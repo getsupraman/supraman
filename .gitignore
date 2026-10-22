@@ -1,4 +1,6 @@
 .repos/
 .claude/briefs/
 target/
+target-load/
+target-bin/
 spikes/term-spike/commit-msg.txt
