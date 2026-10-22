@@ -294,13 +294,53 @@ impl Fleet {
         None
     }
 
+    /// Stops and removes every row named `name`. A `--bg` session started in a main checkout moves into
+    /// `<repo>/.claude/worktrees/<w>` before its first write and commits there; `claude rm` then keeps the
+    /// row and the worktree and names the way out (`--discard-unpushed <sha>@<token>`), which is taken:
+    /// the row is ours, so is its worktree. A worktree rm keeps for another reason (dirty, locked) is
+    /// removed with git, its `worktree-*` branch deleted, and the row removed again (m2/2).
     pub(crate) fn remove(&mut self, name: &str) {
         let rows = self.claude.find_by_name(name, Duration::ZERO).unwrap_or_default();
         for row in rows {
             let _ = self.claude.stop(&row.id);
+            let _ = wait_until_stopped(&self.claude, name);
+            let refusal = match self.claude.rm(&row.id) {
+                Ok(out) => {
+                    println!("cleanup: rm {} ({name}){}", row.id, one_line_tail(&out));
+                    continue;
+                }
+                Err(e) => e.to_string(),
+            };
+            println!("cleanup: rm {} ({name}) refused{}", row.id, one_line_tail(&refusal));
+            if let Some(token) = discard_token(&refusal) {
+                let out = std::process::Command::new(&self.claude.program)
+                    .args(["rm", &row.id, "--discard-unpushed", token])
+                    .stdin(std::process::Stdio::null())
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        println!("cleanup: rm {} --discard-unpushed{}", row.id, one_line_tail(&String::from_utf8_lossy(&o.stdout)));
+                        prune_empty(kept_worktree(&refusal).as_deref());
+                        continue;
+                    }
+                    Ok(o) => println!("cleanup: rm --discard-unpushed failed{}", one_line_tail(&String::from_utf8_lossy(&o.stderr))),
+                    Err(e) => println!("cleanup: rm --discard-unpushed failed: {e}"),
+                }
+            }
+            let Some((repo, worktree)) = kept_worktree(&refusal).as_deref().and_then(claude_worktree) else { continue };
+            let branch = git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+            let wt = worktree.display().to_string();
+            let _ = git(&repo, &["worktree", "unlock", &wt]);
+            let removed = git(&repo, &["worktree", "remove", "--force", "--force", &wt]);
+            let branch_gone = match branch.strip_prefix("worktree-") {
+                Some(_) => git(&repo, &["branch", "-D", &branch]).map(|_| format!("branch {branch} deleted")),
+                None => Ok(format!("branch {branch} kept (not worktree-*)")),
+            };
+            println!("cleanup: git worktree remove {wt}: {removed:?}; {branch_gone:?}");
+            prune_empty(Some(&worktree));
             match self.claude.rm(&row.id) {
-                Ok(_) => println!("cleanup: rm {} ({name})", row.id),
-                Err(e) => println!("cleanup: rm {} ({name}) failed: {e}", row.id),
+                Ok(_) => println!("cleanup: rm {} ({name}) after the worktree went", row.id),
+                Err(e) => println!("cleanup: rm {} ({name}) failed again: {e}", row.id),
             }
         }
     }
@@ -321,6 +361,61 @@ impl Drop for Fleet {
             .collect();
         println!("cleanup: {} aw-m2-probe row(s) of this run left {left:?}", left.len());
     }
+}
+
+/// `(<repo>, <repo>/.claude/worktrees/<w>)` when `cwd` is in such a worktree.
+pub(crate) fn claude_worktree(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
+    let parts: Vec<_> = cwd.components().collect();
+    let at = parts.windows(2).position(|w| w[0].as_os_str() == ".claude" && w[1].as_os_str() == "worktrees")?;
+    parts.get(at + 2)?;
+    let repo: PathBuf = parts[..at].iter().collect();
+    let worktree: PathBuf = parts[..at + 3].iter().collect();
+    Some((repo, worktree))
+}
+
+/// `git -C <dir> <args>`: trimmed stdout, or stderr as the error.
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// Removes `<repo>/.claude/worktrees` and `<repo>/.claude` when a removal left them empty.
+fn prune_empty(worktree: Option<&Path>) {
+    let Some(worktrees) = worktree.and_then(Path::parent) else { return };
+    if fs::remove_dir(worktrees).is_ok()
+        && let Some(dot_claude) = worktrees.parent()
+    {
+        let _ = fs::remove_dir(dot_claude);
+    }
+}
+
+/// `<sha>@<token>` from rm's "… claude rm <id> --discard-unpushed <sha>@<token>".
+fn discard_token(refusal: &str) -> Option<&str> {
+    let rest = refusal.split_once("--discard-unpushed ")?.1;
+    rest.split_whitespace().next().filter(|t| t.contains('@'))
+}
+
+/// The path in rm's "kept <id> — its worktree is still at “<path>”".
+fn kept_worktree(refusal: &str) -> Option<PathBuf> {
+    let rest = refusal.split_once("worktree is still at ")?.1;
+    let rest = rest.trim_start_matches(['“', '"']);
+    let end = rest.find(['”', '"'])?;
+    Some(PathBuf::from(&rest[..end]))
+}
+
+fn one_line_tail(out: &str) -> String {
+    let text = out.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" / ");
+    if text.is_empty() { String::new() } else { format!(": {text}") }
 }
 
 pub(crate) fn wait_until_stopped(claude: &Claude, name: &str) -> Result<(), String> {
@@ -462,6 +557,32 @@ mod tests {
         assert!(used_config(Some("TOOLS=a\nTOOL=present\nRESULT=error\nTEXT=401")).starts_with("foreman's"));
         assert!(used_config(Some("TOOLS=a\nTOOL=present\nRESULT=ok\nTEXT=# brief")).starts_with("user scope"));
         assert_eq!(used_config(None), "no answer");
+    }
+
+    #[test]
+    fn finds_the_claude_worktree_a_cwd_is_in() {
+        let (repo, wt) = claude_worktree(Path::new(r"P:\r\AutoWork\.claude\worktrees\role-tags\target\x")).unwrap();
+        assert_eq!(repo, PathBuf::from(r"P:\r\AutoWork"));
+        assert_eq!(wt, PathBuf::from(r"P:\r\AutoWork\.claude\worktrees\role-tags"));
+        assert_eq!(claude_worktree(Path::new(r"P:\r\AutoWork\target\x")), None);
+        assert_eq!(claude_worktree(Path::new(r"P:\r\AutoWork\.claude\worktrees")), None);
+    }
+
+    /// `claude rm` on a session whose worktree has commits (m2/2, CLI 2.1.309), verbatim.
+    const KEPT: &str = "claude failed (exit 1): kept 202c9998 — its worktree is still at “P:\\Projects\\LarchSys\\AutoWork\\.claude\\worktrees\\iso-probe”\n  39 unpushed commits on “worktree-iso-probe”: 3ccd48a “probe: add iso.txt” and 38 more. They exist on no remote, so deleting the worktree would lose them.\n  push them and run 'claude rm 202c9998' again, or discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1bb9d660d38c0fabd2f5e63bd64be737a@d71f54d85da4468315a1efd780272116";
+
+    #[test]
+    fn reads_rm_refusals() {
+        assert_eq!(
+            discard_token(KEPT),
+            Some("3ccd48a1bb9d660d38c0fabd2f5e63bd64be737a@d71f54d85da4468315a1efd780272116")
+        );
+        assert_eq!(
+            kept_worktree(KEPT),
+            Some(PathBuf::from(r"P:\Projects\LarchSys\AutoWork\.claude\worktrees\iso-probe"))
+        );
+        assert_eq!(discard_token("removed 202c9998"), None);
+        assert_eq!(kept_worktree("removed 202c9998"), None);
     }
 
     #[test]
