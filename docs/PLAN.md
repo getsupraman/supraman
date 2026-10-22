@@ -141,6 +141,8 @@ with `SendMessage("fm-<p>-relay", …)`.
 ### Data placement
 
 - platform registry: `%APPDATA%\Foreman\platforms\<name>.toml`
+- per platform desired state (Start/Stop, wanted sessions): `%APPDATA%\Foreman\supervisor\<name>.toml`;
+  app settings (busy limit, WorkState `.env`): `%APPDATA%\Foreman\settings.toml`
 - runtime session state: in memory, rebuilt from `agents --json --all` + hooks (sessions outlive the app)
 - work, plans, evidence, journal, notes: WorkState (one project per platform; a roadmap is a run)
 
@@ -189,11 +191,15 @@ remove`, `fm sessions`. Crates: `foreman-core`, `foreman-claude` (read side), `f
 `foreman-app`, `fm`. Health derives **liveness from the pid**; `state` is the current turn (`done` + live pid =
 idle). Open: the human hand check (backlog 9-d).
 
-**M2 — supervisor**: Start/Stop, launcher port (role tokens, `--plugin-dir`), reconcile + restart with
-backoff, hook ingest, Inbox, concurrency cap. Proves auto-compact re-injection on a long session (6-d).
-Needs from M1's findings: a "trust needed" state per repo — `claude --bg` refuses a workspace the user never
-trusted, and the user must accept that prompt, Foreman must not; never restart a session whose pid is alive
-(the `done`-with-live-pid case); WorkState `agents` records (skills-5d, scheduled before M2).
+**M2 — supervisor — built** (run `m2`, units 1–4; m2/4 awaits the controller's gate and René's hand check).
+Launcher port (`LaunchSpec`, role token in an owner-only `--mcp-config`, `--plugin-dir`), `plugins/foreman` +
+`fm hook` (event log, role re-injection; auto-compact re-injection proven, 6-d), `foreman-supervisor` (pure
+reconcile, restart with backoff, respawn grace, trust-needed, give-up), and in the app: **Start/Stop per
+platform** (desired state persisted in `<FOREMAN_HOME>/supervisor/`, supervision resumes on app start), the
+**Inbox** (blocked → Attach, launch failed / gave up → Retry, trust needed → Run in terminal; Foreman never
+answers the trust prompt), **one busy-session limit shared by all platforms** (`settings.toml` `max_working`,
+stepper in the app), hook signals on supervised rows. `foreman.exe --selftest-supervise` is the gate.
+Platform sessions are `bgIsolation:"none"`; the platform role is still the M2 placeholder.
 
 **M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `platform-controller`, `repo-controller`. First
 end-to-end task on a small test platform, **not Nomos**.
