@@ -135,3 +135,68 @@ hook.ps1 -Event <E> -Out <abs path>`), so no shell selection was involved.
   turn, so Foreman can re-inject the role skill there. Caveat: every `--resume` also fires
   SessionStart (source=resume) and adds its own injection, and the model saw them all; a re-injected
   role text should be idempotent and tagged with its source.
+
+## 2026-10-22 — m0/4 relay via native SendMessage
+
+Observed with `probes/m0.4-relay/run.ps1` (claude CLI 2.1.308, Windows 11). Per run: `claude --bg` a
+**target** (`aw-m0-relay-target-<hex>`, told to answer any peer message with the nonce) and a **relay**
+(`aw-m0-relay-<hex>`, `--permission-mode auto`, prompt file in the scratch dir), both with cwd = the scratch
+dir. The relay arms `Monitor` on `pwsh -File probes/m0.4-relay/inbox.ps1 -Dir <inbox>`, writes
+`outbox/ready.json`, and then relays: inbox file `{to, body}` → `SendMessage(to, body)`; incoming
+cross-session message → `outbox/msg-NNNN.json` `{from, from_name, body}`. The app (run.ps1) drops
+`inbox/<ts>.json` (write `.tmp`, then rename) and waits for an outbox body carrying the nonce. Raw
+`run.log` + `rows.jsonl` per run in `probes/m0.4-relay/.scratch/<ts>/` (gitignored).
+
+| Run (`.scratch/…`) | Target mode | app→relay reads file | app→target (target transcript enqueue) | round trip (drop → outbox file seen) | Result |
+|---|---|---|---|---|---|
+| `20261022-165907` | auto | — | 6.93 s (read by hand) | ≈17.4 s (log ticks) | round trip OK; script exit 1 on a timestamp-parse bug of mine, fixed |
+| `20261022-170022` | auto | 3.95 s | 6.09 s | 18.00 s | PASS, exit 0 |
+| `20261022-170124` | auto | 3.59 s | 6.46 s | 16.79 s | PASS, exit 0 |
+| `20261022-170233` | **default** | 3.37 s | 5.45 s | 14.00 s | PASS, exit 0 |
+
+app→X = first line containing the nonce in X's transcript minus the drop time. In the relay that is the
+`Read` tool result; in the target it is a `queue-operation`/`enqueue` line.
+
+- **The round trip works with only supported mechanisms**: a file watcher under `Monitor`, `Read`,
+  `SendMessage`, `Write`. Nothing was held, refused, or needed a permission prompt in auto mode (the
+  `Monitor` pwsh command and both `Write`s went through the auto classifier without parking).
+- **No hold with a `default`-mode target.** Relay (auto) → target (default) and the reply back were both
+  delivered straight away, no `[Cross-session delivery notice]` in either transcript. The incoming
+  message is tagged `from-mode="prompting"` in both the auto and the default runs, so whatever the hold
+  rule compares, `auto` vs `default` on two `--bg` sessions did not trigger it. The SendMessage result
+  only says "in that session's inbox, not yet read … a delivery notice follows if that session holds it".
+  → Foreman must still treat a delivery notice as a possible event (the relay prompt writes it to the
+  outbox as `from: "relay-notice"`), but cannot rely on mode mismatch to predict it.
+- **Addresses**: the receiver sees `<cross-session-message from="uds:\.\pipe\LOCAL\cc-msg-<hex>"
+  from-name="<session name>" from-mode="prompting">`; the reply also carries `hop-chain="<hex>"`. The
+  target replied to the pipe address (as SendMessage's docs say: copy `from`), not the name. → Foreman
+  routes by `from_name` (we chose the names) and treats `from` as opaque.
+- **Where the 14–18 s go** (run `170233`, relay transcript, seconds after drop): Monitor event enqueued
+  0.6 → `Read` 1.7 → `SendMessage` 4.0 → turn ends 5.9 → target's reply enqueued in relay 10.5 → `Write`
+  outbox 13.2 → app sees it 14.0. Each direction costs model turns: outbound 3 API calls (Read,
+  SendMessage, end turn), inbound 2 (Write, end turn); the target's own turn is ~5 s of the middle.
+- **Idle cost: zero turns while waiting.** The relay transcript has no lines between arming/ready and the
+  first Monitor event (10 s+ gap per run); nothing polls the model.
+- **Relay row while waiting on Monitor:** `status=busy` the whole time (pid set), `state=done` in three
+  runs and `state=working` throughout in one (`170124`). An idle target shows `status=idle` with
+  `state=done` (three runs) or `state=working` (`170022`). → A relay with an armed Monitor never reads
+  as idle in `agents --json`; `state` alone is not a reliable idle signal. Foreman judges the relay by
+  `ready.json` + `pid`, not by `status`.
+- **`Monitor` is not persistent**: the tool reported "expires in 30m unless the source ends first". The
+  relay prompt tells it to re-arm on expiry, which costs one wake-up turn per 30 min; inbox.ps1 records
+  emitted paths in `<inbox>/.seen` and emits every unseen file on start, so files dropped during a re-arm
+  gap are not lost or replayed. Re-arm itself was not observed (runs were < 1 min).
+- **Teardown is clean**: `claude stop` + `rm` on both ids (from the rows we named) left no `inbox.ps1`
+  pwsh process running in any run.
+- **Failure modes seen**: only my parse bug (ConvertFrom-Json turns the transcript's ISO `timestamp` into
+  a culture-formatted DateTime; regex the raw line instead). Transcript lines without a `timestamp`
+  (`api-request-blob`) also carry the nonce; skip them when timing.
+
+What Foreman's relay should look like:
+- One relay session per Foreman instance, `--bg --permission-mode auto`, cwd = a Foreman-owned dir, name
+  `foreman-relay-<hex>`; prompt from a file, as here, forbidding any recipient not named in an inbox file.
+- Have the watcher print the **message itself** (one JSON line `{to, body}`) instead of a path: that drops
+  the `Read` turn (~2 s and one API call per message). Keep `.seen` (or delete-after-emit) for re-arm.
+- Atomic drops (write `.tmp`, rename); outbox files named by a counter the relay keeps, the app timestamps
+  on arrival. Expect ~5 s app→target and ~15 s round trip with a trivially answering target.
+- Health = `ready.json` present + row has a `pid`; re-arm expiry every 30 min is part of the steady state.
