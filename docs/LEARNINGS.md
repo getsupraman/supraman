@@ -335,3 +335,87 @@ from B are expected but **not measured**: this spike only measured A.
   The routes in the brief ("STOP and report", "send BLOCKED with the numbers") are what made that safe.
 - **Steering an idle agent into the next adjacent unit** (ws/2 → rule-count cap, ws/3 → ws/4, ws/5 → 6, 7)
   cost far less than a fresh launch and kept one commit per unit.
+
+## 2026-10-22 — m1/1 terminal Variant B vs A
+
+`crates/foreman-term` (Variant B) is Zed's `crates/terminal` @ `03efd492` copied and cut:
+- `TerminalSettings` + `impl Settings` are replaced by a plain `TerminalConfig` gpui global (`terminal_settings.rs`;
+  defaults = Zed's `default.json`), and `AlternateScroll` is a local enum.
+- Task mode (`TerminalMode::task`, `TaskState`, `task_summary`, `kill_active_task`, `wait_for_completed_task`)
+  is deleted. `Shell`/`ShellKind` come from `util::shell` (`task` only re-exported them).
+- `AppVersion` is replaced by `TerminalConfig::program_version`.
+- OSC colour replies and `get_color_at_index` take a `TerminalPalette` (16 ANSI + 8 dim + fg/bg/bright fg/cursor)
+  instead of `&Theme`.
+- The test modules of `terminal.rs` and `alacritty/hyperlinks.rs` are dropped (they build a `SettingsStore`).
+
+It keeps `gpui`, `util` and `collections` as git deps, plus the alacritty fork, `vte` and `sysinfo`.
+`cargo tree -p foreman-term` contains none of `settings`, `theme_settings`, `task`, `release_channel`,
+`migrator`, `tree-sitter*`, `wasmtime*` or `proto` (`cargo tree -p foreman-term -i settings` → "did not match
+any packages"). Both foreman-term and term-spike B build with plain `cargo`, no CMake on PATH.
+
+**Variant switch needs `--no-default-features`.** Cargo features only add, so `--features vendored` on its
+own still builds A's crates and CMake. term-spike has `default = ["zed"]` (A) and `vendored` (B), with
+`compile_error!` if both or neither are on:
+- A: `pwsh -File scripts/cargo.ps1 build --release -p term-spike`
+- B: `cargo build --release -p term-spike --no-default-features --features vendored`
+
+B's term-spike still depends on Zed `theme` (no settings in its tree) and calls `theme::init(JustBase)`, so
+`term_element.rs` paints both variants from the same theme. Only the indexed-colour lookup is cfg'd.
+
+**Selftest additions:** frames > 50 ms / > 100 ms plus the three worst frames with their offset into the window.
+`--selftest-external` uses an external load instead of the 24 in-process spinner threads: it wipes
+`target-load/release`, starts a release build of the *other* variant with `CARGO_TARGET_DIR=target-load`
+immediately before the 10 s window, and kills it with `taskkill /T` afterwards. A's exe builds B with plain
+cargo; B's exe builds A through `scripts/cargo.ps1`. The build compiled 153–166 crates in the window and was
+still running at its end in every run.
+
+Same machine as m0/5. Cold build = `cargo clean`, then `Measure-Command` wall clock with registry and git
+checkouts warm. Incremental = `touch main.rs` and rebuild. Runtime = the copies in `target-bin/`, 3 runs each.
+Values are listed run 1 / run 2 / run 3.
+
+| | A (Zed `terminal` git dep) | B (`foreman-term` vendored) |
+|---|---|---|
+| Needs CMake / `cargo.ps1` | yes (wasmtime-c-api build.rs) | **no** |
+| Cold release build | 186.9 s | **102.8 s** (−45 %) |
+| Incremental after touching main.rs | 6.03 s | 4.09 s |
+| Crates (`cargo tree --prefix none`, unique) | 487 | term-spike B **350**; foreman-term alone 326 (term-spike's own deps — Zed `theme`, `gpui_platform`, … — add 24) |
+| Binary size (release, no LTO) | 17,284,096 B (16.5 MiB) | **12,005,888 B (11.4 MiB)** (−31 %) |
+| Idle private bytes, in-process runs | 97.7 / 97.2 / 97.6 MiB | 98.4 / 97.5 / 98.0 MiB |
+| Peak private bytes under in-process load | 99.8 / 99.8 / 99.8 MiB | 98.9 / 99.4 / 99.1 MiB |
+| Peak private bytes under external load | 98.3 / 98.2 / 98.4 MiB | 98.0 / 98.1 / 97.8 MiB |
+| In-process load: p50 | 16.67 / 16.67 / 16.67 ms | 16.67 / 16.66 / 16.66 ms |
+| In-process load: p95 | 18.05 / 17.95 / 17.98 ms | 18.04 / 18.18 / 17.89 ms |
+| In-process load: max | 20.24 / 19.59 / 19.24 ms | 19.03 / 20.06 / 18.70 ms |
+| In-process load: frames > 50 / > 100 ms | 0 / 0 in all 3 | 0 / 0 in all 3 |
+| External load: p50 | 16.67 / 16.66 / 16.67 ms | 16.67 / 16.66 / 16.66 ms |
+| External load: p95 | 18.32 / 18.26 / 18.07 ms | 18.33 / 18.37 / 18.38 ms |
+| External load: max | 21.06 / 20.50 / 20.47 ms | 30.82 / 20.91 / 33.35 ms |
+| External load: frames > 50 / > 100 ms | 0 / 0 in all 3 | 0 / 0 in all 3 |
+| Keystroke-to-grid (nonce), in-process runs | 123 / 108 / 124 ms | 120 / 109 / 124 ms |
+| Keystroke-to-grid (nonce), external runs | 123 / 124 / 121 ms | 137 / 109 / 137 ms |
+
+**Reading:**
+- Runtime is the same. Both variants hold vsync (p50 16.67 ms) with p95 < 18.5 ms under either load.
+  Memory is within ±1 MiB: the cut code (settings store, wasmtime, protobuf) is linked into A but never
+  touched at runtime. ~97 MiB private is gpui + D3D11 + DirectWrite + alacritty.
+- B's two 31–33 ms frames came while it was building **A** (wasmtime/cranelift crates, heavier per job). A
+  never ran under that load, so this is not a terminal-crate difference.
+- The cost of A is all build-side: CMake, +40 % crates, +84 s cold build, +5.0 MiB binary.
+
+**The M0 896 ms hitch did not reproduce, for A or B.** No frame over 50 ms in 12 runs, 6 of them while a
+concurrent `cargo build` saturated the machine. So the cause is not the terminal crate. Differences from the
+M0 gate, any of which could be it: that load was a **.NET build**, not cargo. That run's window state was not
+recorded; here the window was active from start to end of every window (`window active: true / at end true`).
+A window that is not in the foreground would get gpui's 30 fps throttle and lower scheduler priority, which
+could produce one long frame; this is unverified. And the window here only covers the first 10 s of a cold
+build (proc-macros and small crates); a link step or LTO phase was never inside it. Not tested: an inactive
+window, a dotnet load, the link phase.
+
+**Recommendation: switch Foreman to B.** Same frame times, memory and latency. It builds with plain cargo,
+45 % faster cold, 31 % smaller binary, 137 fewer crates. Maintenance is a ~4k-line copy to re-sync per Zed rev
+bump; the hard parts (alacritty fork, gpui) are still deps.
+
+**`scripts/cargo.ps1` can be dropped** once Variant A is retired. Nothing in B's tree needs CMake. Until
+then only A builds use it, including the `--selftest-external` load of a B exe. B does **not** remove the
+Zed-lockfile caveat: `gpui`/`util` are still git deps and resolve against the Cargo.lock seeded from Zed.
+The foreman-term build added 38 packages to the lock without breakage, but rev bumps should still re-seed.

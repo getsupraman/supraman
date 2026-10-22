@@ -1,12 +1,22 @@
 // term-spike: one gpui window running one Zed `terminal` (alacritty_terminal + ConPTY).
-//   term-spike                 interactive pwsh
-//   term-spike --attach <id>   runs `claude attach <id>`
-//   term-spike --selftest      nonce round-trip, then frame times + private bytes under CPU load
+// Feature `zed` (default) = Variant A, Zed's `terminal` crate; feature `vendored` = Variant B,
+// crates/foreman-term (build with `--no-default-features --features vendored`).
+//   term-spike                       interactive pwsh
+//   term-spike --attach <id>         runs `claude attach <id>`
+//   term-spike --selftest            nonce round-trip, then frame times + private bytes under CPU load
+//   term-spike --selftest-external   same, but the load is a cold release build of the other variant
+//                                    into <workspace>/target-load
+
+#[cfg(all(feature = "zed", feature = "vendored"))]
+compile_error!("features `zed` and `vendored` are exclusive; use --no-default-features --features vendored");
+#[cfg(not(any(feature = "zed", feature = "vendored")))]
+compile_error!("enable exactly one of the features `zed` (Variant A) or `vendored` (Variant B)");
 
 mod term_element;
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicI32, Ordering},
@@ -15,6 +25,8 @@ use std::{
 };
 
 use collections::HashMap;
+#[cfg(feature = "vendored")]
+use foreman_term as terminal;
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Bounds, Context, Entity, FocusHandle, KeyDownEvent,
     Render, WeakEntity, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
@@ -28,17 +40,30 @@ use util::paths::PathStyle;
 
 static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 
+#[derive(Clone, Copy, PartialEq)]
+enum Load {
+    InProcess,
+    External,
+}
+
 #[derive(Clone)]
 enum Mode {
     Interactive,
     Attach(String),
-    Selftest,
+    Selftest(Load),
 }
+
+const VARIANT: &str = if cfg!(feature = "vendored") {
+    "B (vendored foreman-term)"
+} else {
+    "A (Zed terminal git dep)"
+};
 
 fn parse_args() -> Mode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("--selftest") => Mode::Selftest,
+        Some("--selftest") => Mode::Selftest(Load::InProcess),
+        Some("--selftest-external") => Mode::Selftest(Load::External),
         Some("--attach") => match args.get(1) {
             Some(id) => Mode::Attach(id.clone()),
             None => {
@@ -48,19 +73,21 @@ fn parse_args() -> Mode {
         },
         None => Mode::Interactive,
         Some(other) => {
-            eprintln!("unknown argument {other}; usage: term-spike [--selftest | --attach <id>]");
+            eprintln!(
+                "unknown argument {other}; usage: term-spike [--selftest | --selftest-external | --attach <id>]"
+            );
             std::process::exit(2);
         }
     }
 }
 
-fn shell_for(mode: &Mode) -> task::Shell {
+fn shell_for(mode: &Mode) -> util::shell::Shell {
     let (program, args) = match mode {
         Mode::Interactive => ("pwsh", vec!["-NoLogo".to_string()]),
-        Mode::Selftest => ("pwsh", vec!["-NoLogo".into(), "-NoProfile".into()]),
+        Mode::Selftest(_) => ("pwsh", vec!["-NoLogo".into(), "-NoProfile".into()]),
         Mode::Attach(id) => ("claude", vec!["attach".into(), id.clone()]),
     };
-    task::Shell::WithArguments {
+    util::shell::Shell::WithArguments {
         program: program.to_string(),
         args,
         title_override: None,
@@ -190,12 +217,127 @@ fn build_terminal(
     )
 }
 
+/// The active theme's terminal colours, for foreman-term's OSC colour replies and the painter's
+/// indexed colours (Variant A reads the same values from `Theme` directly).
+#[cfg(feature = "vendored")]
+pub fn palette(theme: &theme::Theme) -> terminal::terminal_settings::TerminalPalette {
+    let c = theme.colors();
+    terminal::terminal_settings::TerminalPalette {
+        ansi: [
+            c.terminal_ansi_black,
+            c.terminal_ansi_red,
+            c.terminal_ansi_green,
+            c.terminal_ansi_yellow,
+            c.terminal_ansi_blue,
+            c.terminal_ansi_magenta,
+            c.terminal_ansi_cyan,
+            c.terminal_ansi_white,
+            c.terminal_ansi_bright_black,
+            c.terminal_ansi_bright_red,
+            c.terminal_ansi_bright_green,
+            c.terminal_ansi_bright_yellow,
+            c.terminal_ansi_bright_blue,
+            c.terminal_ansi_bright_magenta,
+            c.terminal_ansi_bright_cyan,
+            c.terminal_ansi_bright_white,
+        ],
+        dim: [
+            c.terminal_ansi_dim_black,
+            c.terminal_ansi_dim_red,
+            c.terminal_ansi_dim_green,
+            c.terminal_ansi_dim_yellow,
+            c.terminal_ansi_dim_blue,
+            c.terminal_ansi_dim_magenta,
+            c.terminal_ansi_dim_cyan,
+            c.terminal_ansi_dim_white,
+        ],
+        foreground: c.terminal_foreground,
+        background: c.terminal_background,
+        bright_foreground: c.terminal_bright_foreground,
+        cursor: theme.players().local().cursor,
+    }
+}
+
+#[cfg(feature = "zed")]
+fn init_globals(cx: &mut App) {
+    release_channel::init(semver::Version::new(0, 1, 0), cx);
+    settings::init(cx);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
+}
+
+#[cfg(feature = "vendored")]
+fn init_globals(cx: &mut App) {
+    theme::init(theme::LoadThemes::JustBase, cx);
+    let palette = palette(cx.theme());
+    cx.set_global(terminal::terminal_settings::TerminalConfig {
+        program_version: "0.1.0".to_string(),
+        palette,
+        ..Default::default()
+    });
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+}
+
+fn load_target_dir() -> PathBuf {
+    workspace_root().join("target-load")
+}
+
+/// Starts a release build of the *other* variant into target-load/.
+fn start_external_load() -> std::io::Result<Child> {
+    let log = std::fs::File::create(load_target_dir().join("load-build.log"))?;
+    let mut command = if cfg!(feature = "vendored") {
+        let mut command = Command::new("pwsh");
+        command.args(["-NoProfile", "-File", "scripts/cargo.ps1"]);
+        command.args(["build", "--release", "-p", "term-spike"]);
+        command
+    } else {
+        let mut command = Command::new("cargo");
+        command.args(["build", "--release", "-p", "term-spike"]);
+        command.args(["--no-default-features", "--features", "vendored"]);
+        command
+    };
+    command
+        .current_dir(workspace_root())
+        .env("CARGO_TARGET_DIR", load_target_dir())
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log)
+        .spawn()
+}
+
+fn kill_tree(child: &mut Child) {
+    Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok();
+    child.wait().ok();
+}
+
 fn main() {
     let mode = parse_args();
     log::set_logger(&StderrLogger).ok();
     log::set_max_level(log::LevelFilter::Info);
+    println!("variant {VARIANT}");
 
-    if matches!(mode, Mode::Selftest) {
+    if matches!(mode, Mode::Selftest(Load::External)) {
+        // Before the clock starts: wipe the previous load build so this one compiles from scratch.
+        let cleaned = Instant::now();
+        let release = load_target_dir().join("release");
+        if release.exists()
+            && let Err(error) = std::fs::remove_dir_all(&release)
+        {
+            eprintln!("cannot clean {}: {error}", release.display());
+            std::process::exit(1);
+        }
+        std::fs::create_dir_all(load_target_dir()).ok();
+        println!("cleaned target-load/release in {} ms", cleaned.elapsed().as_millis());
+    }
+
+    if matches!(mode, Mode::Selftest(_)) {
         std::thread::spawn(|| {
             std::thread::sleep(Duration::from_secs(90));
             eprintln!("selftest watchdog: no result after 90 s");
@@ -205,9 +347,7 @@ fn main() {
 
     let started = Instant::now();
     gpui_platform::application().run(move |cx: &mut App| {
-        release_channel::init(semver::Version::new(0, 1, 0), cx);
-        settings::init(cx);
-        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        init_globals(cx);
 
         let bounds = Bounds::centered(None, size(px(900.), px(560.)), cx);
         let mode_for_window = mode.clone();
@@ -250,8 +390,8 @@ fn main() {
                             cx.notify();
                         })
                         .ok();
-                        if matches!(mode, Mode::Selftest) {
-                            selftest(this, started, cx).await;
+                        if let Mode::Selftest(load) = mode {
+                            selftest(this, started, load, cx).await;
                         }
                     })
                     .detach();
@@ -285,7 +425,12 @@ async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
     cx.background_executor().timer(duration).await;
 }
 
-async fn selftest(this: WeakEntity<SpikeView>, started: Instant, cx: &mut AsyncWindowContext) {
+async fn selftest(
+    this: WeakEntity<SpikeView>,
+    started: Instant,
+    load: Load,
+    cx: &mut AsyncWindowContext,
+) {
     let Some(terminal) = this
         .read_with(cx, |view, _| view.terminal.clone())
         .ok()
@@ -335,7 +480,20 @@ async fn selftest(this: WeakEntity<SpikeView>, started: Instant, cx: &mut AsyncW
         .map(|n| n.get())
         .unwrap_or(1);
     let stop = Arc::new(AtomicBool::new(false));
-    let burners: Vec<_> = (0..cores)
+    let burner_count = if load == Load::InProcess { cores } else { 0 };
+    let mut load_build = None;
+    if load == Load::External {
+        match start_external_load() {
+            Ok(child) => load_build = Some(child),
+            Err(error) => {
+                eprintln!("cannot start the external load build: {error}");
+                EXIT_CODE.store(1, Ordering::SeqCst);
+                cx.update(|_, cx| cx.quit()).ok();
+                return;
+            }
+        }
+    }
+    let burners: Vec<_> = (0..burner_count)
         .map(|_| {
             let stop = stop.clone();
             std::thread::spawn(move || {
@@ -375,18 +533,44 @@ async fn selftest(this: WeakEntity<SpikeView>, started: Instant, cx: &mut AsyncW
         })
         .unwrap_or_default();
     let (end_private, _) = memory();
+    let window_active_at_end = cx
+        .update(|window, _| window.is_window_active())
+        .unwrap_or(false);
     stop.store(true, Ordering::Relaxed);
     for burner in burners {
         burner.join().ok();
     }
+    let load_build_running = match load_build.as_mut() {
+        Some(child) => {
+            let running = matches!(child.try_wait(), Ok(None));
+            kill_tree(child);
+            Some(running)
+        }
+        None => None,
+    };
 
-    let mut intervals: Vec<f64> = frames
+    let timed: Vec<(f64, f64)> = frames
         .windows(2)
-        .map(|w| (w[1] - w[0]).as_secs_f64() * 1000.0)
+        .map(|w| {
+            (
+                (w[1] - w[0]).as_secs_f64() * 1000.0,
+                (w[0] - load_started).as_secs_f64() * 1000.0,
+            )
+        })
         .collect();
+    let mut worst = timed.clone();
+    worst.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut intervals: Vec<f64> = timed.iter().map(|(ms, _)| *ms).collect();
     intervals.sort_by(|a, b| a.total_cmp(b));
 
-    println!("load: {cores} busy threads in-process (one per logical core), 10 s, window active: {window_active}");
+    match load_build_running {
+        None => println!(
+            "load: {cores} busy threads in-process (one per logical core), 10 s, window active: {window_active} / at end {window_active_at_end}"
+        ),
+        Some(running) => println!(
+            "load: external `cargo build --release` of the other variant into target-load/, 10 s, still building at end: {running}, window active: {window_active} / at end {window_active_at_end}"
+        ),
+    }
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
     println!(
         "private bytes under load: peak {} / at end {} (peak working set {})",
@@ -400,6 +584,17 @@ async fn selftest(this: WeakEntity<SpikeView>, started: Instant, cx: &mut AsyncW
         percentile(&intervals, 95.0),
         intervals.last().copied().unwrap_or(f64::NAN),
         frames.len()
+    );
+    println!(
+        "frames > 50 ms: {}, frames > 100 ms: {}; worst: {}",
+        intervals.iter().filter(|ms| **ms > 50.0).count(),
+        intervals.iter().filter(|ms| **ms > 100.0).count(),
+        worst
+            .iter()
+            .take(3)
+            .map(|(ms, at)| format!("{ms:.1} ms at +{at:.0} ms"))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     match seen_after {
         Some(elapsed) => println!("nonce seen after {} ms ({nonce})", elapsed.as_millis()),
