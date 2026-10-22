@@ -8,11 +8,12 @@
 
 mod fleet;
 mod selftest;
+mod titlebar;
 mod view;
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
 use crate::view::FleetView;
 
@@ -77,6 +78,11 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(SharedString::from("Foreman")),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
                 ..Default::default()
             },
             move |window, cx| {

@@ -523,7 +523,17 @@ impl FleetView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_lg().font_weight(FontWeight::BOLD).child("Foreman"))
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(colors.text_muted)
+                            .child(cli_line)
+                            .child("·")
+                            .child(refresh_line),
+                    )
                     .child(
                         div()
                             .id("toggle-stopped")
@@ -539,16 +549,6 @@ impl FleetView {
                                 cx.notify();
                             })),
                     ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .text_xs()
-                    .text_color(colors.text_muted)
-                    .child(cli_line)
-                    .child("·")
-                    .child(refresh_line),
             );
 
         let mut notices: Vec<AnyElement> = Vec::new();
@@ -769,7 +769,7 @@ impl FleetView {
             .pr_3()
             .py(px(3.))
             .text_sm()
-            .when(blocked, |d| d.bg(status.warning_background))
+            .when(blocked, |d| d.bg(status.warning.opacity(0.12)))
             .when(dimmed, |d| d.opacity(0.5))
             .child(line)
             .when_some(waiting_for, |d, w| {
@@ -931,8 +931,16 @@ impl Render for FleetView {
             .text_color(colors.text)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .child(self.render_left(cx))
-            .child(self.render_right(cx))
+            .flex_col()
+            .child(crate::titlebar::render(window, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_left(cx))
+                    .child(self.render_right(cx)),
+            )
     }
 }
 
