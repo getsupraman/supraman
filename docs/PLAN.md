@@ -92,6 +92,7 @@ A (Zed's crates as git deps): identical runtime — ~98 MiB private, p50 16.67 m
 cold-builds in 103 s vs 187 s, pulls 350 crates vs 487 and ships 12.0 MB vs 17.3 MB. `gpui`/`util`/`collections`
 stay git deps, so `Cargo.lock` is still re-seeded from Zed's lockfile on a rev bump. M0's one 896 ms frame did
 not reproduce for either variant; untested: inactive window, a .NET build as load, link-phase load.
+Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothing in the workspace needs CMake.
 
 ### Session identity and permissions
 

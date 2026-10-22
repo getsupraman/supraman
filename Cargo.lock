@@ -1641,6 +1641,7 @@ dependencies = [
  "log",
  "parking_lot",
  "percent-encoding",
+ "rand 0.9.4",
  "regex",
  "serde",
  "sysinfo 0.39.6",
