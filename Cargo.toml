@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/foreman-core", "crates/foreman-claude", "crates/foreman-term", "crates/fm", "spikes/term-spike"]
+members = ["crates/foreman-core", "crates/foreman-claude", "crates/foreman-term", "crates/foreman-ui", "crates/foreman-app", "crates/fm", "spikes/term-spike"]
 
 # Copied from Zed's root Cargo.toml @ 03efd49220ba06703d04f9c4732fdf814f9c523c.
 # Git dependencies do not inherit the upstream workspace's patches; these are the
