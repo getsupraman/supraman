@@ -39,9 +39,12 @@ const PROMPT: &str = "Reply with the word ready and then wait for input";
 const LISTED_WITHIN: Duration = Duration::from_secs(15);
 const RENDERED_WITHIN: Duration = Duration::from_secs(10);
 
-struct Scratch {
-    dirs: Vec<PathBuf>,
-    session_name: Option<String>,
+pub(crate) struct Scratch {
+    pub(crate) dirs: Vec<PathBuf>,
+    pub(crate) session_name: Option<String>,
+    /// `--selftest-supervise`: every row whose name starts with this is the run's own; cleanup
+    /// first turns the app's supervisor off, then stops and removes each of them.
+    pub(crate) name_prefix: Option<String>,
 }
 
 static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
@@ -53,7 +56,7 @@ fn repo() -> &'static str {
     REPO.get().map_or("", String::as_str)
 }
 
-fn workspace_root() -> &'static Path {
+pub(crate) fn workspace_root() -> &'static Path {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.ancestors().nth(2).unwrap_or(manifest)
 }
@@ -69,7 +72,7 @@ fn find_main_repo(from: &Path) -> anyhow::Result<PathBuf> {
     })
 }
 
-fn hex6() -> String {
+pub(crate) fn hex6() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -77,7 +80,7 @@ fn hex6() -> String {
     format!("{:06x}", (nanos as u64 ^ (std::process::id() as u64) << 20) & 0xff_ffff)
 }
 
-fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
     // A just-stopped session can hold a handle in its cwd for a few seconds (LEARNINGS m0/2 run).
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -90,7 +93,7 @@ fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
+pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
     let mut command = Command::new("claude");
     command.args(args).stdin(Stdio::null());
     if let Some(cwd) = cwd {
@@ -115,6 +118,9 @@ fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
 /// Before the window: scratch dirs, the platform registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
+    if mode == Mode::SelftestSupervise {
+        return crate::selftest_supervise::prepare();
+    }
     let target = workspace_root().join("target");
     let home = target.join("selftest-home");
     let cwd = target.join("selftest-cwd");
@@ -124,6 +130,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     *lock() = Some(Scratch {
         dirs: vec![home.clone(), cwd.clone()],
         session_name: None,
+        name_prefix: None,
     });
     install_guards(mode);
 
@@ -178,14 +185,15 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn lock() -> MutexGuard<'static, Option<Scratch>> {
+pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
     SCRATCH.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn install_guards(mode: Mode) {
+pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest => Duration::from_secs(150),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
+        Mode::SelftestSupervise => Duration::from_secs(900),
         _ => Duration::from_secs(120),
     };
     std::thread::spawn(move || {
@@ -217,6 +225,9 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
         return;
     };
     let mut ok = true;
+    if let Some(prefix) = &scratch.name_prefix {
+        ok &= crate::selftest_supervise::remove_own_rows(prefix);
+    }
     if let Some(name) = &scratch.session_name {
         // The row can trail `--bg` by a moment, so a missing row is retried before giving up.
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -285,6 +296,7 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
                 Mode::Selftest => gate(&view, cx).await,
                 Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
                 Mode::SelftestDetachShutdown => detach_on_shutdown(&view, cx).await,
+                Mode::SelftestSupervise => crate::selftest_supervise::run(&view, cx).await,
                 _ => perf(&view, cx).await,
             };
             // The window closed itself; `finish` gives the verdict once the event loop has ended.
@@ -305,13 +317,13 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
         .detach();
 }
 
-async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
+pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
     cx.background_executor().timer(duration).await;
 }
 
 /// A left click at the centre of the element painted under `key`, through the window's own input
 /// dispatch, so it lands only if that element is really there and hit-testable.
-async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let bounds = view
         .read_with(cx, |v, _| v.hits.borrow().get(key).copied())
         .ok_or_else(|| anyhow!("nothing painted under {key}"))?;
@@ -378,7 +390,7 @@ fn first_line(text: &str) -> String {
     line.chars().take(80).collect()
 }
 
-async fn wait_for_tab_terminal(
+pub(crate) async fn wait_for_tab_terminal(
     view: &Entity<FleetView>,
     tab: u64,
     within: Duration,
@@ -437,7 +449,7 @@ fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
 }
 
 /// The row's own fields, as `claude agents --json --all` gave them.
-fn raw(s: &Session) -> String {
+pub(crate) fn raw(s: &Session) -> String {
     format!(
         "state={} status={} pid={}{}",
         s.state.as_ref().map_or("-", |s| s.as_str()),

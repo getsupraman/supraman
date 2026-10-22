@@ -1,4 +1,4 @@
-//! `fm plugin install <dir>`: puts the running `fm.exe` at `<dir>/bin/fm.exe`, where the exec-form
+//! `fm plugin install <dir>` and the app's start: put `fm.exe` at `<dir>/bin/fm.exe`, where the exec-form
 //! hooks in `plugins/foreman/hooks/hooks.json` find it via `${CLAUDE_PLUGIN_ROOT}`.
 
 use std::fs;
@@ -10,7 +10,7 @@ pub const HOOK_EXE: &str = "fm.exe";
 /// Copies `exe` to `<plugin_dir>/bin/fm.exe` unless it is already byte-identical. A hook may be
 /// running the old file, which Windows will not let us overwrite but will let us rename, so the new
 /// copy is written beside it and swapped in by renames; the old one is left as `fm.exe.old`.
-pub fn install(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, bool)> {
+pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, bool)> {
     if !plugin_dir.join("hooks").join("hooks.json").is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -45,16 +45,16 @@ mod tests {
         let plugin = dir.path().join("p");
         let exe = dir.path().join("src.exe");
         fs::write(&exe, b"one").unwrap();
-        assert!(install(&plugin, &exe).is_err());
+        assert!(install_hook_exe(&plugin, &exe).is_err());
         fs::create_dir_all(plugin.join("hooks")).unwrap();
         fs::write(plugin.join("hooks").join("hooks.json"), "{}").unwrap();
 
-        let (target, copied) = install(&plugin, &exe).unwrap();
+        let (target, copied) = install_hook_exe(&plugin, &exe).unwrap();
         assert!(copied);
         assert_eq!(fs::read(&target).unwrap(), b"one");
-        assert!(!install(&plugin, &exe).unwrap().1);
+        assert!(!install_hook_exe(&plugin, &exe).unwrap().1);
         fs::write(&exe, b"two").unwrap();
-        assert!(install(&plugin, &exe).unwrap().1);
+        assert!(install_hook_exe(&plugin, &exe).unwrap().1);
         assert_eq!(fs::read(&target).unwrap(), b"two");
         assert_eq!(fs::read(plugin.join("bin").join("fm.exe.old")).unwrap(), b"one");
     }

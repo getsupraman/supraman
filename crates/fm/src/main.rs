@@ -20,7 +20,6 @@ usage:
   fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
 
 mod hook;
-mod plugin;
 mod probe;
 mod probe_hooks;
 mod probe_isolation;
@@ -115,7 +114,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         }
         ["plugin", "install", dir] => {
             let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate fm.exe: {e}")))?;
-            match plugin::install(std::path::Path::new(dir), &exe) {
+            match foreman_core::install_hook_exe(std::path::Path::new(dir), &exe) {
                 Ok((path, true)) => println!("installed {}", path.display()),
                 Ok((path, false)) => println!("up to date {}", path.display()),
                 Err(e) => return Err(Failure::Usage(format!("plugin install {dir}: {e}"))),

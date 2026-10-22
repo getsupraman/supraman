@@ -90,14 +90,18 @@ pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<Pat
 }
 
 /// What a SessionStart hook prints: a tag line `FOREMAN-ROLE <role> v<sha8>` and the role text from
-/// `<home>/roles/<role>.md`. The tag changes only with the text, so a repeated injection (every
-/// `--resume` and compaction fires SessionStart) is recognisable. `None` when the role name is
-/// unsafe or the file is missing or empty.
-pub fn role_injection(home: &Path, role: &str) -> Option<String> {
+/// `<home>/roles/<role>.md`, with `{platform}` replaced by `platform` when given (one role file serves
+/// every platform). The tag changes only with the text, so a repeated injection (every `--resume`
+/// and compaction fires SessionStart) is recognisable. `None` when the role name is unsafe or the
+/// file is missing or empty.
+pub fn role_injection(home: &Path, role: &str, platform: Option<&str>) -> Option<String> {
     if !is_safe_id(role) {
         return None;
     }
-    let text = fs::read_to_string(home.join("roles").join(format!("{role}.md"))).ok()?;
+    let mut text = fs::read_to_string(home.join("roles").join(format!("{role}.md"))).ok()?;
+    if let Some(platform) = platform {
+        text = text.replace("{platform}", platform);
+    }
     let text = text.trim();
     if text.is_empty() {
         return None;
@@ -337,17 +341,27 @@ mod tests {
     #[test]
     fn role_injection_is_tagged_by_content() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(role_injection(home.path(), "worker"), None);
+        assert_eq!(role_injection(home.path(), "worker", None), None);
         fs::create_dir_all(home.path().join("roles")).unwrap();
         fs::write(home.path().join("roles").join("worker.md"), "You are the worker.\n").unwrap();
-        let text = role_injection(home.path(), "worker").unwrap();
+        let text = role_injection(home.path(), "worker", None).unwrap();
         let tag = role_tag("worker", "You are the worker.");
         assert_eq!(text, format!("{tag}\nYou are the worker.\n"));
         assert_ne!(role_tag("worker", "other text"), tag);
         // sha256("abc") = ba7816bf…
         assert_eq!(role_tag("r", "abc"), "FOREMAN-ROLE r vba7816bf");
-        assert_eq!(role_injection(home.path(), "../worker"), None);
+        assert_eq!(role_injection(home.path(), "../worker", None), None);
         fs::write(home.path().join("roles").join("empty.md"), " \n").unwrap();
-        assert_eq!(role_injection(home.path(), "empty"), None);
+        assert_eq!(role_injection(home.path(), "empty", None), None);
+    }
+
+    #[test]
+    fn role_injection_fills_in_the_platform() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join("roles")).unwrap();
+        fs::write(home.path().join("roles").join("platform.md"), "Controller for {platform}.\n").unwrap();
+        let text = role_injection(home.path(), "platform", Some("nomos")).unwrap();
+        assert_eq!(text, format!("{}\nController for nomos.\n", role_tag("platform", "Controller for nomos.")));
+        assert!(role_injection(home.path(), "platform", None).unwrap().contains("{platform}"));
     }
 }

@@ -20,8 +20,9 @@ pub struct Policy {
     /// A session that is dead again this soon after a successful start counts as a failure; one
     /// alive this long clears the failure count.
     pub stable_after: Millis,
-    /// Most `fm-` sessions whose turn is `working` at once, across the machine.
-    pub max_working: usize,
+    /// A row that lost its pid mid-turn (`working`/`blocked`) this soon after it was last seen alive
+    /// is left to the daemon, which respawns a session killed mid-turn by itself (~12 s, m2/4).
+    pub respawn_grace: Millis,
 }
 
 impl Default for Policy {
@@ -31,7 +32,7 @@ impl Default for Policy {
             give_up_after: 5,
             settle: 20 * SECOND,
             stable_after: 60 * SECOND,
-            max_working: 3,
+            respawn_grace: 30 * SECOND,
         }
     }
 }
@@ -73,6 +74,8 @@ pub struct Attempts {
     pub gave_up: bool,
     /// The last successful launch/resume, until it proves stable or dies.
     pub started_at: Option<Millis>,
+    /// The last tick that saw the session live.
+    pub last_alive: Option<Millis>,
 }
 
 /// Per wanted name, what the supervisor tried and how it went. In-process only: a restart of the
@@ -104,9 +107,12 @@ impl SupervisorMemory {
         }
     }
 
-    /// Feeds one observation of the wanted name: confirms a start as stable, or counts it as a
-    /// failure when it is dead after `settle` but within `stable_after`.
+    /// Feeds one observation of the wanted name: remembers when it was last alive, confirms a start
+    /// as stable, or counts it as a failure when it is dead after `settle` but within `stable_after`.
     pub fn observe(&mut self, name: &str, alive: bool, policy: &Policy, now: Millis) {
+        if alive {
+            self.names.entry(name.to_string()).or_default().last_alive = Some(now);
+        }
         let Some(a) = self.names.get_mut(name) else {
             return;
         };
@@ -117,6 +123,7 @@ impl SupervisorMemory {
         if alive && age >= policy.stable_after {
             *a = Attempts {
                 last_attempt: a.last_attempt,
+                last_alive: a.last_alive,
                 ..Attempts::default()
             };
         } else if !alive && age >= policy.settle {
@@ -233,10 +240,24 @@ mod tests {
     }
 
     #[test]
-    fn observing_an_unknown_name_records_nothing() {
+    fn observing_an_unknown_dead_name_records_nothing() {
         let mut m = SupervisorMemory::default();
         m.observe("a", false, &Policy::default(), T0);
         assert_eq!(m, SupervisorMemory::default());
+    }
+
+    #[test]
+    fn alive_observations_are_remembered_across_stability() {
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.observe("a", true, &p, T0);
+        assert_eq!(m.get("a").unwrap().last_alive, Some(T0));
+        m.record_result("a", Ok(()), &p, T0 + SECOND);
+        m.observe("a", true, &p, T0 + 70 * SECOND);
+        let a = m.get("a").unwrap();
+        assert_eq!((a.started_at, a.last_alive), (None, Some(T0 + 70 * SECOND)));
+        m.observe("a", false, &p, T0 + 71 * SECOND);
+        assert_eq!(m.get("a").unwrap().last_alive, Some(T0 + 70 * SECOND));
     }
 
     #[test]

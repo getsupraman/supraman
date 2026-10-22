@@ -1,14 +1,19 @@
-// foreman: the read-only fleet viewer. Platforms → repos → sessions on the left, attached terminals
-// in tabs on the right. It shows and attaches; it never starts or stops a session.
+// foreman: the fleet app. Platforms → supervised sessions and repos → sessions on the left, with
+// Start/Stop per platform, the Inbox and the shared busy-session limit; attached terminals in tabs on
+// the right. Only platforms the human started are supervised (`foreman-supervisor`).
 //   foreman                  the app
 //   foreman --selftest       the M1 gate: one throwaway session, attach, detach, cleanup, perf
 //   foreman --selftest-detach <n>       one session, n attach/close cycles, alive after each
 //   foreman --selftest-detach-shutdown  attach, close the window, session still alive
 //   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
+//   foreman --selftest-supervise        the M2 gate: Start, kill → resume, trust, park, budget, Stop
 
 mod fleet;
 mod selftest;
+mod selftest_supervise;
+mod supervise;
 mod titlebar;
+mod tokens;
 mod view;
 
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -26,6 +31,7 @@ pub enum Mode {
     SelftestDetach(u32),
     SelftestDetachShutdown,
     SelftestPerf,
+    SelftestSupervise,
 }
 
 impl Mode {
@@ -34,7 +40,8 @@ impl Mode {
     }
 }
 
-const USAGE: &str = "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf]";
+const USAGE: &str =
+    "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
 
 fn parse_args() -> Mode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,6 +54,7 @@ fn parse_args() -> Mode {
         }
         ["--selftest-detach-shutdown"] => Mode::SelftestDetachShutdown,
         ["--selftest-perf"] => Mode::SelftestPerf,
+        ["--selftest-supervise"] => Mode::SelftestSupervise,
         other => {
             eprintln!("unknown arguments {other:?}; {USAGE}");
             std::process::exit(2);
