@@ -1,2 +1,4 @@
 .repos/
 .claude/briefs/
+target/
+spikes/term-spike/commit-msg.txt
