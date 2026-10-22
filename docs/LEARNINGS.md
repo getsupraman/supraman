@@ -643,3 +643,66 @@ cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Ev
   (second), against m1/7's ~18 ms. `foreman-app` is not changed by this unit; the cause was not investigated.
 - Deps: `fm` gains `serde_json` (already in the lock, same version); `foreman-claude` gains an example
   `fake_claude` for its integration test. No new external dependency.
+
+## 2026-10-22 — m2/2 hook ingest
+
+Measured with `cargo run -p fm -- probe hooks` (runs 1–8; runs 7–8 are the final code) and throwaway `claude -p`
+sessions `aw-m2-probe-expand*` from `<worktree>/target/aw-m2-probe-expand/cwd` (Windows 11; CLI 2.1.308 at the
+start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309 per their debug logs). Every
+`aw-m2-probe-*` row was stopped + removed by the probe's cleanup (`0 … left` every run).
+
+- **How a plugin hook finds `fm.exe`: `${CLAUDE_PLUGIN_ROOT}/bin/fm.exe`, exec form.** In an exec-form hook
+  (`command` + `args`) Claude Code expands only its own placeholders: `"command": "${FOREMAN_FM}"` failed with
+  `Hook command failed to spawn (SessionStart:startup): Executable not found in $PATH: "${FOREMAN_FM}"` (debug log),
+  although `FOREMAN_FM` was in the session env via `--settings`. Shell form `"$FOREMAN_FM" hook X` worked (bash
+  expands it) but depends on Git Bash being present (else the hook runs in PowerShell, where that line does nothing).
+  → `plugins/foreman/hooks/hooks.json` uses `${CLAUDE_PLUGIN_ROOT}/bin/fm.exe`; `fm plugin install <dir>` copies the
+  running `fm.exe` there (gitignored `bin/`; written as `fm.exe.new` and swapped in by rename, since Windows will
+  not overwrite an exe a hook is running but will rename it).
+- **`--plugin-dir` must not be a `\?\` verbatim path.** Run 1 passed `canonicalize()`'s `\?\P:\…\plugins\foreman`;
+  Claude Code appends `/bin/fm.exe`, which is invalid in a verbatim path: not one event was logged in either
+  session, the park session never parked in 180 s and the compact session never ended its turn in 480 s. With the
+  plain path (prefix stripped) everything fired.
+- **`--settings '{"env":{…}}'` reaches hook processes** (FOREMAN_HOME / FOREMAN_ROLE were seen by `fm hook`), as it
+  reaches tools (m2/1).
+- **Events observed through the plugin** (all `--bg` unless noted; `fm hook` keeps `ts, event, session_id, name
+  (=session_title), source?, notification_type?, trigger?, cwd` — never `prompt` or `last_assistant_message`):
+
+  | Event | When | Kept discriminator | Note |
+  |---|---|---|---|
+  | SessionStart | launch, ~0.4 s before UserPromptSubmit | `source=startup` | stdout = role injection |
+  | UserPromptSubmit | launch prompt; each `--resume -- <prompt>` | — | |
+  | Notification | Bash parked on permission, 8.9–10.5 s after start | `notification_type=permission_prompt` | |
+  | Notification | ~60 s after a turn ended in an auto-compaction loop (runs 2–4) | `notification_type=idle_prompt` | no Stop that turn |
+  | PreCompact | auto-compaction mid-turn | `trigger=auto` | one bailed: "Reactive compact: no assistant messages in summarize set" |
+  | SessionStart | after each compaction, ~10 s after PreCompact | `source=compact` | stdout = role injection |
+  | SessionStart | `--bg --resume <sid> -- <prompt>` | `source=resume` | the plugin + `--settings` env are part of the saved options: hooks fired, role injected |
+  | Stop | turn end | — | **no `session_title`** in the Stop payload → `name` is empty on Stop lines |
+
+- **Auto-compaction can be triggered cheaply (closes 6-d)**: `--autocompact 100k` + `--settings` env
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8000`
+  + `--strict-mcp-config`, then **one** ~80 KB word file `Read` per turn (`--bg --resume <sid> -- <prompt>` between
+  turns; the first one already crossed). Debug log: `autocompact: … level=ok effectiveWindow=92000` → `level=compact`
+  → `routing through reactive (thresholdSource=env)`; run 7: PreCompact(auto) +9.9 s (bailed: "no assistant
+  messages in summarize set"), PreCompact(auto) +15.3 s, SessionStart(compact) +27.8 s, Stop +33.2 s. Pitfalls
+  measured on the way:
+  - the effective window is the window **minus the output reserve**: `--autocompact 100k` alone gave
+    `effectiveWindow=80000` (−20k); with the model's `maxOutputTokens` 128000 not capped, and this user's MCP servers
+    loaded, `--bg` sessions compacted on the first call and kept re-compacting every ~13 s (runs 2–4, PCT 50 and 80
+    alike), then ended the turn without a Stop. A fresh `-p` session's baseline here is ~50.5k tokens
+    (`cache_creation 30840 + cache_read 19628`); `--strict-mcp-config` lowers it enough that the loop stops.
+  - **several big reads in one turn loop**: after a compaction the next `Read` refills past the threshold, it
+    compacts again, … until `autocompact: rapid-refill breaker tripped — 3 consecutive refills within <3 turns each`
+    and the turn ends with `Notification(idle_prompt)` and **no Stop** (run 6; run 5, four reads, passed by luck).
+  - every compaction re-fires SessionStart(compact); a compaction during the *question* turn (runs 2–4) replaces
+    the earlier injection, so the proof needs a turn that does not compact.
+- **Role re-injection after auto-compact works** (runs 5, 7, 8). The role file was rewritten v1 → v2 right after SessionStart
+  (startup) and v2 → v3 before `--bg --resume`; asked to list every `FOREMAN-ROLE` line, the session wrote the v2 tag
+  (only the compact-time SessionStart could have injected it) and the v3 tag (resume), not v1 (dropped by the
+  compaction). Debug log shows the injection verbatim: `Hook SessionStart:compact (SessionStart) success:\nFOREMAN-ROLE
+  probe v3e80ac1f\nYou are the Foreman m2/2 probe role, version 2 …`.
+- **`fm hook` cost** (release, `crates/fm/probe/hook-timing.ps1`, SessionStart with a 1 KB role, 50 runs, spawn to
+  exit): min 9.1 ms, median 10.8 ms, p95 30.0 ms. Claude Code itself reported 30–107 ms per foreman hook in the debug
+  log (its own spawn overhead included; hooks of other plugins took 340–500 ms).
+- Deps: `foreman-core` gains `serde_json` and `sha2` 0.10.9 (both already in the lock, same versions). No new
+  external dependency.
