@@ -26,3 +26,42 @@ Measured facts that shape the design. Newest last; each with its date and how it
   for `--bg` sessions; the daemon exits after 5s idle with no clients.
 - **Zed licensing**: `gpui` Apache-2.0; `terminal`, `terminal_view`, `ui`, `theme`, `workspace`
   GPL-3.0. GPL accepted for this project.
+
+## 2026-10-22 — m0/2 session state model
+
+Observed with `probes/m0.2-states/run.ps1` (claude CLI 2.1.308, Windows 11): one `claude --bg
+--permission-mode default` session per run, prompt "count 1..40 in words, then run `New-Item`
+via the Bash tool". Polled `claude agents --json --all` and `claude agents --json` back to back;
+one poll pair takes ~1.6–1.8 s, so transition times below are ±1 poll. Four runs, all PASS; runs
+3–4 used the final script (runs 1–2 had logging/flag bugs, row data identical). Raw rows per run in
+`probes/m0.2-states/.scratch/<ts>/rows.jsonl` (gitignored).
+
+Background row lifecycle, in order (times from launch, runs 3 / 4):
+
+| # | Trigger | `kind` | `state` | `status` | `waitingFor` | `pid` | in `--json` | in `--json --all` | at |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `claude --bg` returned (0.8 s, prints `backgrounded · <id8> · <name>`) | background | working | *(absent)* | *(absent)* | *(absent)* | yes | yes | 1.8 s / 1.8 s |
+| 2 | session process up | background | working | busy | *(absent)* | set | yes | yes | 3.6 s / 3.6 s |
+| 3 | Bash tool call parks on permission prompt | background | blocked | waiting | `permission prompt` | set | yes | yes | 12.6 s / 14.4 s |
+| 4 | `claude stop <id>` (returns `stopped <id>` in ~0.8 s, exit 0) | background | stopped | *(absent)* | *(absent)* | *(absent)* | **no** | yes | first poll after stop |
+| 5 | `claude rm <id>` (returns `removed <id>` in ~0.8 s, exit 0) | — | — | — | — | — | no | **no** | first poll after rm |
+
+Fields present on every row: `id` (8 hex, = first 8 chars of `sessionId`), `sessionId` (UUID),
+`name`, `cwd`, `kind`, `startedAt` (epoch ms), `state`.
+
+- **`state` and `status` are two vocabularies on the same row.** `state` (working/blocked/stopped)
+  is present from the first poll to rm; `status` (busy/waiting) and `pid` appear only while the
+  process is alive and vanish on stop.
+- **`waitingFor` appears only in the blocked state**, value `permission prompt`, together with
+  `status=waiting`. It is absent (not null) otherwise.
+- **The first row exists before the process does**: ~1 s after `--bg` returns, `state=working`
+  with no `pid`/`status`; `pid` + `status=busy` follow ~1.8 s later.
+- **`startedAt` changes**: the pre-process row and the stopped row carry the launch time (run 4:
+  `…858311`); while the process is alive it carries the process start (`…859967`, +1.66 s).
+- **`stop` keeps the row; `rm` deletes it.** After `stop`, the row leaves plain `--json`
+  immediately but stays in `--json --all` as `state=stopped` (held ≥ 20 s, unchanged). After `rm`
+  it is gone from both by the next poll. A supervisor polling plain `--json` cannot tell
+  "stopped" from "removed" — it must use `--all`.
+- **Parked session stays parked**: the blocked row was unchanged for 6–7 s until stop; no timeout
+  or auto-deny was seen in that window.
+- No other row fields changed during these runs.
