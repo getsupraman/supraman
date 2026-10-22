@@ -35,4 +35,10 @@ pub enum ClaudeError {
     BadVersion(String),
     #[error("claude CLI {found} is not supported: Foreman needs major version {supported}")]
     Unsupported { found: String, supported: u32 },
+    #[error("workspace {} is not trusted: run `claude` there once and accept the trust prompt", .cwd.display())]
+    TrustNeeded { cwd: std::path::PathBuf },
+    #[error("a session named {name} already exists")]
+    NameTaken { name: String },
+    #[error("claude failed (exit {}): {stderr}", .code.map_or("none".to_string(), |c| c.to_string()))]
+    CliFailed { code: Option<i32>, stderr: String },
 }
