@@ -37,6 +37,7 @@ fn parse_args() -> Mode {
 }
 
 fn main() {
+    foreman_ui::process_start();
     let mode = parse_args();
     foreman_ui::init_logger();
     if mode != Mode::App

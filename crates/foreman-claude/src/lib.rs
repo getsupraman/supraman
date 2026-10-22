@@ -28,7 +28,7 @@ mod cli;
 mod error;
 mod session;
 
-pub use assign::{Assignment, assign, repo_of};
+pub use assign::{Assignment, assign, main_repo, repo_of};
 pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, SUPPORTED_MAJOR, check_supported, check_version, cli_version,
     list_sessions, parse_version,

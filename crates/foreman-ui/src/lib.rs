@@ -3,7 +3,7 @@
 
 pub mod term_element;
 
-use std::time::Instant;
+use std::{sync::OnceLock, time::Instant};
 
 use foreman_term::terminal_settings::{TerminalConfig, TerminalPalette};
 use gpui::App;
@@ -116,6 +116,14 @@ pub fn mib(bytes: usize) -> String {
     format!("{:.1} MiB ({bytes} B)", bytes as f64 / (1024.0 * 1024.0))
 }
 
+static PROCESS_START: OnceLock<Instant> = OnceLock::new();
+
+/// The clock the selftests measure "ms since process start" against: first call wins, so `main`
+/// calls it before anything else.
+pub fn process_start() -> Instant {
+    *PROCESS_START.get_or_init(Instant::now)
+}
+
 /// Timestamps of frames the window drew and handed to the platform for presentation.
 ///
 /// A view's `render` runs only inside `Window::draw`, which gpui immediately follows with
@@ -153,6 +161,8 @@ pub struct FrameStats {
     pub max: f64,
     pub over_50: usize,
     pub over_100: usize,
+    /// When the slowest frame was presented, in ms since [`process_start`].
+    pub max_at_ms: f64,
 }
 
 impl FrameStats {
@@ -161,6 +171,10 @@ impl FrameStats {
             .windows(2)
             .map(|w| (w[1] - w[0]).as_secs_f64() * 1000.0)
             .collect();
+        let max_at_ms = frames
+            .windows(2)
+            .max_by_key(|w| w[1] - w[0])
+            .map_or(f64::NAN, |w| ms_since_start(w[1]));
         intervals.sort_by(|a, b| a.total_cmp(b));
         Self {
             frames: frames.len(),
@@ -169,6 +183,7 @@ impl FrameStats {
             max: intervals.last().copied().unwrap_or(f64::NAN),
             over_50: intervals.iter().filter(|ms| **ms > 50.0).count(),
             over_100: intervals.iter().filter(|ms| **ms > 100.0).count(),
+            max_at_ms,
         }
     }
 }
@@ -177,10 +192,14 @@ impl std::fmt::Display for FrameStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms over {} frames; frames > 50 ms: {}, > 100 ms: {}",
-            self.p50, self.p95, self.max, self.frames, self.over_50, self.over_100
+            "p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms (at +{:.0} ms since process start) over {} frames; frames > 50 ms: {}, > 100 ms: {}",
+            self.p50, self.p95, self.max, self.max_at_ms, self.frames, self.over_50, self.over_100
         )
     }
+}
+
+pub fn ms_since_start(at: Instant) -> f64 {
+    at.saturating_duration_since(process_start()).as_secs_f64() * 1000.0
 }
 
 pub fn percentile(sorted: &[f64], p: f64) -> f64 {
