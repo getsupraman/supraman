@@ -643,3 +643,33 @@ cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Ev
   (second), against m1/7's ~18 ms. `foreman-app` is not changed by this unit; the cause was not investigated.
 - Deps: `fm` gains `serde_json` (already in the lock, same version); `foreman-claude` gains an example
   `fake_claude` for its integration test. No new external dependency.
+
+## 2026-10-22 — m2/3 foreman-supervisor: desired state, pure reconcile, backoff
+
+Design decisions only; this unit launched no session and measured nothing live. Rule table (rule → test) in
+`crates/foreman-supervisor/src/lib.rs`.
+
+- **Liveness is `is_live`**: a pid, or the fresh pid-less `working`/`blocked` row right after `--bg` (B11/B12,
+  before `ORPHAN_AFTER`). `state` is never read for liveness, so `done` + live pid (m1/7) is left alone. A live
+  wanted session is never launched or resumed; a `Blocked` one becomes an Inbox row (Attach), never a restart.
+- **Absent → Launch, present but not live → Resume** (`--bg --resume <sessionId>` with no flag, from the
+  **row's** cwd, m2/1). Not started → `Stop` every live wanted session; never `rm`. Two rows with one wanted name →
+  `Duplicate`, none touched. Rows whose name is not wanted are never touched.
+- **Settle window (20 s)** after a successful launch/resume: the row trails `--bg` by ~1 s and the pid by up to
+  ~6 s (m0/2, m1/7), so an absent row then means "starting", not "launch again" (`Wait(Settling)`). Without this a
+  1 s tick would double-launch: `Claude::launch`'s `NameTaken` check races the row.
+- **Failures**: a launch/resume error, or a start that is dead after `settle` but within `stable_after` (60 s).
+  Backoff after failure 1–4: 5 s, 30 s, 2 min, 10 min; the 5th gives up (`GaveUp`, Retry clears). 60 s alive
+  clears the count. `TrustNeeded` is not counted and never retried: Inbox row with `RunInTerminal{cwd, "claude"}`
+  until Retry. Memory is in-process: an app restart forgets failures (and retries once).
+- **Cap**: live `fm-` rows with `state=working` take slots of `Policy::max_working` (default 3); Resumes before
+  Launches; the rest `Wait(Cap)`. Counted from one platform's tick: two platforms ticking in the same snapshot can
+  overshoot by their own launches — the app should tick platforms one after another on fresh snapshots, or share a
+  budget (M2/4's call).
+- **cwd is a field the app chooses** (`WantedSession::cwd`): the platform root is usually not a git repo, so not a
+  trusted workspace (m1/5). The prompt comes from `plugins/foreman/roles/<role>.md` with `{platform}` filled
+  (`role_prompt`); `platform.md` is a placeholder until M3.
+- Tokens come through `TokenProvider::token(role) -> Option<RoleToken>` and go to `LaunchSpec::with_role_token`
+  (owner-only file under `LaunchConfig::mcp_dir`); `None` launches without WorkState. Tests use `fake-token`.
+- Deps: `foreman-supervisor` uses foreman-core, foreman-claude, serde, thiserror, toml (all already in the lock);
+  dev tempfile. No new external dependency. `cargo tree` shows no gpui/foreman-ui/foreman-term.

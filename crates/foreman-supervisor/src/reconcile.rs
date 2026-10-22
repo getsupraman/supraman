@@ -1,0 +1,486 @@
+use std::path::PathBuf;
+
+use foreman_claude::{Health, Session, SessionState};
+
+use crate::{DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// The wanted name has no row: `claude --bg`.
+    Launch(WantedSession),
+    /// The row exists but its process is gone: `claude --bg --resume <session_id>` from `cwd`,
+    /// which keeps the transcript, `id`, `sessionId` and name (m2/1).
+    Resume {
+        name: String,
+        id: String,
+        session_id: String,
+        cwd: PathBuf,
+    },
+    /// `claude stop <id>`; never `rm`, so the transcript stays.
+    Stop { name: String, id: String },
+    /// A launch/resume that is due but deferred. `until` is `None` for [`WaitReason::Cap`]: it
+    /// goes as soon as a slot frees.
+    Wait {
+        name: String,
+        until: Option<Millis>,
+        reason: WaitReason,
+    },
+    NeedsYou(NeedsYou),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitReason {
+    /// Started successfully moments ago; the row or its pid has not shown yet.
+    Settling,
+    Backoff,
+    Cap,
+}
+
+/// A process is there: a pid, or the fresh pid-less row right after `--bg` (`Running`/`Blocked`
+/// without pid only before [`foreman_claude::ORPHAN_AFTER`]). Such a session is never launched or
+/// resumed — whatever its `state` says (m1/7: `done` on a live pid is Idle).
+pub fn is_live(s: &Session, now: Millis) -> bool {
+    s.pid.is_some() || matches!(s.health(now), Health::Running | Health::Blocked { .. })
+}
+
+/// Pure. `memory` must already have seen this tick's observations ([`SupervisorMemory::observe`]),
+/// as [`crate::Supervisor::tick`] does. The rule table is in the crate docs.
+pub fn reconcile(
+    desired: &DesiredState,
+    observed: &[Session],
+    memory: &SupervisorMemory,
+    policy: &Policy,
+    now: Millis,
+) -> Vec<Action> {
+    let need = |kind, name: &str, since, detail: String, action| {
+        Action::NeedsYou(NeedsYou {
+            kind,
+            platform: desired.platform.clone(),
+            name: name.to_string(),
+            since,
+            detail,
+            action,
+        })
+    };
+    let mut out = Vec::new();
+    let mut resumes = Vec::new();
+    let mut launches = Vec::new();
+    for w in &desired.sessions {
+        let rows: Vec<&Session> = observed.iter().filter(|s| s.name == w.name).collect();
+        if rows.len() > 1 {
+            let ids: Vec<&str> = rows.iter().map(|s| s.id.as_str()).collect();
+            let detail = format!("{} sessions are named {}: {}; remove all but one", rows.len(), w.name, ids.join(", "));
+            out.push(need(NeedsKind::Duplicate, &w.name, now, detail, None));
+            continue;
+        }
+        let row = rows.first().copied();
+        let live = row.filter(|s| is_live(s, now));
+        if !desired.started {
+            if let Some(s) = live {
+                out.push(Action::Stop {
+                    name: w.name.clone(),
+                    id: s.id.clone(),
+                });
+            }
+            continue;
+        }
+        if let Some(s) = live {
+            if let Health::Blocked { waiting_for } = s.health(now) {
+                let detail = format!("waiting for {}", waiting_for.as_deref().unwrap_or("an answer"));
+                out.push(need(NeedsKind::Blocked, &w.name, now, detail, Some(Remedy::Attach { id: s.id.clone() })));
+            }
+            continue;
+        }
+        if let Some(a) = memory.get(&w.name) {
+            let since = a.last_attempt.unwrap_or(now);
+            if let Some(cwd) = &a.trust_needed {
+                let detail = format!(
+                    "workspace {} is not trusted: run `claude` there once, accept the trust prompt, then Retry",
+                    cwd.display()
+                );
+                let action = Remedy::RunInTerminal {
+                    cwd: cwd.clone(),
+                    command: "claude".into(),
+                };
+                out.push(need(NeedsKind::TrustNeeded, &w.name, since, detail, Some(action)));
+                continue;
+            }
+            let error = a.last_error.as_deref().unwrap_or("unknown error");
+            if a.gave_up {
+                let detail = format!("gave up after {} failures; last: {error}", a.failures);
+                out.push(need(NeedsKind::GaveUp, &w.name, since, detail, Some(Remedy::Retry)));
+                continue;
+            }
+            if let Some(t) = a.started_at
+                && now - t < policy.settle
+            {
+                out.push(Action::Wait {
+                    name: w.name.clone(),
+                    until: Some(t + policy.settle),
+                    reason: WaitReason::Settling,
+                });
+                continue;
+            }
+            if let Some(next) = a.next_allowed
+                && now < next
+            {
+                out.push(Action::Wait {
+                    name: w.name.clone(),
+                    until: Some(next),
+                    reason: WaitReason::Backoff,
+                });
+                let detail = format!(
+                    "failure {} of {}: {error}; next try in {} s",
+                    a.failures,
+                    policy.give_up_after,
+                    (next - now + SECOND - 1) / SECOND
+                );
+                let since = a.first_failure.unwrap_or(since);
+                out.push(need(NeedsKind::LaunchFailed, &w.name, since, detail, Some(Remedy::Retry)));
+                continue;
+            }
+        }
+        match row {
+            Some(s) => resumes.push(Action::Resume {
+                name: w.name.clone(),
+                id: s.id.clone(),
+                session_id: s.session_id.clone(),
+                cwd: s.cwd.clone(),
+            }),
+            None => launches.push(Action::Launch(w.clone())),
+        }
+    }
+    let working = observed
+        .iter()
+        .filter(|s| s.name.starts_with("fm-") && s.state == Some(SessionState::Working) && is_live(s, now))
+        .count();
+    let mut free = policy.max_working.saturating_sub(working);
+    for action in resumes.into_iter().chain(launches) {
+        if free > 0 {
+            free -= 1;
+            out.push(action);
+        } else {
+            out.push(Action::Wait {
+                name: action_name(&action).to_string(),
+                until: None,
+                reason: WaitReason::Cap,
+            });
+        }
+    }
+    out
+}
+
+pub fn action_name(action: &Action) -> &str {
+    match action {
+        Action::Launch(w) => &w.name,
+        Action::Resume { name, .. } | Action::Stop { name, .. } | Action::Wait { name, .. } => name,
+        Action::NeedsYou(n) => &n.name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use foreman_claude::{Kind, Status};
+
+    use super::*;
+    use crate::Failure;
+
+    const NOW: Millis = 1_800_000_000_000;
+    const OLD: Millis = NOW - 3_600_000;
+
+    fn wanted(name: &str) -> WantedSession {
+        WantedSession {
+            name: name.into(),
+            role: "platform".into(),
+            cwd: r"C:\demo\cwd".into(),
+            repo: None,
+            prompt: "hi".into(),
+        }
+    }
+
+    fn desired(started: bool, names: &[&str]) -> DesiredState {
+        DesiredState {
+            platform: "demo".into(),
+            started,
+            sessions: names.iter().map(|n| wanted(n)).collect(),
+        }
+    }
+
+    fn row(name: &str, n: u32, state: Option<SessionState>, status: Option<Status>, pid: Option<u32>) -> Session {
+        Session {
+            id: format!("aaaa{n:04}"),
+            session_id: format!("aaaa{n:04}-0000-4000-8000-000000000000"),
+            name: name.into(),
+            cwd: format!(r"C:\demo\row{n}").into(),
+            kind: Kind::Background,
+            state,
+            status,
+            waiting_for: None,
+            pid,
+            started_at: Some(OLD),
+        }
+    }
+
+    fn running(name: &str, n: u32) -> Session {
+        row(name, n, Some(SessionState::Working), Some(Status::Busy), Some(1000 + n))
+    }
+
+    fn stopped(name: &str, n: u32) -> Session {
+        row(name, n, Some(SessionState::Stopped), None, None)
+    }
+
+    fn run(d: &DesiredState, observed: &[Session]) -> Vec<Action> {
+        reconcile(d, observed, &SupervisorMemory::default(), &Policy::default(), NOW)
+    }
+
+    fn run_with(d: &DesiredState, observed: &[Session], m: &SupervisorMemory) -> Vec<Action> {
+        reconcile(d, observed, m, &Policy::default(), NOW)
+    }
+
+    fn kinds(actions: &[Action]) -> Vec<NeedsKind> {
+        actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::NeedsYou(n) => Some(n.kind),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn resume_of(s: &Session) -> Action {
+        Action::Resume {
+            name: s.name.clone(),
+            id: s.id.clone(),
+            session_id: s.session_id.clone(),
+            cwd: s.cwd.clone(),
+        }
+    }
+
+    // R1
+    #[test]
+    fn started_and_live_needs_nothing_running_or_idle() {
+        let d = desired(true, &["fm-demo-platform"]);
+        assert_eq!(run(&d, &[running("fm-demo-platform", 1)]), []);
+        let idle = row("fm-demo-platform", 1, Some(SessionState::Working), Some(Status::Idle), Some(7));
+        assert_eq!(run(&d, &[idle]), []);
+    }
+
+    // R1, m1/7
+    #[test]
+    fn done_with_live_pid_is_idle_and_never_relaunched() {
+        let d = desired(true, &["fm-demo-platform"]);
+        for status in [Some(Status::Idle), None] {
+            for state in [SessionState::Done, SessionState::Stopped] {
+                let s = row("fm-demo-platform", 1, Some(state), status.clone(), Some(27304));
+                assert_eq!(run(&d, &[s]), [], "{status:?}");
+            }
+        }
+    }
+
+    // R1: the pre-process row right after `--bg`
+    #[test]
+    fn fresh_row_without_pid_is_starting_not_dead() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let mut s = row("fm-demo-platform", 1, Some(SessionState::Working), None, None);
+        s.started_at = Some(NOW - 2_000);
+        assert_eq!(run(&d, &[s]), []);
+    }
+
+    // R2
+    #[test]
+    fn absent_is_launched() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let other = running("fm-other-platform", 2);
+        assert_eq!(run(&d, &[other]), [Action::Launch(wanted("fm-demo-platform"))]);
+    }
+
+    // R3
+    #[test]
+    fn stopped_or_orphaned_is_resumed_from_its_own_cwd() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let s = stopped("fm-demo-platform", 1);
+        assert_eq!(run(&d, std::slice::from_ref(&s)), [resume_of(&s)]);
+        let done = row("fm-demo-platform", 1, Some(SessionState::Done), None, None);
+        assert_eq!(run(&d, std::slice::from_ref(&done)), [resume_of(&done)]);
+        let orphan = row("fm-demo-platform", 1, Some(SessionState::Working), None, None);
+        assert_eq!(orphan.health(NOW), Health::Orphaned { last_state: SessionState::Working });
+        assert_eq!(run(&d, std::slice::from_ref(&orphan)), [resume_of(&orphan)]);
+    }
+
+    // R4
+    #[test]
+    fn blocked_is_reported_and_never_restarted() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let mut s = row("fm-demo-platform", 1, Some(SessionState::Blocked), Some(Status::Waiting), Some(9));
+        s.waiting_for = Some("permission prompt".into());
+        match run(&d, &[s]).as_slice() {
+            [Action::NeedsYou(n)] => {
+                assert_eq!(n.kind, NeedsKind::Blocked);
+                assert_eq!(n.platform, "demo");
+                assert_eq!(n.detail, "waiting for permission prompt");
+                assert_eq!(n.action, Some(Remedy::Attach { id: "aaaa0001".into() }));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    // R5
+    #[test]
+    fn not_started_stops_live_wanted_sessions_only() {
+        let d = desired(false, &["fm-demo-platform", "fm-demo-alpha", "fm-demo-beta"]);
+        let idle = row("fm-demo-alpha", 2, Some(SessionState::Done), Some(Status::Idle), Some(5));
+        let observed = [running("fm-demo-platform", 1), idle, stopped("fm-demo-beta", 3), running("fm-x-platform", 4)];
+        assert_eq!(
+            run(&d, &observed),
+            [
+                Action::Stop { name: "fm-demo-platform".into(), id: "aaaa0001".into() },
+                Action::Stop { name: "fm-demo-alpha".into(), id: "aaaa0002".into() },
+            ]
+        );
+        assert_eq!(run(&d, &[]), []);
+    }
+
+    // R6
+    #[test]
+    fn duplicates_are_reported_and_left_alone() {
+        for started in [true, false] {
+            let d = desired(started, &["fm-demo-platform"]);
+            let observed = [running("fm-demo-platform", 1), stopped("fm-demo-platform", 2)];
+            match run(&d, &observed).as_slice() {
+                [Action::NeedsYou(n)] => {
+                    assert_eq!(n.kind, NeedsKind::Duplicate);
+                    assert_eq!(n.action, None);
+                    assert!(n.detail.contains("aaaa0001, aaaa0002"), "{}", n.detail);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    // R7
+    #[test]
+    fn backoff_defers_and_reports_launch_failed() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.record_result("fm-demo-platform", Err(Failure::Other("boom".into())), &p, NOW - 2 * SECOND);
+        let actions = run_with(&d, &[], &m);
+        assert_eq!(
+            actions[0],
+            Action::Wait { name: "fm-demo-platform".into(), until: Some(NOW + 3 * SECOND), reason: WaitReason::Backoff }
+        );
+        match &actions[1] {
+            Action::NeedsYou(n) => {
+                assert_eq!(n.kind, NeedsKind::LaunchFailed);
+                assert_eq!(n.detail, "failure 1 of 5: boom; next try in 3 s");
+                assert_eq!(n.since, NOW - 2 * SECOND);
+                assert_eq!(n.action, Some(Remedy::Retry));
+            }
+            other => panic!("{other:?}"),
+        }
+        let later = reconcile(&d, &[], &m, &p, NOW + 3 * SECOND);
+        assert_eq!(later, [Action::Launch(wanted("fm-demo-platform"))], "due again");
+    }
+
+    // R8
+    #[test]
+    fn gave_up_is_reported_and_not_attempted_until_retry() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        for _ in 0..5 {
+            m.record_result("fm-demo-platform", Err(Failure::Other("boom".into())), &p, NOW - 3_600_000);
+        }
+        let actions = run_with(&d, &[stopped("fm-demo-platform", 1)], &m);
+        assert_eq!(kinds(&actions), [NeedsKind::GaveUp]);
+        assert_eq!(actions.len(), 1);
+        m.retry("fm-demo-platform");
+        assert_eq!(run_with(&d, &[stopped("fm-demo-platform", 1)], &m), [resume_of(&stopped("fm-demo-platform", 1))]);
+    }
+
+    // R9
+    #[test]
+    fn trust_needed_shows_the_command_and_is_never_retried_automatically() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.record_result("fm-demo-platform", Err(Failure::TrustNeeded { cwd: r"C:\demo\cwd".into() }), &p, OLD);
+        let actions = run_with(&d, &[], &m);
+        match actions.as_slice() {
+            [Action::NeedsYou(n)] => {
+                assert_eq!(n.kind, NeedsKind::TrustNeeded);
+                assert_eq!(n.since, OLD);
+                assert_eq!(
+                    n.action,
+                    Some(Remedy::RunInTerminal { cwd: r"C:\demo\cwd".into(), command: "claude".into() })
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        m.retry("fm-demo-platform");
+        assert_eq!(run_with(&d, &[], &m), [Action::Launch(wanted("fm-demo-platform"))]);
+    }
+
+    // R10
+    #[test]
+    fn just_started_waits_to_settle_instead_of_launching_again() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.record_result("fm-demo-platform", Ok(()), &p, NOW - SECOND);
+        assert_eq!(
+            run_with(&d, &[], &m),
+            [Action::Wait { name: "fm-demo-platform".into(), until: Some(NOW + 19 * SECOND), reason: WaitReason::Settling }]
+        );
+    }
+
+    // R11
+    #[test]
+    fn cap_counts_working_fm_sessions_and_defers_the_rest() {
+        let names = ["fm-demo-a", "fm-demo-b", "fm-demo-c"];
+        let d = desired(true, &names);
+        let p = Policy { max_working: 3, ..Policy::default() };
+        // Two working fm- sessions elsewhere; a working non-fm one, an idle fm- one and a dead
+        // `working` row do not count.
+        let observed = [
+            running("fm-x-1", 10),
+            running("fm-x-2", 11),
+            running("aw-y", 12),
+            row("fm-x-3", 13, Some(SessionState::Done), Some(Status::Idle), Some(5)),
+            row("fm-x-4", 14, Some(SessionState::Working), None, None),
+        ];
+        let actions = reconcile(&d, &observed, &SupervisorMemory::default(), &p, NOW);
+        assert_eq!(
+            actions,
+            [
+                Action::Launch(wanted("fm-demo-a")),
+                Action::Wait { name: "fm-demo-b".into(), until: None, reason: WaitReason::Cap },
+                Action::Wait { name: "fm-demo-c".into(), until: None, reason: WaitReason::Cap },
+            ]
+        );
+    }
+
+    // R12
+    #[test]
+    fn resumes_take_slots_before_launches() {
+        let d = desired(true, &["fm-demo-new", "fm-demo-old"]);
+        let p = Policy { max_working: 1, ..Policy::default() };
+        let old = stopped("fm-demo-old", 1);
+        let actions = reconcile(&d, std::slice::from_ref(&old), &SupervisorMemory::default(), &p, NOW);
+        assert_eq!(
+            actions,
+            [resume_of(&old), Action::Wait { name: "fm-demo-new".into(), until: None, reason: WaitReason::Cap }]
+        );
+        let full = Policy { max_working: 0, ..p };
+        let actions = reconcile(&d, &[old], &SupervisorMemory::default(), &full, NOW);
+        assert!(actions.iter().all(|a| matches!(a, Action::Wait { reason: WaitReason::Cap, .. })));
+    }
+
+    #[test]
+    fn unwanted_sessions_are_never_touched() {
+        let d = desired(true, &[]);
+        assert_eq!(run(&d, &[stopped("fm-demo-platform", 1), running("fm-demo-x", 2)]), []);
+        let d = desired(false, &[]);
+        assert_eq!(run(&d, &[running("fm-demo-x", 2)]), []);
+    }
+}

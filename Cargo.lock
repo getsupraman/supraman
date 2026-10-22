@@ -1674,6 +1674,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "foreman-supervisor"
+version = "0.1.0"
+dependencies = [
+ "foreman-claude",
+ "foreman-core",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml 0.9.8",
+]
+
+[[package]]
 name = "foreman-term"
 version = "0.1.0"
 dependencies = [
