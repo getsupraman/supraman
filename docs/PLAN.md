@@ -173,12 +173,18 @@ stopped session or a build server holds handles briefly (seen on every unit in M
 **M0 — prove the foundations — done** (run `m0`, 5/5 units verified by the controller, 4 follow-ups in the
 backlog). WorkState fit and fixed; state model, hooks, relay and terminal measured; see §3.
 
-**M1 — fleet viewer (read-only, useful on day one)** — first unit: terminal Variant B vs A. Then scanner +
-platform registry; left panel from `agents --json --all` grouped by platform/repo with health; right panel
-terminal tabs with Attach (the hand check of `--attach`, backlog 9-d, happens here).
+**M1 — fleet viewer (read-only) — done** (run `m1`, 7 units; master `3448f97`). `foreman.exe`: left panel
+platforms → repos → sessions with health (live, every 2 s), right panel terminal tabs; Attach opens
+`claude attach <id>`, closing a tab detaches with Ctrl+Z and never kills anything. `fm platform add|list|show|
+remove`, `fm sessions`. Crates: `foreman-core`, `foreman-claude` (read side), `foreman-term`, `foreman-ui`,
+`foreman-app`, `fm`. Health derives **liveness from the pid**; `state` is the current turn (`done` + live pid =
+idle). Open: the human hand check (backlog 9-d).
 
 **M2 — supervisor**: Start/Stop, launcher port (role tokens, `--plugin-dir`), reconcile + restart with
 backoff, hook ingest, Inbox, concurrency cap. Proves auto-compact re-injection on a long session (6-d).
+Needs from M1's findings: a "trust needed" state per repo — `claude --bg` refuses a workspace the user never
+trusted, and the user must accept that prompt, Foreman must not; never restart a session whose pid is alive
+(the `done`-with-live-pid case); WorkState `agents` records (skills-5d, scheduled before M2).
 
 **M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `platform-controller`, `repo-controller`. First
 end-to-end task on a small test platform, **not Nomos**.
