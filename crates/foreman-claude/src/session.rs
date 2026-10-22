@@ -137,19 +137,57 @@ pub fn now_ms() -> i64 {
 
 impl Session {
     pub fn health(&self, now_ms: i64) -> Health {
+        if self.kind == Kind::Background {
+            self.background_health(now_ms)
+        } else {
+            self.interactive_health()
+        }
+    }
+
+    /// `state` describes the turn, not the process (a finished turn leaves `done` on a live
+    /// process), so liveness comes from `pid` first.
+    fn background_health(&self, now_ms: i64) -> Health {
+        use SessionState as S;
+        let state = self.state.as_ref();
+        if self.pid.is_some() {
+            if self.waiting_for.is_some()
+                || matches!(self.status, Some(Status::Waiting))
+                || (matches!(state, Some(S::Blocked)) && self.status.is_none())
+            {
+                return Health::Blocked {
+                    waiting_for: self.waiting_for.clone(),
+                };
+            }
+            return match (&self.status, state) {
+                (Some(Status::Busy), _) => Health::Running,
+                (Some(Status::Idle), _) => Health::Idle,
+                (None, Some(S::Done | S::Stopped)) => Health::Idle,
+                (None, Some(S::Working)) => Health::Running,
+                _ => Health::Unknown,
+            };
+        }
+        match state {
+            Some(S::Done | S::Stopped) => Health::Stopped,
+            Some(last @ (S::Working | S::Blocked))
+                if self.started_at.is_none_or(|t| now_ms - t > ORPHAN_AFTER.as_millis() as i64) =>
+            {
+                Health::Orphaned {
+                    last_state: last.clone(),
+                }
+            }
+            Some(S::Working) => Health::Running,
+            Some(S::Blocked) => Health::Blocked {
+                waiting_for: self.waiting_for.clone(),
+            },
+            _ => Health::Unknown,
+        }
+    }
+
+    fn interactive_health(&self) -> Health {
         use SessionState as S;
         let state = self.state.as_ref();
         if matches!(state, Some(S::Stopped | S::Done)) {
             return Health::Stopped;
-        }
-        if let Some(last @ (S::Working | S::Blocked)) = state
-            && self.kind == Kind::Background
-            && self.pid.is_none()
-            && self.started_at.is_none_or(|t| now_ms - t > ORPHAN_AFTER.as_millis() as i64)
-        {
-            return Health::Orphaned {
-                last_state: last.clone(),
-            };
         }
         if matches!(state, Some(S::Blocked))
             || matches!(self.status, Some(Status::Waiting))
@@ -325,11 +363,45 @@ mod tests {
     }
 
     #[test]
-    fn stopped_and_done_are_stopped() {
+    fn stopped_and_done_without_pid_are_stopped() {
         assert_eq!(health_of("fm-demo-stopped"), Health::Stopped);
         let done = sessions().into_iter().find(|s| s.name == "fm-demo-done").unwrap();
         assert_eq!(done.state, Some(SessionState::Done));
         assert_eq!(done.health(NOW), Health::Stopped);
+    }
+
+    /// m1/7: a `--bg` session whose turn ended is `state=done, status=idle` on a live pid.
+    #[test]
+    fn done_with_pid_is_idle() {
+        let json = format!(
+            r#"[{{"id":"aaaa0010","sessionId":"aaaa0010-x","cwd":"C:\\x","kind":"background","startedAt":{NOW},"state":"done","status":"idle","pid":27304}}]"#
+        );
+        let s = &parse(&json).unwrap()[0];
+        assert_eq!(s.health(NOW), Health::Idle);
+    }
+
+    #[test]
+    fn stopped_or_done_with_pid_is_alive_whatever_the_status() {
+        let mut s = sessions().remove(1);
+        for state in [SessionState::Stopped, SessionState::Done] {
+            s.state = Some(state);
+            for (status, health) in [
+                (None, Health::Idle),
+                (Some(Status::Idle), Health::Idle),
+                (Some(Status::Busy), Health::Running),
+                (Some(Status::Waiting), Health::Blocked { waiting_for: None }),
+            ] {
+                s.status = status.clone();
+                assert_eq!(s.health(NOW), health, "{:?} / {status:?}", s.state);
+            }
+        }
+    }
+
+    #[test]
+    fn working_with_pid_before_status_is_running() {
+        let mut s = sessions().remove(1);
+        s.status = None;
+        assert_eq!(s.health(NOW), Health::Running);
     }
 
     #[test]
