@@ -200,3 +200,113 @@ What Foreman's relay should look like:
 - Atomic drops (write `.tmp`, rename); outbox files named by a counter the relay keeps, the app timestamps
   on arrival. Expect ~5 s app→target and ~15 s round trip with a trivially answering target.
 - Health = `ready.json` present + row has a `pid`; re-arm expiry every 30 min is part of the steady state.
+
+## 2026-10-22 — m0/5 gpui + terminal spike
+
+`spikes/term-spike` (Variant A): git deps on Zed `gpui`, `gpui_platform`, `terminal`, `settings`,
+`theme`, `theme_settings`, `release_channel`, `task`, `util`, `collections` at rev `03efd492…`; one
+window, one terminal, painted by a ~300-line `canvas` adapted from `terminal_view/src/terminal_element.rs`
+(text runs + background rects + cursor; no selection, hyperlinks, IME, mouse). Machine: Windows 11,
+24 logical cores, NVIDIA RTX 3080, MSVC 14.44, Windows SDK 10.0.26100.
+
+**Build facts**
+- **Toolchain**: rustc 1.98.1 via repo-root `rust-toolchain.toml` (profile minimal). Machine default
+  (`stable`) unchanged (`rustup default`).
+- **CMake is a hard build requirement**, and not because of anything terminal-related: `terminal` →
+  `settings` → `migrator` → `tree-sitter` with `features = ["wasm"]` (`crates/migrator/Cargo.toml:22`,
+  unconditional) → `wasmtime-c-api-impl` 48.0.7. Seen: `cargo tree -i wasmtime`. That crate's
+  `build.rs:40` does `Command::new("cmake")`, so it **needs `cmake` on PATH and ignores `$CMAKE`**
+  (a `.cargo/config.toml` `[env] CMAKE=` was tried and failed identically). CMake ships with VS 2022
+  but is not on PATH. → `scripts/cargo.ps1` prepends VS 2022's CMake 3.31.6 bin dir to its own
+  process PATH; every build runs as `pwsh -File scripts/cargo.ps1 build --release -p term-spike`.
+  The link then emits ~50 benign `LNK4217` warnings (tree-sitter importing wasmtime symbols).
+- **Git deps do not use Zed's `Cargo.lock`.** A fresh resolve picked rust-embed 8.13.0; Zed pins
+  8.11.0, and `settings` failed to compile (`EmbeddedCompressedFile` not found in
+  `util::__rust_embed`). Fix: seed our `Cargo.lock` from Zed's at the same rev and let cargo prune it
+  (`cargo fetch` then locked 50 packages: the Zed git crates plus `calloop` and `khronos-egl`). → Foreman must re-copy Zed's lockfile on every
+  rev bump, or expect crates.io drift breakage.
+- `[patch.crates-io]` copied from Zed: `tree-sitter-language`, `async-process`, `async-task`,
+  `notify`, `notify-types`. The other Zed patches (cpal, livekit, webrtc, khronos-egl, calloop,
+  windows-capture, scratch) are not needed by this tree.
+- **Clean release build** (`target/` removed by `cargo clean`; registry and git checkouts warm):
+  **3m 31s** (cargo's `Finished` line; an earlier `-q` run was ~3m 18s wall clock), 487 `Compiling`
+  lines in the log.
+  Default release profile (opt-level 3, no LTO; Zed's own release uses thin LTO + cgu=1).
+- **Incremental rebuild** after touching `main.rs`: **5.23 s**.
+- **Binary size**: `target/release/term-spike.exe` **17,244,160 B (16.4 MiB)**, default release
+  profile, no LTO. wasmtime is linked in (the `LNK4217` lines resolve its symbols into the exe), and
+  cranelift-codegen, prost/protox and Zed `proto` are compiled as part of the build. Their share of
+  the 16.4 MiB was not measured.
+
+**Runtime facts** (`term-spike --selftest`; load = 24 busy threads in-process, one per logical core,
+xorshift spin for 10 s, at normal priority competing with the UI thread)
+- **GPU backend**: gpui_windows picked **Direct3D 11, feature level 11.1** on the RTX 3080 (its own
+  `log::info!` lines, printed by the spike's stderr logger). DirectWrite text; UI font fallback Segoe UI.
+- **Frame time** = interval between successive `SpikeView::render` calls while the view calls
+  `window.request_animation_frame()` each frame. `render` only runs inside `Window::draw`, which gpui
+  immediately follows with `Window::present` (`gpui/src/window.rs:1910-1911`), so each interval is one
+  drawn + presented frame (full terminal prepaint: `set_size` + `sync` + grid layout + paint). It is
+  CPU-side cadence, not GPU scan-out time. The window was active in every run, so gpui's 30 fps
+  inactive-window throttle was not in play.
+- **The three runs, verbatim:**
+
+  ```
+  run 1: pwsh prompt after 970 ms (from process start)
+         idle private bytes: 97.4 MiB (102129664 B) (working set 62.8 MiB (65896448 B))
+         private bytes under load: peak 99.5 MiB (104284160 B) / at end 98.8 MiB (103616512 B) (peak working set 64.1 MiB (67203072 B))
+         frame time under load: p50 16.55 ms, p95 19.60 ms, max 25.78 ms over 600 frames
+         nonce seen after 137 ms (FOREMAN-TERM-b77cd210)
+  run 2: pwsh prompt after 1037 ms (from process start)
+         idle private bytes: 97.6 MiB (102334464 B) (working set 62.6 MiB (65634304 B))
+         private bytes under load: peak 99.7 MiB (104505344 B) / at end 99.1 MiB (103874560 B) (peak working set 64.0 MiB (67072000 B))
+         frame time under load: p50 16.51 ms, p95 19.63 ms, max 25.65 ms over 601 frames
+         nonce seen after 124 ms (FOREMAN-TERM-e566ef44)
+  run 3: pwsh prompt after 977 ms (from process start)
+         idle private bytes: 97.4 MiB (102170624 B) (working set 63.1 MiB (66113536 B))
+         private bytes under load: peak 99.3 MiB (104169472 B) / at end 98.6 MiB (103428096 B) (peak working set 64.2 MiB (67362816 B))
+         frame time under load: p50 16.64 ms, p95 19.08 ms, max 24.74 ms over 600 frames
+         nonce seen after 124 ms (FOREMAN-TERM-c8bc1d0c)
+  ```
+  All three exited 0. An earlier run during development: p50 16.67 / p95 18.12 / max 20.42 ms.
+- **Reading**: under a fully saturated CPU, the window held vsync (60 Hz, p50 ≈ 16.6 ms), with p95
+  < 20 ms and worst frame < 26 ms. **~97 MiB private / ~63 MiB working set** idle for one terminal;
+  load adds ~2 MiB. Private bytes are our process only (the pwsh child, under ConPTY, is not counted).
+- **Nonce**: `echo FOREMAN-TERM-<hex>\r` written to the PTY 0 ms after the first `PS ` prompt appears
+  in the grid; it counts as seen when the nonce occurs ≥ 2 times in `Terminal::get_content()` (typed
+  line + output), polled every 5 ms. 124–137 ms. The pwsh prompt (`-NoLogo -NoProfile`) appears ~1 s
+  after process start.
+- Not verified: visual correctness of the painted grid (no screenshot taken; the nonce check reads
+  the emulator grid, not pixels); keyboard input in interactive mode; `--attach` (left to the
+  controller).
+
+**Variant B — vendoring `terminal` (assessed, not built)**
+
+What the non-test code of `crates/terminal` (≈6.6k lines: `terminal.rs` 1–3661, `alacritty.rs` 1234,
+`alacritty/hyperlinks.rs` 1–483, `mappings/` 773, `pty_info.rs` 292, `terminal_settings.rs` 1–168)
+actually takes from each Zed sibling, and what a vendored copy would do instead:
+
+| Dep | Used for (file:line) | Vendored replacement |
+|---|---|---|
+| `settings` (drags `fs`, `migrator`→tree-sitter[wasm]→**wasmtime + CMake**, `settings_json`, `settings_content`, `paths`) | `TerminalSettings` + `impl Settings` (`terminal_settings.rs:21-142`); `AlternateScroll` re-export (`:6`); `TerminalSettings::get_global` at `terminal.rs:1830` (keep_selection_on_copy), `:2747` (open_links_in_mouse_mode), `:2821` (mouse_up) | plain `TerminalConfig` struct held by `Terminal`; local `AlternateScroll` enum. **Cut.** |
+| `theme` | `cx.theme()` for OSC colour queries (`terminal.rs:1720`); `get_color_at_index(&Theme)` (`:3575`) | pass a 16-colour + fg/bg palette struct. **Stub.** |
+| `theme_settings` | only `FontFamilyName` (`terminal_settings.rs:14`) | drop with `TerminalSettings`. **Cut.** |
+| `task` (drags `proto` → prost/protox codegen, `zed_actions`) | `Shell` (`terminal.rs:31`), `SpawnInTerminal`/`HideStrategy`/`TaskState` task mode (`:965`, `:1596`, `:3188-3304`) | copy the `Shell` enum (~20 lines); delete task mode (Foreman only runs a shell or `claude attach`). **Cut.** |
+| `release_channel` | `AppVersion::global` for `TERM_PROGRAM_VERSION` (`terminal.rs:1111`) | a version string arg. **Cut.** |
+| `util` | `PathStyle`, `ResultExt`, `truncate_and_trailoff`, `shell::{get_windows_system_shell, ShellKind}` (`util/src/shell.rs`), `command::new_std_command`, `process::Child` (headless path `terminal.rs:3365-3400`) | keep `util` as a git dep (no settings/wasmtime in its tree), or copy ~5 functions + `ShellKind`. **Keep.** |
+| `collections`, `gpui` | `HashMap`/`VecDeque`; entities/executor | keep (gpui is the point). |
+| `alacritty_terminal` (Zed fork rev `4c129667`), `vte`, `sysinfo`, `windows` | emulator, PTY, process info | keep as-is. |
+
+Effort: ~3–4 h to get a vendored crate compiling (mechanical edits concentrated in
+`terminal_settings.rs`, the three `get_global` sites, the task-mode branches, colour lookup), plus
+porting or dropping the ~2.8k lines of tests, which mostly build a `SettingsStore::test` (budget a
+further ~half day for that). Over the brief's ~2 h bar, so not built.
+
+**A vs B recommendation**: **ship A now, plan B before Foreman's first real build.** A works on this
+machine with real numbers (60 fps under full load, ~97 MiB private, 124–137 ms keystroke-to-grid
+round trip), so the terminal approach is sound. But A's costs are almost all incidental to the
+terminal: CMake on PATH, a lockfile that must be re-copied from Zed per rev, wasmtime + cranelift +
+protobuf codegen in a terminal binary, and ~490 crates / 3.5 min cold builds. B removes `settings`,
+`task`, `theme_settings` and `release_channel` (and with them `migrator`/tree-sitter/wasmtime/CMake,
+`proto`, `fs`) for ~1 day of work. It keeps `gpui` + `util` + `collections` as git deps and
+`alacritty_terminal` as-is, so it still tracks Zed for the hard parts. Binary size and memory savings
+from B are expected but **not measured**: this spike only measured A.
