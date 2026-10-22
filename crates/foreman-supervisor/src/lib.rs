@@ -1,0 +1,50 @@
+//! Keeps a platform's wanted sessions alive: desired state, a pure [`reconcile`], restart with
+//! backoff, a concurrency cap, and the Inbox rows ([`NeedsYou`]) for what only the human can fix.
+//! No UI dependency: the app (or a later tray daemon) feeds [`Supervisor::tick`] one
+//! `claude agents --json --all` snapshot at a time.
+//!
+//! # Reconcile rules
+//!
+//! Per wanted session, by name, top to bottom; the first matching row wins. "live" is
+//! [`is_live`]: a pid, or the fresh pid-less row right after `--bg`. `state` is never consulted
+//! for liveness (m1/7: `done` on a live pid is Idle).
+//!
+//! | # | started | rows with the name | memory | action | test |
+//! |---|---|---|---|---|---|
+//! | R6 | any | 2 or more | | `NeedsYou::Duplicate`, act on none | `duplicates_are_reported_and_left_alone` |
+//! | R5 | no | 1, live | | `Stop` (never `rm`) | `not_started_stops_live_wanted_sessions_only` |
+//! | R5 | no | 0, or 1 not live | | nothing | same |
+//! | R4 | yes | 1, live, `Blocked` | | `NeedsYou::Blocked` (Attach), never restarted | `blocked_is_reported_and_never_restarted` |
+//! | R1 | yes | 1, live | | nothing (Running/Idle) | `started_and_live_needs_nothing_running_or_idle`, `done_with_live_pid_is_idle_and_never_relaunched`, `fresh_row_without_pid_is_starting_not_dead` |
+//! | R9 | yes | 0, or 1 not live | trust needed | `NeedsYou::TrustNeeded` (RunInTerminal); only Retry clears it | `trust_needed_shows_the_command_and_is_never_retried_automatically` |
+//! | R8 | yes | 0, or 1 not live | gave up | `NeedsYou::GaveUp` (Retry) | `gave_up_is_reported_and_not_attempted_until_retry` |
+//! | R10 | yes | 0, or 1 not live | started < `settle` ago | `Wait(Settling)` | `just_started_waits_to_settle_instead_of_launching_again` |
+//! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |
+//! | R2 | yes | 0 | | `Launch` | `absent_is_launched` |
+//! | R3 | yes | 1 not live (stopped, done, orphaned) | | `Resume` from the row's cwd | `stopped_or_orphaned_is_resumed_from_its_own_cwd` |
+//!
+//! Then the cap (R11, R12): `fm-` rows that are live with `state=working` each take a slot of
+//! [`Policy::max_working`]; Resumes take the free slots before Launches, each in desired order;
+//! the rest become `Wait(Cap)`. Tests `cap_counts_working_fm_sessions_and_defers_the_rest`,
+//! `resumes_take_slots_before_launches`. Rows whose name is not wanted are never touched.
+//!
+//! # Failures
+//!
+//! [`SupervisorMemory::record_result`] counts a failed launch/resume, and
+//! [`SupervisorMemory::observe`] counts a start that is dead again after `settle` (20 s) but within
+//! `stable_after` (60 s); 60 s alive clears the count. Backoff after failure 1..4: 5 s, 30 s, 2 min,
+//! 10 min; the 5th gives up. A trust refusal is not a counted failure: it waits for Retry.
+
+mod desired;
+mod error;
+mod executor;
+mod memory;
+mod needs;
+mod reconcile;
+
+pub use desired::{DesiredState, PLATFORM_ROLE, WantedSession, platform_session_name, render_role, role_prompt};
+pub use error::{Result, SupervisorError};
+pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider};
+pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
+pub use needs::{NeedsKind, NeedsYou, Remedy};
+pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};

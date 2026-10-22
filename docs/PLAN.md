@@ -76,7 +76,7 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform
 |---|---|
 | `foreman-core` | domain types (Platform, Repo, Session, Role, Health), TOML config, the repo scanner |
 | `foreman-claude` | the only code that knows the `claude` CLI: launch, poll `agents --json --all`, `logs`, `stop`, `rm`, `respawn`; version check so a CLI change fails loudly |
-| `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon |
+| `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon. m2/3: desired state (`<FOREMAN_HOME>/supervisor/<platform>.toml`), pure `reconcile`, backoff memory, `Supervisor::tick` over a `Launcher` trait; deps foreman-core + foreman-claude only |
 | `foreman-workstate` | typed client for WorkState REST/SSE; brings the compose stack up on tear-up and checks the MCP registration from each repo's cwd |
 | `foreman-term` | Zed's `terminal` vendored without `settings`/`theme_settings`/`task`/`release_channel` (Variant B, M1) + a grid painter adapted from `terminal_view/src/terminal_element.rs` |
 | `foreman-app` | the gpui application |

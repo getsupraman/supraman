@@ -1,0 +1,15 @@
+[package]
+name = "foreman-supervisor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+foreman-claude = { path = "../foreman-claude" }
+foreman-core = { path = "../foreman-core" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0.12"
+toml = "0.9.8"
+
+[dev-dependencies]
+tempfile = "3.27.0"
