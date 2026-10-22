@@ -1,228 +1,199 @@
-# AutoWork — plan
+# Foreman — plan
 
 A native Windows-first app (Rust + gpui) where you register a **platform** (a folder of git repos),
 press **Start**, throw tasks/roadmaps at it, and watch a tree of Claude Code sessions build them.
 Everything that needs a human (a permission park, a decision, a migration) surfaces in the app, and
 **Attach** opens that session in an in-app terminal tab.
 
+The repo folder is still `AutoWork`; the product, crates (`foreman-*`) and CLI (`fm`) are Foreman.
+Measured facts behind every decision here are in [`LEARNINGS.md`](LEARNINGS.md); the work record is
+the WorkState project `autowork` (runs `m0`, `ws`).
+
 ---
 
-## 1. What I'd change in the draft — the one principle
+## 1. The one principle
 
 **Deterministic supervision lives in Rust. Judgement lives in skills.**
 
-The draft has an LLM (platform-controller) watching other LLMs, respawning them, telling them about
+The draft had an LLM (platform-controller) watching other LLMs, respawning them, telling them about
 each other, and a cron job asking it for a password. Everything in that list except "coordinate the
 work" is deterministic, and an LLM doing deterministic work is slow, costs tokens, and drifts after
-compaction — the exact failure the health-checker is trying to catch.
+compaction — the exact failure the health-checker was trying to catch.
 
-| Concern | Draft owner | Proposed owner |
+| Concern | Draft owner | Owner |
 |---|---|---|
-| start / restart / stop controllers | platform-controller | **app supervisor** (reconcile loop) |
-| "who are the other repo-controllers" | platform-controller tells them | **roster** served by the app (`aw roster`), always current |
-| liveness, blocked-on-permission | cron + ask the LLM | `claude agents --json` + Claude Code **hooks** pushing to the app |
-| skill drift after auto-compact | password-phrase probe | **`SessionStart` hook with `compact` source** re-injects the skill; canary probe kept as a secondary check |
+| start / restart / stop controllers | platform-controller | **Foreman supervisor** (reconcile loop) |
+| "who are the other repo-controllers" | platform-controller tells them | **roster** served by Foreman (`fm roster`), always current |
+| liveness, blocked-on-permission | cron + ask the LLM | `claude agents --json --all` (`waitingFor`) + Claude Code **hooks** (`Notification`) — both proven in M0 |
+| skill drift after compact | password-phrase probe | **`SessionStart` hook, source `compact`**: its stdout reaches the model (proven for manual compact in M0) |
 | decompose a roadmap across repos, sequence, escalate | platform-controller | platform-controller (unchanged) |
 | run a repo's queue, verify, land, own its DBs/deploys | repo-controller | repo-controller → `/rlarch:controller` per work package (unchanged) |
 
-So the platform-controller becomes a **planner/coordinator**, not a babysitter. It is still the lead
-the repo-controllers listen to, but nobody depends on it to stay alive.
-
 ---
 
-## 2. What already exists and gets reused
+## 2. What exists and gets reused
 
-- **`/rlarch:controller`** (Skills, `feat/workstate`) — the per-work-package discipline: queue in
-  WorkState, brief, auto-mode launch, verify, land, record. Used as-is by repo-controllers.
-- **`/rlarch:nested-claude`** — the mechanics (`claude --bg`, naming, READY/BLOCKED/DONE, launch
-  traps). The Rust launcher is a port of `Start-NestedAgent.ps1` and must keep every trap it fixed
-  (prompt as one quote-free line naming a brief file, variadic flags closed, brief under
-  `.claude/briefs/`, refuse a `-RepoRoot` that is not a working tree, auto mode by default).
-- **WorkState** (`Skills/mcp`, .NET 10 + Postgres, HTTP MCP on :5290) — the system of record for
-  work: items (`Open…Done`), claims/leases, evidence (`work_verify` vs `work_report`), findings,
-  notes, an append-only journal, and already a REST read side + SSE `/stream`. **Reuse it as a .NET
-  process under the hood; do not rewrite it.** The rules-in-Postgres design and the acceptance runs
-  are worth more than having one language. The app talks to it over REST + SSE for reads; agents keep
-  writing through MCP.
-  - Note: `feat/workstate` is **ahead of `master`** (master merged an earlier tip). Build from
-    `feat/workstate`.
-- **`claude` CLI 2.1.x** — `--bg`, `--name`, `agents --json` (has `state: "blocked"` for background
-  sessions, `status: idle|busy` for interactive), `attach`, `logs`, `stop`, `rm`, `respawn`,
-  `--plugin-dir`, `--mcp-config`. This is the whole process API; no screen-scraping needed for status.
+- **`/rlarch:controller`** + **`/rlarch:nested-claude`** (Skills, `feat/workstate`) — the discipline and the
+  mechanics. M0 itself was run with them: 9 nested agents, every unit verified by the controller. The
+  Rust launcher ports `Start-NestedAgent.ps1` and keeps its trap fixes. One more learned in M0: resolve a
+  session's id from the `agents --json --all` row whose name you chose, never from free text.
+- **WorkState** (`Skills/mcp`, .NET 10 + Postgres in Docker, HTTP MCP on :5290) — the system of record.
+  Reused as a .NET service, not rewritten. Using it for M0 found 9 defects; 7 are fixed and live on
+  `feat/workstate` (ws/1–ws/7: empty-server stream, worker brief complete and worker-shaped, notes never
+  consumed unseen, every DB guard a teaching refusal, exact criteria writes, qualified assumption refs).
+  Open: ws/8 claim-per-worktree (decided by the human), F-05 record-note threads.
+- **`claude` CLI 2.1.308** — `--bg`, `--name`, `agents --json [--all]`, `attach`, `logs`, `stop`, `rm`,
+  `respawn`, `--plugin-dir`, `--mcp-config`, `--resume <id> -p`. The whole process API.
 
-What is genuinely new: the app, the supervisor, the `aw` helper CLI, and two skills
-(`platform-controller`, `repo-controller`).
+New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform-controller`,
+`repo-controller`).
 
 ---
 
 ## 3. Architecture
 
 ```
-┌──────────────────────── AutoWork.exe (gpui) ────────────────────────┐
+┌──────────────────────── Foreman.exe (gpui) ─────────────────────────┐
 │  UI: platforms tree · work browser · inbox · terminal tabs         │
 │        ▲ state (entities)                                          │
 │  supervisor: reconcile desired vs observed, restart w/ backoff,    │
 │              concurrency budget, health ladder                     │
-│        ▲                 ▲                    ▲                     │
-│  claude adapter     hook ingest           workstate client          │
-│  (agents --json,    (127.0.0.1 HTTP,      (REST + SSE /stream)      │
-│   --bg, stop, rm)    fed by `aw hook`)                              │
-└────────┬───────────────────┬────────────────────┬──────────────────┘
-         │ spawns            │ hook POSTs          │
-   claude --bg sessions ─────┘                     │
-   aw:<platform>:platform          ──MCP work_*──▶ WorkState (.NET, docker, :5290)
-   aw:<platform>:<repo>                            └ Postgres
-   aw:<platform>:<repo>:<unit>  (launched by repo-controllers via nested-claude)
+│        ▲              ▲               ▲                 ▲           │
+│  claude adapter   hook ingest     relay files      workstate client │
+│  (agents --json   (fm hook →      (inbox/outbox)   (REST + SSE)     │
+│   --all, --bg…)    local sink)                                      │
+└──────┬───────────────┬───────────────┬─────────────────┬───────────┘
+       │ spawns         │ hooks          │ SendMessage     │
+  claude --bg sessions ─┘     fm-<p>-relay ─┘ (native)      │
+  fm-<p>-platform                                  ──MCP──▶ WorkState (.NET, docker, :5290)
+  fm-<p>-<repo>                                            └ Postgres
+  fm-<p>-<repo>-<unit>  (launched by repo-controllers via nested-claude)
 ```
 
 ### Cargo workspace
 
 | crate | job |
 |---|---|
-| `aw-core` | domain types (Platform, Repo, Session, Role, Health), TOML config, the repo scanner |
-| `aw-claude` | the only code that knows the `claude` CLI: launch (port of `Start-NestedAgent.ps1`), poll `agents --json`, `logs`, `stop`, `rm`, `respawn`; version check so a CLI change fails loudly |
-| `aw-supervisor` | reconcile loop, restart policy, health evaluation, hook event ingest, concurrency budget. **No UI dependency** — liftable into a tray daemon later |
-| `aw-workstate` | typed client for WorkState REST/SSE; starts the compose stack on tear-up |
-| `aw-term` | terminal element: **gpui + `alacritty_terminal` directly**, ConPTY on Windows |
-| `aw-app` | the gpui application |
-| `aw` (bin) | tiny CLI the sessions and hooks call: `aw hook <event>`, `aw roster`, `aw wait`, `aw canary` |
-| `plugins/autowork/` | the two skills + `hooks.json`, loaded with `--plugin-dir` at launch so every session runs the version this app ships |
+| `foreman-core` | domain types (Platform, Repo, Session, Role, Health), TOML config, the repo scanner |
+| `foreman-claude` | the only code that knows the `claude` CLI: launch, poll `agents --json --all`, `logs`, `stop`, `rm`, `respawn`; version check so a CLI change fails loudly |
+| `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon |
+| `foreman-workstate` | typed client for WorkState REST/SSE; brings the compose stack up on tear-up and checks the MCP registration from each repo's cwd |
+| `foreman-term` | Zed's `terminal` vendored without `settings`/`theme_settings`/`task`/`release_channel` (Variant B, M1) + a grid painter adapted from `terminal_view/src/terminal_element.rs` |
+| `foreman-app` | the gpui application |
+| `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm roster`, `fm inbox` (the relay's watcher) |
+| `plugins/foreman/` | the two skills + `hooks.json`, loaded with `--plugin-dir` so every session runs the version Foreman ships |
 
-### Why gpui + alacritty, not Zed's `terminal`/`terminal_view` crates
+### Terminal — decided by the M0 spike
 
-**Decided: GPL is fine** (private tool). So reuse Zed's `terminal` (+ `terminal_view`'s element) rather
-than rewriting it. Open question for the M0 spike: depend on Zed's crates by git rev (simple, but
-`terminal` pulls `settings`, `theme`, `theme_settings`, `task`, `release_channel` — a big build) or
-vendor `terminal` + `terminal_element.rs` and cut the settings/theme coupling (more work, lean
-binary). Measure both build time and binary size before choosing.
+Variant A (Zed's crates as git deps @ `03efd492`) **works**: D3D11, ~97 MiB private, p50 16.6 ms /
+p95 17–20 ms frame time with all 24 cores saturated, keystroke-to-grid 124–137 ms, 16.4 MiB binary, 3½ min
+cold build. But its costs are all incidental to the terminal: CMake on PATH (wasmtime via
+`settings → migrator → tree-sitter[wasm]`), Rust 1.98.1, a lockfile re-copied from Zed per rev, ~490
+crates. **Variant B** (vendor `terminal`, cut those four crates, ~6.6k lines, ~1 day) is M1's first unit,
+measured against A.
 
-### Session identity
+### Session identity and permissions
 
-Names are the address and the join key: `aw:<platform>:platform`, `aw:<platform>:<repo>`,
-`aw:<platform>:<repo>:<unit-ref>`. The app filters `agents --json` by prefix, so it ignores your other
-sessions, and parentage is derivable from the name (and recorded in WorkState as an `environment`
-note).
+- Names are the address and the join key: `fm-<platform>-platform`, `fm-<platform>-<repo>`,
+  `fm-<platform>-<repo>-<unit>`, `fm-<platform>-relay`. The app filters `agents --json --all` by prefix.
+- Every session is launched with an explicit `--mcp-config` carrying **its role's token** (controller /
+  orchestrator / worker). M0 found that nested sessions otherwise inherit the user-scope registration —
+  a worker could write evidence as the controller.
+- Every session is launched with `--plugin-dir` pinned to Foreman's skills (the installed rlarch plugin
+  lagged the branch by a major version).
+- Auto mode everywhere; the brief is the authorization (controller §2). Some acts are refused by the
+  classifier however they are authorized — M0's peer-protocol research was refused at launch even with
+  the human's words quoted. Design for the supported route; never route around a refusal.
 
-### Health signals, cheapest first
+### Health signals, cheapest first (all measured in M0)
 
-1. **process** — present in `agents --json`, not exited.
-2. **blocked** — `state: "blocked"` or a `Notification` hook (permission prompt) → red, shows in
-   Inbox with **Attach**.
-3. **stalled** — busy but no transcript growth / hook events for N minutes.
-4. **drifted** — a `SessionStart` hook with source `compact` fired → the hook itself re-injects the
-   role skill as context (deterministic, no LLM cooperation needed). Secondary: a per-launch canary
-   the app hands the session; asked only when the session is idle, never mid-work.
+1. **process** — row present in `agents --json --all`; `state`: `working` → `blocked` → `stopped`; `pid` and
+   `status` exist only while the process lives. Plain `--json` drops stopped rows, so use `--all`.
+2. **blocked** — `waitingFor: "permission prompt"` + `status: waiting`, and a `Notification` hook
+   (`notification_type: permission_prompt`) 1–3 s earlier → Inbox row with **Attach**.
+3. **stalled** — busy but no transcript growth / hook events for N minutes. Exception: a session waiting
+   on a `Monitor` (the relay) shows `busy` forever and costs nothing — health is "its watcher is alive".
+4. **drifted** — a `SessionStart` hook with `source: compact` → its stdout re-injects the role skill.
+   Every `--resume` also fires `SessionStart(resume)`, so the injected text must be idempotent and tagged.
 5. **work health** — from WorkState: expired leases, blocked items, open blocker findings.
 
-### The mailbox (app → session)
+### The mailbox — decided: a relay session
 
-**Preferred, if the M0 probe holds: speak the peer protocol natively.** Every session registers in
-`~/.claude/sessions/<pid>.json` with `messagingSocketPath` (a named pipe `\\.\pipe\LOCAL\cc-msg-…`),
-`peerProtocol: 1`, `peerFeatures`, and a sibling `<pid>.<hash>.key`. That is what `SendMessage` /
-`ListAgents` ride on. If the app can (a) write to a session's pipe and (b) register itself as a peer,
-then the app *is* a session to the fleet: it sends tasks directly, and controllers report with
-`SendMessage("foreman", …)`. It is an undocumented internal protocol, so it lives behind `aw-claude`
-with a `peerProtocol` version check, and the mailbox below stays as the fallback.
-
-**Fallback mailbox.** There is no CLI to send a message into a background session. So: the app writes the task into WorkState (an inbox item under the
-platform project) and controllers wait on it with `Monitor` running `aw wait --for <name>`, which
-blocks on WorkState's SSE and exits when something addressed to them lands. Idle waiting costs no
-tokens. Session ↔ session coordination stays on native `SendMessage`/`ListAgents`.
+Foreman is not a Claude session and cannot call `SendMessage`. The peer-pipe protocol was refused as
+research (classifier), so: Foreman launches `fm-<p>-relay`, which arms `Monitor` on `fm inbox`; Foreman
+drops `{to, body}` files, the relay sends them with native `SendMessage`, and every message sent *to* the
+relay comes back as an outbox file. Measured: ~6 s app→target, ~14–18 s round trip, ~5 model calls per
+round trip, zero while idle, no held messages across permission modes. To do (M3): the watcher emits the
+JSON itself (saves a turn), re-arm the 30-min Monitor, observe a held message. Controllers reach Foreman
+with `SendMessage("fm-<p>-relay", …)`.
 
 ### Data placement
 
-- platform registry: `%APPDATA%\AutoWork\platforms\<name>.toml` (root dir, repos, per-repo overrides:
-  enabled, toolset, verify command, max workers)
-- runtime session state: in memory, rebuilt from `agents --json` + hooks on every start (sessions
-  outlive the app; reopening reconciles)
-- work, plans, evidence, journal, memory-like notes: WorkState (one project per platform; a roadmap is
-  a run; per-repo slices are runs/tasks linked with cross-repo `blocks`)
+- platform registry: `%APPDATA%\Foreman\platforms\<name>.toml`
+- runtime session state: in memory, rebuilt from `agents --json --all` + hooks (sessions outlive the app)
+- work, plans, evidence, journal, notes: WorkState (one project per platform; a roadmap is a run)
 
 ---
 
 ## 4. Flows
 
-**Create platform** — pick `<dir>` → scan one level (configurable depth) for folders whose `.git` is a
-**directory**; a `.git` *file* is a worktree, so `Nomos.*.worktrees/` are skipped; read each repo's
-`CLAUDE.md`/`AGENTS.md` presence as a hint → review list, untick what you don't want (`y_legacy`) →
-save. For `P:\Projects\Magic\Nomos` that yields 13 repos.
+**Create platform** — pick `<dir>` → scan for folders whose `.git` is a **directory** (a `.git` *file* is a
+worktree; `*.worktrees/` skipped) → review, untick → save. `P:\Projects\Magic\Nomos` yields 13 repos.
 
-**Start** — WorkState up (compose) → health OK → launch `aw:<p>:platform` with
-`/autowork:platform-controller` → **repo-controllers start on demand**, when the platform-controller
-assigns that repo work (or pinned always-on per repo). Thirteen idle controllers is thirteen sessions
-to supervise and thirteen chances to drift for nothing.
+**Start** — WorkState up + registration checked → `fm-<p>-relay` → `fm-<p>-platform` with
+`/foreman:platform-controller` → **repo-controllers start on demand** when the platform-controller assigns
+that repo work.
 
-**Throw a task** — text box on the platform → WorkState inbox item → platform-controller wakes,
-decomposes into per-repo slices with dependencies, presents the plan in the app for one approval (the
-controller skill's "one approval per queue" rule, lifted a level) → assigns → each repo-controller runs
-its queue with `/rlarch:controller`, launching workers in worktrees.
+**Throw a task** — text box → relay → platform-controller decomposes into per-repo runs with cross-repo
+`blocks` → one approval in the app → repo-controllers run their queues with `/rlarch:controller`.
 
-**Something needs you** — permission park, `blocked` item with a decision reason, a migration/deploy
-escalation → Inbox row with context and **Attach** → tab opens `claude attach <id>` in an in-app PTY.
+**Something needs you** — permission park, a `blocked` item with a decision reason, a migration/deploy
+escalation → Inbox row → **Attach** opens `claude attach <id>` in a terminal tab.
 
-**Stop / tear down** — stop workers → controllers → platform (order matters: a worktree pins its
-branch; stop before `rm`), reclaim build servers, optionally stop WorkState.
+**Stop / tear down** — workers → controllers → platform → relay. Stop before removing a worktree; run
+`dotnet build-server shutdown` (or the toolchain's equivalent) first and retry the delete after ~3 s — a
+stopped session or a build server holds handles briefly (seen on every unit in M0).
 
 ---
 
-## 5. Skills to write (`plugins/autowork/skills/`)
+## 5. Skills to write (`plugins/foreman/skills/`)
 
-- **`platform-controller`** — planner and lead. Reads the platform `CLAUDE.md` (cross-repo map), owns
-  cross-repo contracts and sequencing, turns roadmaps into per-repo runs, routes escalations up to the
-  human. Does **not** restart anything and does **not** write code. Wait loop on `aw wait`.
-- **`repo-controller`** — owner of one repo: its rules, envs, migrations, databases. Runs the repo's
-  queue via `/rlarch:controller`. Migrations, deploys, prod data **always escalate** (consistent with
-  controller §8) — "owns" means it is the only one allowed to *propose* them.
+- **`platform-controller`** — planner and lead; owns cross-repo contracts and sequencing; routes
+  escalations to the human. Never restarts anything, never writes code. Waits on the relay.
+- **`repo-controller`** — owner of one repo; runs its queue via `/rlarch:controller`. Migrations, deploys,
+  prod data always escalate.
 - `controller` — unchanged, from rlarch.
-
-Permission inheritance ("receives permissions from the parent"): the app launches controllers with a
-toolset profile from the platform config; controllers launch workers with a profile **no wider** than
-their own (`never launder permissions`, controller §8), auto mode everywhere.
 
 ---
 
 ## 6. Milestones
 
-**M0 — prove the foundations (before writing UI)** — run as a `/rlarch:controller` queue in
-WorkState, so the run itself is the first real use of the store. Units:
+**M0 — prove the foundations — done** (run `m0`, 5/5 units verified by the controller, 4 follow-ups in the
+backlog). WorkState fit and fixed; state model, hooks, relay and terminal measured; see §3.
 
-| unit | outcome | gate |
-|---|---|---|
-| M0.1 WorkState fitness | running image == `feat/workstate` HEAD; scripted acceptance (ACCEPTANCE.md §7) passes | script output |
-| M0.2 session state model | table of `agents --json` `state`/`status` values observed across launch → busy → permission park → unpark → idle → stop → exit, for `--bg` and interactive | observations recorded as notes |
-| M0.3 hooks in `--bg` | `Notification` (permission), `SessionStart` (`compact`, via `/compact`), `Stop` fire inside a `--bg` session and can POST/write to a local sink; `SessionStart` `additionalContext` re-injection observed | a log file with one line per event |
-| M0.4 peer-protocol probe | can an external process deliver a message to a session's `messagingSocketPath`, and can it register as a peer visible in `ListAgents`? Read-only investigation first; a yes/no with evidence | a minimal Rust or PS probe that delivers one message, or a documented no |
-| M0.5 gpui + terminal spike | Windows window with one Zed terminal running `claude attach <id>`; idle RAM, frame time under a CPU-saturating build; git-dep vs vendored build time/size | numbers |
+**M1 — fleet viewer (read-only, useful on day one)** — first unit: terminal Variant B vs A. Then scanner +
+platform registry; left panel from `agents --json --all` grouped by platform/repo with health; right panel
+terminal tabs with Attach (the hand check of `--attach`, backlog 9-d, happens here).
 
-M0.2–M0.4 are independent of M0.5; M0.1 goes first (the record depends on it).
+**M2 — supervisor**: Start/Stop, launcher port (role tokens, `--plugin-dir`), reconcile + restart with
+backoff, hook ingest, Inbox, concurrency cap. Proves auto-compact re-injection on a long session (6-d).
 
-**M1 — fleet viewer (useful on day one, read-only)**
-Scanner + platform registry; left panel from `agents --json` grouped by platform/repo, health dots;
-right panel terminal tabs with Attach. Already works with the sessions you run today.
+**M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `platform-controller`, `repo-controller`. First
+end-to-end task on a small test platform, **not Nomos**.
 
-**M2 — supervisor**: Start/Stop, launcher port, reconcile + restart with backoff, hook ingest, Inbox.
+**M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 
-**M3 — skills + mailbox**: `aw` CLI (`hook`, `roster`, `wait`, `canary`), `platform-controller`,
-`repo-controller`, `--plugin-dir` loading. First end-to-end task on a small test platform, **not
-Nomos**.
-
-**M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box,
-pending/running/done. The SolidJS dashboard stays for the browser; the app doesn't embed a webview.
-
-**M5 — hardening**: concurrency/cost budget per platform, tray daemon (supervision while the window is
-closed), Nomos as first real platform.
+**M5 — hardening**: per-platform cost budget, tray daemon, Nomos as first real platform.
 
 ---
 
 ## 7. Risks
 
-- **Usage limits.** A platform plus N repo-controllers plus their workers can saturate a subscription
-  fast. The supervisor needs a global cap on concurrently busy sessions from M2, not M5.
-- **`claude` CLI surface** (`agents --json` fields, `--bg` behaviour) is not a stable contract.
-  Everything goes through `aw-claude`, which checks the version and fails loudly.
-- **WorkState is untested in real use.** M0 exists for this. If it fails, the fallback is fixing it,
-  not replacing it.
-- **Depth.** platform → repo → controller → orchestrate subagents is four levels of delegation;
-  each hop loses context. Briefs from the store (`work_brief(for: "worker")`) are what keeps it honest.
-- **Closing the app stops supervision** until M5's daemon; sessions keep running but nobody respawns
-  them.
+- **Usage limits.** The supervisor needs a global cap on concurrently busy sessions from M2.
+- **`claude` CLI surface** (`agents --json` fields, `--bg`) is not a stable contract; all of it behind
+  `foreman-claude`, version-checked.
+- **Classifier refusals.** Anything that looks like credential access or guard-weakening is refused for
+  nested sessions whatever the brief says. Design for supported routes.
+- **Depth.** platform → repo → controller → orchestrate subagents: four hops. Complete worker briefs from
+  the store (fixed in ws/2–ws/4) are what keeps it honest.
+- **Closing the app stops supervision** until M5's daemon.
