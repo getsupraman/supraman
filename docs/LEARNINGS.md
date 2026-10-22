@@ -88,3 +88,50 @@ Fields present on every row: `id` (8 hex, = first 8 chars of `sessionId`), `sess
   → Foreman's teardown retries the delete with a short backoff.
 - **Never take a session id from free text.** The m0/2 probe regexed it out of `--bg` output (F-04);
   resolve it from the `agents --json --all` row whose name you chose.
+
+## 2026-10-22 — m0/3 hooks in --bg sessions
+
+Observed with `probes/m0.3-hooks/run.ps1` (claude CLI 2.1.308, Windows 11), two runs, both PASS
+(`.scratch/20261022-164329`, `.scratch/20261022-164425`; raw `hooks.jsonl` + `run.log` there, gitignored).
+Sequence per run: `claude --bg --name aw-m0-hooks-<hex> --permission-mode default` with a prompt that
+calls Bash → wait for `state=blocked` → `claude stop` → `claude --resume <sessionId> -p /compact` →
+`claude --resume <sessionId> -p "<list every FOREMAN-NONCE…>"` → `claude rm`. All three processes ran
+from the scratch dir. Hooks were configured in exec form (`command` = pwsh.exe, `args` = `-File
+hook.ps1 -Event <E> -Out <abs path>`), so no shell selection was involved.
+
+- **Project-local `.claude/settings.json` is honoured by a `--bg` session** started in that dir, with
+  no trust prompt: its SessionStart/UserPromptSubmit/Notification hooks fired from the bg process.
+  Writing the file from `run.ps1` was not refused, so `--settings` was not needed.
+- **Hook events, identical in both runs (in order):**
+
+  | # | Event | Fired by | Discriminator | Payload fields |
+  |---|---|---|---|---|
+  | 1 | SessionStart | `--bg` launch | `source=startup` | cwd, hook_event_name, model, scratchpad_dir, session_id, session_title, source, transcript_path |
+  | 2 | UserPromptSubmit | `--bg` launch | — | cwd, hook_event_name, permission_mode, prompt, prompt_id, scratchpad_dir, session_id, session_title, transcript_path |
+  | 3 | Notification | `--bg`, Bash parks on permission (~12 s in, before agents row shows `blocked`) | `notification_type=permission_prompt`, `message="Claude needs your permission"` | cwd, hook_event_name, message, notification_type, prompt_id, scratchpad_dir, session_id, transcript_path |
+  | 4 | SessionStart | `--resume -p /compact` | `source=resume` | context_tokens, cwd, estimated_cache_write_usd, hook_event_name, prompt_cache_likely_expired, seconds_since_last_response, session_id, session_title, source, transcript_path |
+  | 5 | PreCompact | same | `trigger=manual`, `custom_instructions=null` | custom_instructions, cwd, hook_event_name, prompt_id, session_id, transcript_path, trigger |
+  | 6 | SessionStart | same, after compaction (~11 s later) | `source=compact` | cwd, hook_event_name, model, prompt_id, session_id, session_title, source, transcript_path |
+  | 7 | SessionStart | `--resume -p <question>` | `source=resume` (no token/cost fields this time) | cwd, hook_event_name, session_id, session_title, source, transcript_path |
+  | 8 | UserPromptSubmit | same | — | as #2 minus scratchpad_dir |
+  | 9 | Stop | same, turn end | `stop_hook_active=false`, `effort={"level":"medium"}` | background_tasks, cwd, effort, hook_event_name, last_assistant_message, permission_mode, prompt_id, session_crons, session_id, stop_hook_active, transcript_path |
+
+- **`session_id` is the same UUID in all nine events**, across the bg process and both `--resume -p`
+  processes; `session_title` is the `--name` we gave. → Foreman can key hook events by `session_id`
+  and match them to the `agents --json` row's `sessionId`.
+- **Notification has no `title` field** here (the docs show one). It fired ~1–3 s before the agents
+  row reached `state=blocked`, so it is a usable push signal for "parked on a permission prompt".
+- **Not fired:** no Stop from the bg session (it was stopped while parked, mid-turn); no Stop and no
+  UserPromptSubmit for the `-p /compact` run (a slash command is not a prompt or a turn); no
+  SessionEnd configured, so not observed. Stop was seen only from the `-p` question run.
+- **Compact works non-interactively**: `claude --resume <sessionId> -p /compact` exits 0 with empty
+  stdout in ~20 s and fires PreCompact(manual) then SessionStart(source=compact). Auto-compact was not
+  triggered (would need a full context window).
+- **Nonce re-injection works.** The hook printed `FOREMAN-NONCE-<12 hex> (…source=<s>)` as plain
+  stdout. In the next process the model listed four nonces: the startup one only *via the compact
+  summary* (its original hook message was gone), and the resume, compact, and second-resume ones as
+  hook messages in context. The compact-time nonce was in the reply both runs
+  (`…5d848682d812`, `…58e26e7328ed`). → A SessionStart(compact) hook's stdout survives into the next
+  turn, so Foreman can re-inject the role skill there. Caveat: every `--resume` also fires
+  SessionStart (source=resume) and adds its own injection, and the model saw them all; a re-injected
+  role text should be idempotent and tagged with its source.
