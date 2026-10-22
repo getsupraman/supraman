@@ -14,8 +14,8 @@ use foreman_claude::{Claude, ClaudeError, Health, LaunchSpec, Session, now_ms, w
 
 const WORKSTATE_URL: &str = "http://localhost:5290/mcp";
 const INVALID_TOKEN: &str = "fm-probe-invalid";
-const ANSWER_WITHIN: Duration = Duration::from_secs(240);
-const ROW_WITHIN: Duration = Duration::from_secs(15);
+pub(crate) const ANSWER_WITHIN: Duration = Duration::from_secs(240);
+pub(crate) const ROW_WITHIN: Duration = Duration::from_secs(15);
 
 const PROMPT_A: &str = "This is an automated probe. Do exactly this and nothing else. \
 1) Run the shell command that prints the environment variable FM_PROBE: in PowerShell `$env:FM_PROBE`, in Bash `echo \"$FM_PROBE\"`. \
@@ -188,7 +188,7 @@ fn outcome(result: Result<String, ClaudeError>) -> String {
     }
 }
 
-fn first_lines(text: &str, n: usize) -> String {
+pub(crate) fn first_lines(text: &str, n: usize) -> String {
     text.lines().take(n).collect::<Vec<_>>().join(" / ")
 }
 
@@ -244,13 +244,13 @@ fn persisted_in_daemon(needle: &str) -> String {
 }
 
 /// Every name launched here; dropping it stops and removes each row with one of those names.
-struct Fleet {
-    claude: Claude,
-    names: Vec<String>,
+pub(crate) struct Fleet {
+    pub(crate) claude: Claude,
+    pub(crate) names: Vec<String>,
 }
 
 impl Fleet {
-    fn launch(&mut self, spec: &LaunchSpec) -> Result<String, String> {
+    pub(crate) fn launch(&mut self, spec: &LaunchSpec) -> Result<String, String> {
         assert!(spec.name.starts_with("aw-m2-probe-"));
         if !self.names.contains(&spec.name) {
             self.names.push(spec.name.clone());
@@ -258,7 +258,7 @@ impl Fleet {
         self.claude.launch(spec).map_err(|e| format!("launch {}: {e}", spec.name))
     }
 
-    fn row(&self, name: &str) -> Result<Session, String> {
+    pub(crate) fn row(&self, name: &str) -> Result<Session, String> {
         self.claude
             .find_by_name(name, ROW_WITHIN)
             .map_err(|e| e.to_string())?
@@ -268,7 +268,7 @@ impl Fleet {
     }
 
     /// The first line of `file` in the session's cwd, once the session wrote it.
-    fn answer(&self, spec: &LaunchSpec, file: &str) -> Option<String> {
+    pub(crate) fn answer(&self, spec: &LaunchSpec, file: &str) -> Option<String> {
         let path = spec.cwd.join(file);
         let deadline = Instant::now() + ANSWER_WITHIN;
         let mut checked = Instant::now();
@@ -294,7 +294,7 @@ impl Fleet {
         None
     }
 
-    fn remove(&mut self, name: &str) {
+    pub(crate) fn remove(&mut self, name: &str) {
         let rows = self.claude.find_by_name(name, Duration::ZERO).unwrap_or_default();
         for row in rows {
             let _ = self.claude.stop(&row.id);
@@ -323,7 +323,7 @@ impl Drop for Fleet {
     }
 }
 
-fn wait_until_stopped(claude: &Claude, name: &str) -> Result<(), String> {
+pub(crate) fn wait_until_stopped(claude: &Claude, name: &str) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         let rows = claude.find_by_name(name, Duration::ZERO).map_err(|e| e.to_string())?;
@@ -353,7 +353,7 @@ fn used_config(answer: Option<&str>) -> String {
     }
 }
 
-fn describe(s: &Session) -> String {
+pub(crate) fn describe(s: &Session) -> String {
     format!(
         "id={} sessionId={} name={} pid={} state={}",
         s.id,
@@ -368,7 +368,7 @@ fn one_line(text: Option<&str>) -> String {
     text.map(|t| t.lines().map(str::trim).collect::<Vec<_>>().join(" / ")).unwrap_or_else(|| "none".into())
 }
 
-fn yes(b: bool) -> &'static str {
+pub(crate) fn yes(b: bool) -> &'static str {
     if b { "yes" } else { "no" }
 }
 
@@ -425,23 +425,29 @@ impl Listener {
     }
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").canonicalize().unwrap_or_else(|_| PathBuf::from("."))
+/// Without the `\\?\` prefix `canonicalize` adds on Windows: Claude Code appends `/bin/fm.exe` to the
+/// plugin dir, and a verbatim path does not accept `/` as a separator.
+pub(crate) fn workspace_root() -> PathBuf {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").canonicalize().unwrap_or_else(|_| PathBuf::from("."));
+    match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
+        Some(plain) if !plain.starts_with("UNC") => PathBuf::from(plain),
+        _ => path,
+    }
 }
 
-fn mkdir(root: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn mkdir(root: &Path, name: &str) -> Result<PathBuf, String> {
     let dir = root.join(name);
     fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     Ok(dir)
 }
 
-fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf, String> {
+pub(crate) fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf, String> {
     let path = dir.join(name);
     fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
 }
 
-fn hex6() -> String {
+pub(crate) fn hex6() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
     format!("{:06x}", (nanos ^ (u128::from(std::process::id()) << 20)) & 0xff_ffff)
 }

@@ -120,6 +120,12 @@ Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothin
    on a `Monitor` (the relay) shows `busy` forever and costs nothing — health is "its watcher is alive".
 4. **drifted** — a `SessionStart` hook with `source: compact` → its stdout re-injects the role skill.
    Every `--resume` also fires `SessionStart(resume)`, so the injected text must be idempotent and tagged.
+   Built (m2/2): `plugins/foreman` (loaded with `--plugin-dir`) runs `fm hook <event>` for SessionStart,
+   UserPromptSubmit, Notification, Stop, PreCompact; each appends one line to
+   `<FOREMAN_HOME>/events/<session_id>.jsonl` (read with `foreman_core::EventReader`), and SessionStart prints
+   `FOREMAN-ROLE <role> v<sha8>` + `<FOREMAN_HOME>/roles/<FOREMAN_ROLE>.md`. Proven after a real auto-compaction:
+   the compact-time injection is in the model's context on the next turn. A launch needs `--plugin-dir`,
+   `--settings '{"env":{"FOREMAN_HOME":…,"FOREMAN_ROLE":…}}'` and `fm plugin install` once per fm build.
 5. **work health** — from WorkState: expired leases, blocked items, open blocker findings.
 
 ### The mailbox — decided: a relay session

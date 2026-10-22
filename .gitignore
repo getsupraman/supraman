@@ -6,3 +6,4 @@ target-bin/
 spikes/term-spike/commit-msg.txt
 crates/fm/commit-msg.txt
 crates/foreman-supervisor/commit-msg.txt
+plugins/foreman/bin/

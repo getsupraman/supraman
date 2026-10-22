@@ -13,15 +13,21 @@ usage:
   fm platform show <name>
   fm platform remove <name>
   fm sessions [--platform <name>] [--all]
-  fm probe launch";
+  fm probe launch
+  fm probe hooks
+  fm plugin install <plugin-dir>  (copies this fm.exe to <plugin-dir>/bin, where the hooks run it)
+  fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
 
+mod hook;
+mod plugin;
 mod probe;
+mod probe_hooks;
 
 enum Failure {
     Usage(String),
     Core(CoreError),
     Claude(ClaudeError),
-    Probe,
+    Probe(&'static str),
 }
 
 impl From<CoreError> for Failure {
@@ -38,6 +44,14 @@ impl From<ClaudeError> for Failure {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A hook must never break the session: exit 0 whatever the arguments or the outcome.
+    if args.first().map(String::as_str) == Some("hook") {
+        if let Some(event) = args.get(1) {
+            std::panic::set_hook(Box::new(|_| {}));
+            let _ = std::panic::catch_unwind(|| hook::run(event));
+        }
+        return ExitCode::SUCCESS;
+    }
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(Failure::Usage(msg)) => {
@@ -52,8 +66,8 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
-        Err(Failure::Probe) => {
-            eprintln!("error: the decided token route did not work (see the probe lines above)");
+        Err(Failure::Probe(what)) => {
+            eprintln!("error: {what} (see the probe lines above)");
             ExitCode::from(1)
         }
     }
@@ -76,8 +90,25 @@ fn run(args: &[String]) -> Result<(), Failure> {
             if probe::launch() {
                 Ok(())
             } else {
-                Err(Failure::Probe)
+                Err(Failure::Probe("the decided token route did not work"))
             }
+        }
+        ["probe", "hooks"] => {
+            check_supported()?;
+            if probe_hooks::run() {
+                Ok(())
+            } else {
+                Err(Failure::Probe("a hook signal was not observed"))
+            }
+        }
+        ["plugin", "install", dir] => {
+            let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate fm.exe: {e}")))?;
+            match plugin::install(std::path::Path::new(dir), &exe) {
+                Ok((path, true)) => println!("installed {}", path.display()),
+                Ok((path, false)) => println!("up to date {}", path.display()),
+                Err(e) => return Err(Failure::Usage(format!("plugin install {dir}: {e}"))),
+            }
+            Ok(())
         }
         [] => Err(Failure::Usage("missing command".into())),
         _ => Err(Failure::Usage(format!("unrecognised arguments: {}", args.join(" ")))),
