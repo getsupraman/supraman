@@ -588,3 +588,58 @@ Measured with `crates/foreman-app/diag/states.ps1` and `target/release/foreman.e
   10 tabs 211.2 MiB, max frame 22.47 ms).
 - Also seen: `state=blocked, status=idle` on a live pid with no `waitingFor` (2 `--selftest`, 1 shutdown,
   1 `--selftest-detach 2` run; why the turn reads blocked is not known). Health reads it as `Idle`.
+
+## 2026-10-22 — m2/1 launcher probes
+
+Measured with `cargo run -p fm -- probe launch` (runs 1–4; runs 3–4 are the final code, identical answers) and
+`crates/fm/probe/resume.ps1 -Variant bare|prompt|name` (CLI 2.1.308, Windows 11). Sessions `aw-m2-probe-<hex>-*`,
+cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Every row was stopped + removed.
+
+- **(a) Env on the `claude --bg` process does NOT reach the session.** With `FM_PROBE=<nonce>` set on `--bg`, the
+  session's shell tool printed nothing (`ENV=EMPTY`), and a dummy http server in `--mcp-config`
+  (`url …/mcp/${FM_PROBE}`, header `X-Fm-Probe: ${FM_PROBE}`, recorded by a local TCP listener in `fm`) received
+  `POST /mcp/$%7BFM_PROBE%7D` with header `${FM_PROBE}`: an unset variable is left **literal**, no error. The daemon
+  spawns the session (m1/7 chain), so the client's env is gone. 4/4 runs.
+- **(a2) `--settings '{"env":{"FM_PROBE":"<nonce>"}}'` does reach it**: the tool printed the nonce, and the url and
+  header in `--mcp-config` expanded to it. **But the value is written to `~/.claude/daemon/roster.json`** (the
+  daemon's saved launch options; found by a byte search, file name only) for as long as the row exists; after `rm`
+  it was gone (`grep -c` = 0). It is also in every tool's environment, so a stray `env` dump puts it in the
+  transcript. 2/2 runs.
+- **(b) `--mcp-config` beats the user-scope registration of the same name, even without `--strict-mcp-config`.**
+  A `workstate` entry (`http://localhost:5290/mcp`, `Bearer fm-probe-invalid`) in `--mcp-config`: the session had no
+  `mcp__workstate__*` tool at all and reported `workstate (AUTH_HEADER_REJECTED): Server rejected the configured
+  Authorization header (HTTP 401). … OAuth fallback is disabled when headers.Authorization is set.` The valid
+  user-scope server was not loaded beside it. Without strict: 4/4 runs (run 2 reported only `TOOL=absent`, no
+  text). With `--strict-mcp-config` and the per-role file: runs 3–4, same 401 (runs 1–2's strict probe used an
+  unexpanded `${WORKSTATE_TOKEN}` header and failed the same way). Evidence is the session's own report (written to a file by the Write tool); no
+  `--debug` log was taken, because it could log headers.
+- **(c)** Trust refusal not re-measured; m1/5's text is the `TrustNeeded` parser's fixture.
+- **(d) Restart keeping the transcript = `claude --bg --resume <sessionId> [-- <prompt>]` with no other flag**, run
+  from the session's cwd. It prints `note: woke session <id8> with its saved options (--name, --permission-mode).`
+  then `backgrounded · <id8> · <name>` (`(idle — send a prompt to start)` without a prompt). Row before/after:
+  same `id`, same `sessionId`, same `name`, **new `pid`** (e.g. `64acf621… pid 56040` → stopped `pid -` →
+  `pid 65512`). The model answered from memory with the exact line it wrote before the stop, and the saved
+  `--mcp-config` was re-applied (the dummy server got new requests after the resume).
+  **Any extra flag starts a copy**: `--bg --name <n> --resume <sid>` printed `note: background session <id8> keeps
+  its own saved options, so the flags you passed started a copy as <new id8>. Without flags, the same command
+  continues <id8> itself.` → a second row with the same name and a new `sessionId`; the old row stays
+  (`stopped`/`done`, no pid). The copy also carries the transcript. `claude respawn <id>` only restarts a live
+  session on the current binary; it is not a resume.
+- **Names are not unique in the CLI.** `--bg --name <n>` while a (stopped) row named `<n>` exists is accepted
+  (`backgrounded · <new id8> · <n>`), leaving two rows. After `rm`, the name is free and a new launch gets a new
+  `sessionId`. → `Claude::launch` refuses with `NameTaken` when any `--all` row has the name;
+  `launch_unchecked` is the bare CLI.
+- After `claude stop`, the row's `state` was `done` (turn had ended) or `stopped` (turn still running), always
+  without `pid`: `stop` does not normalise `state`; pid is the signal (m1/7).
+- **Decided role-token route**: the preferred one (token as env on `--bg` + `Bearer ${WORKSTATE_TOKEN}`) cannot
+  work — (a). `--settings` env works but persists the token in `roster.json`, outside Foreman's control, and hands
+  it to every tool. → **Fallback: `<FOREMAN_HOME>/mcp/workstate-<role>.json`** holding the literal header, created
+  empty, ACL'd owner-only (`icacls /inheritance:r /grant:r <USERNAME>:F`: one ACE, the user, full control; 0600 on
+  unix), then filled; launched with `--mcp-config <file> --strict-mcp-config`. Only the path is in argv and in
+  `roster.json`. `LaunchSpec::with_role_token(dir, role, url, token)`; the caller reads the token. Verified by
+  probe b2 with the invalid token: the 401 above.
+- `--mcp-config <configs...>` is variadic, so the prompt is passed after `--`; `claude --bg … -- <prompt>` works.
+- `foreman --selftest` after this unit: PASS ×2; but frame p95 was 231 ms (first run of the fresh exe) and 61 ms
+  (second), against m1/7's ~18 ms. `foreman-app` is not changed by this unit; the cause was not investigated.
+- Deps: `fm` gains `serde_json` (already in the lock, same version); `foreman-claude` gains an example
+  `fake_claude` for its integration test. No new external dependency.

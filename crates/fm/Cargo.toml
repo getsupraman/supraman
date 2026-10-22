@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 foreman-claude = { path = "../foreman-claude" }
 foreman-core = { path = "../foreman-core" }
+serde_json = "1.0.151"
 
 [dev-dependencies]
 tempfile = "3.27.0"

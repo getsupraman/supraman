@@ -98,9 +98,12 @@ Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothin
 
 - Names are the address and the join key: `fm-<platform>-platform`, `fm-<platform>-<repo>`,
   `fm-<platform>-<repo>-<unit>`, `fm-<platform>-relay`. The app filters `agents --json --all` by prefix.
-- Every session is launched with an explicit `--mcp-config` carrying **its role's token** (controller /
-  orchestrator / worker). M0 found that nested sessions otherwise inherit the user-scope registration —
-  a worker could write evidence as the controller.
+- Every session is launched with `--mcp-config <FOREMAN_HOME>/mcp/workstate-<role>.json --strict-mcp-config`
+  (controller / orchestrator / worker). The file holds the role's token, is created owner-only (one ACE: the
+  user, full control) before it is filled, and only its path appears in argv and in the daemon's `roster.json`
+  (`LaunchSpec::with_role_token`). M0 found that nested sessions otherwise inherit the user-scope registration —
+  a worker could write evidence as the controller. Env on `claude --bg` never reaches the session, and
+  `--settings` env persists the value in `~/.claude/daemon/roster.json`, so no env-var route (m2/1).
 - Every session is launched with `--plugin-dir` pinned to Foreman's skills (the installed rlarch plugin
   lagged the branch by a major version).
 - Auto mode everywhere; the brief is the authorization (controller §2). Some acts are refused by the

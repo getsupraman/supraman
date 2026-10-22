@@ -12,12 +12,16 @@ usage:
   fm platform list
   fm platform show <name>
   fm platform remove <name>
-  fm sessions [--platform <name>] [--all]";
+  fm sessions [--platform <name>] [--all]
+  fm probe launch";
+
+mod probe;
 
 enum Failure {
     Usage(String),
     Core(CoreError),
     Claude(ClaudeError),
+    Probe,
 }
 
 impl From<CoreError> for Failure {
@@ -48,6 +52,10 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+        Err(Failure::Probe) => {
+            eprintln!("error: the decided token route did not work (see the probe lines above)");
+            ExitCode::from(1)
+        }
     }
 }
 
@@ -63,6 +71,14 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["platform", "show", name] => show(name),
         ["platform", "remove", name] => remove(name),
         ["sessions", rest @ ..] => sessions(rest),
+        ["probe", "launch"] => {
+            check_supported()?;
+            if probe::launch() {
+                Ok(())
+            } else {
+                Err(Failure::Probe)
+            }
+        }
         [] => Err(Failure::Usage("missing command".into())),
         _ => Err(Failure::Usage(format!("unrecognised arguments: {}", args.join(" ")))),
     }

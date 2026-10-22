@@ -1,5 +1,6 @@
 //! The only code in Foreman that knows the `claude` CLI. This is the read side: list sessions,
-//! derive their health, map them onto a platform's repos. Launching, stop and attach are M2.
+//! derive their health, map them onto a platform's repos — and the write side ([`Claude`]):
+//! launch, stop, rm, resume.
 //!
 //! # Health
 //!
@@ -46,6 +47,7 @@
 mod assign;
 mod cli;
 mod error;
+mod launch;
 mod session;
 
 pub use assign::{Assignment, assign, main_repo, repo_of};
@@ -54,6 +56,10 @@ pub use cli::{
     list_sessions, parse_version,
 };
 pub use error::{ClaudeError, Result};
+pub use launch::{
+    Claude, LaunchSpec, Output, WRITE_TIMEOUT, classify, name_taken, resume_argv, workstate_mcp_config,
+    write_role_mcp_config,
+};
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };

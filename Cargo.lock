@@ -1545,6 +1545,7 @@ version = "0.1.0"
 dependencies = [
  "foreman-claude",
  "foreman-core",
+ "serde_json",
  "tempfile",
 ]
 
