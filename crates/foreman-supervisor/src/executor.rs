@@ -158,9 +158,13 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     self.memory.record_result(&w.name, result, &self.policy, now);
                 }
                 Action::Resume {
-                    name, session_id, cwd, ..
+                    name, id, session_id, cwd,
                 } => {
-                    let result = self.launcher.resume(&session_id, &cwd).map(drop).map_err(|e| Failure::from(&e));
+                    let result = self
+                        .launcher
+                        .resume(&session_id, &cwd)
+                        .map_err(|e| Failure::from(&e))
+                        .and_then(|out| woke_in_place(&out, &id));
                     if result.is_ok() {
                         budget.take(1);
                     }
@@ -206,6 +210,20 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 }
 
+/// `--bg --resume` of a session the daemon still counts as running starts a copy under a new id
+/// (`backgrounded · <new id8> · …`) instead of waking it (m2/4): a failure, not a start.
+fn woke_in_place(out: &str, id: &str) -> Result<(), Failure> {
+    let woke = out
+        .split_once("backgrounded · ")
+        .and_then(|(_, rest)| rest.split_whitespace().next());
+    match woke {
+        Some(other) if other != id => Err(Failure::Other(format!(
+            "the resume of {id} started a copy {other} (the daemon still counted it running)"
+        ))),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -229,13 +247,15 @@ mod tests {
         calls: RefCell<Vec<Call>>,
         /// Popped per launch/resume; empty means success.
         errors: RefCell<Vec<ClaudeError>>,
+        /// What a successful launch/resume prints; `None`: `backgrounded · aaaa0001 · x`.
+        output: RefCell<Option<String>>,
     }
 
     impl FakeLauncher {
         fn result(&self) -> foreman_claude::Result<String> {
             match self.errors.borrow_mut().pop() {
                 Some(e) => Err(e),
-                None => Ok("backgrounded · aaaa0001 · x".into()),
+                None => Ok(self.output.borrow().clone().unwrap_or_else(|| "backgrounded · aaaa0001 · x".into())),
             }
         }
 
@@ -519,6 +539,19 @@ mod tests {
     }
 
     #[test]
+    fn a_resume_that_starts_a_copy_is_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        *sup.launcher.output.borrow_mut() = Some("backgrounded · bbbb0002 (idle — send a prompt to start)".into());
+        let needs = sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW);
+        assert_eq!(sup.launcher().take().len(), 1);
+        assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
+        assert!(needs[0].detail.contains("started a copy bbbb0002"), "{}", needs[0].detail);
+        assert_eq!(woke_in_place("backgrounded · aaaa0001 · fm-demo-platform", "aaaa0001"), Ok(()));
+        assert_eq!(woke_in_place("", "aaaa0001"), Ok(()));
+    }
+
+    #[test]
     fn launch_failed_is_listed_while_backing_off() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
@@ -542,7 +575,10 @@ mod tests {
         assert_eq!(sup.launcher().take(), [], "backing off 5 s");
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert!(needs[0].detail.contains("exited within 30 s"), "{}", needs[0].detail);
-        sup.tick(&[dead], &mut free(), NOW + 35 * SECOND);
+        // the backoff is over at +35 s, the respawn grace (last alive at +10 s) at +40 s
+        sup.tick(std::slice::from_ref(&dead), &mut free(), NOW + 35 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "respawn grace");
+        sup.tick(&[dead], &mut free(), NOW + 40 * SECOND);
         assert_eq!(sup.launcher().take().len(), 1);
     }
 }

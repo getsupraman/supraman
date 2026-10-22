@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use foreman_claude::{Health, Session, SessionState};
+use foreman_claude::{Health, Session};
 
 use crate::{DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession};
 
@@ -34,7 +34,8 @@ pub enum WaitReason {
     Settling,
     Backoff,
     Cap,
-    /// Lost its pid mid-turn moments ago: the daemon respawns such a session by itself.
+    /// Lost its pid moments ago: the daemon may respawn it, and until it notices the death a
+    /// resume starts a copy (m2/4).
     Respawn,
 }
 
@@ -144,8 +145,7 @@ pub fn reconcile(
                 continue;
             }
         }
-        if let Some(s) = row
-            && matches!(s.state, Some(SessionState::Working | SessionState::Blocked))
+        if row.is_some()
             && let Some(seen) = memory.get(&w.name).and_then(|a| a.last_alive)
             && now - seen < policy.respawn_grace
         {
@@ -192,7 +192,7 @@ pub fn action_name(action: &Action) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use foreman_claude::{Kind, Status};
+    use foreman_claude::{Kind, SessionState, Status};
 
     use super::*;
     use crate::{Budget, Failure};
@@ -493,7 +493,7 @@ mod tests {
 
     // R13
     #[test]
-    fn killed_mid_turn_is_left_to_the_daemon_for_the_respawn_grace() {
+    fn a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace() {
         let d = desired(true, &["fm-demo-platform"]);
         let p = Policy::default();
         let mut m = SupervisorMemory::default();
@@ -506,9 +506,15 @@ mod tests {
         );
         let later = reconcile(&d, std::slice::from_ref(&orphan), &m, &p, FREE, NOW + 25 * SECOND);
         assert_eq!(later, [resume_of(&orphan)], "the daemon did not respawn it: resume");
-        // an idle session killed is `done` without pid: the daemon leaves it, so resume at once
+        // an idle session killed is `done` without pid: the daemon still counts it running for a few
+        // seconds, so it waits too
         let done = row("fm-demo-platform", 1, Some(SessionState::Done), None, None);
-        assert_eq!(run_with(&d, std::slice::from_ref(&done), &m), [resume_of(&done)]);
+        assert!(matches!(
+            run_with(&d, std::slice::from_ref(&done), &m).as_slice(),
+            [Action::Wait { reason: WaitReason::Respawn, .. }]
+        ));
+        // a row never seen alive by this supervisor (e.g. stopped before the app started) resumes at once
+        assert_eq!(run(&d, std::slice::from_ref(&done)), [resume_of(&done)]);
     }
 
     #[test]

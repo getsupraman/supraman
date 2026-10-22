@@ -21,7 +21,7 @@
 //! | R10 | yes | 0, or 1 not live | started < `settle` ago | `Wait(Settling)` | `just_started_waits_to_settle_instead_of_launching_again` |
 //! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |
 //! | R2 | yes | 0 | | `Launch` | `absent_is_launched` |
-//! | R13 | yes | 1 not live, `state` working/blocked | alive < `respawn_grace` ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn (m2/4) | `killed_mid_turn_is_left_to_the_daemon_for_the_respawn_grace` |
+//! | R13 | yes | 1 not live | alive < `respawn_grace` (30 s) ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn, and a resume while it still counts a dead one running starts a copy (m2/4) | `a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace` |
 //! | R3 | yes | 1 not live (stopped, done, orphaned) | | `Resume` from the row's cwd | `stopped_or_orphaned_is_resumed_from_its_own_cwd` |
 //!
 //! Then the cap (R11, R12): `reconcile` gets the free slots of the shared [`Budget`]; Resumes take

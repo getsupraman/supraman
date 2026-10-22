@@ -281,9 +281,30 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
         sleep(cx, Duration::from_millis(500)).await;
     };
-    let in_panel = view.read_with(cx, |v, _| {
-        v.tree().platforms.iter().any(|p| p.name == tb.a.0 && p.supervised.iter().any(|r| r.session.name == ctrl))
-    });
+    let shown = Instant::now();
+    let in_panel = loop {
+        let in_panel = view.read_with(cx, |v, _| {
+            v.tree().platforms.iter().any(|p| p.name == tb.a.0 && p.supervised.iter().any(|r| r.session.name == ctrl))
+        });
+        if in_panel || shown.elapsed() > Duration::from_secs(10) {
+            break in_panel;
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    };
+    if !in_panel {
+        let state = view.read_with(cx, |v, _| {
+            format!(
+                "refreshes {} ticks {} desired {:?} rows named {} in the view: {} errors {:?}",
+                v.refreshes,
+                v.ticks,
+                v.desired,
+                ctrl,
+                v.sessions.iter().filter(|s| s.name == ctrl).count(),
+                v.supervise_errors
+            )
+        });
+        println!("step b: panel state: {state}");
+    }
     let events_line = seen.iter().map(|e| e.event.clone() + &e.source.as_deref().map(|s| format!("({s})")).unwrap_or_default()).collect::<Vec<_>>().join(", ");
     if !tagged || !in_panel {
         bail!(
@@ -323,8 +344,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             Some(r) if r.pid.is_none() => {
                 dropped.get_or_insert((kill.elapsed(), raw(&r)));
             }
-            Some(r) if r.pid.is_some() && r.session_id == idle.session_id => break r,
-            Some(r) => bail!("step c: {ctrl} came back as another session: {} ({})", r.session_id, raw(&r)),
+            Some(r) if r.pid.is_some() && r.id == idle.id => break r,
+            Some(r) => bail!("step c: {ctrl} came back as another row: {} / {} ({})", r.id, r.session_id, raw(&r)),
             None => bail!("step c: {ctrl} is no longer listed"),
         }
         if kill.elapsed() > Duration::from_secs(120) {
@@ -341,13 +362,28 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if process_alive(pid) {
         bail!("step c: the killed pid {pid} is still running");
     }
+    // Right after `--bg --resume` the row shows a transient sessionId for a few seconds, then the
+    // session's own again (m2/4).
+    let transient = (resumed.session_id != idle.session_id).then(|| resumed.session_id.clone());
+    let settled = wait_for("step c: sessionId back to the original", Duration::from_secs(30), cx, |rows| {
+        rows.iter()
+            .find(|s| s.name == ctrl && s.id == idle.id && s.session_id == idle.session_id && s.pid.is_some())
+            .cloned()
+    })
+    .await?;
+    if rows(cx).await?.iter().filter(|s| s.name == ctrl).count() != 1 {
+        bail!("step c: more than one row named {ctrl} after the resume");
+    }
     let (dropped_after, dropped_row) = dropped.map_or(("never seen".into(), String::new()), |(d, r)| (secs(d), r));
     println!(
-        "step c: killed pid {pid} (turn ended: {}) → row without pid after {dropped_after} [{dropped_row}], dead pid seen in {lingered} poll(s) | resumed by the supervisor after {}: same sessionId {}, pid {pid} → {}",
+        "step c: killed pid {pid} (turn ended: {}) → row without pid after {dropped_after} [{dropped_row}], dead pid seen in {lingered} poll(s) | resumed by the supervisor after {}: same id {}, same sessionId {}{}, pid {pid} → {} [{}], one row",
         raw(&idle),
         secs(resumed_after),
-        resumed.session_id,
-        resumed.pid.unwrap_or_default()
+        settled.id,
+        settled.session_id,
+        transient.map(|t| format!(" (transient {t} right after the resume)")).unwrap_or_default(),
+        settled.pid.unwrap_or_default(),
+        raw(&settled)
     );
 
     // d. untrusted platform → TrustNeeded with Run in terminal; nothing is run or accepted
@@ -380,23 +416,39 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         .read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max())
         .filter(|id| Some(*id) != tabs_before)
         .ok_or_else(|| anyhow!("step d: Run in terminal opened no tab"))?;
-    let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
-    let typed = Instant::now();
-    let line = loop {
-        let content = terminal.read_with(cx, |t, _| t.get_content());
-        if let Some(line) = content.lines().rev().find(|l| l.contains("PS ") && l.trim_end().ends_with(&command)) {
-            break line.trim().to_string();
+    // The command sits typed on the prompt line and stays there: nothing ran it. The tab is closed
+    // whatever happened, so its shell lets go of the dir.
+    let typed: anyhow::Result<String> = async {
+        let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
+        // PSReadLine may draw a history prediction after the typed text; it is display only.
+        let typed_at = format!(" {command}");
+        let screen = |cx: &mut AsyncWindowContext| terminal.read_with(cx, |t, _| t.get_content());
+        let last_line = |content: &str| content.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().trim().to_string();
+        let started = Instant::now();
+        let before = loop {
+            let content = screen(cx);
+            if last_line(&content).contains(&typed_at) {
+                break content;
+            }
+            if started.elapsed() > Duration::from_secs(25) {
+                bail!("`{command}` was not typed at the prompt within 25 s; last line {:?}", last_line(&content));
+            }
+            sleep(cx, Duration::from_millis(100)).await;
+        };
+        sleep(cx, Duration::from_secs(3)).await;
+        let after = screen(cx);
+        if after != before {
+            bail!("the screen changed after typing (was it run?): last line {:?}", last_line(&after));
         }
-        if typed.elapsed() > Duration::from_secs(20) {
-            bail!("step d: `{command}` was not typed at a prompt within 20 s: {:?}", content.lines().rev().find(|l| !l.trim().is_empty()));
-        }
-        sleep(cx, Duration::from_millis(100)).await;
-    };
+        Ok(last_line(&after))
+    }
+    .await;
     click(view, &format!("close-tab-{tab}"), cx).await?;
     sleep(cx, Duration::from_millis(500)).await;
     let closed = view.read_with(cx, |v, _| v.tab(tab).is_none());
+    let line = typed.context("step d")?;
     println!(
-        "step d: Start {} → Inbox `trust needed` after {}: {} | Run in terminal opened a pwsh tab in {} with `{line}` typed, not run; tab closed={closed}; no row named {u_ctrl}",
+        "step d: Start {} → Inbox `trust needed` after {}: {} | Run in terminal opened a pwsh tab in {} with `{command}` typed at the prompt and not run (screen unchanged 3 s; prompt line {line:?}, any text after `{command}` is PSReadLine's prediction); tab closed={closed}; no row named {u_ctrl}",
         tb.u.0,
         secs(clicked.elapsed()),
         need.detail,
@@ -493,8 +545,17 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         sleep(cx, Duration::from_millis(500)).await;
     }
     let fmt = |d: Option<Duration>| d.map_or("-".to_string(), secs);
+    // the one that went second may only have gone once the first one's turn ended
+    let (first, second) = if first_live[0] <= first_live[1] { (0, 1) } else { (1, 0) };
+    if !first_idle[first].is_some_and(|idle| first_live[second].is_some_and(|live| live >= idle)) {
+        bail!(
+            "step f: the second platform went live at {} before the first one's turn ended ({})",
+            fmt(first_live[second]),
+            fmt(first_idle[first])
+        );
+    }
     println!(
-        "step f: limit 3 → 1 by {clicks} stepper clicks (settings.toml max_working = 1) | Start {} and {}: max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}",
+        "step f: limit 3 → 1 by {clicks} stepper clicks (settings.toml max_working = 1) | Start {} and {}: max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
         tb.c1.0,
         tb.c2.0,
         fmt(first_live[0]),

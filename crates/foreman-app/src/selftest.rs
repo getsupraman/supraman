@@ -310,6 +310,11 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
                     EXIT_CODE.store(1, Ordering::SeqCst);
                 }
             }
+            // A shell tab left open (a failed step) would hold its cwd, a scratch dir.
+            let shells: Vec<u64> = view.read_with(cx, |v, _| {
+                v.tabs.iter().filter(|t| matches!(t.kind, TabKind::Shell)).map(|t| t.id).collect()
+            });
+            view.update(cx, |v, cx| shells.into_iter().for_each(|id| v.close_tab(id, cx)));
             // Off the UI thread: cleanup blocks on `claude` processes and file deletes.
             cx.background_executor().spawn(async { cleanup() }).await;
             cx.update(|_, cx| cx.quit()).ok();

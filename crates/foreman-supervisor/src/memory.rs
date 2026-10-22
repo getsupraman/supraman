@@ -20,8 +20,10 @@ pub struct Policy {
     /// A session that is dead again this soon after a successful start counts as a failure; one
     /// alive this long clears the failure count.
     pub stable_after: Millis,
-    /// A row that lost its pid mid-turn (`working`/`blocked`) this soon after it was last seen alive
-    /// is left to the daemon, which respawns a session killed mid-turn by itself (~12 s, m2/4).
+    /// A row that lost its pid this soon after it was last seen alive is not resumed yet: the daemon
+    /// respawns a session killed mid-turn by itself (~12 s), and for a few seconds after the death of
+    /// an idle one still counts it as running, so a resume then starts a copy (5 s: copy, 10 s: woke
+    /// the original; m2/4).
     pub respawn_grace: Millis,
 }
 

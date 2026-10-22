@@ -386,17 +386,27 @@ impl FleetView {
         };
         let title = format!("trust · {}", cwd.display());
         let id = self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx);
+        // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
+        // it look like), or after 15 s regardless.
         cx.spawn(async move |this, cx| {
             let started = Instant::now();
-            while started.elapsed() < Duration::from_secs(15) {
+            let mut last = String::new();
+            let mut since = Instant::now();
+            loop {
                 let Ok(terminal) = this.read_with(cx, |this, _| this.tab(id).and_then(|t| t.terminal.clone())) else {
                     return;
                 };
-                if let Some(terminal) = terminal
-                    && terminal.read_with(cx, |t, _| t.get_content().contains("PS "))
-                {
-                    terminal.update(cx, |t, _| t.input(command.into_bytes()));
-                    return;
+                if let Some(terminal) = terminal {
+                    let content = terminal.read_with(cx, |t, _| t.get_content());
+                    if content != last {
+                        last = content;
+                        since = Instant::now();
+                    } else if (!last.trim().is_empty() && since.elapsed() > Duration::from_millis(500))
+                        || started.elapsed() > Duration::from_secs(15)
+                    {
+                        terminal.update(cx, |t, _| t.input(command.into_bytes()));
+                        return;
+                    }
                 }
                 cx.background_executor().timer(Duration::from_millis(50)).await;
             }
