@@ -5,28 +5,15 @@ edition = "2024"
 publish = false
 license = "GPL-3.0-or-later"
 
-# Exactly one of `zed` (Variant A: Zed's `terminal` git crate, needs CMake via scripts/cargo.ps1)
-# or `vendored` (Variant B: crates/foreman-term). Features only add, so B is built with
-# `--no-default-features --features vendored`.
-[features]
-default = ["zed"]
-zed = ["dep:terminal", "dep:settings", "dep:theme_settings", "dep:release_channel", "dep:semver"]
-vendored = ["dep:foreman-term"]
-
 [dependencies]
 anyhow = "1.0.86"
 collections = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
-foreman-term = { path = "../../crates/foreman-term", optional = true }
+foreman-term = { path = "../../crates/foreman-term" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }
 itertools = "0.14"
 log = "0.4"
 gpui_platform ={ git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }
-release_channel = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", optional = true }
-semver = { version = "1.0", optional = true }
-settings = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", optional = true }
-terminal = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", optional = true }
 theme = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
-theme_settings = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", optional = true }
 util = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 
 [target.'cfg(windows)'.dependencies]

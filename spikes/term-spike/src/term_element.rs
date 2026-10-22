@@ -11,9 +11,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use std::mem;
-#[cfg(feature = "vendored")]
-use foreman_term as terminal;
-use terminal::{
+use foreman_term::{
     Cell, Color, CursorShape, IndexedCell, NamedColor, Terminal, TerminalBounds,
     is_default_background_color,
 };
@@ -377,19 +375,13 @@ fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
             NamedColor::BrightForeground => colors.terminal_bright_foreground,
             NamedColor::DimForeground => colors.terminal_dim_foreground,
         },
-        Color::Spec(rgb) => terminal::rgba_color(rgb.r, rgb.g, rgb.b),
+        Color::Spec(rgb) => foreman_term::rgba_color(rgb.r, rgb.g, rgb.b),
         Color::Indexed(i) => indexed_color(*i as usize, theme),
     }
 }
 
-#[cfg(not(feature = "vendored"))]
 fn indexed_color(index: usize, theme: &Theme) -> Hsla {
-    terminal::get_color_at_index(index, theme)
-}
-
-#[cfg(feature = "vendored")]
-fn indexed_color(index: usize, theme: &Theme) -> Hsla {
-    static PALETTE: std::sync::OnceLock<terminal::terminal_settings::TerminalPalette> =
+    static PALETTE: std::sync::OnceLock<foreman_term::terminal_settings::TerminalPalette> =
         std::sync::OnceLock::new();
-    terminal::get_color_at_index(index, PALETTE.get_or_init(|| crate::palette(theme)))
+    foreman_term::get_color_at_index(index, PALETTE.get_or_init(|| crate::palette(theme)))
 }

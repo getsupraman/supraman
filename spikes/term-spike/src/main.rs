@@ -1,16 +1,9 @@
-// term-spike: one gpui window running one Zed `terminal` (alacritty_terminal + ConPTY).
-// Feature `zed` (default) = Variant A, Zed's `terminal` crate; feature `vendored` = Variant B,
-// crates/foreman-term (build with `--no-default-features --features vendored`).
+// term-spike: one gpui window running one crates/foreman-term terminal (alacritty_terminal + ConPTY).
 //   term-spike                       interactive pwsh
 //   term-spike --attach <id>         runs `claude attach <id>`
 //   term-spike --selftest            nonce round-trip, then frame times + private bytes under CPU load
-//   term-spike --selftest-external   same, but the load is a cold release build of the other variant
+//   term-spike --selftest-external   same, but the load is a cold release build of term-spike
 //                                    into <workspace>/target-load
-
-#[cfg(all(feature = "zed", feature = "vendored"))]
-compile_error!("features `zed` and `vendored` are exclusive; use --no-default-features --features vendored");
-#[cfg(not(any(feature = "zed", feature = "vendored")))]
-compile_error!("enable exactly one of the features `zed` (Variant A) or `vendored` (Variant B)");
 
 mod term_element;
 
@@ -25,7 +18,6 @@ use std::{
 };
 
 use collections::HashMap;
-#[cfg(feature = "vendored")]
 use foreman_term as terminal;
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Bounds, Context, Entity, FocusHandle, KeyDownEvent,
@@ -52,12 +44,6 @@ enum Mode {
     Attach(String),
     Selftest(Load),
 }
-
-const VARIANT: &str = if cfg!(feature = "vendored") {
-    "B (vendored foreman-term)"
-} else {
-    "A (Zed terminal git dep)"
-};
 
 fn parse_args() -> Mode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -218,8 +204,7 @@ fn build_terminal(
 }
 
 /// The active theme's terminal colours, for foreman-term's OSC colour replies and the painter's
-/// indexed colours (Variant A reads the same values from `Theme` directly).
-#[cfg(feature = "vendored")]
+/// indexed colours.
 pub fn palette(theme: &theme::Theme) -> terminal::terminal_settings::TerminalPalette {
     let c = theme.colors();
     terminal::terminal_settings::TerminalPalette {
@@ -258,14 +243,6 @@ pub fn palette(theme: &theme::Theme) -> terminal::terminal_settings::TerminalPal
     }
 }
 
-#[cfg(feature = "zed")]
-fn init_globals(cx: &mut App) {
-    release_channel::init(semver::Version::new(0, 1, 0), cx);
-    settings::init(cx);
-    theme_settings::init(theme::LoadThemes::JustBase, cx);
-}
-
-#[cfg(feature = "vendored")]
 fn init_globals(cx: &mut App) {
     theme::init(theme::LoadThemes::JustBase, cx);
     let palette = palette(cx.theme());
@@ -284,21 +261,11 @@ fn load_target_dir() -> PathBuf {
     workspace_root().join("target-load")
 }
 
-/// Starts a release build of the *other* variant into target-load/.
+/// Starts a second release build of term-spike into target-load/.
 fn start_external_load() -> std::io::Result<Child> {
     let log = std::fs::File::create(load_target_dir().join("load-build.log"))?;
-    let mut command = if cfg!(feature = "vendored") {
-        let mut command = Command::new("pwsh");
-        command.args(["-NoProfile", "-File", "scripts/cargo.ps1"]);
-        command.args(["build", "--release", "-p", "term-spike"]);
-        command
-    } else {
-        let mut command = Command::new("cargo");
-        command.args(["build", "--release", "-p", "term-spike"]);
-        command.args(["--no-default-features", "--features", "vendored"]);
-        command
-    };
-    command
+    Command::new("cargo")
+        .args(["build", "--release", "-p", "term-spike"])
         .current_dir(workspace_root())
         .env("CARGO_TARGET_DIR", load_target_dir())
         .stdin(Stdio::null())
@@ -321,7 +288,7 @@ fn main() {
     let mode = parse_args();
     log::set_logger(&StderrLogger).ok();
     log::set_max_level(log::LevelFilter::Info);
-    println!("variant {VARIANT}");
+    println!("terminal: foreman-term");
 
     if matches!(mode, Mode::Selftest(Load::External)) {
         // Before the clock starts: wipe the previous load build so this one compiles from scratch.
@@ -568,7 +535,7 @@ async fn selftest(
             "load: {cores} busy threads in-process (one per logical core), 10 s, window active: {window_active} / at end {window_active_at_end}"
         ),
         Some(running) => println!(
-            "load: external `cargo build --release` of the other variant into target-load/, 10 s, still building at end: {running}, window active: {window_active} / at end {window_active_at_end}"
+            "load: external `cargo build --release -p term-spike` into target-load/, 10 s, still building at end: {running}, window active: {window_active} / at end {window_active_at_end}"
         ),
     }
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
