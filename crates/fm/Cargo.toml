@@ -1,0 +1,15 @@
+[package]
+name = "fm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "fm"
+path = "src/main.rs"
+
+[dependencies]
+foreman-core = { path = "../foreman-core" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
