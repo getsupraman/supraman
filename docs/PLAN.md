@@ -83,14 +83,15 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform
 | `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm roster`, `fm inbox` (the relay's watcher) |
 | `plugins/foreman/` | the two skills + `hooks.json`, loaded with `--plugin-dir` so every session runs the version Foreman ships |
 
-### Terminal — decided by the M0 spike
+### Terminal — decided: `foreman-term` (Variant B, m1/1)
 
-Variant A (Zed's crates as git deps @ `03efd492`) **works**: D3D11, ~97 MiB private, p50 16.6 ms /
-p95 17–20 ms frame time with all 24 cores saturated, keystroke-to-grid 124–137 ms, 16.4 MiB binary, 3½ min
-cold build. But its costs are all incidental to the terminal: CMake on PATH (wasmtime via
-`settings → migrator → tree-sitter[wasm]`), Rust 1.98.1, a lockfile re-copied from Zed per rev, ~490
-crates. **Variant B** (vendor `terminal`, cut those four crates, ~6.6k lines, ~1 day) is M1's first unit,
-measured against A.
+`crates/foreman-term` is Zed's `terminal` @ `03efd492` vendored with `settings`, `theme_settings`, `task` and
+`release_channel` cut (a plain `TerminalConfig` global + `TerminalPalette` instead). Measured against Variant
+A (Zed's crates as git deps): identical runtime — ~98 MiB private, p50 16.67 ms / p95 ~18 ms, 0 frames over
+50 ms in 12 runs incl. a concurrent `cargo build`, keystroke-to-grid 106–137 ms — while B needs **no CMake**,
+cold-builds in 103 s vs 187 s, pulls 350 crates vs 487 and ships 12.0 MB vs 17.3 MB. `gpui`/`util`/`collections`
+stay git deps, so `Cargo.lock` is still re-seeded from Zed's lockfile on a rev bump. M0's one 896 ms frame did
+not reproduce for either variant; untested: inactive window, a .NET build as load, link-phase load.
 
 ### Session identity and permissions
 
