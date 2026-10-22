@@ -5,8 +5,6 @@
 //   term-spike --selftest-external   same, but the load is a cold release build of term-spike
 //                                    into <workspace>/target-load
 
-mod term_element;
-
 use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -80,62 +78,7 @@ fn shell_for(mode: &Mode) -> util::shell::Shell {
     }
 }
 
-/// Prints gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors.
-struct StderrLogger;
-
-impl log::Log for StderrLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Warn
-            || (metadata.level() <= log::Level::Info && metadata.target().starts_with("gpui"))
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            eprintln!("[{} {}] {}", record.level(), record.target(), record.args());
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-#[cfg(windows)]
-fn memory() -> (usize, usize) {
-    use windows::Win32::System::ProcessStatus::{
-        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
-    };
-    use windows::Win32::System::Threading::GetCurrentProcess;
-    let mut counters = PROCESS_MEMORY_COUNTERS_EX {
-        cb: size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32,
-        ..Default::default()
-    };
-    let ok = unsafe {
-        GetProcessMemoryInfo(
-            GetCurrentProcess(),
-            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX as *mut PROCESS_MEMORY_COUNTERS,
-            counters.cb,
-        )
-    };
-    if ok.is_err() {
-        return (0, 0);
-    }
-    (counters.PrivateUsage, counters.WorkingSetSize)
-}
-
-#[cfg(not(windows))]
-fn memory() -> (usize, usize) {
-    (0, 0)
-}
-
-fn mib(bytes: usize) -> String {
-    format!("{:.1} MiB ({bytes} B)", bytes as f64 / (1024.0 * 1024.0))
-}
-
-/// Timestamps of frames the window drew and handed to the platform for presentation.
-#[derive(Default)]
-struct FrameProbe {
-    recording: bool,
-    frames: Vec<Instant>,
-}
+use foreman_ui::{FrameProbe, init_globals, memory, mib, percentile, term_element};
 
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
@@ -161,12 +104,7 @@ impl SpikeView {
 
 impl Render for SpikeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.probe.recording {
-            // render() runs only inside Window::draw, which is immediately followed by
-            // Window::present, so each timestamp marks one frame handed to the swap chain.
-            self.probe.frames.push(Instant::now());
-            window.request_animation_frame();
-        }
+        self.probe.on_render(window);
         let root = div()
             .size_full()
             .bg(cx.theme().colors().terminal_background)
@@ -203,56 +141,6 @@ fn build_terminal(
     )
 }
 
-/// The active theme's terminal colours, for foreman-term's OSC colour replies and the painter's
-/// indexed colours.
-pub fn palette(theme: &theme::Theme) -> terminal::terminal_settings::TerminalPalette {
-    let c = theme.colors();
-    terminal::terminal_settings::TerminalPalette {
-        ansi: [
-            c.terminal_ansi_black,
-            c.terminal_ansi_red,
-            c.terminal_ansi_green,
-            c.terminal_ansi_yellow,
-            c.terminal_ansi_blue,
-            c.terminal_ansi_magenta,
-            c.terminal_ansi_cyan,
-            c.terminal_ansi_white,
-            c.terminal_ansi_bright_black,
-            c.terminal_ansi_bright_red,
-            c.terminal_ansi_bright_green,
-            c.terminal_ansi_bright_yellow,
-            c.terminal_ansi_bright_blue,
-            c.terminal_ansi_bright_magenta,
-            c.terminal_ansi_bright_cyan,
-            c.terminal_ansi_bright_white,
-        ],
-        dim: [
-            c.terminal_ansi_dim_black,
-            c.terminal_ansi_dim_red,
-            c.terminal_ansi_dim_green,
-            c.terminal_ansi_dim_yellow,
-            c.terminal_ansi_dim_blue,
-            c.terminal_ansi_dim_magenta,
-            c.terminal_ansi_dim_cyan,
-            c.terminal_ansi_dim_white,
-        ],
-        foreground: c.terminal_foreground,
-        background: c.terminal_background,
-        bright_foreground: c.terminal_bright_foreground,
-        cursor: theme.players().local().cursor,
-    }
-}
-
-fn init_globals(cx: &mut App) {
-    theme::init(theme::LoadThemes::JustBase, cx);
-    let palette = palette(cx.theme());
-    cx.set_global(terminal::terminal_settings::TerminalConfig {
-        program_version: "0.1.0".to_string(),
-        palette,
-        ..Default::default()
-    });
-}
-
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
@@ -286,8 +174,7 @@ fn kill_tree(child: &mut Child) {
 
 fn main() {
     let mode = parse_args();
-    log::set_logger(&StderrLogger).ok();
-    log::set_max_level(log::LevelFilter::Info);
+    foreman_ui::init_logger();
     println!("terminal: foreman-term");
 
     if matches!(mode, Mode::Selftest(Load::External)) {
@@ -314,7 +201,7 @@ fn main() {
 
     let started = Instant::now();
     gpui_platform::application().run(move |cx: &mut App| {
-        init_globals(cx);
+        init_globals(cx, "0.1.0");
 
         let bounds = Bounds::centered(None, size(px(900.), px(560.)), cx);
         let mode_for_window = mode.clone();
@@ -378,14 +265,6 @@ fn nonce() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or_default();
     format!("{:08x}", (nanos as u64 ^ (std::process::id() as u64) << 32) as u32)
-}
-
-fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() {
-        return f64::NAN;
-    }
-    let rank = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
-    sorted[rank.min(sorted.len() - 1)]
 }
 
 async fn sleep(cx: &AsyncWindowContext, duration: Duration) {

@@ -492,3 +492,34 @@ One read of `claude agents --json --all` (CLI 2.1.308, Windows 11), 236 rows; co
   resolves to `claude.exe`, so `Command::new("claude")` works without a shell.
 - Deps: `serde_json 1.0.151` and `thiserror 2.0.17`, both already in `Cargo.lock`; lock diff +1 package
   (`foreman-claude`), no version changed. Timeout is a `try_wait` poll loop, so no `wait-timeout` crate.
+
+## 2026-10-22 — m1/5 `foreman` fleet viewer, attach/detach gate
+
+Measured with `target/release/foreman.exe --selftest` / `--selftest-perf` (CLI 2.1.308, same machine as m0/5).
+
+- **`claude --bg` refuses an untrusted workspace**: in a freshly `git init`ed dir under this (trusted) worktree it
+  exits 1 with `Workspace not trusted. Run \`claude\` in <dir> once and accept the trust prompt, then retry.` and
+  creates no row. Trust follows the git root: a nested repo is a new workspace; a plain subfolder of a trusted
+  repo/worktree is trusted. → Foreman cannot launch into a repo the user never opened Claude in; M2 must
+  surface this as a state ("trust needed"), not edit `~/.claude.json`. The gate therefore registers a read-only
+  scan of `P:/Projects/LarchSys` (13 repos) and launches from `<worktree>/target/selftest-cwd`.
+- **Worktree mapping works live**: a session whose cwd is inside `AutoWork.worktrees/m1-5` (nearest `.git` is a
+  file) is assigned to repo `AutoWork` by `assign()`'s gitdir path, 3 of 3 runs.
+- **Launch → listed in the panel with a pid**: 3.29–3.42 s from window open (`--bg` itself returns in 0.79–0.87 s).
+  Health was `running` (status busy) every time, never the pre-process row by then.
+- **`claude attach <id>` in a foreman-term tab**: first output painted 324–381 ms after the click (the Claude Code
+  banner). **Closing the tab detaches**: `release_pty_resources` (terminate, kill after 100 ms) → the attach
+  process exited 20–36 ms later, and the session row stayed `running` with its own pid 2 s later. So the
+  attach process is a client; the session process is separate (different pid).
+- **Synthetic clicks are real**: `Window::dispatch_event` with MouseMove/Down/Up at an element's painted centre
+  fires its `on_click` through gpui's normal hit test (hit test uses the event position, no frame needed).
+  Bounds come from an absolutely positioned zero-paint `canvas` child that records its bounds in prepaint.
+- **Idle**: 120.3–120.7 MiB private (59 MiB working set) with the panel only (term-spike, one terminal: ~98 MiB).
+  Frames over 6 s while the panel refreshed twice (each refresh = registry read + `claude agents --json --all`
+  on a background thread): p50 16.65–16.67 ms, p95 18.46–18.98 ms, max 19.98–31.91 ms, 0 frames > 50 ms.
+- **`--selftest-perf`** (pwsh -NoProfile tabs, only the active tab is painted), two runs:
+  0 tabs 119.3–119.7 MiB; **1 tab 127.4–130.2 MiB**, p95 18.33–18.44 ms, max 21.04–22.75 ms;
+  **10 tabs 210.0–211.5 MiB**, p95 18.25–18.53 ms, max 20.13–22.04 ms; 0 frames > 50 ms. ≈ 9 MiB private per
+  extra terminal (alacritty grid + scrollback in our process; the pwsh children are not counted).
+- Painter moved to `crates/foreman-ui` (needs Zed `theme`, which foreman-term deliberately does not). Lock diff
+  +2 packages (`foreman-ui`, `foreman-app`), no version changed; no new external dependency.
