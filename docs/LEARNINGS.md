@@ -65,3 +65,26 @@ Fields present on every row: `id` (8 hex, = first 8 chars of `sessionId`), `sess
 - **Parked session stays parked**: the blocked row was unchanged for 6–7 s until stop; no timeout
   or auto-deny was seen in that window.
 - No other row fields changed during these runs.
+
+## 2026-10-22 — running M0 as a controller (controller's own observations)
+
+- **Nested `--bg` sessions inherit the user-scope MCP registration — here the controller token.**
+  A worker can therefore write evidence that the store attributes to the controller; only the brief
+  stops it. → Foreman launches every worker with `--mcp-config` carrying the **worker** token.
+- **The installed rlarch plugin (1.5.0) lags `feat/workstate`'s skills.** A session loads whatever
+  is installed. → Foreman launches with `--plugin-dir` pinned to the skill version it ships.
+- **`Start-NestedAgent.ps1 -PromptFile` resolves against the caller's cwd**, not `-RepoRoot`;
+  pass an absolute path.
+- **`work_verify(command:)` must equal the item's `verify_cmd` literally** or the close guard
+  refuses; omit `command` unless a different command ran.
+- **Refs are per-run** (`m0/1` and `ws/1` coexist); qualify across runs. Claim leases are 30 min.
+- **WorkState worker brief truncates BINDING rules and intent with `…`** and tells the worker to
+  `work_status` its own item (findings F-02/F-03 → fixes ws/2, ws/3). Until fixed, the controller
+  writes the full rule text into the brief file.
+- **An empty WorkState server 503s `/api/stream`** until the first write creates the workspace
+  (F-01 → ws/1); the dashboard reads it as "stream down".
+- **`git worktree remove --force` can fail with "Permission denied"** right after `claude stop`:
+  the stopped session still holds a handle for a moment. Retrying after ~3 s succeeded.
+  → Foreman's teardown retries the delete with a short backoff.
+- **Never take a session id from free text.** The m0/2 probe regexed it out of `--bg` output (F-04);
+  resolve it from the `agents --json --all` row whose name you chose.
