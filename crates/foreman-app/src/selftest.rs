@@ -1,4 +1,5 @@
-//! `--selftest` (the M1 gate) and `--selftest-perf`.
+//! `--selftest` (the M1 gate), `--selftest-detach <n>`, `--selftest-detach-shutdown` and
+//! `--selftest-perf`.
 //!
 //! Both run against a scratch `FOREMAN_HOME` under `<workspace>/target/` holding one platform: a
 //! read-only scan of the folder that contains the main repo, found through the nearest `.git` above
@@ -30,7 +31,7 @@ use gpui::{
 use crate::{
     EXIT_CODE, Mode,
     fleet::{self, SessionRow},
-    view::{FleetView, TabKind},
+    view::{DETACH_WITHIN, Detach, FleetView, TabKind, process_alive},
 };
 
 pub const PLATFORM: &str = "larchsys";
@@ -154,7 +155,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         saved.display()
     );
 
-    if mode == Mode::Selftest {
+    if mode.launches_session() {
         let version = check_supported()?;
         println!("claude CLI: {}", version.raw);
         let name = format!("fm-selftest-{}", hex6());
@@ -184,6 +185,7 @@ fn lock() -> MutexGuard<'static, Option<Scratch>> {
 fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest => Duration::from_secs(150),
+        Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         _ => Duration::from_secs(120),
     };
     std::thread::spawn(move || {
@@ -281,8 +283,14 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
         .spawn(cx, async move |cx| {
             let result = match mode {
                 Mode::Selftest => gate(&view, cx).await,
+                Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
+                Mode::SelftestDetachShutdown => detach_on_shutdown(&view, cx).await,
                 _ => perf(&view, cx).await,
             };
+            // The window closed itself; `finish` gives the verdict once the event loop has ended.
+            if mode == Mode::SelftestDetachShutdown && result.is_ok() {
+                return;
+            }
             match result {
                 Ok(()) => println!("PASS"),
                 Err(e) => {
@@ -409,6 +417,8 @@ async fn record_frames(
     view.update(cx, |v, _| v.probe.stop())
 }
 
+/// The session's row by name, alive by health and by its own pid. `state` describes the turn, not
+/// the process, so `done` with a live pid is alive (LEARNINGS m1/7).
 fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
     let rows = list_sessions()?;
     let row = rows
@@ -417,23 +427,47 @@ fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
         .ok_or_else(|| anyhow!("{name} is no longer listed in claude agents --json --all"))?;
     let health = row.health(now_ms());
     if !fleet::is_alive(&health) {
-        bail!("{name} is listed but {health} — the close stopped it instead of detaching");
+        bail!("{name} is listed but {health} ({}) — the close stopped it instead of detaching", raw(&row));
+    }
+    let pid = row.pid.ok_or_else(|| anyhow!("{name} is {health} but has no pid ({})", raw(&row)))?;
+    if !process_alive(pid) {
+        bail!("{name}'s pid {pid} is not a running process ({})", raw(&row));
     }
     Ok(row)
 }
 
-async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let name = SESSION_NAME
+/// The row's own fields, as `claude agents --json --all` gave them.
+fn raw(s: &Session) -> String {
+    format!(
+        "state={} status={} pid={}{}",
+        s.state.as_ref().map_or("-", |s| s.as_str()),
+        match &s.status {
+            None => "-".to_string(),
+            Some(status) => format!("{status:?}").to_lowercase(),
+        },
+        s.pid.map_or("-".to_string(), |p| p.to_string()),
+        s.waiting_for.as_deref().map(|w| format!(" waitingFor={w}")).unwrap_or_default()
+    )
+}
+
+fn session_name() -> anyhow::Result<String> {
+    SESSION_NAME
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
-        .ok_or_else(|| anyhow!("no session was launched"))?;
-    let executor = cx.background_executor().clone();
+        .ok_or_else(|| anyhow!("no session was launched"))
+}
 
-    // 3. Listed under the scratch platform/repo with a live health and a painted [attach].
+/// Step 3: listed under the scratch platform/repo with a live health and a painted [attach], and the
+/// panel row's id is the one id `claude agents --json --all` has for the name.
+async fn wait_attachable(
+    view: &Entity<FleetView>,
+    name: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<(SessionRow, Duration)> {
     let opened = Instant::now();
     let row = loop {
-        let row = view.read_with(cx, |v, _| find_row(v, &name));
+        let row = view.read_with(cx, |v, _| find_row(v, name));
         if let Some(row) = &row {
             let key = format!("attach-{}", row.session.id);
             let painted = view.read_with(cx, |v, _| v.hits.borrow().contains_key(&key));
@@ -444,98 +478,163 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         if opened.elapsed() > LISTED_WITHIN {
             let seen = row.map_or("not listed".to_string(), |r| {
-                format!("listed as {} (pid {:?}, attachable {})", r.health, r.session.pid, r.attachable)
+                format!("listed as {} ({}, attachable {})", r.health, raw(&r.session), r.attachable)
             });
-            bail!("step 3: {name} not live under {PLATFORM}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
+            bail!("{name} not live under {PLATFORM}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
     let id = row.session.id.clone();
-    let name_for_resolve = name.clone();
-    let resolved = executor
+    let name = name.to_string();
+    let resolved = cx
+        .background_executor()
         .spawn(async move {
             list_sessions().map(|rows| {
-                rows.into_iter()
-                    .filter(|s| s.name == name_for_resolve)
-                    .map(|s| s.id)
-                    .collect::<Vec<_>>()
+                rows.into_iter().filter(|s| s.name == name).map(|s| s.id).collect::<Vec<_>>()
             })
         })
         .await?;
     if resolved != [id.clone()] {
-        bail!("step 3: the panel row's id {id} is not the one id resolved by name from claude agents --json --all: {resolved:?}");
+        bail!("the panel row's id {id} is not the one id resolved by name from claude agents --json --all: {resolved:?}");
     }
-    println!(
-        "step 3: {name} ({id}) listed under {PLATFORM} / ./{} as {} after {} ms",
-        repo(),
-        row.health,
-        opened.elapsed().as_millis()
-    );
+    Ok((row, opened.elapsed()))
+}
 
-    // 4. Click [attach]; a tab opens; its painted grid gains output within 10 s.
+struct Attached {
+    tab: u64,
+    title: String,
+    pid: u32,
+    rendered: usize,
+    from: usize,
+    after: Duration,
+    first_line: String,
+}
+
+/// Step 4: click [attach]; a tab opens; its painted grid gains output within 10 s.
+async fn open_attach(view: &Entity<FleetView>, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
+    let before = view.read_with(cx, |v, _| v.tabs.len());
     let clicked = Instant::now();
     click(view, &format!("attach-{id}"), cx).await?;
     let (tab, title) = view
         .read_with(cx, |v, _| {
             v.tabs.iter().find_map(|t| match &t.kind {
-                TabKind::Attach { session_id } if *session_id == id => Some((t.id, t.title.clone())),
+                TabKind::Attach { session_id } if session_id == id => Some((t.id, t.title.clone())),
                 _ => None,
             })
         })
-        .ok_or_else(|| anyhow!("step 4: clicking attach-{id} opened no tab for {id}"))?;
+        .ok_or_else(|| anyhow!("clicking attach-{id} opened no tab for {id}"))?;
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
-    if tabs != 1 {
-        bail!("step 4: expected exactly one tab after the click, found {tabs}");
+    if tabs != before + 1 {
+        bail!("expected {} tab(s) after the click, found {tabs}", before + 1);
     }
     let terminal = wait_for_tab_terminal(view, tab, RENDERED_WITHIN, cx).await?;
     let pid = terminal
         .read_with(cx, |t, _| t.pid())
         .map(|p| p.as_u32())
-        .ok_or_else(|| anyhow!("step 4: the attach terminal has no process id"))?;
-    let at_start = painted_cells(&terminal, cx);
+        .ok_or_else(|| anyhow!("the attach terminal has no process id"))?;
+    let from = painted_cells(&terminal, cx);
     let rendered = loop {
         let cells = painted_cells(&terminal, cx);
-        if cells > at_start {
+        if cells > from {
             break cells;
         }
         if clicked.elapsed() > RENDERED_WITHIN {
             bail!(
-                "step 4: tab \"{title}\" painted no output within {} s (non-blank cells stayed at {at_start})",
+                "tab \"{title}\" painted no output within {} s (non-blank cells stayed at {from})",
                 RENDERED_WITHIN.as_secs()
             );
         }
         sleep(cx, Duration::from_millis(20)).await;
     };
-    let text = terminal.read_with(cx, |t, _| t.get_content());
+    let first_line = first_line(&terminal.read_with(cx, |t, _| t.get_content()));
+    Ok(Attached {
+        tab,
+        title,
+        pid,
+        rendered,
+        from,
+        after: clicked.elapsed(),
+        first_line,
+    })
+}
+
+async fn session_now(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Session> {
+    let name = name.to_string();
+    cx.background_executor().spawn(async move { session_alive_in_cli(&name) }).await
+}
+
+/// Step 5: click the tab's ×. The tab detaches (Ctrl+Z, then waits for `claude attach` to exit) and
+/// goes away; the session is alive afterwards as the same process it was before the close.
+async fn close_attach(
+    view: &Entity<FleetView>,
+    attached: &Attached,
+    name: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<String> {
+    let (tab, pid) = (attached.tab, attached.pid);
+    let before = session_now(name, cx).await.context("before the close")?;
+    let session_pid = before.pid.unwrap_or_default();
+    click(view, &format!("close-tab-{tab}"), cx).await?;
+    let closed = Instant::now();
+    loop {
+        match view.read_with(cx, |v, _| v.tab(tab).map(|t| t.detach)) {
+            None => break,
+            Some(Detach::Failed) => bail!(
+                "detach failed: claude attach {pid} did not exit within {} s of Ctrl+Z; tab left open (alive: {})",
+                DETACH_WITHIN.as_secs(),
+                process_alive(pid)
+            ),
+            Some(_) if closed.elapsed() > DETACH_WITHIN + Duration::from_secs(1) => {
+                bail!("tab {tab} still open {} ms after its close was clicked", closed.elapsed().as_millis())
+            }
+            Some(_) => sleep(cx, Duration::from_millis(10)).await,
+        }
+    }
+    let gone_after = closed.elapsed();
+    if process_alive(pid) {
+        bail!("the tab went away but the attach process {pid} is still running");
+    }
+    sleep(cx, Duration::from_secs(2)).await;
+    let after = session_now(name, cx).await.context("after the close")?;
+    if after.pid != Some(session_pid) {
+        bail!(
+            "{name} was pid {session_pid} before the close and is {} after it",
+            after.pid.map_or("without a pid".to_string(), |p| format!("pid {p}"))
+        );
+    }
+    Ok(format!(
+        "detached in {} ms (attach pid {pid} exited); {name} alive as the same pid {session_pid}: before [{}] after [{}] = {}",
+        gone_after.as_millis(),
+        raw(&before),
+        raw(&after),
+        after.health(now_ms())
+    ))
+}
+
+async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = session_name()?;
+    let (row, listed_after) = wait_attachable(view, &name, cx).await.context("step 3")?;
+    let id = row.session.id.clone();
     println!(
-        "step 4: tab \"{title}\" (claude attach, pid {pid}) painted {rendered} non-blank cells (from {at_start}) {} ms after the click; first line: {}",
-        clicked.elapsed().as_millis(),
-        first_line(&text)
+        "step 3: {name} ({id}) listed under {PLATFORM} / ./{} as {} after {} ms",
+        repo(),
+        row.health,
+        listed_after.as_millis()
     );
 
-    // 5. Close the tab: the attach process exits, the session stays alive.
-    drop(terminal);
-    click(view, &format!("close-tab-{tab}"), cx).await?;
-    if view.read_with(cx, |v, _| v.tab(tab).is_some()) {
-        bail!("step 5: clicking close-tab-{tab} left the tab open");
-    }
-    let closed = Instant::now();
-    while process_alive(pid) {
-        if closed.elapsed() > Duration::from_secs(5) {
-            bail!("step 5: the attach process {pid} is still running 5 s after the tab closed");
-        }
-        sleep(cx, Duration::from_millis(20)).await;
-    }
-    let exited_after = closed.elapsed();
-    sleep(cx, Duration::from_secs(2)).await;
-    let name_for_check = name.clone();
-    let session = executor.spawn(async move { session_alive_in_cli(&name_for_check) }).await?;
+    let attached = open_attach(view, &id, cx).await.context("step 4")?;
     println!(
-        "step 5: tab closed, attach process {pid} exited after {} ms; {name} still alive in claude agents --json --all as {} (pid {:?})",
-        exited_after.as_millis(),
-        session.health(now_ms()),
-        session.pid
+        "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the click; first line: {}",
+        attached.title,
+        attached.pid,
+        attached.rendered,
+        attached.from,
+        attached.after.as_millis(),
+        attached.first_line
     );
+
+    let closed = close_attach(view, &attached, &name, cx).await.context("step 5")?;
+    println!("step 5: tab closed, {closed}");
 
     // 7. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
@@ -548,6 +647,142 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         bail!("step 7: the panel did not refresh during the 6 s frame window");
     }
     Ok(())
+}
+
+/// `--selftest-detach <n>`: one session, n attach/close cycles through the UI, alive after each.
+async fn detach_cycles(view: &Entity<FleetView>, cycles: u32, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = session_name()?;
+    let (row, listed_after) = wait_attachable(view, &name, cx).await?;
+    let id = row.session.id.clone();
+    println!("{name} ({id}) listed as {} after {} ms", row.health, listed_after.as_millis());
+    for cycle in 1..=cycles {
+        let result: anyhow::Result<String> = async {
+            wait_attachable(view, &name, cx).await?;
+            let attached = open_attach(view, &id, cx).await?;
+            let closed = close_attach(view, &attached, &name, cx).await?;
+            Ok(format!("attach pid {} painted after {} ms; {closed}", attached.pid, attached.after.as_millis()))
+        }
+        .await;
+        match result {
+            Ok(line) => println!("cycle {cycle}/{cycles} PASS {line}"),
+            Err(e) => {
+                println!("cycle {cycle}/{cycles} FAIL {e:#}");
+                bail!("{} of {cycles} cycles passed", cycle - 1);
+            }
+        }
+    }
+    println!("{cycles} of {cycles} cycles passed");
+    Ok(())
+}
+
+/// What the shutdown variant hands to [`finish`], which checks it after the window is gone.
+struct ShutdownProbe {
+    name: String,
+    attach_pid: u32,
+    session_pid: u32,
+    before: String,
+    asked: Instant,
+}
+
+static SHUTDOWN: Mutex<Option<ShutdownProbe>> = Mutex::new(None);
+
+/// `--selftest-detach-shutdown`: attach, then close the window the way the OS does (WM_CLOSE). The
+/// window must detach the tab and close by itself; [`finish`] checks the session afterwards.
+async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = session_name()?;
+    let (row, _) = wait_attachable(view, &name, cx).await?;
+    let attached = open_attach(view, &row.session.id, cx).await?;
+    let before = session_now(&name, cx).await.context("before the window close")?;
+    println!(
+        "attached: tab \"{}\" (claude attach, pid {}); {name} [{}]",
+        attached.title,
+        attached.pid,
+        raw(&before)
+    );
+    *SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(ShutdownProbe {
+        name: name.clone(),
+        attach_pid: attached.pid,
+        session_pid: before.pid.unwrap_or_default(),
+        before: raw(&before),
+        asked: Instant::now(),
+    });
+    let posted = post_close_to_own_windows();
+    println!("posted WM_CLOSE to {posted} window(s)");
+    let asked = Instant::now();
+    while asked.elapsed() < DETACH_WITHIN + Duration::from_secs(3) {
+        sleep(cx, Duration::from_millis(50)).await;
+        if cx.update(|_, _| ()).is_err() {
+            return Ok(());
+        }
+    }
+    let state = view.read_with(cx, |v, _| v.tabs.iter().map(|t| format!("{} {:?}", t.title, t.detach)).collect::<Vec<_>>());
+    bail!("the window is still open {} ms after WM_CLOSE; tabs: {state:?}", asked.elapsed().as_millis())
+}
+
+#[cfg(windows)]
+fn post_close_to_own_windows() -> usize {
+    use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, IsWindowVisible, PostMessageW, WM_CLOSE};
+    unsafe extern "system" fn post(hwnd: HWND, count: LPARAM) -> windows::core::BOOL {
+        unsafe {
+            if IsWindowVisible(hwnd).as_bool() && PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() {
+                *(count.0 as *mut usize) += 1;
+            }
+        }
+        true.into()
+    }
+    let mut count = 0usize;
+    unsafe {
+        let _ = EnumThreadWindows(GetCurrentThreadId(), Some(post), LPARAM(&mut count as *mut usize as isize));
+    }
+    count
+}
+
+#[cfg(not(windows))]
+fn post_close_to_own_windows() -> usize {
+    0
+}
+
+/// After the event loop ended. The shutdown variant's verdict: the window closed only after the
+/// attach process exited, and the session is the same live process.
+pub fn finish(mode: Mode) {
+    if mode != Mode::SelftestDetachShutdown || EXIT_CODE.load(Ordering::SeqCst) != 0 {
+        return;
+    }
+    let Some(probe) = SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        println!("FAIL the window closed before the selftest attached");
+        EXIT_CODE.store(1, Ordering::SeqCst);
+        return;
+    };
+    let closed_after = probe.asked.elapsed();
+    let result = (|| {
+        if process_alive(probe.attach_pid) {
+            bail!("the window closed with the attach process {} still running", probe.attach_pid);
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        let after = session_alive_in_cli(&probe.name)?;
+        if after.pid != Some(probe.session_pid) {
+            bail!("{} was pid {} before the window close and is {:?} after it", probe.name, probe.session_pid, after.pid);
+        }
+        Ok(format!(
+            "window closed {} ms after WM_CLOSE, attach pid {} exited; {} alive as the same pid {}: before [{}] after [{}] = {}",
+            closed_after.as_millis(),
+            probe.attach_pid,
+            probe.name,
+            probe.session_pid,
+            probe.before,
+            raw(&after),
+            after.health(now_ms())
+        ))
+    })();
+    match result {
+        Ok(line) => println!("shutdown: {line}\nPASS"),
+        Err(e) => {
+            println!("FAIL shutdown: {e:#}");
+            EXIT_CODE.store(1, Ordering::SeqCst);
+        }
+    }
 }
 
 async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -592,28 +827,6 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     });
     sleep(cx, Duration::from_millis(500)).await;
     Ok(())
-}
-
-#[cfg(windows)]
-fn process_alive(pid: u32) -> bool {
-    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return false;
-        };
-        let mut code = 0u32;
-        let ok = GetExitCodeProcess(handle, &mut code).is_ok();
-        let _ = CloseHandle(handle);
-        ok && code == STILL_ACTIVE.0 as u32
-    }
-}
-
-#[cfg(not(windows))]
-fn process_alive(_pid: u32) -> bool {
-    false
 }
 
 #[cfg(test)]

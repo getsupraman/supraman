@@ -546,3 +546,45 @@ Measured with `target/release/foreman.exe --selftest` / `--selftest-perf` (CLI 2
   `worst: 19.7 ms at +7496 ms (+9536 ms since process start)`. A hitch at a few seconds after start on a first
   run reads as cold start; one late in the window, or on a warm run, as load. Note foreman's frame window opens
   ~9 s after start (after attach/detach), so a hitch in the first seconds is outside it.
+
+## 2026-10-22 — m1/7 closing an Attach tab: the "stop" was a misread `done`; safe detach
+
+Measured with `crates/foreman-app/diag/states.ps1` and `target/release/foreman.exe --selftest-detach <n>` /
+`--selftest-detach-shutdown` / `--selftest` (CLI 2.1.308, Windows 11, worktree m1-7).
+
+- **The defect.** The M1 gate's `--selftest` failed 2 of 4 from the main checkout with `fm-selftest-… is listed but
+  stopped — the close stopped it instead of detaching`. **Nothing stopped it.** A control session that is never
+  attached (`diag/states.ps1`, raw `claude agents --json --all` row every 0.5 s) goes `state=done` on its own with
+  its process alive, as soon as its turn ("Reply with the word ready…") ends:
+
+  | Run | no-pid row | pid up | `status=busy` | **`state=done status=idle`, same pid** |
+  |---|---|---|---|---|
+  | 1 | +3.2 s `working` | +6.3 s pid 27304 (`working`, `idle`) | +12.6 s | **+18.3 s, pid 27304** |
+  | 2 | +1.3 s `working` | +2.3 s pid 20192 (`working`, no status) | +5.6 s | **+8.8 s, pid 20192** |
+
+  m1/4 mapped `done` → `Health::Stopped` from 107 `done` rows that all had no pid/status. The selftest checked
+  liveness ~7–9 s after launch, so whether it read `working` or `done` was the turn's timing: the ~50 %.
+  → **`state` describes the turn, not the process.** Health is now derived from `pid` first for background rows
+  (`done`/`stopped` with a pid → `Idle` or whatever `status` says; without one → `Stopped`); table in
+  `foreman-claude/src/lib.rs`.
+- **Process chain** (Win32_Process ParentProcessId, both control runs): session `claude.exe --session-id <id>` ←
+  `claude.exe --bg-pty-host \\.\pipe\cc-daemon-…-pty-<id8> 200 50 -- …` ← `claude.exe daemon run --origin transient`
+  (the supervisor in `~/.claude/daemon/roster.json`, one for all bg sessions) ← WmiPrvSE. `claude attach` is never
+  an ancestor of the session. foreman-term spawns it with plain `CreateProcessW` + `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`,
+  no job object; `release_pty_resources` on Windows = `ClosePseudoConsole` then `TerminateProcess` of that one pid
+  100 ms later (no tree kill, `terminate_child_process` is a no-op off unix).
+- **Detach input.** Typing `0x1A` (Ctrl+Z, `claude attach`'s "drop back to your shell") into the attach tab ends the
+  attach process by itself in **404–555 ms** (40 closes below). `ESC [ D` (←, "returns to agent view") does **not**:
+  the attach process was still running 5 s later (1 run) and the tab went to "detach failed" as designed.
+- **Safe close** (`view.rs` `close_tab`): an Attach tab types Ctrl+Z, waits ≤ 5 s (`DETACH_WITHIN`) for the attach
+  process to exit, and only then releases the PTY. On timeout it kills nothing: the tab stays, titled
+  `(detach failed)`, with a notice; closing it again retries. A window close (WM_CLOSE) with Attach tabs open
+  detaches them first and closes the window when the last is gone, or stays open if one failed. Shell tabs close as
+  before.
+- **Results**, every close asserting the session row's pid is the same live process before and after:
+  `--selftest-detach 10` ×3: **30/30 PASS**, detach 404–555 ms, rows seen `working/busy`, `done/idle`
+  (most cycles), `blocked/idle`. `--selftest-detach-shutdown` ×2: PASS, window closed 417 / 436 ms after WM_CLOSE.
+  `--selftest` ×3 (worktree): PASS, step 5 detach 458–531 ms. `--selftest-perf`: unchanged (1 tab 129.4 MiB,
+  10 tabs 211.2 MiB, max frame 22.47 ms).
+- Also seen: `state=blocked, status=idle` on a live pid with no `waitingFor` (2 `--selftest`, 1 shutdown,
+  1 `--selftest-detach 2` run; why the turn reads blocked is not known). Health reads it as `Idle`.

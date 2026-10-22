@@ -3,25 +3,45 @@
 //!
 //! # Health
 //!
-//! [`Session::health`] walks this table top to bottom; the first matching row wins. "live state"
-//! means `state` is `working` or `blocked`; "age" is `now - startedAt` (a missing `startedAt`
-//! counts as old).
+//! [`Session::health`] walks the table for the row's `kind` top to bottom; the first matching row
+//! wins. "live state" means `state` is `working` or `blocked`; "age" is `now - startedAt` (a missing
+//! `startedAt` counts as old).
 //!
-//! | # | `state` | `kind` | `pid` | `status` | other | health |
-//! |---|---|---|---|---|---|---|
-//! | 1 | `stopped` or `done` | any | any | any | | `Stopped` |
-//! | 2 | live state | `background` | absent | any | age > [`ORPHAN_AFTER`] | `Orphaned { last_state }` |
-//! | 3 | `blocked` | any | any | any | | `Blocked { waiting_for }` |
-//! | 4 | any | any | any | `waiting` | | `Blocked { waiting_for }` |
-//! | 5 | any | any | any | any | `waitingFor` present | `Blocked { waiting_for }` |
-//! | 6 | any | any | any | `busy` | | `Running` |
-//! | 7 | any | any | any | `idle` | | `Idle` |
-//! | 8 | `working` | any | any | absent | | `Running` (the pre-process row after `--bg`) |
-//! | 9 | anything else | | | | unknown `state` or `status` value | `Unknown` |
+//! `background` rows. `state` describes the turn, not the process: a session whose turn ended is
+//! `state=done, status=idle` on a live pid (m1/7). So liveness comes from `pid` first.
 //!
-//! Row 2 exists because a dead process can leave its row marked `working`/`blocked`; such a
+//! | # | `pid` | `state` | `status` | other | health |
+//! |---|---|---|---|---|---|
+//! | B1 | present | any | `waiting` | | `Blocked { waiting_for }` |
+//! | B2 | present | any | any | `waitingFor` present | `Blocked { waiting_for }` |
+//! | B3 | present | `blocked` | absent | | `Blocked { waiting_for }` |
+//! | B4 | present | any | `busy` | | `Running` |
+//! | B5 | present | any | `idle` | | `Idle` |
+//! | B6 | present | `done` or `stopped` | absent | | `Idle` |
+//! | B7 | present | `working` | absent | | `Running` (pid up, status not yet written) |
+//! | B8 | present | anything else | | | `Unknown` |
+//! | B9 | absent | `done` or `stopped` | any | | `Stopped` |
+//! | B10 | absent | live state | any | age > [`ORPHAN_AFTER`] | `Orphaned { last_state }` |
+//! | B11 | absent | `working` | any | | `Running` (the pre-process row after `--bg`) |
+//! | B12 | absent | `blocked` | any | | `Blocked { waiting_for }` |
+//! | B13 | absent | anything else | | | `Unknown` |
+//!
+//! B10 exists because a dead process can leave its row marked `working`/`blocked`; such a
 //! session must not reach the inbox, where Attach would target a process that is gone. Its
-//! threshold keeps row 8 alive: m0/2 measured the legitimate no-pid `working` row for ~1.8 s.
+//! threshold keeps B11 alive: m0/2 measured the legitimate no-pid `working` row for ~1.8 s.
+//!
+//! Every other `kind` (interactive rows carry `status` and `pid`, no `state`):
+//!
+//! | # | `state` | `status` | other | health |
+//! |---|---|---|---|---|
+//! | I1 | `stopped` or `done` | any | | `Stopped` |
+//! | I2 | `blocked` | any | | `Blocked { waiting_for }` |
+//! | I3 | any | `waiting` | | `Blocked { waiting_for }` |
+//! | I4 | any | any | `waitingFor` present | `Blocked { waiting_for }` |
+//! | I5 | any | `busy` | | `Running` |
+//! | I6 | any | `idle` | | `Idle` |
+//! | I7 | `working` | absent | | `Running` |
+//! | I8 | anything else | | unknown `state` or `status` value | `Unknown` |
 
 mod assign;
 mod cli;

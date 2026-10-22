@@ -17,8 +17,8 @@ use foreman_term::{
 };
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
-    AnyElement, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, Hsla, KeyDownEvent,
-    Pixels, Render, SharedString, Window, canvas, div, prelude::*, px,
+    AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, Hsla,
+    KeyDownEvent, Pixels, Render, SharedString, Window, canvas, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
@@ -26,6 +26,10 @@ use util::paths::PathStyle;
 use crate::fleet::{self, SessionRow, Tree};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
+/// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
+/// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
+pub const DETACH_INPUT: &[u8] = b"\x1a";
+pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
 const LEFT_WIDTH: Pixels = px(460.);
 
 /// Window-space bounds of clickable things, keyed by the same string as their element id, as of
@@ -43,6 +47,17 @@ pub enum TabKind {
     Shell,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Detach {
+    None,
+    /// Close was asked for before the terminal started; the detach runs once it has.
+    Pending,
+    Detaching,
+    /// `claude attach` did not exit within [`DETACH_WITHIN`]. The tab and its process are left as
+    /// they are: nothing is killed that could hold the session.
+    Failed,
+}
+
 pub struct Tab {
     pub id: u64,
     pub title: String,
@@ -50,6 +65,7 @@ pub struct Tab {
     pub terminal: Option<Entity<Terminal>>,
     pub error: Option<String>,
     pub exited: bool,
+    pub detach: Detach,
 }
 
 pub struct FleetView {
@@ -69,6 +85,9 @@ pub struct FleetView {
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
+    window: AnyWindowHandle,
+    /// The window was asked to close while Attach tabs were open; it closes once they detached.
+    quitting: bool,
 }
 
 struct Refresh {
@@ -95,6 +114,10 @@ impl FleetView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            this.update(cx, |this, cx| this.should_close(cx)).unwrap_or(true)
+        });
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
             let checked = executor.spawn(async { check_supported() }).await;
@@ -141,6 +164,8 @@ impl FleetView {
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
+            window: window.window_handle(),
+            quitting: false,
         }
     }
 
@@ -235,6 +260,7 @@ impl FleetView {
             terminal: None,
             error: None,
             exited: false,
+            detach: Detach::None,
         });
         self.active = Some(id);
         let build = TerminalBuilder::new(
@@ -271,7 +297,12 @@ impl FleetView {
                         })
                         .detach();
                         match this.tab_mut(id) {
-                            Some(tab) => tab.terminal = Some(terminal),
+                            Some(tab) => {
+                                tab.terminal = Some(terminal);
+                                if tab.detach == Detach::Pending {
+                                    this.start_detach(id, cx);
+                                }
+                            }
                             // Closed while it was starting.
                             None => terminal.update(cx, |t, _| t.release_pty_resources()),
                         }
@@ -279,6 +310,9 @@ impl FleetView {
                     Err(error) => {
                         if let Some(tab) = this.tab_mut(id) {
                             tab.error = Some(format!("{error:#}"));
+                            if tab.detach == Detach::Pending {
+                                this.remove_tab(id, cx);
+                            }
                         }
                     }
                 }
@@ -291,8 +325,69 @@ impl FleetView {
         id
     }
 
-    /// Ends the tab's process only. For an attach tab that detaches: the session keeps running.
+    /// A shell tab ends its process. An Attach tab first asks `claude attach` to detach by itself
+    /// ([`DETACH_INPUT`]) and is removed only once that process has exited; see [`Detach`].
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(tab) = self.tab_mut(id) else {
+            return;
+        };
+        let attach = matches!(tab.kind, TabKind::Attach { .. });
+        let started = tab.terminal.is_some();
+        if !attach || tab.exited || (!started && tab.error.is_some()) {
+            self.remove_tab(id, cx);
+            return;
+        }
+        match tab.detach {
+            Detach::Detaching | Detach::Pending => {}
+            Detach::None | Detach::Failed if !started => {
+                tab.detach = Detach::Pending;
+                cx.notify();
+            }
+            Detach::None | Detach::Failed => self.start_detach(id, cx),
+        }
+    }
+
+    fn start_detach(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(tab) = self.tab_mut(id) else {
+            return;
+        };
+        let Some(terminal) = tab.terminal.clone() else {
+            return;
+        };
+        tab.detach = Detach::Detaching;
+        let pid = terminal.update(cx, |t, _| {
+            t.input(DETACH_INPUT);
+            t.pid().map(|p| p.as_u32())
+        });
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let started = Instant::now();
+            loop {
+                let exited = this
+                    .read_with(cx, |this, _| this.tab(id).is_none_or(|t| t.exited))
+                    .unwrap_or(true);
+                if exited || !pid.is_some_and(process_alive) {
+                    this.update(cx, |this, cx| this.remove_tab(id, cx)).ok();
+                    return;
+                }
+                if started.elapsed() > DETACH_WITHIN {
+                    this.update(cx, |this, cx| {
+                        if let Some(tab) = this.tab_mut(id) {
+                            tab.detach = Detach::Failed;
+                        }
+                        this.quitting = false;
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                cx.background_executor().timer(Duration::from_millis(20)).await;
+            }
+        })
+        .detach();
+    }
+
+    fn remove_tab(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(index) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
@@ -306,7 +401,40 @@ impl FleetView {
                 .get(index.min(self.tabs.len().saturating_sub(1)))
                 .map(|t| t.id);
         }
+        if self.quitting && !self.has_attach_tabs() {
+            self.window
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        }
         cx.notify();
+    }
+
+    fn has_attach_tabs(&self) -> bool {
+        self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
+    }
+
+    /// Closing the window with Attach tabs open detaches them first; the window closes when the last
+    /// one is gone, or stays open if one fails.
+    fn should_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.has_attach_tabs() {
+            return true;
+        }
+        self.quitting = true;
+        let ids: Vec<u64> = self
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Attach { .. }))
+            .map(|t| t.id)
+            .collect();
+        for id in ids {
+            self.close_tab(id, cx);
+        }
+        // Tabs whose process had already exited are gone by now.
+        let close = !self.has_attach_tabs();
+        if close {
+            self.quitting = false;
+        }
+        close
     }
 
     fn toggle(&mut self, key: String, cx: &mut Context<Self>) {
@@ -674,6 +802,11 @@ impl FleetView {
             if tab.exited {
                 title.push_str(" (exited)");
             }
+            match tab.detach {
+                Detach::Pending | Detach::Detaching => title.push_str(" (detaching…)"),
+                Detach::Failed => title.push_str(" (detach failed)"),
+                Detach::None => {}
+            }
             bar = bar.child(
                 div()
                     .id(SharedString::from(format!("tab-{id}")))
@@ -731,11 +864,27 @@ impl FleetView {
         );
 
         let active = self.active.and_then(|id| self.tab(id));
+        let status = cx.theme().status().clone();
         let content: AnyElement = match active {
-            Some(Tab { terminal: Some(terminal), .. }) => div()
+            Some(Tab { terminal: Some(terminal), detach, .. }) => div()
                 .size_full()
+                .flex()
+                .flex_col()
                 .bg(colors.terminal_background)
-                .child(term_element::terminal_grid(terminal.clone()))
+                .when(*detach == Detach::Failed, |d| {
+                    d.child(
+                        div()
+                            .p_2()
+                            .bg(status.error_background)
+                            .text_sm()
+                            .text_color(status.error)
+                            .child(SharedString::from(format!(
+                                "Detach failed: claude attach did not exit within {} s of Ctrl+Z. Nothing was killed and the session was not touched. Close the tab to try again.",
+                                DETACH_WITHIN.as_secs()
+                            ))),
+                    )
+                })
+                .child(div().flex_1().min_h_0().child(term_element::terminal_grid(terminal.clone())))
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
             Some(_) => placeholder("starting…".into(), cx),
@@ -785,4 +934,26 @@ impl Render for FleetView {
             .child(self.render_left(cx))
             .child(self.render_right(cx))
     }
+}
+
+#[cfg(windows)]
+pub fn process_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(handle, &mut code).is_ok();
+        let _ = CloseHandle(handle);
+        ok && code == STILL_ACTIVE.0 as u32
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_alive(_pid: u32) -> bool {
+    false
 }
