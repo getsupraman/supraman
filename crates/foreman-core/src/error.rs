@@ -1,0 +1,49 @@
+use std::path::PathBuf;
+
+pub type Result<T> = std::result::Result<T, CoreError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CoreError {
+    #[error("invalid platform name '{0}': use lowercase letters, digits and '-' only")]
+    InvalidName(String),
+    #[error("platform '{0}' already exists (use --force to replace it)")]
+    AlreadyExists(String),
+    #[error("platform '{0}' not found")]
+    NotFound(String),
+    #[error("not a directory: {}", .0.display())]
+    NotADirectory(PathBuf),
+    #[error("cannot locate the Foreman home: set FOREMAN_HOME or APPDATA")]
+    NoHome,
+    #[error("{}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{}: {source}", path.display())]
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    #[error("cannot serialize platform '{name}': {source}")]
+    Serialize {
+        name: String,
+        source: toml::ser::Error,
+    },
+}
+
+impl CoreError {
+    /// True when the caller asked for something wrong; false when the disk or environment failed.
+    pub fn is_user_error(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidName(_) | Self::AlreadyExists(_) | Self::NotFound(_) | Self::NotADirectory(_)
+        )
+    }
+
+    pub(crate) fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+        Self::Io {
+            path: path.into(),
+            source,
+        }
+    }
+}

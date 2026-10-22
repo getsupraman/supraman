@@ -451,3 +451,16 @@ only setup changed:
   `test_kill_active_task_on_completed_task_is_noop` — `kill_active_task` is task mode, not vendored.
 - On Windows 110 tests run, all pass: 53 of the 58 (5 are `cfg`'d to unix/linux/macos upstream), 40 from
   hyperlinks (35 of the 37 + 5 `#[perf]` benchmarks that are tests too), 17 pre-existing.
+
+## 2026-10-22 — m1/3 foreman-core registry + scanner, `fm platform`
+
+- `fm platform add P:/Projects/Magic/Nomos --dry-run` → 13 repos, exactly the PLAN list; the four
+  `*.worktrees`, `y_legacy`, `.local-nuget`, `.claude` are not listed. `%APPDATA%\Foreman` did not exist before
+  or after. Branches read from `.git/HEAD`: main ×7, master ×4, `stage` (Nomos), `production` (Nomos.Extract).
+  CLAUDE.md in 8 of 13, AGENTS.md in 3.
+- Deps all already in `Cargo.lock`: `serde 1.0.229`, `toml 0.9.8`, `thiserror 2.0.17`, `chrono 0.4.42`
+  (`now`+`serde`, no default features), dev `tempfile 3.27.0`. No `clap` in the lock → `fm` parses args by
+  hand. Lock diff: +2 packages (`foreman-core`, `fm`), no version changed.
+- On Windows a directory's mtime read through `read_dir` metadata can change between two reads with nothing
+  written (NTFS refreshes the parent's cached copy lazily); a "scan writes nothing" test must compare file
+  contents/mtimes and the directory set, not directory mtimes.

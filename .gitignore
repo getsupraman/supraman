@@ -4,3 +4,4 @@ target/
 target-load/
 target-bin/
 spikes/term-spike/commit-msg.txt
+crates/fm/commit-msg.txt
