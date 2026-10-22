@@ -523,3 +523,26 @@ Measured with `target/release/foreman.exe --selftest` / `--selftest-perf` (CLI 2
   extra terminal (alacritty grid + scrollback in our process; the pwsh children are not counted).
 - Painter moved to `crates/foreman-ui` (needs Zed `theme`, which foreman-term deliberately does not). Lock diff
   +2 packages (`foreman-ui`, `foreman-app`), no version changed; no new external dependency.
+
+## 2026-10-22 — m1/6 selftest repo discovery; the cold-start frame hitch
+
+- **`foreman --selftest` failed from the main checkout** (controller's M1 integrated gate, master c9ce10a):
+  `FAIL setup: scan of P:\Projects found no AutoWork repo`, exit 1. The platform root was `workspace_root()`'s
+  grandparent, which is only right for `<root>/AutoWork.worktrees/<unit>`; from `<root>/AutoWork` it is
+  `P:\Projects`. It had passed only in the m1-5 worktree. → Fix: walk up from `workspace_root()` to the nearest
+  `.git` with `foreman_claude::main_repo` (was the private `worktree_main` in `assign.rs`, now public and
+  case-preserving): a `.git` directory is the main repo, a `.git` file's `gitdir: <repo>/.git/worktrees/<n>`
+  (relative or absolute) points at it. Platform root = its parent, expected repo = its folder name. No `.git`
+  at or above → a setup error naming the path. The launch cwd is still `<workspace>/target/selftest-cwd`.
+  From this worktree: `platform larchsys = P:/Projects/LarchSys (13 repos)`, session listed under
+  `./AutoWork`, PASS. The main-checkout run is the controller's post-merge gate.
+- **Cold-start hitch**: two frames of ~880–900 ms were seen, each on the **first** run of a freshly built exe
+  (M0 integrated gate: term-spike, 896 ms; M1 integrated gate on master c9ce10a). Over ~30 warm runs:
+  0 frames over 50 ms. Suspected: Defender scanning the new exe (or a DLL it maps) on first
+  launch, or GPU shader-cache warm-up for a new binary; **neither is proven**. Not seen in m1/6's own first runs
+  of fresh builds (foreman max 27.89 ms, term-spike max 19.75 ms), so it is not every first run.
+  → Both selftests now print the worst frame's time in ms since process start (`foreman_ui::process_start()`,
+  taken first thing in `main`): foreman `max 27.89 ms (at +8975 ms since process start)`; term-spike
+  `worst: 19.7 ms at +7496 ms (+9536 ms since process start)`. A hitch at a few seconds after start on a first
+  run reads as cold start; one late in the window, or on a warm run, as load. Note foreman's frame window opens
+  ~9 s after start (after attach/detach), so a hitch in the first seconds is outside it.

@@ -78,7 +78,7 @@ fn shell_for(mode: &Mode) -> util::shell::Shell {
     }
 }
 
-use foreman_ui::{FrameProbe, init_globals, memory, mib, percentile, term_element};
+use foreman_ui::{FrameProbe, init_globals, memory, mib, ms_since_start, percentile, term_element};
 
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
@@ -173,6 +173,7 @@ fn kill_tree(child: &mut Child) {
 }
 
 fn main() {
+    foreman_ui::process_start();
     let mode = parse_args();
     foreman_ui::init_logger();
     println!("terminal: foreman-term");
@@ -395,18 +396,19 @@ async fn selftest(
         None => None,
     };
 
-    let timed: Vec<(f64, f64)> = frames
+    let timed: Vec<(f64, f64, f64)> = frames
         .windows(2)
         .map(|w| {
             (
                 (w[1] - w[0]).as_secs_f64() * 1000.0,
                 (w[0] - load_started).as_secs_f64() * 1000.0,
+                ms_since_start(w[1]),
             )
         })
         .collect();
     let mut worst = timed.clone();
     worst.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut intervals: Vec<f64> = timed.iter().map(|(ms, _)| *ms).collect();
+    let mut intervals: Vec<f64> = timed.iter().map(|(ms, _, _)| *ms).collect();
     intervals.sort_by(|a, b| a.total_cmp(b));
 
     match load_build_running {
@@ -438,7 +440,9 @@ async fn selftest(
         worst
             .iter()
             .take(3)
-            .map(|(ms, at)| format!("{ms:.1} ms at +{at:.0} ms"))
+            .map(|(ms, at, since_start)| {
+                format!("{ms:.1} ms at +{at:.0} ms (+{since_start:.0} ms since process start)")
+            })
             .collect::<Vec<_>>()
             .join(", ")
     );

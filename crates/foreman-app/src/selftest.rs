@@ -1,10 +1,11 @@
 //! `--selftest` (the M1 gate) and `--selftest-perf`.
 //!
 //! Both run against a scratch `FOREMAN_HOME` under `<workspace>/target/` holding one platform: a
-//! read-only scan of the folder that contains this repo (P:/Projects/LarchSys → `larchsys`). The
-//! gate also launches one `fm-selftest-<hex>` background session with its cwd in
-//! `<workspace>/target/selftest-cwd`: inside this already-trusted worktree, so `assign` has to map it
-//! through the worktree's `.git` file to the main repo. [`cleanup`] stops and removes that session
+//! read-only scan of the folder that contains the main repo, found through the nearest `.git` above
+//! the workspace (P:/Projects/LarchSys → `larchsys`, from the main checkout or any linked worktree).
+//! The gate also launches one `fm-selftest-<hex>` background session with its cwd in
+//! `<workspace>/target/selftest-cwd`: inside the already-trusted tree the exe was built in, so from a
+//! worktree `assign` has to map it through the worktree's `.git` file to the main repo. [`cleanup`] stops and removes that session
 //! (by the id of the `agents --json --all` row carrying its name) and deletes the scratch dirs on
 //! every exit path: normal end, failure, watchdog, panic. The panel also shows the user's real
 //! sessions in those repos; the selftest only ever acts on its own row, by name.
@@ -12,12 +13,12 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, MutexGuard, atomic::Ordering},
+    sync::{Mutex, MutexGuard, OnceLock, atomic::Ordering},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Session, check_supported, list_sessions, now_ms};
+use foreman_claude::{Session, check_supported, list_sessions, main_repo, now_ms};
 use foreman_core::{DEFAULT_DEPTH, Platform, Registry, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
@@ -33,7 +34,6 @@ use crate::{
 };
 
 pub const PLATFORM: &str = "larchsys";
-pub const REPO: &str = "AutoWork";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
 const LISTED_WITHIN: Duration = Duration::from_secs(15);
 const RENDERED_WITHIN: Duration = Duration::from_secs(10);
@@ -45,10 +45,27 @@ struct Scratch {
 
 static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
 static SESSION_NAME: Mutex<Option<String>> = Mutex::new(None);
+/// The main repo's folder name, the row the gate expects its session under.
+static REPO: OnceLock<String> = OnceLock::new();
+
+fn repo() -> &'static str {
+    REPO.get().map_or("", String::as_str)
+}
 
 fn workspace_root() -> &'static Path {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.ancestors().nth(2).unwrap_or(manifest)
+}
+
+/// The main repo of the tree `from` lies in: the folder of the nearest `.git` directory, or the repo a
+/// `.git` file's `gitdir:` points into.
+fn find_main_repo(from: &Path) -> anyhow::Result<PathBuf> {
+    main_repo(from).ok_or_else(|| {
+        anyhow!(
+            "no .git directory or worktree .git file (gitdir: <repo>/.git/worktrees/<name>) at or above {}",
+            from.display()
+        )
+    })
 }
 
 fn hex6() -> String {
@@ -112,16 +129,22 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
     unsafe { std::env::set_var("FOREMAN_HOME", &home) };
     std::fs::create_dir_all(&cwd)?;
-    // <root>/AutoWork.worktrees/m1-5 → <root>; the scanner skips `*.worktrees` and finds AutoWork.
-    let platform_root = workspace_root()
-        .ancestors()
-        .nth(2)
-        .ok_or_else(|| anyhow!("{} has no grandparent", workspace_root().display()))?;
+    // <root>/AutoWork or <root>/AutoWork.worktrees/<unit> → main repo <root>/AutoWork → <root>.
+    let main = find_main_repo(workspace_root())?;
+    let platform_root = main
+        .parent()
+        .ok_or_else(|| anyhow!("main repo {} has no parent", main.display()))?;
+    let repo_name = main
+        .file_name()
+        .ok_or_else(|| anyhow!("main repo {} has no folder name", main.display()))?
+        .to_string_lossy()
+        .into_owned();
     let registry = Registry::from_env()?;
     let repos = scan(platform_root, DEFAULT_DEPTH)?;
-    if !repos.iter().any(|r| r.name == REPO) {
-        bail!("scan of {} found no {REPO} repo", platform_root.display());
+    if !repos.iter().any(|r| r.name == repo_name) {
+        bail!("scan of {} found no {repo_name} repo (main repo {})", platform_root.display(), main.display());
     }
+    REPO.set(repo_name).ok();
     let count = repos.len();
     let saved = registry.save(&Platform::new(PLATFORM, platform_root, repos), true)?;
     println!(
@@ -325,7 +348,7 @@ fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {
         .find(|p| p.name == PLATFORM)?
         .repos
         .into_iter()
-        .find(|r| r.name == REPO)?
+        .find(|r| r.name == repo())?
         .sessions
         .into_iter()
         .find(|r| r.session.name == name)
@@ -423,7 +446,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
             let seen = row.map_or("not listed".to_string(), |r| {
                 format!("listed as {} (pid {:?}, attachable {})", r.health, r.session.pid, r.attachable)
             });
-            bail!("step 3: {name} not live under {PLATFORM}/./{REPO} within {} s: {seen}", LISTED_WITHIN.as_secs());
+            bail!("step 3: {name} not live under {PLATFORM}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -443,7 +466,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         bail!("step 3: the panel row's id {id} is not the one id resolved by name from claude agents --json --all: {resolved:?}");
     }
     println!(
-        "step 3: {name} ({id}) listed under {PLATFORM} / ./{REPO} as {} after {} ms",
+        "step 3: {name} ({id}) listed under {PLATFORM} / ./{} as {} after {} ms",
+        repo(),
         row.health,
         opened.elapsed().as_millis()
     );
@@ -590,4 +614,43 @@ fn process_alive(pid: u32) -> bool {
 #[cfg(not(windows))]
 fn process_alive(_pid: u32) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// <temp>/fm-selftest-discovery-<hex>/
+    ///   Root/Repo/.git/                       main checkout
+    ///   Root/Repo.worktrees/abs/.git          file → <abs Repo>/.git/worktrees/abs
+    ///   Root/Repo.worktrees/rel/crates/app    below a .git file → ../../Repo/.git/worktrees/rel
+    ///   Bare/                                 no .git anywhere
+    #[test]
+    fn find_main_repo_from_checkout_worktrees_and_nowhere() {
+        let tmp = std::env::temp_dir().join(format!("fm-selftest-discovery-{}", hex6()));
+        let repo = tmp.join("Root").join("Repo");
+        std::fs::create_dir_all(repo.join(".git").join("worktrees")).unwrap();
+        std::fs::create_dir_all(repo.join("crates").join("foreman-app")).unwrap();
+        let wts = tmp.join("Root").join("Repo.worktrees");
+        std::fs::create_dir_all(wts.join("abs")).unwrap();
+        let abs = format!("gitdir: {}\n", repo.join(".git").join("worktrees").join("abs").display());
+        std::fs::write(wts.join("abs").join(".git"), abs).unwrap();
+        std::fs::create_dir_all(wts.join("rel").join("crates").join("app")).unwrap();
+        std::fs::write(wts.join("rel").join(".git"), "gitdir: ../../Repo/.git/worktrees/rel\n").unwrap();
+        std::fs::create_dir_all(tmp.join("Bare")).unwrap();
+
+        let check = |from: &Path, label: &str| {
+            let main = find_main_repo(from).unwrap_or_else(|e| panic!("{label}: {e:#}"));
+            assert_eq!(main.file_name().unwrap(), "Repo", "{label}: {}", main.display());
+            assert_eq!(main.parent().unwrap().file_name().unwrap(), "Root", "{label}: platform root");
+        };
+        check(&repo.join("crates").join("foreman-app"), ".git dir");
+        check(&wts.join("abs"), "absolute gitdir");
+        check(&wts.join("rel").join("crates").join("app"), "relative gitdir");
+        if main_repo(&tmp).is_none() {
+            let error = find_main_repo(&tmp.join("Bare")).unwrap_err().to_string();
+            assert!(error.contains("no .git") && error.contains("Bare"), "{error}");
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use foreman_core::{Platform, Repo};
 
@@ -36,28 +36,29 @@ pub fn repo_of<'a>(cwd: &Path, platform: &'a Platform) -> Option<&'a Repo> {
     };
     let cwd_norm = norm(cwd);
     by_prefix(&cwd_norm).or_else(|| {
-        let main = worktree_main(cwd)?;
+        let main = norm(&main_repo(cwd)?);
         platform.repos.iter().find(|r| norm(&r.path) == main)
     })
 }
 
-/// Walks up from `dir` to the first `.git`; when it is a file with `gitdir: <repo>/.git/worktrees/<n>`,
-/// returns `<repo>`, normalised. A `.git` directory means a plain repo, not a worktree.
-fn worktree_main(dir: &Path) -> Option<String> {
+/// Walks up from `dir` to the first `.git`. A directory: its folder is the main repo. A file with
+/// `gitdir: <repo>/.git/worktrees/<n>` (relative or absolute): a linked worktree of `<repo>`.
+/// Case is kept; the path is `/`-separated with `.`/`..` folded.
+pub fn main_repo(dir: &Path) -> Option<PathBuf> {
     for ancestor in dir.ancestors() {
         let git = ancestor.join(".git");
         if git.is_dir() {
-            return None;
+            return Some(PathBuf::from(fold(ancestor)));
         }
         if !git.is_file() {
             continue;
         }
         let text = fs::read_to_string(&git).ok()?;
         let gitdir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
-        let mut gitdir = norm(&ancestor.join(gitdir));
+        let mut gitdir = fold(&ancestor.join(gitdir));
         let at = gitdir.rfind("/.git/worktrees/")?;
         gitdir.truncate(at);
-        return Some(gitdir);
+        return Some(PathBuf::from(gitdir));
     }
     None
 }
@@ -66,8 +67,14 @@ fn is_within(dir: &str, root: &str) -> bool {
     dir == root || dir.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// `/`-separated, no trailing `/`, `.`/`..` folded, no `\\?\`; lowercase on Windows.
+/// [`fold`], lowercase on Windows.
 fn norm(path: &Path) -> String {
+    let joined = fold(path);
+    if cfg!(windows) { joined.to_lowercase() } else { joined }
+}
+
+/// `/`-separated, no trailing `/`, `.`/`..` folded, no `\\?\`.
+fn fold(path: &Path) -> String {
     let s = path.to_string_lossy().replace('\\', "/");
     let s = s.strip_prefix("//?/").unwrap_or(&s);
     let mut parts: Vec<&str> = Vec::new();
@@ -81,8 +88,7 @@ fn norm(path: &Path) -> String {
             p => parts.push(p),
         }
     }
-    let joined = parts.join("/");
-    if cfg!(windows) { joined.to_lowercase() } else { joined }
+    parts.join("/")
 }
 
 #[cfg(test)]
@@ -154,6 +160,30 @@ mod tests {
         assert_eq!(repo_name(&wts.join("feat"), &p), Some("Alpha"), "relative gitdir");
         assert_eq!(repo_name(&wts.join("feat").join("deep"), &p), Some("Alpha"), "below a worktree");
         assert_eq!(repo_name(&wts.join("abs"), &p), Some("Alpha"), "absolute gitdir");
+    }
+
+    #[test]
+    fn main_repo_from_git_dir_and_worktree_files() {
+        let (tmp, _) = layout();
+        let plat = tmp.path().join("Plat");
+        let alpha = fold(&plat.join("Alpha"));
+        let found = |dir: &Path| main_repo(dir).map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(found(&plat.join("Alpha")).as_deref(), Some(alpha.as_str()), ".git dir");
+        assert_eq!(found(&plat.join("Alpha").join("src")).as_deref(), Some(alpha.as_str()), "below a .git dir");
+        let wts = plat.join("Alpha.worktrees");
+        assert_eq!(found(&wts.join("abs")).as_deref(), Some(alpha.as_str()), "absolute gitdir");
+        assert_eq!(found(&wts.join("feat").join("deep")).as_deref(), Some(alpha.as_str()), "relative gitdir");
+        assert!(alpha.ends_with("/Plat/Alpha"), "case is kept: {alpha}");
+    }
+
+    #[test]
+    fn main_repo_without_git_is_none() {
+        let (tmp, _) = layout();
+        if main_repo(tmp.path()).is_some() {
+            return; // the temp dir itself lies inside some repo; nothing to assert
+        }
+        assert_eq!(main_repo(&tmp.path().join("Elsewhere")), None);
+        assert_eq!(main_repo(&tmp.path().join("Plat").join("Alpha.worktrees")), None);
     }
 
     #[test]
