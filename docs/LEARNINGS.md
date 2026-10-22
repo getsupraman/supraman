@@ -310,3 +310,28 @@ protobuf codegen in a terminal binary, and ~490 crates / 3.5 min cold builds. B 
 `proto`, `fs`) for ~1 day of work. It keeps `gpui` + `util` + `collections` as git deps and
 `alacritty_terminal` as-is, so it still tracks Zed for the hard parts. Binary size and memory savings
 from B are expected but **not measured**: this spike only measured A.
+
+## 2026-10-22 — controller observations, second half of M0 and the ws run
+
+- **A tool's schema is fixed at session start, like its registration.** After ws/8 added `tree:` to
+  `work_status`, this session's `work_status` still had no such parameter; the live server accepted it
+  over raw JSON-RPC. → Foreman restarts (or respawns) a session after upgrading WorkState if it needs a
+  new parameter, and its own client must not cache tool schemas across a server upgrade.
+- **Parallel units need per-worktree claims** (ws/8, now live): pass `tree:"<worktree path>"` to
+  `work_status(in_progress)`. Paths are case/slash-normalised on Windows and lock server-wide; branch
+  names lock per workspace. Without `tree:` a run allows one in-progress unit.
+- **Back up the store before a migration reaches it.** `docker exec workstate-db-1 pg_dump -Fc` (126 KB
+  for this whole record). In Git Bash set `MSYS_NO_PATHCONV=1`, or `/tmp/...` inside the container is
+  rewritten to a Windows path.
+- **A deferral to `"backlog"` lands inside the same run** and blocks the run's close (WorkState F-06);
+  use a project-level `backlog` run. A run is addressed by `<run>/<run>` when its ref is ambiguous (F-07).
+- **The read side merged same-ref items across runs** (`m0/2` showed `ws/2`'s criteria, evidence, commit;
+  DB rows were right) — fix in flight as ws/10. Until it lands, do not trust `work_get`/`work_tree`
+  detail for refs that repeat across runs; ask the database or keep refs unique per project.
+- **Integrated gate hitch:** one 896 ms frame in the term-spike selftest while a .NET build ran
+  concurrently (earlier max 21–26 ms). Cause unproven; M1's terminal unit measures hitches under external load.
+- **Agents found real bugs outside their brief and stopped to ask** (notes consumed unseen, both-runs
+  assumption resolve, deferral ref collision, a test-signature conflict under C4). Every one was right.
+  The routes in the brief ("STOP and report", "send BLOCKED with the numbers") are what made that safe.
+- **Steering an idle agent into the next adjacent unit** (ws/2 → rule-count cap, ws/3 → ws/4, ws/5 → 6, 7)
+  cost far less than a fresh launch and kept one commit per unit.
