@@ -9,6 +9,7 @@ name = "fm"
 path = "src/main.rs"
 
 [dependencies]
+foreman-claude = { path = "../foreman-claude" }
 foreman-core = { path = "../foreman-core" }
 
 [dev-dependencies]

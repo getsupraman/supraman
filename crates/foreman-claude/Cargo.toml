@@ -1,0 +1,13 @@
+[package]
+name = "foreman-claude"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+foreman-core = { path = "../foreman-core" }
+serde_json = "1.0.151"
+thiserror = "2.0.12"
+
+[dev-dependencies]
+tempfile = "3.27.0"

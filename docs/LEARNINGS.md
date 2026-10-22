@@ -464,3 +464,31 @@ only setup changed:
 - On Windows a directory's mtime read through `read_dir` metadata can change between two reads with nothing
   written (NTFS refreshes the parent's cached copy lazily); a "scan writes nothing" test must compare file
   contents/mtimes and the directory set, not directory mtimes.
+
+## 2026-10-22 — m1/4 `claude agents --json --all` on a busy machine, `fm sessions`
+
+One read of `claude agents --json --all` (CLI 2.1.308, Windows 11), 236 rows; counts only, no names/paths kept.
+
+| `kind` | `state` | `status` | `pid` | `waitingFor` | rows |
+|---|---|---|---|---|---|
+| background | stopped | — | — | — | 115 |
+| background | **done** | — | — | — | 107 |
+| background | working | busy | set | — | 1 |
+| background | blocked | — | — | — | 1 |
+| interactive | — | idle | set | — | 10 |
+| interactive | — | busy | set | — | 2 |
+
+- **Interactive rows have no `id` and no `state`** (all 12). `sessionId`, `name`, `cwd`, `kind`, `startedAt`
+  are on all 236. → `foreman-claude` requires only `sessionId`, `cwd`, `kind`; `id` = `sessionId[..8]` when
+  absent (m0/2: they are equal on background rows); a missing `name` becomes `""`.
+- **`state: done` exists** and is the commonest terminal state after `stopped` (107 rows, no pid/status);
+  m0/2 never produced it. → `SessionState::Done`, health `Stopped`.
+- **A row can stay `state: blocked` after its process is gone** (1 row: no pid, status or waitingFor, started
+  hours earlier). Attaching to it would target a dead process. → `Health::Orphaned { last_state }` for a
+  background `working`/`blocked` row with no pid older than `ORPHAN_AFTER` = 60 s; younger stays `Running`,
+  because m0/2's legitimate pre-process row (working, no pid) lasts ~1.8 s.
+- `fm sessions --platform nomos` (temp `FOREMAN_HOME`, platform from `P:/Projects/Magic/Nomos`, 13 repos):
+  8 non-stopped sessions in 2 repos, 7 interactive idle + the orphaned one, exit 0. The CLI's `where claude`
+  resolves to `claude.exe`, so `Command::new("claude")` works without a shell.
+- Deps: `serde_json 1.0.151` and `thiserror 2.0.17`, both already in `Cargo.lock`; lock diff +1 package
+  (`foreman-claude`), no version changed. Timeout is a `try_wait` poll loop, so no `wait-timeout` crate.
