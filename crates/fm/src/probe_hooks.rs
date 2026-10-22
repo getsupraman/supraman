@@ -38,10 +38,12 @@ const TURN_WITHIN: Duration = Duration::from_secs(480);
 const PROMPT_PARK: &str = "This is an automated probe. Run exactly this one Bash command and nothing else: \
 `echo parked > parked.txt`. Then stop.";
 
-const PROMPT_TAGS: &str = "This is an automated probe. Do not read any file. Look through everything in your context \
-(hook output, system reminders, the conversation summary) for lines that start with FOREMAN-ROLE. Use the Write tool to \
-create the file role-tags.txt in the current directory listing every such line exactly as written, one per line, in the \
-order they appear; if there are none, write NONE. Then stop.";
+/// Answered in the reply text, read back from the transcript: a file is not a reliable channel, because a
+/// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write (m2/2).
+const PROMPT_TAGS: &str = "This is an automated probe. Do not use any tool and do not write any file. Look through \
+everything in your context (hook output, system reminders, the conversation summary) for lines that start with \
+FOREMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
+nothing else; if there are none, reply NONE.";
 
 fn prompt_read(round: usize) -> String {
     let files: Vec<String> = (1..=BIG_FILES).map(|i| format!("big-{round}-{i}.txt")).collect();
@@ -52,10 +54,12 @@ one after another, without summarising them: {}. Then reply with the single word
     )
 }
 
-pub fn run() -> bool {
+/// `repo`: the checkout whose `target/` holds the scratch cwd (default: this build's workspace). The
+/// plugin always comes from this build's workspace, so nothing is written into `repo` outside `target/`.
+pub fn run(repo: Option<PathBuf>) -> bool {
     let claude = Claude::default();
     let hex = hex6();
-    let root = workspace_root().join("target").join(format!("aw-m2-probe-{hex}"));
+    let root = repo.unwrap_or_else(workspace_root).join("target").join(format!("aw-m2-probe-{hex}"));
     let mut fleet = Fleet {
         claude: claude.clone(),
         names: Vec::new(),
@@ -192,13 +196,20 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
         claude.stop(&compact.id).map_err(|e| e.to_string())?;
         wait_until_stopped(claude, &spec_compact.name)?;
         let n = log.of(&compact.session_id).len();
+        let stops = log.of(&compact.session_id).iter().filter(|e| e.event == "Stop").count();
         let out = claude.resume(&compact.session_id, &dir_compact, Some(PROMPT_TAGS)).map_err(|e| format!("resume: {e}"))?;
         println!("compact: resumed for the tag question: {}", out.lines().next().unwrap_or(""));
-        let mut spec_q = spec_compact.clone();
-        spec_q.prompt = PROMPT_TAGS.into();
-        tags = fleet.answer(&spec_q, "role-tags.txt");
-        log.wait(&compact.session_id, Duration::from_secs(10), |es| es.len() > n);
+        let answered = log.wait(&compact.session_id, TURN_WITHIN, |es| es.iter().filter(|e| e.event == "Stop").count() > stops);
         let all = log.of(&compact.session_id);
+        let transcript = all.iter().rev().find_map(|e| e.transcript_path.clone());
+        if answered && let Some(path) = &transcript {
+            tags = last_reply(Path::new(path));
+        }
+        println!(
+            "compact: question turn ended={} | reply read from the transcript {}",
+            yes(answered),
+            transcript.as_deref().unwrap_or("(no transcript_path)")
+        );
         println!(
             "compact: hooks after --bg --resume: {}",
             all[n.min(all.len())..].iter().map(label).collect::<Vec<_>>().join(", ")
@@ -217,8 +228,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
         yes(has(&tag_v3)),
         tags.as_deref().map(|t| t.lines().map(str::trim).collect::<Vec<_>>().join(" / ")).unwrap_or_else(|| "no answer".into())
     );
-    println!("compact: autocompact debug lines:
-{}", autocompact_lines(&debug_log));
+    println!("compact: autocompact debug lines:\n{}", autocompact_lines(&debug_log));
     let row = fleet.row(&spec_compact.name).map(|r| describe(&r)).unwrap_or_default();
     println!("compact row: {row}");
 
@@ -260,6 +270,24 @@ fn manual_compact(setup: &Setup, cwd: &Path, session_id: &str, claude: &Claude, 
     Ok(())
 }
 
+/// The text of the last assistant message in a transcript `.jsonl` that has any.
+pub(crate) fn last_reply(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    text.lines().rev().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        if v.get("type")?.as_str()? != "assistant" {
+            return None;
+        }
+        let parts: Vec<&str> = v["message"]["content"]
+            .as_array()?
+            .iter()
+            .filter(|c| c["type"] == "text")
+            .filter_map(|c| c["text"].as_str())
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n"))
+    })
+}
+
 /// The `autocompact:` lines of the debug log (token counts are redacted there), deduplicated.
 fn autocompact_lines(path: &Path) -> String {
     let text = fs::read_to_string(path).unwrap_or_default();
@@ -275,24 +303,24 @@ fn autocompact_lines(path: &Path) -> String {
 }
 
 /// Every event read so far, per session.
-struct Log {
+pub(crate) struct Log {
     reader: EventReader,
     events: Vec<Event>,
 }
 
 impl Log {
-    fn new(home: &Path) -> Self {
+    pub(crate) fn new(home: &Path) -> Self {
         Self {
             reader: EventReader::new(home),
             events: Vec::new(),
         }
     }
 
-    fn of(&self, session_id: &str) -> Vec<Event> {
+    pub(crate) fn of(&self, session_id: &str) -> Vec<Event> {
         self.events.iter().filter(|e| e.session_id == session_id).cloned().collect()
     }
 
-    fn wait(&mut self, session_id: &str, within: Duration, done: impl Fn(&[Event]) -> bool) -> bool {
+    pub(crate) fn wait(&mut self, session_id: &str, within: Duration, done: impl Fn(&[Event]) -> bool) -> bool {
         let deadline = Instant::now() + within;
         loop {
             self.events.extend(self.reader.poll());
@@ -378,7 +406,25 @@ mod tests {
             notification_type: None,
             trigger: trigger.map(Into::into),
             cwd: String::new(),
+            transcript_path: None,
         }
+    }
+
+    #[test]
+    fn last_reply_is_the_final_assistant_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let lines = [
+            r#"{"type":"user","message":{"role":"user","content":"q"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"old"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"A"},{"type":"text","text":"B"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"x"}]}}"#,
+            r#"{"type":"system","subtype":"x"}"#,
+            "not json",
+        ];
+        fs::write(&path, lines.join("\n")).unwrap();
+        assert_eq!(last_reply(&path).as_deref(), Some("A\nB"));
+        assert_eq!(last_reply(&dir.path().join("missing")), None);
     }
 
     #[test]

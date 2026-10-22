@@ -695,7 +695,8 @@ start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309
 - **`--settings '{"env":{…}}'` reaches hook processes** (FOREMAN_HOME / FOREMAN_ROLE were seen by `fm hook`), as it
   reaches tools (m2/1).
 - **Events observed through the plugin** (all `--bg` unless noted; `fm hook` keeps `ts, event, session_id, name
-  (=session_title), source?, notification_type?, trigger?, cwd` — never `prompt` or `last_assistant_message`):
+  (=session_title), source?, notification_type?, trigger?, cwd, transcript_path?` — never `prompt` or
+  `last_assistant_message`; a reply is read back from `transcript_path` instead):
 
   | Event | When | Kept discriminator | Note |
   |---|---|---|---|
@@ -735,3 +736,37 @@ start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309
   log (its own spawn overhead included; hooks of other plugins took 340–500 ms).
 - Deps: `foreman-core` gains `serde_json` and `sha2` 0.10.9 (both already in the lock, same versions). No new
   external dependency.
+- **Controller's gate from the main checkout (2026-10-23, CLI 2.1.309): `--bg` sessions isolate themselves.**
+  The gate's question turn, run from `P:/Projects/LarchSys/AutoWork/target/…`, did not write `role-tags.txt` in its
+  cwd: it made `.claude/worktrees/role-tags` (branch `worktree-role-tags`, locked), wrote and *committed* the file
+  there, and `claude rm` then kept the row. My runs had passed only because their cwd was in a linked worktree.
+  → The probe now asks for the answer as the reply text and reads it from the Stop/SessionStart payload's
+  `transcript_path` (last assistant text in the `.jsonl`); `transcript_path` joins the kept event fields.
+- **Measured with `fm probe isolation`** (two runs, from cwd = the main checkout; three `--bg` sessions each told to
+  `Write` `iso.txt` into its cwd under `target/` and reply with the path):
+
+  | Launch cwd | Settings | Where it wrote | Row `cwd` while live | `claude rm` |
+  |---|---|---|---|---|
+  | main checkout `target/…/iso-main` | default | `.claude/worktrees/iso-probe/iso.txt` — a worktree it created (name chosen by the model, not `--name`), branch `worktree-iso-probe`, **locked**, 1 commit "probe: add iso.txt" made by the session itself | the worktree | **refused, row + worktree + branch kept**: `kept <id> — its worktree is still at “…\.claude\worktrees\iso-probe” / 39 unpushed commits on “worktree-iso-probe” … discard the worktree and its commits: claude rm <id> --discard-unpushed <sha>@<token>` |
+  | same | `--settings {"worktree":{"bgIsolation":"none"}}` | in its cwd | unchanged | `removed <id>`, nothing left |
+  | linked worktree `AutoWork.worktrees/m2-2/target/…` | default | in its cwd | unchanged | `removed <id>`, nothing left |
+
+  - "39 unpushed" = the session's 1 commit + the 38 commits local `master` has that no remote has: rm counts what
+    exists on no remote, not what is not on the main checkout's HEAD.
+  - The row's `cwd` follows the session into the worktree while it lives and **reverts to the launch cwd once
+    stopped**, so a cleanup cannot find the worktree from a stopped row; rm's refusal names it.
+  - `claude rm <id> --discard-unpushed <sha>@<token>` (copied from the refusal) removed the row, the worktree and the
+    `worktree-*` branch: `removed <id> / worktree: “…\iso-probe”`. It left an empty `.claude/worktrees/` (and
+    `.claude/`) in the main checkout; the probe removes those when empty.
+  - Control: the documented setting `worktree.bgIsolation: "none"` (settings file or `--settings` JSON), no CLI flag.
+    `--worktree [name]` is the opposite (start in a new worktree). Docs (agent-view, "Automatic isolation"): isolation
+    is skipped inside any linked worktree, outside a git repo, and for writes outside the cwd.
+  → For M3 repo-controllers: launch with an explicit choice. Either a Foreman-made linked worktree as cwd (writes
+    stay there; rm is clean), or `bgIsolation:"none"` when the session must edit the checkout itself. Default
+    isolation in a main checkout leaves model-named worktrees with commits that a plain `claude rm` will not delete.
+- `fm probe hooks --root P:/Projects/LarchSys/AutoWork` (binary from the m2-2 worktree, cwd = main checkout, scratch
+  under the main checkout's `target/`): PASS twice, compact turn: PreCompact(auto) +3.5/+6.5 s, SessionStart(compact)
+  +15.4 s, Stop +19.5 s (run 2: +5.9/+11.9/+21.9/+26.4 s); reply v1=no v2=yes v3=yes; no worktree, branch or row left.
+- Probe cleanup (`Fleet::remove`): `stop` → `rm`; on a refusal, rerun with the `--discard-unpushed` argument it names;
+  else remove the worktree it names with `git worktree unlock` + `remove --force --force` + `branch -D worktree-*`,
+  then `rm` again. Only worktrees named by the refusal for the probe's own row are touched.

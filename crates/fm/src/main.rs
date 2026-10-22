@@ -14,7 +14,8 @@ usage:
   fm platform remove <name>
   fm sessions [--platform <name>] [--all]
   fm probe launch
-  fm probe hooks
+  fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
+  fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
   fm plugin install <plugin-dir>  (copies this fm.exe to <plugin-dir>/bin, where the hooks run it)
   fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
 
@@ -22,6 +23,7 @@ mod hook;
 mod plugin;
 mod probe;
 mod probe_hooks;
+mod probe_isolation;
 
 enum Failure {
     Usage(String),
@@ -93,12 +95,22 @@ fn run(args: &[String]) -> Result<(), Failure> {
                 Err(Failure::Probe("the decided token route did not work"))
             }
         }
-        ["probe", "hooks"] => {
+        ["probe", "hooks", rest @ ..] => {
+            let root = probe_root(rest)?;
             check_supported()?;
-            if probe_hooks::run() {
+            if probe_hooks::run(root) {
                 Ok(())
             } else {
                 Err(Failure::Probe("a hook signal was not observed"))
+            }
+        }
+        ["probe", "isolation", rest @ ..] => {
+            let root = probe_root(rest)?;
+            check_supported()?;
+            if probe_isolation::run(root) {
+                Ok(())
+            } else {
+                Err(Failure::Probe("an isolation session did not finish its turn"))
             }
         }
         ["plugin", "install", dir] => {
@@ -112,6 +124,16 @@ fn run(args: &[String]) -> Result<(), Failure> {
         }
         [] => Err(Failure::Usage("missing command".into())),
         _ => Err(Failure::Usage(format!("unrecognised arguments: {}", args.join(" ")))),
+    }
+}
+
+fn probe_root(args: &[&str]) -> Result<Option<PathBuf>, Failure> {
+    match args {
+        [] => Ok(None),
+        ["--root", dir] => std::path::absolute(dir)
+            .map(Some)
+            .map_err(|e| Failure::Usage(format!("--root {dir}: {e}"))),
+        _ => Err(Failure::Usage(format!("unexpected arguments: {}", args.join(" ")))),
     }
 }
 

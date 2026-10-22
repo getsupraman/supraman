@@ -32,6 +32,9 @@ pub struct Event {
     pub trigger: Option<String>,
     #[serde(default)]
     pub cwd: String,
+    /// The session's transcript (`.jsonl`); where its replies can be read back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_path: Option<String>,
 }
 
 impl Event {
@@ -49,6 +52,7 @@ impl Event {
             notification_type: text("notification_type"),
             trigger: text("trigger"),
             cwd: text("cwd").unwrap_or_default(),
+            transcript_path: text("transcript_path"),
         })
     }
 }
@@ -235,6 +239,7 @@ mod tests {
         assert_eq!(e.name, "aw-x");
         assert_eq!(e.source.as_deref(), Some("compact"));
         assert_eq!(e.cwd, r"C:\w");
+        assert_eq!(e.transcript_path.as_deref(), Some("t"));
         let line = serde_json::to_string(&ev(1)).unwrap();
         assert!(!line.contains("SECRET"), "{line}");
         assert!(!line.contains("source") && !line.contains("trigger"), "{line}");
