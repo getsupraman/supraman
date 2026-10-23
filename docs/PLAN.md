@@ -191,7 +191,8 @@ remove`, `fm sessions`. Crates: `foreman-core`, `foreman-claude` (read side), `f
 `foreman-app`, `fm`. Health derives **liveness from the pid**; `state` is the current turn (`done` + live pid =
 idle). Open: the human hand check (backlog 9-d).
 
-**M2 — supervisor — built** (run `m2`, units 1–4; m2/4 awaits the controller's gate and René's hand check).
+**M2 — supervisor — done** (run `m2`, units 1–4; master `dc72158`; gate from the main checkout: 252 tests,
+`--selftest-supervise` 3/3, `--selftest` 2/2, `--selftest-detach 10` 10/10). Open: René's hand check on a real platform.
 Launcher port (`LaunchSpec`, role token in an owner-only `--mcp-config`, `--plugin-dir`), `plugins/foreman` +
 `fm hook` (event log, role re-injection; auto-compact re-injection proven, 6-d), `foreman-supervisor` (pure
 reconcile, restart with backoff, respawn grace, trust-needed, give-up), and in the app: **Start/Stop per
