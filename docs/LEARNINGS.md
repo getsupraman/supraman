@@ -876,3 +876,61 @@ keep the old word because they record what was measured under it.
 - Gate from this worktree: `cargo test --workspace` 258 passed (252 + 6 new), `--selftest` PASS (frame p95
   22.01 ms, max 26.51 ms, 0 > 50 ms; idle 121.2 MiB), `--selftest-supervise` PASS (step b: transcript has
   `FOREMAN-ROLE workspace v690ab65d`), no `fm-selftest*` row left.
+
+## 2026-10-23 — m3/1 the relay
+
+Measured with `crates/foreman-app/diag/relay.ps1` (the relay exactly as Foreman launches it: rendered
+`roles/relay.md`, `--plugin-dir`, `--add-dir <home>/relay/<w>`, `--strict-mcp-config`, auto, `bgIsolation:"none"`;
+messages dropped with `fm send`, answers read from the outbox), `diag/timeline.py` on the transcripts, and
+`foreman.exe --selftest-supervise` step r (CLI 2.1.309, Windows 11, worktree m3-1). Sessions `fm-selftest-<hex>-*`,
+cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and removed.
+
+- **Round trip app → relay → target → relay → app: 11.2–16.8 s** with a target told to answer with the nonce
+  (diag: 14.75 / 15.19 / 14.44 s; 12.74 s and, at minute 34, 11.16 s; `acceptEdits` target 11.79 / 15.85 / 16.76 s;
+  selftest step r through `foreman_core::send` 12.7 and 13.7 s, in the app's Messages 2 s later = one refresh).
+  M0 had 14.0–18.0 s. The gain is the outbound leg only: the `fm inbox` line is the Monitor event itself
+  (in the relay transcript 0.2–0.6 s after the drop), and `SendMessage` follows 1.6–2.1 s later in the same API
+  call; app → target 2.9–3.1 s when the relay is idle (M0: 5.5–6.9 s). Outbound 2 API calls (SendMessage, end
+  turn), inbound 2 (Write, end turn). The rest is the target's own turn (~7–8 s) and the relay's `Write`
+  (~2.5 s from the enqueue to the file).
+- **A turn holds the next message ~3 s after its last text**: the transcript's `stop_hook_summary` comes ~3.1–3.5 s
+  after the turn's last assistant text, and a Monitor event or reply enqueued meanwhile waits for it (rounds 2–3:
+  app → target 6.3–8.1 s when the drop landed while the relay was finishing the previous turn). Hook time is not
+  it: `fm hook Stop` 29–52 ms, the user-scope GitKraken Stop hook (`gk.exe ai hook run`) 298–347 ms — user-scope
+  plugin hooks run in Foreman's sessions too.
+- **Write access to the outbox: `--add-dir <FOREMAN_HOME>/relay/<w>`; nothing parked.** The relay's cwd is the
+  workspace root; `ready.json` and every `msg-NNNN.json` are outside it. In auto mode every `Write` there went
+  through without a prompt (no `blocked` row, no Notification) in all 4 diag relays and in the selftest runs
+  (3 relays each: testbed, c1, c2). The `fm.exe inbox` Monitor command
+  (absolute path, forward slashes, quoted) was accepted the same way. Here `FOREMAN_HOME` was the worktree's
+  `target/…-home`, a sibling of the cwd, not `%APPDATA%\Foreman`; the real path was not tried (C17).
+- **Monitor re-arm works** (diag `-HoldMinutes 33`, relay up 34 min): armed 14:23:43; the expiry notice
+  (`[Monitor expired after …]`) arrived 14:53:43, 30 min 0 s later; the relay re-armed with the same command and
+  rewrote `ready.json` in one turn — Monitor + Write in one API call, 2 calls in all, `ready.json` 3.9 s after the
+  notice. Nothing in the transcript between 14:24:18 and the notice: an armed relay costs zero turns idle. A message
+  dropped at minute 33.7 went through in 11.16 s. → `ready.json`'s mtime is the last arm; the app calls a relay
+  whose `ready.json` is older than 31 min "watcher expired, not re-armed".
+- **Held message: not observed.** A `plan`-mode target (relay in auto): the message was *enqueued* in the target 3 s
+  after each of three drops, no `[Cross-session delivery notice]` and no SendMessage failure reached the relay,
+  but the target never answered: its first turn had written a plan (to `~/.claude/plans/<name>.md` — outside the
+  worktree, left there) and parked on `ExitPlanMode` (`state=blocked`, `waitingFor=permission prompt`) 16 s after
+  launch, so the queued messages wait behind a human. Foreman sees that as the target's Inbox `blocked` row, not
+  as a relay event. `acceptEdits` target: delivered and answered like auto. With M0's `default`: no hold in any
+  mode tried so far.
+- **An idle session can keep `state=working`** (m0/4) and the busy budget counts `fm-` rows with `state=working`:
+  the first two selftest runs failed step f (limit 1) because an idle relay-test target held the only slot —
+  once the selftest's own target, once the diag's target running beside it. Relays themselves are exempt (their
+  rows never count, their launches take no slot); the selftest now stops its target after step r. A non-relay
+  session that idles with `state=working` still blocks the budget — open, for M3's controllers.
+- **Relay launch order**: Start writes the relay first in the desired state; the supervisor launches it before the
+  workspace session in the same tick (selftest: relay `startedAt` 1.6–2.6 s earlier), and relays first on every tick
+  because they skip the cap. `ready.json` 14.5–17.8 s after the Start click. Stop stops the relay after the other
+  wanted sessions of the tick.
+- **Teardown**: `claude stop` ends the relay's `fm.exe inbox` child: 0 watcher processes left after every diag run.
+- Outbox numbering is the relay's: it continues from the highest `msg-*.json` (Glob) after a restart or
+  compaction; `read_outbox` treats a file that does not parse for 5 s as unreadable (shown, with its raw text).
+- Gate from this worktree: `cargo test --workspace` 273 passed (258 + 15 new), `--selftest-supervise` PASS
+  (step b relay 1651 ms before the workspace session; step r `ready.json` 15.3 s after Start, round trip 10.3 s,
+  in Messages with Attach after 11.8 s; step g relay stopped with the rest; 8 rows removed, 0 left),
+  `--selftest` PASS (frame p95 22.36 ms, max 30.36 ms, 0 > 50 ms; idle 121.1 MiB).
+- Deps: `fm` gains `chrono` (in the lock, same version, `alloc` only). No new external dependency.

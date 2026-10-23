@@ -74,13 +74,13 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`workspac
 
 | crate | job |
 |---|---|
-| `foreman-core` | domain types (Workspace, Repo, Session, Role, Health), TOML config, the repo scanner |
+| `foreman-core` | domain types (Workspace, Repo, Session, Role, Health), TOML config, the repo scanner, the relay's files (`relay`: `send`, `read_outbox`, `relay_ready`, the `fm inbox` watcher) |
 | `foreman-claude` | the only code that knows the `claude` CLI: launch, poll `agents --json --all`, `logs`, `stop`, `rm`, `respawn`; version check so a CLI change fails loudly |
 | `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon. m2/3: desired state (`<FOREMAN_HOME>/supervisor/<workspace>.toml`), pure `reconcile`, backoff memory, `Supervisor::tick` over a `Launcher` trait; deps foreman-core + foreman-claude only |
 | `foreman-workstate` | typed client for WorkState REST/SSE; brings the compose stack up on tear-up and checks the MCP registration from each repo's cwd |
 | `foreman-term` | Zed's `terminal` vendored without `settings`/`theme_settings`/`task`/`release_channel` (Variant B, M1) + a grid painter adapted from `terminal_view/src/terminal_element.rs` |
 | `foreman-app` | the gpui application |
-| `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm roster`, `fm inbox` (the relay's watcher) |
+| `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm roster`, `fm inbox` (the relay's watcher), `fm send`, `fm messages` |
 | `plugins/foreman/` | the two skills + `hooks.json`, loaded with `--plugin-dir` so every session runs the version Foreman ships |
 
 ### Terminal — decided: `foreman-term` (Variant B, m1/1)
@@ -134,9 +134,19 @@ Foreman is not a Claude session and cannot call `SendMessage`. The peer-pipe pro
 research (classifier), so: Foreman launches `fm-<p>-relay`, which arms `Monitor` on `fm inbox`; Foreman
 drops `{to, body}` files, the relay sends them with native `SendMessage`, and every message sent *to* the
 relay comes back as an outbox file. Measured: ~6 s app→target, ~14–18 s round trip, ~5 model calls per
-round trip, zero while idle, no held messages across permission modes. To do (M3): the watcher emits the
-JSON itself (saves a turn), re-arm the 30-min Monitor, observe a held message. Controllers reach Foreman
-with `SendMessage("fm-<p>-relay", …)`.
+round trip, zero while idle, no held messages across permission modes. Controllers reach Foreman
+with `SendMessage("fm-<w>-relay", …)`.
+
+Built (m3/1): one relay per workspace, `fm-<w>-relay` (role `relay`, `plugins/foreman/roles/relay.md`), a wanted
+session of the workspace's desired state, launched before `fm-<w>-workspace` on Start and stopped after it on
+Stop; cwd = the workspace root, `--add-dir <FOREMAN_HOME>/relay/<w>`, auto, `--strict-mcp-config` and no
+WorkState; outside the busy budget. Files `<FOREMAN_HOME>/relay/<w>/{inbox,outbox}`: `foreman_core::send` (= `fm send
+<w> <to> <body>`) drops `{to, body}`; the relay's Monitor runs `fm inbox --dir <inbox>`, which prints each drop as
+one JSON line and moves it to `sent/`, and the relay calls `SendMessage` straight from that event; everything
+sent to the relay comes back as `outbox/msg-NNNN.json` (`read_outbox`, `fm messages <w>`); `ready.json` is
+rewritten on every arm. A resumed relay is told to re-arm. The app shows relay health on the workspace row
+(live + armed within 31 min) and a Messages section under the Inbox (sender, time, first lines, click for
+all, Attach to the sender).
 
 ### Data placement
 
@@ -165,7 +175,8 @@ that repo work.
 **Something needs you** — permission park, a `blocked` item with a decision reason, a migration/deploy
 escalation → Inbox row → **Attach** opens `claude attach <id>` in a terminal tab.
 
-**Stop / tear down** — workers → controllers → workspace → relay. Stop before removing a worktree; run
+**Stop / tear down** — workers → controllers → workspace → relay (the supervisor stops a relay after the
+other wanted sessions of the tick). Stop before removing a worktree; run
 `dotnet build-server shutdown` (or the toolchain's equivalent) first and retry the delete after ~3 s — a
 stopped session or a build server holds handles briefly (seen on every unit in M0).
 
@@ -206,6 +217,9 @@ Workspace sessions are `bgIsolation:"none"`; the workspace role is still the M2 
 
 **M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `workspace-controller`, `repo-controller`. First
 end-to-end task on a small test workspace, **not Nomos**.
+Progress: **m3/1 relay — built** (§3 "The mailbox"; `fm inbox`/`send`/`messages`; `--selftest-supervise` step r:
+relay up before the workspace session, `ready.json`, a message through the Rust API answered back into the outbox
+and the app's Messages, Stop stops the relay too). Next: the two skills, then the end-to-end task.
 
 **M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 
