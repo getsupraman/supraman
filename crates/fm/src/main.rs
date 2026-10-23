@@ -37,7 +37,7 @@ enum Failure {
     Usage(String),
     Core(CoreError),
     Claude(ClaudeError),
-    Supervisor(foreman_supervisor::SupervisorError),
+    Supervisor(Box<foreman_supervisor::SupervisorError>),
     Probe(&'static str),
 }
 
@@ -45,7 +45,7 @@ impl From<foreman_supervisor::SupervisorError> for Failure {
     fn from(e: foreman_supervisor::SupervisorError) -> Self {
         match e {
             foreman_supervisor::SupervisorError::Core(e) => Self::Core(e),
-            e => Self::Supervisor(e),
+            e => Self::Supervisor(Box::new(e)),
         }
     }
 }

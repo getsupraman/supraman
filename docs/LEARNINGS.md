@@ -934,3 +934,65 @@ cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and rem
   in Messages with Attach after 11.8 s; step g relay stopped with the rest; 8 rows removed, 0 left),
   `--selftest` PASS (frame p95 22.36 ms, max 30.36 ms, 0 > 50 ms; idle 121.1 MiB).
 - Deps: `fm` gains `chrono` (in the lock, same version, `alloc` only). No new external dependency.
+
+## 2026-10-23 — m3/2 repo sessions on demand, named WorkState sessions, fm inside sessions, busy = busy
+
+Measured with `crates/foreman-app/diag/insession.ps1` (sessions exactly as Foreman launches them: `--plugin-dir
+plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `--settings` env + `bgIsolation:"none"`),
+`diag/busy.ps1` and `foreman.exe --selftest-supervise` step w (CLI 2.1.309, Windows 11, worktree m3-2). Sessions
+`fm-selftest-<hex>-*`, cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and removed.
+
+- **The plugin's `bin/` is on the session's PATH.** An auto session asked to run `where.exe fm` and `fm --version`
+  got `…\m3-2\plugins\foreman\bin\fm.exe` and `fm 0.1.0`, unprompted with its **PowerShell** tool. → Roles call
+  `fm` by name; `{fm}` (the absolute path) still renders for roles that want it.
+- **Allowed-tools form: `Bash(fm:*)` and `Bash(<abs fm, forward slashes>:*)` match; PowerShell rules do not.** In
+  `--permission-mode default` (where an unmatched command parks): `--allowedTools "Bash(<abs fm>:*)"` + `<abs fm>
+  --version` and `"Bash(fm:*)"` + `fm --version` ran without a prompt; the control (no rule, Bash `fm --version`)
+  parked (`state=blocked`, `waitingFor=permission prompt`, Notification 6 s later); `"PowerShell(fm:*)"` and
+  `"PowerShell(fm *)"` with the PowerShell tool parked the same way. → Every launch passes
+  `--allowedTools "Bash(fm:*)" "Bash(<abs fm>:*)"` (`LaunchConfig::allowed_tools`, `supervise::fm_allowed_tools`), and
+  the roles say "with the Bash tool, never PowerShell". Auto mode ran `fm` through PowerShell without a park too, but
+  that is the classifier's call, not a rule.
+- **`claude --bg --session-id <uuid>` does not work**: `warning: --bg manages the session id; ignoring --session-id
+  (use --resume <id> to continue an existing session)`, and the row got a uuid of its own. → `X-WorkState-Session`
+  is left out of the launch config; WorkState keys a session by (workspace, name) anyway (doc 11), and
+  `fm roster --json` has the `sessionId` for whoever needs it.
+- **Busy signal: `status`, not `state`.** `diag/busy.ps1` (the relay selftest's target prompt: answer messages, then
+  wait): launch → `state=working status=idle` with a pid (+2.4 s, before its first prompt) → UserPromptSubmit and
+  `status=busy` in the same 500 ms poll → Stop and **`state=working status=idle`** (the m3/1 case: idle, waiting for
+  messages, `state` still `working`) → a SendMessage from another session: UserPromptSubmit + `status=busy` in the
+  same poll → Stop + `state=done status=idle`. In every insession run `status` flipped busy/idle in the same poll as
+  the UserPromptSubmit/Stop hooks, and was `waiting` while parked. → `foreman_supervisor::mid_turn`: live and
+  `status=busy`; only a live row with no `status` yet (the pid-less row right after `--bg`) falls back to
+  `state=working`. Hooks agree and are not consulted, so `reconcile`/`Budget` still take one snapshot.
+  `Supervisor::starting` now holds a slot through `settle` until the row is mid-turn (a fresh `status=idle`
+  second before the first prompt would otherwise free it). Parked (`status=waiting`) takes no slot.
+- **Named WorkState sessions**: one owner-only `<home>/mcp/workstate-<session name>.json` per session (was per
+  role) with `Authorization` + `X-WorkState-Agent/-Launched-By/-Origin/-Cwd/-Foreman-Role`
+  (`SessionIdentity`, `write_session_mcp_config`; unit-tested shape and ACL with `fake-token`). A resume re-applies
+  the file its launch saved. The check against the real server: see the controller's note below (not run here,
+  no real token).
+- **`fm want <w> <repo> [--prompt-file]` / `unwant` / `roster [--json]`.** `want` adds `fm-<w>-<repo slug>` (role
+  `repo`, cwd = the repo, auto, `bgIsolation:"none"`, prompt = `roles/repo.md` with `{repo}`/`{workspace}` + an
+  optional "First task:"); a repo named `workspace`/`relay` is refused, an unknown one lists the known ones. `unwant`
+  moves the name to the desired state's `retired`: reconcile rule R14 stops a live retired row (before the relay),
+  never launches or resumes it. `roster` = `agents --json --all` rows named `fm-<w>-…` (not those of a registered
+  workspace whose name extends `<w>-`) + wanted sessions without a row, tab-separated or JSON.
+- **The desired-state file has two writers now** (the app's Start/Stop, `fm want/unwant`): `DesiredState::update`
+  re-reads the file before saving and starts over when it changed (≤ 10 times); `save` writes a per-process temp
+  file and retries the rename while the other side has the file open. **Remaining race**: a write landing between
+  the re-read and the rename is lost (milliseconds; the loser's change is not applied, nothing is corrupted).
+- **Selftest step w**: the testbed's repo is a plain dir `<root>/Repo` registered by hand, **not** a `git init`ed
+  one: a `git init`ed dir under `target/` is untrusted (step d is built on exactly that). `fm want` → the supervisor
+  launched `fm-selftest-<hex>-repo` live 5.0 s later; its first task ran `Bash: fm roster selftest-<hex>` itself
+  without a park and replied with its own line; `fm roster` listed `…-repo  repo  idle  <id>  <cwd>`; `fm unwant` →
+  stopped 2.2 s later, not resumed 5 s after.
+- `extra_plugin_dirs` (`settings.toml`) go to every launch as more `--plugin-dir` after Foreman's own, re-read every
+  tick; the settings window's new "Plugins" page lists them read-only (warns when a dir has no
+  `.claude-plugin/plugin.json`). The selftests run without any.
+- Gate from this worktree: `cargo test --workspace` 288 passed (274 + 14), `--selftest-supervise` PASS (step b relay
+  1550 ms before the workspace session; step w as above; step f max 1 working over 26 polls, the second live only
+  after the first idled; 9 rows removed, 0 left), `--selftest` PASS (frame p95 21.38 ms, max 24.36 ms, 0 > 50 ms;
+  idle 121.2 MiB).
+- Deps: `fm` gains `foreman-supervisor` (path); `foreman-app` gains `serde_json` (in the lock, same version). No new
+  external dependency.

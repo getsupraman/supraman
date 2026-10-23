@@ -1650,6 +1650,7 @@ dependencies = [
  "foreman-ui",
  "gpui",
  "gpui_platform",
+ "serde_json",
  "tempfile",
  "theme",
  "util",

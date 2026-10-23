@@ -80,7 +80,7 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`workspac
 | `foreman-workstate` | typed client for WorkState REST/SSE; brings the compose stack up on tear-up and checks the MCP registration from each repo's cwd |
 | `foreman-term` | Zed's `terminal` vendored without `settings`/`theme_settings`/`task`/`release_channel` (Variant B, M1) + a grid painter adapted from `terminal_view/src/terminal_element.rs` |
 | `foreman-app` | the gpui application |
-| `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm roster`, `fm inbox` (the relay's watcher), `fm send`, `fm messages` |
+| `fm` (bin) | tiny CLI hooks and sessions call: `fm hook <event>`, `fm want`, `fm unwant`, `fm roster`, `fm inbox` (the relay's watcher), `fm send`, `fm messages` |
 | `plugins/foreman/` | the two skills + `hooks.json`, loaded with `--plugin-dir` so every session runs the version Foreman ships |
 
 ### Terminal — decided: `foreman-term` (Variant B, m1/1)
@@ -98,11 +98,21 @@ Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothin
 
 - Names are the address and the join key: `fm-<workspace>-workspace`, `fm-<workspace>-<repo>`,
   `fm-<workspace>-<repo>-<unit>`, `fm-<workspace>-relay`. The app filters `agents --json --all` by prefix.
-- Every session is launched with `--mcp-config <FOREMAN_HOME>/mcp/workstate-<role>.json --strict-mcp-config`
-  (controller / orchestrator / worker). The file holds the role's token, is created owner-only (one ACE: the
-  user, full control) before it is filled, and only its path appears in argv and in the daemon's `roster.json`
-  (`LaunchSpec::with_role_token`). M0 found that nested sessions otherwise inherit the user-scope registration —
-  a worker could write evidence as the controller. Env on `claude --bg` never reaches the session, and
+- Every session is launched with `--mcp-config <FOREMAN_HOME>/mcp/workstate-<session name>.json --strict-mcp-config`
+  (m3/2; one file per session, was per role). The file holds the role's token (workspace → controller, repo →
+  orchestrator, unless the role has its own line) and the session's WorkState identity headers
+  (`X-WorkState-Agent: <name>`, `-Launched-By: foreman/<w>`, `-Origin: foreman/<w>[/<repo>]`, `-Cwd`,
+  `-Foreman-Role`; Skills `docs/workstate/11-sessions.md`); no `X-WorkState-Session`, because `--bg` ignores
+  `--session-id` and the uuid is unknown at launch. It is created owner-only (one ACE: the user, full control)
+  before it is filled, and only its path appears in argv and in the daemon's `roster.json`
+  (`LaunchSpec::with_session_token`); a resume re-applies it. M0 found that nested sessions otherwise inherit
+  the user-scope registration — a worker could write evidence as the controller.
+- Repo sessions start on demand: `fm want <w> <repo> [--prompt-file]` adds `fm-<w>-<repo slug>` (role `repo`,
+  cwd = the repo, auto, `bgIsolation:"none"`) to the desired state, `fm unwant` retires it (stopped, never rm),
+  `fm roster <w> [--json]` lists the workspace's sessions. Controllers run `fm` themselves: the plugin's `bin/`
+  is on the session's PATH and every launch passes `--allowedTools "Bash(fm:*)" "Bash(<abs fm>:*)"`.
+- `settings.toml` `extra_plugin_dirs` are passed as more `--plugin-dir` after Foreman's own (the rlarch plugin
+  for `/rlarch:controller`). Env on `claude --bg` never reaches the session, and
   `--settings` env persists the value in `~/.claude/daemon/roster.json`, so no env-var route (m2/1).
 - Every session is launched with `--plugin-dir` pinned to Foreman's skills (the installed rlarch plugin
   lagged the branch by a major version).
@@ -219,7 +229,10 @@ Workspace sessions are `bgIsolation:"none"`; the workspace role is still the M2 
 end-to-end task on a small test workspace, **not Nomos**.
 Progress: **m3/1 relay — built** (§3 "The mailbox"; `fm inbox`/`send`/`messages`; `--selftest-supervise` step r:
 relay up before the workspace session, `ready.json`, a message through the Rust API answered back into the outbox
-and the app's Messages, Stop stops the relay too). Next: the two skills, then the end-to-end task.
+and the app's Messages, Stop stops the relay too). **m3/2 repo sessions — built** (§3 "Session identity":
+`fm want|unwant|roster`, one WorkState config per session with identity headers, extra plugin dirs, `fm` from inside
+sessions, the busy budget counts `status=busy` only; `--selftest-supervise` step w). Next: the two skills (m3/3),
+then the end-to-end task.
 
 **M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 
