@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use foreman_claude::{Claude, LaunchSpec};
 
-use crate::plugin;
 use crate::probe::{Fleet, claude_worktree, git, hex6, mkdir, wait_until_stopped, workspace_root, yes};
 use crate::probe_hooks::{Log, last_reply};
 
@@ -60,7 +59,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, repo: Option<PathBuf>, hex: &str) -
     println!("main checkout {} | this build's checkout {}", main.display(), linked.display());
     let plugin = linked.join("plugins").join("foreman");
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    plugin::install(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
+    foreman_core::install_hook_exe(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
     let home = mkdir(&linked.join("target").join(format!("aw-m2-probe-{hex}")), "home")?;
 
     let spec = |label: &str, repo: &Path, settings: serde_json::Value| -> Result<LaunchSpec, String> {

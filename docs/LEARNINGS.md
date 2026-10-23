@@ -770,3 +770,62 @@ start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309
 - Probe cleanup (`Fleet::remove`): `stop` → `rm`; on a refusal, rerun with the `--discard-unpushed` argument it names;
   else remove the worktree it names with `git worktree unlock` + `remove --force --force` + `branch -D worktree-*`,
   then `rm` again. Only worktrees named by the refusal for the probe's own row are touched.
+
+## 2026-10-23 — m2/4 supervisor in the app
+
+Measured with `crates/foreman-app/diag/kill.ps1`, `diag/resume.ps1` and `target/release/foreman.exe
+--selftest-supervise` (CLI 2.1.309, Windows 11, worktree m2-4). Sessions `fm-selftest-…`, cwd under the
+worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolation":"none"}}`; every row removed.
+
+- **A killed session's pid leaves its row at once**: after `taskkill /PID <row pid> /F` (the
+  `claude.exe --session-id <id>` process only) the row had no pid 0.67–0.8 s later, in all 3 diag runs and
+  all `--selftest-supervise` runs (0 polls ever showed the dead pid). → `is_live` can keep trusting `pid`; no
+  process-alive filter before `tick` (`process_alive` stays in `view.rs`).
+- **The daemon respawns a session killed mid-turn by itself**: killed while `state=working` (a `sleep 150`
+  Bash turn, 70 s old) or `state=blocked status=idle` (m1/7's odd state) → ~12 s later the same row had a new
+  pid (`working`/`idle`), no resume issued. Killed while `state=done status=idle` → stays `done`, no pid, for
+  60 s+ (not respawned).
+- **A resume too soon after the death of an idle session starts a copy.** `claude --bg --resume <sessionId>`
+  1 s or 5 s after the kill: `note: session <id8> is already running in the background, so this started a copy
+  as <new id8>` — a second row **with the same name** (= `Duplicate` in reconcile). 10, 20, 30 s after: `note:
+  woke session <id8> with its saved options (--name, --permission-mode, --strict-mcp-config, --settings)`, same
+  row. After `claude stop` (not a kill) it wakes at once (m2/1). → Reconcile rule **R13**: a wanted row that
+  was seen alive less than `respawn_grace` (30 s) ago is not resumed yet (`Wait(Respawn)`), whatever its
+  `state`. And a resume whose stdout says `backgrounded · <other id8>` is recorded as a failure ("started a
+  copy"), never as a start.
+- **Right after `--bg --resume` the row shows a transient `sessionId`** with the new pid (e.g.
+  `327a1c87-…` for session `b91b6265-…`), back to the session's own ~5 s later; `id` stays. Every run of step c
+  saw it. Match a resumed row by `id`, or wait 5 s before reading its `sessionId`.
+- `--bg --resume` with no prompt fires no hook until a prompt arrives (no SessionStart(resume) within 30 s).
+- **Shared busy budget** (René, 2026-10-22: "a setting in the app, shared across platforms"):
+  `settings.toml` `max_working` (default 3), the `busy ≤ − N +` stepper in the left header, re-read every tick.
+  `foreman_supervisor::tick_all(supervisors, snapshot, max_working, now)` ticks every platform on one snapshot
+  in turn with one `Budget`: `max` − live `fm-` rows with `state=working` − wanted sessions still settling after
+  a start (`Supervisor::starting`); each launch/resume that succeeds takes a slot. `reconcile` gets the free
+  slots as a parameter (`Policy::max_working` is gone). Step f, 3 runs: limit 1, two platforms started → max 1
+  working; the second went live 1.9–2.7 s after the first one's turn ended (first idle 9.6–13.1 s).
+- **Trust**: Start on a `git init`ed dir → `TrustNeeded` Inbox row 6.7–8.4 s after the click, no row created.
+  Run in terminal opens pwsh there and types `claude` without Enter once the shell's output has been still for
+  500 ms — this profile's prompt is `<dir> (master) >`, no `PS `, and PSReadLine draws a history prediction
+  after the typed text (`claude attach 6c08e610`), which is display only.
+- **Park**: a wanted session with `--permission-mode default` told to run one Bash command → Inbox `blocked`
+  (`waiting for permission prompt`) with Attach; its hook log's last event was Notification(permission_prompt)
+  35–45 s before the row was read. The platform session itself is `auto` (`WantedSession::permission_mode`,
+  default `auto`), so the selftest's park is a separate wanted session of the testbed platform.
+- **Role re-injection per platform**: one `<FOREMAN_HOME>/roles/platform.md` (the template from
+  `plugins/foreman/roles`, written at app start) serves every platform: `fm hook` fills `{platform}` from
+  `FOREMAN_PLATFORM`, passed with `FOREMAN_HOME`/`FOREMAN_ROLE` in `--settings {"env":…}`. Step b found the
+  rendered tag (`FOREMAN-ROLE platform v<sha8>`) in the session's transcript after SessionStart(startup), 3/3.
+- **Start → live**: 4.9–5.3 s from the click to a row with pid (one 2 s refresh, `Claude::launch`'s name check
+  + `--bg`, then the pid). Stop → both testbed rows without pid 6.7–6.8 s after the click, rows kept.
+- **fm.exe at start**: the app finds `plugins/foreman` by walking up from `foreman.exe` and copies the `fm.exe`
+  built beside it into `plugins/foreman/bin/` (`foreman_core::install_hook_exe`, moved from `fm`); a missing
+  `fm.exe` is a notice, sessions then launch without hooks.
+- **Tokens**: `settings.toml` `workstate_env` (+ `workstate_url`, default `http://localhost:5290/mcp`);
+  `AppTokens` reads `WORKSTATE_<ROLE>_TOKEN` from that file at launch time (unit-tested on a fake file). Unset or
+  unreadable → `--strict-mcp-config` and no WorkState server; every supervised launch is strict. The selftest
+  ran with no `workstate_env`.
+- Gate from this worktree: `--selftest-supervise` 3/3 PASS, `--selftest` 2/2 PASS (frame p95 19.83–19.86 ms,
+  max 23.92–26.22 ms, 0 > 50 ms; idle 120.4–120.8 MiB), `--selftest-detach 10` 10/10.
+- Deps: `foreman-supervisor` gains `serde_json` (in the lock, same version); `foreman-app` gains
+  `foreman-supervisor` and dev `tempfile`. No new external dependency.

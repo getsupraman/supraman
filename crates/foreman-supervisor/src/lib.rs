@@ -21,12 +21,21 @@
 //! | R10 | yes | 0, or 1 not live | started < `settle` ago | `Wait(Settling)` | `just_started_waits_to_settle_instead_of_launching_again` |
 //! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |
 //! | R2 | yes | 0 | | `Launch` | `absent_is_launched` |
+//! | R13 | yes | 1 not live | alive < `respawn_grace` (30 s) ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn, and a resume while it still counts a dead one running starts a copy (m2/4) | `a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace` |
 //! | R3 | yes | 1 not live (stopped, done, orphaned) | | `Resume` from the row's cwd | `stopped_or_orphaned_is_resumed_from_its_own_cwd` |
 //!
-//! Then the cap (R11, R12): `fm-` rows that are live with `state=working` each take a slot of
-//! [`Policy::max_working`]; Resumes take the free slots before Launches, each in desired order;
-//! the rest become `Wait(Cap)`. Tests `cap_counts_working_fm_sessions_and_defers_the_rest`,
-//! `resumes_take_slots_before_launches`. Rows whose name is not wanted are never touched.
+//! Then the cap (R11, R12): `reconcile` gets the free slots of the shared [`Budget`]; Resumes take
+//! them before Launches, each in desired order; the rest become `Wait(Cap)`. Tests
+//! `cap_counts_working_fm_sessions_and_defers_the_rest`, `resumes_take_slots_before_launches`.
+//! Rows whose name is not wanted are never touched.
+//!
+//! # The shared budget
+//!
+//! One `max_working` for all platforms (the human's setting). [`tick_all`] ticks every platform's
+//! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
+//! minus the live `fm-` rows with `state=working`, minus every wanted session still settling after a
+//! start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot. Test
+//! `two_started_platforms_never_exceed_the_shared_budget_together`.
 //!
 //! # Failures
 //!
@@ -35,6 +44,7 @@
 //! `stable_after` (60 s); 60 s alive clears the count. Backoff after failure 1..4: 5 s, 30 s, 2 min,
 //! 10 min; the 5th gives up. A trust refusal is not a counted failure: it waits for Retry.
 
+mod budget;
 mod desired;
 mod error;
 mod executor;
@@ -42,7 +52,10 @@ mod memory;
 mod needs;
 mod reconcile;
 
-pub use desired::{DesiredState, PLATFORM_ROLE, WantedSession, platform_session_name, render_role, role_prompt};
+pub use budget::{Budget, tick_all, working};
+pub use desired::{
+    DEFAULT_PERMISSION_MODE, DesiredState, PLATFORM_ROLE, WantedSession, platform_session_name, render_role, role_prompt,
+};
 pub use error::{Result, SupervisorError};
 pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider};
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};

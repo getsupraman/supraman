@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use foreman_claude::{Claude, LaunchSpec, Session};
 
 use crate::{
-    Action, DesiredState, Failure, Millis, NeedsYou, Policy, SupervisorMemory, WantedSession, is_live, reconcile,
+    Action, Budget, DesiredState, Failure, Millis, NeedsYou, Policy, SupervisorMemory, WantedSession, is_live,
+    reconcile,
 };
 
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
@@ -40,12 +41,40 @@ pub trait TokenProvider {
     fn token(&self, role: &str) -> Option<RoleToken>;
 }
 
-/// Launch options every session of this supervisor gets.
+/// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
+/// session gets the role's WorkState server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
     /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_role_token`] writes the owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
+    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE` and `FOREMAN_PLATFORM`, through
+    /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
+    pub foreman_home: Option<PathBuf>,
+    /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
+    /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
+    pub bg_isolation_none: bool,
+}
+
+impl LaunchConfig {
+    /// The `--settings` JSON for one session, `None` when there is nothing to set.
+    pub fn session_settings(&self, platform: &str, role: &str) -> Option<String> {
+        let mut settings = serde_json::Map::new();
+        if let Some(home) = &self.foreman_home {
+            settings.insert(
+                "env".into(),
+                serde_json::json!({
+                    "FOREMAN_HOME": home.display().to_string(),
+                    "FOREMAN_ROLE": role,
+                    "FOREMAN_PLATFORM": platform,
+                }),
+            );
+        }
+        if self.bg_isolation_none {
+            settings.insert("worktree".into(), serde_json::json!({ "bgIsolation": "none" }));
+        }
+        (!settings.is_empty()).then(|| serde_json::Value::Object(settings).to_string())
+    }
 }
 
 /// One platform's supervisor: desired state + memory, driven by [`Supervisor::tick`].
@@ -86,10 +115,31 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.memory.retry(name);
     }
 
+    /// Wanted sessions started less than `settle` ago that the snapshot does not show live yet: each
+    /// holds a slot of the shared [`Budget`] until it shows.
+    pub fn starting(&self, observed: &[Session], now: Millis) -> usize {
+        if !self.desired.started {
+            return 0;
+        }
+        self.desired
+            .sessions
+            .iter()
+            .filter(|w| {
+                let settling = self
+                    .memory
+                    .get(&w.name)
+                    .and_then(|a| a.started_at)
+                    .is_some_and(|t| now - t < self.policy.settle);
+                settling && !observed.iter().any(|s| s.name == w.name && is_live(s, now))
+            })
+            .count()
+    }
+
     /// `observed` is one fresh `claude agents --json --all`. Observes, reconciles, executes the
     /// launches/resumes/stops, records their results, and returns the Inbox rows as they stand
-    /// after execution (a launch refused for trust shows in the same tick).
-    pub fn tick(&mut self, observed: &[Session], now: Millis) -> Vec<NeedsYou> {
+    /// after execution (a launch refused for trust shows in the same tick). Launches and resumes
+    /// go only while `budget` has free slots; each one that starts takes one.
+    pub fn tick(&mut self, observed: &[Session], budget: &mut Budget, now: Millis) -> Vec<NeedsYou> {
         for w in &self.desired.sessions {
             let mut rows = observed.iter().filter(|s| s.name == w.name);
             let alive = match (rows.next(), rows.next()) {
@@ -98,16 +148,26 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             };
             self.memory.observe(&w.name, alive, &self.policy, now);
         }
-        for action in reconcile(&self.desired, observed, &self.memory, &self.policy, now) {
+        for action in reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now) {
             match action {
                 Action::Launch(w) => {
                     let result = self.launch(&w).map(drop);
+                    if result.is_ok() {
+                        budget.take(1);
+                    }
                     self.memory.record_result(&w.name, result, &self.policy, now);
                 }
                 Action::Resume {
-                    name, session_id, cwd, ..
+                    name, id, session_id, cwd,
                 } => {
-                    let result = self.launcher.resume(&session_id, &cwd).map(drop).map_err(|e| Failure::from(&e));
+                    let result = self
+                        .launcher
+                        .resume(&session_id, &cwd)
+                        .map_err(|e| Failure::from(&e))
+                        .and_then(|out| woke_in_place(&out, &id));
+                    if result.is_ok() {
+                        budget.take(1);
+                    }
                     self.memory.record_result(&name, result, &self.policy, now);
                 }
                 // A failed stop is retried by the next tick: the row is still live.
@@ -117,7 +177,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 Action::Wait { .. } | Action::NeedsYou(_) => {}
             }
         }
-        let needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, now)
+        let needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
             .into_iter()
             .filter_map(|a| match a {
                 Action::NeedsYou(mut n) => {
@@ -135,13 +195,32 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     fn launch(&self, w: &WantedSession) -> Result<String, Failure> {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
+        spec.permission_mode = w.permission_mode.clone();
+        spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
+        if let Some(settings) = self.config.session_settings(&self.desired.platform, &w.role) {
+            spec.extra_args = vec!["--settings".into(), settings];
+        }
         if let Some(t) = self.tokens.token(&w.role) {
             spec = spec
                 .with_role_token(&self.config.mcp_dir, &w.role, &t.url, &t.token)
                 .map_err(|e| Failure::Other(format!("cannot write the {} mcp config: {e}", w.role)))?;
         }
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
+    }
+}
+
+/// `--bg --resume` of a session the daemon still counts as running starts a copy under a new id
+/// (`backgrounded · <new id8> · …`) instead of waking it (m2/4): a failure, not a start.
+fn woke_in_place(out: &str, id: &str) -> Result<(), Failure> {
+    let woke = out
+        .split_once("backgrounded · ")
+        .and_then(|(_, rest)| rest.split_whitespace().next());
+    match woke {
+        Some(other) if other != id => Err(Failure::Other(format!(
+            "the resume of {id} started a copy {other} (the daemon still counted it running)"
+        ))),
+        _ => Ok(()),
     }
 }
 
@@ -152,7 +231,7 @@ mod tests {
     use foreman_claude::{ClaudeError, Kind, SessionState, Status};
 
     use super::*;
-    use crate::{NeedsKind, Remedy, SECOND};
+    use crate::{NeedsKind, Remedy, SECOND, tick_all};
 
     const NOW: Millis = 1_800_000_000_000;
 
@@ -168,13 +247,15 @@ mod tests {
         calls: RefCell<Vec<Call>>,
         /// Popped per launch/resume; empty means success.
         errors: RefCell<Vec<ClaudeError>>,
+        /// What a successful launch/resume prints; `None`: `backgrounded · aaaa0001 · x`.
+        output: RefCell<Option<String>>,
     }
 
     impl FakeLauncher {
         fn result(&self) -> foreman_claude::Result<String> {
             match self.errors.borrow_mut().pop() {
                 Some(e) => Err(e),
-                None => Ok("backgrounded · aaaa0001 · x".into()),
+                None => Ok(self.output.borrow().clone().unwrap_or_else(|| "backgrounded · aaaa0001 · x".into())),
             }
         }
 
@@ -215,8 +296,13 @@ mod tests {
         let config = LaunchConfig {
             mcp_dir: mcp_dir.into(),
             plugin_dirs: vec![r"C:\fm\plugins\foreman".into()],
+            ..LaunchConfig::default()
         };
         Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens))
+    }
+
+    fn free() -> Budget {
+        Budget { max: 3, free: 3 }
     }
 
     fn row(state: SessionState, status: Option<Status>, pid: Option<u32>) -> Session {
@@ -242,7 +328,7 @@ mod tests {
             token: "fake-token".into(),
         };
         let mut sup = supervisor(true, Some(token), &dir.path().join("mcp"));
-        assert_eq!(sup.tick(&[], NOW), []);
+        assert_eq!(sup.tick(&[], &mut free(), NOW), []);
         match sup.launcher().take().as_slice() {
             [Call::Launch { name, argv }] => {
                 assert_eq!(name, "fm-demo-platform");
@@ -255,10 +341,10 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(sup.tick(&[], NOW + 5 * SECOND), []);
+        assert_eq!(sup.tick(&[], &mut free(), NOW + 5 * SECOND), []);
         assert_eq!(sup.launcher().take(), [], "the row has not shown yet: no second launch");
         let live = row(SessionState::Working, Some(Status::Busy), Some(4242));
-        sup.tick(std::slice::from_ref(&live), NOW + 61 * SECOND);
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         assert_eq!(sup.launcher().take(), []);
         assert_eq!(sup.memory.get("fm-demo-platform").unwrap().started_at, None, "stable");
     }
@@ -267,18 +353,113 @@ mod tests {
     fn no_token_launches_without_mcp_config() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
-        sup.tick(&[], NOW);
+        sup.tick(&[], &mut free(), NOW);
         match sup.launcher().take().as_slice() {
-            [Call::Launch { argv, .. }] => assert!(!argv.iter().any(|a| a == "--mcp-config"), "{argv:?}"),
+            [Call::Launch { argv, .. }] => {
+                assert!(!argv.iter().any(|a| a == "--mcp-config"), "{argv:?}");
+                assert!(argv.iter().any(|a| a == "--strict-mcp-config"), "never the user-scope server: {argv:?}");
+            }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn session_gets_its_env_isolation_and_permission_mode_through_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        sup.config.foreman_home = Some(r"C:\fm\home".into());
+        sup.config.bg_isolation_none = true;
+        sup.desired.sessions[0].permission_mode = "default".into();
+        sup.tick(&[], &mut free(), NOW);
+        let argv = match sup.launcher().take().as_slice() {
+            [Call::Launch { argv, .. }] => argv.clone(),
+            other => panic!("{other:?}"),
+        };
+        let at = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
+        assert_eq!(at("--permission-mode").as_deref(), Some("default"));
+        let settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
+        assert_eq!(
+            settings,
+            serde_json::json!({
+                "env": { "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "platform", "FOREMAN_PLATFORM": "demo" },
+                "worktree": { "bgIsolation": "none" }
+            })
+        );
+        assert_eq!(LaunchConfig::default().session_settings("demo", "platform"), None);
+    }
+
+    fn platform(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {
+        let mut desired = DesiredState::platform_controller(name, r"C:\demo\cwd", "be the controller");
+        desired.started = true;
+        let config = LaunchConfig {
+            mcp_dir: mcp_dir.into(),
+            ..LaunchConfig::default()
+        };
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None))
+    }
+
+    fn live(name: &str, n: u32, state: SessionState, status: Status) -> Session {
+        Session {
+            id: format!("bbbb000{n}"),
+            session_id: format!("bbbb000{n}-0000-4000-8000-000000000000"),
+            name: name.into(),
+            cwd: r"C:\demo\cwd".into(),
+            kind: Kind::Background,
+            state: Some(state),
+            status: Some(status),
+            waiting_for: None,
+            pid: Some(100 + n),
+            started_at: Some(NOW),
+        }
+    }
+
+    #[test]
+    fn two_started_platforms_never_exceed_the_shared_budget_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let launched = |sups: &[Supervisor<FakeLauncher, FakeTokens>]| -> Vec<usize> {
+            sups.iter().map(|s| s.launcher().take().len()).collect()
+        };
+        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        // budget 1, both need a launch: only alpha goes
+        tick_all(sups.iter_mut(), &[], 1, NOW);
+        assert_eq!(launched(&sups), [1, 0]);
+        // alpha's row has not shown yet: it still holds the slot, beta waits
+        tick_all(sups.iter_mut(), &[], 1, NOW + 2 * SECOND);
+        assert_eq!(launched(&sups), [0, 0]);
+        // alpha is working: beta waits
+        let alpha_busy = live("fm-alpha-platform", 1, SessionState::Working, Status::Busy);
+        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_busy), 1, NOW + 4 * SECOND);
+        assert_eq!(launched(&sups), [0, 0]);
+        // alpha's turn ended (done + live pid = idle): the slot frees, beta goes
+        let alpha_idle = live("fm-alpha-platform", 1, SessionState::Done, Status::Idle);
+        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_idle), 1, NOW + 30 * SECOND);
+        assert_eq!(launched(&sups), [0, 1]);
+        // the same snapshot again: beta, settling, holds the slot
+        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_idle), 1, NOW + 32 * SECOND);
+        assert_eq!(launched(&sups), [0, 0]);
+
+        // budget 2: both in one tick
+        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        tick_all(sups.iter_mut(), &[], 2, NOW);
+        assert_eq!(launched(&sups), [1, 1]);
+
+        // budget 0 pauses every launch; a working fm- session nobody here supervises counts too
+        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        tick_all(sups.iter_mut(), &[], 0, NOW);
+        assert_eq!(launched(&sups), [0, 0]);
+        let other = live("fm-gamma-platform", 3, SessionState::Working, Status::Busy);
+        tick_all(sups.iter_mut(), std::slice::from_ref(&other), 1, NOW + SECOND);
+        assert_eq!(launched(&sups), [0, 0]);
+        let needs = tick_all(sups.iter_mut(), std::slice::from_ref(&other), 2, NOW + 2 * SECOND);
+        assert_eq!(launched(&sups), [1, 0]);
+        assert!(needs.is_empty(), "a cap wait is not an Inbox row: {needs:?}");
     }
 
     #[test]
     fn stopped_row_is_resumed_from_its_cwd_with_its_session_id() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
-        sup.tick(&[row(SessionState::Stopped, None, None)], NOW);
+        sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW);
         assert_eq!(
             sup.launcher().take(),
             [Call::Resume {
@@ -292,7 +473,7 @@ mod tests {
     fn idle_done_with_pid_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
-        assert_eq!(sup.tick(&[row(SessionState::Done, Some(Status::Idle), Some(27304))], NOW), []);
+        assert_eq!(sup.tick(&[row(SessionState::Done, Some(Status::Idle), Some(27304))], &mut free(), NOW), []);
         assert_eq!(sup.launcher().take(), []);
     }
 
@@ -300,9 +481,9 @@ mod tests {
     fn stop_stops_live_and_never_removes() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(false, None, dir.path());
-        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(1))], NOW);
+        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(1))], &mut free(), NOW);
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
-        sup.tick(&[row(SessionState::Stopped, None, None)], NOW + SECOND);
+        sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + SECOND);
         assert_eq!(sup.launcher().take(), []);
     }
 
@@ -311,7 +492,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
         sup.launcher.errors.borrow_mut().push(ClaudeError::TrustNeeded { cwd: r"C:\demo\cwd".into() });
-        let needs = sup.tick(&[], NOW);
+        let needs = sup.tick(&[], &mut free(), NOW);
         assert_eq!(needs.len(), 1);
         assert_eq!(needs[0].kind, NeedsKind::TrustNeeded);
         assert_eq!(needs[0].since, NOW);
@@ -320,11 +501,11 @@ mod tests {
             Some(Remedy::RunInTerminal { cwd: r"C:\demo\cwd".into(), command: "claude".into() })
         );
         sup.launcher().take();
-        let later = sup.tick(&[], NOW + 3_600 * SECOND);
+        let later = sup.tick(&[], &mut free(), NOW + 3_600 * SECOND);
         assert_eq!(later[0].since, NOW, "since is kept");
         assert_eq!(sup.launcher().take(), [], "never retried automatically");
         sup.retry("fm-demo-platform");
-        assert_eq!(sup.tick(&[], NOW + 3_601 * SECOND), []);
+        assert_eq!(sup.tick(&[], &mut free(), NOW + 3_601 * SECOND), []);
         assert_eq!(sup.launcher().take().len(), 1);
     }
 
@@ -340,7 +521,7 @@ mod tests {
         }
         // Tick every second for an hour: launches only at 0, +5 s, +35 s, +155 s, +755 s.
         while now < NOW + 3_600 * SECOND {
-            sup.tick(&[], now);
+            sup.tick(&[], &mut free(), now);
             if !sup.launcher().take().is_empty() {
                 attempts.push((now - NOW) / SECOND);
             }
@@ -353,8 +534,21 @@ mod tests {
         assert_eq!(needs[0].since, NOW + 755 * SECOND);
         assert_eq!(needs[0].detail, "gave up after 5 failures; last: claude failed (exit 1): boom");
         sup.retry("fm-demo-platform");
-        sup.tick(&[], now);
+        sup.tick(&[], &mut free(), now);
         assert_eq!(sup.launcher().take().len(), 1);
+    }
+
+    #[test]
+    fn a_resume_that_starts_a_copy_is_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        *sup.launcher.output.borrow_mut() = Some("backgrounded · bbbb0002 (idle — send a prompt to start)".into());
+        let needs = sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW);
+        assert_eq!(sup.launcher().take().len(), 1);
+        assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
+        assert!(needs[0].detail.contains("started a copy bbbb0002"), "{}", needs[0].detail);
+        assert_eq!(woke_in_place("backgrounded · aaaa0001 · fm-demo-platform", "aaaa0001"), Ok(()));
+        assert_eq!(woke_in_place("", "aaaa0001"), Ok(()));
     }
 
     #[test]
@@ -362,7 +556,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
         sup.launcher.errors.borrow_mut().push(ClaudeError::NotInstalled);
-        let needs = sup.tick(&[], NOW);
+        let needs = sup.tick(&[], &mut free(), NOW);
         assert_eq!(needs.len(), 1);
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert_eq!(needs[0].action, Some(Remedy::Retry));
@@ -374,14 +568,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
         let dead = row(SessionState::Stopped, None, None);
-        sup.tick(std::slice::from_ref(&dead), NOW);
+        sup.tick(std::slice::from_ref(&dead), &mut free(), NOW);
         assert_eq!(sup.launcher().take().len(), 1);
-        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(9))], NOW + 10 * SECOND);
-        let needs = sup.tick(std::slice::from_ref(&dead), NOW + 30 * SECOND);
+        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(9))], &mut free(), NOW + 10 * SECOND);
+        let needs = sup.tick(std::slice::from_ref(&dead), &mut free(), NOW + 30 * SECOND);
         assert_eq!(sup.launcher().take(), [], "backing off 5 s");
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert!(needs[0].detail.contains("exited within 30 s"), "{}", needs[0].detail);
-        sup.tick(&[dead], NOW + 35 * SECOND);
+        // the backoff is over at +35 s, the respawn grace (last alive at +10 s) at +40 s
+        sup.tick(std::slice::from_ref(&dead), &mut free(), NOW + 35 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "respawn grace");
+        sup.tick(&[dead], &mut free(), NOW + 40 * SECOND);
         assert_eq!(sup.launcher().take().len(), 1);
     }
 }

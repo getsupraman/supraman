@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 use foreman_claude::{Claude, LaunchSpec};
 use foreman_core::{Event, EventReader, role_tag};
 
-use crate::plugin;
 use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped, workspace_root, write, yes};
 
 const ROLE: &str = "probe";
@@ -112,7 +111,7 @@ impl Setup {
 fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<bool, String> {
     let plugin = workspace_root().join("plugins").join("foreman");
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
-    let (_, copied) = plugin::install(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
+    let (_, copied) = foreman_core::install_hook_exe(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
     println!("plugin {} (fm.exe {})", plugin.display(), if copied { "installed" } else { "up to date" });
     let setup = Setup {
         plugin,

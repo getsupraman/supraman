@@ -28,9 +28,17 @@ pub struct WantedSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     pub prompt: String,
+    /// `--permission-mode`; a role whose tools must park for the human uses `default`.
+    #[serde(default = "default_permission_mode")]
+    pub permission_mode: String,
 }
 
 pub const PLATFORM_ROLE: &str = "platform";
+pub const DEFAULT_PERMISSION_MODE: &str = "auto";
+
+fn default_permission_mode() -> String {
+    DEFAULT_PERMISSION_MODE.into()
+}
 
 pub fn platform_session_name(platform: &str) -> String {
     format!("fm-{platform}-{PLATFORM_ROLE}")
@@ -54,6 +62,7 @@ impl DesiredState {
                 cwd: cwd.into(),
                 repo: None,
                 prompt: prompt.into(),
+                permission_mode: default_permission_mode(),
             }],
             ..Self::new(platform)
         }
@@ -127,10 +136,22 @@ mod tests {
             cwd: r"C:\demo\Alpha".into(),
             repo: Some("Alpha".into()),
             prompt: "line one\nline \"two\"".into(),
+            permission_mode: "default".into(),
         });
         let path = desired.save(home.path()).unwrap();
         assert_eq!(path, home.path().join("supervisor").join("demo.toml"));
         assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(desired));
+    }
+
+    #[test]
+    fn a_file_without_permission_mode_reads_as_auto() {
+        let home = tempfile::tempdir().unwrap();
+        let path = DesiredState::platform_controller("demo", r"C:\d", "p").save(home.path()).unwrap();
+        let text = fs::read_to_string(&path).unwrap().replace("permission_mode = \"auto\"\n", "");
+        assert!(!text.contains("permission_mode"), "{text}");
+        fs::write(&path, text).unwrap();
+        let loaded = DesiredState::load(home.path(), "demo").unwrap().unwrap();
+        assert_eq!(loaded.sessions[0].permission_mode, "auto");
     }
 
     #[test]

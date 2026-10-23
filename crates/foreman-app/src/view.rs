@@ -2,15 +2,17 @@
 
 use std::{
     cell::RefCell,
-    collections::{HashMap as StdHashMap, HashSet},
+    collections::{BTreeMap, HashMap as StdHashMap, HashSet},
     path::PathBuf,
     rc::Rc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use collections::HashMap;
 use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{Platform, Registry};
+use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Platform, Registry};
+use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
 use foreman_term::{
     Event as TerminalEvent, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -23,7 +25,8 @@ use gpui::{
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
 
-use crate::fleet::{self, SessionRow, Tree};
+use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
+use crate::supervise::{self, Report, Supervision};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -31,6 +34,8 @@ pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
 const LEFT_WIDTH: Pixels = px(460.);
+/// The concurrency stepper's range; 0 pauses every launch and resume.
+pub const MAX_WORKING_LIMIT: usize = 20;
 
 /// Window-space bounds of clickable things, keyed by the same string as their element id, as of
 /// the last painted frame. The selftest clicks through these.
@@ -88,25 +93,83 @@ pub struct FleetView {
     window: AnyWindowHandle,
     /// The window was asked to close while Attach tabs were open; it closes once they detached.
     quitting: bool,
+    /// `FOREMAN_HOME` (else `%APPDATA%\Foreman`): desired state, settings, events, roles.
+    pub home: Option<PathBuf>,
+    pub plugin_dir: Option<PathBuf>,
+    pub setup_notices: Vec<String>,
+    /// The Inbox: every platform's [`NeedsYou`] from the last tick.
+    pub needs: Vec<NeedsYou>,
+    /// Per platform with a desired-state file: started, wanted session names.
+    pub desired: BTreeMap<String, (bool, Vec<String>)>,
+    pub max_working: usize,
+    pub supervise_errors: Vec<String>,
+    pub action_error: Option<String>,
+    pub last_attempt: StdHashMap<String, i64>,
+    pub hooks: StdHashMap<String, HookSignal>,
+    /// When the shown `claude agents` snapshot was taken.
+    pub polled_at: i64,
+    pub ticks: u64,
+    /// Retries (`(platform, name)`) for the next tick.
+    retries: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 struct Refresh {
     platforms: Result<Vec<Platform>, String>,
     sessions: Option<Result<Vec<Session>, String>>,
+    polled_at: i64,
+    events: Vec<Event>,
+    report: Option<Report>,
     took: Duration,
 }
 
-/// Runs on a background thread: the registry read and the `claude agents` process both block.
-fn load(with_sessions: bool) -> Refresh {
-    let started = Instant::now();
-    let platforms = Registry::from_env()
-        .and_then(|r| r.list())
-        .map_err(|e| e.to_string());
-    let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
-    Refresh {
-        platforms,
-        sessions,
-        took: started.elapsed(),
+/// Owned by the refresh loop and moved onto a background thread for every poll: the registry read,
+/// the `claude agents` process and the supervisor's `claude` writes all block.
+struct Poller {
+    home: Option<PathBuf>,
+    events: Option<EventReader>,
+    supervision: Option<Supervision>,
+    retries: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+impl Poller {
+    fn setup(&mut self) -> supervise::Setup {
+        let Some(home) = self.home.clone() else {
+            return supervise::Setup {
+                plugin_dir: None,
+                notices: vec!["No Foreman home (set FOREMAN_HOME or APPDATA): nothing can be started.".into()],
+            };
+        };
+        let setup = supervise::setup(&home);
+        self.events = Some(EventReader::new(&home));
+        self.supervision = Some(Supervision::new(home, setup.plugin_dir.clone()));
+        setup
+    }
+
+    /// The supervisor ticks only on a snapshot read in this poll: a stale list never drives a launch.
+    fn load(&mut self, with_sessions: bool) -> Refresh {
+        let started = Instant::now();
+        let platforms = Registry::from_env()
+            .and_then(|r| r.list())
+            .map_err(|e| e.to_string());
+        let polled_at = now_ms();
+        let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
+        let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
+        let took = started.elapsed();
+        let report = match (&platforms, &sessions, self.supervision.as_mut()) {
+            (Ok(platforms), Some(Ok(sessions)), Some(supervision)) => {
+                let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
+                Some(supervision.tick(platforms, sessions, retries, now_ms()))
+            }
+            _ => None,
+        };
+        Refresh {
+            platforms,
+            sessions,
+            polled_at,
+            events,
+            report,
+            took,
+        }
     }
 }
 
@@ -118,16 +181,33 @@ impl FleetView {
         window.on_window_should_close(cx, move |_, cx| {
             this.update(cx, |this, cx| this.should_close(cx)).unwrap_or(true)
         });
+        let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
+        let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let mut poller = Poller {
+            home: home.clone(),
+            events: None,
+            supervision: None,
+            retries: retries.clone(),
+        };
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
             let checked = executor.spawn(async { check_supported() }).await;
             let supported = checked.is_ok();
+            let (ready, setup) = executor
+                .spawn(async move {
+                    let setup = poller.setup();
+                    (poller, setup)
+                })
+                .await;
+            poller = ready;
             if this
                 .update(cx, |this, cx| {
                     this.cli = match checked {
                         Ok(version) => Cli::Supported(version),
                         Err(error) => Cli::Failed(error.to_string()),
                     };
+                    this.plugin_dir = setup.plugin_dir;
+                    this.setup_notices = setup.notices;
                     cx.notify();
                 })
                 .is_err()
@@ -135,7 +215,13 @@ impl FleetView {
                 return;
             }
             loop {
-                let refresh = executor.spawn(async move { load(supported) }).await;
+                let (done, refresh) = executor
+                    .spawn(async move {
+                        let refresh = poller.load(supported);
+                        (poller, refresh)
+                    })
+                    .await;
+                poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
                     cx.notify();
@@ -166,6 +252,19 @@ impl FleetView {
             hits: HitTargets::default(),
             window: window.window_handle(),
             quitting: false,
+            home,
+            plugin_dir: None,
+            setup_notices: Vec::new(),
+            needs: Vec::new(),
+            desired: BTreeMap::new(),
+            max_working: DEFAULT_MAX_WORKING,
+            supervise_errors: Vec::new(),
+            action_error: None,
+            last_attempt: StdHashMap::new(),
+            hooks: StdHashMap::new(),
+            polled_at: 0,
+            ticks: 0,
+            retries,
         }
     }
 
@@ -182,16 +281,138 @@ impl FleetView {
             Some(Ok(sessions)) => {
                 self.sessions = sessions;
                 self.sessions_error = None;
+                self.polled_at = refresh.polled_at;
             }
             Some(Err(error)) => self.sessions_error = Some(error),
             None => {}
+        }
+        for event in refresh.events {
+            HookSignal::record(&mut self.hooks, event);
+        }
+        if let Some(report) = refresh.report {
+            self.needs = report.needs;
+            self.desired = report.desired;
+            self.max_working = report.max_working;
+            self.supervise_errors = report.errors;
+            self.last_attempt = report.last_attempt.into_iter().collect();
+            self.ticks += 1;
         }
         self.last_refresh_took = Some(refresh.took);
         self.refreshes += 1;
     }
 
     pub fn tree(&self) -> Tree {
-        fleet::build(&self.platforms, &self.sessions, now_ms(), self.show_stopped)
+        let sup = Supervised {
+            desired: Some(&self.desired),
+            hooks: Some(&self.hooks),
+            polled_at: self.polled_at,
+        };
+        fleet::build(&self.platforms, &self.sessions, now_ms(), self.show_stopped, &sup)
+    }
+
+    pub fn start_platform(&mut self, name: &str, cx: &mut Context<Self>) {
+        let result = match (&self.home, self.platforms.iter().find(|p| p.name == name)) {
+            (Some(home), Some(platform)) => supervise::start_platform(home, self.plugin_dir.as_deref(), platform),
+            (None, _) => Err(anyhow::anyhow!("no Foreman home")),
+            (_, None) => Err(anyhow::anyhow!("not registered")),
+        };
+        match result {
+            Ok(desired) => {
+                let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
+                self.desired.insert(name.to_string(), (true, names));
+                self.action_error = None;
+            }
+            Err(e) => self.action_error = Some(format!("Cannot start {name}: {e:#}")),
+        }
+        cx.notify();
+    }
+
+    pub fn stop_platform(&mut self, name: &str, cx: &mut Context<Self>) {
+        let result = match &self.home {
+            Some(home) => supervise::stop_platform(home, name),
+            None => Err(anyhow::anyhow!("no Foreman home")),
+        };
+        match result {
+            Ok(()) => {
+                if let Some(entry) = self.desired.get_mut(name) {
+                    entry.0 = false;
+                }
+                self.action_error = None;
+            }
+            Err(e) => self.action_error = Some(format!("Cannot stop {name}: {e:#}")),
+        }
+        cx.notify();
+    }
+
+    /// The shared concurrency budget, saved to `settings.toml`; the next tick applies it.
+    pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
+        let max_working = max_working.min(MAX_WORKING_LIMIT);
+        let result = match &self.home {
+            Some(home) => supervise::set_max_working(home, max_working),
+            None => Err(anyhow::anyhow!("no Foreman home")),
+        };
+        match result {
+            Ok(()) => {
+                self.max_working = max_working;
+                self.action_error = None;
+            }
+            Err(e) => self.action_error = Some(format!("Cannot save the busy-session limit: {e:#}")),
+        }
+        cx.notify();
+    }
+
+    pub fn retry(&mut self, platform: &str, name: &str, cx: &mut Context<Self>) {
+        self.retries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((platform.to_string(), name.to_string()));
+        self.needs.retain(|n| !(n.platform == platform && n.name == name));
+        cx.notify();
+    }
+
+    /// The Inbox's Attach: the existing attach-tab path, by the row's 8-hex id.
+    pub fn attach_by_id(&mut self, platform: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
+        let session = self.sessions.iter().find(|s| s.id == id)?.clone();
+        Some(self.attach(platform, "supervised", &session, window, cx))
+    }
+
+    /// A shell tab in `cwd` with `command` typed at its prompt and NOT run: the human presses Enter
+    /// and answers whatever it asks (the trust prompt is theirs; Foreman never answers it).
+    pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let shell = util::shell::Shell::WithArguments {
+            program: "pwsh".into(),
+            args: self.shell_args.clone(),
+            title_override: None,
+        };
+        let title = format!("trust · {}", cwd.display());
+        let id = self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx);
+        // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
+        // it look like), or after 15 s regardless.
+        cx.spawn(async move |this, cx| {
+            let started = Instant::now();
+            let mut last = String::new();
+            let mut since = Instant::now();
+            loop {
+                let Ok(terminal) = this.read_with(cx, |this, _| this.tab(id).and_then(|t| t.terminal.clone())) else {
+                    return;
+                };
+                if let Some(terminal) = terminal {
+                    let content = terminal.read_with(cx, |t, _| t.get_content());
+                    if content != last {
+                        last = content;
+                        since = Instant::now();
+                    } else if (!last.trim().is_empty() && since.elapsed() > Duration::from_millis(500))
+                        || started.elapsed() > Duration::from_secs(15)
+                    {
+                        terminal.update(cx, |t, _| t.input(command.into_bytes()));
+                        return;
+                    }
+                }
+                cx.background_executor().timer(Duration::from_millis(50)).await;
+            }
+        })
+        .detach();
+        id
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -478,6 +699,55 @@ fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     .size_full()
 }
 
+/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it).
+fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &gpui::App) -> gpui::Stateful<gpui::Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(SharedString::from(key.clone()))
+        .relative()
+        .flex_none()
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.element_background)
+        .text_xs()
+        .text_color(colors.text)
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.element_hover))
+        .child(label.into())
+        .child(hit_target(hits, key))
+}
+
+fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
+    let status = cx.theme().status();
+    match kind {
+        NeedsKind::Blocked | NeedsKind::TrustNeeded => status.warning,
+        NeedsKind::GaveUp | NeedsKind::LaunchFailed => status.error,
+        NeedsKind::Duplicate => status.hint,
+    }
+}
+
+fn needs_label(kind: NeedsKind) -> &'static str {
+    match kind {
+        NeedsKind::Blocked => "blocked",
+        NeedsKind::TrustNeeded => "trust needed",
+        NeedsKind::GaveUp => "gave up",
+        NeedsKind::LaunchFailed => "launch failed",
+        NeedsKind::Duplicate => "duplicate",
+    }
+}
+
+/// The Inbox button's hit-target key for one need.
+pub fn inbox_key(need: &NeedsYou) -> Option<String> {
+    let verb = match need.action.as_ref()? {
+        Remedy::Attach { .. } => "attach",
+        Remedy::Retry => "retry",
+        Remedy::RunInTerminal { .. } => "run",
+    };
+    Some(format!("inbox-{verb}-{}", need.name))
+}
+
 fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
     match health {
@@ -509,6 +779,33 @@ impl FleetView {
         } else {
             format!("show stopped ({})", tree.hidden_stopped).into()
         };
+        let max_working = self.max_working;
+        let stepper = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_xs()
+            .text_color(colors.text_muted)
+            .child("busy ≤")
+            .child(
+                button(&self.hits, "budget-dec".into(), "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.set_max_working(max_working.saturating_sub(1), cx);
+                })),
+            )
+            .child(
+                div()
+                    .w(px(18.))
+                    .flex()
+                    .justify_center()
+                    .text_color(colors.text)
+                    .font_weight(FontWeight::BOLD)
+                    .child(SharedString::from(max_working.to_string())),
+            )
+            .child(
+                button(&self.hits, "budget-inc".into(), "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.set_max_working(max_working + 1, cx);
+                })),
+            );
 
         let header = div()
             .flex()
@@ -534,6 +831,7 @@ impl FleetView {
                             .child("·")
                             .child(refresh_line),
                     )
+                    .child(stepper)
                     .child(
                         div()
                             .id("toggle-stopped")
@@ -552,6 +850,7 @@ impl FleetView {
             );
 
         let mut notices: Vec<AnyElement> = Vec::new();
+        // A tint of the text colour, never the theme's `*_background` fills (unreadable in m1).
         let notice = |text: String, fg: Hsla, bg: Hsla| {
             div()
                 .mx_3()
@@ -568,22 +867,25 @@ impl FleetView {
             notices.push(notice(
                 format!("Cannot use the claude CLI, so no sessions are shown: {error}"),
                 status.error,
-                status.error_background,
+                status.error.opacity(0.12),
             ));
         }
         if let Some(error) = &self.registry_error {
             notices.push(notice(
                 format!("Cannot read the platform registry: {error}"),
                 status.error,
-                status.error_background,
+                status.error.opacity(0.12),
             ));
         }
         if let Some(error) = &self.sessions_error {
             notices.push(notice(
-                format!("Session list is stale, the last read failed: {error}"),
+                format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
                 status.warning,
-                status.warning_background,
+                status.warning.opacity(0.12),
             ));
+        }
+        for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.action_error) {
+            notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
         }
         if self.registry_error.is_none() && self.refreshes > 0 && tree.platforms.is_empty() {
             notices.push(notice(
@@ -603,6 +905,24 @@ impl FleetView {
         for platform in &tree.platforms {
             let pkey = format!("platform:{}", platform.name);
             let open = !self.collapsed.contains(&pkey);
+            let started = platform.started == Some(true);
+            let (state_text, state_color) = match platform.started {
+                Some(true) => ("started", status.success),
+                Some(false) => ("stopped", colors.text_muted),
+                None => ("", colors.text_muted),
+            };
+            let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, platform.name);
+            let pname = platform.name.clone();
+            let start_stop = button(&self.hits, toggle_key, if started { "Stop" } else { "Start" }, cx).on_click(
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    if started {
+                        this.stop_platform(&pname, cx);
+                    } else {
+                        this.start_platform(&pname, cx);
+                    }
+                }),
+            );
             body = body.child(
                 div()
                     .id(SharedString::from(pkey.clone()))
@@ -635,10 +955,15 @@ impl FleetView {
                             .text_color(colors.text_muted)
                             .child(SharedString::from(format!("{} sessions", platform.session_count()))),
                     )
+                    .child(div().text_xs().text_color(state_color).child(state_text))
+                    .child(start_stop)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx))),
             );
             if !open {
                 continue;
+            }
+            for row in &platform.supervised {
+                body = body.child(self.render_session(&platform.name, "supervised", row, px(28.), cx));
             }
             for repo in &platform.repos {
                 let rkey = format!("repo:{}/{}", platform.name, repo.name);
@@ -675,7 +1000,7 @@ impl FleetView {
                     continue;
                 }
                 for row in &repo.sessions {
-                    body = body.child(self.render_session(&platform.name, &repo.name, row, cx));
+                    body = body.child(self.render_session(&platform.name, &repo.name, row, px(48.), cx));
                 }
             }
         }
@@ -690,9 +1015,97 @@ impl FleetView {
             .border_r_1()
             .border_color(colors.border)
             .child(header)
+            .children(self.render_inbox(cx))
             .children(notices)
             .child(body)
             .into_any_element()
+    }
+
+    /// One row per [`NeedsYou`] across platforms, oldest first; nothing when empty.
+    fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.needs.is_empty() {
+            return None;
+        }
+        let colors = cx.theme().colors().clone();
+        let now = now_ms();
+        let mut needs: Vec<&NeedsYou> = self.needs.iter().collect();
+        needs.sort_by_key(|n| (n.since, n.kind));
+        let mut inbox = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(colors.text_muted)
+                    .child(SharedString::from(format!("INBOX · {}", needs.len()))),
+            );
+        for need in needs {
+            let color = needs_color(need.kind, cx);
+            let remedy = match (&need.action, inbox_key(need)) {
+                (Some(action), Some(key)) => {
+                    let (label, action, platform) = match action {
+                        Remedy::Attach { .. } => ("Attach", action.clone(), need.platform.clone()),
+                        Remedy::Retry => ("Retry", action.clone(), need.platform.clone()),
+                        Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.platform.clone()),
+                    };
+                    let name = need.name.clone();
+                    Some(button(&self.hits, key, label, cx).on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| match &action {
+                            Remedy::Attach { id } => {
+                                this.attach_by_id(&platform, id, window, cx);
+                            }
+                            Remedy::Retry => this.retry(&platform, &name, cx),
+                            Remedy::RunInTerminal { cwd, command } => {
+                                this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
+                            }
+                        },
+                    )))
+                }
+                _ => None,
+            };
+            inbox = inbox.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .p_2()
+                    .rounded_md()
+                    .border_l_2()
+                    .border_color(color)
+                    .bg(color.opacity(0.10))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
+                                    .child(SharedString::from(format!("{} · {}", need.platform, need.name)))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(colors.text_muted)
+                                            .child(SharedString::from(fleet::ago(now - need.since))),
+                                    ),
+                            )
+                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
+                    )
+                    .children(remedy),
+            );
+        }
+        Some(inbox.into_any_element())
     }
 
     fn render_session(
@@ -700,6 +1113,7 @@ impl FleetView {
         platform: &str,
         repo: &str,
         row: &SessionRow,
+        indent: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let colors = cx.theme().colors().clone();
@@ -713,6 +1127,11 @@ impl FleetView {
             _ => None,
         };
         let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
+        let hook = row
+            .hook
+            .as_ref()
+            .filter(|_| s.name.starts_with("fm-"))
+            .map(|h| format!("hook: {}", h.label(now_ms())));
 
         let line = div()
             .flex()
@@ -765,7 +1184,7 @@ impl FleetView {
         div()
             .flex()
             .flex_col()
-            .pl(px(48.))
+            .pl(indent)
             .pr_3()
             .py(px(3.))
             .text_sm()
@@ -779,6 +1198,15 @@ impl FleetView {
                         .text_xs()
                         .text_color(status.warning)
                         .child(SharedString::from(w)),
+                )
+            })
+            .when_some(hook, |d, h| {
+                d.child(
+                    div()
+                        .pl(px(16.))
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .child(SharedString::from(h)),
                 )
             })
             .into_any_element()

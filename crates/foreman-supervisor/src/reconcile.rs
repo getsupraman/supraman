@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use foreman_claude::{Health, Session, SessionState};
+use foreman_claude::{Health, Session};
 
 use crate::{DesiredState, Millis, NeedsKind, NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession};
 
@@ -34,6 +34,9 @@ pub enum WaitReason {
     Settling,
     Backoff,
     Cap,
+    /// Lost its pid moments ago: the daemon may respawn it, and until it notices the death a
+    /// resume starts a copy (m2/4).
+    Respawn,
 }
 
 /// A process is there: a pid, or the fresh pid-less row right after `--bg` (`Running`/`Blocked`
@@ -44,12 +47,14 @@ pub fn is_live(s: &Session, now: Millis) -> bool {
 }
 
 /// Pure. `memory` must already have seen this tick's observations ([`SupervisorMemory::observe`]),
-/// as [`crate::Supervisor::tick`] does. The rule table is in the crate docs.
+/// as [`crate::Supervisor::tick`] does. `free` is how many launches/resumes the shared budget still
+/// allows ([`crate::Budget`]). The rule table is in the crate docs.
 pub fn reconcile(
     desired: &DesiredState,
     observed: &[Session],
     memory: &SupervisorMemory,
     policy: &Policy,
+    free: usize,
     now: Millis,
 ) -> Vec<Action> {
     let need = |kind, name: &str, since, detail: String, action| {
@@ -140,6 +145,17 @@ pub fn reconcile(
                 continue;
             }
         }
+        if row.is_some()
+            && let Some(seen) = memory.get(&w.name).and_then(|a| a.last_alive)
+            && now - seen < policy.respawn_grace
+        {
+            out.push(Action::Wait {
+                name: w.name.clone(),
+                until: Some(seen + policy.respawn_grace),
+                reason: WaitReason::Respawn,
+            });
+            continue;
+        }
         match row {
             Some(s) => resumes.push(Action::Resume {
                 name: w.name.clone(),
@@ -150,11 +166,7 @@ pub fn reconcile(
             None => launches.push(Action::Launch(w.clone())),
         }
     }
-    let working = observed
-        .iter()
-        .filter(|s| s.name.starts_with("fm-") && s.state == Some(SessionState::Working) && is_live(s, now))
-        .count();
-    let mut free = policy.max_working.saturating_sub(working);
+    let mut free = free;
     for action in resumes.into_iter().chain(launches) {
         if free > 0 {
             free -= 1;
@@ -180,10 +192,10 @@ pub fn action_name(action: &Action) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use foreman_claude::{Kind, Status};
+    use foreman_claude::{Kind, SessionState, Status};
 
     use super::*;
-    use crate::Failure;
+    use crate::{Budget, Failure};
 
     const NOW: Millis = 1_800_000_000_000;
     const OLD: Millis = NOW - 3_600_000;
@@ -195,6 +207,7 @@ mod tests {
             cwd: r"C:\demo\cwd".into(),
             repo: None,
             prompt: "hi".into(),
+            permission_mode: "auto".into(),
         }
     }
 
@@ -229,12 +242,14 @@ mod tests {
         row(name, n, Some(SessionState::Stopped), None, None)
     }
 
+    const FREE: usize = 3;
+
     fn run(d: &DesiredState, observed: &[Session]) -> Vec<Action> {
-        reconcile(d, observed, &SupervisorMemory::default(), &Policy::default(), NOW)
+        reconcile(d, observed, &SupervisorMemory::default(), &Policy::default(), FREE, NOW)
     }
 
     fn run_with(d: &DesiredState, observed: &[Session], m: &SupervisorMemory) -> Vec<Action> {
-        reconcile(d, observed, m, &Policy::default(), NOW)
+        reconcile(d, observed, m, &Policy::default(), FREE, NOW)
     }
 
     fn kinds(actions: &[Action]) -> Vec<NeedsKind> {
@@ -378,7 +393,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        let later = reconcile(&d, &[], &m, &p, NOW + 3 * SECOND);
+        let later = reconcile(&d, &[], &m, &p, FREE, NOW + 3 * SECOND);
         assert_eq!(later, [Action::Launch(wanted("fm-demo-platform"))], "due again");
     }
 
@@ -439,7 +454,6 @@ mod tests {
     fn cap_counts_working_fm_sessions_and_defers_the_rest() {
         let names = ["fm-demo-a", "fm-demo-b", "fm-demo-c"];
         let d = desired(true, &names);
-        let p = Policy { max_working: 3, ..Policy::default() };
         // Two working fm- sessions elsewhere; a working non-fm one, an idle fm- one and a dead
         // `working` row do not count.
         let observed = [
@@ -449,7 +463,9 @@ mod tests {
             row("fm-x-3", 13, Some(SessionState::Done), Some(Status::Idle), Some(5)),
             row("fm-x-4", 14, Some(SessionState::Working), None, None),
         ];
-        let actions = reconcile(&d, &observed, &SupervisorMemory::default(), &p, NOW);
+        let budget = Budget::new(3, &observed, NOW);
+        assert_eq!(budget.free, 1);
+        let actions = reconcile(&d, &observed, &SupervisorMemory::default(), &Policy::default(), budget.free, NOW);
         assert_eq!(
             actions,
             [
@@ -464,16 +480,41 @@ mod tests {
     #[test]
     fn resumes_take_slots_before_launches() {
         let d = desired(true, &["fm-demo-new", "fm-demo-old"]);
-        let p = Policy { max_working: 1, ..Policy::default() };
+        let p = Policy::default();
         let old = stopped("fm-demo-old", 1);
-        let actions = reconcile(&d, std::slice::from_ref(&old), &SupervisorMemory::default(), &p, NOW);
+        let actions = reconcile(&d, std::slice::from_ref(&old), &SupervisorMemory::default(), &p, 1, NOW);
         assert_eq!(
             actions,
             [resume_of(&old), Action::Wait { name: "fm-demo-new".into(), until: None, reason: WaitReason::Cap }]
         );
-        let full = Policy { max_working: 0, ..p };
-        let actions = reconcile(&d, &[old], &SupervisorMemory::default(), &full, NOW);
+        let actions = reconcile(&d, &[old], &SupervisorMemory::default(), &p, 0, NOW);
         assert!(actions.iter().all(|a| matches!(a, Action::Wait { reason: WaitReason::Cap, .. })));
+    }
+
+    // R13
+    #[test]
+    fn a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace() {
+        let d = desired(true, &["fm-demo-platform"]);
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.observe("fm-demo-platform", true, &p, NOW - 5 * SECOND);
+        // the pid went, the turn's `working` stays: an orphan by age, but alive 5 s ago
+        let orphan = row("fm-demo-platform", 1, Some(SessionState::Working), None, None);
+        assert_eq!(
+            run_with(&d, std::slice::from_ref(&orphan), &m),
+            [Action::Wait { name: "fm-demo-platform".into(), until: Some(NOW + 25 * SECOND), reason: WaitReason::Respawn }]
+        );
+        let later = reconcile(&d, std::slice::from_ref(&orphan), &m, &p, FREE, NOW + 25 * SECOND);
+        assert_eq!(later, [resume_of(&orphan)], "the daemon did not respawn it: resume");
+        // an idle session killed is `done` without pid: the daemon still counts it running for a few
+        // seconds, so it waits too
+        let done = row("fm-demo-platform", 1, Some(SessionState::Done), None, None);
+        assert!(matches!(
+            run_with(&d, std::slice::from_ref(&done), &m).as_slice(),
+            [Action::Wait { reason: WaitReason::Respawn, .. }]
+        ));
+        // a row never seen alive by this supervisor (e.g. stopped before the app started) resumes at once
+        assert_eq!(run(&d, std::slice::from_ref(&done)), [resume_of(&done)]);
     }
 
     #[test]
