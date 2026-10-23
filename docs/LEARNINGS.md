@@ -851,3 +851,28 @@ worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolati
   `WORKSTATE_PLATFORM_TOKEN` never existed in `Skills/mcp/.env`. A role's own line still wins; else platform →
   `WORKSTATE_CONTROLLER_TOKEN`, repo → `WORKSTATE_ORCHESTRATOR_TOKEN` (`tokens::workstate_role`). The settings
   window shows which line each role would use, never the value.
+
+## 2026-10-23 — m2x/2 "platform" is now "workspace"
+
+René, 2026-10-23: Foreman's unit of supervision (a folder of git repos) is a **workspace**, "yes, do the full
+rename", on-disk data included. No CLI aliases (`fm workspace …`, `fm sessions --workspace`); the entries above
+keep the old word because they record what was measured under it.
+
+- **Names**: `Workspace`, `<FOREMAN_HOME>/workspaces/`, role `workspace` (`roles/workspace.md`, placeholder
+  `{workspace}`), session `fm-<w>-workspace`, env `FOREMAN_WORKSPACE`, token line `WORKSTATE_WORKSPACE_TOKEN`
+  (else `WORKSTATE_CONTROLLER_TOKEN`). The helper that finds this build's cargo workspace is `cargo_root()` now,
+  so the two meanings never share a name. Claude's own trust message still says "workspace … is not trusted".
+- **Migration** (`foreman_core::migrate_home`, app start + every `fm` registry command): `platforms/` →
+  `workspaces/` by rename (both present: neither touched, a notice every run until the human resolves it);
+  `supervisor/<w>.toml` field/role/session renamed and written back only when changed. A desired state that was
+  started is saved **stopped**, with a notice: `start_workspace` reuses the saved sessions, so without the session
+  rename Start would add `fm-<w>-workspace` beside a still-wanted `fm-<w>-platform` and both would be kept alive;
+  and the live `fm-<w>-platform` row is no longer wanted by anything, so the human stops it. The migration never
+  stops a session. The kept `prompt` still says "platform controller" until the next Start rewrites it.
+- **Old sessions on resume** keep their launch env: `fm hook` falls back to `FOREMAN_PLATFORM` and maps
+  `FOREMAN_ROLE=platform` to `roles/workspace.md` (tag `FOREMAN-ROLE workspace v<sha8>`).
+- `toml::Table` round trip of a desired-state file loads back as the same `DesiredState`
+  (`a_file_from_before_the_rename_loads_and_migrates_to_the_current_shape`).
+- Gate from this worktree: `cargo test --workspace` 258 passed (252 + 6 new), `--selftest` PASS (frame p95
+  22.01 ms, max 26.51 ms, 0 > 50 ms; idle 121.2 MiB), `--selftest-supervise` PASS (step b: transcript has
+  `FOREMAN-ROLE workspace v690ab65d`), no `fm-selftest*` row left.

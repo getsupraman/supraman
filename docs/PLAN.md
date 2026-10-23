@@ -145,6 +145,8 @@ with `SendMessage("fm-<p>-relay", …)`.
   app settings (busy limit, WorkState `.env`): `%APPDATA%\Foreman\settings.toml`
 - runtime session state: in memory, rebuilt from `agents --json --all` + hooks (sessions outlive the app)
 - work, plans, evidence, journal, notes: WorkState (one project per workspace; a roadmap is a run)
+- a home written while a workspace was called a platform (before m2x/2) is migrated by
+  `foreman_core::migrate_home` at app start and before every `fm` registry command
 
 ---
 
