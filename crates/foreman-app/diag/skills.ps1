@@ -10,8 +10,11 @@
 # Read back from each transcript: the skill_listing attachment (does it name foreman:workspace-controller and
 # foreman:repo-controller?), the SessionStart injection (the FOREMAN-ROLE tag and the skill named in it), the tool
 # calls of the first turn and the last reply; and the relay's outbox. Then every row is stopped and removed.
-#   pwsh -File crates/foreman-app/diag/skills.ps1 [-TimeoutSec 240]
-param([int]$TimeoutSec = 240)
+# -Drop: also launch fm-selftest-<hex>-target (the selftest's step r target, auto, no plugin) and, after the
+# workspace session's `ready` reached the relay, drop one message for it with `fm send`; logs whether the relay
+# delivered it (its answer in the outbox) or a notice came back (m3/3: the classifier refused the relay's send).
+#   pwsh -File crates/foreman-app/diag/skills.ps1 [-TimeoutSec 240] [-Drop]
+param([int]$TimeoutSec = 240, [switch]$Drop)
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -71,6 +74,7 @@ function Report([string]$k, [string]$sid) {
 }
 
 $names = [ordered]@{ relay = "fm-$workspace-relay"; workspace = "fm-$workspace-workspace"; repo = "fm-$workspace-repo" }
+$targetName = "fm-$workspace-target"
 $env:FOREMAN_HOME = $home_
 try {
     Log "install: $(& $fm plugin install $plugin)"
@@ -89,6 +93,13 @@ try {
         Start-Sleep -Seconds 2
         Log "launch workspace: $((claude --bg --name $names.workspace --permission-mode auto @common --settings (Settings 'workspace' '') -- $wsPrompt 2>&1) -join ' | ')"
     } finally { Pop-Location }
+    if ($Drop) {
+        Push-Location $cwd
+        try {
+            $tp = 'This is an automated Foreman selftest. When another session sends you a message, reply to its sender with SendMessage repeating the FOREMAN-RELAY nonce it contains, then wait for more. Do nothing else.'
+            Log "launch target: $((claude --bg --name $targetName --permission-mode auto --strict-mcp-config --settings '{"worktree":{"bgIsolation":"none"}}' -- $tp 2>&1 | Select-Object -First 1))"
+        } finally { Pop-Location }
+    }
     Push-Location $repoDir
     try {
         Log "launch repo: $((claude --bg --name $names.repo --permission-mode auto @common --settings (Settings 'repo' 'Repo') -- $repoPrompt 2>&1) -join ' | ')"
@@ -114,6 +125,16 @@ try {
     foreach ($k in @('workspace', 'repo')) {
         $r = $rows | Where-Object { $_.name -eq $names[$k] } | Select-Object -First 1
         if ($r) { Log "$k final row state=$($r.state) status=$($r.status) waitingFor=$($r.waitingFor)"; Report $k $r.sessionId } else { Log "$k : no row" }
+    }
+    if ($Drop) {
+        $nonce = "FOREMAN-RELAY-$('{0:x6}' -f (Get-Random -Maximum 0xffffff))"
+        Log "drop: $(& $fm send $workspace $targetName "$nonce ping from the diag`nsecond line" 2>&1)"
+        $until = (Get-Date).AddSeconds(120); $got = $null
+        while (-not $got -and (Get-Date) -lt $until) {
+            Start-Sleep -Milliseconds 500
+            $got = Get-ChildItem (Join-Path $relayDir 'outbox') -Filter 'msg-*.json' | Where-Object { (Get-Content $_.FullName -Raw) -match "$nonce|relay-notice" } | Select-Object -First 1
+        }
+        Log "drop result: $(if ($got) { "$($got.Name): $((Get-Content $got.FullName -Raw) -replace "`r?`n", ' ')" } else { 'nothing within 120 s' })"
     }
     foreach ($f in @(Get-ChildItem (Join-Path $relayDir 'outbox') -Filter 'msg-*.json' -ErrorAction SilentlyContinue)) {
         Log "outbox $($f.Name): $((Get-Content $f.FullName -Raw) -replace "`r?`n", ' ')"

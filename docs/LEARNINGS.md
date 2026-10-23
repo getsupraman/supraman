@@ -1051,6 +1051,20 @@ touched the real store.
   workspace-controller must `SendMessage` the task as well; likewise a repo session the supervisor resumes after a
   crash sits idle until a message. (2) `fm send` from inside a session is delivered *from `fm-<w>-relay`*, i.e. as
   the human's voice, and `Bash(fm:*)` allows it; both skills forbid it in words only.
+- **The relay's send was refused by the auto-mode classifier twice** (selftest runs 11 and 13 of 14, step r):
+  `SendMessage to fm-selftest-…-target failed: Permission for this action was denied by the Claude Code auto mode
+  classifier. Reason: [External System Writes].`, relay row `state=blocked status=busy`. New in this unit: before the
+  drop the relay has already received the workspace session's `ready`. Not reproduced on purpose: `diag/relay.ps1`
+  (no workspace session) 3/3 rounds delivered, `diag/skills.ps1 -Drop` (a drop right after the workspace's
+  `ready`) 3/3 delivered. So: intermittent, cause unknown, not routed around. If it happens to a real relay the
+  human's message is not delivered and a `relay-notice` lands in Messages; m3/4 should watch for it.
+- Gate from this worktree (final code, run 14): `cargo test --workspace` 291 passed (288 + 3: roles/skills, skill
+  listing, `Hit::fully_visible`), 0 failed; `--selftest-supervise` PASS (step b `FOREMAN-ROLE workspace v85771130`,
+  skills listed both, first turn Skill → ToolSearch ×2 → SendMessage; step c resumed by the supervisor after 32 s;
+  step w the repo session ran `fm roster` with Bash, no park; steps s/f/g as in the finding below; 9 rows removed,
+  0 left); `--selftest` PASS (frame p95 20.79 ms, max 24.10 ms, 0 > 50 ms; idle 120.8 MiB). The 13 runs before:
+  c ×2 (runs 1–2), f ×3 (3–5), the new click helper ×5 (6–10), r ×2 (11, 13), PASS once (12, before step s
+  existed) — each cause named above or below; only r's is open.
 
 ## 2026-10-23 — m3/3 finding: the left panel could not scroll; the last workspaces were out of reach
 
