@@ -19,15 +19,17 @@ use crate::view::FleetView;
 enum Page {
     Sessions,
     WorkState,
+    Plugins,
 }
 
 impl Page {
-    const ALL: [Page; 2] = [Page::Sessions, Page::WorkState];
+    const ALL: [Page; 3] = [Page::Sessions, Page::WorkState, Page::Plugins];
 
     fn title(self) -> &'static str {
         match self {
             Page::Sessions => "Sessions",
             Page::WorkState => "WorkState",
+            Page::Plugins => "Plugins",
         }
     }
 }
@@ -259,6 +261,33 @@ impl SettingsView {
             ),
         ]
     }
+
+    fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let colors = cx.theme().colors().clone();
+        let dirs = &self.settings.extra_plugin_dirs;
+        let lines: Vec<AnyElement> = if dirs.is_empty() {
+            vec![div().text_sm().text_color(colors.text_muted).child("none").into_any_element()]
+        } else {
+            dirs.iter()
+                .map(|dir| {
+                    let missing = !dir.join(".claude-plugin").join("plugin.json").is_file();
+                    let text = format!("{}{}", dir.display(), if missing { "  (no .claude-plugin/plugin.json here)" } else { "" });
+                    div()
+                        .text_sm()
+                        .when(missing, |d| d.text_color(cx.theme().status().warning))
+                        .child(SharedString::from(text))
+                        .into_any_element()
+                })
+                .collect()
+        };
+        vec![row(
+            "Extra plugin dirs",
+            "Passed as --plugin-dir to every session Foreman launches, after Foreman's own plugin, e.g.              the rlarch plugin whose /rlarch:controller a repo session runs. Change them in settings.toml              (extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
+            div().into_any_element(),
+            Some(div().flex().flex_col().gap_1().pt_2().children(lines).into_any_element()),
+            cx,
+        )]
+    }
 }
 
 fn row(
@@ -360,6 +389,7 @@ impl Render for SettingsView {
         let rows = match self.page {
             Page::Sessions => self.render_sessions(cx),
             Page::WorkState => self.render_workstate(cx),
+            Page::Plugins => self.render_plugins(cx),
         };
         let content = div()
             .id("settings-page")

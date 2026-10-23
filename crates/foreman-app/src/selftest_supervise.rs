@@ -15,6 +15,10 @@
 //!   outbox message carrying the nonce, and into the app's Messages section.
 //! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
 //!   and the supervisor resumes it: same sessionId, new pid.
+//! - w. `fm want <testbed> Repo --prompt-file …` (the testbed's repo is a plain dir `<root>/Repo`: a `git init`ed
+//!   one is untrusted, step d) → the supervisor launches `fm-selftest-<hex>-repo`; its first task runs
+//!   `fm roster` itself with the Bash tool (no park) and replies with it; `fm roster` from here lists it with role
+//!   `repo`; `fm unwant` → the supervisor stops it and does not bring it back.
 //! - d. Start `-u` → Inbox TrustNeeded with Run in terminal; the click opens a pwsh tab there with
 //!   `claude` typed and NOT run; the tab is closed. Nothing is accepted.
 //! - e. the park session → Inbox Blocked with Attach.
@@ -31,10 +35,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Claude, Health, LaunchSpec, Session, SessionState, check_supported, list_sessions, now_ms};
-use foreman_core::{EventReader, Workspace, Registry, Settings, read_outbox, relay_ready, role_tag};
+use foreman_claude::{Claude, Health, LaunchSpec, Session, check_supported, list_sessions, now_ms};
+use foreman_core::{EventReader, Repo, Workspace, Registry, Settings, read_outbox, relay_ready, role_tag};
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, relay_session_name, workspace_session_name,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity};
@@ -48,6 +52,7 @@ use crate::{Mode, supervise};
 
 const PROMPT_TARGET: &str = "This is an automated Foreman selftest. When another session sends you a message, reply \
 to its sender with SendMessage repeating the FOREMAN-RELAY nonce it contains, then wait for more. Do nothing else.";
+const REPO: &str = "Repo";
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
 
@@ -119,8 +124,15 @@ pub fn prepare() -> anyhow::Result<()> {
         bail!("git init {}: {}", tb.u.1.display(), String::from_utf8_lossy(&git.stderr));
     }
     let registry = Registry::at(&home);
+    let repo = tb.a.1.join(REPO);
+    std::fs::create_dir_all(&repo).with_context(|| format!("create {}", repo.display()))?;
     for (name, root) in [&tb.a, &tb.u, &tb.c1, &tb.c2] {
-        registry.save(&Workspace::new(name.as_str(), root.as_path(), Vec::new()), true)?;
+        let repos = if name == &tb.a.0 {
+            vec![Repo { name: REPO.into(), path: repo.clone(), has_claude_md: false, has_agents_md: false, branch: None, enabled: true }]
+        } else {
+            Vec::new()
+        };
+        registry.save(&Workspace::new(name.as_str(), root.as_path(), repos), true)?;
     }
     let plugin = cargo_root().join("plugins").join("foreman");
     let mut desired = DesiredState::workspace_controller(&tb.a.0, &tb.a.1, role_prompt(&plugin, WORKSPACE_ROLE, &tb.a.0)?);
@@ -406,6 +418,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         raw(&settled)
     );
 
+    want_step(tb, view, cx).await.context("step w")?;
+
     // d. untrusted workspace → TrustNeeded with Run in terminal; nothing is run or accepted
     let u_ctrl = workspace_session_name(&tb.u.0);
     wait_painted(view, &format!("start-{}", tb.u.0), Duration::from_secs(10), cx).await?;
@@ -530,12 +544,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     while first_live.iter().any(Option::is_none) {
         let rows = rows(cx).await?;
         let now = now_ms();
-        // relays are outside the budget (an armed one may show `working` throughout, m0/4)
+        // relays are outside the budget (an armed one may show `working` throughout, m0/4); working is
+        // what the budget counts: mid-turn (m3/2)
         let working: Vec<&Session> = rows
             .iter()
-            .filter(|s| {
-                s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && s.state == Some(SessionState::Working) && is_live(s, now)
-            })
+            .filter(|s| s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && mid_turn(s, now))
             .collect();
         polls += 1;
         if working.len() > max_seen {
@@ -604,6 +617,119 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
     }
     Ok(())
+}
+
+/// `fm.exe` built beside this `foreman.exe`, run with this process's `FOREMAN_HOME` (the testbed's).
+fn fm(args: &[&str]) -> anyhow::Result<String> {
+    let exe = std::env::current_exe()?.with_file_name(foreman_core::HOOK_EXE);
+    let out = Command::new(&exe).args(args).stdin(Stdio::null()).output().with_context(|| format!("run {}", exe.display()))?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if !out.status.success() {
+        bail!("fm {}: {}", args.join(" "), text.trim());
+    }
+    Ok(text)
+}
+
+/// Step w: a repo session on demand through `fm want`, `fm` run from inside it, `fm roster`, `fm unwant`.
+async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let w = tb.a.0.as_str();
+    let name = foreman_supervisor::repo_session_name(w, REPO).ok_or_else(|| anyhow!("no session name for {REPO}"))?;
+    let task = tb.home.join("want-task.md");
+    std::fs::write(&task, format!("Run `fm roster {w}` with the Bash tool and reply with its output verbatim. Then stop."))?;
+    let started = Instant::now();
+    let wanted = fm(&["want", w, REPO, "--prompt-file", &task.display().to_string()])?;
+    let live = wait_for("repo session live", Duration::from_secs(60), cx, |rows| {
+        rows.iter().find(|s| s.name == name && s.pid.is_some()).cloned()
+    })
+    .await?;
+    let live_after = started.elapsed();
+    let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&name).copied());
+    if attempt.is_none() {
+        bail!("{name} is live, but the supervisor never launched it");
+    }
+    // its first task: `fm roster` from inside the session, which must not park
+    let mut events = EventReader::new(&tb.home);
+    let mut transcript = None;
+    let (reply, tools) = loop {
+        for e in events.poll_session(&live.session_id) {
+            if e.event == "Stop" {
+                transcript = e.transcript_path.clone().or(transcript);
+            }
+        }
+        if let Some(path) = &transcript
+            && let (Some(text), tools) = transcript_turn(path)
+        {
+            break (text, tools);
+        }
+        if let Some(r) = row(&name, cx).await?
+            && let Health::Blocked { waiting_for } = r.health(now_ms())
+        {
+            bail!("{name} parked running fm ({waiting_for:?}): [{}]", raw(&r));
+        }
+        if started.elapsed() > Duration::from_secs(150) {
+            bail!("{name} did not end its first turn within 150 s");
+        }
+        sleep(cx, Duration::from_millis(500)).await;
+    };
+    if !tools.iter().any(|t| t.starts_with("Bash: ") && t.contains("roster")) {
+        bail!("{name} did not run fm roster with Bash: tools {tools:?}, reply {reply:?}");
+    }
+    if !reply.contains(&name) {
+        bail!("{name} ran {tools:?}, but its reply does not list itself: {reply:?}");
+    }
+    let roster = fm(&["roster", w])?;
+    let line = roster
+        .lines()
+        .find(|l| l.starts_with(&format!("{name}\trepo\t")))
+        .ok_or_else(|| anyhow!("fm roster {w} does not list {name} as repo:\n{roster}"))?
+        .to_string();
+    let unwanted = fm(&["unwant", w, REPO])?;
+    let unwant_at = Instant::now();
+    let stopped = wait_for("repo session stopped after unwant", Duration::from_secs(60), cx, |rows| {
+        rows.iter().find(|s| s.name == name && s.pid.is_none()).cloned()
+    })
+    .await?;
+    let stopped_after = unwant_at.elapsed();
+    sleep(cx, Duration::from_secs(5)).await;
+    if row(&name, cx).await?.is_some_and(|r| r.pid.is_some()) {
+        bail!("{name} came back after fm unwant");
+    }
+    println!(
+        "step w: `fm want {w} {REPO}` ({}) → {name} ({}) launched by the supervisor, live after {} | its first turn ran {tools:?} itself, no park, its reply lists it ({} chars) | `fm roster {w}`: {line:?} | `fm unwant` ({}) → stopped after {} [{}], not resumed 5 s later",
+        wanted.lines().next().unwrap_or_default(),
+        live.id,
+        secs(live_after),
+        reply.len(),
+        unwanted.lines().next().unwrap_or_default(),
+        secs(stopped_after),
+        raw(&stopped),
+    );
+    Ok(())
+}
+
+/// The last assistant text of a transcript (`.jsonl`) and the commands of its tool calls (`tool: command`).
+fn transcript_turn(path: &str) -> (Option<String>, Vec<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else { return (None, Vec::new()) };
+    let mut last = None;
+    let mut tools = Vec::new();
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if v["type"] != "assistant" {
+            continue;
+        }
+        for c in v["message"]["content"].as_array().into_iter().flatten() {
+            match (c["type"].as_str(), c["text"].as_str()) {
+                (Some("text"), Some(t)) => last = Some(t.to_string()),
+                (Some("tool_use"), _) => tools.push(format!(
+                    "{}: {}",
+                    c["name"].as_str().unwrap_or("?"),
+                    c["input"]["command"].as_str().unwrap_or("")
+                )),
+                _ => {}
+            }
+        }
+    }
+    (last, tools)
 }
 
 /// Step r: the relay armed, a message from the Rust API to a session launched here, its answer back in

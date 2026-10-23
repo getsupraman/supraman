@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,10 @@ pub struct DesiredState {
     pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
     pub started: bool,
+    /// Names Foreman stopped wanting (`fm unwant`): a live row with one is stopped, never launched or
+    /// resumed. A name wanted again leaves this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<String>,
     #[serde(default)]
     pub sessions: Vec<WantedSession>,
 }
@@ -52,6 +57,8 @@ impl WantedSession {
 
 pub const WORKSPACE_ROLE: &str = "workspace";
 pub const RELAY_ROLE: &str = "relay";
+/// A repo-controller: `fm-<workspace>-<repo slug>`, started on demand (`fm want`).
+pub const REPO_ROLE: &str = "repo";
 /// What a resumed relay is told: its `Monitor` died with the process.
 pub const RELAY_RESUME_PROMPT: &str =
     "You were restarted and your Monitor is gone. Re-arm it now exactly as your instructions say (rewrite ready.json), then wait.";
@@ -85,13 +92,71 @@ pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl I
     }
 }
 
+/// `fm-<workspace>-<slug of repo>`. `None` when the slug is empty or would take the name of the
+/// workspace's own sessions (`workspace`, `relay`).
+pub fn repo_session_name(workspace: &str, repo: &str) -> Option<String> {
+    let slug = foreman_core::slugify(repo);
+    (!slug.is_empty() && slug != WORKSPACE_ROLE && slug != RELAY_ROLE).then(|| format!("fm-{workspace}-{slug}"))
+}
+
+/// A repo-controller for `repo`: cwd = the repo's checkout (it merges there like a controller does, so the
+/// launch config's `bgIsolation:"none"` applies; its nested agents work in worktrees), auto, role `repo`.
+pub fn repo_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>) -> Option<WantedSession> {
+    Some(WantedSession {
+        name: repo_session_name(workspace, repo)?,
+        role: REPO_ROLE.into(),
+        cwd: cwd.into(),
+        repo: Some(repo.into()),
+        prompt: prompt.into(),
+        permission_mode: default_permission_mode(),
+        add_dirs: Vec::new(),
+        resume_prompt: None,
+    })
+}
+
+/// What [`DesiredState::want`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wanted {
+    Added,
+    Updated,
+    Unchanged,
+}
+
 impl DesiredState {
     pub fn new(workspace: impl Into<String>) -> Self {
         Self {
             workspace: workspace.into(),
             started: false,
+            retired: Vec::new(),
             sessions: Vec::new(),
         }
+    }
+
+    /// Adds `w`, or replaces the wanted session of that name; either way it is no longer retired.
+    pub fn want(&mut self, w: WantedSession) -> Wanted {
+        self.retired.retain(|n| n != &w.name);
+        match self.sessions.iter_mut().find(|s| s.name == w.name) {
+            Some(s) if *s == w => Wanted::Unchanged,
+            Some(s) => {
+                *s = w;
+                Wanted::Updated
+            }
+            None => {
+                self.sessions.push(w);
+                Wanted::Added
+            }
+        }
+    }
+
+    /// Removes the wanted session `name` and retires it, so a live one is stopped. False when it was
+    /// not wanted (it is retired all the same).
+    pub fn unwant(&mut self, name: &str) -> bool {
+        let before = self.sessions.len();
+        self.sessions.retain(|s| s.name != name);
+        if !self.retired.iter().any(|n| n == name) {
+            self.retired.push(name.to_string());
+        }
+        self.sessions.len() != before
     }
 
     /// M2's desired state: one `fm-<workspace>-workspace` session, not started.
@@ -129,6 +194,8 @@ impl DesiredState {
             .map_err(|source| SupervisorError::Parse { path, source })
     }
 
+    /// Atomic replace: written to a temp file of this process, then renamed over the file (retried
+    /// while another process holds it open), so a reader never sees half a file.
     pub fn save(&self, home: &Path) -> Result<PathBuf> {
         let path = Self::path(home, &self.workspace)?;
         let text = toml::to_string(self).map_err(|source| SupervisorError::Serialize {
@@ -142,10 +209,51 @@ impl DesiredState {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir).map_err(io(dir))?;
         }
-        let tmp = path.with_extension("toml.tmp");
+        // one temp name per process: the app and `fm` may save at the same moment
+        let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
         fs::write(&tmp, text).map_err(io(&tmp))?;
-        fs::rename(&tmp, &path).map_err(io(&path))?;
-        Ok(path)
+        let mut tries = 0;
+        loop {
+            match fs::rename(&tmp, &path) {
+                Ok(()) => return Ok(path),
+                Err(e) if tries < 20 && e.kind() == ErrorKind::PermissionDenied => {
+                    tries += 1;
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(source) => {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(SupervisorError::Io { path, source });
+                }
+            }
+        }
+    }
+
+    /// Read-modify-write against other writers (the app's Start/Stop, other `fm` calls): loads the file
+    /// (or [`DesiredState::new`] when there is none), applies `edit`, and before saving re-reads it; if it
+    /// changed meanwhile, starts over on the new content (up to 10 times). What is left is the moment
+    /// between that re-read and the rename: a write landing there is lost. `edit` may run more than once.
+    pub fn update<T>(home: &Path, workspace: &str, mut edit: impl FnMut(&mut Self) -> T) -> Result<(Self, T)> {
+        let path = Self::path(home, workspace)?;
+        let read = || match fs::read_to_string(&path) {
+            Ok(text) => Ok(Some(text)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(SupervisorError::Io { path: path.clone(), source }),
+        };
+        let mut attempt = 0;
+        loop {
+            let before = read()?;
+            let mut desired = match &before {
+                Some(text) => toml::from_str(text).map_err(|source| SupervisorError::Parse { path: path.clone(), source })?,
+                None => Self::new(workspace),
+            };
+            let out = edit(&mut desired);
+            attempt += 1;
+            if read()? != before && attempt < 10 {
+                continue;
+            }
+            desired.save(home)?;
+            return Ok((desired, out));
+        }
     }
 }
 
@@ -158,6 +266,18 @@ pub fn role_prompt(plugin_dir: &Path, role: &str, workspace: &str) -> Result<Str
 
 pub fn render_role(template: &str, workspace: &str) -> String {
     template.replace("{workspace}", workspace).trim().to_string()
+}
+
+/// [`render_role`] plus `{repo}`, for a repo session.
+pub fn render_repo_role(template: &str, workspace: &str, repo: &str) -> String {
+    render_role(&template.replace("{repo}", repo), workspace)
+}
+
+/// `{fm}` (this build's `fm.exe`) and `{home}` (`FOREMAN_HOME`) filled in, forward slashes: a role's
+/// commands may run under Git Bash (m0/4). `{workspace}`/`{repo}` stay for [`render_role`] and the hook.
+pub fn fill_paths(template: &str, fm: &Path, home: &Path) -> String {
+    let forward = |p: &Path| p.display().to_string().replace('\\', "/");
+    template.replace("{fm}", &forward(fm)).replace("{home}", &forward(home))
 }
 
 #[cfg(test)]
@@ -263,6 +383,75 @@ mod tests {
         let prompt = render_role(&template, "nomos");
         assert!(prompt.contains("relay/nomos/inbox"), "{prompt}");
         assert!(prompt.contains("SendMessage"), "{prompt}");
+    }
+
+    #[test]
+    fn repo_sessions_are_named_by_slug_and_never_take_a_workspace_name() {
+        assert_eq!(repo_session_name("nomos", "Nomos.Extract").as_deref(), Some("fm-nomos-nomos-extract"));
+        assert_eq!(repo_session_name("nomos", "Relay"), None);
+        assert_eq!(repo_session_name("nomos", "workspace"), None);
+        assert_eq!(repo_session_name("nomos", "..."), None);
+        let r = repo_session("nomos", "Nomos.Extract", r"C:\n\Nomos.Extract", "p").unwrap();
+        assert_eq!((r.role.as_str(), r.repo.as_deref(), r.permission_mode.as_str()), ("repo", Some("Nomos.Extract"), "auto"));
+        assert!(!r.exempt_from_budget());
+    }
+
+    #[test]
+    fn want_is_idempotent_and_unwant_retires() {
+        let mut d = DesiredState::new("demo");
+        let r = repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap();
+        assert_eq!(d.want(r.clone()), Wanted::Added);
+        assert_eq!(d.want(r.clone()), Wanted::Unchanged);
+        assert_eq!(d.want(WantedSession { prompt: "p2".into(), ..r.clone() }), Wanted::Updated);
+        assert_eq!(d.sessions.len(), 1);
+        assert!(d.unwant("fm-demo-alpha"));
+        assert!(!d.unwant("fm-demo-alpha"));
+        assert_eq!((d.sessions.len(), d.retired.as_slice()), (0, ["fm-demo-alpha".to_string()].as_slice()));
+        let home = tempfile::tempdir().unwrap();
+        d.save(home.path()).unwrap();
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(d.clone()));
+        assert_eq!(d.want(r), Wanted::Added);
+        assert!(d.retired.is_empty());
+    }
+
+    #[test]
+    fn update_starts_over_when_another_writer_saved_meanwhile() {
+        let home = tempfile::tempdir().unwrap();
+        let (d, ()) = DesiredState::update(home.path(), "demo", |_| ()).unwrap();
+        assert_eq!(d, DesiredState::new("demo"), "no file: a new one");
+        let mut runs = 0;
+        let (d, _) = DesiredState::update(home.path(), "demo", |d| {
+            runs += 1;
+            if runs == 1 {
+                // the app's Start lands between our read and our save
+                let mut started = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+                started.started = true;
+                started.save(home.path()).unwrap();
+            }
+            d.want(repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap())
+        })
+        .unwrap();
+        assert_eq!(runs, 2);
+        assert!(d.started, "the other write is kept");
+        let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["fm-demo-workspace", "fm-demo-alpha"]);
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(d));
+        let leftovers = fs::read_dir(home.path().join("supervisor")).unwrap().count();
+        assert_eq!(leftovers, 1, "no temp file left");
+    }
+
+    #[test]
+    fn repo_role_fills_repo_and_paths() {
+        let template = "Repo {repo} of {workspace}; run {fm} roster {workspace}; home {home}";
+        let filled = fill_paths(template, Path::new(r"C:\fm\bin\fm.exe"), Path::new(r"C:\fm home"));
+        assert_eq!(
+            render_repo_role(&filled, "demo", "Alpha"),
+            "Repo Alpha of demo; run C:/fm/bin/fm.exe roster demo; home C:/fm home"
+        );
+        let shipped = fs::read_to_string(plugin_dir().join("roles").join("repo.md")).unwrap();
+        for placeholder in ["{workspace}", "{repo}"] {
+            assert!(shipped.contains(placeholder), "{placeholder}");
+        }
     }
 
     #[test]

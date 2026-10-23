@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use foreman_claude::{Claude, LaunchSpec, Session};
+use foreman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 
 use crate::{
-    Action, Budget, DesiredState, Failure, Millis, NeedsYou, Policy, SupervisorMemory, WantedSession, is_live,
+    Action, Budget, DesiredState, Failure, Millis, NeedsYou, Policy, SupervisorMemory, WantedSession, is_live, mid_turn,
     reconcile,
 };
 
@@ -45,30 +45,35 @@ pub trait TokenProvider {
 /// session gets the role's WorkState server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
-    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_role_token`] writes the owner-only config.
+    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_session_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE` and `FOREMAN_WORKSPACE`, through
+    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE` (and `FOREMAN_REPO` for a
+    /// repo session), through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
     pub foreman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
     /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
     pub bg_isolation_none: bool,
+    /// `--allowedTools`: permission rules every session gets, so `fm` (Foreman's CLI, run by controllers
+    /// themselves) never parks for permission (m3/2: `Bash(fm:*)` matched; PowerShell rules did not).
+    pub allowed_tools: Vec<String>,
 }
 
 impl LaunchConfig {
     /// The `--settings` JSON for one session, `None` when there is nothing to set.
-    pub fn session_settings(&self, workspace: &str, role: &str) -> Option<String> {
+    pub fn session_settings(&self, workspace: &str, role: &str, repo: Option<&str>) -> Option<String> {
         let mut settings = serde_json::Map::new();
         if let Some(home) = &self.foreman_home {
-            settings.insert(
-                "env".into(),
-                serde_json::json!({
-                    "FOREMAN_HOME": home.display().to_string(),
-                    "FOREMAN_ROLE": role,
-                    "FOREMAN_WORKSPACE": workspace,
-                }),
-            );
+            let mut env = serde_json::json!({
+                "FOREMAN_HOME": home.display().to_string(),
+                "FOREMAN_ROLE": role,
+                "FOREMAN_WORKSPACE": workspace,
+            });
+            if let Some(repo) = repo {
+                env["FOREMAN_REPO"] = repo.into();
+            }
+            settings.insert("env".into(), env);
         }
         if self.bg_isolation_none {
             settings.insert("worktree".into(), serde_json::json!({ "bgIsolation": "none" }));
@@ -115,8 +120,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.memory.retry(name);
     }
 
-    /// Wanted sessions started less than `settle` ago that the snapshot does not show live yet: each
-    /// holds a slot of the shared [`Budget`] until it shows.
+    /// Wanted sessions started less than `settle` ago that the snapshot does not show mid-turn: each
+    /// holds a slot of the shared [`Budget`] until it is counted as working, or `settle` passes. A fresh
+    /// process shows `status=idle` for a second before its first prompt (m3/2), so "live" is not enough.
     pub fn starting(&self, observed: &[Session], now: Millis) -> usize {
         if !self.desired.started {
             return 0;
@@ -131,7 +137,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     .get(&w.name)
                     .and_then(|a| a.started_at)
                     .is_some_and(|t| now - t < self.policy.settle);
-                settling && !observed.iter().any(|s| s.name == w.name && is_live(s, now))
+                settling && !observed.iter().any(|s| s.name == w.name && mid_turn(s, now))
             })
             .count()
     }
@@ -202,15 +208,36 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
         spec.add_dirs = w.add_dirs.clone();
-        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role) {
+        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role, w.repo.as_deref()) {
             spec.extra_args = vec!["--settings".into(), settings];
+        }
+        if !self.config.allowed_tools.is_empty() {
+            spec.extra_args.push("--allowedTools".into());
+            spec.extra_args.extend(self.config.allowed_tools.iter().cloned());
         }
         if let Some(t) = self.tokens.token(&w.role) {
             spec = spec
-                .with_role_token(&self.config.mcp_dir, &w.role, &t.url, &t.token)
-                .map_err(|e| Failure::Other(format!("cannot write the {} mcp config: {e}", w.role)))?;
+                .with_session_token(&self.config.mcp_dir, &session_identity(&self.desired.workspace, w), &t.url, &t.token)
+                .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
         }
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
+    }
+}
+
+/// What `w` tells WorkState about itself: its name, `foreman/<workspace>` as launcher, the repo in its
+/// origin, its cwd and Foreman role.
+pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
+    let launched_by = format!("foreman/{workspace}");
+    SessionIdentity {
+        agent: w.name.clone(),
+        session: None,
+        origin: match &w.repo {
+            Some(repo) => format!("{launched_by}/{repo}"),
+            None => launched_by.clone(),
+        },
+        launched_by,
+        cwd: w.cwd.display().to_string(),
+        foreman_role: w.role.clone(),
     }
 }
 
@@ -342,7 +369,7 @@ mod tests {
                 assert_eq!(name, "fm-demo-workspace");
                 let argv = argv.join(" ");
                 assert!(argv.contains("--strict-mcp-config"), "{argv}");
-                assert!(argv.contains("workstate-workspace.json"), "{argv}");
+                assert!(argv.contains("workstate-fm-demo-workspace.json"), "{argv}");
                 assert!(argv.contains(r"--plugin-dir C:\fm\plugins\foreman"), "{argv}");
                 assert!(argv.ends_with("-- be the controller"), "{argv}");
                 assert!(!argv.contains("fake-token"), "{argv}");
@@ -355,6 +382,41 @@ mod tests {
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         assert_eq!(sup.launcher().take(), []);
         assert_eq!(sup.memory.get("fm-demo-workspace").unwrap().started_at, None, "stable");
+    }
+
+    #[test]
+    fn each_session_gets_its_own_config_with_its_identity_headers() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = RoleToken { url: "http://127.0.0.1:5290/mcp".into(), token: "fake-token".into() };
+        let mut sup = supervisor(true, Some(token), &dir.path().join("mcp"));
+        sup.desired.sessions.push(WantedSession {
+            name: "fm-demo-alpha".into(),
+            role: "repo".into(),
+            cwd: r"C:\demo\Alpha".into(),
+            repo: Some("Alpha".into()),
+            prompt: "run the queue".into(),
+            permission_mode: "auto".into(),
+            add_dirs: Vec::new(),
+            resume_prompt: None,
+        });
+        sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.launcher().take().len(), 2);
+        let headers = |name: &str| {
+            let text = std::fs::read_to_string(dir.path().join("mcp").join(format!("workstate-{name}.json"))).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            v["mcpServers"]["workstate"]["headers"].clone()
+        };
+        let repo = headers("fm-demo-alpha");
+        assert_eq!(repo["X-WorkState-Agent"], "fm-demo-alpha");
+        assert_eq!(repo["X-WorkState-Launched-By"], "foreman/demo");
+        assert_eq!(repo["X-WorkState-Origin"], "foreman/demo/Alpha");
+        assert_eq!(repo["X-WorkState-Cwd"], r"C:\demo\Alpha");
+        assert_eq!(repo["X-WorkState-Foreman-Role"], "repo");
+        assert!(repo.get("X-WorkState-Session").is_none());
+        let ws = headers("fm-demo-workspace");
+        assert_eq!(ws["X-WorkState-Origin"], "foreman/demo");
+        assert_eq!(ws["X-WorkState-Foreman-Role"], "workspace");
+        assert!(!dir.path().join("mcp").join("workstate-workspace.json").exists(), "no per-role file any more");
     }
 
     #[test]
@@ -377,6 +439,7 @@ mod tests {
         let mut sup = supervisor(true, None, dir.path());
         sup.config.foreman_home = Some(r"C:\fm\home".into());
         sup.config.bg_isolation_none = true;
+        sup.config.allowed_tools = vec!["Bash(fm:*)".into(), "Bash(C:/fm/bin/fm.exe:*)".into()];
         sup.desired.sessions[0].permission_mode = "default".into();
         sup.tick(&[], &mut free(), NOW);
         let argv = match sup.launcher().take().as_slice() {
@@ -385,6 +448,8 @@ mod tests {
         };
         let at = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
         assert_eq!(at("--permission-mode").as_deref(), Some("default"));
+        let tools = argv.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(argv[tools + 1..tools + 4], ["Bash(fm:*)", "Bash(C:/fm/bin/fm.exe:*)", "--"]);
         let settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
         assert_eq!(
             settings,
@@ -393,7 +458,7 @@ mod tests {
                 "worktree": { "bgIsolation": "none" }
             })
         );
-        assert_eq!(LaunchConfig::default().session_settings("demo", "workspace"), None);
+        assert_eq!(LaunchConfig::default().session_settings("demo", "workspace", None), None);
     }
 
     fn workspace(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {
@@ -461,6 +526,21 @@ mod tests {
         let needs = tick_all(sups.iter_mut(), std::slice::from_ref(&other), 2, NOW + 2 * SECOND);
         assert_eq!(launched(&sups), [1, 0]);
         assert!(needs.is_empty(), "a cap wait is not an Inbox row: {needs:?}");
+    }
+
+    #[test]
+    fn a_workspace_session_idling_on_the_relay_frees_its_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
+        tick_all(sups.iter_mut(), &[], 1, NOW);
+        assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [1, 0]);
+        // just started, no prompt taken yet: `status=idle` on a live pid still holds the slot while settling
+        let fresh = live("fm-alpha-workspace", 1, SessionState::Working, Status::Idle);
+        tick_all(sups.iter_mut(), std::slice::from_ref(&fresh), 1, NOW + 2 * SECOND);
+        assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [0, 0]);
+        // its turn ended, `state` stayed `working`: the slot is free once it settled
+        tick_all(sups.iter_mut(), std::slice::from_ref(&fresh), 1, NOW + 30 * SECOND);
+        assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [0, 1]);
     }
 
     #[test]

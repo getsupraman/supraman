@@ -1546,6 +1546,7 @@ dependencies = [
  "chrono",
  "foreman-claude",
  "foreman-core",
+ "foreman-supervisor",
  "serde_json",
  "tempfile",
 ]
@@ -1649,6 +1650,7 @@ dependencies = [
  "foreman-ui",
  "gpui",
  "gpui_platform",
+ "serde_json",
  "tempfile",
  "theme",
  "util",

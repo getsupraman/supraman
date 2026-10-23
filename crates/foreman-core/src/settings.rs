@@ -23,6 +23,10 @@ pub struct Settings {
     /// The fleet panel's width in logical pixels, as the divider was last dragged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub left_width: Option<u32>,
+    /// More plugin dirs every launch gets, as `--plugin-dir` after Foreman's own (e.g. the rlarch plugin
+    /// whose `/rlarch:controller` a repo-controller runs). Edited in the file; the app only shows them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_plugin_dirs: Vec<PathBuf>,
 }
 
 fn default_max_working() -> usize {
@@ -36,6 +40,7 @@ impl Default for Settings {
             workstate_env: None,
             workstate_url: None,
             left_width: None,
+            extra_plugin_dirs: Vec::new(),
         }
     }
 }
@@ -83,6 +88,7 @@ mod tests {
             workstate_env: Some(r"C:\x\.env".into()),
             workstate_url: Some("http://127.0.0.1:5290/mcp".into()),
             left_width: Some(512),
+            extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
@@ -95,6 +101,7 @@ mod tests {
         let s = Settings::load(home.path()).unwrap();
         assert_eq!(s.max_working, DEFAULT_MAX_WORKING);
         assert_eq!(s.workstate_url.as_deref(), Some("http://x/mcp"));
+        assert!(s.extra_plugin_dirs.is_empty());
         fs::write(Settings::path(home.path()), "max_working = \"many\"").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })));
     }

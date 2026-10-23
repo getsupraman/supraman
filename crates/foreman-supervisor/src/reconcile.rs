@@ -175,6 +175,16 @@ pub fn reconcile(
             _ => launches.push(action),
         }
     }
+    // retired names (`fm unwant`): stopped whether the workspace is started or not, before the relay
+    for name in desired.retired.iter().filter(|n| !desired.sessions.iter().any(|w| &w.name == *n)) {
+        let live: Vec<&Session> = observed.iter().filter(|s| &s.name == name && is_live(s, now)).collect();
+        if let [s] = live.as_slice() {
+            out.push(Action::Stop {
+                name: name.clone(),
+                id: s.id.clone(),
+            });
+        }
+    }
     out.append(&mut last_stops);
     out.append(&mut exempt);
     let mut free = free;
@@ -228,6 +238,7 @@ mod tests {
         DesiredState {
             workspace: "demo".into(),
             started,
+            retired: Vec::new(),
             sessions: names.iter().map(|n| wanted(n)).collect(),
         }
     }
@@ -489,6 +500,25 @@ mod tests {
         );
     }
 
+    // R11, m3/2: `state` is not the turn
+    #[test]
+    fn an_idle_working_row_takes_no_slot() {
+        // m3/1, measured m3/2: a session that ended its turn waiting for messages stays `state=working`
+        let waiting = row("fm-x-1", 1, Some(SessionState::Working), Some(Status::Idle), Some(7));
+        assert_eq!(Budget::new(1, std::slice::from_ref(&waiting), NOW).free, 1);
+        assert!(!crate::mid_turn(&waiting, NOW));
+        // mid-turn is `status=busy`, whatever `state` says
+        let busy = row("fm-x-2", 2, Some(SessionState::Done), Some(Status::Busy), Some(8));
+        assert_eq!(Budget::new(1, &[waiting, busy], NOW).free, 0);
+        // a parked session waits on the human, not on the model
+        let parked = row("fm-x-3", 3, Some(SessionState::Blocked), Some(Status::Waiting), Some(9));
+        assert_eq!(Budget::new(1, &[parked], NOW).free, 1);
+        // no status yet (the pid-less row right after `--bg`): `state=working` still counts
+        let mut fresh = row("fm-x-4", 4, Some(SessionState::Working), None, None);
+        fresh.started_at = Some(NOW - 2_000);
+        assert_eq!(Budget::new(1, &[fresh], NOW).free, 0);
+    }
+
     // R11 for the relay
     #[test]
     fn the_relay_is_outside_the_cap_and_its_working_row_takes_no_slot() {
@@ -546,6 +576,40 @@ mod tests {
         ));
         // a row never seen alive by this supervisor (e.g. stopped before the app started) resumes at once
         assert_eq!(run(&d, std::slice::from_ref(&done)), [resume_of(&done)]);
+    }
+
+    // R14
+    #[test]
+    fn retired_sessions_are_stopped_before_the_relay_and_never_relaunched() {
+        for started in [true, false] {
+            let mut d = desired(started, &["fm-demo-workspace"]);
+            d.sessions.insert(0, crate::relay_session("demo", r"C:\demo", r"C:\fm\relay\demo", "r"));
+            d.unwant("fm-demo-alpha");
+            let observed = [running("fm-demo-relay", 1), running("fm-demo-workspace", 2), running("fm-demo-alpha", 3)];
+            let actions = run(&d, &observed);
+            let stops: Vec<&str> = actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::Stop { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let expected: &[&str] = if started {
+                &["fm-demo-alpha"]
+            } else {
+                &["fm-demo-workspace", "fm-demo-alpha", "fm-demo-relay"]
+            };
+            assert_eq!(stops, expected, "started={started}");
+            // stopped: nothing more, no resume
+            let observed = [running("fm-demo-relay", 1), running("fm-demo-workspace", 2), stopped("fm-demo-alpha", 3)];
+            assert!(run(&d, &observed).iter().all(|a| action_name(a) != "fm-demo-alpha"));
+        }
+        // wanted again: launched or resumed as usual
+        let mut d = desired(true, &[]);
+        d.unwant("fm-demo-alpha");
+        d.want(wanted("fm-demo-alpha"));
+        assert!(d.retired.is_empty());
+        assert_eq!(run(&d, &[stopped("fm-demo-alpha", 3)]), [resume_of(&stopped("fm-demo-alpha", 3))]);
     }
 
     #[test]

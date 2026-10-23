@@ -15,8 +15,8 @@ use foreman_core::{
     read_outbox, relay_ready,
 };
 use foreman_supervisor::{
-    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, WORKSPACE_ROLE, Supervisor, is_live, relay_session,
-    relay_session_name, role_prompt, tick_all, workspace_session_name,
+    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, fill_paths, is_live,
+    relay_session, relay_session_name, role_prompt, tick_all,
 };
 
 use crate::tokens::AppTokens;
@@ -46,8 +46,8 @@ pub fn find_plugin_dir(exe: &Path) -> Option<PathBuf> {
 }
 
 /// [`migrate_home`] (before anything reads the registry), `fm plugin install` for the `fm.exe` built next
-/// to `foreman.exe`, and the role templates at `<home>/roles/{workspace,relay}.md` (the SessionStart hook
-/// fills in `{workspace}` from `FOREMAN_WORKSPACE`; the relay's `{fm}` and `{home}` are filled here).
+/// to `foreman.exe`, and the role templates at `<home>/roles/{workspace,relay,repo}.md` (the SessionStart hook
+/// fills in `{workspace}`/`{repo}` from `FOREMAN_WORKSPACE`/`FOREMAN_REPO`; `{fm}` and `{home}` are filled here).
 pub fn setup(home: &Path) -> Setup {
     let mut notices = migrate_home(home)
         .unwrap_or_else(|e| vec![format!("Cannot migrate {} to workspace names: {e}", home.display())]);
@@ -76,7 +76,7 @@ pub fn setup(home: &Path) -> Setup {
             fm.display()
         ));
     }
-    for role in [WORKSPACE_ROLE, RELAY_ROLE] {
+    for role in [WORKSPACE_ROLE, RELAY_ROLE, REPO_ROLE] {
         if let Err(e) = write_role_template(home, &plugin_dir, role) {
             notices.push(format!("Cannot write the {role} role into {}: {e:#}", home.display()));
         }
@@ -92,13 +92,21 @@ fn forward(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
+/// The permission rules every session gets so `fm` never parks (m3/2): the plugin's `bin/` is on the
+/// session's PATH, and a session may also call the exe by its absolute path.
+pub fn fm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
+    vec!["Bash(fm:*)".into(), format!("Bash({}:*)", forward(&plugin_dir.join("bin").join(HOOK_EXE)))]
+}
+
 /// `<home>/roles/<role>.md` from the plugin's template, with `{fm}` (the plugin's hook exe) and `{home}`
-/// filled in; `{workspace}` stays for the hook and [`role_prompt`].
+/// filled in; `{workspace}` and `{repo}` stay for the hook, [`role_prompt`] and `fm want`.
 pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow::Result<()> {
     let file = format!("{role}.md");
-    let template = std::fs::read_to_string(plugin_dir.join("roles").join(&file))?
-        .replace("{fm}", &forward(&plugin_dir.join("bin").join(HOOK_EXE)))
-        .replace("{home}", &forward(home));
+    let template = fill_paths(
+        &std::fs::read_to_string(plugin_dir.join("roles").join(&file))?,
+        &plugin_dir.join("bin").join(HOOK_EXE),
+        home,
+    );
     let dir = home.join("roles");
     std::fs::create_dir_all(&dir)?;
     let target = dir.join(file);
@@ -110,8 +118,10 @@ pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow
 
 /// Start: the workspace's desired state with its `fm-<workspace>-relay` first and its
 /// `fm-<workspace>-workspace` session (cwd = the workspace root for both, prompt = the role),
-/// `started = true`, saved. Other wanted sessions are kept. The relay's dirs are created and its last
-/// `ready.json` forgotten: the supervisor launches the relay before the workspace session.
+/// `started = true`, saved. Other wanted sessions (repo sessions `fm want` added) are kept, after these
+/// two. The relay's dirs are created and its last `ready.json` forgotten: the supervisor launches the
+/// relay before the workspace session. Read-modify-write through [`DesiredState::update`]: `fm want`
+/// writes the same file.
 pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Workspace) -> anyhow::Result<DesiredState> {
     let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/foreman found for this build"))?;
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
@@ -119,31 +129,26 @@ pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Works
     clear_ready(home, &workspace.name)?;
     // the rendered copy in <home>/roles has the relay's paths filled in
     let relay = relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?);
-    let name = workspace_session_name(&workspace.name);
-    let mut desired = DesiredState::load(home, &workspace.name)?
-        .unwrap_or_else(|| DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt));
-    match desired.sessions.iter_mut().find(|w| w.name == name) {
-        Some(w) => {
-            w.cwd = workspace.root.clone();
-            w.prompt = prompt;
-        }
-        None => {
-            let controller = DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt);
-            desired.sessions.insert(0, controller.sessions.into_iter().next().context("no controller session")?);
-        }
-    }
-    desired.sessions.retain(|w| w.name != relay.name);
-    desired.sessions.insert(0, relay);
-    desired.started = true;
-    desired.save(home)?;
+    let controller = DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt)
+        .sessions
+        .into_iter()
+        .next()
+        .context("no controller session")?;
+    let (desired, ()) = DesiredState::update(home, &workspace.name, |desired| {
+        desired.sessions.retain(|w| w.name != relay.name && w.name != controller.name);
+        desired.retired.retain(|n| n != &relay.name && n != &controller.name);
+        desired.sessions.insert(0, controller.clone());
+        desired.sessions.insert(0, relay.clone());
+        desired.started = true;
+    })?;
     Ok(desired)
 }
 
-/// Stop: `started = false`, saved. The next tick stops the live wanted sessions (never removes them).
+/// Stop: `started = false`, saved. The next tick stops the live wanted sessions (never removes them):
+/// the workspace session, then the repo sessions, the relay last.
 pub fn stop_workspace(home: &Path, workspace: &str) -> anyhow::Result<()> {
-    if let Some(mut desired) = DesiredState::load(home, workspace)? {
-        desired.started = false;
-        desired.save(home)?;
+    if DesiredState::load(home, workspace)?.is_some() {
+        DesiredState::update(home, workspace, |desired| desired.started = false)?;
     }
     Ok(())
 }
@@ -204,20 +209,28 @@ impl RelayStatus {
 
 pub struct Supervision {
     home: PathBuf,
+    plugin_dir: Option<PathBuf>,
     config: LaunchConfig,
     supervisors: BTreeMap<String, Supervisor<Claude, AppTokens>>,
+}
+
+/// Foreman's own plugin first, then `settings.toml` `extra_plugin_dirs` in their order.
+pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBuf> {
+    plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.extra_plugin_dirs.iter().cloned()).collect()
 }
 
 impl Supervision {
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
         let config = LaunchConfig {
             mcp_dir: home.join("mcp"),
-            plugin_dirs: plugin_dir.into_iter().collect(),
+            plugin_dirs: plugin_dir.clone().into_iter().collect(),
             foreman_home: Some(home.clone()),
             bg_isolation_none: true,
+            allowed_tools: plugin_dir.as_deref().map(fm_allowed_tools).unwrap_or_default(),
         };
         Self {
             home,
+            plugin_dir,
             config,
             supervisors: BTreeMap::new(),
         }
@@ -232,11 +245,15 @@ impl Supervision {
             Settings::default()
         });
         report.max_working = settings.max_working;
+        self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {
             match DesiredState::load(&self.home, &p.name) {
                 Ok(Some(desired)) => match self.supervisors.get_mut(&p.name) {
-                    Some(s) => s.desired = desired,
+                    Some(s) => {
+                        s.desired = desired;
+                        s.config.plugin_dirs = self.config.plugin_dirs.clone();
+                    }
                     None => {
                         let tokens = AppTokens { home: self.home.clone() };
                         let s = Supervisor::new(desired, self.config.clone(), Claude::default(), tokens);
@@ -306,6 +323,34 @@ mod tests {
         let found = find_plugin_dir(&exe).unwrap();
         assert!(found.join("roles").join("workspace.md").is_file(), "{}", found.display());
         assert_eq!(find_plugin_dir(Path::new(r"C:\nowhere\foreman.exe")), None);
+    }
+
+    #[test]
+    fn launches_get_extra_plugin_dirs_after_foremans_and_the_fm_rules() {
+        let settings = Settings {
+            extra_plugin_dirs: vec![r"C:\skills\plugins\rlarch".into()],
+            ..Settings::default()
+        };
+        let own = Path::new(r"C:\fm\plugins\foreman");
+        assert_eq!(plugin_dirs(Some(own), &settings), [own.to_path_buf(), r"C:\skills\plugins\rlarch".into()]);
+        assert_eq!(plugin_dirs(None, &Settings::default()), Vec::<PathBuf>::new());
+        assert_eq!(fm_allowed_tools(own), ["Bash(fm:*)", "Bash(C:/fm/plugins/foreman/bin/fm.exe:*)"]);
+    }
+
+    #[test]
+    fn start_keeps_repo_sessions_after_its_own() {
+        let home = tempfile::tempdir().unwrap();
+        write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
+        write_role_template(home.path(), &plugin_dir(), REPO_ROLE).unwrap();
+        let rendered = std::fs::read_to_string(home.path().join("roles").join("repo.md")).unwrap();
+        assert!(rendered.contains("{repo}") && rendered.contains("{workspace}"), "{rendered}");
+        let alpha = foreman_supervisor::repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap();
+        DesiredState::update(home.path(), "demo", |d| d.want(alpha.clone())).unwrap();
+        let d = start_workspace(home.path(), Some(&plugin_dir()), &Workspace::new("demo", r"C:\demo", Vec::new())).unwrap();
+        let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["fm-demo-relay", "fm-demo-workspace", "fm-demo-alpha"]);
+        stop_workspace(home.path(), "demo").unwrap();
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap().unwrap().sessions.len(), 3);
     }
 
     #[test]

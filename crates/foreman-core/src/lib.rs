@@ -11,7 +11,7 @@ mod slug;
 
 pub use error::{CoreError, Result};
 pub use events::{
-    Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_tag,
+    Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
 };
 pub use migrate::migrate_home;
 pub use model::{Repo, Workspace};
