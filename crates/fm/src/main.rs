@@ -86,6 +86,10 @@ fn run(args: &[String]) -> Result<(), Failure> {
             println!("{USAGE}");
             Ok(())
         }
+        ["-V" | "--version"] => {
+            println!("fm {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         ["workspace", "add", rest @ ..] => add(rest),
         ["workspace", "list"] => list(),
         ["workspace", "show", name] => show(name),

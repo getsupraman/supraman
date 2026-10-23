@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use foreman_claude::{Claude, ClaudeError, Health, LaunchSpec, Session, now_ms, workstate_mcp_config};
+use foreman_claude::{Claude, ClaudeError, Health, LaunchSpec, Session, SessionIdentity, now_ms, workstate_mcp_config};
 
 const WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 const INVALID_TOKEN: &str = "fm-probe-invalid";
@@ -83,10 +83,10 @@ fn run(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<boo
     // b2 is the decided route exactly as Foreman will launch: an owner-only per-role config file.
     let dir_b1 = mkdir(root, "b1")?;
     let mut spec_b1 = LaunchSpec::new(format!("aw-m2-probe-{hex}-b1"), &dir_b1, PROMPT_B);
-    spec_b1.mcp_config = Some(write(&dir_b1, "probe-mcp.json", &workstate_mcp_config(WORKSTATE_URL, INVALID_TOKEN))?);
+    spec_b1.mcp_config = Some(write(&dir_b1, "probe-mcp.json", &workstate_mcp_config(WORKSTATE_URL, INVALID_TOKEN, &[]))?);
     let dir_b2 = mkdir(root, "b2")?;
     let spec_b2 = LaunchSpec::new(format!("aw-m2-probe-{hex}-b2"), &dir_b2, PROMPT_B)
-        .with_role_token(&dir_b2.join("mcp"), "probe", WORKSTATE_URL, INVALID_TOKEN)
+        .with_session_token(&dir_b2.join("mcp"), &SessionIdentity { agent: format!("aw-m2-probe-{hex}-b2"), ..SessionIdentity::default() }, WORKSTATE_URL, INVALID_TOKEN)
         .map_err(|e| format!("role config: {e}"))?;
 
     // (a2) the same, but the variable set through `--settings {"env":…}` instead of the process env.

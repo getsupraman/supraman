@@ -38,8 +38,8 @@
 //!
 //! One `max_working` for all workspaces (the human's setting). [`tick_all`] ticks every workspace's
 //! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
-//! minus the live `fm-` rows with `state=working`, minus every wanted session still settling after a
-//! start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot. Test
+//! minus the live `fm-` rows that are mid-turn ([`mid_turn`]: `status=busy`, not `state=working`), minus
+//! every wanted session still settling after a start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot. Test
 //! `two_started_workspaces_never_exceed_the_shared_budget_together`.
 //!
 //! # Failures
@@ -57,13 +57,13 @@ mod memory;
 mod needs;
 mod reconcile;
 
-pub use budget::{Budget, tick_all, working};
+pub use budget::{Budget, mid_turn, tick_all, working};
 pub use desired::{
     DEFAULT_PERMISSION_MODE, DesiredState, RELAY_RESUME_PROMPT, RELAY_ROLE, WORKSPACE_ROLE, WantedSession, relay_session,
     relay_session_name, render_role, role_prompt, workspace_session_name,
 };
 pub use error::{Result, SupervisorError};
-pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider};
+pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider, session_identity};
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};
 pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};

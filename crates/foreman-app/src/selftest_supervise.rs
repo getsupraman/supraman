@@ -31,10 +31,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Claude, Health, LaunchSpec, Session, SessionState, check_supported, list_sessions, now_ms};
+use foreman_claude::{Claude, Health, LaunchSpec, Session, check_supported, list_sessions, now_ms};
 use foreman_core::{EventReader, Workspace, Registry, Settings, read_outbox, relay_ready, role_tag};
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, relay_session_name, workspace_session_name,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity};
@@ -530,12 +530,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     while first_live.iter().any(Option::is_none) {
         let rows = rows(cx).await?;
         let now = now_ms();
-        // relays are outside the budget (an armed one may show `working` throughout, m0/4)
+        // relays are outside the budget (an armed one may show `working` throughout, m0/4); working is
+        // what the budget counts: mid-turn (m3/2)
         let working: Vec<&Session> = rows
             .iter()
-            .filter(|s| {
-                s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && s.state == Some(SessionState::Working) && is_live(s, now)
-            })
+            .filter(|s| s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && mid_turn(s, now))
             .collect();
         polls += 1;
         if working.len() > max_seen {

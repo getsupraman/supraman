@@ -42,12 +42,12 @@ impl LaunchSpec {
         }
     }
 
-    /// The decided role-token route (m2/1): `<dir>/workstate-<role>.json` holds the role's token
-    /// (owner-only ACL, see [`write_role_mcp_config`]) and the session gets it via
-    /// `--mcp-config <file> --strict-mcp-config`, so the user-scope `workstate` is never loaded.
-    /// `dir` is `<FOREMAN_HOME>/mcp`; the caller reads `token`.
-    pub fn with_role_token(mut self, dir: &Path, role: &str, url: &str, token: &str) -> std::io::Result<Self> {
-        self.mcp_config = Some(write_role_mcp_config(dir, role, url, token)?);
+    /// The decided token route (m2/1), one file per session (m3/2): `<dir>/workstate-<agent>.json` holds
+    /// the role's token and the session's identity headers (owner-only ACL, see
+    /// [`write_session_mcp_config`]) and the session gets it via `--mcp-config <file> --strict-mcp-config`,
+    /// so the user-scope `workstate` is never loaded. `dir` is `<FOREMAN_HOME>/mcp`; the caller reads `token`.
+    pub fn with_session_token(mut self, dir: &Path, identity: &SessionIdentity, url: &str, token: &str) -> std::io::Result<Self> {
+        self.mcp_config = Some(write_session_mcp_config(dir, identity, url, token)?);
         self.strict_mcp_config = true;
         Ok(self)
     }
@@ -93,29 +93,78 @@ pub fn resume_argv(session_id: &str, prompt: Option<&str>) -> Vec<OsString> {
     args
 }
 
-/// The `workstate` server entry with the token written in, shaped like Skills' `plugin.mcp.json`.
-pub fn workstate_mcp_config(url: &str, token: &str) -> String {
+/// Who a session is, for WorkState's named sessions (Skills `docs/workstate/11-sessions.md`): sent as
+/// `X-WorkState-*` headers on every request, so they survive resumes and compaction. A label, never
+/// an authority: the role still comes from the token.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionIdentity {
+    /// `X-WorkState-Agent`: the session's `--name`; also the config file's name.
+    pub agent: String,
+    /// `X-WorkState-Session`: the claude session uuid, when it is known at launch.
+    pub session: Option<String>,
+    /// `X-WorkState-Launched-By`, e.g. `foreman/nomos`.
+    pub launched_by: String,
+    /// `X-WorkState-Origin`, e.g. `foreman/nomos/Nomos.Extract`.
+    pub origin: String,
+    /// `X-WorkState-Cwd`.
+    pub cwd: String,
+    /// `X-WorkState-Foreman-Role`: Foreman's role (workspace, repo, …), not the token's.
+    pub foreman_role: String,
+}
+
+impl SessionIdentity {
+    /// The headers that carry a value, in a fixed order.
+    pub fn headers(&self) -> Vec<(&'static str, String)> {
+        [
+            ("X-WorkState-Agent", Some(&self.agent)),
+            ("X-WorkState-Session", self.session.as_ref()),
+            ("X-WorkState-Launched-By", Some(&self.launched_by)),
+            ("X-WorkState-Origin", Some(&self.origin)),
+            ("X-WorkState-Cwd", Some(&self.cwd)),
+            ("X-WorkState-Foreman-Role", Some(&self.foreman_role)),
+        ]
+        .into_iter()
+        .filter_map(|(k, v)| v.filter(|v| !v.is_empty()).map(|v| (k, v.clone())))
+        .collect()
+    }
+}
+
+/// The `workstate` server entry with the token and `headers` written in, shaped like Skills' `plugin.mcp.json`.
+pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert("Authorization".into(), format!("Bearer {token}").into());
+    for (k, v) in headers {
+        map.insert((*k).into(), v.clone().into());
+    }
     serde_json::json!({
         "mcpServers": {
             "workstate": {
                 "type": "http",
                 "url": url,
-                "headers": { "Authorization": format!("Bearer {token}") }
+                "headers": map
             }
         }
     })
     .to_string()
 }
 
-/// Writes `<dir>/workstate-<role>.json`. The file is created empty, restricted to the current user
+/// Writes `<dir>/workstate-<agent>.json`. The file is created empty, restricted to the current user
 /// (Windows: inheritance removed, the user alone granted full control; unix: 0600), and only then
-/// filled, so the token is never readable by anyone else.
-pub fn write_role_mcp_config(dir: &Path, role: &str, url: &str, token: &str) -> std::io::Result<PathBuf> {
+/// filled, so the token is never readable by anyone else. Refuses an agent name that is not a plain
+/// file name (letters, digits, `-`, `_`, `.`).
+pub fn write_session_mcp_config(dir: &Path, identity: &SessionIdentity, url: &str, token: &str) -> std::io::Result<PathBuf> {
+    let agent = &identity.agent;
+    let plain = !agent.is_empty()
+        && !agent.starts_with('.')
+        && agent.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !plain {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("not a session name: {agent:?}")));
+    }
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("workstate-{role}.json"));
+    let path = dir.join(format!("workstate-{agent}.json"));
     std::fs::write(&path, b"")?;
     restrict_to_owner(&path)?;
-    std::fs::write(&path, workstate_mcp_config(url, token))?;
+    std::fs::write(&path, workstate_mcp_config(url, token, &identity.headers()))?;
     Ok(path)
 }
 
@@ -375,13 +424,24 @@ mod tests {
         assert_eq!(strs(&resume_argv("1234-uuid", Some("go on"))), ["--bg", "--resume", "1234-uuid", "--", "go on"]);
     }
 
+    fn identity() -> SessionIdentity {
+        SessionIdentity {
+            agent: "fm-demo-alpha".into(),
+            session: None,
+            launched_by: "foreman/demo".into(),
+            origin: "foreman/demo/Alpha".into(),
+            cwd: r"C:\demo\Alpha".into(),
+            foreman_role: "repo".into(),
+        }
+    }
+
     #[test]
-    fn role_token_lands_in_an_owner_only_file_not_in_argv() {
+    fn session_token_lands_in_an_owner_only_file_per_session_not_in_argv() {
         let dir = tempfile::tempdir().unwrap();
-        let spec = LaunchSpec::new("n", "C:\\", "hi")
-            .with_role_token(&dir.path().join("mcp"), "worker", "http://127.0.0.1:5290/mcp", "fake-token")
+        let spec = LaunchSpec::new("fm-demo-alpha", "C:\\", "hi")
+            .with_session_token(&dir.path().join("mcp"), &identity(), "http://127.0.0.1:5290/mcp", "fake-token")
             .unwrap();
-        let path = dir.path().join("mcp").join("workstate-worker.json");
+        let path = dir.path().join("mcp").join("workstate-fm-demo-alpha.json");
         assert_eq!(spec.mcp_config.as_deref(), Some(path.as_path()));
         assert!(spec.strict_mcp_config);
         assert!(spec.env.is_empty());
@@ -391,7 +451,18 @@ mod tests {
         let ws = &v["mcpServers"]["workstate"];
         assert_eq!(ws["type"], "http");
         assert_eq!(ws["url"], "http://127.0.0.1:5290/mcp");
-        assert_eq!(ws["headers"]["Authorization"], "Bearer fake-token");
+        assert_eq!(
+            ws["headers"],
+            serde_json::json!({
+                "Authorization": "Bearer fake-token",
+                "X-WorkState-Agent": "fm-demo-alpha",
+                "X-WorkState-Launched-By": "foreman/demo",
+                "X-WorkState-Origin": "foreman/demo/Alpha",
+                "X-WorkState-Cwd": r"C:\demo\Alpha",
+                "X-WorkState-Foreman-Role": "repo",
+            }),
+            "no X-WorkState-Session while the uuid is unknown"
+        );
         #[cfg(windows)]
         {
             let acl = Command::new("icacls").arg(&path).output().unwrap();
@@ -400,6 +471,15 @@ mod tests {
             let grants: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
             assert_eq!(grants.len(), 1, "{acl}");
             assert!(grants[0].contains(&format!("{user}:(F)")), "{acl}");
+        }
+        let other = SessionIdentity { agent: "fm-demo-beta".into(), session: Some("u-1".into()), ..identity() };
+        let path_b = write_session_mcp_config(&dir.path().join("mcp"), &other, "http://x/mcp", "fake-token").unwrap();
+        assert_ne!(path_b, path, "one file per session");
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path_b).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["workstate"]["headers"]["X-WorkState-Session"], "u-1");
+        for bad in ["", "..", "../x", r"a\b", "a b"] {
+            let id = SessionIdentity { agent: bad.into(), ..identity() };
+            assert!(write_session_mcp_config(&dir.path().join("mcp"), &id, "u", "fake-token").is_err(), "{bad:?}");
         }
     }
 
