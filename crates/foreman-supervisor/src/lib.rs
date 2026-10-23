@@ -54,7 +54,8 @@ mod reconcile;
 
 pub use budget::{Budget, tick_all, working};
 pub use desired::{
-    DEFAULT_PERMISSION_MODE, DesiredState, WORKSPACE_ROLE, WantedSession, workspace_session_name, render_role, role_prompt,
+    DEFAULT_PERMISSION_MODE, DesiredState, RELAY_RESUME_PROMPT, RELAY_ROLE, WORKSPACE_ROLE, WantedSession, relay_session,
+    relay_session_name, render_role, role_prompt, workspace_session_name,
 };
 pub use error::{Result, SupervisorError};
 pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider};

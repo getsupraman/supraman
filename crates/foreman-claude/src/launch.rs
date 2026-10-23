@@ -23,6 +23,8 @@ pub struct LaunchSpec {
     pub mcp_config: Option<PathBuf>,
     pub strict_mcp_config: bool,
     pub plugin_dirs: Vec<PathBuf>,
+    /// `--add-dir`: dirs outside `cwd` the session's tools may use.
+    pub add_dirs: Vec<PathBuf>,
     /// Set on the `claude --bg` process only. The session does NOT inherit it: the daemon spawns
     /// the session (m2/1). Use `--settings {"env":…}` in `extra_args` for env the session must see.
     pub env: Vec<(String, String)>,
@@ -67,6 +69,10 @@ impl LaunchSpec {
         }
         for dir in &self.plugin_dirs {
             args.push("--plugin-dir".into());
+            args.push(dir.clone().into());
+        }
+        for dir in &self.add_dirs {
+            args.push("--add-dir".into());
             args.push(dir.clone().into());
         }
         args.extend(self.extra_args.iter().map(OsString::from));
@@ -331,6 +337,7 @@ mod tests {
             mcp_config: Some(PathBuf::from(r"C:\fm\ws.json")),
             strict_mcp_config: true,
             plugin_dirs: vec![PathBuf::from(r"C:\p1"), PathBuf::from(r"C:\p2")],
+            add_dirs: vec![PathBuf::from(r"C:\fm\relay\demo")],
             env: vec![("A".into(), "1".into())],
             extra_args: vec!["--model".into(), "opus".into()],
         }
@@ -342,7 +349,8 @@ mod tests {
             strs(&full().argv()),
             [
                 "--bg", "--name", "fm-demo-a", "--permission-mode", "auto", "--mcp-config", r"C:\fm\ws.json",
-                "--strict-mcp-config", "--plugin-dir", r"C:\p1", "--plugin-dir", r"C:\p2", "--model", "opus", "--",
+                "--strict-mcp-config", "--plugin-dir", r"C:\p1", "--plugin-dir", r"C:\p2", "--add-dir",
+                r"C:\fm\relay\demo", "--model", "opus", "--",
                 "--looks-like-a-flag but is the prompt",
             ]
         );

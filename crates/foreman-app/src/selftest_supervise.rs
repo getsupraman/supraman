@@ -121,6 +121,8 @@ pub fn prepare() -> anyhow::Result<()> {
         repo: None,
         prompt: PROMPT_PARK.into(),
         permission_mode: "default".into(),
+        add_dirs: Vec::new(),
+        resume_prompt: None,
     });
     desired.save(&home)?;
     println!(

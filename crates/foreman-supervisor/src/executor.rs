@@ -10,8 +10,8 @@ use crate::{
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
 pub trait Launcher {
     fn launch(&self, spec: &LaunchSpec) -> foreman_claude::Result<String>;
-    /// Must pass no flag but `--bg --resume <session_id>` (any flag forks a copy, m2/1).
-    fn resume(&self, session_id: &str, cwd: &Path) -> foreman_claude::Result<String>;
+    /// Must pass no flag but `--bg --resume <session_id> [-- <prompt>]` (any flag forks a copy, m2/1).
+    fn resume(&self, session_id: &str, cwd: &Path, prompt: Option<&str>) -> foreman_claude::Result<String>;
     fn stop(&self, id: &str) -> foreman_claude::Result<String>;
 }
 
@@ -20,8 +20,8 @@ impl Launcher for Claude {
         Claude::launch(self, spec)
     }
 
-    fn resume(&self, session_id: &str, cwd: &Path) -> foreman_claude::Result<String> {
-        Claude::resume(self, session_id, cwd, None)
+    fn resume(&self, session_id: &str, cwd: &Path, prompt: Option<&str>) -> foreman_claude::Result<String> {
+        Claude::resume(self, session_id, cwd, prompt)
     }
 
     fn stop(&self, id: &str) -> foreman_claude::Result<String> {
@@ -124,6 +124,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.desired
             .sessions
             .iter()
+            .filter(|w| !w.exempt_from_budget())
             .filter(|w| {
                 let settling = self
                     .memory
@@ -152,7 +153,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             match action {
                 Action::Launch(w) => {
                     let result = self.launch(&w).map(drop);
-                    if result.is_ok() {
+                    if result.is_ok() && !w.exempt_from_budget() {
                         budget.take(1);
                     }
                     self.memory.record_result(&w.name, result, &self.policy, now);
@@ -160,12 +161,14 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 Action::Resume {
                     name, id, session_id, cwd,
                 } => {
+                    let prompt = self.desired.sessions.iter().find(|w| w.name == name).and_then(|w| w.resume_prompt.clone());
+                    let exempt = self.desired.sessions.iter().any(|w| w.name == name && w.exempt_from_budget());
                     let result = self
                         .launcher
-                        .resume(&session_id, &cwd)
+                        .resume(&session_id, &cwd, prompt.as_deref())
                         .map_err(|e| Failure::from(&e))
                         .and_then(|out| woke_in_place(&out, &id));
-                    if result.is_ok() {
+                    if result.is_ok() && !exempt {
                         budget.take(1);
                     }
                     self.memory.record_result(&name, result, &self.policy, now);
@@ -198,6 +201,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
+        spec.add_dirs = w.add_dirs.clone();
         if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role) {
             spec.extra_args = vec!["--settings".into(), settings];
         }
@@ -238,7 +242,7 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Call {
         Launch { name: String, argv: Vec<String> },
-        Resume { session_id: String, cwd: PathBuf },
+        Resume { session_id: String, cwd: PathBuf, prompt: Option<String> },
         Stop { id: String },
     }
 
@@ -271,8 +275,12 @@ mod tests {
             self.result()
         }
 
-        fn resume(&self, session_id: &str, cwd: &Path) -> foreman_claude::Result<String> {
-            self.calls.borrow_mut().push(Call::Resume { session_id: session_id.into(), cwd: cwd.into() });
+        fn resume(&self, session_id: &str, cwd: &Path, prompt: Option<&str>) -> foreman_claude::Result<String> {
+            self.calls.borrow_mut().push(Call::Resume {
+                session_id: session_id.into(),
+                cwd: cwd.into(),
+                prompt: prompt.map(str::to_string),
+            });
             self.result()
         }
 
@@ -464,8 +472,73 @@ mod tests {
             sup.launcher().take(),
             [Call::Resume {
                 session_id: "aaaa0001-0000-4000-8000-000000000001".into(),
-                cwd: r"C:\demo\cwd".into()
+                cwd: r"C:\demo\cwd".into(),
+                prompt: None,
             }]
+        );
+    }
+
+    fn with_relay(sup: &mut Supervisor<FakeLauncher, FakeTokens>) {
+        let relay = crate::relay_session("demo", r"C:\demo\cwd", r"C:\fm\home\relay\demo", "be the relay");
+        sup.desired.sessions.insert(0, relay);
+    }
+
+    #[test]
+    fn the_relay_launches_first_with_its_add_dir_and_never_takes_a_budget_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        with_relay(&mut sup);
+        let mut budget = Budget { max: 1, free: 1 };
+        sup.tick(&[], &mut budget, NOW);
+        let calls = sup.launcher().take();
+        let names: Vec<&str> = calls
+            .iter()
+            .map(|c| match c {
+                Call::Launch { name, .. } => name.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(names, ["fm-demo-relay", "fm-demo-workspace"], "relay first");
+        let Call::Launch { argv, .. } = &calls[0] else { unreachable!() };
+        let at = argv.iter().position(|a| a == "--add-dir").expect("--add-dir");
+        assert_eq!(argv[at + 1], r"C:\fm\home\relay\demo");
+        assert_eq!(budget.free, 0, "only the workspace session took the slot");
+        assert_eq!(sup.starting(&[], NOW + SECOND), 1, "a settling relay holds no slot");
+
+        // budget 0: the relay still goes, the workspace waits
+        let mut sup = supervisor(true, None, dir.path());
+        with_relay(&mut sup);
+        sup.tick(&[], &mut Budget { max: 0, free: 0 }, NOW);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Launch { name, .. }] if name == "fm-demo-relay"));
+    }
+
+    #[test]
+    fn a_resumed_relay_is_told_to_rearm() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        with_relay(&mut sup);
+        let mut relay = row(SessionState::Stopped, None, None);
+        relay.name = "fm-demo-relay".into();
+        let live = row(SessionState::Done, Some(Status::Idle), Some(5));
+        sup.tick(&[relay, live], &mut Budget { max: 0, free: 0 }, NOW);
+        match sup.launcher().take().as_slice() {
+            [Call::Resume { prompt: Some(p), .. }] => assert!(p.contains("Re-arm"), "{p}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn stop_stops_the_relay_after_the_other_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(false, None, dir.path());
+        with_relay(&mut sup);
+        let mut relay = row(SessionState::Working, Some(Status::Busy), Some(2));
+        relay.name = "fm-demo-relay".into();
+        relay.id = "aaaa0002".into();
+        sup.tick(&[relay, row(SessionState::Done, Some(Status::Idle), Some(1))], &mut free(), NOW);
+        assert_eq!(
+            sup.launcher().take(),
+            [Call::Stop { id: "aaaa0001".into() }, Call::Stop { id: "aaaa0002".into() }]
         );
     }
 

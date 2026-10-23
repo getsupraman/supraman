@@ -1,6 +1,6 @@
 use foreman_claude::{Session, SessionState};
 
-use crate::{Launcher, Millis, NeedsYou, Supervisor, TokenProvider, is_live};
+use crate::{Launcher, Millis, NeedsYou, RELAY_ROLE, Supervisor, TokenProvider, is_live};
 
 /// The machine-wide concurrency budget of one tick, shared by every workspace's supervisor: at most
 /// `max` `fm-` sessions busy at once. Starts as `max` minus the live `fm-` rows with `state=working`;
@@ -25,11 +25,16 @@ impl Budget {
     }
 }
 
-/// Live `fm-` rows whose turn is `working`.
+/// Live `fm-` rows whose turn is `working`, relays aside ([`crate::WantedSession::exempt_from_budget`]).
 pub fn working(observed: &[Session], now: Millis) -> usize {
     observed
         .iter()
-        .filter(|s| s.name.starts_with("fm-") && s.state == Some(SessionState::Working) && is_live(s, now))
+        .filter(|s| {
+            s.name.starts_with("fm-")
+                && !s.name.ends_with(&format!("-{RELAY_ROLE}"))
+                && s.state == Some(SessionState::Working)
+                && is_live(s, now)
+        })
         .count()
 }
 

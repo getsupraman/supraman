@@ -33,9 +33,28 @@ pub struct WantedSession {
     /// `--permission-mode`; a role whose tools must park for the human uses `default`.
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    /// `--add-dir`: dirs outside `cwd` the session may write to (the relay's outbox).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add_dirs: Vec<PathBuf>,
+    /// The prompt a resume passes (`--bg --resume <id> -- <prompt>`). A resumed session gets no turn
+    /// without one (m2/4), and a relay must re-arm its watcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_prompt: Option<String>,
+}
+
+impl WantedSession {
+    /// The relay costs nothing while it waits on its watcher but may show `working` throughout (m0/4):
+    /// it neither takes nor waits for a slot of the busy budget.
+    pub fn exempt_from_budget(&self) -> bool {
+        self.role == RELAY_ROLE
+    }
 }
 
 pub const WORKSPACE_ROLE: &str = "workspace";
+pub const RELAY_ROLE: &str = "relay";
+/// What a resumed relay is told: its `Monitor` died with the process.
+pub const RELAY_RESUME_PROMPT: &str =
+    "You were restarted and your Monitor is gone. Re-arm it now exactly as your instructions say (rewrite ready.json), then wait.";
 pub const DEFAULT_PERMISSION_MODE: &str = "auto";
 
 fn default_permission_mode() -> String {
@@ -44,6 +63,26 @@ fn default_permission_mode() -> String {
 
 pub fn workspace_session_name(workspace: &str) -> String {
     format!("fm-{workspace}-{WORKSPACE_ROLE}")
+}
+
+pub fn relay_session_name(workspace: &str) -> String {
+    format!("fm-{workspace}-{RELAY_ROLE}")
+}
+
+/// `fm-<workspace>-relay`: cwd = the workspace root (trusted: the workspace session runs there),
+/// `--add-dir` its relay dir (`<FOREMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
+/// on resume told to re-arm.
+pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl Into<PathBuf>, prompt: impl Into<String>) -> WantedSession {
+    WantedSession {
+        name: relay_session_name(workspace),
+        role: RELAY_ROLE.into(),
+        cwd: cwd.into(),
+        repo: None,
+        prompt: prompt.into(),
+        permission_mode: default_permission_mode(),
+        add_dirs: vec![relay_dir.into()],
+        resume_prompt: Some(RELAY_RESUME_PROMPT.into()),
+    }
 }
 
 impl DesiredState {
@@ -65,6 +104,8 @@ impl DesiredState {
                 repo: None,
                 prompt: prompt.into(),
                 permission_mode: default_permission_mode(),
+                add_dirs: Vec::new(),
+                resume_prompt: None,
             }],
             ..Self::new(workspace)
         }
@@ -139,7 +180,10 @@ mod tests {
             repo: Some("Alpha".into()),
             prompt: "line one\nline \"two\"".into(),
             permission_mode: "default".into(),
+            add_dirs: Vec::new(),
+            resume_prompt: None,
         });
+        desired.sessions.insert(0, relay_session("demo", r"C:\demo", r"C:\fm\relay\demo", "relay"));
         let path = desired.save(home.path()).unwrap();
         assert_eq!(path, home.path().join("supervisor").join("demo.toml"));
         assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(desired));
@@ -196,6 +240,29 @@ mod tests {
         assert!(notices[0].contains("fm-nomos-platform"), "{}", notices[0]);
         old.started = false;
         assert_eq!(DesiredState::load(home.path(), "nomos").unwrap(), Some(old));
+    }
+
+    #[test]
+    fn relay_is_named_by_convention_and_exempt_from_the_budget() {
+        let r = relay_session("nomos", r"C:\n", r"C:\fm\relay\nomos", "p");
+        assert_eq!(r.name, "fm-nomos-relay");
+        assert_eq!(r.role, "relay");
+        assert_eq!(r.permission_mode, "auto");
+        assert_eq!(r.add_dirs, [PathBuf::from(r"C:\fm\relay\nomos")]);
+        assert!(r.resume_prompt.as_deref().is_some_and(|p| p.contains("Re-arm")));
+        assert!(r.exempt_from_budget());
+        assert!(!DesiredState::workspace_controller("nomos", r"C:\n", "p").sessions[0].exempt_from_budget());
+    }
+
+    #[test]
+    fn shipped_relay_role_renders_with_its_paths() {
+        let template = fs::read_to_string(plugin_dir().join("roles").join("relay.md")).unwrap();
+        for placeholder in ["{workspace}", "{fm}", "{home}"] {
+            assert!(template.contains(placeholder), "{placeholder}");
+        }
+        let prompt = render_role(&template, "nomos");
+        assert!(prompt.contains("relay/nomos/inbox"), "{prompt}");
+        assert!(prompt.contains("SendMessage"), "{prompt}");
     }
 
     #[test]
