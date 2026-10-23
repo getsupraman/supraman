@@ -1104,3 +1104,33 @@ from the skills; fix in its own commit.
   itself, or writes into `relay/<w>/inbox` by hand — the guard closes the pre-approved `Bash(fm:*)` path only.
 - `FOREMAN_ROLE` leaking from a Foreman session into a test run would now fail `fm send` tests, so
   `tests/relay.rs`'s helper removes it (as `tests/hook.rs` already did).
+
+## 2026-10-24 — m3/4 the first end-to-end task (test workspace `e2e`)
+
+Two throwaway git repos under `target/e2e` (`textkit`: `greet`; `textcli`: `python -m textcli greet <name>`,
+importing the sibling textkit), test home `target/e2e-home` (`max_working = 3`, `extra_plugin_dirs` = rlarch).
+Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `textkit.shout`.
+
+- **Timeline** (local): Start 17:08 → workspace-controller `ready` 17:09:26 → task sent 17:09:34 → `APPROVE?` with
+  project `e2e`, runs `shout-textkit`, `shout-textcli` (blocked by textkit's task), integration run `shout` /
+  `shout-verify` 17:11:34 (2 min) → approved 17:11:49 → `fm want e2e textkit`. Then **trust** (below) until the
+  next day. textkit session 00:01:16 → nested unit 00:02:18 → merged `e126cae` 00:03:40. textcli session 00:04:17
+  → `BLOCKED` 00:04:41 (below) → decision 00:05:45 → nested unit 00:08:06 → merged `2ae66b4` 00:09:28 →
+  workspace-controller ran `shout-verify` itself and sent `DONE` 00:11:31, then retired both repo sessions
+  (`fm unwant`). Stop: all six sessions stopped in 3.3 s. Work time without the human waits: ~12 min.
+- **Verified by me** from the repos: textkit 3 tests OK, textcli 8 tests OK, `greet --shout Ada` and
+  `greet Ada --shout` → `HELLO, ADA!`, `greet Ada` → `Hello, Ada!`; both repos clean on main, one worktree each.
+  WorkState project `e2e` 6/6 done, each run with its merge sha.
+- **Trust is a human step per repo.** A git-init'ed folder is untrusted even inside a trusted checkout, so the
+  first `fm want` stalls with Inbox "trust needed". It is the human's to accept ("Run in terminal" / the repo `+`,
+  accept, `/exit`, Retry). The workspace-controller correctly said nothing about it: the Inbox row is Foreman's.
+- **Defect — the skill listing is truncated.** Both repo sessions' listings had six rlarch skills but not
+  `rlarch:controller` / `rlarch:nested-claude` (the two longest descriptions, 953/960 chars). textkit called the
+  Skill tool anyway and it loaded; textcli trusted the listing and escalated `BLOCKED`, which reached the human as
+  a `DECIDE` with two wrong options (add the plugin + restart / waive nested agents). Answered: "call the Skill
+  tool directly". Fix queued as m3/8 (skills say: a missing listing entry is not a blocker, a failed Skill call is).
+- **The escalation path worked as designed**: repo-controller → workspace-controller (`BLOCKED`, verbatim) →
+  relay → app Messages (`DECIDE:`) → human `fm send` → workspace-controller → repo-controller (`DECISION` forwarded).
+- **Seen by René in the UI** (queued in backlog): tabs monochrome — `NO_COLOR=1` inherited because I launched the
+  test Foreman from a Claude Code shell (backlog 5); block glyphs (the Claude logo) with gaps between rows (4);
+  no mouse-wheel scroll in a terminal tab (6).
