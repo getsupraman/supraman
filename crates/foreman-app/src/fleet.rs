@@ -21,6 +21,7 @@ pub struct PlatformNode {
 #[derive(Debug, Clone)]
 pub struct RepoNode {
     pub name: String,
+    pub path: PathBuf,
     pub branch: Option<String>,
     pub sessions: Vec<SessionRow>,
 }
@@ -207,6 +208,7 @@ pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_sto
                     sort(&mut rows);
                     RepoNode {
                         name: repo.name.clone(),
+                        path: platform.root.join(&repo.path),
                         branch: repo.branch.clone(),
                         sessions: rows,
                     }

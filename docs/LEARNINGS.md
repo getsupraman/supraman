@@ -829,3 +829,25 @@ worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolati
   max 23.92–26.22 ms, 0 > 50 ms; idle 120.4–120.8 MiB), `--selftest-detach 10` 10/10.
 - Deps: `foreman-supervisor` gains `serde_json` (in the lock, same version); `foreman-app` gains
   `foreman-supervisor` and dev `tempfile`. No new external dependency.
+
+## Fleet UI after M2 (René's first hand check)
+
+- **Resume from the tree**: a background session with no process resumes in a tab that runs
+  `claude --bg --resume <sessionId>; claude attach <id>` (pwsh `-Command`). The session wakes under the same
+  8-hex id with its transcript, so the tab is an ordinary Attach tab: closing it (× or middle click) types
+  Ctrl+Z and the session keeps running. Measured on a throwaway `--bg` session: 10–14 s from the click to the
+  attached screen, row `idle` again, same pid afterwards. An interactive session with no process resumes
+  in the tab itself (`claude --resume <sessionId>`). Not offered for `fm-` rows (Start resumes them) or for a
+  session this app saw alive in the last 30 s (the daemon's own respawn, R13). A live interactive session
+  belongs to the terminal that runs it: no attach, no resume.
+- **`CLAUDE_CODE_CHILD_SESSION`**: started from a shell inside a Claude Code session, Foreman inherited the
+  marker and the `claude` a tab started said "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
+  marker". `main` removes it before anything starts.
+- **Divider drag in gpui**: `on_drag(DraggedDivider, …)` on a 7 px grab area plus `on_drag_move::<DraggedDivider>`
+  on the row holding both panels (it fires in the capture phase wherever the cursor is). Mouse input sent with
+  `SetCursorPos` does not start a gpui drag; relative `mouse_event` moves do. The width is saved to
+  `settings.toml` `left_width` on mouse up; double click resets it.
+- **Role → WorkState token**: WorkState has controller, orchestrator and worker tokens only, so
+  `WORKSTATE_PLATFORM_TOKEN` never existed in `Skills/mcp/.env`. A role's own line still wins; else platform →
+  `WORKSTATE_CONTROLLER_TOKEN`, repo → `WORKSTATE_ORCHESTRATOR_TOKEN` (`tokens::workstate_role`). The settings
+  window shows which line each role would use, never the value.

@@ -489,16 +489,9 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         hook.unwrap_or_else(|| "none".into())
     );
 
-    // f. busy limit 1 (stepper), two more platforms started: never more than one working
-    let mut clicks = 0;
-    while view.read_with(cx, |v, _| v.max_working) > 1 {
-        click(view, "budget-dec", cx).await?;
-        clicks += 1;
-        sleep(cx, Duration::from_millis(100)).await;
-        if clicks > 30 {
-            bail!("step f: the stepper did not bring the limit to 1");
-        }
-    }
+    // f. busy limit 1 (the settings window's stepper path), two more platforms started: never
+    // more than one working
+    view.update(cx, |v, cx| v.set_max_working(1, cx));
     let saved = Settings::load(&tb.home)?.max_working;
     if saved != 1 {
         bail!("step f: settings.toml has max_working {saved} after the stepper showed 1");
@@ -555,7 +548,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         );
     }
     println!(
-        "step f: limit 3 → 1 by {clicks} stepper clicks (settings.toml max_working = 1) | Start {} and {}: max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
+        "step f: limit 3 → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {}: max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
         tb.c1.0,
         tb.c2.0,
         fmt(first_live[0]),

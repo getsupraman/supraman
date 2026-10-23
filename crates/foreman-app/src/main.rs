@@ -11,6 +11,7 @@
 mod fleet;
 mod selftest;
 mod selftest_supervise;
+mod settings_window;
 mod supervise;
 mod titlebar;
 mod tokens;
@@ -64,6 +65,10 @@ fn parse_args() -> Mode {
 
 fn main() {
     foreman_ui::process_start();
+    // Inherited when Foreman is started from a shell inside a Claude Code session; every `claude`
+    // a tab then runs would keep no transcript (LEARNINGS, fleet UI).
+    // SAFETY: no other thread exists yet.
+    unsafe { std::env::remove_var("CLAUDE_CODE_CHILD_SESSION") };
     let mode = parse_args();
     foreman_ui::init_logger();
     if mode != Mode::App

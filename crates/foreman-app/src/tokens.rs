@@ -1,6 +1,7 @@
 //! Role tokens for the sessions the app launches: `settings.toml` may name a WorkState `.env`
 //! (`workstate_env`) and URL (`workstate_url`); the token of role `r` is its `WORKSTATE_<R>_TOKEN`
-//! line, read when the session launches. No file, no line: the session launches without WorkState
+//! line, else the line of the WorkState role it acts as ([`workstate_role`]), read when the session
+//! launches. No file, no line: the session launches without WorkState
 //! (`--strict-mcp-config`, so never with the user-scope server). A token is never logged.
 
 use std::io;
@@ -24,11 +25,24 @@ impl TokenProvider for AppTokens {
 
 pub fn token_from(settings: &Settings, role: &str) -> Option<RoleToken> {
     let env = settings.workstate_env.as_deref()?;
-    let token = read_env_value(env, &token_key(role)).ok()??;
+    let token = match read_env_value(env, &token_key(role)).ok()? {
+        Some(token) => token,
+        None => read_env_value(env, &token_key(workstate_role(role)?)).ok()??,
+    };
     Some(RoleToken {
         url: settings.workstate_url.clone().unwrap_or_else(|| DEFAULT_WORKSTATE_URL.into()),
         token,
     })
+}
+
+/// WorkState knows controller, orchestrator and worker. A platform session runs the platform's
+/// queue (controller); a repo session runs one repo's units (orchestrator).
+pub fn workstate_role(role: &str) -> Option<&'static str> {
+    match role {
+        "platform" => Some("controller"),
+        "repo" | "repo-controller" => Some("orchestrator"),
+        _ => None,
+    }
 }
 
 pub fn token_key(role: &str) -> String {
@@ -107,6 +121,21 @@ not a line\n";
             })
         );
         assert_eq!(tokens.token("worker"), None, "no line for the role");
+        assert_eq!(
+            tokens.token("platform").unwrap().token,
+            "fake-platform",
+            "the role's own line wins over the WorkState role's"
+        );
+        let mapped = dir.path().join("mapped.env");
+        std::fs::write(&mapped, "WORKSTATE_CONTROLLER_TOKEN=fake-controller
+WORKSTATE_ORCHESTRATOR_TOKEN=fake-orch
+").unwrap();
+        settings.workstate_env = Some(mapped);
+        settings.save(&home).unwrap();
+        assert_eq!(tokens.token("platform").unwrap().token, "fake-controller");
+        assert_eq!(tokens.token("repo").unwrap().token, "fake-orch");
+        assert_eq!(tokens.token("worker"), None);
+        settings.workstate_env = Some(dir.path().join(".env"));
         settings.workstate_url = Some("http://localhost:9/mcp".into());
         settings.save(&home).unwrap();
         assert_eq!(tokens.token("platform").unwrap().url, "http://localhost:9/mcp");

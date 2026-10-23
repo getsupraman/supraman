@@ -20,6 +20,9 @@ pub struct Settings {
     pub workstate_env: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate_url: Option<String>,
+    /// The fleet panel's width in logical pixels, as the divider was last dragged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_width: Option<u32>,
 }
 
 fn default_max_working() -> usize {
@@ -32,6 +35,7 @@ impl Default for Settings {
             max_working: DEFAULT_MAX_WORKING,
             workstate_env: None,
             workstate_url: None,
+            left_width: None,
         }
     }
 }
@@ -78,6 +82,7 @@ mod tests {
             max_working: 1,
             workstate_env: Some(r"C:\x\.env".into()),
             workstate_url: Some("http://localhost:5290/mcp".into()),
+            left_width: Some(512),
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);

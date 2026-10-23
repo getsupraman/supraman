@@ -11,7 +11,7 @@ use std::{
 
 use collections::HashMap;
 use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Platform, Registry};
+use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Platform, Registry, Settings};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
 use foreman_term::{
     Event as TerminalEvent, Terminal, TerminalBuilder, TerminalMode,
@@ -19,13 +19,15 @@ use foreman_term::{
 };
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
-    AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, Hsla,
-    KeyDownEvent, Pixels, Render, SharedString, Window, canvas, div, prelude::*, px,
+    AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
+    FontWeight, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
+    WindowHandle, canvas, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
 
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
+use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, Report, Supervision};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
@@ -33,7 +35,12 @@ pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
-const LEFT_WIDTH: Pixels = px(460.);
+const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
+const MIN_LEFT_WIDTH: Pixels = px(280.);
+const MIN_RIGHT_WIDTH: Pixels = px(320.);
+/// A session the daemon may still respawn by itself (it does ~12 s after a death mid-turn) is not
+/// offered for resume: two resumes of one transcript run as two processes (m2/4, R13).
+const RESUME_GRACE_MS: i64 = 30_000;
 /// The concurrency stepper's range; 0 pauses every launch and resume.
 pub const MAX_WORKING_LIMIT: usize = 20;
 
@@ -111,6 +118,19 @@ pub struct FleetView {
     pub ticks: u64,
     /// Retries (`(platform, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    pub left_width: Pixels,
+    settings_window: Option<WindowHandle<SettingsView>>,
+    /// `session_id` → when this app last saw it alive.
+    last_alive: StdHashMap<String, i64>,
+}
+
+/// What the fleet/terminal divider drags.
+struct DraggedDivider;
+
+impl Render for DraggedDivider {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
 }
 
 struct Refresh {
@@ -182,6 +202,11 @@ impl FleetView {
             this.update(cx, |this, cx| this.should_close(cx)).unwrap_or(true)
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
+        let left_width = home
+            .as_deref()
+            .and_then(|h| Settings::load(h).ok())
+            .and_then(|s| s.left_width)
+            .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let mut poller = Poller {
             home: home.clone(),
@@ -265,6 +290,9 @@ impl FleetView {
             polled_at: 0,
             ticks: 0,
             retries,
+            left_width,
+            settings_window: None,
+            last_alive: StdHashMap::new(),
         }
     }
 
@@ -279,6 +307,12 @@ impl FleetView {
         // A failed read keeps the last good list on screen, flagged as stale.
         match refresh.sessions {
             Some(Ok(sessions)) => {
+                let now = now_ms();
+                for s in &sessions {
+                    if fleet::is_alive(&s.health(now)) {
+                        self.last_alive.insert(s.session_id.clone(), now);
+                    }
+                }
                 self.sessions = sessions;
                 self.sessions_error = None;
                 self.polled_at = refresh.polled_at;
@@ -379,12 +413,16 @@ impl FleetView {
     /// A shell tab in `cwd` with `command` typed at its prompt and NOT run: the human presses Enter
     /// and answers whatever it asks (the trust prompt is theirs; Foreman never answers it).
     pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let title = format!("trust · {}", cwd.display());
+        self.type_in_shell(cwd, title, command, window, cx)
+    }
+
+    fn type_in_shell(&mut self, cwd: PathBuf, title: String, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "pwsh".into(),
             args: self.shell_args.clone(),
             title_override: None,
         };
-        let title = format!("trust · {}", cwd.display());
         let id = self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx);
         // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
         // it look like), or after 15 s regardless.
@@ -413,6 +451,89 @@ impl FleetView {
         })
         .detach();
         id
+    }
+
+    /// Brings the settings window forward, or opens it.
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.settings_window
+            && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+        {
+            return;
+        }
+        let (home, fleet) = (self.home.clone(), cx.weak_entity());
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            let handle = settings_window::open(home, fleet, cx);
+            this.update(cx, |this, _| this.settings_window = handle).ok();
+        });
+    }
+
+    fn close_settings(&mut self, cx: &mut Context<Self>) {
+        if let Some(handle) = self.settings_window.take() {
+            handle.update(cx, |_, window, _| window.remove_window()).ok();
+        }
+    }
+
+    fn save_left_width(&mut self) {
+        let Some(home) = &self.home else {
+            return;
+        };
+        let width = f32::from(self.left_width).round() as u32;
+        if let Ok(mut settings) = Settings::load(home)
+            && settings.left_width != Some(width)
+        {
+            settings.left_width = Some(width);
+            if let Err(e) = settings.save(home) {
+                self.action_error = Some(format!("Cannot save the panel width: {e}"));
+            }
+        }
+    }
+
+    /// Whether [`Self::resume`] is offered: a session with no process that this app has not seen
+    /// alive in the last [`RESUME_GRACE_MS`]. `fm-` sessions are the supervisor's (Start resumes).
+    pub fn resumable(&self, row: &SessionRow) -> bool {
+        let s = &row.session;
+        !fleet::is_alive(&row.health)
+            && !s.session_id.is_empty()
+            && !s.name.starts_with("fm-")
+            && self
+                .last_alive
+                .get(&s.session_id)
+                .is_none_or(|t| now_ms() - t > RESUME_GRACE_MS)
+    }
+
+    /// A background session wakes in the background (`claude --bg --resume`, no other flag: the
+    /// same id) and the tab attaches to it, so closing the tab detaches and leaves it running. An
+    /// interactive one resumes in the tab, as it ran before.
+    pub fn resume(&mut self, platform: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let name = if session.name.is_empty() { fleet::short_id(session) } else { &session.name };
+        let title = format!("{platform} · {repo} · {name}");
+        let sid = &session.session_id;
+        if session.kind == foreman_claude::Kind::Background {
+            let script = format!(
+                "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",
+                session.id, session.id
+            );
+            let shell = util::shell::Shell::WithArguments {
+                program: "pwsh".into(),
+                args: vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script],
+                title_override: None,
+            };
+            let kind = TabKind::Attach { session_id: session.id.clone() };
+            self.open_tab(title, kind, shell, Some(session.cwd.clone()), window, cx)
+        } else {
+            let shell = util::shell::Shell::WithArguments {
+                program: "claude".into(),
+                args: vec!["--resume".into(), sid.clone()],
+                title_override: None,
+            };
+            self.open_tab(title, TabKind::Shell, shell, Some(session.cwd.clone()), window, cx)
+        }
+    }
+
+    /// A shell tab in `cwd` running `claude`, as if typed there: the shell stays when it exits.
+    pub fn new_claude(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        self.type_in_shell(cwd, title, "claude\r".into(), window, cx)
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -623,6 +744,7 @@ impl FleetView {
                 .map(|t| t.id);
         }
         if self.quitting && !self.has_attach_tabs() {
+            self.close_settings(cx);
             self.window
                 .update(cx, |_, window, _| window.remove_window())
                 .ok();
@@ -638,6 +760,7 @@ impl FleetView {
     /// one is gone, or stays open if one fails.
     fn should_close(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.has_attach_tabs() {
+            self.close_settings(cx);
             return true;
         }
         self.quitting = true;
@@ -654,6 +777,7 @@ impl FleetView {
         let close = !self.has_attach_tabs();
         if close {
             self.quitting = false;
+            self.close_settings(cx);
         }
         close
     }
@@ -666,6 +790,11 @@ impl FleetView {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let k = &event.keystroke;
+        if k.key == "," && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift {
+            self.open_settings(cx);
+            return;
+        }
         let Some(terminal) = self
             .active
             .and_then(|id| self.tab(id))
@@ -779,33 +908,7 @@ impl FleetView {
         } else {
             format!("show stopped ({})", tree.hidden_stopped).into()
         };
-        let max_working = self.max_working;
-        let stepper = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .text_xs()
-            .text_color(colors.text_muted)
-            .child("busy ≤")
-            .child(
-                button(&self.hits, "budget-dec".into(), "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_max_working(max_working.saturating_sub(1), cx);
-                })),
-            )
-            .child(
-                div()
-                    .w(px(18.))
-                    .flex()
-                    .justify_center()
-                    .text_color(colors.text)
-                    .font_weight(FontWeight::BOLD)
-                    .child(SharedString::from(max_working.to_string())),
-            )
-            .child(
-                button(&self.hits, "budget-inc".into(), "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_max_working(max_working + 1, cx);
-                })),
-            );
+        let busy: SharedString = format!("busy ≤ {}", self.max_working).into();
 
         let header = div()
             .flex()
@@ -820,10 +923,14 @@ impl FleetView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap_3()
+                    .gap_1()
                     .child(
                         div()
                             .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
                             .gap_2()
                             .text_xs()
                             .text_color(colors.text_muted)
@@ -831,10 +938,23 @@ impl FleetView {
                             .child("·")
                             .child(refresh_line),
                     )
-                    .child(stepper)
+                    .child(
+                        div()
+                            .id("busy-limit")
+                            .flex_none()
+                            .px_2()
+                            .rounded_sm()
+                            .text_xs()
+                            .text_color(colors.text_muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(colors.ghost_element_hover))
+                            .child(busy)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
+                    )
                     .child(
                         div()
                             .id("toggle-stopped")
+                            .flex_none()
                             .px_2()
                             .rounded_sm()
                             .text_xs()
@@ -970,6 +1090,22 @@ impl FleetView {
                 let ropen = !self.collapsed.contains(&rkey);
                 let empty = repo.sessions.is_empty();
                 let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
+                let new_key = format!("new-claude-{}/{}", platform.name, repo.name);
+                let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", platform.name, repo.name));
+                let new_claude = div()
+                    .id(SharedString::from(new_key.clone()))
+                    .relative()
+                    .flex_none()
+                    .px_1()
+                    .rounded_sm()
+                    .text_color(colors.text_muted)
+                    .hover(|s| s.bg(colors.element_hover).text_color(colors.text))
+                    .child("+")
+                    .child(hit_target(&self.hits, new_key))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.new_claude(new_cwd.clone(), new_title.clone(), window, cx);
+                    }));
                 body = body.child(
                     div()
                         .id(SharedString::from(rkey.clone()))
@@ -985,7 +1121,15 @@ impl FleetView {
                         .when(empty, |d| d.text_color(colors.text_muted))
                         .child(if empty { " " } else if ropen { "▾" } else { "▸" })
                         .child(SharedString::from(format!("./{}", repo.name)))
-                        .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_xs()
+                                .text_color(colors.text_muted)
+                                .child(SharedString::from(branch)),
+                        )
                         .when(!empty, |d| {
                             d.child(
                                 div()
@@ -994,6 +1138,8 @@ impl FleetView {
                                     .child(SharedString::from(format!("{}", repo.sessions.len()))),
                             )
                         })
+                        .child(div().flex_1())
+                        .child(new_claude)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx))),
                 );
                 if !ropen {
@@ -1008,12 +1154,10 @@ impl FleetView {
         div()
             .flex()
             .flex_col()
-            .w(LEFT_WIDTH)
+            .w(self.left_width)
             .flex_none()
             .h_full()
             .bg(colors.panel_background)
-            .border_r_1()
-            .border_color(colors.border)
             .child(header)
             .children(self.render_inbox(cx))
             .children(notices)
@@ -1159,6 +1303,27 @@ impl FleetView {
                     .text_color(colors.text_muted)
                     .child(SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s)))),
             )
+            .when(!row.attachable && self.resumable(row), |d| {
+                let key = format!("resume-{}", s.id);
+                let (platform, repo, session) = (platform.to_string(), repo.to_string(), s.clone());
+                d.child(
+                    div()
+                        .id(SharedString::from(key.clone()))
+                        .relative()
+                        .px_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(colors.border)
+                        .text_xs()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(colors.element_hover))
+                        .child("resume")
+                        .child(hit_target(&self.hits, key))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.resume(&platform, &repo, &session, window, cx);
+                        })),
+                )
+            })
             .when(row.attachable, |d| {
                 let key = format!("attach-{}", s.id);
                 let (platform, repo, session) = (platform.to_string(), repo.to_string(), s.clone());
@@ -1266,6 +1431,13 @@ impl FleetView {
                             })),
                     )
                     .child(hit_target(&self.hits, format!("tab-{id}")))
+                    .on_mouse_down(
+                        MouseButton::Middle,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(id, cx);
+                        }),
+                    )
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if this.tab(id).is_some() {
                             this.active = Some(id);
@@ -1360,13 +1532,59 @@ impl Render for FleetView {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .flex_col()
-            .child(crate::titlebar::render(window, cx))
+            .child(crate::titlebar::render(
+                "Foreman",
+                Some(
+                    crate::titlebar::icon_button("open-settings", "\u{e713}", cx)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx)))
+                        .into_any_element(),
+                ),
+                window,
+                cx,
+            ))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
+                    .on_drag_move(cx.listener(|this, e: &DragMoveEvent<DraggedDivider>, window, cx| {
+                        let max = (window.viewport_size().width - MIN_RIGHT_WIDTH).max(MIN_LEFT_WIDTH);
+                        this.left_width = (e.event.position.x - e.bounds.left()).clamp(MIN_LEFT_WIDTH, max);
+                        cx.notify();
+                    }))
                     .child(self.render_left(cx))
+                    .child(
+                        // A 1 px border with a 7 px grab area over both panels' edges.
+                        div()
+                            .relative()
+                            .w(px(1.))
+                            .h_full()
+                            .flex_none()
+                            .bg(colors.border)
+                            .child(
+                                div()
+                                    .id("divider")
+                                    .absolute()
+                                    .top_0()
+                                    .left(px(-3.))
+                                    .w(px(7.))
+                                    .h_full()
+                                    .occlude()
+                                    .cursor(CursorStyle::ResizeLeftRight)
+                                    .on_drag(DraggedDivider, |_, _, _, cx| cx.new(|_| DraggedDivider))
+                                    .on_mouse_up(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, _| this.save_left_width()),
+                                    )
+                                    .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
+                                        if e.click_count() == 2 {
+                                            this.left_width = DEFAULT_LEFT_WIDTH;
+                                            this.save_left_width();
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
+                    )
                     .child(self.render_right(cx)),
             )
     }

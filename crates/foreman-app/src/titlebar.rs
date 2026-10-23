@@ -7,7 +7,8 @@ use theme::ActiveTheme as _;
 
 pub const HEIGHT: Pixels = px(34.);
 
-pub fn render(window: &Window, cx: &App) -> AnyElement {
+/// `title` on the left; `actions` (e.g. the settings button) just left of the caption buttons.
+pub fn render(title: &'static str, actions: Option<AnyElement>, window: &Window, cx: &App) -> AnyElement {
     let colors = cx.theme().colors();
     div()
         .id("title-bar")
@@ -26,10 +27,37 @@ pub fn render(window: &Window, cx: &App) -> AnyElement {
                 .pl_3()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
-                .child("Foreman"),
+                .child(title),
         )
-        .child(caption_buttons(window, cx))
+        .child(
+            div()
+                .flex()
+                .h_full()
+                .items_center()
+                .children(actions)
+                .child(caption_buttons(window, cx)),
+        )
         .into_any_element()
+}
+
+/// A 46 px title-bar button with a Segoe icon glyph, e.g. `\u{e713}` (Settings).
+pub fn icon_button(id: &'static str, glyph: &'static str, cx: &App) -> gpui::Stateful<gpui::Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(id)
+        .relative()
+        .flex()
+        .items_center()
+        .justify_center()
+        .occlude()
+        .w(px(46.))
+        .h_full()
+        .font_family(icon_font())
+        .text_size(px(12.))
+        .text_color(colors.text_muted)
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
+        .child(glyph)
 }
 
 fn caption_buttons(window: &Window, cx: &App) -> AnyElement {
