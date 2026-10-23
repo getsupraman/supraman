@@ -244,15 +244,16 @@ answers the trust prompt), **one busy-session limit shared by all workspaces** (
 stepper in the app), hook signals on supervised rows. `foreman.exe --selftest-supervise` is the gate.
 Workspace sessions are `bgIsolation:"none"`; the workspace role is still the M2 placeholder.
 
-**M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `workspace-controller`, `repo-controller`. First
-end-to-end task on a small test workspace, **not Nomos**.
-Progress: **m3/1 relay — built** (§3 "The mailbox"; `fm inbox`/`send`/`messages`; `--selftest-supervise` step r:
-relay up before the workspace session, `ready.json`, a message through the Rust API answered back into the outbox
-and the app's Messages, Stop stops the relay too). **m3/2 repo sessions — built** (§3 "Session identity":
-`fm want|unwant|roster`, one WorkState config per session with identity headers, extra plugin dirs, `fm` from inside
-sessions, the busy budget counts `status=busy` only; `--selftest-supervise` step w). **m3/3 skills — written**
-(§5; sessions launched as Foreman launches them list both skills and the injected role names its skill;
-`--selftest-supervise` step b checks both). Next: the end-to-end task (m3/4).
+**M3 — skills + relay — done** (run `m3`, units 1–4, 6, 8; master `75c3bf1`; gate from the main checkout: 297 tests,
+`--selftest` PASS, `--selftest-supervise` PASS 3 of 4, the miss being the classifier flake at step r, 7-d2). The relay `fm-<w>-relay` (§3 "The mailbox";
+`fm inbox`/`send`/`messages`, app Messages), repo sessions on demand (`fm want|unwant|roster`, one WorkState config
+per session with identity headers, extra plugin dirs, busy = `status=busy`), the `workspace-controller` and
+`repo-controller` skills (§5), `fm send` refused inside a Foreman session. **First end-to-end task (m3/4)** on
+two throwaway repos under `target/e2e`: thrown → plan → approval in the app → both repo-controllers ran a nested
+unit each and merged → workspace-controller verified and reported DONE; ~12 min of work, Stop in 3.3 s (LEARNINGS
+"m3/4"). Found there and fixed in m3/8: the skill listing is truncated, so sessions call the Skill tool for
+unlisted rlarch skills; a Foreman session waiting on a peer is not an Inbox "blocked". Human step per new repo:
+accept Claude's trust prompt. Backlog from René's look at the UI: terminal wheel scroll, block glyphs, `NO_COLOR`.
 
 **M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 
