@@ -12,7 +12,8 @@ passed as `--settings '{"env":{…}}'` (env on the `claude --bg` process does no
 writes `roles/{workspace,relay,repo}.md` to `<FOREMAN_HOME>/roles/` at start (`{fm}`/`{home}` filled in) and installs
 `bin/fm.exe` from its own build. Claude Code puts this plugin's `bin/` on the session's PATH (m3/2: `where.exe fm` found
 it), so roles call `fm` by name, with the Bash tool: every launch passes `--allowedTools "Bash(fm:*)" "Bash(<abs fm>:*)"`
-(a `PowerShell(…)` rule did not match).
+(a `PowerShell(…)` rule did not match). `fm send` exits 1 when `FOREMAN_ROLE` is set and non-empty (m3/6): its drop
+reaches the receiver from `fm-<w>-relay`, the human's voice, so a session reaches another one with `SendMessage` only.
 
 Skills (m3/3): `skills/workspace-controller` (`/foreman:workspace-controller`, loaded by `roles/workspace.md`) and
 `skills/repo-controller` (`/foreman:repo-controller`, loaded by `roles/repo.md`; it runs `/rlarch:controller`, so the

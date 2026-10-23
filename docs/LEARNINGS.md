@@ -1090,3 +1090,17 @@ from the skills; fix in its own commit.
   gets there. New step **s**: window resized to 480 px, the tree's lowest row (y 787, tree visible 315–480) scrolled
   to y 457, wholly visible; size restored. Step g's Stop then scrolled back up (329 → 506 in 502–820), and step d's
   Inbox button scrolled inside the capped Inbox (277 → 243 in 70–267).
+
+## 2026-10-23 — m3/6 `fm send` refuses inside a Foreman session
+
+- **The guard keys on `FOREMAN_ROLE` being set and non-empty** in `fm`'s own environment. Every session Foreman
+  launches gets it through `--settings {"env":…}` (`foreman-supervisor` `session_settings`), and so does every `fm`
+  it runs with Bash; the human's shell does not. `fm send` then exits 1 with one stderr line
+  `fm send speaks as the human through the relay and is refused inside a Foreman session (FOREMAN_ROLE=<role>); use
+  SendMessage to reach a session`, checked in `main.rs` before `registry()` — nothing under `FOREMAN_HOME` is read or
+  written (`crates/fm/tests/relay.rs`: the home dir stays empty). Absent or empty: unchanged.
+- **The guard is the enforcement; the skills' "never run `fm send`" (m3/3 finding) is now the explanation.** A model
+  that ignores the words gets the refusal, not the human's voice. Not covered: a session that unsets the variable
+  itself, or writes into `relay/<w>/inbox` by hand — the guard closes the pre-approved `Bash(fm:*)` path only.
+- `FOREMAN_ROLE` leaking from a Foreman session into a test run would now fail `fm send` tests, so
+  `tests/relay.rs`'s helper removes it (as `tests/hook.rs` already did).
