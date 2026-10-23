@@ -1051,3 +1051,28 @@ touched the real store.
   workspace-controller must `SendMessage` the task as well; likewise a repo session the supervisor resumes after a
   crash sits idle until a message. (2) `fm send` from inside a session is delivered *from `fm-<w>-relay`*, i.e. as
   the human's voice, and `Bash(fm:*)` allows it; both skills forbid it in words only.
+
+## 2026-10-23 — m3/3 finding: the left panel could not scroll; the last workspaces were out of reach
+
+Found by `--selftest-supervise` step f once the workspace session posts `ready` (one more Messages row). Separate
+from the skills; fix in its own commit.
+
+- **Symptom**: step f failed 3 runs in a row with `not both launched within 180 s`; `-c2` got no row at all, not
+  even its relay (which skips the busy cap). A diagnostic bail (step f now fails if a desired state is not started
+  3 s after its Start click) showed `start-<c2>` painted at y 846 in an 820 px window: the click landed outside the
+  window. A wheel event over the tree did not move it (four runs, bounds unchanged ×20).
+- **Cause**: the left column is header, Inbox, Messages, notices, then the tree (`id("fleet")`, `flex_1`,
+  `overflow_y_scroll`). The tree had no `min_h_0`, so it grew to its content and never scrolled; and the Inbox and
+  Messages sections, plain flex children with `min-height: auto`, could not shrink, so with `min_h_0` alone the tree
+  is what gets squeezed. Dump of run 10: Inbox y 110–330, Messages 330–560, tree from 560 with rows to 888+. A human
+  could not reach those workspaces either.
+- **Fix** (`view.rs`): the tree gets `min_h_0`; Inbox and Messages are capped at 25 % / 30 % of the panel
+  (`max_h(relative(…))`, `flex_shrink_0`) and scroll inside themselves (`id("inbox")`/`id("messages")` +
+  `overflow_y_scroll`). A hit target now records its clip as well as its bounds (`Hit { bounds, visible }`,
+  `visible` = `window.content_mask()` at prepaint = the visible area of the scroll container around it).
+- **Harness** (`selftest.rs`): `click` first scrolls its target **wholly** into its visible area — mouse moved
+  into that area, then a wheel event of the missing distance (gpui gives a scroll to the hitbox under the pointer:
+  the earlier attempts sent it at mid-window, over the Inbox) — and fails with every bounds it saw if it never
+  gets there. New step **s**: window resized to 480 px, the tree's lowest row (y 787, tree visible 315–480) scrolled
+  to y 457, wholly visible; size restored. Step g's Stop then scrolled back up (329 → 506 in 502–820), and step d's
+  Inbox button scrolled inside the capped Inbox (277 → 243 in 70–267).
