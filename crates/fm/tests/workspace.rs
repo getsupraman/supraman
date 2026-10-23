@@ -61,6 +61,34 @@ fn add_list_show_remove_round_trip() {
 }
 
 #[test]
+fn a_home_from_before_the_rename_is_migrated_first() {
+    let ws = workspace();
+    let home = tempfile::tempdir().unwrap();
+    let dir = ws.path().join("My.Workspace");
+    assert_eq!(fm(home.path(), &["workspace", "add", dir.to_str().unwrap()]).status.code(), Some(0));
+    fs::rename(home.path().join("workspaces"), home.path().join("platforms")).unwrap();
+    fs::create_dir_all(home.path().join("supervisor")).unwrap();
+    fs::write(
+        home.path().join("supervisor").join("my-workspace.toml"),
+        "platform = \"my-workspace\"\nstarted = true\n\n[[sessions]]\nname = \"fm-my-workspace-platform\"\n\
+         role = \"platform\"\ncwd = 'C:\\x'\nprompt = \"p\"\n",
+    )
+    .unwrap();
+
+    let out = fm(home.path(), &["workspace", "list"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(stdout(&out).starts_with("my-workspace\trepos=2\troot="), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("notice: workspace my-workspace was started under its old name"), "{err}");
+    assert!(!home.path().join("platforms").exists());
+    let desired = fs::read_to_string(home.path().join("supervisor").join("my-workspace.toml")).unwrap();
+    assert!(desired.contains("fm-my-workspace-workspace") && desired.contains("started = false"), "{desired}");
+
+    let again = fm(home.path(), &["workspace", "list"]);
+    assert!(again.stderr.is_empty(), "{again:?}");
+}
+
+#[test]
 fn dry_run_writes_nothing() {
     let ws = workspace();
     let home = tempfile::tempdir().unwrap();

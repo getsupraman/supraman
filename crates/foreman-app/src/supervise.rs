@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
-use foreman_core::{HOOK_EXE, Workspace, Settings, install_hook_exe};
+use foreman_core::{HOOK_EXE, Settings, Workspace, install_hook_exe, migrate_home};
 use foreman_supervisor::{
     DesiredState, LaunchConfig, Millis, NeedsYou, WORKSPACE_ROLE, Supervisor, workspace_session_name, role_prompt,
     tick_all,
@@ -42,17 +42,17 @@ pub fn find_plugin_dir(exe: &Path) -> Option<PathBuf> {
         .find(|dir| dir.join("hooks").join("hooks.json").is_file())
 }
 
-/// `fm plugin install` for the `fm.exe` built next to `foreman.exe`, and the workspace role template at
-/// `<home>/roles/workspace.md` (the SessionStart hook fills in `{workspace}` from `FOREMAN_WORKSPACE`).
+/// [`migrate_home`] (before anything reads the registry), `fm plugin install` for the `fm.exe` built next
+/// to `foreman.exe`, and the workspace role template at `<home>/roles/workspace.md` (the SessionStart hook
+/// fills in `{workspace}` from `FOREMAN_WORKSPACE`).
 pub fn setup(home: &Path) -> Setup {
-    let mut notices = Vec::new();
+    let mut notices = migrate_home(home)
+        .unwrap_or_else(|e| vec![format!("Cannot migrate {} to workspace names: {e}", home.display())]);
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            return Setup {
-                plugin_dir: None,
-                notices: vec![format!("Cannot locate foreman.exe ({e}); Start is unavailable.")],
-            };
+            notices.push(format!("Cannot locate foreman.exe ({e}); Start is unavailable."));
+            return Setup { plugin_dir: None, notices };
         }
     };
     let Some(plugin_dir) = find_plugin_dir(&exe) else {

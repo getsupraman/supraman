@@ -9,6 +9,8 @@ use crate::{Result, SupervisorError};
 /// What the human asked for on one workspace. Persisted at `<FOREMAN_HOME>/supervisor/<workspace>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesiredState {
+    /// `platform` in a file written before m2x/2 (`foreman_core::migrate_home` rewrites it).
+    #[serde(alias = "platform")]
     pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
     pub started: bool,
@@ -171,6 +173,29 @@ mod tests {
             Err(SupervisorError::Parse { path: p, .. }) => assert_eq!(p, path),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_file_from_before_the_rename_loads_and_migrates_to_the_current_shape() {
+        let home = tempfile::tempdir().unwrap();
+        let mut old = DesiredState::workspace_controller("nomos", r"C:\n", "p");
+        old.started = true;
+        let path = old.save(home.path()).unwrap();
+        let text = fs::read_to_string(&path)
+            .unwrap()
+            .replace("workspace = \"nomos\"", "platform = \"nomos\"")
+            .replace("fm-nomos-workspace", "fm-nomos-platform")
+            .replace("role = \"workspace\"", "role = \"platform\"");
+        assert!(!text.contains("workspace"), "{text}");
+        fs::write(&path, text).unwrap();
+        let read = DesiredState::load(home.path(), "nomos").unwrap().unwrap();
+        assert_eq!(read.workspace, "nomos", "serde alias");
+
+        let notices = foreman_core::migrate_home(home.path()).unwrap();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("fm-nomos-platform"), "{}", notices[0]);
+        old.started = false;
+        assert_eq!(DesiredState::load(home.path(), "nomos").unwrap(), Some(old));
     }
 
     #[test]

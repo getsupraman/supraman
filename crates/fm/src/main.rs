@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Workspace, Registry, scan, slugify, validate_name};
+use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, migrate_home, scan, slugify, validate_name};
 
 const USAGE: &str = "\
 usage:
@@ -203,7 +203,7 @@ fn add(args: &[&str]) -> Result<(), Failure> {
     let repos = scan(&root, args.depth)?;
     let workspace = Workspace::new(name, root, repos);
 
-    let registry = Registry::from_env()?;
+    let registry = registry()?;
     if !args.force && registry.exists(&workspace.name)? {
         return Err(CoreError::AlreadyExists(workspace.name).into());
     }
@@ -218,8 +218,17 @@ fn add(args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
+/// The registry of `FOREMAN_HOME`, after [`migrate_home`]; its notices go to stderr.
+fn registry() -> Result<Registry, Failure> {
+    let registry = Registry::from_env()?;
+    for notice in migrate_home(registry.home())? {
+        eprintln!("notice: {notice}");
+    }
+    Ok(registry)
+}
+
 fn list() -> Result<(), Failure> {
-    let workspaces = Registry::from_env()?.list()?;
+    let workspaces = registry()?.list()?;
     if workspaces.is_empty() {
         println!("no workspaces registered");
     }
@@ -230,13 +239,13 @@ fn list() -> Result<(), Failure> {
 }
 
 fn show(name: &str) -> Result<(), Failure> {
-    let workspace = Registry::from_env()?.load(name)?;
+    let workspace = registry()?.load(name)?;
     print_workspace(&workspace, true);
     Ok(())
 }
 
 fn remove(name: &str) -> Result<(), Failure> {
-    Registry::from_env()?.remove(name)?;
+    registry()?.remove(name)?;
     println!("removed workspace {name}");
     Ok(())
 }
@@ -274,7 +283,7 @@ fn sessions(args: &[&str]) -> Result<(), Failure> {
             other => return Err(Failure::Usage(format!("unexpected argument '{other}'"))),
         }
     }
-    let registry = Registry::from_env()?;
+    let registry = registry()?;
     let workspaces = match workspace {
         Some(name) => vec![registry.load(name)?],
         None => registry.list()?,
