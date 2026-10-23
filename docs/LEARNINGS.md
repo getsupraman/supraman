@@ -970,8 +970,13 @@ plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `-
 - **Named WorkState sessions**: one owner-only `<home>/mcp/workstate-<session name>.json` per session (was per
   role) with `Authorization` + `X-WorkState-Agent/-Launched-By/-Origin/-Cwd/-Foreman-Role`
   (`SessionIdentity`, `write_session_mcp_config`; unit-tested shape and ACL with `fake-token`). A resume re-applies
-  the file its launch saved. The check against the real server: see the controller's note below (not run here,
-  no real token).
+  the file its launch saved. **Checked against the real server by the controller** (autowork-7c, 2026-10-23
+  13:32 UTC; this unit has no real token): a hand-launched `fm-check-named` (`--strict-mcp-config --mcp-config`
+  with exactly this shape, real CONTROLLER token, Agent=fm-check-named, Launched-By/Origin=foreman/check,
+  Foreman-Role=workspace, no Session header) called `work_brief` once → one `agent_session` row: name
+  fm-check-named, role controller (from the token), external_role workspace, origin and launched_by foreman/check,
+  cwd = the launch cwd, client_name claude-code, claude_session_id empty. `work_brief` printed no "session …" hint
+  line, which it shows only to unnamed callers.
 - **`fm want <w> <repo> [--prompt-file]` / `unwant` / `roster [--json]`.** `want` adds `fm-<w>-<repo slug>` (role
   `repo`, cwd = the repo, auto, `bgIsolation:"none"`, prompt = `roles/repo.md` with `{repo}`/`{workspace}` + an
   optional "First task:"); a repo named `workspace`/`relay` is refused, an unknown one lists the known ones. `unwant`
