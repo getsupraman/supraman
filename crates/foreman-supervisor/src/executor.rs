@@ -513,6 +513,28 @@ mod tests {
     }
 
     #[test]
+    fn armed_relays_leave_the_budget_to_the_workspace_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
+        for (s, name) in sups.iter_mut().zip(["alpha", "beta"]) {
+            let relay = crate::relay_session(name, r"C:\demo\cwd", r"C:\fm\relay", "be the relay");
+            s.desired.sessions.insert(0, relay);
+        }
+        tick_all(sups.iter_mut(), &[], 1, NOW);
+        let first: Vec<Vec<Call>> = sups.iter().map(|s| s.launcher().take()).collect();
+        assert_eq!(first[0].len(), 2, "alpha: relay and workspace {first:?}");
+        assert_eq!(first[1].len(), 1, "beta: relay only {first:?}");
+        let rows = [
+            live("fm-alpha-relay", 1, SessionState::Working, Status::Busy),
+            live("fm-beta-relay", 2, SessionState::Working, Status::Busy),
+            live("fm-alpha-workspace", 3, SessionState::Done, Status::Idle),
+        ];
+        tick_all(sups.iter_mut(), &rows, 1, NOW + 30 * SECOND);
+        let second: Vec<usize> = sups.iter().map(|s| s.launcher().take().len()).collect();
+        assert_eq!(second, [0, 1], "beta's workspace session goes once alpha's is idle");
+    }
+
+    #[test]
     fn a_resumed_relay_is_told_to_rearm() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());

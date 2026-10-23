@@ -27,6 +27,11 @@
 //! Then the cap (R11, R12): `reconcile` gets the free slots of the shared [`Budget`]; Resumes take
 //! them before Launches, each in desired order; the rest become `Wait(Cap)`. Tests
 //! `cap_counts_working_fm_sessions_and_defers_the_rest`, `resumes_take_slots_before_launches`.
+//! A relay ([`WantedSession::exempt_from_budget`]) is outside the cap: its launch/resume goes first and
+//! takes no slot, its `working` row counts for nothing, and on Stop it is stopped after the others. Tests
+//! `the_relay_is_outside_the_cap_and_its_working_row_takes_no_slot`,
+//! `the_relay_launches_first_with_its_add_dir_and_never_takes_a_budget_slot`,
+//! `stop_stops_the_relay_after_the_other_sessions`.
 //! Rows whose name is not wanted are never touched.
 //!
 //! # The shared budget

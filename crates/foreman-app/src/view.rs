@@ -11,7 +11,7 @@ use std::{
 
 use collections::HashMap;
 use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Workspace, Registry, Settings};
+use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
 use foreman_term::{
     Event as TerminalEvent, Terminal, TerminalBuilder, TerminalMode,
@@ -28,7 +28,7 @@ use util::paths::PathStyle;
 
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
-use crate::supervise::{self, Report, Supervision};
+use crate::supervise::{self, RelayStatus, Report, Supervision};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -43,6 +43,9 @@ const MIN_RIGHT_WIDTH: Pixels = px(320.);
 const RESUME_GRACE_MS: i64 = 30_000;
 /// The concurrency stepper's range; 0 pauses every launch and resume.
 pub const MAX_WORKING_LIMIT: usize = 20;
+/// The Messages section shows this many, newest first; a body shows this many lines until clicked.
+const MESSAGES_LISTED: usize = 10;
+const MESSAGE_LINES: usize = 3;
 
 /// Window-space bounds of clickable things, keyed by the same string as their element id, as of
 /// the last painted frame. The selftest clicks through these.
@@ -122,6 +125,12 @@ pub struct FleetView {
     settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
+    /// Per workspace that wants a relay: live, armed.
+    pub relays: BTreeMap<String, RelayStatus>,
+    /// Per workspace, what its relay received (oldest first).
+    pub messages: BTreeMap<String, Vec<OutboxMessage>>,
+    /// `<workspace>/<file>` of the messages shown in full.
+    expanded: HashSet<String>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -293,6 +302,9 @@ impl FleetView {
             left_width,
             settings_window: None,
             last_alive: StdHashMap::new(),
+            relays: BTreeMap::new(),
+            messages: BTreeMap::new(),
+            expanded: HashSet::new(),
         }
     }
 
@@ -329,6 +341,8 @@ impl FleetView {
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
             self.last_attempt = report.last_attempt.into_iter().collect();
+            self.relays = report.relays;
+            self.messages = report.messages;
             self.ticks += 1;
         }
         self.last_refresh_took = Some(refresh.took);
@@ -1076,6 +1090,13 @@ impl FleetView {
                             .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
                     )
                     .child(div().text_xs().text_color(state_color).child(state_text))
+                    .children(self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).map(|(text, ok)| {
+                        div()
+                            .id(SharedString::from(format!("relay-{}", workspace.name)))
+                            .text_xs()
+                            .text_color(if ok { status.success } else { status.warning })
+                            .child(SharedString::from(text))
+                    }))
                     .child(start_stop)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx))),
             );
@@ -1160,6 +1181,7 @@ impl FleetView {
             .bg(colors.panel_background)
             .child(header)
             .children(self.render_inbox(cx))
+            .children(self.render_messages(cx))
             .children(notices)
             .child(body)
             .into_any_element()
@@ -1250,6 +1272,112 @@ impl FleetView {
             );
         }
         Some(inbox.into_any_element())
+    }
+
+    /// What the workspaces' relays received, newest first, across workspaces; nothing when empty. A body
+    /// shows its first lines until clicked; Attach opens the sender's session when it is attachable.
+    fn render_messages(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let mut all: Vec<(&String, &OutboxMessage)> =
+            self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| (w, m))).collect();
+        if all.is_empty() {
+            return None;
+        }
+        all.sort_by_key(|(_, m)| std::cmp::Reverse((m.at, m.file.clone())));
+        let total = all.len();
+        all.truncate(MESSAGES_LISTED);
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let now = now_ms();
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(colors.text_muted)
+                    .child(SharedString::from(format!("MESSAGES · {total}"))),
+            );
+        for (workspace, m) in all {
+            let key = format!("{workspace}/{}", m.file);
+            let color = if m.is_notice() || m.error.is_some() { status.warning } else { status.info };
+            let sender = match (&m.error, m.from_name.as_str()) {
+                (Some(_), _) => format!("unreadable {}", m.file),
+                (None, "") => "?".to_string(),
+                (None, name) => name.to_string(),
+            };
+            let lines: Vec<&str> = m.body.lines().collect();
+            let open = self.expanded.contains(&key);
+            let shown = if open { lines.len() } else { lines.len().min(MESSAGE_LINES) };
+            let mut body = lines[..shown].join("\n");
+            if shown < lines.len() {
+                body.push_str(&format!("\n… {} more line(s), click to show", lines.len() - shown));
+            }
+            // every row, not the tree's: a sender in the workspace root but outside its repos has no tree row
+            let target = self
+                .sessions
+                .iter()
+                .find(|s| !m.from_name.is_empty() && s.name == m.from_name && fleet::attachable(s, &s.health(now)))
+                .map(|s| s.id.clone());
+            let attach = target.map(|id| {
+                let workspace = workspace.clone();
+                button(&self.hits, format!("msg-attach-{key}"), "Attach", cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.attach_by_id(&workspace, &id, window, cx);
+                    },
+                ))
+            });
+            section = section.child(
+                div()
+                    .id(SharedString::from(format!("msg-{key}")))
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .p_2()
+                    .rounded_md()
+                    .border_l_2()
+                    .border_color(color)
+                    .bg(color.opacity(0.10))
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .child(div().font_weight(FontWeight::BOLD).text_color(color).child(SharedString::from(sender)))
+                                    .child(div().text_color(colors.text_muted).child(SharedString::from(workspace.clone())))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(colors.text_muted)
+                                            .child(SharedString::from(fleet::ago(now - m.at))),
+                                    ),
+                            )
+                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(body))),
+                    )
+                    .children(attach)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if !this.expanded.remove(&key) {
+                            this.expanded.insert(key.clone());
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        Some(section.into_any_element())
     }
 
     fn render_session(
