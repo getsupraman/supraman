@@ -606,7 +606,7 @@ cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Ev
   it was gone (`grep -c` = 0). It is also in every tool's environment, so a stray `env` dump puts it in the
   transcript. 2/2 runs.
 - **(b) `--mcp-config` beats the user-scope registration of the same name, even without `--strict-mcp-config`.**
-  A `workstate` entry (`http://127.0.0.1:5290/mcp`, `Bearer fm-probe-invalid`) in `--mcp-config`: the session had no
+  A `workstate` entry (`http://localhost:5290/mcp`, `Bearer fm-probe-invalid`) in `--mcp-config`: the session had no
   `mcp__workstate__*` tool at all and reported `workstate (AUTH_HEADER_REJECTED): Server rejected the configured
   Authorization header (HTTP 401). … OAuth fallback is disabled when headers.Authorization is set.` The valid
   user-scope server was not loaded beside it. Without strict: 4/4 runs (run 2 reported only `TOOL=absent`, no
