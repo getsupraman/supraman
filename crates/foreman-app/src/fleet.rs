@@ -169,7 +169,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
     let mut hidden_stopped = 0;
     let row = |session: Session| {
         let hook = sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
-        let health = with_hook(session.health(now_ms), hook.as_ref(), sup.polled_at);
+        let health = with_hook(session.supervised_health(now_ms), hook.as_ref(), sup.polled_at);
         SessionRow {
             attachable: attachable(&session, &health),
             session,
@@ -340,6 +340,33 @@ mod tests {
             }
         );
         assert_eq!(short_id(&beta.sessions[0].session), "bbbb0005");
+    }
+
+    #[test]
+    fn foreman_session_waiting_on_a_peer_is_idle_a_parked_one_blocked() {
+        let old = NOW - 3_600_000;
+        let rows = parse(&format!(
+            r#"[
+  {{"id":"aaaa0011","sessionId":"aaaa0011-x","name":"fm-demo-alpha","cwd":"C:\\demo\\Alpha","kind":"background","startedAt":{old},"state":"blocked","pid":11}},
+  {{"id":"aaaa0012","sessionId":"aaaa0012-x","name":"fm-demo-beta","cwd":"C:\\demo\\Beta","kind":"background","startedAt":{old},"state":"blocked","status":"waiting","waitingFor":"permission prompt","pid":12}},
+  {{"id":"aaaa0013","sessionId":"aaaa0013-x","name":"mine","cwd":"C:\\demo\\Beta","kind":"background","startedAt":{old},"state":"blocked","pid":13}}
+]"#
+        ))
+        .unwrap();
+        let tree = build(&[workspace()], &rows, NOW, false, &Supervised::default());
+        let health: Vec<(&str, &Health)> =
+            tree.workspaces[0].repos.iter().flat_map(|r| &r.sessions).map(|r| (r.session.name.as_str(), &r.health)).collect();
+        let parked = Health::Blocked { waiting_for: Some("permission prompt".into()) };
+        let asks = Health::Blocked { waiting_for: None };
+        assert_eq!(health, [("fm-demo-alpha", &Health::Idle), ("fm-demo-beta", &parked), ("mine", &asks)]);
+
+        let mut hooks = HashMap::new();
+        let mut prompt = event("Notification", Some("permission_prompt"), NOW);
+        prompt.session_id = "aaaa0011-x".into();
+        HookSignal::record(&mut hooks, prompt);
+        let sup = Supervised { hooks: Some(&hooks), polled_at: NOW - 1_000, ..Supervised::default() };
+        let tree = build(&[workspace()], &rows, NOW, false, &sup);
+        assert_eq!(tree.workspaces[0].repos[0].sessions[0].health, parked, "the hook's permission prompt still blocks it");
     }
 
     #[test]

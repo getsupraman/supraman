@@ -31,6 +31,9 @@
 //! session must not reach the inbox, where Attach would target a process that is gone. Its
 //! threshold keeps B11 alive: m0/2 measured the legitimate no-pid `working` row for ~1.8 s.
 //!
+//! [`Session::supervised_health`] (the Inbox, the fleet panel, `fm roster`) reads B1/B3 without
+//! `waitingFor` on an `fm-…` row as `Idle`: a Foreman session waits on peers, not on the human (m3/8).
+//!
 //! Every other `kind` (interactive rows carry `status` and `pid`, no `state`):
 //!
 //! | # | `state` | `status` | other | health |

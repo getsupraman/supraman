@@ -1134,3 +1134,31 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - **Seen by René in the UI** (queued in backlog): tabs monochrome — `NO_COLOR=1` inherited because I launched the
   test Foreman from a Claude Code shell (backlog 5); block glyphs (the Claude logo) with gaps between rows (4);
   no mouse-wheel scroll in a terminal tab (6).
+
+## 2026-10-24 — m3/8 skills call Skill for unlisted rlarch skills; `done:` lines that don't read as blocked
+
+- **Skills/roles** (`plugins/foreman/skills/{repo,workspace}-controller/SKILL.md`, `plugins/foreman/roles/{repo,workspace}.md`):
+  a session calls the Skill tool for `rlarch:controller`, `rlarch:nested-claude` and any skill its role names
+  even when the skill listing does not show it — the listing is truncated (m3/4); only a failed Skill call is a
+  blocker. The repo-controller's old "Not in your skill list → BLOCKED" is gone. The workspace-controller answers
+  such a `BLOCKED` itself ("call the Skill tool anyway"), never as a `DECIDE` to the human. A turn that waits on
+  someone ends `done: waiting on <who> for <what>`, never with the word BLOCKED in the `done:` line (the
+  `BLOCKED` message via `SendMessage` is unchanged). Pinned by `crates/fm/tests/skills.rs`.
+- **Rule chosen** — `Session::supervised_health` (`crates/foreman-claude/src/session.rs`): an `fm-…` row on a live
+  pid that `health()` reads `Blocked` with **no `waitingFor`** (B1 `status=waiting` / B3 `state=blocked`, no status)
+  is `Idle`. Used by the Inbox (`reconcile` R4), the fleet panel (`fleet::build`, before `with_hook`) and
+  `fm roster`. Why: a Foreman session talks to Claudes; a turn that merely *reads* as a question waits on a peer's
+  message, and only Claude's own UI waiting on something (`waitingFor`, measured only as `permission prompt`)
+  needs the human's Attach. `waitingFor` *present*, not = "permission prompt", so a future value (a plan or a
+  question dialog) still reaches the Inbox. The hook's permission-prompt upgrade (`with_hook`) still applies after
+  it. Non-`fm-` rows and `health()` itself are unchanged (budget uses `status` only, unaffected).
+- **What it was before**: m3/3 measured the question-ending turn as `blocked/idle`, which `health()` already read
+  `Idle` (B5) — so the m3/4 textcli row most likely never made an Inbox row (not re-measured). The open paths were
+  B1/B3 without `waitingFor` on a live pid, which did reach the Inbox as "waiting for an answer"; now they don't.
+- Tests: `fleet::foreman_session_waiting_on_a_peer_is_idle_a_parked_one_blocked`,
+  `reconcile::blocked_without_waiting_for_is_not_reported`, `skills_call_the_skill_tool_even_when_the_listing_omits_it`,
+  `skills_end_a_waiting_turn_without_the_word_blocked`. Red: rule disabled → fleet 1 failed, reconcile 1 failed;
+  skills reverted to master → 2 failed.
+- Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 297 passed (293 + 4), 0 failed;
+  `--selftest` PASS (p95 23.29 ms, max 30.36 ms, 0 > 50 ms; idle 121.1 MiB); `--selftest-supervise` PASS (step e:
+  `state=blocked status=waiting waitingFor=permission prompt` → Inbox `blocked` with Attach); `cargo test -p fm skills` 2 passed.

@@ -168,7 +168,7 @@ pub fn roster(desired: &DesiredState, rows: &[Session], others: &[String], now: 
                     None => "-".into(),
                 },
                 repo: w.and_then(|w| w.repo.clone()),
-                health: s.health(now).to_string(),
+                health: s.supervised_health(now).to_string(),
                 id: Some(s.id.clone()),
                 session_id: Some(s.session_id.clone()),
                 cwd: s.cwd.clone(),
