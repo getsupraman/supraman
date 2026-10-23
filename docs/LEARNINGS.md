@@ -1001,3 +1001,53 @@ plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `-
   idle 121.2 MiB).
 - Deps: `fm` gains `foreman-supervisor` (path); `foreman-app` gains `serde_json` (in the lock, same version). No new
   external dependency.
+
+## 2026-10-23 — m3/3 the two skills: workspace-controller, repo-controller
+
+Measured with `crates/foreman-app/diag/skills.ps1` (a relay, a workspace session and a repo session exactly as
+Foreman launches them: rendered `roles/*.md` as the prompt, `--plugin-dir plugins/foreman` with this build's
+`fm.exe`, `--settings` env FOREMAN_HOME/ROLE/WORKSPACE(/REPO) + `bgIsolation:"none"`, `--allowedTools "Bash(fm:*)"
+"Bash(<abs fm>:*)"`, auto, `--strict-mcp-config` and **no WorkState config**; FOREMAN_HOME and cwd under the
+worktree's `target/`), `diag/endstate.ps1`, and `foreman.exe --selftest-supervise` (CLI 2.1.309, Windows 11, worktree
+m3-3). Sessions `fm-selftest-<hex>-*`; every row stopped and removed. No session had a `work_*` tool, so nothing
+touched the real store.
+
+- **Skills from `--plugin-dir` are listed as `foreman:<name>`.** The transcript's first `attachment` of type
+  `skill_listing` has `names` (61 here) and `content` (`- <name>: <description>` lines); both sessions listed
+  `foreman:repo-controller` and `foreman:workspace-controller`. The SessionStart injection is in the transcript too:
+  `FOREMAN-ROLE workspace vb2ba9581` / `FOREMAN-ROLE repo v247eda8d`, each followed by the role text naming
+  `/foreman:workspace-controller` resp. `/foreman:repo-controller`. → `--selftest-supervise` step b now fails unless
+  the workspace role names its skill and the session's `skill_listing` names both (`skills_listed`).
+- **Both sessions invoked their skill as the first act.** Workspace: `Skill(foreman:workspace-controller)` →
+  `ToolSearch` (loads the deferred `SendMessage`) → `SendMessage(fm-…-relay, "fm-…-workspace ready, but WorkState is
+  not visible here — I can talk, not plan. Foreman's settings need workstate_env.")` — the skill's no-WorkState
+  line verbatim; the relay wrote it to `outbox/msg-0001.json` with `from_name` = the workspace session. Turn ended
+  18 s after launch. Repo (first task a direct request: list the foreman:/rlarch: skills): `Skill(foreman:repo-
+  controller)`, then the list as its reply, turn ended 13 s after launch, nothing sent.
+- **The user-scope rlarch plugin loads in Foreman's sessions and has no `controller` and no `nested-claude`.** The repo
+  session listed `rlarch:code-comments, dotnet-reflect, dotnet-source, orchestrate, ts-source` — the installed
+  version, not the `feat/workstate` branch. → `/rlarch:controller` needs `settings.toml` `extra_plugin_dirs` =
+  `P:/Projects/LarchSys/Skills/plugins/rlarch` (m3/2); the repo-controller skill sends `BLOCKED` naming exactly that
+  when the skill is missing. Which of two same-named plugins wins when both are loaded was not measured.
+- **Claude Code reads the end of a turn into `state`, and the daemon acts on it.** `diag/endstate.ps1`, one turn
+  each, bare sessions: a last text "Should I continue?" → `blocked/idle` for 85 s (m1/7's unexplained state: "needs
+  input"); "ready", "waiting", "I'm now waiting for the next message …", SendMessage + "ready", ToolSearch + "ready",
+  Skill + "ready" → `done/idle`. But the **workspace session** (role + skill telling it to wait for messages) ended
+  `blocked/idle` with a long closing paragraph (diag run 1, selftest run 1) and `working/idle` with the one line
+  `waiting` (diag run 2; selftest run 2) — the context, not the last word alone, decides. `done: ready sent` ended
+  `done/idle` (diag run 3, selftest runs 3–4). The repo session's direct-request turn (a list as the reply) ended
+  `working/idle` every time. It matters: m2/4's daemon respawns a killed `working` or `blocked` session by itself, so
+  `--selftest-supervise` step c failed twice ("came back with pid …, but not by the supervisor") until the workspace
+  role and skill ended the turn with `done: <what it did>`. → Both skills end every turn with one line `done: …` that
+  asks nothing; questions go by `SendMessage`. A model that ignores it still reads `Idle` in Foreman (no
+  `waitingFor`), and a killed one comes back by the daemon instead of the supervisor — it comes back either way.
+- **Decided in the skills** (no code): project ref = the workspace name; one run per repo `<task-slug>-<repo-slug>`;
+  an integration run `<task-slug>` with `<task-slug>-verify` for the workspace-controller's own cross-repo check,
+  blocked by every repo run; prompt files at `<workspace root>/.foreman/prompts/<run ref>.md`, kept; a repo whose
+  run is all blocked is wanted only when its blocker lands; messages `APPROVE?`/`DECIDE:`/`DONE:` to the relay,
+  `BLOCKED <unit>:`/`DONE <run>:` repo → workspace, `ANSWER`/`DECISION … (from the human, verbatim)` back.
+- **Two gaps the skills route around, not fixed:** (1) `fm want` for a session that already has a row resumes it
+  with **no prompt** (`resume_prompt` is `None` for repo sessions; m2/4: no hook fires until a prompt), so the
+  workspace-controller must `SendMessage` the task as well; likewise a repo session the supervisor resumes after a
+  crash sits idle until a message. (2) `fm send` from inside a session is delivered *from `fm-<w>-relay`*, i.e. as
+  the human's voice, and `Bash(fm:*)` allows it; both skills forbid it in words only.

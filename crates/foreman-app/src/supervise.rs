@@ -338,6 +338,29 @@ mod tests {
     }
 
     #[test]
+    fn controller_roles_load_their_skills_as_rendered_and_injected() {
+        let home = tempfile::tempdir().unwrap();
+        for (role, skill, repo) in [(WORKSPACE_ROLE, "workspace-controller", None), (REPO_ROLE, "repo-controller", Some("Nomos.Pdf"))] {
+            write_role_template(home.path(), &plugin_dir(), role).unwrap();
+            let injected = foreman_core::role_injection_for(home.path(), role, Some("demo"), repo).unwrap();
+            assert!(injected.contains(&format!("/foreman:{skill}")), "{injected}");
+            assert!(injected.contains("work_brief"), "after a compaction the role says how to resume: {injected}");
+            assert!(injected.contains("fm-demo-workspace"), "{injected}");
+            assert!(!injected.contains('{'), "every placeholder filled: {injected}");
+
+            let text = std::fs::read_to_string(plugin_dir().join("skills").join(skill).join("SKILL.md")).unwrap().replace("\r\n", "\n");
+            let front = text.strip_prefix("---\n").and_then(|t| t.split_once("\n---\n")).map(|(f, _)| f).unwrap_or_default();
+            assert!(front.lines().any(|l| l == format!("name: {skill}")), "{skill}: {front}");
+            let description = front.lines().find_map(|l| l.strip_prefix("description: ")).unwrap_or_default();
+            assert!(description.contains("USE FOR") && description.contains("DO NOT USE FOR"), "{skill}: {description}");
+        }
+        let launched = role_prompt(&plugin_dir(), WORKSPACE_ROLE, "demo").unwrap();
+        assert!(launched.contains("/foreman:workspace-controller") && launched.contains("fm-demo-relay"), "{launched}");
+        let repo = foreman_supervisor::render_repo_role(&std::fs::read_to_string(plugin_dir().join("roles").join("repo.md")).unwrap(), "demo", "Alpha");
+        assert!(repo.contains("/foreman:repo-controller") && repo.contains("/rlarch:controller"), "{repo}");
+    }
+
+    #[test]
     fn start_keeps_repo_sessions_after_its_own() {
         let home = tempfile::tempdir().unwrap();
         write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();

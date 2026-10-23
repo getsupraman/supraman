@@ -341,8 +341,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             "step b: {ctrl} live, but SessionStart(startup) with the role tag {tag} in its transcript={tagged}, row under its workspace={in_panel}; events: {events_line}"
         );
     }
+    let transcript = transcript.unwrap_or_default();
+    let listed = skills_listed(&std::fs::read_to_string(&transcript).unwrap_or_default());
+    if !template.contains(&format!("/{WORKSPACE_SKILL}")) || ![WORKSPACE_SKILL, REPO_SKILL].iter().all(|s| listed.iter().any(|l| l == s)) {
+        bail!("step b: the role must name /{WORKSPACE_SKILL} and the session list it and {REPO_SKILL}; listed {listed:?}");
+    }
     println!(
-        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` | row under {} in the panel",
+        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | row under {} in the panel",
         relay.id,
         launched.id,
         secs(live_after),
@@ -356,6 +361,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
     .await?;
+    // what the skill made of its first turn: reported, not asserted (a model's choice, not Foreman's)
+    let (_, tools) = transcript_turn(&transcript);
+    let ready = read_outbox(&tb.home, &tb.a.0)?.into_iter().find(|m| m.from_name == ctrl).map(|m| m.body);
+    println!("step b: {ctrl}'s first turn: tools {tools:?} | its message to {relay_name}: {ready:?}");
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
     let kill = Instant::now();
@@ -707,6 +716,36 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     Ok(())
 }
 
+const WORKSPACE_SKILL: &str = "foreman:workspace-controller";
+const REPO_SKILL: &str = "foreman:repo-controller";
+
+/// The `foreman:` skills of a transcript's `skill_listing` attachments: `attachment.names`, else the
+/// `- <name>: <description>` lines of `attachment.content` (CLI 2.1.309 writes both).
+fn skills_listed(transcript: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in transcript.lines().filter(|l| l.contains("\"skill_listing\"")) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let a = &v["attachment"];
+        let names: Vec<String> = match a["names"].as_array() {
+            Some(names) => names.iter().filter_map(|n| n.as_str().map(String::from)).collect(),
+            None => a["content"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| l.strip_prefix("- "))
+                .filter_map(|l| l.split_once(": ").map(|(name, _)| name.to_string()))
+                .collect(),
+        };
+        for name in names {
+            if name.starts_with("foreman:") && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The last assistant text of a transcript (`.jsonl`) and the commands of its tool calls (`tool: command`).
 fn transcript_turn(path: &str) -> (Option<String>, Vec<String>) {
     let Ok(text) = std::fs::read_to_string(path) else { return (None, Vec::new()) };
@@ -832,5 +871,16 @@ mod tests {
         let refusal = "claude rm 202c9998 failed (exit 1): kept 202c9998 … discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1@d71f54d8";
         assert_eq!(discard_token(refusal), Some("3ccd48a1@d71f54d8"));
         assert_eq!(discard_token("removed 202c9998"), None);
+    }
+
+    #[test]
+    fn reads_the_foreman_skills_of_a_skill_listing() {
+        // shape of a CLI 2.1.309 transcript line (m3/3), shortened
+        let names = r#"{"attachment":{"type":"skill_listing","content":"- x: y\n","names":["graphify","foreman:workspace-controller","rlarch:orchestrate","foreman:repo-controller"]},"type":"attachment"}"#;
+        let content = r#"{"attachment":{"type":"skill_listing","content":"- graphify (graphify-windows): Use for: x\n- foreman:repo-controller: Be the repo-controller: of one repo\n"},"type":"attachment"}"#;
+        let other = r#"{"type":"user","message":{"content":"- foreman:fake: not a listing"}}"#;
+        assert_eq!(skills_listed(&format!("{other}\n{names}\n")), [REPO_SKILL, WORKSPACE_SKILL]);
+        assert_eq!(skills_listed(content), [REPO_SKILL]);
+        assert!(skills_listed(other).is_empty());
     }
 }
