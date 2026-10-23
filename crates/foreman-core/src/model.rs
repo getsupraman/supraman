@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // `repos` stays last: TOML emits it as an array of tables, which must follow the plain keys.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Platform {
+pub struct Workspace {
     pub name: String,
     pub root: PathBuf,
     pub created_at: DateTime<Utc>,
@@ -13,7 +13,7 @@ pub struct Platform {
     pub repos: Vec<Repo>,
 }
 
-impl Platform {
+impl Workspace {
     pub fn new(name: impl Into<String>, root: impl Into<PathBuf>, repos: Vec<Repo>) -> Self {
         Self {
             name: name.into(),
@@ -26,7 +26,7 @@ impl Platform {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
-    /// Path relative to the platform root, `/`-separated; the folder name at depth 1.
+    /// Path relative to the workspace root, `/`-separated; the folder name at depth 1.
     pub name: String,
     pub path: PathBuf,
     pub has_claude_md: bool,

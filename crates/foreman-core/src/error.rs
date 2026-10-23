@@ -4,11 +4,11 @@ pub type Result<T> = std::result::Result<T, CoreError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
-    #[error("invalid platform name '{0}': use lowercase letters, digits and '-' only")]
+    #[error("invalid workspace name '{0}': use lowercase letters, digits and '-' only")]
     InvalidName(String),
-    #[error("platform '{0}' already exists (use --force to replace it)")]
+    #[error("workspace '{0}' already exists (use --force to replace it)")]
     AlreadyExists(String),
-    #[error("platform '{0}' not found")]
+    #[error("workspace '{0}' not found")]
     NotFound(String),
     #[error("not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
@@ -24,7 +24,7 @@ pub enum CoreError {
         path: PathBuf,
         source: toml::de::Error,
     },
-    #[error("cannot serialize platform '{name}': {source}")]
+    #[error("cannot serialize workspace '{name}': {source}")]
     Serialize {
         name: String,
         source: toml::ser::Error,

@@ -2,7 +2,7 @@ use foreman_claude::{Session, SessionState};
 
 use crate::{Launcher, Millis, NeedsYou, Supervisor, TokenProvider, is_live};
 
-/// The machine-wide concurrency budget of one tick, shared by every platform's supervisor: at most
+/// The machine-wide concurrency budget of one tick, shared by every workspace's supervisor: at most
 /// `max` `fm-` sessions busy at once. Starts as `max` minus the live `fm-` rows with `state=working`;
 /// every start the supervisors are still waiting to see, and every launch/resume of this tick, takes
 /// one more slot.
@@ -33,9 +33,9 @@ pub fn working(observed: &[Session], now: Millis) -> usize {
         .count()
 }
 
-/// One tick of every platform on one snapshot, sequentially with one [`Budget`] of `max_working`.
+/// One tick of every workspace on one snapshot, sequentially with one [`Budget`] of `max_working`.
 /// Sessions still settling after a start are reserved first (they are working by intent but not yet
-/// `working` in the snapshot), so no platform spends a slot another one already used. Returns all
+/// `working` in the snapshot), so no workspace spends a slot another one already used. Returns all
 /// Inbox rows, in supervisor order.
 pub fn tick_all<'a, L, T>(
     supervisors: impl IntoIterator<Item = &'a mut Supervisor<L, T>>,

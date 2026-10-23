@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use foreman_claude::{Claude, LaunchSpec};
 
-use crate::probe::{Fleet, claude_worktree, git, hex6, mkdir, wait_until_stopped, workspace_root, yes};
+use crate::probe::{Fleet, claude_worktree, git, hex6, mkdir, wait_until_stopped, cargo_root, yes};
 use crate::probe_hooks::{Log, last_reply};
 
 const TURN_WITHIN: Duration = Duration::from_secs(300);
@@ -25,7 +25,7 @@ exactly one line: ISO {case}. Then reply with only the absolute path of the file
     )
 }
 
-/// `repo`: the main checkout to probe (default: the main checkout of this build's workspace).
+/// `repo`: the main checkout to probe (default: the main checkout of this build's cargo workspace).
 pub fn run(repo: Option<PathBuf>) -> bool {
     let claude = Claude::default();
     let hex = hex6();
@@ -51,7 +51,7 @@ struct Case {
 }
 
 fn probe(claude: &Claude, fleet: &mut Fleet, repo: Option<PathBuf>, hex: &str) -> Result<bool, String> {
-    let linked = workspace_root();
+    let linked = cargo_root();
     let main = match repo {
         Some(r) => r,
         None => main_checkout(&linked)?,

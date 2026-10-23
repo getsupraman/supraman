@@ -1,6 +1,6 @@
 # Foreman — plan
 
-A native Windows-first app (Rust + gpui) where you register a **platform** (a folder of git repos),
+A native Windows-first app (Rust + gpui) where you register a **workspace** (a folder of git repos),
 press **Start**, throw tasks/roadmaps at it, and watch a tree of Claude Code sessions build them.
 Everything that needs a human (a permission park, a decision, a migration) surfaces in the app, and
 **Attach** opens that session in an in-app terminal tab.
@@ -15,18 +15,18 @@ the WorkState project `autowork` (runs `m0`, `ws`).
 
 **Deterministic supervision lives in Rust. Judgement lives in skills.**
 
-The draft had an LLM (platform-controller) watching other LLMs, respawning them, telling them about
+The draft had an LLM (workspace-controller) watching other LLMs, respawning them, telling them about
 each other, and a cron job asking it for a password. Everything in that list except "coordinate the
 work" is deterministic, and an LLM doing deterministic work is slow, costs tokens, and drifts after
 compaction — the exact failure the health-checker was trying to catch.
 
 | Concern | Draft owner | Owner |
 |---|---|---|
-| start / restart / stop controllers | platform-controller | **Foreman supervisor** (reconcile loop) |
-| "who are the other repo-controllers" | platform-controller tells them | **roster** served by Foreman (`fm roster`), always current |
+| start / restart / stop controllers | workspace-controller | **Foreman supervisor** (reconcile loop) |
+| "who are the other repo-controllers" | workspace-controller tells them | **roster** served by Foreman (`fm roster`), always current |
 | liveness, blocked-on-permission | cron + ask the LLM | `claude agents --json --all` (`waitingFor`) + Claude Code **hooks** (`Notification`) — both proven in M0 |
 | skill drift after compact | password-phrase probe | **`SessionStart` hook, source `compact`**: its stdout reaches the model (proven for manual compact in M0) |
-| decompose a roadmap across repos, sequence, escalate | platform-controller | platform-controller (unchanged) |
+| decompose a roadmap across repos, sequence, escalate | workspace-controller | workspace-controller (unchanged) |
 | run a repo's queue, verify, land, own its DBs/deploys | repo-controller | repo-controller → `/rlarch:controller` per work package (unchanged) |
 
 ---
@@ -45,7 +45,7 @@ compaction — the exact failure the health-checker was trying to catch.
 - **`claude` CLI 2.1.308** — `--bg`, `--name`, `agents --json [--all]`, `attach`, `logs`, `stop`, `rm`,
   `respawn`, `--plugin-dir`, `--mcp-config`, `--resume <id> -p`. The whole process API.
 
-New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform-controller`,
+New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`workspace-controller`,
 `repo-controller`).
 
 ---
@@ -54,7 +54,7 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform
 
 ```
 ┌──────────────────────── Foreman.exe (gpui) ─────────────────────────┐
-│  UI: platforms tree · work browser · inbox · terminal tabs         │
+│  UI: workspaces tree · work browser · inbox · terminal tabs        │
 │        ▲ state (entities)                                          │
 │  supervisor: reconcile desired vs observed, restart w/ backoff,    │
 │              concurrency budget, health ladder                     │
@@ -65,7 +65,7 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform
 └──────┬───────────────┬───────────────┬─────────────────┬───────────┘
        │ spawns         │ hooks          │ SendMessage     │
   claude --bg sessions ─┘     fm-<p>-relay ─┘ (native)      │
-  fm-<p>-platform                                  ──MCP──▶ WorkState (.NET, docker, :5290)
+  fm-<p>-workspace                                 ──MCP──▶ WorkState (.NET, docker, :5290)
   fm-<p>-<repo>                                            └ Postgres
   fm-<p>-<repo>-<unit>  (launched by repo-controllers via nested-claude)
 ```
@@ -74,9 +74,9 @@ New: the app, the supervisor, the `fm` CLI, the relay, and two skills (`platform
 
 | crate | job |
 |---|---|
-| `foreman-core` | domain types (Platform, Repo, Session, Role, Health), TOML config, the repo scanner |
+| `foreman-core` | domain types (Workspace, Repo, Session, Role, Health), TOML config, the repo scanner |
 | `foreman-claude` | the only code that knows the `claude` CLI: launch, poll `agents --json --all`, `logs`, `stop`, `rm`, `respawn`; version check so a CLI change fails loudly |
-| `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon. m2/3: desired state (`<FOREMAN_HOME>/supervisor/<platform>.toml`), pure `reconcile`, backoff memory, `Supervisor::tick` over a `Launcher` trait; deps foreman-core + foreman-claude only |
+| `foreman-supervisor` | reconcile loop, restart policy, health evaluation, hook ingest, relay, concurrency budget. **No UI dependency** — liftable into a tray daemon. m2/3: desired state (`<FOREMAN_HOME>/supervisor/<workspace>.toml`), pure `reconcile`, backoff memory, `Supervisor::tick` over a `Launcher` trait; deps foreman-core + foreman-claude only |
 | `foreman-workstate` | typed client for WorkState REST/SSE; brings the compose stack up on tear-up and checks the MCP registration from each repo's cwd |
 | `foreman-term` | Zed's `terminal` vendored without `settings`/`theme_settings`/`task`/`release_channel` (Variant B, M1) + a grid painter adapted from `terminal_view/src/terminal_element.rs` |
 | `foreman-app` | the gpui application |
@@ -96,8 +96,8 @@ Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothin
 
 ### Session identity and permissions
 
-- Names are the address and the join key: `fm-<platform>-platform`, `fm-<platform>-<repo>`,
-  `fm-<platform>-<repo>-<unit>`, `fm-<platform>-relay`. The app filters `agents --json --all` by prefix.
+- Names are the address and the join key: `fm-<workspace>-workspace`, `fm-<workspace>-<repo>`,
+  `fm-<workspace>-<repo>-<unit>`, `fm-<workspace>-relay`. The app filters `agents --json --all` by prefix.
 - Every session is launched with `--mcp-config <FOREMAN_HOME>/mcp/workstate-<role>.json --strict-mcp-config`
   (controller / orchestrator / worker). The file holds the role's token, is created owner-only (one ACE: the
   user, full control) before it is filled, and only its path appears in argv and in the daemon's `roster.json`
@@ -140,30 +140,30 @@ with `SendMessage("fm-<p>-relay", …)`.
 
 ### Data placement
 
-- platform registry: `%APPDATA%\Foreman\platforms\<name>.toml`
-- per platform desired state (Start/Stop, wanted sessions): `%APPDATA%\Foreman\supervisor\<name>.toml`;
+- workspace registry: `%APPDATA%\Foreman\workspaces\<name>.toml`
+- per workspace desired state (Start/Stop, wanted sessions): `%APPDATA%\Foreman\supervisor\<name>.toml`;
   app settings (busy limit, WorkState `.env`): `%APPDATA%\Foreman\settings.toml`
 - runtime session state: in memory, rebuilt from `agents --json --all` + hooks (sessions outlive the app)
-- work, plans, evidence, journal, notes: WorkState (one project per platform; a roadmap is a run)
+- work, plans, evidence, journal, notes: WorkState (one project per workspace; a roadmap is a run)
 
 ---
 
 ## 4. Flows
 
-**Create platform** — pick `<dir>` → scan for folders whose `.git` is a **directory** (a `.git` *file* is a
+**Create workspace** — pick `<dir>` → scan for folders whose `.git` is a **directory** (a `.git` *file* is a
 worktree; `*.worktrees/` skipped) → review, untick → save. `P:\Projects\Magic\Nomos` yields 13 repos.
 
-**Start** — WorkState up + registration checked → `fm-<p>-relay` → `fm-<p>-platform` with
-`/foreman:platform-controller` → **repo-controllers start on demand** when the platform-controller assigns
+**Start** — WorkState up + registration checked → `fm-<p>-relay` → `fm-<p>-workspace` with
+`/foreman:workspace-controller` → **repo-controllers start on demand** when the workspace-controller assigns
 that repo work.
 
-**Throw a task** — text box → relay → platform-controller decomposes into per-repo runs with cross-repo
+**Throw a task** — text box → relay → workspace-controller decomposes into per-repo runs with cross-repo
 `blocks` → one approval in the app → repo-controllers run their queues with `/rlarch:controller`.
 
 **Something needs you** — permission park, a `blocked` item with a decision reason, a migration/deploy
 escalation → Inbox row → **Attach** opens `claude attach <id>` in a terminal tab.
 
-**Stop / tear down** — workers → controllers → platform → relay. Stop before removing a worktree; run
+**Stop / tear down** — workers → controllers → workspace → relay. Stop before removing a worktree; run
 `dotnet build-server shutdown` (or the toolchain's equivalent) first and retry the delete after ~3 s — a
 stopped session or a build server holds handles briefly (seen on every unit in M0).
 
@@ -171,7 +171,7 @@ stopped session or a build server holds handles briefly (seen on every unit in M
 
 ## 5. Skills to write (`plugins/foreman/skills/`)
 
-- **`platform-controller`** — planner and lead; owns cross-repo contracts and sequencing; routes
+- **`workspace-controller`** — planner and lead; owns cross-repo contracts and sequencing; routes
   escalations to the human. Never restarts anything, never writes code. Waits on the relay.
 - **`repo-controller`** — owner of one repo; runs its queue via `/rlarch:controller`. Migrations, deploys,
   prod data always escalate.
@@ -185,29 +185,29 @@ stopped session or a build server holds handles briefly (seen on every unit in M
 backlog). WorkState fit and fixed; state model, hooks, relay and terminal measured; see §3.
 
 **M1 — fleet viewer (read-only) — done** (run `m1`, 7 units; master `3448f97`). `foreman.exe`: left panel
-platforms → repos → sessions with health (live, every 2 s), right panel terminal tabs; Attach opens
-`claude attach <id>`, closing a tab detaches with Ctrl+Z and never kills anything. `fm platform add|list|show|
+workspaces → repos → sessions with health (live, every 2 s), right panel terminal tabs; Attach opens
+`claude attach <id>`, closing a tab detaches with Ctrl+Z and never kills anything. `fm workspace add|list|show|
 remove`, `fm sessions`. Crates: `foreman-core`, `foreman-claude` (read side), `foreman-term`, `foreman-ui`,
 `foreman-app`, `fm`. Health derives **liveness from the pid**; `state` is the current turn (`done` + live pid =
 idle). Open: the human hand check (backlog 9-d).
 
 **M2 — supervisor — done** (run `m2`, units 1–4; master `dc72158`; gate from the main checkout: 252 tests,
-`--selftest-supervise` 3/3, `--selftest` 2/2, `--selftest-detach 10` 10/10). Open: René's hand check on a real platform.
+`--selftest-supervise` 3/3, `--selftest` 2/2, `--selftest-detach 10` 10/10). Open: René's hand check on a real workspace.
 Launcher port (`LaunchSpec`, role token in an owner-only `--mcp-config`, `--plugin-dir`), `plugins/foreman` +
 `fm hook` (event log, role re-injection; auto-compact re-injection proven, 6-d), `foreman-supervisor` (pure
 reconcile, restart with backoff, respawn grace, trust-needed, give-up), and in the app: **Start/Stop per
-platform** (desired state persisted in `<FOREMAN_HOME>/supervisor/`, supervision resumes on app start), the
+workspace** (desired state persisted in `<FOREMAN_HOME>/supervisor/`, supervision resumes on app start), the
 **Inbox** (blocked → Attach, launch failed / gave up → Retry, trust needed → Run in terminal; Foreman never
-answers the trust prompt), **one busy-session limit shared by all platforms** (`settings.toml` `max_working`,
+answers the trust prompt), **one busy-session limit shared by all workspaces** (`settings.toml` `max_working`,
 stepper in the app), hook signals on supervised rows. `foreman.exe --selftest-supervise` is the gate.
-Platform sessions are `bgIsolation:"none"`; the platform role is still the M2 placeholder.
+Workspace sessions are `bgIsolation:"none"`; the workspace role is still the M2 placeholder.
 
-**M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `platform-controller`, `repo-controller`. First
-end-to-end task on a small test platform, **not Nomos**.
+**M3 — skills + relay**: `fm` CLI, relay hardening (7-d), `workspace-controller`, `repo-controller`. First
+end-to-end task on a small test workspace, **not Nomos**.
 
 **M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 
-**M5 — hardening**: per-platform cost budget, tray daemon, Nomos as first real platform.
+**M5 — hardening**: per-workspace cost budget, tray daemon, Nomos as first real workspace.
 
 ---
 
@@ -218,6 +218,6 @@ end-to-end task on a small test platform, **not Nomos**.
   `foreman-claude`, version-checked.
 - **Classifier refusals.** Anything that looks like credential access or guard-weakening is refused for
   nested sessions whatever the brief says. Design for supported routes.
-- **Depth.** platform → repo → controller → orchestrate subagents: four hops. Complete worker briefs from
+- **Depth.** workspace → repo → controller → orchestrate subagents: four hops. Complete worker briefs from
   the store (fixed in ws/2–ws/4) are what keeps it honest.
 - **Closing the app stops supervision** until M5's daemon.

@@ -1,6 +1,6 @@
 //! `fm hook <event>`: run by `plugins/foreman/hooks/hooks.json` inside every session Foreman launches.
 //! Appends one [`Event`] line to `<FOREMAN_HOME>/events/<session_id>.jsonl`; on SessionStart also
-//! prints the role text for `FOREMAN_ROLE` (`{platform}` filled from `FOREMAN_PLATFORM`), which Claude
+//! prints the role text for `FOREMAN_ROLE` (`{workspace}` filled from `FOREMAN_WORKSPACE`), which Claude
 //! Code adds to the session's context.
 //! Never fails: whatever goes wrong, nothing is printed and the exit code is 0 (see `main`).
 
@@ -25,7 +25,7 @@ pub fn run(event: &str) {
     }
     if event == "SessionStart"
         && let Some(role) = std::env::var("FOREMAN_ROLE").ok()
-        && let Some(text) = role_injection(&home, &role, std::env::var("FOREMAN_PLATFORM").ok().as_deref())
+        && let Some(text) = role_injection(&home, &role, std::env::var("FOREMAN_WORKSPACE").ok().as_deref())
     {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(text.as_bytes());

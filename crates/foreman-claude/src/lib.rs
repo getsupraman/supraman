@@ -1,5 +1,5 @@
 //! The only code in Foreman that knows the `claude` CLI. This is the read side: list sessions,
-//! derive their health, map them onto a platform's repos — and the write side ([`Claude`]):
+//! derive their health, map them onto a workspace's repos — and the write side ([`Claude`]):
 //! launch, stop, rm, resume.
 //!
 //! # Health

@@ -6,24 +6,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, SupervisorError};
 
-/// What the human asked for on one platform. Persisted at `<FOREMAN_HOME>/supervisor/<platform>.toml`.
+/// What the human asked for on one workspace. Persisted at `<FOREMAN_HOME>/supervisor/<workspace>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesiredState {
-    pub platform: String,
+    pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
     pub started: bool,
     #[serde(default)]
     pub sessions: Vec<WantedSession>,
 }
 
-/// One session the supervisor keeps alive while the platform is started. `name` is the join key
+/// One session the supervisor keeps alive while the workspace is started. `name` is the join key
 /// against `claude agents` rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WantedSession {
     pub name: String,
     pub role: String,
     /// Chosen by the app, not derived: `claude --bg` refuses an untrusted workspace (m1/5), and a
-    /// platform root is usually not a git repo, so it is usually not trusted.
+    /// workspace root is usually not a git repo, so it is usually not trusted.
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
@@ -33,49 +33,49 @@ pub struct WantedSession {
     pub permission_mode: String,
 }
 
-pub const PLATFORM_ROLE: &str = "platform";
+pub const WORKSPACE_ROLE: &str = "workspace";
 pub const DEFAULT_PERMISSION_MODE: &str = "auto";
 
 fn default_permission_mode() -> String {
     DEFAULT_PERMISSION_MODE.into()
 }
 
-pub fn platform_session_name(platform: &str) -> String {
-    format!("fm-{platform}-{PLATFORM_ROLE}")
+pub fn workspace_session_name(workspace: &str) -> String {
+    format!("fm-{workspace}-{WORKSPACE_ROLE}")
 }
 
 impl DesiredState {
-    pub fn new(platform: impl Into<String>) -> Self {
+    pub fn new(workspace: impl Into<String>) -> Self {
         Self {
-            platform: platform.into(),
+            workspace: workspace.into(),
             started: false,
             sessions: Vec::new(),
         }
     }
 
-    /// M2's desired state: one `fm-<platform>-platform` session, not started.
-    pub fn platform_controller(platform: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>) -> Self {
+    /// M2's desired state: one `fm-<workspace>-workspace` session, not started.
+    pub fn workspace_controller(workspace: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>) -> Self {
         Self {
             sessions: vec![WantedSession {
-                name: platform_session_name(platform),
-                role: PLATFORM_ROLE.into(),
+                name: workspace_session_name(workspace),
+                role: WORKSPACE_ROLE.into(),
                 cwd: cwd.into(),
                 repo: None,
                 prompt: prompt.into(),
                 permission_mode: default_permission_mode(),
             }],
-            ..Self::new(platform)
+            ..Self::new(workspace)
         }
     }
 
-    pub fn path(home: &Path, platform: &str) -> Result<PathBuf> {
-        foreman_core::validate_name(platform)?;
-        Ok(home.join("supervisor").join(format!("{platform}.toml")))
+    pub fn path(home: &Path, workspace: &str) -> Result<PathBuf> {
+        foreman_core::validate_name(workspace)?;
+        Ok(home.join("supervisor").join(format!("{workspace}.toml")))
     }
 
-    /// `None` when the platform has no supervisor file yet.
-    pub fn load(home: &Path, platform: &str) -> Result<Option<Self>> {
-        let path = Self::path(home, platform)?;
+    /// `None` when the workspace has no supervisor file yet.
+    pub fn load(home: &Path, workspace: &str) -> Result<Option<Self>> {
+        let path = Self::path(home, workspace)?;
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
@@ -87,9 +87,9 @@ impl DesiredState {
     }
 
     pub fn save(&self, home: &Path) -> Result<PathBuf> {
-        let path = Self::path(home, &self.platform)?;
+        let path = Self::path(home, &self.workspace)?;
         let text = toml::to_string(self).map_err(|source| SupervisorError::Serialize {
-            platform: self.platform.clone(),
+            workspace: self.workspace.clone(),
             source,
         })?;
         let io = |path: &Path| {
@@ -106,15 +106,15 @@ impl DesiredState {
     }
 }
 
-/// `<plugin_dir>/roles/<role>.md` with `{platform}` filled in.
-pub fn role_prompt(plugin_dir: &Path, role: &str, platform: &str) -> Result<String> {
+/// `<plugin_dir>/roles/<role>.md` with `{workspace}` filled in.
+pub fn role_prompt(plugin_dir: &Path, role: &str, workspace: &str) -> Result<String> {
     let path = plugin_dir.join("roles").join(format!("{role}.md"));
     let template = fs::read_to_string(&path).map_err(|source| SupervisorError::Io { path, source })?;
-    Ok(render_role(&template, platform))
+    Ok(render_role(&template, workspace))
 }
 
-pub fn render_role(template: &str, platform: &str) -> String {
-    template.replace("{platform}", platform).trim().to_string()
+pub fn render_role(template: &str, workspace: &str) -> String {
+    template.replace("{workspace}", workspace).trim().to_string()
 }
 
 #[cfg(test)]
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn round_trips_through_toml_on_disk() {
         let home = tempfile::tempdir().unwrap();
-        let mut desired = DesiredState::platform_controller("demo", r"C:\demo\Alpha", "be the controller");
+        let mut desired = DesiredState::workspace_controller("demo", r"C:\demo\Alpha", "be the controller");
         desired.started = true;
         desired.sessions.push(WantedSession {
             name: "fm-demo-alpha".into(),
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn a_file_without_permission_mode_reads_as_auto() {
         let home = tempfile::tempdir().unwrap();
-        let path = DesiredState::platform_controller("demo", r"C:\d", "p").save(home.path()).unwrap();
+        let path = DesiredState::workspace_controller("demo", r"C:\d", "p").save(home.path()).unwrap();
         let text = fs::read_to_string(&path).unwrap().replace("permission_mode = \"auto\"\n", "");
         assert!(!text.contains("permission_mode"), "{text}");
         fs::write(&path, text).unwrap();
@@ -174,18 +174,18 @@ mod tests {
     }
 
     #[test]
-    fn platform_controller_is_named_by_convention() {
-        let d = DesiredState::platform_controller("nomos", r"C:\n", "p");
+    fn workspace_controller_is_named_by_convention() {
+        let d = DesiredState::workspace_controller("nomos", r"C:\n", "p");
         assert!(!d.started);
-        assert_eq!(d.sessions[0].name, "fm-nomos-platform");
-        assert_eq!(d.sessions[0].role, "platform");
+        assert_eq!(d.sessions[0].name, "fm-nomos-workspace");
+        assert_eq!(d.sessions[0].role, "workspace");
     }
 
     #[test]
-    fn shipped_platform_role_renders() {
-        let prompt = role_prompt(&plugin_dir(), PLATFORM_ROLE, "nomos").unwrap();
-        assert!(prompt.starts_with("You are the platform controller for nomos"), "{prompt}");
-        assert!(!prompt.contains("{platform}"));
+    fn shipped_workspace_role_renders() {
+        let prompt = role_prompt(&plugin_dir(), WORKSPACE_ROLE, "nomos").unwrap();
+        assert!(prompt.starts_with("You are the workspace controller for nomos"), "{prompt}");
+        assert!(!prompt.contains("{workspace}"));
         assert!(role_prompt(&plugin_dir(), "nope", "nomos").is_err());
     }
 }

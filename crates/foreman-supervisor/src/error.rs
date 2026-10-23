@@ -16,9 +16,9 @@ pub enum SupervisorError {
         path: PathBuf,
         source: toml::de::Error,
     },
-    #[error("cannot serialize the desired state of '{platform}': {source}")]
+    #[error("cannot serialize the desired state of '{workspace}': {source}")]
     Serialize {
-        platform: String,
+        workspace: String,
         source: toml::ser::Error,
     },
 }

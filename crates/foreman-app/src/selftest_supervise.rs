@@ -1,13 +1,13 @@
 //! `--selftest-supervise`: the M2 gate, through the real UI (clicks on painted hit targets) and the
-//! real `claude` CLI. `FOREMAN_HOME` = `<workspace>/target/selftest-home`; four throwaway platforms
-//! rooted at fresh dirs under `<workspace>/target/` (never Nomos, never the user's registry); every
+//! real `claude` CLI. `FOREMAN_HOME` = `<cargo root>/target/selftest-home`; four throwaway workspaces
+//! rooted at fresh dirs under `<cargo root>/target/` (never Nomos, never the user's registry); every
 //! session is `fm-selftest-<hex>-…`. One line per step:
 //!
-//! - a. platforms registered: `selftest-<hex>` (testbed, plain dir: trusted, inside the checkout),
+//! - a. workspaces registered: `selftest-<hex>` (testbed, plain dir: trusted, inside the checkout),
 //!   `-u` (`git init`ed: untrusted by construction), `-c1`/`-c2` (plain, for the budget). The testbed's
 //!   desired state also wants `fm-selftest-<hex>-park` (`--permission-mode default`, told to run one
-//!   Bash command): the platform session itself is `auto`, so the park is a separate wanted session.
-//! - b. Start (click) → `fm-selftest-<hex>-platform` live; its event log has SessionStart(startup) and
+//!   Bash command): the workspace session itself is `auto`, so the park is a separate wanted session.
+//! - b. Start (click) → `fm-selftest-<hex>-workspace` live; its event log has SessionStart(startup) and
 //!   its transcript the role tag the hook injected.
 //! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
 //!   and the supervisor resumes it: same sessionId, new pid.
@@ -28,16 +28,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Health, Session, SessionState, check_supported, list_sessions, now_ms};
-use foreman_core::{EventReader, Platform, Registry, Settings, role_tag};
+use foreman_core::{EventReader, Workspace, Registry, Settings, role_tag};
 use foreman_supervisor::{
-    DesiredState, NeedsKind, PLATFORM_ROLE, Remedy, WantedSession, is_live, platform_session_name, render_role,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, workspace_session_name, render_role,
     role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::selftest::{
     Scratch, claude, click, hex6, install_guards, lock, raw, remove_dir_retrying, sleep, wait_for_tab_terminal,
-    workspace_root,
+    cargo_root,
 };
 use crate::view::{FleetView, process_alive};
 use crate::{Mode, supervise};
@@ -48,7 +48,7 @@ else: `echo parked > parked.txt`. Then stop.";
 struct Testbed {
     hex: String,
     home: PathBuf,
-    /// testbed, untrusted, budget 1, budget 2: (platform name, root)
+    /// testbed, untrusted, budget 1, budget 2: (workspace name, root)
     a: (String, PathBuf),
     u: (String, PathBuf),
     c1: (String, PathBuf),
@@ -68,20 +68,20 @@ impl Testbed {
 }
 
 pub fn prepare() -> anyhow::Result<()> {
-    let target = workspace_root().join("target");
+    let target = cargo_root().join("target");
     let home = target.join("selftest-home");
     remove_dir_retrying(&home).with_context(|| format!("cannot clear {}", home.display()))?;
     let hex = hex6();
-    let platform = |suffix: &str| {
+    let workspace = |suffix: &str| {
         let name = format!("selftest-{hex}{suffix}");
         let root = target.join(&name);
         (name, root)
     };
     let tb = Testbed {
-        a: platform(""),
-        u: platform("-u"),
-        c1: platform("-c1"),
-        c2: platform("-c2"),
+        a: workspace(""),
+        u: workspace("-u"),
+        c1: workspace("-c1"),
+        c2: workspace("-c2"),
         home: home.clone(),
         hex: hex.clone(),
     };
@@ -110,10 +110,10 @@ pub fn prepare() -> anyhow::Result<()> {
     }
     let registry = Registry::at(&home);
     for (name, root) in [&tb.a, &tb.u, &tb.c1, &tb.c2] {
-        registry.save(&Platform::new(name.as_str(), root.as_path(), Vec::new()), true)?;
+        registry.save(&Workspace::new(name.as_str(), root.as_path(), Vec::new()), true)?;
     }
-    let plugin = workspace_root().join("plugins").join("foreman");
-    let mut desired = DesiredState::platform_controller(&tb.a.0, &tb.a.1, role_prompt(&plugin, PLATFORM_ROLE, &tb.a.0)?);
+    let plugin = cargo_root().join("plugins").join("foreman");
+    let mut desired = DesiredState::workspace_controller(&tb.a.0, &tb.a.1, role_prompt(&plugin, WORKSPACE_ROLE, &tb.a.0)?);
     desired.sessions.push(WantedSession {
         name: tb.park(),
         role: "probe".into(),
@@ -124,7 +124,7 @@ pub fn prepare() -> anyhow::Result<()> {
     });
     desired.save(&home)?;
     println!(
-        "step a: claude {} | FOREMAN_HOME={} | platforms {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
+        "step a: claude {} | FOREMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
         version.raw,
         home.display(),
         tb.a.0,
@@ -132,7 +132,7 @@ pub fn prepare() -> anyhow::Result<()> {
         tb.c1.0,
         tb.c2.0,
         tb.a.0,
-        platform_session_name(&tb.a.0),
+        workspace_session_name(&tb.a.0),
         tb.park()
     );
     TESTBED.set(tb).map_err(|_| anyhow!("prepared twice"))?;
@@ -244,7 +244,7 @@ fn secs(d: Duration) -> String {
 
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let tb = testbed()?;
-    let ctrl = platform_session_name(&tb.a.0);
+    let ctrl = workspace_session_name(&tb.a.0);
 
     // b. Start through the UI
     wait_painted(view, &format!("start-{}", tb.a.0), Duration::from_secs(30), cx).await.context("step b")?;
@@ -254,13 +254,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     click(view, &format!("start-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
-    let launched = wait_for("step b: platform session live", Duration::from_secs(60), cx, |rows| {
+    let launched = wait_for("step b: workspace session live", Duration::from_secs(60), cx, |rows| {
         rows.iter().find(|s| s.name == ctrl && s.pid.is_some()).cloned()
     })
     .await?;
     let live_after = clicked.elapsed();
-    let template = std::fs::read_to_string(tb.home.join("roles").join("platform.md")).context("step b: role file")?;
-    let tag = role_tag(PLATFORM_ROLE, &render_role(&template, &tb.a.0));
+    let template = std::fs::read_to_string(tb.home.join("roles").join("workspace.md")).context("step b: role file")?;
+    let tag = role_tag(WORKSPACE_ROLE, &render_role(&template, &tb.a.0));
     let mut events = EventReader::new(&tb.home);
     let mut seen = Vec::new();
     let mut transcript = None;
@@ -284,7 +284,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let shown = Instant::now();
     let in_panel = loop {
         let in_panel = view.read_with(cx, |v, _| {
-            v.tree().platforms.iter().any(|p| p.name == tb.a.0 && p.supervised.iter().any(|r| r.session.name == ctrl))
+            v.tree().workspaces.iter().any(|p| p.name == tb.a.0 && p.supervised.iter().any(|r| r.session.name == ctrl))
         });
         if in_panel || shown.elapsed() > Duration::from_secs(10) {
             break in_panel;
@@ -308,7 +308,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let events_line = seen.iter().map(|e| e.event.clone() + &e.source.as_deref().map(|s| format!("({s})")).unwrap_or_default()).collect::<Vec<_>>().join(", ");
     if !tagged || !in_panel {
         bail!(
-            "step b: {ctrl} live, but SessionStart(startup) with the role tag {tag} in its transcript={tagged}, row under its platform={in_panel}; events: {events_line}"
+            "step b: {ctrl} live, but SessionStart(startup) with the role tag {tag} in its transcript={tagged}, row under its workspace={in_panel}; events: {events_line}"
         );
     }
     println!(
@@ -320,7 +320,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     );
 
     // c. kill its process once its turn ended; the supervisor resumes it
-    let idle = wait_for("step c: platform session idle", Duration::from_secs(120), cx, |rows| {
+    let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
         rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
     .await?;
@@ -386,8 +386,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         raw(&settled)
     );
 
-    // d. untrusted platform → TrustNeeded with Run in terminal; nothing is run or accepted
-    let u_ctrl = platform_session_name(&tb.u.0);
+    // d. untrusted workspace → TrustNeeded with Run in terminal; nothing is run or accepted
+    let u_ctrl = workspace_session_name(&tb.u.0);
     wait_painted(view, &format!("start-{}", tb.u.0), Duration::from_secs(10), cx).await?;
     click(view, &format!("start-{}", tb.u.0), cx).await?;
     let clicked = Instant::now();
@@ -489,7 +489,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         hook.unwrap_or_else(|| "none".into())
     );
 
-    // f. busy limit 1 (the settings window's stepper path), two more platforms started: never
+    // f. busy limit 1 (the settings window's stepper path), two more workspaces started: never
     // more than one working
     view.update(cx, |v, cx| v.set_max_working(1, cx));
     let saved = Settings::load(&tb.home)?.max_working;
@@ -497,7 +497,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("step f: settings.toml has max_working {saved} after the stepper showed 1");
     }
     let prefix = format!("fm-selftest-{}", tb.hex);
-    let (c1, c2) = (platform_session_name(&tb.c1.0), platform_session_name(&tb.c2.0));
+    let (c1, c2) = (workspace_session_name(&tb.c1.0), workspace_session_name(&tb.c2.0));
     for (name, _) in [&tb.c1, &tb.c2] {
         wait_painted(view, &format!("start-{name}"), Duration::from_secs(10), cx).await?;
         click(view, &format!("start-{name}"), cx).await?;
@@ -542,7 +542,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let (first, second) = if first_live[0] <= first_live[1] { (0, 1) } else { (1, 0) };
     if !first_idle[first].is_some_and(|idle| first_live[second].is_some_and(|live| live >= idle)) {
         bail!(
-            "step f: the second platform went live at {} before the first one's turn ended ({})",
+            "step f: the second workspace went live at {} before the first one's turn ended ({})",
             fmt(first_live[second]),
             fmt(first_idle[first])
         );
@@ -568,7 +568,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     .await?;
     sleep(cx, Duration::from_secs(3)).await;
     let shown = view.read_with(cx, |v, _| {
-        v.tree().platforms.iter().find(|p| p.name == tb.a.0).map(|p| p.supervised.len()).unwrap_or(0)
+        v.tree().workspaces.iter().find(|p| p.name == tb.a.0).map(|p| p.supervised.len()).unwrap_or(0)
     });
     let still = rows(cx).await?.into_iter().filter(|s| names.contains(&s.name) && s.pid.is_some()).count();
     println!(

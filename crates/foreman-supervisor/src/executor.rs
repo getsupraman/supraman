@@ -48,7 +48,7 @@ pub struct LaunchConfig {
     /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_role_token`] writes the owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE` and `FOREMAN_PLATFORM`, through
+    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE` and `FOREMAN_WORKSPACE`, through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
     pub foreman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
@@ -58,7 +58,7 @@ pub struct LaunchConfig {
 
 impl LaunchConfig {
     /// The `--settings` JSON for one session, `None` when there is nothing to set.
-    pub fn session_settings(&self, platform: &str, role: &str) -> Option<String> {
+    pub fn session_settings(&self, workspace: &str, role: &str) -> Option<String> {
         let mut settings = serde_json::Map::new();
         if let Some(home) = &self.foreman_home {
             settings.insert(
@@ -66,7 +66,7 @@ impl LaunchConfig {
                 serde_json::json!({
                     "FOREMAN_HOME": home.display().to_string(),
                     "FOREMAN_ROLE": role,
-                    "FOREMAN_PLATFORM": platform,
+                    "FOREMAN_WORKSPACE": workspace,
                 }),
             );
         }
@@ -77,7 +77,7 @@ impl LaunchConfig {
     }
 }
 
-/// One platform's supervisor: desired state + memory, driven by [`Supervisor::tick`].
+/// One workspace's supervisor: desired state + memory, driven by [`Supervisor::tick`].
 pub struct Supervisor<L, T> {
     pub desired: DesiredState,
     pub memory: SupervisorMemory,
@@ -198,7 +198,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
-        if let Some(settings) = self.config.session_settings(&self.desired.platform, &w.role) {
+        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role) {
             spec.extra_args = vec!["--settings".into(), settings];
         }
         if let Some(t) = self.tokens.token(&w.role) {
@@ -291,7 +291,7 @@ mod tests {
     }
 
     fn supervisor(started: bool, tokens: Option<RoleToken>, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {
-        let mut desired = DesiredState::platform_controller("demo", r"C:\demo\cwd", "be the controller");
+        let mut desired = DesiredState::workspace_controller("demo", r"C:\demo\cwd", "be the controller");
         desired.started = started;
         let config = LaunchConfig {
             mcp_dir: mcp_dir.into(),
@@ -309,7 +309,7 @@ mod tests {
         Session {
             id: "aaaa0001".into(),
             session_id: "aaaa0001-0000-4000-8000-000000000001".into(),
-            name: "fm-demo-platform".into(),
+            name: "fm-demo-workspace".into(),
             cwd: r"C:\demo\cwd".into(),
             kind: Kind::Background,
             state: Some(state),
@@ -331,10 +331,10 @@ mod tests {
         assert_eq!(sup.tick(&[], &mut free(), NOW), []);
         match sup.launcher().take().as_slice() {
             [Call::Launch { name, argv }] => {
-                assert_eq!(name, "fm-demo-platform");
+                assert_eq!(name, "fm-demo-workspace");
                 let argv = argv.join(" ");
                 assert!(argv.contains("--strict-mcp-config"), "{argv}");
-                assert!(argv.contains("workstate-platform.json"), "{argv}");
+                assert!(argv.contains("workstate-workspace.json"), "{argv}");
                 assert!(argv.contains(r"--plugin-dir C:\fm\plugins\foreman"), "{argv}");
                 assert!(argv.ends_with("-- be the controller"), "{argv}");
                 assert!(!argv.contains("fake-token"), "{argv}");
@@ -346,7 +346,7 @@ mod tests {
         let live = row(SessionState::Working, Some(Status::Busy), Some(4242));
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         assert_eq!(sup.launcher().take(), []);
-        assert_eq!(sup.memory.get("fm-demo-platform").unwrap().started_at, None, "stable");
+        assert_eq!(sup.memory.get("fm-demo-workspace").unwrap().started_at, None, "stable");
     }
 
     #[test]
@@ -381,15 +381,15 @@ mod tests {
         assert_eq!(
             settings,
             serde_json::json!({
-                "env": { "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "platform", "FOREMAN_PLATFORM": "demo" },
+                "env": { "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "workspace", "FOREMAN_WORKSPACE": "demo" },
                 "worktree": { "bgIsolation": "none" }
             })
         );
-        assert_eq!(LaunchConfig::default().session_settings("demo", "platform"), None);
+        assert_eq!(LaunchConfig::default().session_settings("demo", "workspace"), None);
     }
 
-    fn platform(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {
-        let mut desired = DesiredState::platform_controller(name, r"C:\demo\cwd", "be the controller");
+    fn workspace(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {
+        let mut desired = DesiredState::workspace_controller(name, r"C:\demo\cwd", "be the controller");
         desired.started = true;
         let config = LaunchConfig {
             mcp_dir: mcp_dir.into(),
@@ -414,12 +414,12 @@ mod tests {
     }
 
     #[test]
-    fn two_started_platforms_never_exceed_the_shared_budget_together() {
+    fn two_started_workspaces_never_exceed_the_shared_budget_together() {
         let dir = tempfile::tempdir().unwrap();
         let launched = |sups: &[Supervisor<FakeLauncher, FakeTokens>]| -> Vec<usize> {
             sups.iter().map(|s| s.launcher().take().len()).collect()
         };
-        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
         // budget 1, both need a launch: only alpha goes
         tick_all(sups.iter_mut(), &[], 1, NOW);
         assert_eq!(launched(&sups), [1, 0]);
@@ -427,11 +427,11 @@ mod tests {
         tick_all(sups.iter_mut(), &[], 1, NOW + 2 * SECOND);
         assert_eq!(launched(&sups), [0, 0]);
         // alpha is working: beta waits
-        let alpha_busy = live("fm-alpha-platform", 1, SessionState::Working, Status::Busy);
+        let alpha_busy = live("fm-alpha-workspace", 1, SessionState::Working, Status::Busy);
         tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_busy), 1, NOW + 4 * SECOND);
         assert_eq!(launched(&sups), [0, 0]);
         // alpha's turn ended (done + live pid = idle): the slot frees, beta goes
-        let alpha_idle = live("fm-alpha-platform", 1, SessionState::Done, Status::Idle);
+        let alpha_idle = live("fm-alpha-workspace", 1, SessionState::Done, Status::Idle);
         tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_idle), 1, NOW + 30 * SECOND);
         assert_eq!(launched(&sups), [0, 1]);
         // the same snapshot again: beta, settling, holds the slot
@@ -439,15 +439,15 @@ mod tests {
         assert_eq!(launched(&sups), [0, 0]);
 
         // budget 2: both in one tick
-        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
         tick_all(sups.iter_mut(), &[], 2, NOW);
         assert_eq!(launched(&sups), [1, 1]);
 
         // budget 0 pauses every launch; a working fm- session nobody here supervises counts too
-        let mut sups = [platform("alpha", dir.path()), platform("beta", dir.path())];
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
         tick_all(sups.iter_mut(), &[], 0, NOW);
         assert_eq!(launched(&sups), [0, 0]);
-        let other = live("fm-gamma-platform", 3, SessionState::Working, Status::Busy);
+        let other = live("fm-gamma-workspace", 3, SessionState::Working, Status::Busy);
         tick_all(sups.iter_mut(), std::slice::from_ref(&other), 1, NOW + SECOND);
         assert_eq!(launched(&sups), [0, 0]);
         let needs = tick_all(sups.iter_mut(), std::slice::from_ref(&other), 2, NOW + 2 * SECOND);
@@ -504,7 +504,7 @@ mod tests {
         let later = sup.tick(&[], &mut free(), NOW + 3_600 * SECOND);
         assert_eq!(later[0].since, NOW, "since is kept");
         assert_eq!(sup.launcher().take(), [], "never retried automatically");
-        sup.retry("fm-demo-platform");
+        sup.retry("fm-demo-workspace");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 3_601 * SECOND), []);
         assert_eq!(sup.launcher().take().len(), 1);
     }
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(needs[0].kind, NeedsKind::GaveUp);
         assert_eq!(needs[0].since, NOW + 755 * SECOND);
         assert_eq!(needs[0].detail, "gave up after 5 failures; last: claude failed (exit 1): boom");
-        sup.retry("fm-demo-platform");
+        sup.retry("fm-demo-workspace");
         sup.tick(&[], &mut free(), now);
         assert_eq!(sup.launcher().take().len(), 1);
     }
@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(sup.launcher().take().len(), 1);
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert!(needs[0].detail.contains("started a copy bbbb0002"), "{}", needs[0].detail);
-        assert_eq!(woke_in_place("backgrounded · aaaa0001 · fm-demo-platform", "aaaa0001"), Ok(()));
+        assert_eq!(woke_in_place("backgrounded · aaaa0001 · fm-demo-workspace", "aaaa0001"), Ok(()));
         assert_eq!(woke_in_place("", "aaaa0001"), Ok(()));
     }
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use foreman_core::{Platform, Repo};
+use foreman_core::{Workspace, Repo};
 
 use crate::Session;
 
@@ -13,10 +13,10 @@ pub struct Assignment {
     pub unassigned: Vec<Session>,
 }
 
-pub fn assign(sessions: &[Session], platform: &Platform) -> Assignment {
+pub fn assign(sessions: &[Session], workspace: &Workspace) -> Assignment {
     let mut out = Assignment::default();
     for s in sessions {
-        match repo_of(&s.cwd, platform) {
+        match repo_of(&s.cwd, workspace) {
             Some(repo) => out.by_repo.entry(repo.name.clone()).or_default().push(s.clone()),
             None => out.unassigned.push(s.clone()),
         }
@@ -26,9 +26,9 @@ pub fn assign(sessions: &[Session], platform: &Platform) -> Assignment {
 
 /// The repo whose path is `cwd` or an ancestor of it (deepest wins), else the repo owning the
 /// linked worktree `cwd` lies in, found through the worktree's `.git` file.
-pub fn repo_of<'a>(cwd: &Path, platform: &'a Platform) -> Option<&'a Repo> {
+pub fn repo_of<'a>(cwd: &Path, workspace: &'a Workspace) -> Option<&'a Repo> {
     let by_prefix = |dir: &str| {
-        platform
+        workspace
             .repos
             .iter()
             .filter(|r| is_within(dir, &norm(&r.path)))
@@ -37,7 +37,7 @@ pub fn repo_of<'a>(cwd: &Path, platform: &'a Platform) -> Option<&'a Repo> {
     let cwd_norm = norm(cwd);
     by_prefix(&cwd_norm).or_else(|| {
         let main = norm(&main_repo(cwd)?);
-        platform.repos.iter().find(|r| norm(&r.path) == main)
+        workspace.repos.iter().find(|r| norm(&r.path) == main)
     })
 }
 
@@ -105,7 +105,7 @@ mod tests {
     ///   Plat/Alpha.worktrees/feat/.git  file → ../../Alpha/.git/worktrees/feat
     ///   Plat/Alpha.worktrees/abs/.git   file → <abs Alpha>/.git/worktrees/abs
     ///   Elsewhere/
-    fn layout() -> (tempfile::TempDir, Platform) {
+    fn layout() -> (tempfile::TempDir, Workspace) {
         let tmp = tempfile::tempdir().unwrap();
         let plat = tmp.path().join("Plat");
         let alpha = plat.join("Alpha");
@@ -127,8 +127,8 @@ mod tests {
             branch: Some("main".into()),
             enabled: true,
         };
-        let platform = Platform::new("plat", &plat, vec![repo("Alpha"), repo("Alpha.Ext")]);
-        (tmp, platform)
+        let workspace = Workspace::new("plat", &plat, vec![repo("Alpha"), repo("Alpha.Ext")]);
+        (tmp, workspace)
     }
 
     fn session(id: &str, cwd: &Path) -> Session {
@@ -139,7 +139,7 @@ mod tests {
         parse(&json.to_string()).unwrap().remove(0)
     }
 
-    fn repo_name<'a>(cwd: &Path, p: &'a Platform) -> Option<&'a str> {
+    fn repo_name<'a>(cwd: &Path, p: &'a Workspace) -> Option<&'a str> {
         repo_of(cwd, p).map(|r| r.name.as_str())
     }
 
@@ -190,7 +190,7 @@ mod tests {
     fn outside_every_repo_is_unassigned() {
         let (tmp, p) = layout();
         assert_eq!(repo_name(&tmp.path().join("Elsewhere"), &p), None);
-        assert_eq!(repo_name(&tmp.path().join("Plat"), &p), None, "the platform root itself");
+        assert_eq!(repo_name(&tmp.path().join("Plat"), &p), None, "the workspace root itself");
         assert_eq!(repo_name(&tmp.path().join("Plat").join("Alpha.worktrees"), &p), None);
         assert_eq!(repo_name(&tmp.path().join("Plat").join("Alph"), &p), None);
     }

@@ -1,6 +1,6 @@
-// foreman: the fleet app. Platforms → supervised sessions and repos → sessions on the left, with
-// Start/Stop per platform, the Inbox and the shared busy-session limit; attached terminals in tabs on
-// the right. Only platforms the human started are supervised (`foreman-supervisor`).
+// foreman: the fleet app. Workspaces → supervised sessions and repos → sessions on the left, with
+// Start/Stop per workspace, the Inbox and the shared busy-session limit; attached terminals in tabs on
+// the right. Only workspaces the human started are supervised (`foreman-supervisor`).
 //   foreman                  the app
 //   foreman --selftest       the M1 gate: one throwaway session, attach, detach, cleanup, perf
 //   foreman --selftest-detach <n>       one session, n attach/close cycles, alive after each

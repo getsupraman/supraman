@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use crate::Millis;
 
-/// One Inbox row: something on a platform only the human can resolve.
+/// One Inbox row: something on a workspace only the human can resolve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NeedsYou {
     pub kind: NeedsKind,
-    pub platform: String,
+    pub workspace: String,
     pub name: String,
     /// When the supervisor first saw this need (kept across ticks by [`crate::Supervisor`]).
     pub since: Millis,

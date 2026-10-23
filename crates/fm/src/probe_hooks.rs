@@ -1,5 +1,5 @@
 //! `fm probe hooks`: the m2/2 hook-ingest probes on throwaway `aw-m2-probe-<hex>-*` sessions, run from
-//! `<workspace>/target/aw-m2-probe-<hex>/<probe>` with `--plugin-dir <workspace>/plugins/foreman` and
+//! `<cargo root>/target/aw-m2-probe-<hex>/<probe>` with `--plugin-dir <cargo root>/plugins/foreman` and
 //! `FOREMAN_HOME` = `<scratch>/home`. Answers are recorded in `docs/LEARNINGS.md` (m2/2).
 //!
 //! - park: `--permission-mode default` + a Bash command → SessionStart(startup), UserPromptSubmit,
@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use foreman_claude::{Claude, LaunchSpec};
 use foreman_core::{Event, EventReader, role_tag};
 
-use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped, workspace_root, write, yes};
+use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped, cargo_root, write, yes};
 
 const ROLE: &str = "probe";
 const WINDOW: &str = "100000";
@@ -53,12 +53,12 @@ one after another, without summarising them: {}. Then reply with the single word
     )
 }
 
-/// `repo`: the checkout whose `target/` holds the scratch cwd (default: this build's workspace). The
-/// plugin always comes from this build's workspace, so nothing is written into `repo` outside `target/`.
+/// `repo`: the checkout whose `target/` holds the scratch cwd (default: this build's cargo workspace). The
+/// plugin always comes from this build's cargo workspace, so nothing is written into `repo` outside `target/`.
 pub fn run(repo: Option<PathBuf>) -> bool {
     let claude = Claude::default();
     let hex = hex6();
-    let root = repo.unwrap_or_else(workspace_root).join("target").join(format!("aw-m2-probe-{hex}"));
+    let root = repo.unwrap_or_else(cargo_root).join("target").join(format!("aw-m2-probe-{hex}"));
     let mut fleet = Fleet {
         claude: claude.clone(),
         names: Vec::new(),
@@ -109,7 +109,7 @@ impl Setup {
 }
 
 fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<bool, String> {
-    let plugin = workspace_root().join("plugins").join("foreman");
+    let plugin = cargo_root().join("plugins").join("foreman");
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     let (_, copied) = foreman_core::install_hook_exe(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
     println!("plugin {} (fm.exe {})", plugin.display(), if copied { "installed" } else { "up to date" });
