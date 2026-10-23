@@ -13,6 +13,9 @@ usage:
   fm workspace show <name>
   fm workspace remove <name>
   fm sessions [--workspace <name>] [--all]
+  fm want <workspace> <repo> [--prompt-file <path>]   (start the repo's session fm-<workspace>-<repo>)
+  fm unwant <workspace> <repo>         (stop it; stop, never rm)
+  fm roster <workspace> [--json]       (the workspace's sessions: name, role, health, id, cwd)
   fm send <workspace> <to> <body>      (drop a message for the workspace's relay to send)
   fm send <workspace> <to> --file <path>
   fm messages <workspace>              (messages the relay received, newest last)
@@ -28,12 +31,23 @@ mod probe;
 mod probe_hooks;
 mod probe_isolation;
 mod relay;
+mod repos;
 
 enum Failure {
     Usage(String),
     Core(CoreError),
     Claude(ClaudeError),
+    Supervisor(foreman_supervisor::SupervisorError),
     Probe(&'static str),
+}
+
+impl From<foreman_supervisor::SupervisorError> for Failure {
+    fn from(e: foreman_supervisor::SupervisorError) -> Self {
+        match e {
+            foreman_supervisor::SupervisorError::Core(e) => Self::Core(e),
+            e => Self::Supervisor(e),
+        }
+    }
 }
 
 impl From<CoreError> for Failure {
@@ -72,6 +86,10 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+        Err(Failure::Supervisor(e)) => {
+            eprintln!("error: {e}");
+            ExitCode::from(2)
+        }
         Err(Failure::Probe(what)) => {
             eprintln!("error: {what} (see the probe lines above)");
             ExitCode::from(1)
@@ -98,6 +116,9 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["inbox", rest @ ..] => relay::inbox(rest),
         ["send", rest @ ..] => relay::send_cmd(registry()?.home(), rest),
         ["messages", rest @ ..] => relay::messages(&registry()?, rest),
+        ["want", rest @ ..] => repos::want(&registry()?, rest),
+        ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
+        ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
         ["probe", "launch"] => {
             check_supported()?;
             if probe::launch() {

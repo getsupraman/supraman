@@ -95,10 +95,18 @@ pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<Pat
 /// and compaction fires SessionStart) is recognisable. `None` when the role name is unsafe or the
 /// file is missing or empty.
 pub fn role_injection(home: &Path, role: &str, workspace: Option<&str>) -> Option<String> {
+    role_injection_for(home, role, workspace, None)
+}
+
+/// [`role_injection`] for a repo session: `{repo}` too, from `FOREMAN_REPO`.
+pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo: Option<&str>) -> Option<String> {
     if !is_safe_id(role) {
         return None;
     }
     let mut text = fs::read_to_string(home.join("roles").join(format!("{role}.md"))).ok()?;
+    if let Some(repo) = repo {
+        text = text.replace("{repo}", repo);
+    }
     if let Some(workspace) = workspace {
         text = text.replace("{workspace}", workspace);
     }
@@ -363,5 +371,11 @@ mod tests {
         let text = role_injection(home.path(), "workspace", Some("nomos")).unwrap();
         assert_eq!(text, format!("{}\nController for nomos.\n", role_tag("workspace", "Controller for nomos.")));
         assert!(role_injection(home.path(), "workspace", None).unwrap().contains("{workspace}"));
+        fs::write(home.path().join("roles").join("repo.md"), "Repo {repo} of {workspace}.
+").unwrap();
+        let text = role_injection_for(home.path(), "repo", Some("nomos"), Some("Nomos.Pdf")).unwrap();
+        assert!(text.ends_with("
+Repo Nomos.Pdf of nomos.
+"), "{text}");
     }
 }

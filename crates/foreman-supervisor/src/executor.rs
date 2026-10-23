@@ -48,27 +48,32 @@ pub struct LaunchConfig {
     /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_session_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE` and `FOREMAN_WORKSPACE`, through
+    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE` (and `FOREMAN_REPO` for a
+    /// repo session), through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
     pub foreman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
     /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
     pub bg_isolation_none: bool,
+    /// `--allowedTools`: permission rules every session gets, so `fm` (Foreman's CLI, run by controllers
+    /// themselves) never parks for permission (m3/2: `Bash(fm:*)` matched; PowerShell rules did not).
+    pub allowed_tools: Vec<String>,
 }
 
 impl LaunchConfig {
     /// The `--settings` JSON for one session, `None` when there is nothing to set.
-    pub fn session_settings(&self, workspace: &str, role: &str) -> Option<String> {
+    pub fn session_settings(&self, workspace: &str, role: &str, repo: Option<&str>) -> Option<String> {
         let mut settings = serde_json::Map::new();
         if let Some(home) = &self.foreman_home {
-            settings.insert(
-                "env".into(),
-                serde_json::json!({
-                    "FOREMAN_HOME": home.display().to_string(),
-                    "FOREMAN_ROLE": role,
-                    "FOREMAN_WORKSPACE": workspace,
-                }),
-            );
+            let mut env = serde_json::json!({
+                "FOREMAN_HOME": home.display().to_string(),
+                "FOREMAN_ROLE": role,
+                "FOREMAN_WORKSPACE": workspace,
+            });
+            if let Some(repo) = repo {
+                env["FOREMAN_REPO"] = repo.into();
+            }
+            settings.insert("env".into(), env);
         }
         if self.bg_isolation_none {
             settings.insert("worktree".into(), serde_json::json!({ "bgIsolation": "none" }));
@@ -203,8 +208,12 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
         spec.add_dirs = w.add_dirs.clone();
-        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role) {
+        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.role, w.repo.as_deref()) {
             spec.extra_args = vec!["--settings".into(), settings];
+        }
+        if !self.config.allowed_tools.is_empty() {
+            spec.extra_args.push("--allowedTools".into());
+            spec.extra_args.extend(self.config.allowed_tools.iter().cloned());
         }
         if let Some(t) = self.tokens.token(&w.role) {
             spec = spec
@@ -430,6 +439,7 @@ mod tests {
         let mut sup = supervisor(true, None, dir.path());
         sup.config.foreman_home = Some(r"C:\fm\home".into());
         sup.config.bg_isolation_none = true;
+        sup.config.allowed_tools = vec!["Bash(fm:*)".into(), "Bash(C:/fm/bin/fm.exe:*)".into()];
         sup.desired.sessions[0].permission_mode = "default".into();
         sup.tick(&[], &mut free(), NOW);
         let argv = match sup.launcher().take().as_slice() {
@@ -438,6 +448,8 @@ mod tests {
         };
         let at = |flag: &str| argv.iter().position(|a| a == flag).map(|i| argv[i + 1].clone());
         assert_eq!(at("--permission-mode").as_deref(), Some("default"));
+        let tools = argv.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(argv[tools + 1..tools + 4], ["Bash(fm:*)", "Bash(C:/fm/bin/fm.exe:*)", "--"]);
         let settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
         assert_eq!(
             settings,
@@ -446,7 +458,7 @@ mod tests {
                 "worktree": { "bgIsolation": "none" }
             })
         );
-        assert_eq!(LaunchConfig::default().session_settings("demo", "workspace"), None);
+        assert_eq!(LaunchConfig::default().session_settings("demo", "workspace", None), None);
     }
 
     fn workspace(name: &str, mcp_dir: &Path) -> Supervisor<FakeLauncher, FakeTokens> {

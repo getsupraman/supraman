@@ -175,6 +175,16 @@ pub fn reconcile(
             _ => launches.push(action),
         }
     }
+    // retired names (`fm unwant`): stopped whether the workspace is started or not, before the relay
+    for name in desired.retired.iter().filter(|n| !desired.sessions.iter().any(|w| &w.name == *n)) {
+        let live: Vec<&Session> = observed.iter().filter(|s| &s.name == name && is_live(s, now)).collect();
+        if let [s] = live.as_slice() {
+            out.push(Action::Stop {
+                name: name.clone(),
+                id: s.id.clone(),
+            });
+        }
+    }
     out.append(&mut last_stops);
     out.append(&mut exempt);
     let mut free = free;
@@ -228,6 +238,7 @@ mod tests {
         DesiredState {
             workspace: "demo".into(),
             started,
+            retired: Vec::new(),
             sessions: names.iter().map(|n| wanted(n)).collect(),
         }
     }
@@ -565,6 +576,40 @@ mod tests {
         ));
         // a row never seen alive by this supervisor (e.g. stopped before the app started) resumes at once
         assert_eq!(run(&d, std::slice::from_ref(&done)), [resume_of(&done)]);
+    }
+
+    // R14
+    #[test]
+    fn retired_sessions_are_stopped_before_the_relay_and_never_relaunched() {
+        for started in [true, false] {
+            let mut d = desired(started, &["fm-demo-workspace"]);
+            d.sessions.insert(0, crate::relay_session("demo", r"C:\demo", r"C:\fm\relay\demo", "r"));
+            d.unwant("fm-demo-alpha");
+            let observed = [running("fm-demo-relay", 1), running("fm-demo-workspace", 2), running("fm-demo-alpha", 3)];
+            let actions = run(&d, &observed);
+            let stops: Vec<&str> = actions
+                .iter()
+                .filter_map(|a| match a {
+                    Action::Stop { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            let expected: &[&str] = if started {
+                &["fm-demo-alpha"]
+            } else {
+                &["fm-demo-workspace", "fm-demo-alpha", "fm-demo-relay"]
+            };
+            assert_eq!(stops, expected, "started={started}");
+            // stopped: nothing more, no resume
+            let observed = [running("fm-demo-relay", 1), running("fm-demo-workspace", 2), stopped("fm-demo-alpha", 3)];
+            assert!(run(&d, &observed).iter().all(|a| action_name(a) != "fm-demo-alpha"));
+        }
+        // wanted again: launched or resumed as usual
+        let mut d = desired(true, &[]);
+        d.unwant("fm-demo-alpha");
+        d.want(wanted("fm-demo-alpha"));
+        assert!(d.retired.is_empty());
+        assert_eq!(run(&d, &[stopped("fm-demo-alpha", 3)]), [resume_of(&stopped("fm-demo-alpha", 3))]);
     }
 
     #[test]

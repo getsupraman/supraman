@@ -1,6 +1,7 @@
 //! `fm hook <event>`: run by `plugins/foreman/hooks/hooks.json` inside every session Foreman launches.
 //! Appends one [`Event`] line to `<FOREMAN_HOME>/events/<session_id>.jsonl`; on SessionStart also
-//! prints the role text for `FOREMAN_ROLE` (`{workspace}` filled from `FOREMAN_WORKSPACE`), which Claude
+//! prints the role text for `FOREMAN_ROLE` (`{workspace}` filled from `FOREMAN_WORKSPACE`, `{repo}` from
+//! `FOREMAN_REPO`), which Claude
 //! Code adds to the session's context.
 //! Never fails: whatever goes wrong, nothing is printed and the exit code is 0 (see `main`).
 
@@ -8,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use foreman_core::{Event, ROTATE_AT, append_event, role_injection};
+use foreman_core::{Event, ROTATE_AT, append_event, role_injection_for};
 
 /// A UserPromptSubmit payload carries the whole prompt; a larger one is not parsed.
 const MAX_PAYLOAD: u64 = 8 << 20;
@@ -28,7 +29,7 @@ pub fn run(event: &str) {
     if event == "SessionStart"
         && let Some(role) = std::env::var("FOREMAN_ROLE").ok()
         && let role = if role == "platform" { "workspace".to_string() } else { role }
-        && let Some(text) = role_injection(&home, &role, workspace.as_deref())
+        && let Some(text) = role_injection_for(&home, &role, workspace.as_deref(), std::env::var("FOREMAN_REPO").ok().as_deref())
     {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(text.as_bytes());
