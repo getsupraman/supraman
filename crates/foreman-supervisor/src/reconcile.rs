@@ -94,7 +94,7 @@ pub fn reconcile(
             continue;
         }
         if let Some(s) = live {
-            if let Health::Blocked { waiting_for } = s.health(now) {
+            if let Health::Blocked { waiting_for } = s.supervised_health(now) {
                 let detail = format!("waiting for {}", waiting_for.as_deref().unwrap_or("an answer"));
                 out.push(need(NeedsKind::Blocked, &w.name, now, detail, Some(Remedy::Attach { id: s.id.clone() })));
             }
@@ -360,6 +360,16 @@ mod tests {
                 assert_eq!(n.action, Some(Remedy::Attach { id: "aaaa0001".into() }));
             }
             other => panic!("{other:?}"),
+        }
+    }
+
+    // R4, m3/8: a Foreman session blocked with nothing it waits for waits on a peer, not on the human
+    #[test]
+    fn blocked_without_waiting_for_is_not_reported() {
+        let d = desired(true, &["fm-demo-workspace"]);
+        for (state, status) in [(SessionState::Blocked, None), (SessionState::Done, Some(Status::Waiting))] {
+            let s = row("fm-demo-workspace", 1, Some(state), status, Some(9));
+            assert_eq!(run(&d, &[s]), [], "live, so never restarted either");
         }
     }
 

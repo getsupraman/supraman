@@ -23,9 +23,11 @@ tool, bare) lists every session if you need another name; never guess one.
   message → `SendMessage` the answer back to its sender. Do not open a run for it.
 - **No task** → end your turn with `done: no task`. Messages wake you; never poll, never `sleep`.
 
-**End every turn with a last line that says what the turn did and asks nothing** (`done: BLOCKED 2.3
-sent`, `done: DONE <run ref> sent`; after the answer a launch-prompt request asked for, `done: answered`).
-Nobody reads your reply text otherwise, and Claude Code reads the turn's end: one that asks something
+**End every turn with a last line that says what the turn did and asks nothing** (`done: DONE <run ref>
+sent`; after the answer a launch-prompt request asked for, `done: answered`). A turn that waits on someone
+ends `done: waiting on <who> for <what>` (`done: waiting on fm-<w>-workspace for 2.3`) — never with the word
+BLOCKED in the `done:` line, which Claude Code reads as blocked (m3/4); the `BLOCKED` message itself goes by
+`SendMessage` as §3 says. Nobody reads your reply text otherwise, and Claude Code reads the turn's end: one that asks something
 leaves your row `state=blocked` ("needs input"), one that reads as waiting leaves `state=working` (m3/3) —
 Foreman cannot tell either from a parked or a busy session. Every question goes
 by `SendMessage` to `fm-<w>-workspace` (§3).
@@ -33,9 +35,11 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
 ## 2. Run it — `/rlarch:controller` on your run
 
 1. **Invoke `/rlarch:controller`** and do its §0 preflight with `work_brief(scope: "<run ref>")`.
-   Not in your skill list → `BLOCKED <run ref>: /rlarch:controller is not loaded in this session
-   (Foreman's settings.toml extra_plugin_dirs needs the rlarch plugin)` to `fm-<w>-workspace`, then wait.
-   No `work_*` tools → the same, naming WorkState.
+   **Call the Skill tool for `rlarch:controller` and `rlarch:nested-claude` even when the skill listing
+   does not show them**: the listing is truncated (m3/4). Only a failed Skill call is a blocker →
+   `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (Foreman's settings.toml
+   extra_plugin_dirs needs the rlarch plugin)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the
+   same, naming WorkState.
 2. **The run and its units already exist**: the workspace controller made them, and the human approved
    them. Skip the controller skill's §1 creation and its "one approval" step — **your first task is the
    authorization**; do not ask again. You may split a unit, add a `followup`, add a unit's own binding

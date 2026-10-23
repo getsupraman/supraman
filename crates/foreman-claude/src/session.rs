@@ -144,6 +144,16 @@ impl Session {
         }
     }
 
+    /// [`Self::health`] for what needs the human: a Foreman session (`fm-…`) on a live pid that is
+    /// `Blocked` with no `waitingFor` ended a turn that read as a question and waits on a peer's
+    /// message, so it is `Idle` (m3/8). A `waitingFor` (a permission prompt) keeps it `Blocked`.
+    pub fn supervised_health(&self, now_ms: i64) -> Health {
+        match self.health(now_ms) {
+            Health::Blocked { waiting_for: None } if self.pid.is_some() && self.name.starts_with("fm-") => Health::Idle,
+            health => health,
+        }
+    }
+
     /// `state` describes the turn, not the process (a finished turn leaves `done` on a live
     /// process), so liveness comes from `pid` first.
     fn background_health(&self, now_ms: i64) -> Health {
