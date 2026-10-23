@@ -10,8 +10,48 @@ fn fm(home: &Path, args: &[&str]) -> Output {
         .args(args)
         .env("FOREMAN_HOME", home)
         .env_remove("APPDATA")
+        .env_remove("FOREMAN_ROLE")
         .output()
         .unwrap()
+}
+
+#[test]
+fn send_is_refused_inside_a_foreman_session_before_touching_the_home() {
+    let home = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_fm"))
+        .args(["send", "demo", "fm-demo-workspace", "hello"])
+        .env("FOREMAN_HOME", home.path())
+        .env_remove("APPDATA")
+        .env("FOREMAN_ROLE", "workspace")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "fm send speaks as the human through the relay and is refused inside a Foreman session \
+         (FOREMAN_ROLE=workspace); use SendMessage to reach a session\n"
+    );
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0, "nothing written under FOREMAN_HOME");
+}
+
+#[test]
+fn send_with_an_empty_or_absent_role_drops_as_before() {
+    let home = tempfile::tempdir().unwrap();
+    let inbox = home.path().join("relay").join("demo").join("inbox");
+    let out = Command::new(env!("CARGO_BIN_EXE_fm"))
+        .args(["send", "demo", "fm-demo-workspace", "one"])
+        .env("FOREMAN_HOME", home.path())
+        .env_remove("APPDATA")
+        .env("FOREMAN_ROLE", "")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let out = fm(home.path(), &["send", "demo", "fm-demo-workspace", "two"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("dropped "), "{out:?}");
+    let drops = fs::read_dir(&inbox).unwrap().filter(|e| e.as_ref().unwrap().path().is_file()).count();
+    assert_eq!(drops, 2);
 }
 
 #[test]

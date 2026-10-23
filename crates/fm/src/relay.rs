@@ -51,6 +51,19 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     }
 }
 
+/// The relay delivers a drop as `fm-<w>-relay`, which the workspace-controller skill reads as the human;
+/// every Foreman-launched session carries `FOREMAN_ROLE` (`foreman_supervisor` `session_settings`), the
+/// human's shell does not. Runs before the registry is opened.
+pub fn refuse_inside_foreman() -> Result<(), Failure> {
+    match std::env::var_os("FOREMAN_ROLE") {
+        Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
+            "fm send speaks as the human through the relay and is refused inside a Foreman session (FOREMAN_ROLE={}); use SendMessage to reach a session",
+            role.to_string_lossy()
+        ))),
+        _ => Ok(()),
+    }
+}
+
 /// `fm send <workspace> <to> <body>` or `fm send <workspace> <to> --file <path>`.
 pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     let (workspace, to, body) = match args {

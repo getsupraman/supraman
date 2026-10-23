@@ -39,6 +39,8 @@ enum Failure {
     Claude(ClaudeError),
     Supervisor(Box<foreman_supervisor::SupervisorError>),
     Probe(&'static str),
+    /// Printed as is, exit 1.
+    Refused(String),
 }
 
 impl From<foreman_supervisor::SupervisorError> for Failure {
@@ -94,6 +96,10 @@ fn main() -> ExitCode {
             eprintln!("error: {what} (see the probe lines above)");
             ExitCode::from(1)
         }
+        Err(Failure::Refused(line)) => {
+            eprintln!("{line}");
+            ExitCode::from(1)
+        }
     }
 }
 
@@ -114,7 +120,10 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["workspace", "remove", name] => remove(name),
         ["sessions", rest @ ..] => sessions(rest),
         ["inbox", rest @ ..] => relay::inbox(rest),
-        ["send", rest @ ..] => relay::send_cmd(registry()?.home(), rest),
+        ["send", rest @ ..] => {
+            relay::refuse_inside_foreman()?;
+            relay::send_cmd(registry()?.home(), rest)
+        }
         ["messages", rest @ ..] => relay::messages(&registry()?, rest),
         ["want", rest @ ..] => repos::want(&registry()?, rest),
         ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
