@@ -70,6 +70,8 @@ pub fn reconcile(
     let mut out = Vec::new();
     let mut resumes = Vec::new();
     let mut launches = Vec::new();
+    let mut exempt = Vec::new();
+    let mut last_stops = Vec::new();
     for w in &desired.sessions {
         let rows: Vec<&Session> = observed.iter().filter(|s| s.name == w.name).collect();
         if rows.len() > 1 {
@@ -82,10 +84,12 @@ pub fn reconcile(
         let live = row.filter(|s| is_live(s, now));
         if !desired.started {
             if let Some(s) = live {
-                out.push(Action::Stop {
+                let stop = Action::Stop {
                     name: w.name.clone(),
                     id: s.id.clone(),
-                });
+                };
+                // the relay goes last: the others may still be reporting through it
+                if w.exempt_from_budget() { last_stops.push(stop) } else { out.push(stop) }
             }
             continue;
         }
@@ -156,16 +160,23 @@ pub fn reconcile(
             });
             continue;
         }
-        match row {
-            Some(s) => resumes.push(Action::Resume {
+        let action = match row {
+            Some(s) => Action::Resume {
                 name: w.name.clone(),
                 id: s.id.clone(),
                 session_id: s.session_id.clone(),
                 cwd: s.cwd.clone(),
-            }),
-            None => launches.push(Action::Launch(w.clone())),
+            },
+            None => Action::Launch(w.clone()),
+        };
+        match &action {
+            _ if w.exempt_from_budget() => exempt.push(action),
+            Action::Resume { .. } => resumes.push(action),
+            _ => launches.push(action),
         }
     }
+    out.append(&mut last_stops);
+    out.append(&mut exempt);
     let mut free = free;
     for action in resumes.into_iter().chain(launches) {
         if free > 0 {
@@ -208,6 +219,8 @@ mod tests {
             repo: None,
             prompt: "hi".into(),
             permission_mode: "auto".into(),
+            add_dirs: Vec::new(),
+            resume_prompt: None,
         }
     }
 
@@ -474,6 +487,24 @@ mod tests {
                 Action::Wait { name: "fm-demo-c".into(), until: None, reason: WaitReason::Cap },
             ]
         );
+    }
+
+    // R11 for the relay
+    #[test]
+    fn the_relay_is_outside_the_cap_and_its_working_row_takes_no_slot() {
+        let mut d = desired(true, &["fm-demo-workspace"]);
+        let relay = crate::relay_session("demo", r"C:\demo\cwd", r"C:\fm\relay\demo", "relay");
+        d.sessions.insert(0, relay.clone());
+        let actions = reconcile(&d, &[], &SupervisorMemory::default(), &Policy::default(), 0, NOW);
+        assert_eq!(
+            actions,
+            [
+                Action::Launch(relay),
+                Action::Wait { name: "fm-demo-workspace".into(), until: None, reason: WaitReason::Cap },
+            ]
+        );
+        let armed = [running("fm-demo-relay", 1), running("fm-x-relay", 2)];
+        assert_eq!(Budget::new(1, &armed, NOW).free, 1);
     }
 
     // R12

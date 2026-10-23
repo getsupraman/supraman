@@ -1543,6 +1543,7 @@ dependencies = [
 name = "fm"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "foreman-claude",
  "foreman-core",
  "serde_json",

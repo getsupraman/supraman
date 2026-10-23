@@ -1,0 +1,341 @@
+//! The relay's files: `<FOREMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Foreman drops `{to, body}`
+//! into the inbox ([`send`]); the workspace's relay session watches it with `fm inbox` under its
+//! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
+//! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]). Facts
+//! behind the shape: `docs/LEARNINGS.md` m0/4 and m3/1.
+
+use std::collections::HashSet;
+use std::fs;
+use std::io::{self, ErrorKind};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{CoreError, Result, validate_name};
+
+/// Written by the relay each time its watcher is armed (first arm and every re-arm).
+pub const READY_FILE: &str = "ready.json";
+/// Where the watcher moves a drop once it printed it, and where a malformed one is set aside.
+pub const SENT_DIR: &str = "sent";
+pub const REJECTED_DIR: &str = "rejected";
+/// An outbox file that does not parse yet may still be being written; after this it is shown as is.
+pub const UNREADABLE_AFTER_MS: i64 = 5_000;
+
+pub fn relay_dir(home: &Path, workspace: &str) -> Result<PathBuf> {
+    validate_name(workspace)?;
+    Ok(home.join("relay").join(workspace))
+}
+
+pub fn inbox_dir(home: &Path, workspace: &str) -> Result<PathBuf> {
+    Ok(relay_dir(home, workspace)?.join("inbox"))
+}
+
+pub fn outbox_dir(home: &Path, workspace: &str) -> Result<PathBuf> {
+    Ok(relay_dir(home, workspace)?.join("outbox"))
+}
+
+/// Creates `inbox/` and `outbox/`; the relay's `--add-dir` must exist before it launches.
+pub fn ensure_relay_dirs(home: &Path, workspace: &str) -> Result<PathBuf> {
+    let dir = relay_dir(home, workspace)?;
+    for sub in ["inbox", "outbox"] {
+        let path = dir.join(sub);
+        fs::create_dir_all(&path).map_err(|e| CoreError::io(&path, e))?;
+    }
+    Ok(dir)
+}
+
+/// One message for the relay to send: `SendMessage(to, body)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayDrop {
+    pub to: String,
+    pub body: String,
+}
+
+static SEQ: AtomicU32 = AtomicU32::new(0);
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+/// Drops `{to, body}` into the workspace's inbox: written as `<name>.json.tmp`, then renamed, so the
+/// watcher never sees half a file. Names sort in drop order (`<ms>-<pid>-<seq>.json`).
+pub fn send(home: &Path, workspace: &str, to: &str, body: &str) -> Result<PathBuf> {
+    if to.trim().is_empty() {
+        return Err(CoreError::io(
+            inbox_dir(home, workspace)?,
+            io::Error::new(ErrorKind::InvalidInput, "a message needs a recipient"),
+        ));
+    }
+    let dir = ensure_relay_dirs(home, workspace)?.join("inbox");
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = format!("{:013}-{}-{seq:04}.json", now_ms(), std::process::id());
+    let path = dir.join(&name);
+    let tmp = dir.join(format!("{name}.tmp"));
+    let text = serde_json::to_string(&RelayDrop {
+        to: to.to_string(),
+        body: body.to_string(),
+    })
+    .map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
+    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
+    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    Ok(path)
+}
+
+/// One message the relay received, as it wrote it to the outbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboxMessage {
+    pub file: String,
+    /// The sender's address (`uds:…` pipe, opaque), or `relay-notice` for a delivery notice or a
+    /// failed `SendMessage`.
+    pub from: String,
+    /// The sender's session name: what Foreman routes by (m0/4).
+    pub from_name: String,
+    pub body: String,
+    /// Arrival: the file's modification time, Unix epoch milliseconds.
+    pub at: i64,
+    /// Set when the file is not the expected JSON; `body` is then its raw text.
+    pub error: Option<String>,
+}
+
+impl OutboxMessage {
+    pub fn is_notice(&self) -> bool {
+        self.from == "relay-notice"
+    }
+}
+
+#[derive(Deserialize)]
+struct OutboxFile {
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    from_name: String,
+    body: String,
+}
+
+fn modified_ms(meta: &fs::Metadata) -> i64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// Every message in the workspace's outbox, oldest first (by arrival, then file name). `ready.json`
+/// is not a message. A file that does not parse is skipped while it is younger than
+/// [`UNREADABLE_AFTER_MS`] (the relay may still be writing it), then listed with `error` set.
+pub fn read_outbox(home: &Path, workspace: &str) -> Result<Vec<OutboxMessage>> {
+    let dir = outbox_dir(home, workspace)?;
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(CoreError::io(&dir, e)),
+    };
+    let now = now_ms();
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        if !file.ends_with(".json") || file == READY_FILE {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let at = modified_ms(&meta);
+        let Ok(text) = fs::read_to_string(entry.path()) else { continue };
+        match serde_json::from_str::<OutboxFile>(&text) {
+            Ok(m) => out.push(OutboxMessage {
+                from_name: if m.from_name.is_empty() { m.from.clone() } else { m.from_name },
+                from: m.from,
+                body: m.body,
+                file,
+                at,
+                error: None,
+            }),
+            Err(_) if now - at < UNREADABLE_AFTER_MS => {}
+            Err(e) => out.push(OutboxMessage {
+                file,
+                from: String::new(),
+                from_name: String::new(),
+                body: text,
+                at,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+    out.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.file.cmp(&b.file)));
+    Ok(out)
+}
+
+/// When the relay last armed its watcher (`outbox/ready.json`'s modification time), if ever.
+pub fn relay_ready(home: &Path, workspace: &str) -> Option<i64> {
+    let path = outbox_dir(home, workspace).ok()?.join(READY_FILE);
+    fs::metadata(path).ok().filter(fs::Metadata::is_file).map(|m| modified_ms(&m))
+}
+
+/// Forgets the last arm: a relay that is not running has no watcher, whatever `ready.json` says.
+pub fn clear_ready(home: &Path, workspace: &str) -> Result<()> {
+    let path = outbox_dir(home, workspace)?.join(READY_FILE);
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != ErrorKind::NotFound => Err(CoreError::io(&path, e)),
+        _ => Ok(()),
+    }
+}
+
+/// `fm inbox --dir <inbox>`'s state: each [`InboxWatcher::scan`] turns every new `*.json` drop into
+/// one JSON line and moves the file to `sent/` (a malformed one to `rejected/`), so a re-armed
+/// watcher neither loses nor replays a drop. A file it could not move is remembered, not re-printed.
+#[derive(Debug, Default)]
+pub struct InboxWatcher {
+    dir: PathBuf,
+    printed: HashSet<String>,
+}
+
+impl InboxWatcher {
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self {
+            dir: dir.into(),
+            printed: HashSet::new(),
+        }
+    }
+
+    /// The lines for this pass, in file-name order: `{"to","body","file"}` per drop, or
+    /// `{"error","file"}` for a drop that is not `{to, body}` with a non-empty `to`.
+    pub fn scan(&mut self) -> io::Result<Vec<String>> {
+        let mut names: Vec<String> = fs::read_dir(&self.dir)?
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".json") && !self.printed.contains(n))
+            .collect();
+        names.sort();
+        let mut lines = Vec::new();
+        for name in names {
+            let path = self.dir.join(&name);
+            let parsed = fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|text| serde_json::from_str::<RelayDrop>(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()))
+                .and_then(|d| if d.to.trim().is_empty() { Err("\"to\" is empty".into()) } else { Ok(d) });
+            let (line, to_dir) = match parsed {
+                Ok(d) => (serde_json::json!({ "to": d.to, "body": d.body, "file": name }), SENT_DIR),
+                Err(e) => (serde_json::json!({ "error": format!("not a {{to, body}} drop: {e}"), "file": name }), REJECTED_DIR),
+            };
+            lines.push(line.to_string());
+            self.printed.insert(name.clone());
+            let target = self.dir.join(to_dir);
+            let _ = fs::create_dir_all(&target).and_then(|()| fs::rename(&path, target.join(&name)));
+        }
+        Ok(lines)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_drop_is_one_json_line_with_its_multiline_body_escaped_and_is_moved_to_sent() {
+        let home = tempfile::tempdir().unwrap();
+        let path = send(home.path(), "demo", "fm-demo-workspace", "line one\nline \"two\"").unwrap();
+        let inbox = inbox_dir(home.path(), "demo").unwrap();
+        assert_eq!(path.parent(), Some(inbox.as_path()));
+        let mut w = InboxWatcher::new(&inbox);
+        let lines = w.scan().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(!lines[0].contains('\n'), "{}", lines[0]);
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        let file = path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(v, serde_json::json!({"to": "fm-demo-workspace", "body": "line one\nline \"two\"", "file": file}));
+        assert!(!path.exists());
+        assert!(inbox.join(SENT_DIR).join(file).is_file());
+        assert_eq!(w.scan().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_rearmed_watcher_neither_loses_nor_replays() {
+        let home = tempfile::tempdir().unwrap();
+        let inbox = inbox_dir(home.path(), "demo").unwrap();
+        send(home.path(), "demo", "a", "1").unwrap();
+        assert_eq!(InboxWatcher::new(&inbox).scan().unwrap().len(), 1);
+        // dropped while no watcher ran
+        send(home.path(), "demo", "b", "2").unwrap();
+        send(home.path(), "demo", "c", "3").unwrap();
+        let lines = InboxWatcher::new(&inbox).scan().unwrap();
+        let to: Vec<String> = lines
+            .iter()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["to"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(to, ["b", "c"], "in drop order, none replayed");
+    }
+
+    #[test]
+    fn malformed_drops_print_an_error_line_and_are_set_aside() {
+        let home = tempfile::tempdir().unwrap();
+        let inbox = ensure_relay_dirs(home.path(), "demo").unwrap().join("inbox");
+        fs::write(inbox.join("1.json"), "not json").unwrap();
+        fs::write(inbox.join("2.json"), r#"{"to": " ", "body": "x"}"#).unwrap();
+        fs::write(inbox.join("3.json"), r#"{"body": "x"}"#).unwrap();
+        fs::write(inbox.join("4.json.tmp"), r#"{"to": "a", "body": "half"#).unwrap();
+        fs::write(inbox.join("5.json"), "\u{feff}{\"to\": \"a\", \"body\": \"bom\"}").unwrap();
+        let mut w = InboxWatcher::new(&inbox);
+        let lines: Vec<serde_json::Value> = w.scan().unwrap().iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        for (line, file) in lines.iter().take(3).zip(["1.json", "2.json", "3.json"]) {
+            assert_eq!(line["file"], file);
+            assert!(line["error"].as_str().unwrap().starts_with("not a {to, body} drop"), "{line}");
+            assert!(inbox.join(REJECTED_DIR).join(file).is_file());
+        }
+        assert_eq!(lines[3]["body"], "bom");
+        assert!(inbox.join("4.json.tmp").is_file(), "a .tmp is never read");
+        assert_eq!(w.scan().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn send_refuses_an_empty_recipient_and_a_bad_workspace() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(send(home.path(), "demo", " ", "x").is_err());
+        assert!(send(home.path(), "../x", "a", "x").is_err());
+    }
+
+    #[test]
+    fn outbox_lists_messages_oldest_first_and_ready_separately() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(read_outbox(home.path(), "demo").unwrap(), []);
+        assert_eq!(relay_ready(home.path(), "demo"), None);
+        let outbox = ensure_relay_dirs(home.path(), "demo").unwrap().join("outbox");
+        fs::write(outbox.join(READY_FILE), r#"{"ready": true}"#).unwrap();
+        assert!(relay_ready(home.path(), "demo").is_some());
+        fs::write(outbox.join("msg-0002.json"), r#"{"from": "relay-notice", "body": "held"}"#).unwrap();
+        fs::write(
+            outbox.join("msg-0001.json"),
+            r#"{"from": "uds:\\\\.\\pipe\\x", "from_name": "fm-demo-workspace", "body": "hi\nthere"}"#,
+        )
+        .unwrap();
+        fs::write(outbox.join("msg-0003.json"), "{\"from\": ").unwrap();
+        let old = SystemTime::now() - std::time::Duration::from_secs(60);
+        for (name, age) in [("msg-0001.json", 2), ("msg-0002.json", 1)] {
+            let f = fs::File::options().write(true).open(outbox.join(name)).unwrap();
+            f.set_modified(old + std::time::Duration::from_secs(age)).unwrap();
+        }
+        let msgs = read_outbox(home.path(), "demo").unwrap();
+        assert_eq!(msgs.len(), 2, "the half-written file is not listed yet: {msgs:?}");
+        assert_eq!(msgs[0].file, "msg-0002.json");
+        assert!(msgs[0].is_notice());
+        assert_eq!(msgs[0].from_name, "relay-notice");
+        assert_eq!(msgs[1].from_name, "fm-demo-workspace");
+        assert_eq!(msgs[1].body, "hi\nthere");
+        assert!(msgs[0].at < msgs[1].at);
+
+        let f = fs::File::options().write(true).open(outbox.join("msg-0003.json")).unwrap();
+        f.set_modified(old).unwrap();
+        let msgs = read_outbox(home.path(), "demo").unwrap();
+        assert_eq!(msgs[0].file, "msg-0003.json");
+        assert!(msgs[0].error.is_some());
+        assert_eq!(msgs[0].body, "{\"from\": ");
+
+        clear_ready(home.path(), "demo").unwrap();
+        clear_ready(home.path(), "demo").unwrap();
+        assert_eq!(relay_ready(home.path(), "demo"), None);
+    }
+}

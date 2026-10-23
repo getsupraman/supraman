@@ -10,10 +10,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
-use foreman_core::{HOOK_EXE, Settings, Workspace, install_hook_exe, migrate_home};
+use foreman_core::{
+    HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, install_hook_exe, migrate_home,
+    read_outbox, relay_ready,
+};
 use foreman_supervisor::{
-    DesiredState, LaunchConfig, Millis, NeedsYou, WORKSPACE_ROLE, Supervisor, workspace_session_name, role_prompt,
-    tick_all,
+    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, WORKSPACE_ROLE, Supervisor, is_live, relay_session,
+    relay_session_name, role_prompt, tick_all, workspace_session_name,
 };
 
 use crate::tokens::AppTokens;
@@ -43,8 +46,8 @@ pub fn find_plugin_dir(exe: &Path) -> Option<PathBuf> {
 }
 
 /// [`migrate_home`] (before anything reads the registry), `fm plugin install` for the `fm.exe` built next
-/// to `foreman.exe`, and the workspace role template at `<home>/roles/workspace.md` (the SessionStart hook
-/// fills in `{workspace}` from `FOREMAN_WORKSPACE`).
+/// to `foreman.exe`, and the role templates at `<home>/roles/{workspace,relay}.md` (the SessionStart hook
+/// fills in `{workspace}` from `FOREMAN_WORKSPACE`; the relay's `{fm}` and `{home}` are filled here).
 pub fn setup(home: &Path) -> Setup {
     let mut notices = migrate_home(home)
         .unwrap_or_else(|e| vec![format!("Cannot migrate {} to workspace names: {e}", home.display())]);
@@ -73,8 +76,10 @@ pub fn setup(home: &Path) -> Setup {
             fm.display()
         ));
     }
-    if let Err(e) = write_role_template(home, &plugin_dir) {
-        notices.push(format!("Cannot write the workspace role into {}: {e:#}", home.display()));
+    for role in [WORKSPACE_ROLE, RELAY_ROLE] {
+        if let Err(e) = write_role_template(home, &plugin_dir, role) {
+            notices.push(format!("Cannot write the {role} role into {}: {e:#}", home.display()));
+        }
     }
     Setup {
         plugin_dir: Some(plugin_dir),
@@ -82,9 +87,18 @@ pub fn setup(home: &Path) -> Setup {
     }
 }
 
-fn write_role_template(home: &Path, plugin_dir: &Path) -> anyhow::Result<()> {
-    let file = format!("{WORKSPACE_ROLE}.md");
-    let template = std::fs::read_to_string(plugin_dir.join("roles").join(&file))?;
+/// Forward slashes: the relay's Monitor runs its command under Git Bash (m0/4).
+fn forward(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// `<home>/roles/<role>.md` from the plugin's template, with `{fm}` (the plugin's hook exe) and `{home}`
+/// filled in; `{workspace}` stays for the hook and [`role_prompt`].
+pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow::Result<()> {
+    let file = format!("{role}.md");
+    let template = std::fs::read_to_string(plugin_dir.join("roles").join(&file))?
+        .replace("{fm}", &forward(&plugin_dir.join("bin").join(HOOK_EXE)))
+        .replace("{home}", &forward(home));
     let dir = home.join("roles");
     std::fs::create_dir_all(&dir)?;
     let target = dir.join(file);
@@ -94,11 +108,17 @@ fn write_role_template(home: &Path, plugin_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start: the workspace's desired state with its `fm-<workspace>-workspace` session (cwd = the workspace
-/// root, prompt = the workspace role), `started = true`, saved. Other wanted sessions are kept.
+/// Start: the workspace's desired state with its `fm-<workspace>-relay` first and its
+/// `fm-<workspace>-workspace` session (cwd = the workspace root for both, prompt = the role),
+/// `started = true`, saved. Other wanted sessions are kept. The relay's dirs are created and its last
+/// `ready.json` forgotten: the supervisor launches the relay before the workspace session.
 pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Workspace) -> anyhow::Result<DesiredState> {
     let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/foreman found for this build"))?;
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
+    let relay_dir = ensure_relay_dirs(home, &workspace.name)?;
+    clear_ready(home, &workspace.name)?;
+    // the rendered copy in <home>/roles has the relay's paths filled in
+    let relay = relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?);
     let name = workspace_session_name(&workspace.name);
     let mut desired = DesiredState::load(home, &workspace.name)?
         .unwrap_or_else(|| DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt));
@@ -112,6 +132,8 @@ pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Works
             desired.sessions.insert(0, controller.sessions.into_iter().next().context("no controller session")?);
         }
     }
+    desired.sessions.retain(|w| w.name != relay.name);
+    desired.sessions.insert(0, relay);
     desired.started = true;
     desired.save(home)?;
     Ok(desired)
@@ -143,6 +165,41 @@ pub struct Report {
     pub errors: Vec<String>,
     /// Per wanted name, the supervisor's last launch/resume attempt.
     pub last_attempt: HashMap<String, Millis>,
+    /// Per workspace whose desired state wants a relay.
+    pub relays: BTreeMap<String, RelayStatus>,
+    /// Per registered workspace, the last [`MESSAGES_SHOWN`] outbox messages, oldest first.
+    pub messages: BTreeMap<String, Vec<OutboxMessage>>,
+}
+
+pub const MESSAGES_SHOWN: usize = 20;
+/// Monitor expires after 30 min (m0/4); a relay that has not re-armed a minute later has lost it.
+pub const REARM_WITHIN_MS: Millis = 31 * 60 * 1000;
+
+/// What the workspace row says about its relay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayStatus {
+    pub started: bool,
+    /// The `fm-<w>-relay` row is live ([`is_live`]).
+    pub live: bool,
+    /// When it last armed its watcher (`ready.json`); forgotten whenever the row is not live.
+    pub ready_at: Option<Millis>,
+}
+
+impl RelayStatus {
+    /// `(text, healthy)`; `None` when the workspace is stopped and its relay with it.
+    pub fn label(&self, now: Millis) -> Option<(String, bool)> {
+        if !self.started && !self.live {
+            return None;
+        }
+        Some(match (self.live, self.ready_at) {
+            (false, _) => ("relay not running".into(), false),
+            (true, None) => ("relay up, watcher not armed yet".into(), false),
+            (true, Some(t)) if now - t > REARM_WITHIN_MS => {
+                (format!("relay watcher expired, not re-armed (armed {} min ago)", (now - t) / 60_000), false)
+            }
+            (true, Some(_)) => ("relay ready".into(), true),
+        })
+    }
 }
 
 pub struct Supervision {
@@ -210,7 +267,26 @@ impl Supervision {
                     report.last_attempt.insert(name.clone(), t);
                 }
             }
+            let relay = relay_session_name(workspace);
+            if names.contains(&relay) {
+                let live = observed.iter().any(|r| r.name == relay && is_live(r, now));
+                if !live && let Err(e) = clear_ready(&self.home, workspace) {
+                    report.errors.push(format!("Cannot reset the relay of {workspace}: {e}"));
+                }
+                let ready_at = live.then(|| relay_ready(&self.home, workspace)).flatten();
+                report.relays.insert(workspace.clone(), RelayStatus { started: s.desired.started, live, ready_at });
+            }
             report.desired.insert(workspace.clone(), (s.desired.started, names));
+        }
+        for p in workspaces {
+            match read_outbox(&self.home, &p.name) {
+                Ok(mut msgs) if !msgs.is_empty() => {
+                    msgs.drain(..msgs.len().saturating_sub(MESSAGES_SHOWN));
+                    report.messages.insert(p.name.clone(), msgs);
+                }
+                Ok(_) => {}
+                Err(e) => report.errors.push(format!("Cannot read the messages of {}: {e}", p.name)),
+            }
         }
         report
     }
@@ -236,30 +312,66 @@ mod tests {
     fn start_keeps_extra_sessions_and_stop_keeps_the_file() {
         let home = tempfile::tempdir().unwrap();
         let workspace = Workspace::new("demo", r"C:\demo", Vec::new());
+        write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
         let d = start_workspace(home.path(), Some(&plugin_dir()), &workspace).unwrap();
         assert!(d.started);
-        assert_eq!(d.sessions[0].name, "fm-demo-workspace");
-        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\demo"));
-        assert!(d.sessions[0].prompt.contains("workspace controller for demo"), "{}", d.sessions[0].prompt);
+        assert_eq!(d.sessions[0].name, "fm-demo-relay", "the relay comes first");
+        assert_eq!(d.sessions[1].name, "fm-demo-workspace");
+        assert_eq!(d.sessions[1].cwd, PathBuf::from(r"C:\demo"));
+        assert!(d.sessions[1].prompt.contains("workspace controller for demo"), "{}", d.sessions[1].prompt);
 
         let mut extra = d.clone();
         extra.started = false;
-        let mut park = extra.sessions[0].clone();
+        let mut park = extra.sessions[1].clone();
         park.name = "fm-demo-park".into();
         extra.sessions.push(park);
         extra.save(home.path()).unwrap();
         let moved = Workspace::new("demo", r"C:\moved", Vec::new());
         let d = start_workspace(home.path(), Some(&plugin_dir()), &moved).unwrap();
-        assert_eq!(d.sessions.len(), 2);
-        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\moved"));
+        assert_eq!(d.sessions.len(), 3);
+        assert_eq!(d.sessions[1].cwd, PathBuf::from(r"C:\moved"));
+        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\moved"), "the relay follows the root");
 
         stop_workspace(home.path(), "demo").unwrap();
         let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
         assert!(!d.started);
-        assert_eq!(d.sessions.len(), 2);
+        assert_eq!(d.sessions.len(), 3);
         stop_workspace(home.path(), "never-started").unwrap();
         assert!(DesiredState::load(home.path(), "never-started").unwrap().is_none());
         assert!(start_workspace(home.path(), None, &workspace).is_err());
+    }
+
+    #[test]
+    fn the_relay_role_gets_its_paths_and_start_wants_the_relay_with_its_dir() {
+        let home = tempfile::tempdir().unwrap();
+        write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
+        let rendered = std::fs::read_to_string(home.path().join("roles").join("relay.md")).unwrap();
+        let fm = forward(&plugin_dir().join("bin").join("fm.exe"));
+        let command = format!("\"{fm}\" inbox --dir \"{}/relay/{{workspace}}/inbox\"", forward(home.path()));
+        assert!(rendered.contains(&command), "{command}\n{rendered}");
+        assert!(!rendered.contains('\\'), "forward slashes only: {rendered}");
+
+        let outbox = ensure_relay_dirs(home.path(), "demo").unwrap().join("outbox");
+        std::fs::write(outbox.join("ready.json"), "{}").unwrap();
+        let d = start_workspace(home.path(), Some(&plugin_dir()), &Workspace::new("demo", r"C:\demo", Vec::new())).unwrap();
+        let relay = &d.sessions[0];
+        assert_eq!((relay.name.as_str(), relay.role.as_str()), ("fm-demo-relay", "relay"));
+        assert_eq!(relay.add_dirs, [home.path().join("relay").join("demo")]);
+        assert!(relay.prompt.contains("/relay/demo/outbox/ready.json"), "{}", relay.prompt);
+        assert!(!outbox.join("ready.json").exists(), "a new start forgets the last arm");
+        assert!(home.path().join("relay").join("demo").join("inbox").is_dir());
+    }
+
+    #[test]
+    fn relay_status_reads_live_armed_and_expired() {
+        let now = 1_800_000_000_000;
+        let st = |started, live, ready_at| RelayStatus { started, live, ready_at };
+        assert_eq!(st(false, false, None).label(now), None);
+        assert_eq!(st(true, false, None).label(now), Some(("relay not running".into(), false)));
+        assert!(!st(true, true, None).label(now).unwrap().1);
+        assert_eq!(st(true, true, Some(now - 60_000)).label(now), Some(("relay ready".into(), true)));
+        let expired = st(true, true, Some(now - 40 * 60_000)).label(now).unwrap();
+        assert_eq!(expired, ("relay watcher expired, not re-armed (armed 40 min ago)".into(), false));
     }
 
     #[test]
@@ -275,5 +387,21 @@ mod tests {
         assert_eq!(report.desired.keys().collect::<Vec<_>>(), ["beta"]);
         assert_eq!(report.desired["beta"], (false, vec!["fm-beta-workspace".to_string()]));
         assert!(report.needs.is_empty() && report.errors.is_empty(), "{report:?}");
+        assert!(report.relays.is_empty() && report.messages.is_empty(), "{report:?}");
+
+        // beta wants a relay that is not running: its stale ready.json is forgotten; alpha has a message
+        let mut d = DesiredState::workspace_controller("beta", r"C:\b", "p");
+        d.sessions.insert(0, relay_session("beta", r"C:\b", home.path().join("relay").join("beta"), "r"));
+        d.save(home.path()).unwrap();
+        let outbox = ensure_relay_dirs(home.path(), "beta").unwrap().join("outbox");
+        std::fs::write(outbox.join("ready.json"), "{}").unwrap();
+        let alpha_outbox = ensure_relay_dirs(home.path(), "alpha").unwrap().join("outbox");
+        let msg = r#"{"from": "u", "from_name": "fm-alpha-workspace", "body": "hi"}"#;
+        std::fs::write(alpha_outbox.join("msg-0001.json"), msg).unwrap();
+        let report = s.tick(&workspaces, &[], Vec::new(), 1_800_000_000_000);
+        assert_eq!(report.relays["beta"], RelayStatus { started: false, live: false, ready_at: None });
+        assert!(!outbox.join("ready.json").exists());
+        assert_eq!(report.messages["alpha"].len(), 1);
+        assert_eq!(report.messages["alpha"][0].from_name, "fm-alpha-workspace");
     }
 }

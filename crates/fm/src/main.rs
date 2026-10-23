@@ -13,6 +13,10 @@ usage:
   fm workspace show <name>
   fm workspace remove <name>
   fm sessions [--workspace <name>] [--all]
+  fm send <workspace> <to> <body>      (drop a message for the workspace's relay to send)
+  fm send <workspace> <to> --file <path>
+  fm messages <workspace>              (messages the relay received, newest last)
+  fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
   fm probe launch
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
@@ -23,6 +27,7 @@ mod hook;
 mod probe;
 mod probe_hooks;
 mod probe_isolation;
+mod relay;
 
 enum Failure {
     Usage(String),
@@ -86,6 +91,9 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["workspace", "show", name] => show(name),
         ["workspace", "remove", name] => remove(name),
         ["sessions", rest @ ..] => sessions(rest),
+        ["inbox", rest @ ..] => relay::inbox(rest),
+        ["send", rest @ ..] => relay::send_cmd(registry()?.home(), rest),
+        ["messages", rest @ ..] => relay::messages(&registry()?, rest),
         ["probe", "launch"] => {
             check_supported()?;
             if probe::launch() {

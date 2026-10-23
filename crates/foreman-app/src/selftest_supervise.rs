@@ -7,8 +7,12 @@
 //!   `-u` (`git init`ed: untrusted by construction), `-c1`/`-c2` (plain, for the budget). The testbed's
 //!   desired state also wants `fm-selftest-<hex>-park` (`--permission-mode default`, told to run one
 //!   Bash command): the workspace session itself is `auto`, so the park is a separate wanted session.
-//! - b. Start (click) → `fm-selftest-<hex>-workspace` live; its event log has SessionStart(startup) and
-//!   its transcript the role tag the hook injected.
+//! - b. Start (click) → `fm-selftest-<hex>-relay` launched before `fm-selftest-<hex>-workspace`, both live;
+//!   the workspace session's event log has SessionStart(startup) and its transcript the role tag the hook
+//!   injected.
+//! - r. the relay writes `ready.json`; a target `fm-selftest-<hex>-target` (launched here, auto, told to
+//!   answer with the nonce) gets a message sent with `foreman_core::send`, and the answer comes back as an
+//!   outbox message carrying the nonce, and into the app's Messages section.
 //! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
 //!   and the supervisor resumes it: same sessionId, new pid.
 //! - d. Start `-u` → Inbox TrustNeeded with Run in terminal; the click opens a pwsh tab there with
@@ -16,7 +20,7 @@
 //! - e. the park session → Inbox Blocked with Attach.
 //! - f. busy limit set to 1 with the stepper, Start `-c1` and `-c2` → never more than 1 of this run's
 //!   sessions `working`, and both get launched.
-//! - g. Stop (click) → the testbed's sessions stopped, rows kept.
+//! - g. Stop (click) → the testbed's sessions stopped, the relay too, rows kept.
 //!
 //! Cleanup (every exit path, see `selftest::cleanup`): supervisor off, then stop + rm every row named
 //! `fm-selftest-<hex>…`, then the dirs.
@@ -27,11 +31,11 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Health, Session, SessionState, check_supported, list_sessions, now_ms};
-use foreman_core::{EventReader, Workspace, Registry, Settings, role_tag};
+use foreman_claude::{Claude, Health, LaunchSpec, Session, SessionState, check_supported, list_sessions, now_ms};
+use foreman_core::{EventReader, Workspace, Registry, Settings, read_outbox, relay_ready, role_tag};
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, workspace_session_name, render_role,
-    role_prompt,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, relay_session_name, workspace_session_name,
+    render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity};
 
@@ -42,6 +46,8 @@ use crate::selftest::{
 use crate::view::{FleetView, process_alive};
 use crate::{Mode, supervise};
 
+const PROMPT_TARGET: &str = "This is an automated Foreman selftest. When another session sends you a message, reply \
+to its sender with SendMessage repeating the FOREMAN-RELAY nonce it contains, then wait for more. Do nothing else.";
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
 
@@ -64,6 +70,10 @@ fn testbed() -> anyhow::Result<&'static Testbed> {
 impl Testbed {
     fn park(&self) -> String {
         format!("fm-selftest-{}-park", self.hex)
+    }
+
+    fn target(&self) -> String {
+        format!("fm-selftest-{}-target", self.hex)
     }
 }
 
@@ -121,6 +131,8 @@ pub fn prepare() -> anyhow::Result<()> {
         repo: None,
         prompt: PROMPT_PARK.into(),
         permission_mode: "default".into(),
+        add_dirs: Vec::new(),
+        resume_prompt: None,
     });
     desired.save(&home)?;
     println!(
@@ -254,11 +266,17 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     click(view, &format!("start-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
-    let launched = wait_for("step b: workspace session live", Duration::from_secs(60), cx, |rows| {
-        rows.iter().find(|s| s.name == ctrl && s.pid.is_some()).cloned()
+    let relay_name = relay_session_name(&tb.a.0);
+    let (launched, relay) = wait_for("step b: workspace and relay sessions live", Duration::from_secs(60), cx, |rows| {
+        let live = |name: &str| rows.iter().find(|s| s.name == name && s.pid.is_some()).cloned();
+        live(&ctrl).zip(live(&relay_name))
     })
     .await?;
     let live_after = clicked.elapsed();
+    let relay_first = match (relay.started_at, launched.started_at) {
+        (Some(r), Some(w)) if r < w => w - r,
+        other => bail!("step b: {relay_name} was not launched before {ctrl} (startedAt relay/workspace {other:?})"),
+    };
     let template = std::fs::read_to_string(tb.home.join("roles").join("workspace.md")).context("step b: role file")?;
     let tag = role_tag(WORKSPACE_ROLE, &render_role(&template, &tb.a.0));
     let mut events = EventReader::new(&tb.home);
@@ -312,12 +330,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         );
     }
     println!(
-        "step b: Start clicked → {ctrl} ({}) live with pid {} after {} | events: {events_line} | transcript has `{tag}` | row under {} in the panel",
+        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` | row under {} in the panel",
+        relay.id,
         launched.id,
-        launched.pid.unwrap_or_default(),
         secs(live_after),
         tb.a.0
     );
+
+    relay_step(tb, &relay_name, clicked, view, cx).await.context("step r")?;
 
     // c. kill its process once its turn ended; the supervisor resumes it
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
@@ -510,9 +530,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     while first_live.iter().any(Option::is_none) {
         let rows = rows(cx).await?;
         let now = now_ms();
+        // relays are outside the budget (an armed one may show `working` throughout, m0/4)
         let working: Vec<&Session> = rows
             .iter()
-            .filter(|s| s.name.starts_with(&prefix) && s.state == Some(SessionState::Working) && is_live(s, now))
+            .filter(|s| {
+                s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && s.state == Some(SessionState::Working) && is_live(s, now)
+            })
             .collect();
         polls += 1;
         if working.len() > max_seen {
@@ -560,10 +583,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // g. Stop through the UI: stopped, rows and transcripts kept
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
-    let names = [ctrl.clone(), park.clone()];
+    let names = [ctrl.clone(), park.clone(), relay_name.clone()];
     let stopped = wait_for("step g: testbed sessions stopped", Duration::from_secs(60), cx, |rows| {
         let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
-        (ours.len() == 2 && ours.iter().all(|s| s.pid.is_none())).then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
+        (ours.len() == 3 && ours.iter().all(|s| s.pid.is_none())).then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
     })
     .await?;
     sleep(cx, Duration::from_secs(3)).await;
@@ -577,9 +600,100 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         stopped.join(", "),
         tb.a.0
     );
-    if shown != 2 || still != 0 {
-        bail!("step g: expected 2 rows shown and none restarted, got {shown} shown, {still} live");
+    if shown != 3 || still != 0 {
+        bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
     }
+    Ok(())
+}
+
+/// Step r: the relay armed, a message from the Rust API to a session launched here, its answer back in
+/// the outbox and in the app's Messages section.
+async fn relay_step(
+    tb: &Testbed,
+    relay_name: &str,
+    clicked: Instant,
+    view: &Entity<FleetView>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    let w = tb.a.0.as_str();
+    let started = Instant::now();
+    while relay_ready(&tb.home, w).is_none() {
+        if started.elapsed() > Duration::from_secs(90) {
+            bail!("{relay_name} wrote no ready.json within 90 s (row: {:?})", row(relay_name, cx).await?.map(|r| raw(&r)));
+        }
+        sleep(cx, Duration::from_millis(200)).await;
+    }
+    let ready_after = clicked.elapsed();
+    let mut ready_shown = false;
+    for _ in 0..40 {
+        ready_shown = view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).is_some_and(|(_, ok)| ok));
+        if ready_shown {
+            break;
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    }
+    if !ready_shown {
+        bail!("ready.json is there, but the workspace row does not show the relay ready: {:?}", view.read_with(cx, |v, _| v.relays.get(w).cloned()));
+    }
+
+    let target = tb.target();
+    let mut spec = LaunchSpec::new(&target, &tb.a.1, PROMPT_TARGET);
+    spec.strict_mcp_config = true;
+    spec.extra_args = vec!["--settings".into(), r#"{"worktree":{"bgIsolation":"none"}}"#.into()];
+    let launch = cx.background_executor().spawn(async move { Claude::default().launch(&spec) }).await?;
+    let target_row = wait_for("target live", Duration::from_secs(60), cx, |rows| {
+        rows.iter().find(|s| s.name == target && s.pid.is_some()).cloned()
+    })
+    .await?;
+
+    let nonce = format!("FOREMAN-RELAY-{}", crate::selftest::hex6());
+    let sent_at = Instant::now();
+    let drop = foreman_core::send(&tb.home, w, &target, &format!("{nonce} ping from the selftest\nsecond line"))?;
+    let reply = loop {
+        let found = read_outbox(&tb.home, w)?
+            .into_iter()
+            .find(|m| m.body.contains(&nonce) && !m.is_notice());
+        if let Some(m) = found {
+            break m;
+        }
+        if sent_at.elapsed() > Duration::from_secs(120) {
+            let notices: Vec<String> = read_outbox(&tb.home, w)?.into_iter().filter(|m| m.is_notice()).map(|m| m.body).collect();
+            bail!("no outbox message with {nonce} within 120 s of the drop (notices: {notices:?}; relay row {:?})", row(relay_name, cx).await?.map(|r| raw(&r)));
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    };
+    let round_trip = sent_at.elapsed();
+    let shown = loop {
+        let shown = view.read_with(cx, |v, _| v.messages.get(w).is_some_and(|m| m.iter().any(|m| m.file == reply.file)));
+        if shown || sent_at.elapsed() > round_trip + Duration::from_secs(10) {
+            break shown;
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    };
+    let shown_after = sent_at.elapsed();
+    if !shown {
+        bail!("{} is in the outbox but not in the app's Messages", reply.file);
+    }
+    if reply.from_name != target {
+        bail!("{} came from {:?}, not {target}", reply.file, reply.from_name);
+    }
+    // the sender is live and in the background: its message offers Attach
+    let attach_key = format!("msg-attach-{w}/{}", reply.file);
+    wait_painted(view, &attach_key, Duration::from_secs(5), cx).await?;
+    // An idle target can keep `state=working` (m0/4), which the busy budget counts: step f's limit of 1
+    // would wait on it for ever. Its job is done.
+    claude(&["stop", &target_row.id], None).context("stop the target")?;
+    println!(
+        "step r: {relay_name} wrote ready.json {} after Start; workspace row shows `relay ready` | launched {target} ({}, `{}`) | send() dropped {} → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach",
+        secs(ready_after),
+        target_row.id,
+        launch.lines().next().unwrap_or_default(),
+        drop.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+        reply.file,
+        reply.from_name,
+        secs(round_trip),
+        secs(shown_after),
+    );
     Ok(())
 }
 
