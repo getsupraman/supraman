@@ -1,19 +1,19 @@
-//! The left panel's model: registered platforms → their supervised sessions and enabled repos → the
+//! The left panel's model: registered workspaces → their supervised sessions and enabled repos → the
 //! sessions in them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use foreman_claude::{Health, Kind, Session, assign};
-use foreman_core::{Event, Platform};
+use foreman_core::{Event, Workspace};
 
 #[derive(Debug, Clone)]
-pub struct PlatformNode {
+pub struct WorkspaceNode {
     pub name: String,
     pub root: PathBuf,
     /// `None`: never started (no desired-state file).
     pub started: Option<bool>,
-    /// Rows named like one of the platform's wanted sessions, wherever their cwd; stopped ones too.
+    /// Rows named like one of the workspace's wanted sessions, wherever their cwd; stopped ones too.
     pub supervised: Vec<SessionRow>,
     pub repos: Vec<RepoNode>,
 }
@@ -113,7 +113,7 @@ pub fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> H
     }
 }
 
-/// What the supervisor knows per platform (from its last tick), and the hook signals.
+/// What the supervisor knows per workspace (from its last tick), and the hook signals.
 #[derive(Default)]
 pub struct Supervised<'a> {
     pub desired: Option<&'a BTreeMap<String, (bool, Vec<String>)>>,
@@ -123,12 +123,12 @@ pub struct Supervised<'a> {
 }
 
 pub struct Tree {
-    pub platforms: Vec<PlatformNode>,
+    pub workspaces: Vec<WorkspaceNode>,
     /// Stopped sessions left out because `show_stopped` was off.
     pub hidden_stopped: usize,
 }
 
-impl PlatformNode {
+impl WorkspaceNode {
     pub fn session_count(&self) -> usize {
         self.supervised.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
@@ -165,7 +165,7 @@ fn sort(rows: &mut [SessionRow]) {
     });
 }
 
-pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &Supervised) -> Tree {
+pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &Supervised) -> Tree {
     let mut hidden_stopped = 0;
     let row = |session: Session| {
         let hook = sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
@@ -177,10 +177,10 @@ pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_sto
             hook,
         }
     };
-    let platforms = platforms
+    let workspaces = workspaces
         .iter()
-        .map(|platform| {
-            let (started, wanted) = match sup.desired.and_then(|d| d.get(&platform.name)) {
+        .map(|workspace| {
+            let (started, wanted) = match sup.desired.and_then(|d| d.get(&workspace.name)) {
                 Some((started, wanted)) => (Some(*started), wanted.as_slice()),
                 None => (None, &[][..]),
             };
@@ -188,8 +188,8 @@ pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_sto
                 sessions.iter().cloned().partition(|s| wanted.contains(&s.name));
             let mut supervised: Vec<SessionRow> = theirs.into_iter().map(row).collect();
             sort(&mut supervised);
-            let mut by_repo = assign(&rest, platform).by_repo;
-            let repos = platform
+            let mut by_repo = assign(&rest, workspace).by_repo;
+            let repos = workspace
                 .repos
                 .iter()
                 .filter(|r| r.enabled)
@@ -208,15 +208,15 @@ pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_sto
                     sort(&mut rows);
                     RepoNode {
                         name: repo.name.clone(),
-                        path: platform.root.join(&repo.path),
+                        path: workspace.root.join(&repo.path),
                         branch: repo.branch.clone(),
                         sessions: rows,
                     }
                 })
                 .collect();
-            PlatformNode {
-                name: platform.name.clone(),
-                root: platform.root.clone(),
+            WorkspaceNode {
+                name: workspace.name.clone(),
+                root: workspace.root.clone(),
                 started,
                 supervised,
                 repos,
@@ -224,7 +224,7 @@ pub fn build(platforms: &[Platform], sessions: &[Session], now_ms: i64, show_sto
         })
         .collect();
     Tree {
-        platforms,
+        workspaces,
         hidden_stopped,
     }
 }
@@ -250,7 +250,7 @@ mod tests {
 
     const NOW: i64 = 1_800_000_000_000;
 
-    fn platform() -> Platform {
+    fn workspace() -> Workspace {
         let repo = |name: &str, enabled: bool| Repo {
             name: name.into(),
             path: format!(r"C:\demo\{name}").into(),
@@ -259,7 +259,7 @@ mod tests {
             branch: Some("main".into()),
             enabled,
         };
-        Platform::new(
+        Workspace::new(
             "demo",
             r"C:\demo",
             vec![repo("Alpha", true), repo("Beta", true), repo("Off", false)],
@@ -288,8 +288,8 @@ mod tests {
 
     #[test]
     fn groups_enabled_repos_blocked_first_and_hides_stopped() {
-        let tree = build(&[platform()], &sessions(), NOW, false, &Supervised::default());
-        let p = &tree.platforms[0];
+        let tree = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
+        let p = &tree.workspaces[0];
         let repos: Vec<_> = p.repos.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(repos, ["Alpha", "Beta"], "disabled repo Off is not listed");
         assert_eq!(names(&p.repos[0]), ["parked", "busy"]);
@@ -300,15 +300,15 @@ mod tests {
 
     #[test]
     fn show_stopped_keeps_them_last() {
-        let tree = build(&[platform()], &sessions(), NOW, true, &Supervised::default());
-        assert_eq!(names(&tree.platforms[0].repos[1]), ["term", "gone", "done"]);
+        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        assert_eq!(names(&tree.workspaces[0].repos[1]), ["term", "gone", "done"]);
         assert_eq!(tree.hidden_stopped, 0);
     }
 
     #[test]
     fn attach_only_for_live_background_sessions() {
-        let tree = build(&[platform()], &sessions(), NOW, true, &Supervised::default());
-        let flags: Vec<(&str, bool)> = tree.platforms[0]
+        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let flags: Vec<(&str, bool)> = tree.workspaces[0]
             .repos
             .iter()
             .flat_map(|r| &r.sessions)
@@ -328,10 +328,10 @@ mod tests {
 
     #[test]
     fn labels() {
-        let tree = build(&[platform()], &sessions(), NOW, true, &Supervised::default());
-        let beta = &tree.platforms[0].repos[1];
+        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let beta = &tree.workspaces[0].repos[1];
         assert_eq!(health_label(&beta.sessions[1].health), "process gone");
-        let alpha = &tree.platforms[0].repos[0];
+        let alpha = &tree.workspaces[0].repos[0];
         assert_eq!(health_label(&alpha.sessions[0].health), "blocked");
         assert_eq!(
             alpha.sessions[0].health,
@@ -343,9 +343,9 @@ mod tests {
     }
 
     #[test]
-    fn no_platforms_is_empty() {
+    fn no_workspaces_is_empty() {
         let tree = build(&[], &sessions(), NOW, false, &Supervised::default());
-        assert!(tree.platforms.is_empty());
+        assert!(tree.workspaces.is_empty());
     }
 
     fn event(event: &str, detail: Option<&str>, ts: i64) -> Event {
@@ -358,22 +358,22 @@ mod tests {
     }
 
     #[test]
-    fn wanted_sessions_sit_under_the_platform_stopped_ones_included() {
+    fn wanted_sessions_sit_under_the_workspace_stopped_ones_included() {
         let mut desired = BTreeMap::new();
         desired.insert("demo".to_string(), (true, vec!["busy".to_string(), "done".to_string()]));
         let sup = Supervised {
             desired: Some(&desired),
             ..Supervised::default()
         };
-        let tree = build(&[platform()], &sessions(), NOW, false, &sup);
-        let p = &tree.platforms[0];
+        let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
+        let p = &tree.workspaces[0];
         assert_eq!(p.started, Some(true));
         let supervised: Vec<&str> = p.supervised.iter().map(|r| r.session.name.as_str()).collect();
         assert_eq!(supervised, ["busy", "done"]);
         assert_eq!(names(&p.repos[0]), ["parked"], "not listed twice");
         assert_eq!(tree.hidden_stopped, 0, "the stopped wanted row is shown, not hidden");
-        let never = build(&[platform()], &sessions(), NOW, false, &Supervised::default());
-        assert_eq!(never.platforms[0].started, None);
+        let never = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
+        assert_eq!(never.workspaces[0].started, None);
     }
 
     #[test]
@@ -400,8 +400,8 @@ mod tests {
             polled_at,
             ..Supervised::default()
         };
-        let tree = build(&[platform()], &sessions(), NOW, false, &sup);
-        let busy = tree.platforms[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap();
+        let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
+        let busy = tree.workspaces[0].repos[0].sessions.iter().find(|r| r.session.name == "busy").unwrap();
         assert_eq!(busy.health, blocked);
         assert!(busy.hook.is_some());
     }

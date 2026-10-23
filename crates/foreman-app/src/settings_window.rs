@@ -174,7 +174,7 @@ impl SettingsView {
         vec![row(
             "Busy sessions at most",
             "How many Foreman sessions may be working (mid-turn) at the same time, counted across all \
-             platforms. Launches and resumes wait while the limit is reached. 0 pauses them all. \
+             workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
              Your own sessions are not counted.",
             stepper.into_any_element(),
             None,
@@ -202,7 +202,7 @@ impl SettingsView {
             });
 
         // Which line each role would use; the token itself is never shown.
-        let found = ["platform", "repo"].map(|role| {
+        let found = ["workspace", "repo"].map(|role| {
             let own = tokens::token_key(role);
             let via = tokens::workstate_role(role).map(tokens::token_key);
             let via = via.as_deref();
@@ -227,7 +227,7 @@ impl SettingsView {
             row(
                 "Token file",
                 "A .env file with WORKSTATE_<ROLE>_TOKEN=… lines, e.g. the WorkState server's own \
-                 mcp/.env. A platform session uses WORKSTATE_PLATFORM_TOKEN, else \
+                 mcp/.env. A workspace session uses WORKSTATE_WORKSPACE_TOKEN, else \
                  WORKSTATE_CONTROLLER_TOKEN; a repo session WORKSTATE_REPO_TOKEN, else \
                  WORKSTATE_ORCHESTRATOR_TOKEN. Read when a session launches; tokens are never shown \
                  or logged. Not set: Foreman's sessions run without WorkState.",

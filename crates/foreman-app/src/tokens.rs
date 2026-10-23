@@ -35,11 +35,11 @@ pub fn token_from(settings: &Settings, role: &str) -> Option<RoleToken> {
     })
 }
 
-/// WorkState knows controller, orchestrator and worker. A platform session runs the platform's
+/// WorkState knows controller, orchestrator and worker. A workspace session runs the workspace's
 /// queue (controller); a repo session runs one repo's units (orchestrator).
 pub fn workstate_role(role: &str) -> Option<&'static str> {
     match role {
-        "platform" => Some("controller"),
+        "workspace" => Some("controller"),
         "repo" | "repo-controller" => Some("orchestrator"),
         _ => None,
     }
@@ -81,7 +81,7 @@ mod tests {
 
     const FAKE: &str = "# fake WorkState env for tests\n\
 WORKSTATE_CONTROLLER_TOKEN=fake-controller\n\
-export WORKSTATE_PLATFORM_TOKEN = \"fake-platform\"\n\
+export WORKSTATE_WORKSPACE_TOKEN = \"fake-workspace\"\n\
 WORKSTATE_REPO_CONTROLLER_TOKEN='fake-repo'\n\
 WORKSTATE_EMPTY_TOKEN=\n\
 not a line\n";
@@ -93,7 +93,7 @@ not a line\n";
         std::fs::write(&env, FAKE).unwrap();
         let read = |k: &str| read_env_value(&env, k).unwrap();
         assert_eq!(read("WORKSTATE_CONTROLLER_TOKEN").as_deref(), Some("fake-controller"));
-        assert_eq!(read(&token_key("platform")).as_deref(), Some("fake-platform"));
+        assert_eq!(read(&token_key("workspace")).as_deref(), Some("fake-workspace"));
         assert_eq!(read(&token_key("repo-controller")).as_deref(), Some("fake-repo"));
         assert_eq!(read("WORKSTATE_EMPTY_TOKEN"), None);
         assert_eq!(read("WORKSTATE_WORKER_TOKEN"), None);
@@ -105,7 +105,7 @@ not a line\n";
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let tokens = AppTokens { home: home.clone() };
-        assert_eq!(tokens.token("platform"), None, "no settings file");
+        assert_eq!(tokens.token("workspace"), None, "no settings file");
         let env = dir.path().join(".env");
         std::fs::write(&env, FAKE).unwrap();
         let mut settings = Settings {
@@ -114,16 +114,16 @@ not a line\n";
         };
         settings.save(&home).unwrap();
         assert_eq!(
-            tokens.token("platform"),
+            tokens.token("workspace"),
             Some(RoleToken {
                 url: DEFAULT_WORKSTATE_URL.into(),
-                token: "fake-platform".into()
+                token: "fake-workspace".into()
             })
         );
         assert_eq!(tokens.token("worker"), None, "no line for the role");
         assert_eq!(
-            tokens.token("platform").unwrap().token,
-            "fake-platform",
+            tokens.token("workspace").unwrap().token,
+            "fake-workspace",
             "the role's own line wins over the WorkState role's"
         );
         let mapped = dir.path().join("mapped.env");
@@ -132,15 +132,15 @@ WORKSTATE_ORCHESTRATOR_TOKEN=fake-orch
 ").unwrap();
         settings.workstate_env = Some(mapped);
         settings.save(&home).unwrap();
-        assert_eq!(tokens.token("platform").unwrap().token, "fake-controller");
+        assert_eq!(tokens.token("workspace").unwrap().token, "fake-controller");
         assert_eq!(tokens.token("repo").unwrap().token, "fake-orch");
         assert_eq!(tokens.token("worker"), None);
         settings.workstate_env = Some(dir.path().join(".env"));
         settings.workstate_url = Some("http://localhost:9/mcp".into());
         settings.save(&home).unwrap();
-        assert_eq!(tokens.token("platform").unwrap().url, "http://localhost:9/mcp");
+        assert_eq!(tokens.token("workspace").unwrap().url, "http://localhost:9/mcp");
         settings.workstate_env = Some(dir.path().join("gone.env"));
         settings.save(&home).unwrap();
-        assert_eq!(tokens.token("platform"), None, "unreadable file");
+        assert_eq!(tokens.token("workspace"), None, "unreadable file");
     }
 }

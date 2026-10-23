@@ -1,4 +1,4 @@
-//! Keeps a platform's wanted sessions alive: desired state, a pure [`reconcile`], restart with
+//! Keeps a workspace's wanted sessions alive: desired state, a pure [`reconcile`], restart with
 //! backoff, a concurrency cap, and the Inbox rows ([`NeedsYou`]) for what only the human can fix.
 //! No UI dependency: the app (or a later tray daemon) feeds [`Supervisor::tick`] one
 //! `claude agents --json --all` snapshot at a time.
@@ -31,11 +31,11 @@
 //!
 //! # The shared budget
 //!
-//! One `max_working` for all platforms (the human's setting). [`tick_all`] ticks every platform's
+//! One `max_working` for all workspaces (the human's setting). [`tick_all`] ticks every workspace's
 //! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
 //! minus the live `fm-` rows with `state=working`, minus every wanted session still settling after a
 //! start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot. Test
-//! `two_started_platforms_never_exceed_the_shared_budget_together`.
+//! `two_started_workspaces_never_exceed_the_shared_budget_together`.
 //!
 //! # Failures
 //!
@@ -54,7 +54,7 @@ mod reconcile;
 
 pub use budget::{Budget, tick_all, working};
 pub use desired::{
-    DEFAULT_PERMISSION_MODE, DesiredState, PLATFORM_ROLE, WantedSession, platform_session_name, render_role, role_prompt,
+    DEFAULT_PERMISSION_MODE, DesiredState, WORKSPACE_ROLE, WantedSession, workspace_session_name, render_role, role_prompt,
 };
 pub use error::{Result, SupervisorError};
 pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider};

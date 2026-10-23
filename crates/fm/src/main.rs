@@ -4,15 +4,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Platform, Registry, scan, slugify, validate_name};
+use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, migrate_home, scan, slugify, validate_name};
 
 const USAGE: &str = "\
 usage:
-  fm platform add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
-  fm platform list
-  fm platform show <name>
-  fm platform remove <name>
-  fm sessions [--platform <name>] [--all]
+  fm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
+  fm workspace list
+  fm workspace show <name>
+  fm workspace remove <name>
+  fm sessions [--workspace <name>] [--all]
   fm probe launch
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
@@ -81,10 +81,10 @@ fn run(args: &[String]) -> Result<(), Failure> {
             println!("{USAGE}");
             Ok(())
         }
-        ["platform", "add", rest @ ..] => add(rest),
-        ["platform", "list"] => list(),
-        ["platform", "show", name] => show(name),
-        ["platform", "remove", name] => remove(name),
+        ["workspace", "add", rest @ ..] => add(rest),
+        ["workspace", "list"] => list(),
+        ["workspace", "show", name] => show(name),
+        ["workspace", "remove", name] => remove(name),
         ["sessions", rest @ ..] => sessions(rest),
         ["probe", "launch"] => {
             check_supported()?;
@@ -173,7 +173,7 @@ fn parse_add(args: &[&str]) -> Result<AddArgs, Failure> {
             extra => return Err(Failure::Usage(format!("unexpected argument '{extra}'"))),
         }
     }
-    let dir = dir.ok_or_else(|| Failure::Usage("platform add needs a <dir>".into()))?;
+    let dir = dir.ok_or_else(|| Failure::Usage("workspace add needs a <dir>".into()))?;
     Ok(AddArgs {
         dir,
         name,
@@ -201,47 +201,56 @@ fn add(args: &[&str]) -> Result<(), Failure> {
     };
     validate_name(&name)?;
     let repos = scan(&root, args.depth)?;
-    let platform = Platform::new(name, root, repos);
+    let workspace = Workspace::new(name, root, repos);
 
-    let registry = Registry::from_env()?;
-    if !args.force && registry.exists(&platform.name)? {
-        return Err(CoreError::AlreadyExists(platform.name).into());
+    let registry = registry()?;
+    if !args.force && registry.exists(&workspace.name)? {
+        return Err(CoreError::AlreadyExists(workspace.name).into());
     }
     if args.dry_run {
-        println!("dry run: would register platform {} (nothing written)", platform.name);
-        print_platform(&platform, false);
+        println!("dry run: would register workspace {} (nothing written)", workspace.name);
+        print_workspace(&workspace, false);
         return Ok(());
     }
-    let path = registry.save(&platform, args.force)?;
-    println!("registered platform {} at {}", platform.name, path.display());
-    print_platform(&platform, true);
+    let path = registry.save(&workspace, args.force)?;
+    println!("registered workspace {} at {}", workspace.name, path.display());
+    print_workspace(&workspace, true);
     Ok(())
 }
 
-fn list() -> Result<(), Failure> {
-    let platforms = Registry::from_env()?.list()?;
-    if platforms.is_empty() {
-        println!("no platforms registered");
+/// The registry of `FOREMAN_HOME`, after [`migrate_home`]; its notices go to stderr.
+fn registry() -> Result<Registry, Failure> {
+    let registry = Registry::from_env()?;
+    for notice in migrate_home(registry.home())? {
+        eprintln!("notice: {notice}");
     }
-    for p in platforms {
+    Ok(registry)
+}
+
+fn list() -> Result<(), Failure> {
+    let workspaces = registry()?.list()?;
+    if workspaces.is_empty() {
+        println!("no workspaces registered");
+    }
+    for p in workspaces {
         println!("{}\trepos={}\troot={}", p.name, p.repos.len(), p.root.display());
     }
     Ok(())
 }
 
 fn show(name: &str) -> Result<(), Failure> {
-    let platform = Registry::from_env()?.load(name)?;
-    print_platform(&platform, true);
+    let workspace = registry()?.load(name)?;
+    print_workspace(&workspace, true);
     Ok(())
 }
 
 fn remove(name: &str) -> Result<(), Failure> {
-    Registry::from_env()?.remove(name)?;
-    println!("removed platform {name}");
+    registry()?.remove(name)?;
+    println!("removed workspace {name}");
     Ok(())
 }
 
-fn print_platform(p: &Platform, with_created: bool) {
+fn print_workspace(p: &Workspace, with_created: bool) {
     println!("name: {}", p.name);
     println!("root: {}", p.root.display());
     if with_created {
@@ -262,30 +271,30 @@ fn print_platform(p: &Platform, with_created: bool) {
 }
 
 /// Without `--all`, stopped sessions are hidden; with it, they are shown, and when no
-/// `--platform` is given an "unassigned" group lists sessions outside every platform.
+/// `--workspace` is given an "unassigned" group lists sessions outside every workspace.
 fn sessions(args: &[&str]) -> Result<(), Failure> {
-    let mut platform = None;
+    let mut workspace = None;
     let mut all = false;
     let mut it = args.iter();
     while let Some(&arg) = it.next() {
         match arg {
-            "--platform" => platform = Some(value(&mut it, "--platform")?),
+            "--workspace" => workspace = Some(value(&mut it, "--workspace")?),
             "--all" => all = true,
             other => return Err(Failure::Usage(format!("unexpected argument '{other}'"))),
         }
     }
-    let registry = Registry::from_env()?;
-    let platforms = match platform {
+    let registry = registry()?;
+    let workspaces = match workspace {
         Some(name) => vec![registry.load(name)?],
         None => registry.list()?,
     };
     check_supported()?;
     let sessions = list_sessions()?;
-    print!("{}", render(&platforms, &sessions, all, platform.is_none() && all, now_ms()));
+    print!("{}", render(&workspaces, &sessions, all, workspace.is_none() && all, now_ms()));
     Ok(())
 }
 
-fn render(platforms: &[Platform], sessions: &[Session], show_stopped: bool, show_unassigned: bool, now: i64) -> String {
+fn render(workspaces: &[Workspace], sessions: &[Session], show_stopped: bool, show_unassigned: bool, now: i64) -> String {
     let mut visible: Vec<&Session> = sessions
         .iter()
         .filter(|s| show_stopped || s.health(now) != Health::Stopped)
@@ -296,10 +305,10 @@ fn render(platforms: &[Platform], sessions: &[Session], show_stopped: bool, show
 
     let mut out = String::new();
     let mut placed = HashSet::new();
-    if platforms.is_empty() {
-        out.push_str("no platforms registered\n");
+    if workspaces.is_empty() {
+        out.push_str("no workspaces registered\n");
     }
-    for p in platforms {
+    for p in workspaces {
         let assignment = assign(&visible, p);
         let count: usize = assignment.by_repo.values().map(Vec::len).sum();
         let _ = writeln!(out, "{}  {}  ({count} sessions)", p.name, p.root.display());
@@ -346,7 +355,7 @@ mod tests {
 
     const NOW: i64 = 1_800_000_000_000;
 
-    fn platform(name: &str, root: &str, repos: &[&str]) -> Platform {
+    fn workspace(name: &str, root: &str, repos: &[&str]) -> Workspace {
         let repos = repos
             .iter()
             .map(|r| Repo {
@@ -358,7 +367,7 @@ mod tests {
                 enabled: true,
             })
             .collect();
-        Platform::new(name, root, repos)
+        Workspace::new(name, root, repos)
     }
 
     fn rows() -> Vec<Session> {
@@ -377,7 +386,7 @@ mod tests {
 
     #[test]
     fn groups_by_repo_and_hides_stopped_by_default() {
-        let p = platform("demo", r"C:\demo", &["Alpha", "Beta", "Gamma"]);
+        let p = workspace("demo", r"C:\demo", &["Alpha", "Beta", "Gamma"]);
         let text = render(&[p], &rows(), false, false, NOW);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], r"demo  C:\demo  (2 sessions)");
@@ -391,7 +400,7 @@ mod tests {
 
     #[test]
     fn all_shows_stopped_and_unassigned() {
-        let p = platform("demo", r"C:\demo", &["Alpha", "Beta"]);
+        let p = workspace("demo", r"C:\demo", &["Alpha", "Beta"]);
         let text = render(&[p], &rows(), true, true, NOW);
         assert!(text.contains("aaaa0003  stopped"), "{text}");
         assert!(text.contains("unassigned  (1 sessions)\n    bbbb0004  idle"), "{text}");
@@ -399,9 +408,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_platform_says_so() {
-        let p = platform("empty", r"C:\nothing", &["X"]);
+    fn empty_workspace_says_so() {
+        let p = workspace("empty", r"C:\nothing", &["X"]);
         assert_eq!(render(&[p], &rows(), false, false, NOW), "empty  C:\\nothing  (0 sessions)\n  no live sessions\n");
-        assert_eq!(render(&[], &[], false, false, NOW), "no platforms registered\n");
+        assert_eq!(render(&[], &[], false, false, NOW), "no workspaces registered\n");
     }
 }

@@ -11,7 +11,7 @@ use std::{
 
 use collections::HashMap;
 use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Platform, Registry, Settings};
+use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, Workspace, Registry, Settings};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
 use foreman_term::{
     Event as TerminalEvent, Terminal, TerminalBuilder, TerminalMode,
@@ -82,7 +82,7 @@ pub struct Tab {
 
 pub struct FleetView {
     pub cli: Cli,
-    pub platforms: Vec<Platform>,
+    pub workspaces: Vec<Workspace>,
     pub registry_error: Option<String>,
     pub sessions: Vec<Session>,
     pub sessions_error: Option<String>,
@@ -104,9 +104,9 @@ pub struct FleetView {
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
     pub setup_notices: Vec<String>,
-    /// The Inbox: every platform's [`NeedsYou`] from the last tick.
+    /// The Inbox: every workspace's [`NeedsYou`] from the last tick.
     pub needs: Vec<NeedsYou>,
-    /// Per platform with a desired-state file: started, wanted session names.
+    /// Per workspace with a desired-state file: started, wanted session names.
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
     pub supervise_errors: Vec<String>,
@@ -116,7 +116,7 @@ pub struct FleetView {
     /// When the shown `claude agents` snapshot was taken.
     pub polled_at: i64,
     pub ticks: u64,
-    /// Retries (`(platform, name)`) for the next tick.
+    /// Retries (`(workspace, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
     pub left_width: Pixels,
     settings_window: Option<WindowHandle<SettingsView>>,
@@ -134,7 +134,7 @@ impl Render for DraggedDivider {
 }
 
 struct Refresh {
-    platforms: Result<Vec<Platform>, String>,
+    workspaces: Result<Vec<Workspace>, String>,
     sessions: Option<Result<Vec<Session>, String>>,
     polled_at: i64,
     events: Vec<Event>,
@@ -168,22 +168,22 @@ impl Poller {
     /// The supervisor ticks only on a snapshot read in this poll: a stale list never drives a launch.
     fn load(&mut self, with_sessions: bool) -> Refresh {
         let started = Instant::now();
-        let platforms = Registry::from_env()
+        let workspaces = Registry::from_env()
             .and_then(|r| r.list())
             .map_err(|e| e.to_string());
         let polled_at = now_ms();
         let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
         let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
         let took = started.elapsed();
-        let report = match (&platforms, &sessions, self.supervision.as_mut()) {
-            (Ok(platforms), Some(Ok(sessions)), Some(supervision)) => {
+        let report = match (&workspaces, &sessions, self.supervision.as_mut()) {
+            (Ok(workspaces), Some(Ok(sessions)), Some(supervision)) => {
                 let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
-                Some(supervision.tick(platforms, sessions, retries, now_ms()))
+                Some(supervision.tick(workspaces, sessions, retries, now_ms()))
             }
             _ => None,
         };
         Refresh {
-            platforms,
+            workspaces,
             sessions,
             polled_at,
             events,
@@ -260,7 +260,7 @@ impl FleetView {
         .detach();
         Self {
             cli: Cli::Checking,
-            platforms: Vec::new(),
+            workspaces: Vec::new(),
             registry_error: None,
             sessions: Vec::new(),
             sessions_error: None,
@@ -297,9 +297,9 @@ impl FleetView {
     }
 
     fn apply(&mut self, refresh: Refresh) {
-        match refresh.platforms {
-            Ok(platforms) => {
-                self.platforms = platforms;
+        match refresh.workspaces {
+            Ok(workspaces) => {
+                self.workspaces = workspaces;
                 self.registry_error = None;
             }
             Err(error) => self.registry_error = Some(error),
@@ -341,12 +341,12 @@ impl FleetView {
             hooks: Some(&self.hooks),
             polled_at: self.polled_at,
         };
-        fleet::build(&self.platforms, &self.sessions, now_ms(), self.show_stopped, &sup)
+        fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
     }
 
-    pub fn start_platform(&mut self, name: &str, cx: &mut Context<Self>) {
-        let result = match (&self.home, self.platforms.iter().find(|p| p.name == name)) {
-            (Some(home), Some(platform)) => supervise::start_platform(home, self.plugin_dir.as_deref(), platform),
+    pub fn start_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
+        let result = match (&self.home, self.workspaces.iter().find(|p| p.name == name)) {
+            (Some(home), Some(workspace)) => supervise::start_workspace(home, self.plugin_dir.as_deref(), workspace),
             (None, _) => Err(anyhow::anyhow!("no Foreman home")),
             (_, None) => Err(anyhow::anyhow!("not registered")),
         };
@@ -361,9 +361,9 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn stop_platform(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let result = match &self.home {
-            Some(home) => supervise::stop_platform(home, name),
+            Some(home) => supervise::stop_workspace(home, name),
             None => Err(anyhow::anyhow!("no Foreman home")),
         };
         match result {
@@ -395,19 +395,19 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn retry(&mut self, platform: &str, name: &str, cx: &mut Context<Self>) {
+    pub fn retry(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
         self.retries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push((platform.to_string(), name.to_string()));
-        self.needs.retain(|n| !(n.platform == platform && n.name == name));
+            .push((workspace.to_string(), name.to_string()));
+        self.needs.retain(|n| !(n.workspace == workspace && n.name == name));
         cx.notify();
     }
 
     /// The Inbox's Attach: the existing attach-tab path, by the row's 8-hex id.
-    pub fn attach_by_id(&mut self, platform: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
+    pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
         let session = self.sessions.iter().find(|s| s.id == id)?.clone();
-        Some(self.attach(platform, "supervised", &session, window, cx))
+        Some(self.attach(workspace, "supervised", &session, window, cx))
     }
 
     /// A shell tab in `cwd` with `command` typed at its prompt and NOT run: the human presses Enter
@@ -505,9 +505,9 @@ impl FleetView {
     /// A background session wakes in the background (`claude --bg --resume`, no other flag: the
     /// same id) and the tab attaches to it, so closing the tab detaches and leaves it running. An
     /// interactive one resumes in the tab, as it ran before.
-    pub fn resume(&mut self, platform: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+    pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let name = if session.name.is_empty() { fleet::short_id(session) } else { &session.name };
-        let title = format!("{platform} · {repo} · {name}");
+        let title = format!("{workspace} · {repo} · {name}");
         let sid = &session.session_id;
         if session.kind == foreman_claude::Kind::Background {
             let script = format!(
@@ -546,7 +546,7 @@ impl FleetView {
 
     pub fn attach(
         &mut self,
-        platform: &str,
+        workspace: &str,
         repo: &str,
         session: &Session,
         window: &mut Window,
@@ -563,7 +563,7 @@ impl FleetView {
             title_override: None,
         };
         self.open_tab(
-            format!("{platform} · {repo} · {name}"),
+            format!("{workspace} · {repo} · {name}"),
             TabKind::Attach {
                 session_id: session.id.clone(),
             },
@@ -992,7 +992,7 @@ impl FleetView {
         }
         if let Some(error) = &self.registry_error {
             notices.push(notice(
-                format!("Cannot read the platform registry: {error}"),
+                format!("Cannot read the workspace registry: {error}"),
                 status.error,
                 status.error.opacity(0.12),
             ));
@@ -1007,9 +1007,9 @@ impl FleetView {
         for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.action_error) {
             notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
         }
-        if self.registry_error.is_none() && self.refreshes > 0 && tree.platforms.is_empty() {
+        if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() {
             notices.push(notice(
-                "No platforms registered. Add one with:  fm platform add <dir>".into(),
+                "No workspaces registered. Add one with:  fm workspace add <dir>".into(),
                 colors.text,
                 colors.element_background,
             ));
@@ -1022,24 +1022,24 @@ impl FleetView {
             .flex_1()
             .overflow_y_scroll()
             .pb_4();
-        for platform in &tree.platforms {
-            let pkey = format!("platform:{}", platform.name);
+        for workspace in &tree.workspaces {
+            let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);
-            let started = platform.started == Some(true);
-            let (state_text, state_color) = match platform.started {
+            let started = workspace.started == Some(true);
+            let (state_text, state_color) = match workspace.started {
                 Some(true) => ("started", status.success),
                 Some(false) => ("stopped", colors.text_muted),
                 None => ("", colors.text_muted),
             };
-            let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, platform.name);
-            let pname = platform.name.clone();
+            let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, workspace.name);
+            let pname = workspace.name.clone();
             let start_stop = button(&self.hits, toggle_key, if started { "Stop" } else { "Start" }, cx).on_click(
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     if started {
-                        this.stop_platform(&pname, cx);
+                        this.stop_workspace(&pname, cx);
                     } else {
-                        this.start_platform(&pname, cx);
+                        this.start_workspace(&pname, cx);
                     }
                 }),
             );
@@ -1058,7 +1058,7 @@ impl FleetView {
                     .child(
                         div()
                             .font_weight(FontWeight::BOLD)
-                            .child(SharedString::from(platform.name.clone())),
+                            .child(SharedString::from(workspace.name.clone())),
                     )
                     .child(
                         div()
@@ -1067,13 +1067,13 @@ impl FleetView {
                             .text_xs()
                             .text_color(colors.text_muted)
                             .whitespace_nowrap()
-                            .child(SharedString::from(platform.root.display().to_string())),
+                            .child(SharedString::from(workspace.root.display().to_string())),
                     )
                     .child(
                         div()
                             .text_xs()
                             .text_color(colors.text_muted)
-                            .child(SharedString::from(format!("{} sessions", platform.session_count()))),
+                            .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
                     )
                     .child(div().text_xs().text_color(state_color).child(state_text))
                     .child(start_stop)
@@ -1082,16 +1082,16 @@ impl FleetView {
             if !open {
                 continue;
             }
-            for row in &platform.supervised {
-                body = body.child(self.render_session(&platform.name, "supervised", row, px(28.), cx));
+            for row in &workspace.supervised {
+                body = body.child(self.render_session(&workspace.name, "supervised", row, px(28.), cx));
             }
-            for repo in &platform.repos {
-                let rkey = format!("repo:{}/{}", platform.name, repo.name);
+            for repo in &workspace.repos {
+                let rkey = format!("repo:{}/{}", workspace.name, repo.name);
                 let ropen = !self.collapsed.contains(&rkey);
                 let empty = repo.sessions.is_empty();
                 let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
-                let new_key = format!("new-claude-{}/{}", platform.name, repo.name);
-                let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", platform.name, repo.name));
+                let new_key = format!("new-claude-{}/{}", workspace.name, repo.name);
+                let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", workspace.name, repo.name));
                 let new_claude = div()
                     .id(SharedString::from(new_key.clone()))
                     .relative()
@@ -1146,7 +1146,7 @@ impl FleetView {
                     continue;
                 }
                 for row in &repo.sessions {
-                    body = body.child(self.render_session(&platform.name, &repo.name, row, px(48.), cx));
+                    body = body.child(self.render_session(&workspace.name, &repo.name, row, px(48.), cx));
                 }
             }
         }
@@ -1165,7 +1165,7 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// One row per [`NeedsYou`] across platforms, oldest first; nothing when empty.
+    /// One row per [`NeedsYou`] across workspaces, oldest first; nothing when empty.
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.needs.is_empty() {
             return None;
@@ -1193,18 +1193,18 @@ impl FleetView {
             let color = needs_color(need.kind, cx);
             let remedy = match (&need.action, inbox_key(need)) {
                 (Some(action), Some(key)) => {
-                    let (label, action, platform) = match action {
-                        Remedy::Attach { .. } => ("Attach", action.clone(), need.platform.clone()),
-                        Remedy::Retry => ("Retry", action.clone(), need.platform.clone()),
-                        Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.platform.clone()),
+                    let (label, action, workspace) = match action {
+                        Remedy::Attach { .. } => ("Attach", action.clone(), need.workspace.clone()),
+                        Remedy::Retry => ("Retry", action.clone(), need.workspace.clone()),
+                        Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.workspace.clone()),
                     };
                     let name = need.name.clone();
                     Some(button(&self.hits, key, label, cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| match &action {
                             Remedy::Attach { id } => {
-                                this.attach_by_id(&platform, id, window, cx);
+                                this.attach_by_id(&workspace, id, window, cx);
                             }
-                            Remedy::Retry => this.retry(&platform, &name, cx),
+                            Remedy::Retry => this.retry(&workspace, &name, cx),
                             Remedy::RunInTerminal { cwd, command } => {
                                 this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
                             }
@@ -1236,7 +1236,7 @@ impl FleetView {
                                     .gap_2()
                                     .text_sm()
                                     .child(div().font_weight(FontWeight::BOLD).text_color(color).child(needs_label(need.kind)))
-                                    .child(SharedString::from(format!("{} · {}", need.platform, need.name)))
+                                    .child(SharedString::from(format!("{} · {}", need.workspace, need.name)))
                                     .child(
                                         div()
                                             .text_xs()
@@ -1254,7 +1254,7 @@ impl FleetView {
 
     fn render_session(
         &self,
-        platform: &str,
+        workspace: &str,
         repo: &str,
         row: &SessionRow,
         indent: Pixels,
@@ -1305,7 +1305,7 @@ impl FleetView {
             )
             .when(!row.attachable && self.resumable(row), |d| {
                 let key = format!("resume-{}", s.id);
-                let (platform, repo, session) = (platform.to_string(), repo.to_string(), s.clone());
+                let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
                     div()
                         .id(SharedString::from(key.clone()))
@@ -1320,13 +1320,13 @@ impl FleetView {
                         .child("resume")
                         .child(hit_target(&self.hits, key))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.resume(&platform, &repo, &session, window, cx);
+                            this.resume(&workspace, &repo, &session, window, cx);
                         })),
                 )
             })
             .when(row.attachable, |d| {
                 let key = format!("attach-{}", s.id);
-                let (platform, repo, session) = (platform.to_string(), repo.to_string(), s.clone());
+                let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
                     div()
                         .id(SharedString::from(key.clone()))
@@ -1341,7 +1341,7 @@ impl FleetView {
                         .child("attach")
                         .child(hit_target(&self.hits, key))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.attach(&platform, &repo, &session, window, cx);
+                            this.attach(&workspace, &repo, &session, window, cx);
                         })),
                 )
             });

@@ -1,11 +1,11 @@
 //! `--selftest` (the M1 gate), `--selftest-detach <n>`, `--selftest-detach-shutdown` and
 //! `--selftest-perf`.
 //!
-//! Both run against a scratch `FOREMAN_HOME` under `<workspace>/target/` holding one platform: a
+//! Both run against a scratch `FOREMAN_HOME` under `<cargo root>/target/` holding one workspace: a
 //! read-only scan of the folder that contains the main repo, found through the nearest `.git` above
-//! the workspace (P:/Projects/LarchSys → `larchsys`, from the main checkout or any linked worktree).
+//! the cargo workspace (P:/Projects/LarchSys → `larchsys`, from the main checkout or any linked worktree).
 //! The gate also launches one `fm-selftest-<hex>` background session with its cwd in
-//! `<workspace>/target/selftest-cwd`: inside the already-trusted tree the exe was built in, so from a
+//! `<cargo root>/target/selftest-cwd`: inside the already-trusted tree the exe was built in, so from a
 //! worktree `assign` has to map it through the worktree's `.git` file to the main repo. [`cleanup`] stops and removes that session
 //! (by the id of the `agents --json --all` row carrying its name) and deletes the scratch dirs on
 //! every exit path: normal end, failure, watchdog, panic. The panel also shows the user's real
@@ -20,7 +20,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Session, check_supported, list_sessions, main_repo, now_ms};
-use foreman_core::{DEFAULT_DEPTH, Platform, Registry, scan};
+use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
 use gpui::{
@@ -34,7 +34,7 @@ use crate::{
     view::{DETACH_WITHIN, Detach, FleetView, TabKind, process_alive},
 };
 
-pub const PLATFORM: &str = "larchsys";
+pub const WORKSPACE: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
 const LISTED_WITHIN: Duration = Duration::from_secs(15);
 const RENDERED_WITHIN: Duration = Duration::from_secs(10);
@@ -56,7 +56,7 @@ fn repo() -> &'static str {
     REPO.get().map_or("", String::as_str)
 }
 
-pub(crate) fn workspace_root() -> &'static Path {
+pub(crate) fn cargo_root() -> &'static Path {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest.ancestors().nth(2).unwrap_or(manifest)
 }
@@ -115,13 +115,13 @@ pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String
     Ok(stdout)
 }
 
-/// Before the window: scratch dirs, the platform registered through foreman-core, and (gate only)
+/// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
-    let target = workspace_root().join("target");
+    let target = cargo_root().join("target");
     let home = target.join("selftest-home");
     let cwd = target.join("selftest-cwd");
     for dir in [&home, &cwd] {
@@ -138,8 +138,8 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     unsafe { std::env::set_var("FOREMAN_HOME", &home) };
     std::fs::create_dir_all(&cwd)?;
     // <root>/AutoWork or <root>/AutoWork.worktrees/<unit> → main repo <root>/AutoWork → <root>.
-    let main = find_main_repo(workspace_root())?;
-    let platform_root = main
+    let main = find_main_repo(cargo_root())?;
+    let workspace_root = main
         .parent()
         .ok_or_else(|| anyhow!("main repo {} has no parent", main.display()))?;
     let repo_name = main
@@ -148,17 +148,17 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         .to_string_lossy()
         .into_owned();
     let registry = Registry::from_env()?;
-    let repos = scan(platform_root, DEFAULT_DEPTH)?;
+    let repos = scan(workspace_root, DEFAULT_DEPTH)?;
     if !repos.iter().any(|r| r.name == repo_name) {
-        bail!("scan of {} found no {repo_name} repo (main repo {})", platform_root.display(), main.display());
+        bail!("scan of {} found no {repo_name} repo (main repo {})", workspace_root.display(), main.display());
     }
     REPO.set(repo_name).ok();
     let count = repos.len();
-    let saved = registry.save(&Platform::new(PLATFORM, platform_root, repos), true)?;
+    let saved = registry.save(&Workspace::new(WORKSPACE, workspace_root, repos), true)?;
     println!(
-        "step 1: FOREMAN_HOME={} ; platform {PLATFORM} = {} ({count} repos, read-only scan) registered at {}",
+        "step 1: FOREMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} repos, read-only scan) registered at {}",
         home.display(),
-        platform_root.display(),
+        workspace_root.display(),
         saved.display()
     );
 
@@ -368,9 +368,9 @@ pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWin
 
 fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {
     view.tree()
-        .platforms
+        .workspaces
         .into_iter()
-        .find(|p| p.name == PLATFORM)?
+        .find(|p| p.name == WORKSPACE)?
         .repos
         .into_iter()
         .find(|r| r.name == repo())?
@@ -475,7 +475,7 @@ fn session_name() -> anyhow::Result<String> {
         .ok_or_else(|| anyhow!("no session was launched"))
 }
 
-/// Step 3: listed under the scratch platform/repo with a live health and a painted [attach], and the
+/// Step 3: listed under the scratch workspace/repo with a live health and a painted [attach], and the
 /// panel row's id is the one id `claude agents --json --all` has for the name.
 async fn wait_attachable(
     view: &Entity<FleetView>,
@@ -497,7 +497,7 @@ async fn wait_attachable(
             let seen = row.map_or("not listed".to_string(), |r| {
                 format!("listed as {} ({}, attachable {})", r.health, raw(&r.session), r.attachable)
             });
-            bail!("{name} not live under {PLATFORM}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
+            bail!("{name} not live under {WORKSPACE}/./{} within {} s: {seen}", repo(), LISTED_WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -633,7 +633,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let (row, listed_after) = wait_attachable(view, &name, cx).await.context("step 3")?;
     let id = row.session.id.clone();
     println!(
-        "step 3: {name} ({id}) listed under {PLATFORM} / ./{} as {} after {} ms",
+        "step 3: {name} ({id}) listed under {WORKSPACE} / ./{} as {} after {} ms",
         repo(),
         row.health,
         listed_after.as_millis()
@@ -872,7 +872,7 @@ mod tests {
         let check = |from: &Path, label: &str| {
             let main = find_main_repo(from).unwrap_or_else(|e| panic!("{label}: {e:#}"));
             assert_eq!(main.file_name().unwrap(), "Repo", "{label}: {}", main.display());
-            assert_eq!(main.parent().unwrap().file_name().unwrap(), "Root", "{label}: platform root");
+            assert_eq!(main.parent().unwrap().file_name().unwrap(), "Root", "{label}: workspace root");
         };
         check(&repo.join("crates").join("foreman-app"), ".git dir");
         check(&wts.join("abs"), "absolute gitdir");

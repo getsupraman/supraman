@@ -1,5 +1,5 @@
 //! `fm probe launch`: the m2/1 launcher probes, end to end, on throwaway `aw-m2-probe-*` sessions run
-//! from `<workspace>/target/aw-m2-probe-<hex>` (a plain subfolder of the trusted worktree).
+//! from `<cargo root>/target/aw-m2-probe-<hex>` (a plain subfolder of the trusted worktree).
 //! Answers are recorded in `docs/LEARNINGS.md` (m2/1).
 
 use std::fs;
@@ -41,7 +41,7 @@ const PROMPT_READY: &str = "This is an automated probe. Reply with the word read
 pub fn launch() -> bool {
     let claude = Claude::default();
     let hex = hex6();
-    let root = workspace_root().join("target").join(format!("aw-m2-probe-{hex}"));
+    let root = cargo_root().join("target").join(format!("aw-m2-probe-{hex}"));
     let mut fleet = Fleet {
         claude: claude.clone(),
         names: Vec::new(),
@@ -522,7 +522,7 @@ impl Listener {
 
 /// Without the `\\?\` prefix `canonicalize` adds on Windows: Claude Code appends `/bin/fm.exe` to the
 /// plugin dir, and a verbatim path does not accept `/` as a separator.
-pub(crate) fn workspace_root() -> PathBuf {
+pub(crate) fn cargo_root() -> PathBuf {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").canonicalize().unwrap_or_else(|_| PathBuf::from("."));
     match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
         Some(plain) if !plain.starts_with("UNC") => PathBuf::from(plain),

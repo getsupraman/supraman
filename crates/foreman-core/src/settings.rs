@@ -11,7 +11,7 @@ pub const DEFAULT_MAX_WORKING: usize = 3;
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
-    /// Most `fm-` sessions with `state=working` at once, across all platforms.
+    /// Most `fm-` sessions with `state=working` at once, across all workspaces.
     #[serde(default = "default_max_working")]
     pub max_working: usize,
     /// A `.env` holding `WORKSTATE_<ROLE>_TOKEN=…` lines, read at launch time. Unset: sessions
