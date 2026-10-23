@@ -371,7 +371,7 @@ mod tests {
     fn role_token_lands_in_an_owner_only_file_not_in_argv() {
         let dir = tempfile::tempdir().unwrap();
         let spec = LaunchSpec::new("n", "C:\\", "hi")
-            .with_role_token(&dir.path().join("mcp"), "worker", "http://localhost:5290/mcp", "fake-token")
+            .with_role_token(&dir.path().join("mcp"), "worker", "http://127.0.0.1:5290/mcp", "fake-token")
             .unwrap();
         let path = dir.path().join("mcp").join("workstate-worker.json");
         assert_eq!(spec.mcp_config.as_deref(), Some(path.as_path()));
@@ -382,7 +382,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let ws = &v["mcpServers"]["workstate"];
         assert_eq!(ws["type"], "http");
-        assert_eq!(ws["url"], "http://localhost:5290/mcp");
+        assert_eq!(ws["url"], "http://127.0.0.1:5290/mcp");
         assert_eq!(ws["headers"]["Authorization"], "Bearer fake-token");
         #[cfg(windows)]
         {

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use foreman_claude::{Claude, ClaudeError, Health, LaunchSpec, Session, now_ms, workstate_mcp_config};
 
-const WORKSTATE_URL: &str = "http://localhost:5290/mcp";
+const WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 const INVALID_TOKEN: &str = "fm-probe-invalid";
 pub(crate) const ANSWER_WITHIN: Duration = Duration::from_secs(240);
 pub(crate) const ROW_WITHIN: Duration = Duration::from_secs(15);

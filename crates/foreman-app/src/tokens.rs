@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use foreman_core::Settings;
 use foreman_supervisor::{RoleToken, TokenProvider};
 
-pub const DEFAULT_WORKSTATE_URL: &str = "http://localhost:5290/mcp";
+pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 
 pub struct AppTokens {
     pub home: PathBuf,

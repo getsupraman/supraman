@@ -324,7 +324,7 @@ mod tests {
     fn launches_with_role_token_file_and_plugin_dir_then_settles() {
         let dir = tempfile::tempdir().unwrap();
         let token = RoleToken {
-            url: "http://localhost:5290/mcp".into(),
+            url: "http://127.0.0.1:5290/mcp".into(),
             token: "fake-token".into(),
         };
         let mut sup = supervisor(true, Some(token), &dir.path().join("mcp"));

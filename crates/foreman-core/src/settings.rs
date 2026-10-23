@@ -81,7 +81,7 @@ mod tests {
         let s = Settings {
             max_working: 1,
             workstate_env: Some(r"C:\x\.env".into()),
-            workstate_url: Some("http://localhost:5290/mcp".into()),
+            workstate_url: Some("http://127.0.0.1:5290/mcp".into()),
             left_width: Some(512),
         };
         s.save(home.path()).unwrap();
