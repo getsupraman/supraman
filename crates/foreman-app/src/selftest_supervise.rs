@@ -24,6 +24,8 @@
 //! - e. the park session → Inbox Blocked with Attach.
 //! - f. busy limit set to 1 with the stepper, Start `-c1` and `-c2` → never more than 1 of this run's
 //!   sessions `working`, and both get launched.
+//! - s. the window made 480 px tall → the tree overflows; its lowest row is scrolled wholly into view, size
+//!   restored.
 //! - g. Stop (click) → the testbed's sessions stopped, the relay too, rows kept.
 //!
 //! Cleanup (every exit path, see `selftest::cleanup`): supervisor off, then stop + rm every row named
@@ -41,11 +43,11 @@ use foreman_supervisor::{
     DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AsyncWindowContext, Entity, px, size};
 
 use crate::selftest::{
-    Scratch, claude, click, hex6, install_guards, lock, raw, remove_dir_retrying, sleep, wait_for_tab_terminal,
-    cargo_root,
+    Scratch, claude, click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
+    wait_for_tab_terminal, cargo_root,
 };
 use crate::view::{FleetView, process_alive};
 use crate::{Mode, supervise};
@@ -341,8 +343,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             "step b: {ctrl} live, but SessionStart(startup) with the role tag {tag} in its transcript={tagged}, row under its workspace={in_panel}; events: {events_line}"
         );
     }
+    let transcript = transcript.unwrap_or_default();
+    let listed = skills_listed(&std::fs::read_to_string(&transcript).unwrap_or_default());
+    if !template.contains(&format!("/{WORKSPACE_SKILL}")) || ![WORKSPACE_SKILL, REPO_SKILL].iter().all(|s| listed.iter().any(|l| l == s)) {
+        bail!("step b: the role must name /{WORKSPACE_SKILL} and the session list it and {REPO_SKILL}; listed {listed:?}");
+    }
     println!(
-        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` | row under {} in the panel",
+        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | row under {} in the panel",
         relay.id,
         launched.id,
         secs(live_after),
@@ -356,6 +363,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
     .await?;
+    // what the skill made of its first turn: reported, not asserted (a model's choice, not Foreman's)
+    let (_, tools) = transcript_turn(&transcript);
+    let ready = read_outbox(&tb.home, &tb.a.0)?.into_iter().find(|m| m.from_name == ctrl).map(|m| m.body);
+    println!("step b: {ctrl}'s first turn: tools {tools:?} | its message to {relay_name}: {ready:?}");
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
     let kill = Instant::now();
@@ -532,9 +543,37 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     let prefix = format!("fm-selftest-{}", tb.hex);
     let (c1, c2) = (workspace_session_name(&tb.c1.0), workspace_session_name(&tb.c2.0));
+    let hit = |key: String, cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.hits.borrow().get(&key).copied());
+    // the tree scrolls: a Start below the fold is scrolled into view by `click`, which fails unless it
+    // ends up wholly visible (m3/3)
+    let mut clicked_at = Vec::new();
+    let mut folds = Vec::new();
     for (name, _) in [&tb.c1, &tb.c2] {
-        wait_painted(view, &format!("start-{name}"), Duration::from_secs(10), cx).await?;
-        click(view, &format!("start-{name}"), cx).await?;
+        let key = format!("start-{name}");
+        wait_painted(view, &key, Duration::from_secs(10), cx).await?;
+        let before = hit(key.clone(), cx);
+        click(view, &key, cx).await?;
+        let at = hit(key.clone(), cx);
+        if let (Some(b), Some(a)) = (before, at)
+            && !b.fully_visible()
+        {
+            folds.push(format!(
+                "{key} below the fold at y {:.0} (visible to {:.0}), clicked at y {:.0}",
+                f32::from(b.bounds.top()),
+                f32::from(b.visible.bottom()),
+                f32::from(a.bounds.top())
+            ));
+        }
+        clicked_at.push(at);
+    }
+    sleep(cx, Duration::from_secs(3)).await;
+    for ((name, _), at) in [&tb.c1, &tb.c2].into_iter().zip(&clicked_at) {
+        if !DesiredState::load(&tb.home, name)?.is_some_and(|d| d.started) {
+            bail!(
+                "step f: Start {name} clicked at {at:?}, but its desired state is not started 3 s later; start-{name} is now painted at {:?}",
+                hit(format!("start-{name}"), cx)
+            );
+        }
     }
     let started = Instant::now();
     let mut max_seen = 0;
@@ -584,14 +623,17 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         );
     }
     println!(
-        "step f: limit 3 → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {}: max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
+        "step f: limit 3 → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {} ({}): max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
         tb.c1.0,
         tb.c2.0,
+        if folds.is_empty() { "both in view".to_string() } else { folds.join("; ") },
         fmt(first_live[0]),
         fmt(first_live[1]),
         fmt(first_idle[0]),
         fmt(first_idle[1])
     );
+
+    scroll_step(tb, view, cx).await.context("step s")?;
 
     // g. Stop through the UI: stopped, rows and transcripts kept
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
@@ -617,6 +659,53 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
     }
     Ok(())
+}
+
+/// Step s: the workspace tree scrolls (m3/3: it could not, and the last workspaces were out of reach). The
+/// window is made 480 px tall so the tree overflows; its lowest row's hit target, below the fold, is
+/// scrolled wholly into view by the wheel; then the window gets its size back.
+async fn scroll_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let original = cx.update(|window, _| window.viewport_size())?;
+    cx.update(|window, _| window.resize(size(original.width, px(480.))))?;
+    sleep(cx, Duration::from_secs(1)).await;
+    let result = lowest_row_scrolled_into_view(tb, view, cx).await;
+    cx.update(|window, _| window.resize(original))?;
+    sleep(cx, Duration::from_secs(1)).await;
+    println!("step s: {}", result?);
+    Ok(())
+}
+
+async fn lowest_row_scrolled_into_view(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let anchor = format!("stop-{}", tb.a.0);
+    let tree = view
+        .read_with(cx, |v, _| v.hits.borrow().get(&anchor).copied())
+        .ok_or_else(|| anyhow!("nothing painted under {anchor}"))?
+        .visible;
+    let (key, before) = view
+        .read_with(cx, |v, _| {
+            v.hits
+                .borrow()
+                .iter()
+                .filter(|(_, h)| h.visible == tree)
+                .max_by(|a, b| f32::from(a.1.bounds.bottom()).total_cmp(&f32::from(b.1.bounds.bottom())))
+                .map(|(k, h)| (k.clone(), *h))
+        })
+        .ok_or_else(|| anyhow!("no hit target in the tree"))?;
+    if before.fully_visible() {
+        bail!("the tree does not overflow a 480 px window: its lowest row {key} is in view at {:?} (tree {tree:?})", before.bounds);
+    }
+    let after = scrolled_into_view(view, &key, cx).await?;
+    let now = view.read_with(cx, |v, _| v.hits.borrow().get(&key).copied()).ok_or_else(|| anyhow!("{key} gone"))?;
+    if !now.fully_visible() {
+        bail!("{key} at {:?} is not wholly inside the tree {:?} after scrolling", now.bounds, now.visible);
+    }
+    Ok(format!(
+        "window 480 px tall: the tree shows y {:.0}..{:.0}; its lowest row {key} at y {:.0} (below the fold) → scrolled to y {:.0}, wholly visible; size restored",
+        f32::from(tree.top()),
+        f32::from(tree.bottom()),
+        f32::from(before.bounds.top()),
+        f32::from(after.top())
+    ))
 }
 
 /// `fm.exe` built beside this `foreman.exe`, run with this process's `FOREMAN_HOME` (the testbed's).
@@ -705,6 +794,36 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
         raw(&stopped),
     );
     Ok(())
+}
+
+const WORKSPACE_SKILL: &str = "foreman:workspace-controller";
+const REPO_SKILL: &str = "foreman:repo-controller";
+
+/// The `foreman:` skills of a transcript's `skill_listing` attachments: `attachment.names`, else the
+/// `- <name>: <description>` lines of `attachment.content` (CLI 2.1.309 writes both).
+fn skills_listed(transcript: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in transcript.lines().filter(|l| l.contains("\"skill_listing\"")) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let a = &v["attachment"];
+        let names: Vec<String> = match a["names"].as_array() {
+            Some(names) => names.iter().filter_map(|n| n.as_str().map(String::from)).collect(),
+            None => a["content"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| l.strip_prefix("- "))
+                .filter_map(|l| l.split_once(": ").map(|(name, _)| name.to_string()))
+                .collect(),
+        };
+        for name in names {
+            if name.starts_with("foreman:") && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// The last assistant text of a transcript (`.jsonl`) and the commands of its tool calls (`tool: command`).
@@ -832,5 +951,16 @@ mod tests {
         let refusal = "claude rm 202c9998 failed (exit 1): kept 202c9998 … discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1@d71f54d8";
         assert_eq!(discard_token(refusal), Some("3ccd48a1@d71f54d8"));
         assert_eq!(discard_token("removed 202c9998"), None);
+    }
+
+    #[test]
+    fn reads_the_foreman_skills_of_a_skill_listing() {
+        // shape of a CLI 2.1.309 transcript line (m3/3), shortened
+        let names = r#"{"attachment":{"type":"skill_listing","content":"- x: y\n","names":["graphify","foreman:workspace-controller","rlarch:orchestrate","foreman:repo-controller"]},"type":"attachment"}"#;
+        let content = r#"{"attachment":{"type":"skill_listing","content":"- graphify (graphify-windows): Use for: x\n- foreman:repo-controller: Be the repo-controller: of one repo\n"},"type":"attachment"}"#;
+        let other = r#"{"type":"user","message":{"content":"- foreman:fake: not a listing"}}"#;
+        assert_eq!(skills_listed(&format!("{other}\n{names}\n")), [REPO_SKILL, WORKSPACE_SKILL]);
+        assert_eq!(skills_listed(content), [REPO_SKILL]);
+        assert!(skills_listed(other).is_empty());
     }
 }

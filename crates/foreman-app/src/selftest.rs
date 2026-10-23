@@ -24,8 +24,8 @@ use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
 use gpui::{
-    App, AsyncWindowContext, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PlatformInput, Window,
+    App, AsyncWindowContext, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window, point, px,
 };
 
 use crate::{
@@ -326,13 +326,11 @@ pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
     cx.background_executor().timer(duration).await;
 }
 
-/// A left click at the centre of the element painted under `key`, through the window's own input
-/// dispatch, so it lands only if that element is really there and hit-testable.
+/// A left click at the centre of the element painted under `key`, after scrolling it fully into view
+/// ([`scrolled_into_view`]), through the window's own input dispatch, so it lands only if that element is
+/// really there and hit-testable.
 pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let bounds = view
-        .read_with(cx, |v, _| v.hits.borrow().get(key).copied())
-        .ok_or_else(|| anyhow!("nothing painted under {key}"))?;
-    let position = bounds.center();
+    let position = scrolled_into_view(view, key, cx).await?.center();
     let modifiers = Modifiers::default();
     cx.update(|window, cx| {
         window.dispatch_event(
@@ -364,6 +362,41 @@ pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWin
         );
     })?;
     Ok(())
+}
+
+/// The bounds painted under `key`, once **fully** inside its visible area ([`Hit::visible`], the clip of the
+/// scroll container around it): an element scrolled out of its container is painted but takes no click, so
+/// that container is scrolled with the wheel, from inside its visible area, until the element is in view.
+/// Fails with every bounds it saw when it never gets there (m3/3: the tree once could not scroll at all).
+pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Bounds<Pixels>> {
+    let margin = px(4.);
+    let mut seen = Vec::new();
+    for _ in 0..20 {
+        let hit = view
+            .read_with(cx, |v, _| v.hits.borrow().get(key).copied())
+            .ok_or_else(|| anyhow!("nothing painted under {key}"))?;
+        let (b, v) = (hit.bounds, hit.visible);
+        seen.push(format!("{}..{} in {}..{}", f32::from(b.top()), f32::from(b.bottom()), f32::from(v.top()), f32::from(v.bottom())));
+        if hit.fully_visible() {
+            if seen.len() > 1 {
+                println!("click: scrolled {key} into view: {}", seen.join(" → "));
+            }
+            return Ok(b);
+        }
+        if b.size.height > v.size.height || b.size.width > v.size.width {
+            bail!("{key} ({b:?}) is larger than its visible area {v:?}");
+        }
+        let dy = if b.bottom() > v.bottom() { v.bottom() - margin - b.bottom() } else { v.top() + margin - b.top() };
+        // a scroll goes to the scroll container under the pointer, so it is sent from inside the visible area
+        let position = v.center();
+        cx.update(|window, cx| {
+            window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+            let event = ScrollEvent { position, delta: ScrollDelta::Pixels(point(px(0.), dy)), ..Default::default() };
+            window.dispatch_event(PlatformInput::Scroll(event), cx);
+        })?;
+        sleep(cx, Duration::from_millis(300)).await;
+    }
+    bail!("{key} is not fully inside its visible area after scrolling: {}", seen.join(" → "))
 }
 
 fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {

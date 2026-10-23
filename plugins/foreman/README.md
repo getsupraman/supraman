@@ -14,6 +14,11 @@ writes `roles/{workspace,relay,repo}.md` to `<FOREMAN_HOME>/roles/` at start (`{
 it), so roles call `fm` by name, with the Bash tool: every launch passes `--allowedTools "Bash(fm:*)" "Bash(<abs fm>:*)"`
 (a `PowerShell(…)` rule did not match).
 
+Skills (m3/3): `skills/workspace-controller` (`/foreman:workspace-controller`, loaded by `roles/workspace.md`) and
+`skills/repo-controller` (`/foreman:repo-controller`, loaded by `roles/repo.md`; it runs `/rlarch:controller`, so the
+rlarch plugin must be in `settings.toml` `extra_plugin_dirs`). The roles stay short: who the session is, which skill to
+invoke, what to do on start and after a compaction; the skills hold the rules.
+
 - every event: one line in `<FOREMAN_HOME>/events/<session_id>.jsonl` (`foreman_core::Event`)
 - SessionStart (startup, resume, compact, clear): stdout = `FOREMAN-ROLE <role> v<sha8>` + `<FOREMAN_HOME>/roles/<role>.md`
   with `{workspace}` replaced by `FOREMAN_WORKSPACE` and `{repo}` by `FOREMAN_REPO`

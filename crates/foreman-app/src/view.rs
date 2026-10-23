@@ -21,7 +21,7 @@ use foreman_ui::{FrameProbe, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
     FontWeight, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
-    WindowHandle, canvas, div, prelude::*, px,
+    WindowHandle, canvas, div, prelude::*, px, relative,
 };
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
@@ -47,9 +47,29 @@ pub const MAX_WORKING_LIMIT: usize = 20;
 const MESSAGES_LISTED: usize = 10;
 const MESSAGE_LINES: usize = 3;
 
-/// Window-space bounds of clickable things, keyed by the same string as their element id, as of
-/// the last painted frame. The selftest clicks through these.
-pub type HitTargets = Rc<RefCell<StdHashMap<String, Bounds<Pixels>>>>;
+/// The Inbox and Messages sections take at most this share of the left panel each and scroll inside
+/// it, so the workspace tree below them keeps room and stays reachable.
+const INBOX_MAX_SHARE: f32 = 0.25;
+const MESSAGES_MAX_SHARE: f32 = 0.3;
+
+/// Where a clickable thing was painted, and the part of the window it can be seen in: its clip, i.e.
+/// the visible area of the scroll container around it (the whole window when there is none).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hit {
+    pub bounds: Bounds<Pixels>,
+    pub visible: Bounds<Pixels>,
+}
+
+impl Hit {
+    pub fn fully_visible(&self) -> bool {
+        let (b, v) = (self.bounds, self.visible);
+        b.left() >= v.left() && b.top() >= v.top() && b.right() <= v.right() && b.bottom() <= v.bottom()
+    }
+}
+
+/// [`Hit`]s keyed by the same string as their element id, as of the last painted frame. The selftest
+/// clicks through these.
+pub type HitTargets = Rc<RefCell<StdHashMap<String, Hit>>>;
 
 pub enum Cli {
     Checking,
@@ -827,12 +847,13 @@ impl FleetView {
     }
 }
 
-/// An invisible overlay that records its parent's painted bounds under `key`.
+/// An invisible overlay that records its parent's painted bounds and clip under `key`.
 fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     let hits = hits.clone();
     canvas(
-        move |bounds, _, _| {
-            hits.borrow_mut().insert(key, bounds);
+        move |bounds, window, _| {
+            let visible = window.content_mask().bounds;
+            hits.borrow_mut().insert(key, Hit { bounds, visible });
         },
         |_, _, _, _| {},
     )
@@ -1034,6 +1055,7 @@ impl FleetView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .pb_4();
         for workspace in &tree.workspaces {
@@ -1197,8 +1219,12 @@ impl FleetView {
         let mut needs: Vec<&NeedsYou> = self.needs.iter().collect();
         needs.sort_by_key(|n| (n.since, n.kind));
         let mut inbox = div()
+            .id("inbox")
             .flex()
             .flex_col()
+            .flex_shrink_0()
+            .max_h(relative(INBOX_MAX_SHARE))
+            .overflow_y_scroll()
             .gap_1()
             .px_3()
             .py_2()
@@ -1289,8 +1315,12 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let now = now_ms();
         let mut section = div()
+            .id("messages")
             .flex()
             .flex_col()
+            .flex_shrink_0()
+            .max_h(relative(MESSAGES_MAX_SHARE))
+            .overflow_y_scroll()
             .gap_1()
             .px_3()
             .py_2()
@@ -1738,4 +1768,27 @@ pub fn process_alive(pid: u32) -> bool {
 #[cfg(not(windows))]
 pub fn process_alive(_pid: u32) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{point, size};
+
+    use super::*;
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    #[test]
+    fn a_hit_is_visible_only_when_wholly_inside_its_clip() {
+        let tree = rect(0., 560., 480., 260.);
+        assert!(Hit { bounds: rect(406., 700., 41., 19.), visible: tree }.fully_visible());
+        assert!(Hit { bounds: rect(406., 560., 41., 260.), visible: tree }.fully_visible(), "edges touch");
+        // m3/3: painted 804..823 under an 820 px window, centre inside, bottom outside
+        assert!(!Hit { bounds: rect(406., 804., 41., 19.33), visible: tree }.fully_visible());
+        assert!(!Hit { bounds: rect(406., 846., 41., 19.), visible: tree }.fully_visible(), "below the fold");
+        assert!(!Hit { bounds: rect(406., 550., 41., 19.), visible: tree }.fully_visible(), "under the section above");
+        assert!(!Hit { bounds: rect(470., 700., 41., 19.), visible: tree }.fully_visible(), "past the right edge");
+    }
 }

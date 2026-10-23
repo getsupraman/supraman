@@ -194,11 +194,30 @@ stopped session or a build server holds handles briefly (seen on every unit in M
 
 ## 5. Skills to write (`plugins/foreman/skills/`)
 
-- **`workspace-controller`** — planner and lead; owns cross-repo contracts and sequencing; routes
-  escalations to the human. Never restarts anything, never writes code. Waits on the relay.
-- **`repo-controller`** — owner of one repo; runs its queue via `/rlarch:controller`. Migrations, deploys,
-  prod data always escalate.
-- `controller` — unchanged, from rlarch.
+Written (m3/3); `roles/workspace.md` and `roles/repo.md` only say who the session is, invoke the skill, and
+what to do on start and after a compaction (re-invoke, `work_brief`).
+
+- **`workspace-controller`** (`/foreman:workspace-controller`, session `fm-<w>-workspace`, controller token) —
+  planner and lead. On start it announces `ready` to the relay once and waits (messages wake it; no polling).
+  A task from `fm-<w>-relay` (the only voice of the human): reads the repos (`fm workspace show`, `fm roster`,
+  the code) → WorkState project `<w>`, one run per repo `<task-slug>-<repo-slug>` with units (criteria + a
+  verify that can fail), an integration run `<task-slug>` holding `<task-slug>-verify`, cross-repo `blocks`
+  → **one approval** (`APPROVE?` + `work_tree` to the relay, waits for the answer) → `fm want <w> <repo>
+  --prompt-file .foreman/prompts/<run ref>.md` for each repo with unblocked work (and a `SendMessage` when the
+  session had a row before, since a resumed session gets no prompt) → answers what is its own, forwards the
+  human's decisions as `DECIDE:` and passes answers back verbatim → runs the cross-repo check itself, reports
+  `DONE:` in outcomes, `fm unwant`s idle repos. Never writes code, runs nested agents, restarts or stops
+  sessions, approves for the human, or runs `fm send` (it speaks as the human).
+- **`repo-controller`** (`/foreman:repo-controller`, session `fm-<w>-<repo-slug>`, orchestrator token) — runs
+  the run it is handed with `/rlarch:controller` verbatim (the run and the approval exist already; nested
+  agents `fm-<w>-<slug>-<unit>` in `../<repo>.worktrees/<unit>`, merge into the repo's checkout, close with
+  evidence, never push). Escalates migrations, deploys, prod data, dependencies, public contracts, undecided
+  questions to `fm-<w>-workspace` (never the relay) as `BLOCKED <unit>: …`, unit `blocked` meanwhile;
+  reports `DONE <run>: …` with the merge shas. A direct request with no run is answered where it came from.
+  Known gap: nested agents get no per-session WorkState config yet (skills-5d), so they must never close,
+  verify or report their own unit.
+- `controller`, `nested-claude` — unchanged, from rlarch (needs `extra_plugin_dirs`: the installed rlarch
+  plugin has neither, m3/3).
 
 ---
 
@@ -231,8 +250,9 @@ Progress: **m3/1 relay — built** (§3 "The mailbox"; `fm inbox`/`send`/`messag
 relay up before the workspace session, `ready.json`, a message through the Rust API answered back into the outbox
 and the app's Messages, Stop stops the relay too). **m3/2 repo sessions — built** (§3 "Session identity":
 `fm want|unwant|roster`, one WorkState config per session with identity headers, extra plugin dirs, `fm` from inside
-sessions, the busy budget counts `status=busy` only; `--selftest-supervise` step w). Next: the two skills (m3/3),
-then the end-to-end task.
+sessions, the busy budget counts `status=busy` only; `--selftest-supervise` step w). **m3/3 skills — written**
+(§5; sessions launched as Foreman launches them list both skills and the injected role names its skill;
+`--selftest-supervise` step b checks both). Next: the end-to-end task (m3/4).
 
 **M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
 

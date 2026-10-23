@@ -1001,3 +1001,92 @@ plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `-
   idle 121.2 MiB).
 - Deps: `fm` gains `foreman-supervisor` (path); `foreman-app` gains `serde_json` (in the lock, same version). No new
   external dependency.
+
+## 2026-10-23 — m3/3 the two skills: workspace-controller, repo-controller
+
+Measured with `crates/foreman-app/diag/skills.ps1` (a relay, a workspace session and a repo session exactly as
+Foreman launches them: rendered `roles/*.md` as the prompt, `--plugin-dir plugins/foreman` with this build's
+`fm.exe`, `--settings` env FOREMAN_HOME/ROLE/WORKSPACE(/REPO) + `bgIsolation:"none"`, `--allowedTools "Bash(fm:*)"
+"Bash(<abs fm>:*)"`, auto, `--strict-mcp-config` and **no WorkState config**; FOREMAN_HOME and cwd under the
+worktree's `target/`), `diag/endstate.ps1`, and `foreman.exe --selftest-supervise` (CLI 2.1.309, Windows 11, worktree
+m3-3). Sessions `fm-selftest-<hex>-*`; every row stopped and removed. No session had a `work_*` tool, so nothing
+touched the real store.
+
+- **Skills from `--plugin-dir` are listed as `foreman:<name>`.** The transcript's first `attachment` of type
+  `skill_listing` has `names` (61 here) and `content` (`- <name>: <description>` lines); both sessions listed
+  `foreman:repo-controller` and `foreman:workspace-controller`. The SessionStart injection is in the transcript too:
+  `FOREMAN-ROLE workspace vb2ba9581` / `FOREMAN-ROLE repo v247eda8d`, each followed by the role text naming
+  `/foreman:workspace-controller` resp. `/foreman:repo-controller`. → `--selftest-supervise` step b now fails unless
+  the workspace role names its skill and the session's `skill_listing` names both (`skills_listed`).
+- **Both sessions invoked their skill as the first act.** Workspace: `Skill(foreman:workspace-controller)` →
+  `ToolSearch` (loads the deferred `SendMessage`) → `SendMessage(fm-…-relay, "fm-…-workspace ready, but WorkState is
+  not visible here — I can talk, not plan. Foreman's settings need workstate_env.")` — the skill's no-WorkState
+  line verbatim; the relay wrote it to `outbox/msg-0001.json` with `from_name` = the workspace session. Turn ended
+  18 s after launch. Repo (first task a direct request: list the foreman:/rlarch: skills): `Skill(foreman:repo-
+  controller)`, then the list as its reply, turn ended 13 s after launch, nothing sent.
+- **The user-scope rlarch plugin loads in Foreman's sessions and has no `controller` and no `nested-claude`.** The repo
+  session listed `rlarch:code-comments, dotnet-reflect, dotnet-source, orchestrate, ts-source` — the installed
+  version, not the `feat/workstate` branch. → `/rlarch:controller` needs `settings.toml` `extra_plugin_dirs` =
+  `P:/Projects/LarchSys/Skills/plugins/rlarch` (m3/2); the repo-controller skill sends `BLOCKED` naming exactly that
+  when the skill is missing. Which of two same-named plugins wins when both are loaded was not measured.
+- **Claude Code reads the end of a turn into `state`, and the daemon acts on it.** `diag/endstate.ps1`, one turn
+  each, bare sessions: a last text "Should I continue?" → `blocked/idle` for 85 s (m1/7's unexplained state: "needs
+  input"); "ready", "waiting", "I'm now waiting for the next message …", SendMessage + "ready", ToolSearch + "ready",
+  Skill + "ready" → `done/idle`. But the **workspace session** (role + skill telling it to wait for messages) ended
+  `blocked/idle` with a long closing paragraph (diag run 1, selftest run 1) and `working/idle` with the one line
+  `waiting` (diag run 2; selftest run 2) — the context, not the last word alone, decides. `done: ready sent` ended
+  `done/idle` (diag run 3, selftest runs 3–4). The repo session's direct-request turn (a list as the reply) ended
+  `working/idle` every time. It matters: m2/4's daemon respawns a killed `working` or `blocked` session by itself, so
+  `--selftest-supervise` step c failed twice ("came back with pid …, but not by the supervisor") until the workspace
+  role and skill ended the turn with `done: <what it did>`. → Both skills end every turn with one line `done: …` that
+  asks nothing; questions go by `SendMessage`. A model that ignores it still reads `Idle` in Foreman (no
+  `waitingFor`), and a killed one comes back by the daemon instead of the supervisor — it comes back either way.
+- **Decided in the skills** (no code): project ref = the workspace name; one run per repo `<task-slug>-<repo-slug>`;
+  an integration run `<task-slug>` with `<task-slug>-verify` for the workspace-controller's own cross-repo check,
+  blocked by every repo run; prompt files at `<workspace root>/.foreman/prompts/<run ref>.md`, kept; a repo whose
+  run is all blocked is wanted only when its blocker lands; messages `APPROVE?`/`DECIDE:`/`DONE:` to the relay,
+  `BLOCKED <unit>:`/`DONE <run>:` repo → workspace, `ANSWER`/`DECISION … (from the human, verbatim)` back.
+- **Two gaps the skills route around, not fixed:** (1) `fm want` for a session that already has a row resumes it
+  with **no prompt** (`resume_prompt` is `None` for repo sessions; m2/4: no hook fires until a prompt), so the
+  workspace-controller must `SendMessage` the task as well; likewise a repo session the supervisor resumes after a
+  crash sits idle until a message. (2) `fm send` from inside a session is delivered *from `fm-<w>-relay`*, i.e. as
+  the human's voice, and `Bash(fm:*)` allows it; both skills forbid it in words only.
+- **The relay's send was refused by the auto-mode classifier twice** (selftest runs 11 and 13 of 14, step r):
+  `SendMessage to fm-selftest-…-target failed: Permission for this action was denied by the Claude Code auto mode
+  classifier. Reason: [External System Writes].`, relay row `state=blocked status=busy`. New in this unit: before the
+  drop the relay has already received the workspace session's `ready`. Not reproduced on purpose: `diag/relay.ps1`
+  (no workspace session) 3/3 rounds delivered, `diag/skills.ps1 -Drop` (a drop right after the workspace's
+  `ready`) 3/3 delivered. So: intermittent, cause unknown, not routed around. If it happens to a real relay the
+  human's message is not delivered and a `relay-notice` lands in Messages; m3/4 should watch for it.
+- Gate from this worktree (final code, run 14): `cargo test --workspace` 291 passed (288 + 3: roles/skills, skill
+  listing, `Hit::fully_visible`), 0 failed; `--selftest-supervise` PASS (step b `FOREMAN-ROLE workspace v85771130`,
+  skills listed both, first turn Skill → ToolSearch ×2 → SendMessage; step c resumed by the supervisor after 32 s;
+  step w the repo session ran `fm roster` with Bash, no park; steps s/f/g as in the finding below; 9 rows removed,
+  0 left); `--selftest` PASS (frame p95 20.79 ms, max 24.10 ms, 0 > 50 ms; idle 120.8 MiB). The 13 runs before:
+  c ×2 (runs 1–2), f ×3 (3–5), the new click helper ×5 (6–10), r ×2 (11, 13), PASS once (12, before step s
+  existed) — each cause named above or below; only r's is open.
+
+## 2026-10-23 — m3/3 finding: the left panel could not scroll; the last workspaces were out of reach
+
+Found by `--selftest-supervise` step f once the workspace session posts `ready` (one more Messages row). Separate
+from the skills; fix in its own commit.
+
+- **Symptom**: step f failed 3 runs in a row with `not both launched within 180 s`; `-c2` got no row at all, not
+  even its relay (which skips the busy cap). A diagnostic bail (step f now fails if a desired state is not started
+  3 s after its Start click) showed `start-<c2>` painted at y 846 in an 820 px window: the click landed outside the
+  window. A wheel event over the tree did not move it (four runs, bounds unchanged ×20).
+- **Cause**: the left column is header, Inbox, Messages, notices, then the tree (`id("fleet")`, `flex_1`,
+  `overflow_y_scroll`). The tree had no `min_h_0`, so it grew to its content and never scrolled; and the Inbox and
+  Messages sections, plain flex children with `min-height: auto`, could not shrink, so with `min_h_0` alone the tree
+  is what gets squeezed. Dump of run 10: Inbox y 110–330, Messages 330–560, tree from 560 with rows to 888+. A human
+  could not reach those workspaces either.
+- **Fix** (`view.rs`): the tree gets `min_h_0`; Inbox and Messages are capped at 25 % / 30 % of the panel
+  (`max_h(relative(…))`, `flex_shrink_0`) and scroll inside themselves (`id("inbox")`/`id("messages")` +
+  `overflow_y_scroll`). A hit target now records its clip as well as its bounds (`Hit { bounds, visible }`,
+  `visible` = `window.content_mask()` at prepaint = the visible area of the scroll container around it).
+- **Harness** (`selftest.rs`): `click` first scrolls its target **wholly** into its visible area — mouse moved
+  into that area, then a wheel event of the missing distance (gpui gives a scroll to the hitbox under the pointer:
+  the earlier attempts sent it at mid-window, over the Inbox) — and fails with every bounds it saw if it never
+  gets there. New step **s**: window resized to 480 px, the tree's lowest row (y 787, tree visible 315–480) scrolled
+  to y 457, wholly visible; size restored. Step g's Stop then scrolled back up (329 → 506 in 502–820), and step d's
+  Inbox button scrolled inside the capped Inbox (277 → 243 in 70–267).
