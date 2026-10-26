@@ -1174,3 +1174,10 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   across lines. Painted after text runs, as in Zed. Sextants (U+1FB00–1FB3B) not ported (not in the brief).
 - `foreman_term::Cell::with_char(c, fg)` exists so foreman-ui tests can build cells; the fallback theme for tests
   comes from `theme::ThemeRegistry::default()` (no `App` needed).
+- Tests: `block_element_*` (5) in `crates/foreman-ui/src/term_element.rs`. Red: block-element hook disabled in
+  `layout_grid` → 3 failed. Screenshot: `target/tf-4/foreman-block-glyphs.png` (logo solid, no row gaps).
+- Gate (built with `CARGO_TARGET_DIR` on C: because P: was full): release build ok; `cargo test --workspace
+  --no-fail-fast` 301 passed, 1 failed (302 = 297 + 5). The failure is `fm/tests/want.rs:41`: `fm::repos::plugin_of`
+  walks up from the exe, and a target dir outside the repo has no `plugins/foreman` above it. `--selftest` PASS
+  (p95 23.39 ms, max 38.73 ms, 0 > 50 ms; idle 121.9 MiB); `--selftest-supervise` PASS when run from exe copies in
+  the worktree's `target/release` (it FAILs at step b from the C: path for the same reason).
