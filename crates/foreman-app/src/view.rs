@@ -25,7 +25,7 @@ use foreman_term::{
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
-    KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
+    KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
     WindowHandle, canvas, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -45,6 +45,30 @@ mod menu;
 
 pub use manage::{AddDraft, NameKey, Removing};
 pub use menu::{Confirm, ContextMenu, MenuTarget};
+
+gpui::actions!(foreman, [NextTab, PreviousTab]);
+
+const KEY_CONTEXT: &str = "FleetView";
+
+/// The tab bar's hotkeys. Bindings are matched before [`FleetView::key_down`] runs, so a terminal tab
+/// never sees these chords; everything else (Tab, Shift+Tab, PgUp, Ctrl+V…) still reaches it.
+pub fn bind_keys(cx: &mut gpui::App) {
+    cx.bind_keys([
+        KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-pageup", PreviousTab, Some(KEY_CONTEXT)),
+    ]);
+}
+
+/// The index `step` tabs away from `at`, wrapping; with none active, the first (forward) or last.
+fn cycled(len: usize, at: Option<usize>, step: isize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let at = at.map_or(if step > 0 { -1 } else { 0 }, |at| at as isize);
+    Some((at + step).rem_euclid(len as isize) as usize)
+}
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -870,6 +894,28 @@ impl FleetView {
         self.tabs.iter_mut().find(|t| t.id == id)
     }
 
+    /// What clicking the tab does.
+    pub fn activate_tab(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.tab(id).is_some() {
+            self.active = Some(id);
+            cx.notify();
+        }
+    }
+
+    fn cycle_tab(&mut self, step: isize, cx: &mut Context<Self>) {
+        let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
+        if let Some(next) = cycled(self.tabs.len(), at, step) {
+            self.activate_tab(self.tabs[next].id, cx);
+        }
+    }
+
+    /// The window's keys are this view's: no task box or name field holds them.
+    pub fn has_keys(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+            && !self.compose.as_ref().is_some_and(|c| c.focused)
+            && !self.adding.as_ref().is_some_and(|d| d.name_focused)
+    }
+
     pub fn attach(
         &mut self,
         workspace: &str,
@@ -1384,12 +1430,7 @@ impl FleetView {
                             this.close_tab(id, cx);
                         }),
                     )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if this.tab(id).is_some() {
-                            this.active = Some(id);
-                            cx.notify();
-                        }
-                    })),
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(id, cx))),
             );
         }
         bar = bar.child(
@@ -1511,6 +1552,9 @@ impl Render for FleetView {
             .bg(colors.background)
             .text_color(colors.text)
             .track_focus(&self.focus)
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(|this, _: &NextTab, _, cx| this.cycle_tab(1, cx)))
+            .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
             .on_key_down(cx.listener(Self::key_down))
             .flex_col()
             .child(crate::titlebar::render(
@@ -1615,5 +1659,16 @@ mod tests {
         assert!(!Hit { bounds: rect(406., 846., 41., 19.), visible: tree }.fully_visible(), "below the fold");
         assert!(!Hit { bounds: rect(406., 550., 41., 19.), visible: tree }.fully_visible(), "under the section above");
         assert!(!Hit { bounds: rect(470., 700., 41., 19.), visible: tree }.fully_visible(), "past the right edge");
+    }
+
+    #[test]
+    fn tabs_cycle_wrapping_both_ways() {
+        assert_eq!(cycled(3, Some(0), 1), Some(1));
+        assert_eq!(cycled(3, Some(2), 1), Some(0), "wraps forward");
+        assert_eq!(cycled(3, Some(0), -1), Some(2), "wraps back");
+        assert_eq!(cycled(1, Some(0), 1), Some(0));
+        assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
+        assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
+        assert_eq!(cycled(0, None, 1), None);
     }
 }
