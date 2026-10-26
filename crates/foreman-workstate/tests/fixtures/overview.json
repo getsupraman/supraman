@@ -1,0 +1,161 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "projects": [
+    {
+      "item": {
+        "id": "11111111-0000-4000-8000-000000000001",
+        "ref": "autowork",
+        "qualifiedRef": "autowork",
+        "kind": "project",
+        "title": "Foreman",
+        "status": "in_progress"
+      },
+      "rollup": {
+        "total": 14,
+        "done": 10,
+        "inProgress": 1,
+        "review": 0,
+        "blocked": 1,
+        "open": 1,
+        "cancelled": 1,
+        "superseded": 0,
+        "addedLater": 0
+      },
+      "runs": [
+        {
+          "item": {
+            "id": "22222222-0000-4000-8000-000000000004",
+            "ref": "m4",
+            "qualifiedRef": "m4",
+            "kind": "run",
+            "title": "The work browser",
+            "status": "in_progress"
+          },
+          "rollup": {
+            "total": 3,
+            "done": 1,
+            "inProgress": 1,
+            "review": 0,
+            "blocked": 1,
+            "open": 0,
+            "cancelled": 0,
+            "superseded": 0
+          },
+          "branch": "m4/1-workstate-client",
+          "worktree": "P:/w/m4-1",
+          "activeClaims": 1,
+          "lastEventAt": "2026-10-26T10:01:00+00:00",
+          "inboxCount": 2,
+          "lastVerification": {
+            "passed": true,
+            "at": "2026-10-26T09:30:00+00:00"
+          },
+          "addedLater": "y"
+        },
+        {
+          "item": {
+            "id": "22222222-0000-4000-8000-000000000003",
+            "ref": "m3",
+            "qualifiedRef": "m3",
+            "kind": "run",
+            "title": "The supervisor",
+            "status": "done"
+          },
+          "rollup": {
+            "total": 11,
+            "done": 9,
+            "inProgress": 0,
+            "review": 0,
+            "blocked": 0,
+            "open": 1,
+            "cancelled": 1,
+            "superseded": 0
+          },
+          "branch": null,
+          "worktree": null,
+          "activeClaims": 0,
+          "lastEventAt": "2026-10-25T18:00:00+00:00",
+          "inboxCount": 0,
+          "lastVerification": null
+        }
+      ]
+    },
+    {
+      "item": {
+        "id": "11111111-0000-4000-8000-000000000002",
+        "ref": "skills",
+        "qualifiedRef": "skills",
+        "kind": "project",
+        "title": "Skills",
+        "status": "open"
+      },
+      "rollup": {
+        "total": 0,
+        "done": 0,
+        "inProgress": 0,
+        "review": 0,
+        "blocked": 0,
+        "open": 0,
+        "cancelled": 0,
+        "superseded": 0
+      },
+      "runs": []
+    }
+  ],
+  "workingNow": [
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000001",
+        "ref": "1",
+        "qualifiedRef": "m4/1",
+        "kind": "task",
+        "title": "foreman-workstate: read API v1 client",
+        "status": "in_progress",
+        "addedLater": "x"
+      },
+      "run": {
+        "id": "22222222-0000-4000-8000-000000000004",
+        "ref": "m4",
+        "qualifiedRef": "m4",
+        "kind": "run",
+        "title": "The work browser",
+        "status": "in_progress"
+      },
+      "session": {
+        "id": "44444444-0000-4000-8000-000000000001",
+        "name": "aw-m4-1",
+        "role": "worker",
+        "externalRole": "repo",
+        "origin": "foreman/autowork/AutoWork",
+        "launchedBy": "autowork-7c",
+        "claudeSessionId": null,
+        "cwd": "P:/w/m4-1",
+        "tree": null,
+        "client": "claude-code 2.x",
+        "firstSeenAt": "2026-10-26T09:00:00+00:00",
+        "lastSeenAt": "2026-10-26T10:00:00+00:00",
+        "addedLater": 1
+      },
+      "agent": "controller",
+      "role": "worker",
+      "tree": "P:/w/m4-1",
+      "acquiredAt": "2026-10-26T09:00:00+00:00",
+      "heartbeatAt": "2026-10-26T10:00:00+00:00",
+      "expiresAt": "2026-10-26T11:00:00+00:00",
+      "expired": false,
+      "addedLater": true
+    }
+  ],
+  "inboxCount": 3,
+  "honesty": {
+    "doneUnverified": 0,
+    "forced": 1,
+    "ungated": 0,
+    "followupsOpen": 4,
+    "addedLater": 0
+  }
+}

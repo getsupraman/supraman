@@ -1324,3 +1324,52 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (P: had 12 GB free, built in place): `cargo build --release --workspace` ok; `cargo test --workspace` 323
   passed (309 + 14), 0 failed; `--selftest` PASS (p95 20.45 ms, max 28.20 ms, 0 > 50 ms; idle 131.2 MiB);
   `--selftest-supervise` PASS on the first run.
+
+## 2026-10-26 — m4/1 read API client
+
+- **Crate `foreman-workstate`**: serde models for every read API v1 shape (Skills `docs/workstate/10-read-api.md`),
+  a blocking `Client` (ureq 3 like the minter: no TLS, no proxy, no redirects, 15 s), and `Stream`, the
+  `/api/stream` subscriber. Read only (C21): `GET` and nothing else. Models are lenient by construction: no
+  `deny_unknown_fields`, every struct `#[serde(default)]`, `| null` → `Option`, and `ItemStatus`/`ItemResolution`
+  carry `#[serde(other)] Unknown` so a value added after v1 decodes instead of failing the whole response. `flags`,
+  inbox `kind` and item `kind` stay strings for the same reason. Instants stay ISO strings.
+- **Every 2xx must carry `X-WorkState-Api: 1`**, else `Error::Api` (missing, or another version). Non-2xx maps to
+  `Error::Http{status, reason}` before the header check (a 404 from something that is not WorkState has none);
+  `reason` is the JSON `error/title/message/detail` cut to 200 chars. The token is scrubbed from every reason
+  (a server that echoes it back, as the fake does, prints `<redacted>`); `Client`'s `Debug` redacts it.
+- **URLs take ids**: `board(run_id)`, `item(id)`, `brief(id, for)`; refs only go to `resolve(ref)`, ids and
+  query values percent-encoded (`kinds=transition%2Cnote` — the comma is encoded too, which a server decodes).
+- **Token**: `client_from_settings` reads `WORKSTATE_READER_TOKEN` from `workstate_env`, else
+  `WORKSTATE_CONTROLLER_TOKEN`; base = origin of `workstate_url` (default `DEFAULT_WORKSTATE_URL`, now in
+  foreman-core). `read_env_value` moved from foreman-app's `tokens.rs` to `foreman_core::read_env_value` (tokens.rs
+  re-exports it); `api_base` moved from `foreman_supervisor::mint` to `foreman_workstate::api_base` (mint re-exports
+  it), so the supervisor depends on foreman-workstate.
+- **Stream**: plain HTTP/1.1 on a `TcpStream` with a 200 ms read timeout, not ureq — ureq's timeouts are per phase
+  (a whole body), so a silent server would make the thread unstoppable. Handles chunked, `Content-Length` and
+  close-delimited bodies; SSE per WHATWG (`data:` lines join with `\n`, `:` comments, `\r\n`/`\r`/`\n`, `event:`
+  ignored, `id:` sent back as `Last-Event-ID`, `retry:` ignored). Signals: `Connected` (after every 200 — the app
+  must re-read everything then, frames between a loss and a reconnect are gone), `Event(StreamEvent)`, `Lost(reason)`.
+  Backoff 0.5 s doubling to 30 s, reset by a 200. `stop()`/drop returns within one poll. No `X-WorkState-Api` check
+  on the stream (doc: "unchanged transport"). A frame whose data is not a `StreamEvent` is skipped.
+- **Gotcha**: on Windows a connect to a closed 127.0.0.1 port takes ~2 s to be refused (SYN retries), so an
+  unreachable-server test costs 2 s per attempt unless the connect timeout is short.
+- **fm**: `fm work overview <workspace>` resolves `<workspace>` (kind `project`, exactly one), prints the project
+  rollup, its runs (rollup, status, branch, claims, inbox, last verify), its claims from `workingNow`, inbox and
+  honesty counts. `fm work board <workspace> <run-ref>` resolves the run ref; since a ref can name runs of other
+  projects, it reads each `kind=run` candidate's board and keeps the one whose `project.id` is the workspace's.
+  Rows: indented seq, status, criteria n/m, claim holder (session name, else agent; `(expired)`), pass/FAIL/-,
+  title, container rollup, open blockers, flags. "n/m done" = done / (total − cancelled − superseded). Errors are
+  one line `error: …`, exit 1, never the token.
+- **Fake**: `foreman_workstate::fake::FakeWorkState` (feature `fake`, a dev-dependency only) answers exact targets
+  from a table and records method, target and `Authorization`; fixtures in `crates/foreman-workstate/tests/fixtures/`
+  are doc-10-shaped with an `addedLater` field in most objects and future enum values.
+- Tests: `cargo test -p foreman-workstate` 16 (8 unit: SSE split at every byte, chunked split at every byte, non-200,
+  query encoding, Debug redaction, token choice; 6 client: every endpoint's target, bearer, GET only, decode of each
+  fixture, 401/404/500/no header/v2/bad JSON/unreachable; 2 stream: chunked frames + drop + 401 + reconnect with
+  `Last-Event-ID` + stop while silent, backoff growth while unreachable). `cargo test -p fm --test work` 4 (overview,
+  board picking the workspace's m4 among two, one-line errors, `--help`). Red: header check and token scrub disabled
+  → 2 failed (client errors test, fm errors test).
+- Gate (P: had 11 GB free at the start, built in place; 4.6 GB after): `cargo build --release --workspace` ok;
+  `cargo test --workspace` 342 passed (323 + 20 new − 1 `api_base` test moved), 0 failed; `--selftest` PASS (p95
+  25.01 ms, max 29.29 ms, 0 > 50 ms; idle 133.2 MiB); `--selftest-supervise` FAIL at step c on the first run (the
+  daemon resumed the killed workspace session, not the supervisor — the known case), PASS on the rerun.

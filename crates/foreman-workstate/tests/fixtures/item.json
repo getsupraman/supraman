@@ -1,0 +1,282 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "item": {
+    "id": "33333333-0000-4000-8000-000000000001",
+    "ref": "1",
+    "qualifiedRef": "m4/1",
+    "kind": "task",
+    "title": "foreman-workstate: read API v1 client",
+    "status": "in_progress",
+    "addedLater": "x"
+  },
+  "path": [
+    {
+      "id": "11111111-0000-4000-8000-000000000001",
+      "ref": "autowork",
+      "qualifiedRef": "autowork",
+      "kind": "project",
+      "title": "Foreman",
+      "status": "in_progress"
+    },
+    {
+      "id": "22222222-0000-4000-8000-000000000004",
+      "ref": "m4",
+      "qualifiedRef": "m4",
+      "kind": "run",
+      "title": "The work browser",
+      "status": "in_progress"
+    }
+  ],
+  "intent": "One crate for every WorkState read",
+  "verifyCmd": "cargo test -p foreman-workstate",
+  "riskTags": [
+    "auth"
+  ],
+  "priority": 0,
+  "severity": null,
+  "source": null,
+  "resolution": null,
+  "closedBy": null,
+  "openedAt": "2026-10-26T08:00:00+00:00",
+  "startedAt": "2026-10-26T09:00:00+00:00",
+  "closedAt": null,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "typed models",
+      "checked": true,
+      "evidence": "tests/client.rs",
+      "checkedAt": "2026-10-26T09:20:00+00:00",
+      "addedLater": 1
+    },
+    {
+      "id": "c2",
+      "text": "fake server tests",
+      "checked": false,
+      "evidence": null,
+      "checkedAt": null
+    }
+  ],
+  "claim": {
+    "item": {
+      "id": "33333333-0000-4000-8000-000000000001",
+      "ref": "1",
+      "qualifiedRef": "m4/1",
+      "kind": "task",
+      "title": "foreman-workstate: read API v1 client",
+      "status": "in_progress",
+      "addedLater": "x"
+    },
+    "run": {
+      "id": "22222222-0000-4000-8000-000000000004",
+      "ref": "m4",
+      "qualifiedRef": "m4",
+      "kind": "run",
+      "title": "The work browser",
+      "status": "in_progress"
+    },
+    "session": {
+      "id": "44444444-0000-4000-8000-000000000001",
+      "name": "aw-m4-1",
+      "role": "worker",
+      "externalRole": "repo",
+      "origin": "foreman/autowork/AutoWork",
+      "launchedBy": "autowork-7c",
+      "claudeSessionId": null,
+      "cwd": "P:/w/m4-1",
+      "tree": null,
+      "client": "claude-code 2.x",
+      "firstSeenAt": "2026-10-26T09:00:00+00:00",
+      "lastSeenAt": "2026-10-26T10:00:00+00:00",
+      "addedLater": 1
+    },
+    "agent": "controller",
+    "role": "worker",
+    "tree": "P:/w/m4-1",
+    "acquiredAt": "2026-10-26T09:00:00+00:00",
+    "heartbeatAt": "2026-10-26T10:00:00+00:00",
+    "expiresAt": "2026-10-26T11:00:00+00:00",
+    "expired": false,
+    "addedLater": true
+  },
+  "reports": [
+    {
+      "attempt": 1,
+      "session": {
+        "id": "44444444-0000-4000-8000-000000000001",
+        "name": "aw-m4-1",
+        "role": "worker",
+        "externalRole": "repo",
+        "origin": "foreman/autowork/AutoWork",
+        "launchedBy": "autowork-7c",
+        "claudeSessionId": null,
+        "cwd": "P:/w/m4-1",
+        "tree": null,
+        "client": "claude-code 2.x",
+        "firstSeenAt": "2026-10-26T09:00:00+00:00",
+        "lastSeenAt": "2026-10-26T10:00:00+00:00",
+        "addedLater": 1
+      },
+      "agent": "aw-m4-1",
+      "startedAt": "2026-10-26T09:00:00+00:00",
+      "endedAt": null,
+      "status": "done",
+      "files": [
+        "crates/foreman-workstate/src/lib.rs"
+      ],
+      "verify": "cargo test -p foreman-workstate",
+      "redCheck": "dropped the header check: 2 failed",
+      "deviations": "none",
+      "risks": "none",
+      "notDone": "",
+      "at": "2026-10-26T09:50:00+00:00"
+    }
+  ],
+  "verifications": [
+    {
+      "command": "cargo test -p foreman-workstate",
+      "resultLine": "Passed! 308",
+      "passed": true,
+      "counts": {
+        "passed": 308
+      },
+      "runBy": "orchestrator",
+      "session": null,
+      "redCheck": null,
+      "at": "2026-10-26T09:55:00+00:00"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "commit",
+      "value": "a439808",
+      "at": "2026-10-26T09:51:00+00:00"
+    }
+  ],
+  "children": [
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000011",
+        "ref": "1.1",
+        "qualifiedRef": "m4/1.1",
+        "kind": "subtask",
+        "title": "SSE parser",
+        "status": "done"
+      },
+      "criteria": {
+        "checked": 2,
+        "total": 2
+      }
+    }
+  ],
+  "findings": [
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000002",
+        "ref": "2",
+        "qualifiedRef": "m4/2",
+        "kind": "task",
+        "title": "The board view",
+        "status": "blocked"
+      },
+      "severity": "blocker",
+      "source": "review"
+    }
+  ],
+  "notes": [
+    {
+      "id": "n1",
+      "kind": "decision",
+      "body": "use ureq 3",
+      "from": null,
+      "to": {
+        "id": "33333333-0000-4000-8000-000000000001",
+        "ref": "1",
+        "qualifiedRef": "m4/1",
+        "kind": "task",
+        "title": "foreman-workstate: read API v1 client",
+        "status": "in_progress",
+        "addedLater": "x"
+      },
+      "consumedAt": null,
+      "createdAt": "2026-10-26T08:30:00+00:00",
+      "session": null
+    }
+  ],
+  "links": {
+    "out": [
+      {
+        "type": "blocks",
+        "item": {
+          "id": "33333333-0000-4000-8000-000000000002",
+          "ref": "2",
+          "qualifiedRef": "m4/2",
+          "kind": "task",
+          "title": "The board view",
+          "status": "blocked"
+        }
+      }
+    ],
+    "in": []
+  },
+  "assumptions": [
+    {
+      "ref": "A1",
+      "text": "the stream sends no X-WorkState-Api",
+      "status": "open",
+      "revisitWhen": null
+    }
+  ],
+  "events": [
+    {
+      "seq": 1233,
+      "at": "2026-10-26T10:00:00+00:00",
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000001",
+        "ref": "1",
+        "qualifiedRef": "m4/1",
+        "kind": "task",
+        "title": "foreman-workstate: read API v1 client",
+        "status": "in_progress",
+        "addedLater": "x"
+      },
+      "run": {
+        "id": "22222222-0000-4000-8000-000000000004",
+        "ref": "m4",
+        "qualifiedRef": "m4",
+        "kind": "run",
+        "title": "The work browser",
+        "status": "in_progress"
+      },
+      "session": {
+        "id": "44444444-0000-4000-8000-000000000001",
+        "name": "aw-m4-1",
+        "role": "worker",
+        "externalRole": "repo",
+        "origin": "foreman/autowork/AutoWork",
+        "launchedBy": "autowork-7c",
+        "claudeSessionId": null,
+        "cwd": "P:/w/m4-1",
+        "tree": null,
+        "client": "claude-code 2.x",
+        "firstSeenAt": "2026-10-26T09:00:00+00:00",
+        "lastSeenAt": "2026-10-26T10:00:00+00:00",
+        "addedLater": 1
+      },
+      "actor": "controller",
+      "role": "controller",
+      "kind": "transition",
+      "summary": "ready -> in_progress",
+      "payload": {
+        "from": "ready",
+        "to": "in_progress"
+      },
+      "addedLater": []
+    }
+  ],
+  "eventsHasMore": true
+}

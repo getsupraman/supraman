@@ -1,3 +1,4 @@
+mod dotenv;
 mod error;
 mod events;
 mod migrate;
@@ -9,6 +10,7 @@ mod scan;
 mod settings;
 mod slug;
 
+pub use dotenv::read_env_value;
 pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
@@ -22,5 +24,5 @@ pub use relay::{
     outbox_dir, read_outbox, relay_dir, relay_ready, send,
 };
 pub use scan::{DEFAULT_DEPTH, scan};
-pub use settings::{DEFAULT_MAX_WORKING, Settings};
+pub use settings::{DEFAULT_MAX_WORKING, DEFAULT_WORKSTATE_URL, Settings};
 pub use slug::{slugify, validate_name};
