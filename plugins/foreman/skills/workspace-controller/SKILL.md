@@ -138,8 +138,8 @@ forwards the rest **unchanged**.
 **Yours to answer**: sequencing, which repo does what, the cross-repo contract the approved plan fixed,
 an interpretation the plan already settles, a re-split inside the approved scope — and a `BLOCKED` saying
 a skill (`rlarch:controller`, `rlarch:nested-claude`, any skill a role names) is not in the skill listing:
-answer it yourself, never ask the human — *call the Skill tool for it anyway; the listing is truncated, only
-a failed Skill call is a blocker* (m3/4). Sessions call the Skill tool for those skills even when the
+answer it yourself, never ask the human — *call the Skill tool for it anyway; a skill can be missing from the
+listing (a plugin skill whose header failed to parse was), only a failed Skill call is a blocker* (m3/4). Sessions call the Skill tool for those skills even when the
 listing does not show them, you too. Answer the sender with
 `SendMessage` (`ANSWER <unit ref>: …`) and record it: `work_note(kind: "decision", from: "<unit ref>", …)`.
 

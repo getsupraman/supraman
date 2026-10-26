@@ -68,13 +68,32 @@ fn parse_args() -> Mode {
 /// keeps no transcript. `CLAUDECODE=1` marks the tool shell: with it, `NO_COLOR` is that shell's,
 /// not the user's, and would render every tab monochrome; `CLAUDECODE` itself makes a tab's
 /// `claude` count as nested. A `NO_COLOR` without `CLAUDECODE` is the user's choice and stays.
+/// The rest of `TOOL_SHELL` is the parent session's identity (tf/8): its messaging socket and
+/// token would let a tab's process speak as that session. Without `CLAUDECODE` they stay too, so a
+/// `CLAUDE_EFFORT` a user set on purpose is kept.
 fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
     let mut scrub = vec!["CLAUDE_CODE_CHILD_SESSION"];
     if get("CLAUDECODE").as_deref() == Some("1") {
         scrub.extend(["CLAUDECODE", "NO_COLOR"]);
+        scrub.extend(TOOL_SHELL);
     }
     scrub
 }
+
+/// What a Claude Code 2.1 tool shell exports besides `CLAUDECODE`, `NO_COLOR` and
+/// `CLAUDE_CODE_CHILD_SESSION`, as measured on 2026-10-26.
+const TOOL_SHELL: [&str; 10] = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT",
+    "CLAUDE_EFFORT",
+    "CLAUDE_JOB_DIR",
+];
 
 fn main() {
     foreman_ui::process_start();
@@ -133,7 +152,7 @@ fn main() {
 mod tests {
     use std::collections::HashMap;
 
-    use super::env_scrub;
+    use super::{TOOL_SHELL, env_scrub};
 
     fn scrub(vars: &[(&str, &str)]) -> Vec<&'static str> {
         let env: HashMap<String, String> =
@@ -153,6 +172,22 @@ mod tests {
         let scrubbed = scrub(&[("NO_COLOR", "1")]);
         assert!(!scrubbed.contains(&"NO_COLOR"));
         assert!(!scrubbed.contains(&"CLAUDECODE"));
+    }
+
+    #[test]
+    fn env_scrub_drops_the_parent_sessions_identity_from_a_claude_code_shell() {
+        let scrubbed = scrub(&[("CLAUDECODE", "1")]);
+        assert!(scrubbed.contains(&"CLAUDE_CODE_MESSAGING_SOCKET"));
+        assert!(scrubbed.contains(&"CLAUDE_CODE_MESSAGING_TOKEN"));
+        for name in TOOL_SHELL {
+            assert!(scrubbed.contains(&name), "{name}");
+        }
+    }
+
+    #[test]
+    fn env_scrub_keeps_claude_vars_without_claudecode() {
+        let scrubbed = scrub(&[("CLAUDE_EFFORT", "high"), ("CLAUDE_CODE_MESSAGING_SOCKET", "x")]);
+        assert_eq!(scrubbed, ["CLAUDE_CODE_CHILD_SESSION"]);
     }
 
     #[test]

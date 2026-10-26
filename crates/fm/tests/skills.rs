@@ -18,7 +18,8 @@ fn skills_call_the_skill_tool_even_when_the_listing_omits_it() {
     ] {
         let text = plugin(path);
         assert!(text.contains("Skill tool"), "{path}");
-        assert!(text.contains("listing is truncated"), "{path}");
+        assert!(text.contains("a skill can be missing from the listing"), "{path}");
+        assert!(!text.contains("listing is truncated"), "the listing is not truncated (tf/7): {path}");
         assert!(text.contains("only a failed Skill call is a blocker") || text.contains("Only a failed Skill call is a blocker"), "{path}");
     }
     let repo = plugin("skills/repo-controller/SKILL.md");

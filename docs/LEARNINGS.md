@@ -1129,6 +1129,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   Skill tool anyway and it loaded; textcli trusted the listing and escalated `BLOCKED`, which reached the human as
   a `DECIDE` with two wrong options (add the plugin + restart / waive nested agents). Answered: "call the Skill
   tool directly". Fix queued as m3/8 (skills say: a missing listing entry is not a blocker, a failed Skill call is).
+  **Correction 2026-10-26**: not truncation — the two skills' SKILL.md YAML frontmatter did not parse, so they
+  loaded without a description and were left out of the listing (fixed in rlarch 2.2.0, Skills `e00f76b`; tf/7).
 - **The escalation path worked as designed**: repo-controller → workspace-controller (`BLOCKED`, verbatim) →
   relay → app Messages (`DECIDE:`) → human `fm send` → workspace-controller → repo-controller (`DECISION` forwarded).
 - **Seen by René in the UI** (queued in backlog): tabs monochrome — `NO_COLOR=1` inherited because I launched the
@@ -1144,6 +1146,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   such a `BLOCKED` itself ("call the Skill tool anyway"), never as a `DECIDE` to the human. A turn that waits on
   someone ends `done: waiting on <who> for <what>`, never with the word BLOCKED in the `done:` line (the
   `BLOCKED` message via `SendMessage` is unchanged). Pinned by `crates/fm/tests/skills.rs`.
+  **Correction 2026-10-26**: the listing was not truncated — rlarch's `controller` / `nested-claude` frontmatter
+  did not parse (fixed in rlarch 2.2.0); the skills now say a skill can be missing from the listing (tf/7).
 - **Rule chosen** — `Session::supervised_health` (`crates/foreman-claude/src/session.rs`): an `fm-…` row on a live
   pid that `health()` reads `Blocked` with **no `waitingFor`** (B1 `status=waiting` / B3 `state=blocked`, no status)
   is `Idle`. Used by the Inbox (`reconcile` R4), the fleet panel (`fleet::build`, before `with_hook`) and
@@ -1212,3 +1216,25 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   removed → 1 failed.
 - Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 300 passed (297 + 3), 0 failed;
   `--selftest` PASS (p95 21.88 ms, max 35.03 ms, 0 > 50 ms; idle 121.3 MiB); `--selftest-supervise` PASS.
+
+## 2026-10-26 — tf/8 the rest of a Claude Code tool shell's variables
+
+- **Rule** — `env_scrub` (`crates/foreman-app/src/main.rs`): with `CLAUDECODE=1` it now also drops `TOOL_SHELL`:
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_ENTRYPOINT`,
+  `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`,
+  `CLAUDE_EFFORT`, `CLAUDE_JOB_DIR`. They are the parent session's identity and settings; the messaging socket and
+  token would let a tab's process speak as that session. The list is the names a 2.1 tool shell had on 2026-10-26
+  (`CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` was not in tf/5's list; it is set neither in `~/.claude/settings.json` nor
+  in the user environment, so Claude Code sets it). Explicit names, not a `CLAUDE_CODE_*` prefix: a user's own
+  `CLAUDE_CODE_*` setting (e.g. a provider switch) passes through a tool shell too and must reach the tabs.
+- **Without `CLAUDECODE`** nothing but `CLAUDE_CODE_CHILD_SESSION` is touched: a `CLAUDE_EFFORT` (or any other of
+  these) set by the user is deliberate and stays.
+- **Not scrubbed**: `AI_AGENT` and `COREPACK_ENABLE_AUTO_PIN`, also exported by the tool shell, are not Claude
+  Code's own namespace and not in the brief; a tab inherits them when Foreman is started from a tool shell.
+- Tests: `tests::env_scrub_drops_the_parent_sessions_identity_from_a_claude_code_shell` (socket + token + every
+  `TOOL_SHELL` name), `tests::env_scrub_keeps_claude_vars_without_claudecode`. Red: `scrub.extend(TOOL_SHELL)`
+  removed → 1 failed.
+- Gate (P: had 4.2 GB free after the release build, so `CARGO_TARGET_DIR` on C: with the `plugins` junction):
+  `cargo build --release --workspace` ok; `cargo test --workspace` 307 passed (305 + 2), 0 failed; `cargo test -p
+  foreman-app env_scrub` 5 passed; `--selftest` PASS (p95 21.38 ms, max 30.41 ms, 0 > 50 ms; idle 121.6 MiB);
+  `--selftest-supervise` PASS (from exe copies in the worktree's `target/release`, deleted afterwards).

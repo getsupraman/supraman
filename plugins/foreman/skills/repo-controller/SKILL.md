@@ -36,7 +36,8 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
 
 1. **Invoke `/rlarch:controller`** and do its §0 preflight with `work_brief(scope: "<run ref>")`.
    **Call the Skill tool for `rlarch:controller` and `rlarch:nested-claude` even when the skill listing
-   does not show them**: the listing is truncated (m3/4). Only a failed Skill call is a blocker →
+   does not show them**: a skill can be missing from the listing (a plugin skill whose header failed to
+   parse was, m3/4). Only a failed Skill call is a blocker →
    `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (Foreman's settings.toml
    extra_plugin_dirs needs the rlarch plugin)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the
    same, naming WorkState.
