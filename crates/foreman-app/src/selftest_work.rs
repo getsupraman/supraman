@@ -631,6 +631,16 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     }
 
     // A reload (an event without a run re-reads every inbox) adds a row; the dismissed one stays hidden.
+    // off the panel first: under a resting pointer the m5/18 hold keeps the new row back for HOLD_STILL
+    let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
+    crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
+    let deadline = Instant::now() + LIVE_WITHIN;
+    while view.read_with(cx, |v, _| v.left_held()) {
+        if Instant::now() > deadline {
+            bail!("the left panel still holds its rows {} ms after the pointer left it", LIVE_WITHIN.as_millis());
+        }
+        sleep(cx, Duration::from_millis(20)).await;
+    }
     fake.set(inbox_target(), Answer::json(inbox(121, true, false)));
     if fake.push(&json!({ "seq": 121, "runId": null, "itemId": null, "kind": "note" }).to_string()) == 0 {
         bail!("the app's stream was gone when the inbox event was pushed");

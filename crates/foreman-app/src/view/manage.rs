@@ -2,7 +2,10 @@
 //! the registry), Remove (Stop first, then the registry entry and its desired state; no file is
 //! deleted), Rescan, repo Enable/Disable, and what the context menu's other items do.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::Ordering,
+};
 
 use foreman_claude::{Claude, Session, now_ms};
 use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover, rescan, validate_name};
@@ -199,6 +202,7 @@ impl FleetView {
 
     /// The registry as it is now, without waiting for the next poll.
     fn reload_workspaces(&mut self) {
+        self.registry_writes.fetch_add(1, Ordering::SeqCst);
         match registry(self.home.as_deref()).and_then(|r| r.list().map_err(|e| e.to_string())) {
             Ok(workspaces) => {
                 self.workspaces = workspaces;
