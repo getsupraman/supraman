@@ -1593,3 +1593,31 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   numbers of the original flake.
 - **Pattern**: before a selftest reads anything sized by layout (`terminal_bounds`, `num_lines`), wait for the
   first prepaint. A fresh `Terminal` reports 6 lines until then.
+
+## 2026-10-26 — m5/2 packaging
+
+- **Release layout** (docs/RELEASE.md): `Foreman\{foreman.exe, fm.exe, VERSION, plugins\foreman\{hooks,roles,skills,
+  .claude-plugin,bin\fm.exe}}`, built by `scripts\release.ps1` (honours `CARGO_TARGET_DIR`; default out
+  `<target dir>\dist\Foreman`, zip `Foreman-<crate ver>-<yyyyMMdd>-<sha>.zip` beside it, ~8.6 MB). No signing, no
+  installer for v1 — a zip extracted anywhere is enough; SmartScreen may ask once for an unsigned exe.
+- **One lookup**: `foreman_core::find_plugin_dir` replaces `supervise::find_plugin_dir` and `fm`'s `plugin_of`:
+  `<exe dir>\plugins\foreman`, then the plugin the exe sits in (`<plugin>\bin\fm.exe`), then the walk up. A plugin
+  needs `hooks\hooks.json` and `roles\` (the app's old check only wanted the hooks). The error names both places.
+- **claude version policy**: `MIN_VERSION` 2.1.308 (the oldest CLI every fact — `--bg`, `agents --json --all`
+  fields, `--plugin-dir`, `peerProtocol 1` — was measured on) refuses; up to `TESTED_VERSION` 2.1.310 runs;
+  newer, including a new major, runs with a warning (app notice, `fm: warning:` on stderr, `WARNING` line in both
+  selftests). The old check refused any major but 2 — a claude 3.0 would have blocked every user.
+- **The selftest-supervise target used the repo's plugin** (`cargo_root()/plugins/foreman`), whose `bin\fm.exe` only
+  exists if a dev build ran there. From the release folder the app installs fm into its own plugin, so the target
+  had no `fm` and step r failed `answered 0 of 30 direct nonces within 360 s` (a natural red). It now uses
+  `find_plugin_dir(current_exe)`, the plugin the app under test found. `fm probe hooks` still uses the repo's — a
+  dev probe.
+- **Still repo-bound in a release exe**: both selftests put their scratch (`FOREMAN_HOME`, cwd, testbed) under
+  `<cargo root>\target` baked in at compile time (`selftest::cargo_root`), on purpose: an already-trusted tree. A
+  release folder copied to another machine cannot run the selftests; the app itself has no compile-time path.
+- **cargo test with `CARGO_TARGET_DIR` outside the repo** still needs a `plugins` junction above the target dir:
+  `fm/tests/want.rs` runs the debug `fm.exe` without a role file, so it walks up for the repo plugin.
+- Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-2, CLI 2.1.310): `cargo build --release --workspace` ok, no warnings;
+  `cargo test --workspace` 382 passed, 0 failed (378 + plugin lookup 2, version cases 3 − 1 replaced); release zip
+  extracted to `C:\fmbuild\dist-test\Foreman`, no junction, nothing named `plugins` above it: `--selftest` PASS and
+  `--selftest-supervise` PASS (step r 30/30 direct), both on the first run after the fix. Copy deleted after.
