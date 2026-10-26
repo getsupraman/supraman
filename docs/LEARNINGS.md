@@ -1728,7 +1728,7 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   20–39 ms. Run the gate's selftests when no other worker's selftest is open.
 - Gate (CARGO_TARGET_DIR=C:\fmbuild\m4-4\target, `plugins` junction at C:\fmbuild\m4-4\plugins, CLI 2.1.310):
   `cargo build --release --workspace` ok, no warnings; `cargo test --workspace` 395 passed, 0 failed (387 + 8);
-  `--selftest` PASS 3 in a row on the final build (runs 2–5 of 6 there; 1 and 6 failed frame budgets with m5-11's
+  `--selftest` PASS 4 in a row on the final build (runs 2–5 of 6 there; 1 and 6 failed frame budgets with m5-11's
   supervise running), and 3 in a row (7–9) on the build before the row layout change; `--selftest-supervise` PASS on
   the build before the row layout change (that change is the Work tab journal's render only, which supervise does
   not open).
