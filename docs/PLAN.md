@@ -261,7 +261,13 @@ unit each and merged → workspace-controller verified and reported DONE; ~12 mi
 unlisted rlarch skills; a Foreman session waiting on a peer is not an Inbox "blocked". Human step per new repo:
 accept Claude's trust prompt. Backlog from René's look at the UI: terminal wheel scroll, block glyphs, `NO_COLOR`.
 
-**M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box.
+**M4 — work browser**: native views over WorkState (tree, journal, threads, evidence), task box. Run `m4`,
+read-only on WorkState read API v1 (Skills `docs/workstate/10-read-api.md`; Foreman never writes to WorkState, C21):
+m4/1 `foreman-workstate` client + SSE stream and `fm work`; m4/2 Work tab (project runs → live board); m4/3 item page
+(asked / reported / verified, Attach from a claim); m4/4 WorkState inbox rows in the app Inbox + journal feed;
+m4/5 task box and Approve/Reply on Messages (the relay, like `fm send`); m4/6 end-to-end on a throwaway workspace.
+Before it (2026-10-26): run `tf` (terminal: block glyphs, NO_COLOR/tool-shell env scrub, wheel scroll) and run `mint`
+(the supervisor mints a per-session `wss_` WorkState token, revoked on stop; live-checked 200 → 401).
 
 **M5 — hardening**: per-workspace cost budget, tray daemon, Nomos as first real workspace.
 
