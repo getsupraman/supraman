@@ -133,6 +133,9 @@ pub struct FleetView {
     window: AnyWindowHandle,
     /// The window was asked to close while Attach tabs were open; it closes once they detached.
     quitting: bool,
+    /// Quit (the tray) was asked for: the window closes and the app with it. Otherwise closing the
+    /// window only hides it (m5/1).
+    quit_asked: bool,
     /// `FOREMAN_HOME` (else `%APPDATA%\Foreman`): desired state, settings, events, roles.
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
@@ -255,8 +258,8 @@ impl FleetView {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         let this = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
-            this.update(cx, |this, cx| this.should_close(cx)).unwrap_or(true)
+        window.on_window_should_close(cx, move |window, cx| {
+            this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true)
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let left_width = home
@@ -339,6 +342,7 @@ impl FleetView {
             hits: HitTargets::default(),
             window: window.window_handle(),
             quitting: false,
+            quit_asked: false,
             home,
             plugin_dir: None,
             setup_notices: Vec::new(),
@@ -932,6 +936,7 @@ impl FleetView {
                             tab.detach = Detach::Failed;
                         }
                         this.quitting = false;
+                        this.quit_asked = false;
                         cx.notify();
                     })
                     .ok();
@@ -970,9 +975,23 @@ impl FleetView {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 
-    /// Closing the window with Attach tabs open detaches them first; the window closes when the last
-    /// one is gone, or stays open if one fails.
-    fn should_close(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Quit: the window closes as [`Self::should_close`] lets it, and the app ends with it.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.quit_asked = true;
+        if self.should_close(window, cx) {
+            window.remove_window();
+        }
+    }
+
+    /// Closing the window hides it (with the settings window) unless Quit was asked for. Quitting with
+    /// Attach tabs open detaches them first; the window closes when the last one is gone, or stays open
+    /// if one fails.
+    fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.quit_asked {
+            self.close_settings(cx);
+            crate::tray::hide(window);
+            return false;
+        }
         if !self.has_attach_tabs() {
             self.close_settings(cx);
             return true;

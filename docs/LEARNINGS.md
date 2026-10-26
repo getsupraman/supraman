@@ -1793,3 +1793,43 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-11 + `plugins` junction, CLI 2.1.310): `cargo build --release --workspace` ok,
   no warnings; `cargo test --workspace` 388 passed (387 + 1), 0 failed; `--selftest` PASS (p95 18.71 ms, max
   21.13 ms, idle 131.9 MiB); `--selftest-supervise` PASS 5 of 5 consecutive (plus 1 PASS before the reds).
+
+## 2026-10-26 — m5/1 tray
+
+- **Design (b), tray-resident, not a daemon.** gpui on Windows runs a plain `GetMessageW`/`DispatchMessageW` loop on
+  its main thread, so the `tray-icon` crate (0.26, `default-features = false`: no GTK/appindicator on Windows) works
+  there unchanged: its hidden `tray_icon_app` window and the `muda` popup menu are pumped by gpui's loop. Its menu and
+  click handlers run inside that window procedure, so they only push a `tray::Command` into a `futures` mpsc channel;
+  a gpui foreground task applies it with the app in hand (`tray::apply`). No IPC, no state sync.
+- **gpui has no "hide window".** `Window::on_window_should_close` returning `false` keeps it; the hide is
+  `ShowWindow(hwnd, SW_HIDE)` on the HWND from gpui's `HasWindowHandle` impl. The window, its tabs (attached
+  terminals stay attached) and the refresh/supervisor loop keep running: that loop is a foreground-executor task,
+  driven by the message loop, not by frames. Show is `ShowWindow(SW_SHOW)` + `SetForegroundWindow` +
+  `activate_window`. The caption Close button is `HTCLOSE` → `WM_CLOSE`, the same path Alt+F4 and a posted `WM_CLOSE`
+  take, so the selftest's posted `WM_CLOSE` is the button's path. The settings window closes with the hide.
+- **Quit** (tray) sets `quit_asked` and runs the old close path (detach Attach tabs, then remove the window; the last
+  window closing quits the app). With a workspace started it asks first (`Window::prompt`, at most one: gpui panics on
+  a re-entrant prompt). The tray icon is dropped after the event loop: `std::process::exit` skips drops and would
+  leave a ghost icon until the next hover.
+- **Single instance per `FOREMAN_HOME`**: named mutex `Local\Foreman-<FNV-1a of the lowercased canonical home>`
+  (`\\?\` stripped, so a home hashes the same before and after it exists; `DefaultHasher` is not stable across
+  builds). A second launch sets the auto-reset event `Local\Foreman-<key>-open` (after `AllowSetForegroundWindow`)
+  and exits 0; the first waits on it on a thread and queues `Command::Open`. Selftests take the lock on their own
+  home *before* `prepare` clears it, so a second selftest on the same build dir now fails at setup instead of
+  deleting a running one's home; René's Foreman (other home) never collides. Tests `instance::tests::*` (3).
+- **A selftest whose window closes under it used to exit 0 with no verdict** (the selftest task dies with the
+  window). Found by the red check below; `selftest::finish` now FAILs "the app quit before the selftest gave a
+  verdict", and `--selftest-detach-shutdown` FAILs a window that closed before its Quit.
+- Screenshot of a tray menu from a script: post `6002` (tray-icon's `WM_USER_TRAYICON`) with `lparam = WM_RBUTTONUP`
+  to the process's `tray_icon_app` window; the menu (`#32768`) opens at the cursor. Capture from a DPI-aware process
+  (`SetProcessDPIAware`), else `CopyFromScreen` coordinates are scaled and miss it. `target/m5-1/tray-menu.png`.
+- Autostart at login: not done (not trivial to test without writing this machine's Run key, a red line).
+- Placeholder icon `crates/foreman-app/assets/tray.ico` (16–64 px), decoded with `image` (ico); m5/14 swaps the file.
+- Red checks (temporary patch: `should_close` never hides, built, run, reverted): `--selftest-detach-shutdown` →
+  FAIL "the window closed 488 ms after WM_CLOSE, before Quit: closing must only hide it"; `--selftest-supervise` →
+  FAIL "the app quit before the selftest gave a verdict" (before the verdict guard both exited 0).
+- Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-1 + `plugins` junction, CLI 2.1.310): `cargo build --release --workspace`
+  ok, no warnings; `cargo test --workspace` 403 passed (400 + 3), 0 failed; `--selftest` PASS 6 of 6 (p95
+  19.6–22.6 ms); `--selftest-supervise` PASS 4 of 4 (step h: hidden 37–40 s, 12–14 ticks, the stopped workspace
+  session resumed while hidden, Open → shown in ≤ 6 ms, repainted in ~110 ms; step q: Stop all in 3.9–6.0 s);
+  `--selftest-detach-shutdown` PASS.

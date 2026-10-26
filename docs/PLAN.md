@@ -270,8 +270,10 @@ Before it (2026-10-26): run `tf` (terminal: block glyphs, NO_COLOR/tool-shell en
 (the supervisor mints a per-session `wss_` WorkState token, revoked on stop; live-checked 200 → 401).
 
 **M5 — v1** (run `m5`; cut agreed with René 2026-10-26). v1 ships when M4 and these are done:
-- m5/1 **supervision outlives the window**: a background supervisor with a tray icon; the app attaches to it
-  (single instance); closing the window no longer stops restarts, the relay or the Inbox.
+- m5/1 **supervision outlives the window**: tray-resident app (2026-10-26): closing the window hides it, the
+  process (supervisor, relay watcher, hooks, Inbox) keeps running; the tray icon offers Open, Stop all workspaces,
+  Quit (confirmed when a workspace is started). One Foreman per `FOREMAN_HOME`; a second launch shows the running
+  window and exits. Autostart at login: not in v1.
 - m5/2 **packaging**: a release folder with `foreman.exe`, `fm.exe` and `plugins/foreman` that starts sessions
   from any path (today the plugin is found only by walking up from the exe inside the repo). The `claude` CLI
   check warns about versions newer than tested and **never blocks them**; it refuses only below the minimum.
@@ -298,4 +300,5 @@ when a workspace is removed (backlog/5).
   nested sessions whatever the brief says. Design for supported routes.
 - **Depth.** workspace → repo → controller → orchestrate subagents: four hops. Complete worker briefs from
   the store (fixed in ws/2–ws/4) are what keeps it honest.
-- **Closing the app stops supervision** until m5/1's background supervisor.
+- **Quitting Foreman stops supervision** (tray Quit, a crash, logoff): sessions keep running, nothing restarts or
+  delivers until it runs again. Closing the window does not (m5/1); no autostart at login.

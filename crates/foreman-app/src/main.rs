@@ -8,9 +8,12 @@
 //   foreman --selftest-detach-shutdown  attach, close the window, session still alive
 //   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
 //   foreman --selftest-supervise        the M2 gate: Start, kill → resume, trust, park, budget, Stop
+// One Foreman per FOREMAN_HOME (`instance`); closing its window hides it, the tray icon brings it back
+// or quits (`tray`), so supervision outlives the window (m5/1).
 
 mod compose;
 mod fleet;
+mod instance;
 mod selftest;
 mod selftest_supervise;
 mod selftest_work;
@@ -18,14 +21,25 @@ mod settings_window;
 mod supervise;
 mod titlebar;
 mod tokens;
+mod tray;
 mod view;
 mod work_view;
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use gpui::{App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use foreman_core::Registry;
+use futures::StreamExt as _;
+use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
+use crate::instance::Acquired;
+use crate::tray::{Command, Tray};
 use crate::view::FleetView;
+
+thread_local! {
+    /// Dropped after the event loop, so the icon leaves the notification area with the process.
+    static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
+}
 
 pub static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 
@@ -107,12 +121,42 @@ fn main() {
     }
     let mode = parse_args();
     foreman_ui::init_logger();
+    let home = match mode {
+        Mode::App => Registry::from_env().ok().map(|r| r.home().to_path_buf()),
+        _ => Some(selftest::home()),
+    };
+    // Before `prepare`: a selftest clears its home, which a running one on the same home still uses.
+    let instance = match home.as_deref().map(instance::acquire) {
+        Some(Ok(Acquired::First(instance))) => Some(instance),
+        Some(Ok(Acquired::Running)) => {
+            let home = home.unwrap_or_default();
+            if mode == Mode::App {
+                println!("Foreman is already running for {}: asked it to show its window.", home.display());
+                std::process::exit(0);
+            }
+            println!("FAIL setup: another Foreman runs on {}", home.display());
+            std::process::exit(1);
+        }
+        Some(Err(error)) => {
+            eprintln!("cannot take the single-instance lock: {error:#}");
+            None
+        }
+        None => None,
+    };
     if mode != Mode::App
         && let Err(error) = selftest::prepare(mode)
     {
         println!("FAIL setup: {error:#}");
         selftest::cleanup();
         std::process::exit(1);
+    }
+
+    let (commands, mut received) = futures::channel::mpsc::unbounded::<Command>();
+    if let Some(instance) = &instance {
+        let commands = commands.clone();
+        if let Err(error) = instance.on_open(move || { commands.unbounded_send(Command::Open).ok(); }) {
+            eprintln!("a second launch cannot bring this window forward: {error:#}");
+        }
     }
 
     gpui_platform::application().run(move |cx: &mut App| {
@@ -124,7 +168,7 @@ fn main() {
         })
         .detach();
         let bounds = Bounds::centered(None, size(px(1400.), px(820.)), cx);
-        cx.open_window(
+        let handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
@@ -144,7 +188,22 @@ fn main() {
         )
         .expect("failed to open window");
         cx.activate(true);
+        match tray::install(commands) {
+            Ok(tray) => TRAY.with(|t| *t.borrow_mut() = Some(tray)),
+            Err(error) => eprintln!("no tray icon: {error:#}"),
+        }
+        let fleet = handle.update(cx, |_, _, cx| cx.entity()).expect("the window just opened");
+        let window = AnyWindowHandle::from(handle);
+        cx.spawn(async move |cx| {
+            while let Some(command) = received.next().await {
+                if window.update(cx, |_, window, cx| tray::apply(command, &fleet, window, cx)).is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
     });
+    TRAY.with(|t| t.borrow_mut().take());
     if mode != Mode::App {
         selftest::finish(mode);
         selftest::cleanup();

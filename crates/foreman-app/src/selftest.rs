@@ -14,7 +14,7 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, MutexGuard, OnceLock, atomic::Ordering},
+    sync::{Mutex, MutexGuard, OnceLock, atomic::{AtomicBool, Ordering}},
     time::{Duration, Instant},
 };
 
@@ -123,7 +123,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         return crate::selftest_supervise::prepare();
     }
     let target = cargo_root().join("target");
-    let home = target.join("selftest-home");
+    let home = home();
     let cwd = target.join("selftest-cwd");
     let work = target.join("selftest-work");
     for dir in [&home, &cwd, &work] {
@@ -223,6 +223,11 @@ pub(crate) fn install_guards(mode: Mode) {
     }));
 }
 
+/// Every selftest's `FOREMAN_HOME`; `main` takes the single-instance lock on it before `prepare` clears it.
+pub fn home() -> PathBuf {
+    cargo_root().join("target").join("selftest-home")
+}
+
 /// Idempotent; holds the lock throughout, so a second caller waits for the first to finish.
 pub fn cleanup() {
     let mut guard = lock();
@@ -319,6 +324,7 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
                     EXIT_CODE.store(1, Ordering::SeqCst);
                 }
             }
+            VERDICT.store(true, Ordering::SeqCst);
             // A shell tab left open (a failed step) would hold its cwd, a scratch dir.
             let shells: Vec<u64> = view.read_with(cx, |v, _| {
                 v.tabs.iter().filter(|t| matches!(t.kind, TabKind::Shell)).map(|t| t.id).collect()
@@ -922,12 +928,15 @@ struct ShutdownProbe {
     session_pid: u32,
     before: String,
     asked: Instant,
+    /// Set when Quit was applied: a window that closed before it closed on WM_CLOSE, which must only hide it.
+    quit: bool,
 }
 
 static SHUTDOWN: Mutex<Option<ShutdownProbe>> = Mutex::new(None);
 
-/// `--selftest-detach-shutdown`: attach, then close the window the way the OS does (WM_CLOSE). The
-/// window must detach the tab and close by itself; [`finish`] checks the session afterwards.
+/// `--selftest-detach-shutdown`: attach, then close the window the way the OS does (WM_CLOSE): it only
+/// hides, the tab still attached. Then Quit, as the tray asks for it: the window must detach the tab and
+/// close by itself; [`finish`] checks the session afterwards.
 async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     let (row, _) = wait_attachable(view, &name, cx).await?;
@@ -945,9 +954,32 @@ async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContex
         session_pid: before.pid.unwrap_or_default(),
         before: raw(&before),
         asked: Instant::now(),
+        quit: false,
     });
     let posted = post_close_to_own_windows();
-    println!("posted WM_CLOSE to {posted} window(s)");
+    let closed = Instant::now();
+    while cx.update(|window, _| crate::tray::is_shown(window))? {
+        if closed.elapsed() > Duration::from_secs(5) {
+            bail!("the window is still shown 5 s after WM_CLOSE (posted to {posted} window(s))");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    sleep(cx, Duration::from_millis(500)).await;
+    let tabs = view.read_with(cx, |v, _| v.tabs.iter().map(|t| (t.title.clone(), t.detach)).collect::<Vec<_>>());
+    if !tabs.iter().any(|(title, detach)| *title == attached.title && *detach == Detach::None) || !process_alive(attached.pid) {
+        bail!("WM_CLOSE hid the window but did not keep the attach tab: {tabs:?}");
+    }
+    println!(
+        "posted WM_CLOSE to {posted} window(s) → hidden after {} ms, the tab still attached (pid {} alive); Quit",
+        closed.elapsed().as_millis(),
+        attached.pid
+    );
+    if let Some(probe) = SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        probe.asked = Instant::now();
+        probe.quit = true;
+    }
+    let fleet = view.clone();
+    cx.update(|window, cx| crate::tray::apply(crate::tray::Command::Quit, &fleet, window, cx))?;
     let asked = Instant::now();
     while asked.elapsed() < DETACH_WITHIN + Duration::from_secs(3) {
         sleep(cx, Duration::from_millis(50)).await;
@@ -956,11 +988,11 @@ async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContex
         }
     }
     let state = view.read_with(cx, |v, _| v.tabs.iter().map(|t| format!("{} {:?}", t.title, t.detach)).collect::<Vec<_>>());
-    bail!("the window is still open {} ms after WM_CLOSE; tabs: {state:?}", asked.elapsed().as_millis())
+    bail!("the window is still open {} ms after Quit; tabs: {state:?}", asked.elapsed().as_millis())
 }
 
 #[cfg(windows)]
-fn post_close_to_own_windows() -> usize {
+pub(crate) fn post_close_to_own_windows() -> usize {
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, IsWindowVisible, PostMessageW, WM_CLOSE};
@@ -980,14 +1012,25 @@ fn post_close_to_own_windows() -> usize {
 }
 
 #[cfg(not(windows))]
-fn post_close_to_own_windows() -> usize {
+pub(crate) fn post_close_to_own_windows() -> usize {
     0
 }
 
 /// After the event loop ended. The shutdown variant's verdict: the window closed only after the
 /// attach process exited, and the session is the same live process.
+/// Set once [`start`] printed PASS or FAIL.
+static VERDICT: AtomicBool = AtomicBool::new(false);
+
 pub fn finish(mode: Mode) {
-    if mode != Mode::SelftestDetachShutdown || EXIT_CODE.load(Ordering::SeqCst) != 0 {
+    if mode != Mode::SelftestDetachShutdown {
+        // the window closed under the selftest, which ended with it (closing must only hide it)
+        if !VERDICT.load(Ordering::SeqCst) && EXIT_CODE.load(Ordering::SeqCst) == 0 {
+            println!("FAIL the app quit before the selftest gave a verdict");
+            EXIT_CODE.store(1, Ordering::SeqCst);
+        }
+        return;
+    }
+    if EXIT_CODE.load(Ordering::SeqCst) != 0 {
         return;
     }
     let Some(probe) = SHUTDOWN.lock().unwrap_or_else(|e| e.into_inner()).take() else {
@@ -997,16 +1040,19 @@ pub fn finish(mode: Mode) {
     };
     let closed_after = probe.asked.elapsed();
     let result = (|| {
+        if !probe.quit {
+            bail!("the window closed {} ms after WM_CLOSE, before Quit: closing must only hide it", closed_after.as_millis());
+        }
         if process_alive(probe.attach_pid) {
             bail!("the window closed with the attach process {} still running", probe.attach_pid);
         }
         std::thread::sleep(Duration::from_secs(2));
         let after = session_alive_in_cli(&probe.name)?;
         if after.pid != Some(probe.session_pid) {
-            bail!("{} was pid {} before the window close and is {:?} after it", probe.name, probe.session_pid, after.pid);
+            bail!("{} was pid {} before Quit and is {:?} after it", probe.name, probe.session_pid, after.pid);
         }
         Ok(format!(
-            "window closed {} ms after WM_CLOSE, attach pid {} exited; {} alive as the same pid {}: before [{}] after [{}] = {}",
+            "window closed {} ms after Quit, attach pid {} exited; {} alive as the same pid {}: before [{}] after [{}] = {}",
             closed_after.as_millis(),
             probe.attach_pid,
             probe.name,
