@@ -19,6 +19,7 @@ mod selftest_first_run;
 mod selftest_left;
 mod selftest_manage;
 mod selftest_supervise;
+mod selftest_tabs;
 mod selftest_work;
 mod settings_window;
 mod supervise;
@@ -165,6 +166,7 @@ fn main() {
 
     gpui_platform::application().run(move |cx: &mut App| {
         foreman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
+        view::bind_keys(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

@@ -2113,3 +2113,12 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   clicks landed in it. Clicks/wheel are now PostMessage'd to the target HWND (no foreground needed); typing needs
   real keystrokes (posted WM_CHAR is ignored), so it is guarded: type only while GetForegroundWindow's pid is the
   target, re-checked per chunk.
+
+## 2026-10-26 — m5/17 tab hotkeys
+
+- gpui matches key bindings *before* any `on_key_down` listener and a handled action stops the event, so actions
+  `NextTab`/`PreviousTab` bound in the `FleetView` key context beat `FleetView::key_down`, the only path from a key to
+  a PTY; no per-chord filtering in the terminal code. Plain Tab / Shift+Tab are unbound and still go to the PTY.
+- Unbound, Ctrl+Tab and Ctrl+Shift+Tab already sent no bytes (`to_esc_str` has no mapping); Ctrl+PgUp/PgDn did
+  (`\x1b[5;5~`), and that is what selftest 7e's red check caught (handlers made to `cx.propagate()`: the pwsh
+  `ReadKey` readers printed `PageUp 4`). `[Console]::ReadKey` modifiers: Alt = 1, Shift = 2, Control = 4.
