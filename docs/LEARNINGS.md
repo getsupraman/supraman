@@ -2041,3 +2041,46 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   supervise testbed's notices, step s found `ws-row-…-u` in a 0 px tall visible area. The notices now sit in their
   own scroll container (`#notices`, shrinkable) and the tree keeps `TREE_MIN_SHARE` = 30 % of the panel; the Start
   warning is one short line.
+
+## 2026-10-26 — m5/14 UI detailing
+
+- **Text glyphs do not centre; icons in fixed boxes do.** `▸`/`▾`, `+` and `×` sat on the font's baseline, a few px
+  off their hit area's centre, and an empty repo's `" "` placeholder was narrower than `▾`, so empty and foldable repo
+  names did not line up. Now: Zed's `chevron_right`/`chevron_down`/`close`/`plus` SVGs (Lucide, ISC, beside m5/13's)
+  in fixed boxes — disclosure 16 px (empty when the row does not fold), `glyph_button` 20 px ([+], Inbox ×), tab × 18 px,
+  new-shell + 36 px wide. Hit keys unchanged (`new-claude-…`, `inbox-ws-dismiss-…`, `close-tab-…`, `new-shell`).
+- **One height per row kind**: workspace 30 px, repo 26 px, a session's first line 24 px (`WORKSPACE_ROW`, `REPO_ROW`,
+  `SESSION_LINE` in `view/left.rs`); the shared `button()` is 20 px with its label centred. Flex children that may
+  overflow (path, branch, relay label, session name, waiting-for/hook lines, Work titles, tab titles) are
+  `min_w_0().truncate()` — gpui's `truncate()` is overflow hidden + nowrap + ellipsis, but a flex child without
+  `min_w_0` never shrinks below its text, so it pushes its siblings out instead of ellipsing.
+- **States**: every clickable row and button has a hover fill and a pressed fill (`.active`, ghost/element `_active`);
+  `button()` gains `border_selected` on hover; attach/resume are muted outlined pills whose border, fill and text come
+  up on hover; the session row whose attach tab is active is selected (`ghost_element_selected` + a 2 px
+  `border_focused` left edge); disabled repos keep 0.6 opacity and get a bordered "disabled" tag. Active tab: 2 px
+  `border_focused` line on top; inactive tabs hover. Only theme colours (`cx.theme()`), no new palette.
+- **Focus ring: not done.** The window has one focus handle and `FleetView::key_down` sends every key not taken by
+  the task box / Add name to the terminal, Tab included; a ring needs per-element focus handles and a Tab traversal
+  that would take Tab from the terminal. The two text fields (task box, Add name) already show `border_focused`.
+- **App icon**: `scripts/icon-gen` (own `[workspace]`, not a member; resvg 0.46 + image 0.25 from the lock) renders an
+  SVG to PNG previews, a preview sheet on dark/light taskbar colours, `<name>.ico` (16/24/32/48/256, PNG entries) and
+  `<name>-tray.ico` (16–48: `image` decodes an .ico's largest entry, and 48 px scales down to the tray better).
+  Proposals in `docs/icon-proposals/`. **gpui's Windows platform loads icon resource 1 of the exe as its window
+  class icon** (`gpui_windows` `load_icon`: `LoadImageW(module, 1, IMAGE_ICON)`), so one resource gives both the window
+  and the Explorer icon: `crates/foreman-app/build.rs` + `assets/foreman.rc` (`1 ICON "foreman.ico"`) with
+  `embed-resource` 3.0 (already in the lock via gpui's `windows-manifest`; uses the SDK's rc.exe). Checked with
+  `[System.Drawing.Icon]::ExtractAssociatedIcon(foreman.exe)`.
+- **René picked B, the hard hat** (`docs/icon-proposals/b-hardhat.svg`): `icon-gen` → `assets/foreman.ico` (16–256,
+  exe + window) and `assets/tray.ico` (`b-hardhat-tray.ico`, 16–48). To change it: edit the SVG, rerun
+  `cargo run --release --manifest-path scripts/icon-gen/Cargo.toml -- <svg> <out>`, copy both, rebuild.
+- `FOREMAN_SHOTS` now also writes `m5-14-terminal-tab`, `m5-14-inbox`, `m5-14-work-board`, `m5-14-work-item`,
+  `m5-14-work-journal` (`--selftest`) and `m5-14-messages` (`--selftest-supervise`). Before/after: `target/m5-14/before/`,
+  `target/m5-14/after/`.
+- Seen, not fixed (also in the before shots): with the tree scrolled, its top row paints over the last ~15 px of a
+  full Inbox (both half-lines visible where they meet). Not chased.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-14\target` + `plugins` junction): `cargo build --release --workspace` ok, no
+  warnings; `cargo test --release --workspace` 422 passed, 0 failed; `--selftest` on the polish build 4 PASS of 5 —
+  the fifth FAILed step 6b ("Ctrl+Shift+C … left the clipboard at Some(\"not copied\") (5 tries)", parallel units on
+  the machine; m5/15's clipboard race, the terminal is untouched here) — and PASS again on the icon build;
+  `--selftest-supervise` PASS. Step 8's interval checks SKIPped as "machine busy" (baseline p50 ~45 ms) in every run,
+  before the change too; own work p10 5–7 ms.

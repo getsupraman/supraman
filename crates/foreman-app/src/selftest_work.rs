@@ -334,6 +334,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     // The fake's inbox joined the app's Inbox without opening anything.
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the WorkState rows in the Inbox", cx).await?;
+    crate::selftest_manage::shot("m5-14-inbox", cx).await;
     lines.push(format!("Inbox painted the fake's 2 WorkState rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
     // Open: the Work button on the workspace row; frames measured while the overview and boards load.
@@ -353,6 +354,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     let during = recording.stop(view, cx);
     let loaded = loaded?;
     let stats = frames::judge("step 7 board load", &before, &during, view, cx).await?;
+    crate::selftest_manage::shot("m5-14-work-board", cx).await;
     for absent in ["work-row-13", "work-row-sw1/1"] {
         if is_painted(view, absent, cx) {
             bail!("{absent} is painted: the run's own row must be the header, and the done run must start collapsed");
@@ -514,6 +516,7 @@ async fn item_page(
     }
     lines.push(format!("1 stream event → 1 item re-read; c3 painted checked {} ms after the push", live_after.as_millis()));
 
+    crate::selftest_manage::shot("m5-14-work-item", cx).await;
     if let Some(secs) = std::env::var("FOREMAN_SELFTEST_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
         println!("step 7: holding the item page {secs} s (FOREMAN_SELFTEST_HOLD_SECS)");
         sleep(cx, Duration::from_secs(secs)).await;
@@ -649,6 +652,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
         "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page; frames: {stats}",
         live_after.as_millis()
     ));
+    crate::selftest_manage::shot("m5-14-work-journal", cx).await;
     if let Some(secs) = std::env::var("FOREMAN_SELFTEST_JOURNAL_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
         println!("step 7: holding the journal {secs} s (FOREMAN_SELFTEST_JOURNAL_HOLD_SECS)");
         sleep(cx, Duration::from_secs(secs)).await;

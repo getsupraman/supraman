@@ -707,6 +707,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         attached.after.as_millis(),
         attached.first_line
     );
+    crate::selftest_manage::shot("m5-14-terminal-tab", cx).await;
 
     let closed = close_attach(view, &attached, &name, cx).await.context("step 5")?;
     println!("step 5: tab closed, {closed}");

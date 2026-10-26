@@ -1280,13 +1280,18 @@ pub(crate) fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     .size_full()
 }
 
-/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it).
+/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
+/// height, the label centred, a lighter fill and border on hover, a deeper fill pressed.
 fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &gpui::App) -> gpui::Stateful<gpui::Div> {
     let colors = cx.theme().colors();
     div()
         .id(SharedString::from(key.clone()))
         .relative()
+        .flex()
         .flex_none()
+        .items_center()
+        .justify_center()
+        .h(px(20.))
         .px_2()
         .rounded_sm()
         .border_1()
@@ -1294,8 +1299,10 @@ fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &g
         .bg(colors.element_background)
         .text_xs()
         .text_color(colors.text)
+        .whitespace_nowrap()
         .cursor_pointer()
-        .hover(|s| s.bg(colors.element_hover))
+        .hover(|s| s.bg(colors.element_hover).border_color(colors.border_selected))
+        .active(|s| s.bg(colors.element_active))
         .child(label.into())
         .child(hit_target(hits, key))
 }
@@ -1338,22 +1345,37 @@ impl FleetView {
                     .border_color(colors.border)
                     .cursor_pointer()
                     .bg(if active { colors.tab_active_background } else { colors.tab_inactive_background })
-                    .when(!active, |d| d.text_color(colors.text_muted))
-                    .child(SharedString::from(title))
-                    .child(
+                    .when(!active, |d| d.text_color(colors.text_muted).hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text)))
+                    // the active tab: an accent line on top
+                    .when(active, |d| {
+                        d.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(colors.border_focused))
+                    })
+                    .child(div().max_w(px(280.)).truncate().child(SharedString::from(title)))
+                    .child({
+                        let group = SharedString::from(close_key.clone());
                         div()
-                            .id(SharedString::from(close_key.clone()))
+                            .id(group.clone())
+                            .group(group.clone())
                             .relative()
-                            .px_1()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .justify_center()
+                            .size(px(18.))
                             .rounded_sm()
-                            .hover(|s| s.bg(colors.element_hover))
-                            .child("×")
+                            .hover(|s| s.bg(colors.ghost_element_hover))
+                            .active(|s| s.bg(colors.ghost_element_active))
+                            .child(
+                                icon::Icon::Close
+                                    .svg(14., colors.text_muted)
+                                    .group_hover(group, |s| s.text_color(colors.text)),
+                            )
                             .child(hit_target(&self.hits, close_key))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.close_tab(id, cx);
-                            })),
-                    )
+                            }))
+                    })
                     .child(hit_target(&self.hits, format!("tab-{id}")))
                     .on_mouse_down(
                         MouseButton::Middle,
@@ -1373,15 +1395,19 @@ impl FleetView {
         bar = bar.child(
             div()
                 .id("new-shell")
+                .group("new-shell")
                 .relative()
                 .flex()
                 .items_center()
+                .justify_center()
                 .h_full()
-                .px_3()
+                .w(px(36.))
                 .cursor_pointer()
                 .hover(|s| s.bg(colors.ghost_element_hover))
-                .child("+")
+                .active(|s| s.bg(colors.ghost_element_active))
+                .child(icon::Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
                 .child(hit_target(&self.hits, "new-shell".into()))
+                .tooltip(icon::Tooltip::text("New shell"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.new_shell(window, cx);
                 })),
