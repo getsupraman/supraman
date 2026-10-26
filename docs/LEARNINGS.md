@@ -1514,3 +1514,57 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   linked the fix. Give each tree its own target dir (or `touch` its sources).
 - **Flake**: `--selftest` step 6 (`wheel down: display_offset 1 → 0 → 0`: two notches up moved only 1 line)
   failed in a cluster of consecutive runs on all three builds, ccc7b4a included; unrelated to this change.
+
+## 2026-10-26 — m5/4 direct messages
+
+- **Why**: the relay's `SendMessage` was refused by the auto-mode classifier in 3 of 18 selftest runs (7-d2).
+  René chose the hybrid: human → session goes **straight into the session's pipe**, session → human is
+  **`fm tell`**, and the **relay stays as the fallback**. Protocol facts: `docs/peer-messaging.md`
+  (autowork-36's measurements, claude 2.1.304–2.1.310).
+- **Down**: `foreman_claude::peer` (`find_session`, `deliver`) + `human::Sender::send`, used by the task box,
+  Approve/Reply and `fm send`. Read only on `~/.claude/sessions`: exact name, pid alive **with the same
+  `procStart`** (= the process creation FILETIME, equal to `GetProcessTimes` for all 20 live sessions),
+  newest wins, `peerProtocol == 1`, the `.key`'s token read, written and dropped (`Token`'s `Debug` is
+  redacted; key-file errors never carry its text). One connection: auth line + user line, no `from`, no
+  `from-mode`, 5 s bound. Content: `<cross-session-message from-name="foreman">` + `From the human (via Foreman,
+  workspace <w>) [m-<8hex>]:` + body.
+- **Direct only to a session whose launch mode Foreman knows is prompting** (`DesiredState::launch_mode`:
+  `auto`/`default`/`acceptEdits`): a bypass or plan receiver holds an unmoded message silently and Foreman would
+  never hear of it. Unknown or other mode → the relay, with the reason.
+- **"sent direct" means written, not confirmed.** Foreman has no inbox, so no receipt comes back; a rate,
+  duplicate or queue-full drop would be silent. Mitigations: a fresh `[m-<8hex>]` per message (never the same
+  text twice), `relay/<w>/direct.json` keeps ≥ 10 of the receiver's 30-token burst (refill 0.5/s; one send a
+  second spends half a token each), else the relay. Proof of delivery is only the receiver acting on it.
+- **Which path** shows everywhere: the box `sent direct [m-…]: <line>`, the answered row `answered: approve ·
+  sent direct [m-…]` (or `sent via relay (<why>)`), `fm send` prints it.
+- **Up**: `fm tell "<body>"` / `fm tell --file <path>` writes `relay/<w>/outbox/<ms>-tell-<pid>-<seq>.json`
+  `{from, from_name, body}` as the relay does (never `msg-NNNN`, the relay's numbering); the sender is
+  `FOREMAN_SESSION` (new in the session env), else derived from `FOREMAN_ROLE`/`FOREMAN_REPO` for sessions
+  launched before. Allowed inside Foreman sessions (unlike `fm send`); `Bash(fm:*)` already covers it.
+- **Skills**: the workspace controller reaches the human only with `fm tell` (`--file` for anything multi-line)
+  and reads both shapes as the human: Foreman's frame (`from-name="foreman"` + that first line) and the relay
+  fallback (`from-name="fm-<w>-relay"`). The repo controller never runs `fm tell`. Pinned in
+  `crates/fm/tests/skills.rs`, including the exact first line `human::framed` writes. In the selftest the
+  workspace session's first turn announced ready with `fm tell` on its own.
+- **Incident, and the guard**: the first `peer.rs` test used a live session's pipe path copied from the
+  registry as its fixture; two `cargo test` runs connected to it (fake token, "hi"). Now under `cfg(test)`
+  `deliver` refuses every pipe outside `\.\pipe\LOCAL\cc-msg-foremantest-*` (test:
+  `under_test_a_real_looking_pipe_is_refused…`; red: guard off → 1 failed), and the wire test serves its own
+  `cc-msg-foremantest-<pid>-wire` pipe. The selftest writes only to `fm-selftest-<hex>-*` names it chose,
+  after checking the registry `cwd` (`own_peer`).
+- **Dropping the relay later** would need: a reply path for sessions not launched by Foreman (none: they answer
+  with `fm tell` only if they run Foreman's plugin), a fallback for bypass-mode sessions (stream-json stdin for
+  sessions Foreman launches, or `crossSessionInbound: accept`), and confidence that `peerProtocol 1` holds
+  across claude updates (watch `peerProtocol`/`peerFeatures`). Until then it costs one idle session per
+  workspace.
+- Tests: `peer::tests` (12: key-file name with a fixed fixture, stale/reused pid, newest wins, unknown
+  protocol, missing/broken key never echoed, wire lines, unwrappable body, liveness, test guard, served-pipe
+  wire), `human::tests` (6: bucket, ids, launch mode, fallback reasons, pacing), `relay::tests::tell_…`,
+  `desired::tests::the_launch_mode_…`, `fm/tests/relay.rs` (`tell`, fallback wording), `fm/tests/skills.rs` (2 new).
+- Gate (P: had 8.8 → 4.6 GB free: `CARGO_TARGET_DIR` on C: with the `plugins` junction, exe copies in the
+  worktree's `target/release`, deleted after): `cargo build --release --workspace` ok; `cargo test --workspace`
+  377 passed, 0 failed; `--selftest-supervise` PASS on the first run (step r: 30/30 direct nonces answered in
+  42.3 s, fallback via relay 11.5 s round trip; step t: task box `sent direct`, in the transcript after 0.3 s;
+  Approve direct; 32 direct deliveries, 0 held, 0 dropped); `--selftest` FAIL twice at step 7 (Work tab frame
+  times, p95 54.5 / 146.5 ms; steps 1–6 pass) — the frame-time fix aw-m4-2b is doing in `work_view.rs`, code
+  m5/4 does not touch.

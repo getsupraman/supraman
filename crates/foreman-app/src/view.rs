@@ -10,11 +10,11 @@ use std::{
 };
 
 use collections::HashMap;
-use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
+use foreman_claude::{ClaudeVersion, Health, Sent, Session, check_supported, list_sessions, now_ms, send_from_human};
 use foreman_core::{
     Ask, AskState, DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings, ask_states, mark_answered,
 };
-use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
+use foreman_supervisor::{DesiredState, NeedsKind, NeedsYou, Remedy, workspace_session_name};
 use foreman_term::{
     Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -164,6 +164,8 @@ pub struct FleetView {
     /// Per workspace, the questions answered from here: outbox file → the answer's first line (this
     /// session's, plus `answered.json` as each tick reads it).
     pub answered: BTreeMap<String, BTreeMap<String, String>>,
+    /// `<workspace>/<outbox file>` → how this session's answer went (`sent direct`, `sent via relay (…)`).
+    pub answered_route: BTreeMap<String, String>,
     /// The open task box or reply, at most one.
     pub compose: Option<Compose>,
 }
@@ -349,6 +351,7 @@ impl FleetView {
             messages: BTreeMap::new(),
             expanded: HashSet::new(),
             answered: BTreeMap::new(),
+            answered_route: BTreeMap::new(),
             compose: None,
         }
     }
@@ -468,7 +471,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The box's Ctrl+Enter: `relay::send(home, w, "fm-<w>-workspace", text)`, as `fm send` does. A task
+    /// The box's Ctrl+Enter: to `fm-<w>-workspace` as `fm send` does (direct, else the relay). A task
     /// clears the box on success; a reply marks its question answered and closes it. A refusal or a
     /// failure stays in the box.
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
@@ -485,10 +488,11 @@ impl FleetView {
             }
         };
         match (result, &mut self.compose) {
-            (Ok(()), _) if reply_to.is_some() => self.compose = None,
-            (Ok(()), Some(c)) => {
+            (Ok(_), _) if reply_to.is_some() => self.compose = None,
+            (Ok(sent), Some(c)) => {
                 c.clear();
                 c.sent = Some(compose::first_line(&text));
+                c.route = Some(sent.label());
                 c.error = None;
             }
             (Err(e), Some(c)) => c.error = Some(e),
@@ -497,20 +501,20 @@ impl FleetView {
         cx.notify();
     }
 
-    fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<(), String> {
-        if let Some(why) = self.relay_refusal(workspace) {
-            return Err(format!("Not sent: {why}."));
-        }
-        let home = self.home.as_deref().ok_or("no Foreman home")?;
-        foreman_core::send(home, workspace, &workspace_session_name(workspace), text)
-            .map(|_| ())
-            .map_err(|e| format!("Not sent: {e}"))
+    /// Into the workspace session's pipe, else through its relay when that is live and armed.
+    fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<Sent, String> {
+        let home = self.home.as_deref().ok_or("Not sent: no Foreman home.")?;
+        let to = workspace_session_name(workspace);
+        let mode = DesiredState::launch_mode(home, workspace, &to);
+        send_from_human(home, workspace, &to, mode.as_deref(), text, self.relay_refusal(workspace))
+            .map_err(|e| format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay))
     }
 
     /// Sends `text` as the answer to the outbox message `file` and marks it answered, in memory and in
     /// `answered.json` (a failed save is reported; the row still shows it answered).
-    pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<(), String> {
-        self.send_to_workspace(workspace, text)?;
+    pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<Sent, String> {
+        let sent = self.send_to_workspace(workspace, text)?;
+        self.answered_route.insert(format!("{workspace}/{file}"), sent.label());
         let line = compose::first_line(text);
         self.answered.entry(workspace.to_string()).or_default().insert(file.to_string(), line.clone());
         if let Some(home) = &self.home
@@ -518,13 +522,13 @@ impl FleetView {
         {
             self.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
         }
-        Ok(())
+        Ok(sent)
     }
 
     /// The Messages row's Approve: the answer `approve`.
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
         match self.answer(workspace, file, "approve") {
-            Ok(()) => self.action_error = None,
+            Ok(_) => self.action_error = None,
             Err(e) => self.action_error = Some(format!("Approve {workspace}: {e}")),
         }
         cx.notify();
@@ -1577,7 +1581,10 @@ impl FleetView {
                         div()
                             .relative()
                             .text_color(status.success)
-                            .child(SharedString::from(format!("answered: {line}")))
+                            .child(SharedString::from(match self.answered_route.get(&key) {
+                                Some(route) => format!("answered: {line} · {route}"),
+                                None => format!("answered: {line}"),
+                            }))
                             .child(hit_target(&self.hits, format!("msg-answered-{key}"))),
                     ),
                     AskState::Superseded => {
@@ -1691,7 +1698,7 @@ impl FleetView {
                 .child(div().min_h(px(48.)).text_sm().child(text))
                 .children(refusal.map(|why| line(format!("Cannot send now: {why}."), status.warning)))
                 .children(c.error.clone().map(|e| line(e, status.error)))
-                .children(c.sent.clone().map(|s| line(format!("sent: {s}"), status.success)))
+                .children(c.sent.clone().map(|s| line(format!("{}: {s}", c.route.as_deref().unwrap_or("sent")), status.success)))
                 .child(
                     div()
                         .flex()

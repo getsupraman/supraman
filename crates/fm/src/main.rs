@@ -17,7 +17,9 @@ usage:
   fm unwant <workspace> <repo>         (stop it; stop, never rm)
   fm roster <workspace> [--json]       (the workspace's sessions: name, role, health, id, cwd)
   fm send <workspace> <to> <body>      (drop a message for the workspace's relay to send)
-  fm send <workspace> <to> --file <path>
+  fm send <workspace> <to> --file <path>  (into the session's pipe, else through the relay)
+  fm tell <body>                       (inside a Foreman session: a message to the human)
+  fm tell --file <path>
   fm messages <workspace>              (messages the relay received, newest last)
   fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
   fm work overview <workspace>         (its WorkState project: runs with rollups, who works, the inbox)
@@ -127,6 +129,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
             relay::refuse_inside_foreman()?;
             relay::send_cmd(registry()?.home(), rest)
         }
+        ["tell", rest @ ..] => relay::tell_cmd(rest),
         ["messages", rest @ ..] => relay::messages(&registry()?, rest),
         ["want", rest @ ..] => repos::want(&registry()?, rest),
         ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),

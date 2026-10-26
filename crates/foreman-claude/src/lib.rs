@@ -50,7 +50,9 @@
 mod assign;
 mod cli;
 mod error;
+pub mod human;
 mod launch;
+pub mod peer;
 mod session;
 
 pub use assign::{Assignment, assign, assign_with, main_repo, main_repo_walks, repo_of};
@@ -59,6 +61,7 @@ pub use cli::{
     list_sessions, parse_version,
 };
 pub use error::{ClaudeError, Result};
+pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
     Claude, LaunchSpec, Output, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, resume_argv, workstate_mcp_config,
     write_mcp_config, write_session_mcp_config,

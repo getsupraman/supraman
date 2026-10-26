@@ -71,7 +71,7 @@ go into `work_verify`.
 
 ## 3. Escalate to the workspace controller, not to the relay
 
-You never message `fm-<w>-relay`: the human is the workspace controller's to reach. Escalate to
+You never message `fm-<w>-relay` and never run `fm tell`: the human is the workspace controller's to reach. Escalate to
 `fm-<w>-workspace` whatever is not yours to decide — **a migration, a deploy, production data, a new
 dependency, a public contract (an API surface, a wire format, a published key), an undecided question,
 `git push`, a scope change** — and everything the controller skill's §8 lists. Mark the unit
@@ -120,7 +120,7 @@ bringing you back: continue the run if it is open, else wait.
 | Never | Instead |
 |---|---|
 | write the unit's code yourself | a nested agent does; controller skill §9 for finishing a parked one |
-| message `fm-<w>-relay` or run `fm send` (it speaks as the human) | `SendMessage` to `fm-<w>-workspace` |
+| message `fm-<w>-relay`, run `fm tell` (it reaches the human) or `fm send` (it speaks as the human) | `SendMessage` to `fm-<w>-workspace` |
 | `fm want`/`fm unwant`; `claude stop`/`rm`/`respawn` of a session you did not launch | ask `fm-<w>-workspace`; stop only your own nested agents (nested-claude §6) |
 | decide a migration, deploy, prod data, dependency or public contract | §3 |
 | let a nested agent close, verify or report its own unit | §2 known gap |

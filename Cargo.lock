@@ -1670,9 +1670,13 @@ name = "foreman-claude"
 version = "0.1.0"
 dependencies = [
  "foreman-core",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.17",
+ "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]

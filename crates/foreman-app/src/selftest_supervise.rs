@@ -10,13 +10,16 @@
 //! - b. Start (click) → `fm-selftest-<hex>-relay` launched before `fm-selftest-<hex>-workspace`, both live;
 //!   the workspace session's event log has SessionStart(startup) and its transcript the role tag the hook
 //!   injected.
-//! - r. the relay writes `ready.json`; a target `fm-selftest-<hex>-target` (launched here, auto, told to
-//!   answer with the nonce) gets a message sent with `foreman_core::send`, and the answer comes back as an
-//!   outbox message carrying the nonce, and into the app's Messages section.
-//! - t. (run after c) the task box: Task… (click) on the testbed, a two-line task typed key by key, Ctrl+Enter → an inbox
-//!   drop `{to: fm-selftest-<hex>-workspace, body: <the task>}` and the box cleared; an `APPROVE?` injected
-//!   into the outbox as from the workspace session → Approve (click) → a drop `approve` and the row shows
-//!   `answered: approve`, also in `answered.json`; text typed and Escape → the box closed, nothing sent.
+//! - r. the relay writes `ready.json`; a target `fm-selftest-<hex>-target` (launched here, auto, Foreman's
+//!   plugin, told to answer each nonce with `fm tell`) gets 30 messages straight into its pipe, one a second
+//!   (`foreman_claude::human`), and answers every nonce: delivered, none held or dropped. Then one forced
+//!   fallback (a `Sender` whose registry dir is empty) goes through the relay, and its nonce comes back too,
+//!   into the app's Messages section with Attach.
+//! - t. (run after c) the task box: Task… (click) on the testbed, a two-line task typed key by key, Ctrl+Enter →
+//!   delivered direct (the box shows `sent direct: …`, the workspace session's transcript has it framed as the
+//!   human's, no relay drop) and the box cleared; an `APPROVE?` injected into the outbox as from the workspace
+//!   session → Approve (click) → `approve` delivered direct, the row shows `answered: approve · sent direct`,
+//!   also in `answered.json`; text typed and Escape → the box closed, nothing sent.
 //!   `FOREMAN_SELFTEST_HOLD_SECS=<n>` holds the box and the answered row on screen for `n` s before
 //!   Escape (for a screenshot), after writing `<FOREMAN_HOME>/hold`.
 //! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
@@ -43,7 +46,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Claude, Health, LaunchSpec, Session, check_supported, list_sessions, now_ms};
+use foreman_claude::{Claude, Health, LaunchSpec, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
     EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
@@ -61,8 +64,12 @@ use crate::selftest::{
 use crate::view::{FleetView, process_alive};
 use crate::{Mode, supervise};
 
-const PROMPT_TARGET: &str = "This is an automated Foreman selftest. When another session sends you a message, reply \
-to its sender with SendMessage repeating the FOREMAN-RELAY nonce it contains, then wait for more. Do nothing else.";
+const PROMPT_TARGET: &str = "This is an automated Foreman selftest. Messages will arrive that contain nonces like \
+FOREMAN-DIRECT-1a2b3c01 or FOREMAN-RELAY-1a2b3c. Each time you get one or more of them, run exactly one Bash command: \
+fm tell \"<every nonce you got since your last reply, space-separated>\" and then wait for more. Never use SendMessage. \
+Do nothing else.";
+/// Step r's direct sends to the target, one a second: half the receiver's burst, none paced (m5/4).
+const DIRECT_SENDS: usize = 30;
 const REPO: &str = "Repo";
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
@@ -444,7 +451,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     // after c, not right after r: the drops give the workspace session turns of its own, and one that ends
     // `working`/`blocked` is respawned by the daemon when step c kills it, not resumed by the supervisor (m2/4)
-    task_box_step(tb, view, cx).await.context("step t")?;
+    task_box_step(tb, &transcript, view, cx).await.context("step t")?;
 
     want_step(tb, view, cx).await.context("step w")?;
 
@@ -899,18 +906,77 @@ async fn relay_step(
     }
 
     let target = tb.target();
+    let plugin = cargo_root().join("plugins").join("foreman");
     let mut spec = LaunchSpec::new(&target, &tb.a.1, PROMPT_TARGET);
     spec.strict_mcp_config = true;
-    spec.extra_args = vec!["--settings".into(), r#"{"worktree":{"bgIsolation":"none"}}"#.into()];
+    spec.plugin_dirs = vec![plugin.clone()];
+    let env = serde_json::json!({
+        "env": { "FOREMAN_HOME": tb.home.display().to_string(), "FOREMAN_WORKSPACE": w, "FOREMAN_SESSION": target },
+        "worktree": { "bgIsolation": "none" },
+    });
+    spec.extra_args = vec!["--settings".into(), env.to_string(), "--allowedTools".into()];
+    spec.extra_args.extend(supervise::fm_allowed_tools(&plugin));
     let launch = cx.background_executor().spawn(async move { Claude::default().launch(&spec) }).await?;
     let target_row = wait_for("target live", Duration::from_secs(60), cx, |rows| {
         rows.iter().find(|s| s.name == target && s.pid.is_some()).cloned()
     })
     .await?;
+    // the pipe is registered once the session is up; only ever the one this run launched
+    let registered = Instant::now();
+    while let Err(e) = own_peer(&target, &tb.a.1) {
+        if registered.elapsed() > Duration::from_secs(60) {
+            bail!("{target}: {e:#}");
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    }
 
+    // direct: DIRECT_SENDS messages straight into the target's pipe, one a second
+    let tag = crate::selftest::hex6();
+    let nonces: Vec<String> = (1..=DIRECT_SENDS).map(|i| format!("FOREMAN-DIRECT-{tag}{i:02}")).collect();
+    let direct_started = Instant::now();
+    let mut not_direct = Vec::new();
+    for (i, nonce) in nonces.iter().enumerate() {
+        let (home, ws, to) = (tb.home.clone(), w.to_string(), target.clone());
+        let body = format!("{nonce} direct delivery {}/{DIRECT_SENDS} from the selftest", i + 1);
+        // launched above with LaunchSpec's default mode, auto
+        let sent = cx.background_executor().spawn(async move { send_from_human(&home, &ws, &to, Some("auto"), &body, None) }).await?;
+        if !sent.is_direct() {
+            not_direct.push(sent.label());
+        }
+        sleep(cx, Duration::from_secs(1)).await;
+    }
+    if !not_direct.is_empty() {
+        bail!("{} of {DIRECT_SENDS} sends did not go direct: {not_direct:?}", not_direct.len());
+    }
+    let sent_in = direct_started.elapsed();
+    let answered = loop {
+        let bodies: Vec<String> =
+            read_outbox(&tb.home, w)?.into_iter().filter(|m| m.from_name == target && !m.is_notice()).map(|m| m.body).collect();
+        let answered: Vec<&String> = nonces.iter().filter(|n| bodies.iter().any(|b| b.contains(n.as_str()))).collect();
+        if answered.len() == nonces.len() {
+            break answered.len();
+        }
+        if direct_started.elapsed() > Duration::from_secs(360) {
+            let missing: Vec<&String> = nonces.iter().filter(|n| !answered.contains(n)).collect();
+            bail!("{target} answered {} of {DIRECT_SENDS} direct nonces within 360 s; missing (held or dropped) {missing:?}", answered.len());
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    };
+    let direct_round_trip = direct_started.elapsed();
+
+    // forced fallback: a registry dir with no entry, so the relay carries it
+    let empty = tb.home.join("no-sessions");
+    std::fs::create_dir_all(&empty)?;
     let nonce = format!("FOREMAN-RELAY-{}", crate::selftest::hex6());
     let sent_at = Instant::now();
-    let drop = foreman_core::send(&tb.home, w, &target, &format!("{nonce} ping from the selftest\nsecond line"))?;
+    let fallback =
+        Sender { sessions: Some(empty), ..Sender::default() }.send(&tb.home, w, &target, Some("auto"), &format!("{nonce} ping from the selftest\nsecond line"))?;
+    let Route::Relay { reason, drop } = &fallback.route else {
+        bail!("the forced fallback went {:?}", fallback.route);
+    };
+    if !reason.starts_with("no session named") {
+        bail!("the forced fallback's reason is {reason:?}");
+    }
     let reply = loop {
         let found = read_outbox(&tb.home, w)?
             .into_iter()
@@ -920,7 +986,7 @@ async fn relay_step(
         }
         if sent_at.elapsed() > Duration::from_secs(120) {
             let notices: Vec<String> = read_outbox(&tb.home, w)?.into_iter().filter(|m| m.is_notice()).map(|m| m.body).collect();
-            bail!("no outbox message with {nonce} within 120 s of the drop (notices: {notices:?}; relay row {:?})", row(relay_name, cx).await?.map(|r| raw(&r)));
+            bail!("no outbox message with {nonce} within 120 s of the relay drop (notices: {notices:?}; relay row {:?})", row(relay_name, cx).await?.map(|r| raw(&r)));
         }
         sleep(cx, Duration::from_millis(100)).await;
     };
@@ -946,10 +1012,13 @@ async fn relay_step(
     // would wait on it for ever. Its job is done.
     claude(&["stop", &target_row.id], None).context("stop the target")?;
     println!(
-        "step r: {relay_name} wrote ready.json {} after Start; workspace row shows `relay ready` | launched {target} ({}, `{}`) | send() dropped {} → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach",
+        "step r: {relay_name} wrote ready.json {} after Start; workspace row shows `relay ready` | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with fm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach",
         secs(ready_after),
         target_row.id,
         launch.lines().next().unwrap_or_default(),
+        secs(sent_in),
+        secs(direct_round_trip),
+        fallback.label(),
         drop.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
         reply.file,
         reply.from_name,
@@ -1006,21 +1075,59 @@ fn drops(home: &std::path::Path, w: &str) -> anyhow::Result<Vec<(String, RelayDr
     Ok(out)
 }
 
-async fn wait_drop(home: &std::path::Path, w: &str, to: &str, body: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let started = Instant::now();
-    loop {
-        if let Some((name, _)) = drops(home, w)?.into_iter().find(|(_, d)| d.to == to && d.body == body) {
-            return Ok(name);
-        }
-        if started.elapsed() > Duration::from_secs(5) {
-            bail!("no drop {{to: {to}, body: {body:?}}} within 5 s; drops: {:?}", drops(home, w)?);
-        }
-        sleep(cx, Duration::from_millis(100)).await;
+/// The registry entry of a session this run launched, by the exact name it chose, registered in `cwd`:
+/// what a direct send resolves to. A selftest writes into no other session's pipe.
+fn own_peer(name: &str, cwd: &std::path::Path) -> anyhow::Result<peer::PeerTarget> {
+    let prefix = format!("fm-selftest-{}-", testbed()?.hex);
+    if !name.starts_with(&prefix) {
+        bail!("{name} is not this run's session ({prefix}…)");
     }
+    let sessions = peer::sessions_dir().ok_or_else(|| anyhow!("no home directory for ~/.claude/sessions"))?;
+    let t = peer::find_session(&sessions, name, &peer::System)?;
+    let same = |p: &std::path::Path| std::fs::canonicalize(p).ok();
+    if t.cwd.as_deref().and_then(same) != same(cwd) {
+        bail!("{name} (pid {}) registered cwd {:?}, not {}", t.pid, t.cwd, cwd.display());
+    }
+    Ok(t)
 }
 
-/// Step t: the task box and the Approve button, each through the UI, each a relay drop like `fm send`'s.
-async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+/// The `m-<8hex>` of a `sent direct [m-…]` label.
+fn direct_id(label: &str) -> anyhow::Result<String> {
+    label
+        .strip_prefix("sent direct [")
+        .and_then(|rest| rest.strip_suffix(']'))
+        .map(String::from)
+        .ok_or_else(|| anyhow!("{label:?} is not a direct send"))
+}
+
+/// Whether the session's transcript holds `text` as Foreman framed it for `w` with `id` (JSON-escaped, as
+/// the transcript stores a message's content).
+fn in_transcript(transcript: &str, w: &str, text: &str, id: &str) -> bool {
+    let framed = serde_json::to_string(&foreman_claude::human::framed(w, text, id)).unwrap_or_default();
+    std::fs::read_to_string(transcript).is_ok_and(|t| t.contains(framed.trim_matches('"')))
+}
+
+/// Direct sends recorded for `to` in the workspace's ledger.
+fn ledger_count(home: &std::path::Path, w: &str, to: &str) -> anyhow::Result<usize> {
+    let path = foreman_core::relay_dir(home, w)?.join(foreman_claude::human::LEDGER_FILE);
+    let v: serde_json::Value = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    Ok(v["sent"].as_array().map_or(0, |a| a.iter().filter(|e| e["to"] == to).count()))
+}
+
+async fn wait_delivered(transcript: &str, w: &str, text: &str, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
+    let started = Instant::now();
+    while !in_transcript(transcript, w, text, id) {
+        if started.elapsed() > Duration::from_secs(90) {
+            bail!("{transcript} has no framed {text:?} within 90 s");
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    }
+    Ok(started.elapsed())
+}
+
+/// Step t: the task box and the Approve button, each through the UI, each delivered direct like `fm send`'s.
+/// `transcript`: the workspace session's.
+async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let ctrl = workspace_session_name(w);
     let task_key = format!("task-{w}");
@@ -1031,6 +1138,7 @@ async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
     if open != Some((w.to_string(), None, true)) {
         bail!("Task… opened {open:?}, not a focused task box for {w}");
     }
+    own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
     let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
     // the workspace session reads this as the human's: it must not start work
     let task = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.\nDo nothing and send nothing.");
@@ -1040,14 +1148,15 @@ async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
         bail!("the box holds {typed:?} after typing {task:?}");
     }
     keystroke(cx, "enter", None, Modifiers::control())?;
-    let task_drop = wait_drop(&tb.home, w, &ctrl, &task, cx).await?;
-    let after = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.text.clone(), c.sent.clone(), c.error.clone())));
-    let Some((left, Some(sent), None)) = after else {
+    let after = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.text.clone(), c.sent.clone(), c.route.clone(), c.error.clone())));
+    let Some((left, Some(sent), Some(route), None)) = after else {
         bail!("after Ctrl+Enter the box is {after:?}, expected open, cleared, `sent` set and no error");
     };
     if !left.is_empty() || !sent.starts_with(&nonce) {
-        bail!("after Ctrl+Enter the box holds {left:?}, sent {sent:?}");
+        bail!("after Ctrl+Enter the box holds {left:?}, sent {sent:?} ({route})");
     }
+    let task_id = direct_id(&route)?;
+    let task_in = wait_delivered(transcript, w, &task, &task_id, cx).await?;
 
     // an APPROVE? as the workspace session would send it, newest in the outbox
     let file = format!("{:013}-selftest-approve.json", now_ms());
@@ -1063,10 +1172,16 @@ async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
         bail!("the APPROVE? row has Approve but no Reply…");
     }
     click(view, &approve_key, cx).await?;
-    let approve_drop = wait_drop(&tb.home, w, &ctrl, "approve", cx).await?;
     wait_painted(view, &format!("msg-answered-{key}"), Duration::from_secs(5), cx).await?;
     if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
         bail!("the answered row still offers Approve");
+    }
+    let approve_route = view.read_with(cx, |v, _| v.answered_route.get(&key).cloned()).unwrap_or_default();
+    let approve_id = direct_id(&approve_route)?;
+    let approve_in = wait_delivered(transcript, w, "approve", &approve_id, cx).await?;
+    let relayed: Vec<String> = drops(&tb.home, w)?.into_iter().filter(|(_, d)| d.to == ctrl).map(|(f, _)| f).collect();
+    if !relayed.is_empty() {
+        bail!("direct sends left relay drops for {ctrl}: {relayed:?}");
     }
     let saved = read_answered(&tb.home, w)?;
     if saved.get(&file).map(String::as_str) != Some("approve") {
@@ -1081,36 +1196,36 @@ async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
         println!("step t: holding {secs} s for a screenshot");
         sleep(cx, Duration::from_secs(secs)).await;
     }
-    let before = drops(&tb.home, w)?.len();
+    let before = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
     keystroke(cx, "escape", None, Modifiers::default())?;
     sleep(cx, Duration::from_millis(500)).await;
     let closed = view.read_with(cx, |v, _| v.compose.is_none());
-    let after = drops(&tb.home, w)?.len();
-    if !closed || after != before {
-        bail!("Escape: box closed={closed}, drops {before} → {after}");
+    let after = (drops(&tb.home, w)?.len(), ledger_count(&tb.home, w, &ctrl)?);
+    if !closed || after != before || before.1 != 2 {
+        bail!("Escape: box closed={closed}, (relay drops, direct sends) {before:?} → {after:?}, expected 2 direct sends");
     }
-    // Both drops reach the workspace session as two prompts; step c kills it once idle, and a kill in the gap
-    // between them is a kill mid-turn, which the daemon resumes instead of the supervisor. So: both sent,
-    // then idle for SETTLED without a break.
+    // Both messages reach the workspace session as two prompts; a later step's kill in the gap between them
+    // is a kill mid-turn, which the daemon resumes instead of the supervisor. So: idle for SETTLED without a break.
     const SETTLED: Duration = Duration::from_secs(15);
-    let sent = inbox_dir(&tb.home, w)?.join(SENT_DIR);
     let started = Instant::now();
     let mut idle_since: Option<Instant> = None;
     loop {
-        let delivered = [&task_drop, &approve_drop].iter().all(|d| sent.join(d).is_file());
+        let delivered = in_transcript(transcript, w, &task, &task_id) && in_transcript(transcript, w, "approve", &approve_id);
         let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.health(now_ms()) == Health::Idle);
         idle_since = if idle { idle_since.or(Some(Instant::now())) } else { None };
         if idle_since.is_some_and(|t| t.elapsed() >= SETTLED) {
             break;
         }
         if started.elapsed() > Duration::from_secs(180) {
-            bail!("{ctrl} not idle for {} s within 180 s of the drops (both sent: {delivered})", SETTLED.as_secs());
+            bail!("{ctrl} not idle for {} s within 180 s of the sends (both in its transcript: {delivered})", SETTLED.as_secs());
         }
         sleep(cx, Duration::from_millis(500)).await;
     }
     println!(
-        "step t: Task… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → drop {task_drop} {{to: {ctrl}, body: the task}}, box cleared, shows `sent: …` | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked → drop {approve_drop} `approve`, row shows `answered: approve`, answered.json has it | typed + Escape → closed, nothing dropped | both delivered, {ctrl} idle {} s after {}",
+        "step t: Task… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → `sent direct [{task_id}]`, box cleared, in {ctrl}'s transcript framed as the human's after {} | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked → `answered: approve · sent direct [{approve_id}]`, answered.json has it, in the transcript after {}, no relay drop | typed + Escape → closed, nothing sent | {ctrl} idle {} s after {}",
         task.chars().count(),
+        secs(task_in),
+        secs(approve_in),
         SETTLED.as_secs(),
         secs(started.elapsed())
     );
