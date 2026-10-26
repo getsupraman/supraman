@@ -12,7 +12,7 @@ use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
 use foreman_core::{
     HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, install_hook_exe, migrate_home,
-    read_outbox, relay_ready,
+    read_answered, read_outbox, relay_ready,
 };
 use foreman_supervisor::{
     DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, fill_paths, is_live,
@@ -174,6 +174,8 @@ pub struct Report {
     pub relays: BTreeMap<String, RelayStatus>,
     /// Per registered workspace, the last [`MESSAGES_SHOWN`] outbox messages, oldest first.
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
+    /// Per workspace with messages, its `answered.json` (outbox file → the answer's first line).
+    pub answered: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 pub const MESSAGES_SHOWN: usize = 20;
@@ -310,6 +312,12 @@ impl Supervision {
                 Ok(mut msgs) if !msgs.is_empty() => {
                     msgs.drain(..msgs.len().saturating_sub(MESSAGES_SHOWN));
                     report.messages.insert(p.name.clone(), msgs);
+                    match read_answered(&self.home, &p.name) {
+                        Ok(answered) => {
+                            report.answered.insert(p.name.clone(), answered);
+                        }
+                        Err(e) => report.errors.push(format!("Cannot read which questions of {} were answered: {e}", p.name)),
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => report.errors.push(format!("Cannot read the messages of {}: {e}", p.name)),

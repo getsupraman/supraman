@@ -11,8 +11,10 @@ use std::{
 
 use collections::HashMap;
 use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings};
-use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
+use foreman_core::{
+    Ask, AskState, DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings, ask_states, mark_answered,
+};
+use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
 use foreman_term::{
     Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
@@ -26,6 +28,7 @@ use gpui::{
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
 
+use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
@@ -153,6 +156,11 @@ pub struct FleetView {
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
     /// `<workspace>/<file>` of the messages shown in full.
     expanded: HashSet<String>,
+    /// Per workspace, the questions answered from here: outbox file → the answer's first line (this
+    /// session's, plus `answered.json` as each tick reads it).
+    pub answered: BTreeMap<String, BTreeMap<String, String>>,
+    /// The open task box or reply, at most one.
+    pub compose: Option<Compose>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -327,6 +335,8 @@ impl FleetView {
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
             expanded: HashSet::new(),
+            answered: BTreeMap::new(),
+            compose: None,
         }
     }
 
@@ -365,6 +375,12 @@ impl FleetView {
             self.last_attempt = report.last_attempt.into_iter().collect();
             self.relays = report.relays;
             self.messages = report.messages;
+            for (workspace, on_disk) in report.answered {
+                let answered = self.answered.entry(workspace).or_default();
+                for (file, line) in on_disk {
+                    answered.entry(file).or_insert(line);
+                }
+            }
             self.ticks += 1;
         }
         self.last_refresh_took = Some(refresh.took);
@@ -410,6 +426,91 @@ impl FleetView {
                 self.action_error = None;
             }
             Err(e) => self.action_error = Some(format!("Cannot stop {name}: {e:#}")),
+        }
+        cx.notify();
+    }
+
+    /// Why nothing can be sent through `workspace`'s relay now, if so: it must be started with its
+    /// relay live and its watcher armed (what the row shows as `relay ready`).
+    pub fn relay_refusal(&self, workspace: &str) -> Option<String> {
+        if self.home.is_none() {
+            return Some("no Foreman home".into());
+        }
+        match self.relays.get(workspace).and_then(|r| r.label(now_ms())) {
+            Some((_, true)) => None,
+            Some((text, false)) => Some(text),
+            None => Some(format!("{workspace} is stopped")),
+        }
+    }
+
+    /// Opens the task box (`reply_to: None`) or the reply to an outbox message, focused; an open one
+    /// for something else is replaced.
+    pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, cx: &mut Context<Self>) {
+        match &mut self.compose {
+            Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.focused = true,
+            compose => *compose = Some(Compose::new(workspace, reply_to)),
+        }
+        cx.notify();
+    }
+
+    /// The box's Ctrl+Enter: `relay::send(home, w, "fm-<w>-workspace", text)`, as `fm send` does. A task
+    /// clears the box on success; a reply marks its question answered and closes it. A refusal or a
+    /// failure stays in the box.
+    pub fn send_compose(&mut self, cx: &mut Context<Self>) {
+        let Some(c) = &self.compose else {
+            return;
+        };
+        let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text.trim().to_string());
+        let result = if text.is_empty() {
+            Err("Nothing to send.".to_string())
+        } else {
+            match &reply_to {
+                Some(file) => self.answer(&workspace, file, &text),
+                None => self.send_to_workspace(&workspace, &text),
+            }
+        };
+        match (result, &mut self.compose) {
+            (Ok(()), _) if reply_to.is_some() => self.compose = None,
+            (Ok(()), Some(c)) => {
+                c.clear();
+                c.sent = Some(compose::first_line(&text));
+                c.error = None;
+            }
+            (Err(e), Some(c)) => c.error = Some(e),
+            (_, None) => {}
+        }
+        cx.notify();
+    }
+
+    fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<(), String> {
+        if let Some(why) = self.relay_refusal(workspace) {
+            return Err(format!("Not sent: {why}."));
+        }
+        let home = self.home.as_deref().ok_or("no Foreman home")?;
+        foreman_core::send(home, workspace, &workspace_session_name(workspace), text)
+            .map(|_| ())
+            .map_err(|e| format!("Not sent: {e}"))
+    }
+
+    /// Sends `text` as the answer to the outbox message `file` and marks it answered, in memory and in
+    /// `answered.json` (a failed save is reported; the row still shows it answered).
+    pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<(), String> {
+        self.send_to_workspace(workspace, text)?;
+        let line = compose::first_line(text);
+        self.answered.entry(workspace.to_string()).or_default().insert(file.to_string(), line.clone());
+        if let Some(home) = &self.home
+            && let Err(e) = mark_answered(home, workspace, file, &line)
+        {
+            self.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
+        }
+        Ok(())
+    }
+
+    /// The Messages row's Approve: the answer `approve`.
+    pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
+        match self.answer(workspace, file, "approve") {
+            Ok(()) => self.action_error = None,
+            Err(e) => self.action_error = Some(format!("Approve {workspace}: {e}")),
         }
         cx.notify();
     }
@@ -831,6 +932,17 @@ impl FleetView {
             self.open_settings(cx);
             return;
         }
+        if let Some(compose) = self.compose.as_mut().filter(|c| c.focused) {
+            match compose.key(k, || cx.read_from_clipboard().and_then(|c| c.text())) {
+                KeyOutcome::Send => self.send_compose(cx),
+                KeyOutcome::Cancel => self.compose = None,
+                KeyOutcome::Edited => compose.error = None,
+                KeyOutcome::Ignored => {}
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         let Some(terminal) = self
             .active
             .and_then(|id| self.tab(id))
@@ -1081,6 +1193,17 @@ impl FleetView {
                     }
                 }),
             );
+            // only a workspace whose relay can take it now; otherwise the relay label beside it says why (and
+            // a long label plus this button would push Stop past the panel's edge)
+            let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
+                let w = workspace.name.clone();
+                button(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.open_compose(&w, None, cx);
+                    },
+                ))
+            });
             body = body.child(
                 div()
                     .id(SharedString::from(pkey.clone()))
@@ -1121,9 +1244,13 @@ impl FleetView {
                             .text_color(if ok { status.success } else { status.warning })
                             .child(SharedString::from(text))
                     }))
+                    .children(task)
                     .child(start_stop)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx))),
             );
+            if self.compose.as_ref().is_some_and(|c| c.workspace == workspace.name && c.reply_to.is_none()) {
+                body = body.children(self.render_compose(cx));
+            }
             if !open {
                 continue;
             }
@@ -1316,6 +1443,12 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let now = now_ms();
+        let no_answers = BTreeMap::new();
+        let asks: BTreeMap<&String, BTreeMap<String, AskState>> = self
+            .messages
+            .iter()
+            .map(|(w, msgs)| (w, ask_states(msgs, &workspace_session_name(w), self.answered.get(w).unwrap_or(&no_answers))))
+            .collect();
         let mut section = div()
             .id("messages")
             .flex()
@@ -1365,6 +1498,45 @@ impl FleetView {
                     },
                 ))
             });
+            let answer = asks.get(workspace).and_then(|a| a.get(&m.file)).map(|state| {
+                let row = div().flex().items_center().gap_2().text_xs();
+                let reply = |cx: &mut Context<Self>| {
+                    let (w, file) = (workspace.clone(), m.file.clone());
+                    button(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.open_compose(&w, Some(file.clone()), cx);
+                        },
+                    ))
+                };
+                match state {
+                    AskState::Open(Ask::Approve) => {
+                        let (w, file) = (workspace.clone(), m.file.clone());
+                        row.child(button(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
+                            move |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.approve(&w, &file, cx);
+                            },
+                        )))
+                        .child(reply(cx))
+                    }
+                    AskState::Open(Ask::Decide) => row.child(reply(cx)),
+                    AskState::Answered(line) => row.child(
+                        div()
+                            .relative()
+                            .text_color(status.success)
+                            .child(SharedString::from(format!("answered: {line}")))
+                            .child(hit_target(&self.hits, format!("msg-answered-{key}"))),
+                    ),
+                    AskState::Superseded => {
+                        row.child(div().text_color(colors.text_muted).child("superseded by a later APPROVE?"))
+                    }
+                }
+            });
+            let replying = self
+                .compose
+                .as_ref()
+                .is_some_and(|c| &c.workspace == workspace && c.reply_to.as_deref() == Some(m.file.as_str()));
             section = section.child(
                 div()
                     .id(SharedString::from(format!("msg-{key}")))
@@ -1398,7 +1570,8 @@ impl FleetView {
                                             .child(SharedString::from(fleet::ago(now - m.at))),
                                     ),
                             )
-                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(body))),
+                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(body)))
+                            .children(answer),
                     )
                     .children(attach)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1408,8 +1581,93 @@ impl FleetView {
                         cx.notify();
                     })),
             );
+            if replying {
+                section = section.children(self.render_compose(cx));
+            }
         }
         Some(section.into_any_element())
+    }
+
+    /// The open [`Compose`]: its text with a caret while focused, what Ctrl+Enter does, why the relay
+    /// cannot take it now, the last error or the last task sent; Send and Cancel.
+    fn render_compose(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let c = self.compose.as_ref()?;
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let ctrl = workspace_session_name(&c.workspace);
+        let title = match &c.reply_to {
+            Some(_) => format!("Reply to {ctrl}"),
+            None => format!("Task for {ctrl}"),
+        };
+        let caret = if c.focused { "▏" } else { "" };
+        let (before, after) = c.text.split_at(c.cursor());
+        let text = if c.text.is_empty() {
+            div()
+                .text_color(colors.text_muted)
+                .child(SharedString::from(format!("{caret}Type here; Enter adds a line.")))
+        } else {
+            div().text_color(colors.text).child(SharedString::from(format!("{before}{caret}{after}")))
+        };
+        let refusal = self.relay_refusal(&c.workspace);
+        let line = |text: String, color: Hsla| div().text_xs().text_color(color).child(SharedString::from(text));
+        Some(
+            div()
+                .id("compose")
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap_1()
+                .mx_3()
+                .my_1()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(if c.focused { colors.border_focused } else { colors.border })
+                .bg(colors.editor_background)
+                .cursor_text()
+                .child(hit_target(&self.hits, "compose-box".into()))
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .child(SharedString::from(title))
+                        .child("Ctrl+Enter sends · Esc cancels"),
+                )
+                .child(div().min_h(px(48.)).text_sm().child(text))
+                .children(refusal.map(|why| line(format!("Cannot send now: {why}."), status.warning)))
+                .children(c.error.clone().map(|e| line(e, status.error)))
+                .children(c.sent.clone().map(|s| line(format!("sent: {s}"), status.success)))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(button(&self.hits, "compose-send".into(), "Send", cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.send_compose(cx);
+                            },
+                        )))
+                        .child(button(&self.hits, "compose-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.compose = None;
+                                cx.notify();
+                            },
+                        ))),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    if let Some(c) = &mut this.compose {
+                        c.focused = true;
+                    }
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
     }
 
     fn render_session(
@@ -1648,6 +1906,18 @@ impl FleetView {
                     div()
                         .flex_1()
                         .min_h_0()
+                        // a click in the terminal gives it the keys back from the task box
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                                if let Some(c) = &mut this.compose
+                                    && c.focused
+                                {
+                                    c.focused = false;
+                                    cx.notify();
+                                }
+                            }),
+                        )
                         .on_scroll({
                             // as Zed's TerminalView::scroll_wheel: the Terminal decides between
                             // scrollback, a mouse report and alternate-scroll arrow keys
