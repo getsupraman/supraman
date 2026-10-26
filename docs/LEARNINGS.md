@@ -1212,3 +1212,37 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   removed → 1 failed.
 - Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 300 passed (297 + 3), 0 failed;
   `--selftest` PASS (p95 21.88 ms, max 35.03 ms, 0 > 50 ms; idle 121.3 MiB); `--selftest-supervise` PASS.
+
+## 2026-10-26 — tf/6 wheel scroll
+
+- **Cause** (René, 2026-10-24, "I can't scroll in a terminal"): the Zed port kept `Terminal::scroll_wheel` and its
+  mode logic, but nothing called it — `term_element.rs` dropped Zed's mouse handling and the tab wired only keys.
+- **Fix**: the div around a tab's grid (`render_right`, `crates/foreman-app/src/view.rs`) has `on_scroll` →
+  `Terminal::scroll_wheel(e, SCROLL_MULTIPLIER = 1.0 (Zed's default), MouseInputMode::ReportToTerminal)`, then
+  `cx.notify()` on the view; the queued `Scroll` is applied by the grid's prepaint `sync`. The Terminal decides, as
+  in Zed: mouse tracking on → an SGR/normal mouse report to the PTY; alt screen + alternate scroll → `ESC O A/B`
+  arrow keys; else the scrollback (`display_offset`). Already in the port, unchanged: output arriving while scrolled
+  up keeps the view (alacritty), and every `input()` queues `Scroll::Bottom`. No focus check (Zed scrolls only a
+  focused or standalone view; Foreman's keys go to the active tab anyway).
+- **Windows wheel**: gpui_windows sends `ScrollDelta::Lines`, one notch = `WHEEL_DELTA` × the system's 3 lines,
+  positive = up; **shift+wheel becomes horizontal** (x), so Zed's "shift forces a local scroll" never sees a y delta
+  on Windows — shift+wheel does nothing in a tab, as in Zed on Windows.
+- Tests: `test_report_mode_wheel_without_mouse_mode_scrolls_scrollback` (offset 3, no PTY write, output does not yank,
+  a keystroke returns to 0) and `test_report_mode_wheel_on_alt_screen_sends_arrow_keys` (incl. shift → nothing) in
+  `crates/foreman-term/src/terminal.rs`; they pin the port's behaviour for Foreman's mode. Selftest step 6
+  (`wheel_scroll`): a `-NoProfile` `+` tab, `lines*2+20` lines, wheel events dispatched over the grid through the
+  window: `display_offset 0 → 6 → 3 → 0`. Red: handler body disabled → step 6 FAIL "left display_offset at 0".
+  The user's pwsh profile prompt has no `PS ` (the first run of step 6 timed out on it), hence `-NoProfile`.
+- Hand check (`target/tf-6/`, PrintWindow; real `mouse_event` relative moves + `MOUSEEVENTF_WHEEL`): 3 notches up =
+  9 lines, 3 down = bottom, 5 up then `x` typed = bottom, scrolled up while `tick` lines arrive = view held.
+  `claude` TUI case not tried (an untrusted scratch dir would need the trust prompt); the alt-screen path is unit-tested.
+- **Gotchas, synthetic input**: `Process.MainWindowHandle` of foreman.exe is its console, find the gpui window by
+  `EnumWindows` + pid; relative `mouse_event` moves are accelerated (2×20 px landed +79 px), use ±1 steps after
+  `SetCursorPos`; check `WindowFromPoint` is Foreman (and make it topmost) before clicking, and that it is the
+  foreground window before `SendKeys`.
+- Gate (P: had 2.4 GB free → `CARGO_TARGET_DIR` on C:, `plugins` junction beside it, exe copies in the worktree's
+  `target/release` for the supervise selftest): `cargo build --release --workspace` ok; `cargo test --workspace`
+  307 passed (305 + 2), 0 failed; `--selftest` PASS (p95 21.72 ms, max 24.30 ms, 0 > 50 ms; idle 131.8 MiB — up
+  from ~121 MiB, the step-6 shell tab ran and closed before the measurement); `--selftest-supervise` FAIL at step c
+  on the first run (the daemon resumed the killed workspace session, not the supervisor — the known model-turn case
+  above), PASS on the rerun.

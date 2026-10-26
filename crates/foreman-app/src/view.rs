@@ -14,13 +14,13 @@ use foreman_claude::{ClaudeVersion, Health, Session, check_supported, list_sessi
 use foreman_core::{DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy};
 use foreman_term::{
-    Event as TerminalEvent, Terminal, TerminalBuilder, TerminalMode,
+    Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CursorShape},
 };
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
-    FontWeight, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, SharedString, Window,
+    FontWeight, Hsla, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
     WindowHandle, canvas, div, prelude::*, px, relative,
 };
 use theme::ActiveTheme as _;
@@ -35,6 +35,8 @@ pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
+/// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
+const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
 const MIN_LEFT_WIDTH: Pixels = px(280.);
 const MIN_RIGHT_WIDTH: Pixels = px(320.);
@@ -1642,7 +1644,24 @@ impl FleetView {
                             ))),
                     )
                 })
-                .child(div().flex_1().min_h_0().child(term_element::terminal_grid(terminal.clone())))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .on_scroll({
+                            // as Zed's TerminalView::scroll_wheel: the Terminal decides between
+                            // scrollback, a mouse report and alternate-scroll arrow keys
+                            let terminal = terminal.clone();
+                            cx.listener(move |_, e: &ScrollEvent, _, cx| {
+                                terminal.update(cx, |terminal, _| {
+                                    terminal.scroll_wheel(e, SCROLL_MULTIPLIER, MouseInputMode::ReportToTerminal);
+                                });
+                                // the queued Scroll is applied by the grid's prepaint sync
+                                cx.notify();
+                            })
+                        })
+                        .child(term_element::terminal_grid(terminal.clone())),
+                )
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
             Some(_) => placeholder("starting…".into(), cx),
