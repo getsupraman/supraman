@@ -4,7 +4,8 @@
 //! the mint, the PATCH of the claude session uuid and the revoke, never a file or an argument.
 //!
 //! The minted token's expiry slides on use (72 h idle window). A session idle longer gets HTTP 401 on
-//! `/mcp`; nothing polls for that: its next launch or resume mints again with `replace`.
+//! `/mcp`: the supervisor shows it as [`crate::NeedsKind::TokenExpired`] (no turn seen within the
+//! window), and its next launch or resume mints again with `replace`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,6 +28,46 @@ pub struct MintRequest {
     pub external_role: String,
     /// One live token per name: `replace` revokes the old one and keeps the row and its `sessionId`.
     pub replace: bool,
+    /// The repository a repo session works in: its bare `work_brief()` opens the project bound to it
+    /// (m5/8). `None` for the workspace session and the relay (the workspace root is not a repo).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<MintRepo>,
+}
+
+/// `repo:{root, remote?}` of a mint, as git prints them; WorkState normalises both (Skills
+/// `docs/workstate/02-data-model.md`, Identity).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MintRepo {
+    /// The main checkout's root: the parent of `git rev-parse --path-format=absolute --git-common-dir`,
+    /// the same for every worktree.
+    pub root: String,
+    /// `git remote get-url origin`; `None` without an origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<String>,
+}
+
+/// The [`MintRepo`] of the git working tree `dir` (a worktree gives its main checkout's root); `None`
+/// when `dir` is not in one or git cannot be run.
+pub fn git_repo(dir: &Path) -> Option<MintRepo> {
+    let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let root = Path::new(&common).parent()?.to_str()?.to_string();
+    Some(MintRepo {
+        root,
+        remote: git(dir, &["remote", "get-url", "origin"]),
+    })
+}
+
+/// `git -C <dir> <args>`: trimmed stdout when it succeeds and prints something.
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !text.is_empty()).then_some(text)
 }
 
 /// The `201` of a mint. `token` is shown once; `Debug` never prints it.
@@ -195,6 +236,10 @@ pub struct MintedSession {
     /// The claude session uuid PATCHed since the last mint; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
+    /// Epoch ms of the mint or of the last turn seen within the token's window: what slid its expiry
+    /// last. `None` for a file written before m5/7; the first tick sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_active: Option<crate::Millis>,
 }
 
 /// Per session name, its [`MintedSession`]; persisted at `<FOREMAN_HOME>/supervisor/<workspace>.sessions.json`
@@ -338,6 +383,7 @@ mod tests {
             cwd: r"C:\demo".into(),
             external_role: "workspace".into(),
             replace: true,
+            repo: None,
         }
     }
 
@@ -364,6 +410,56 @@ mod tests {
                 "origin": "foreman/demo", "cwd": r"C:\demo", "externalRole": "workspace", "replace": true
             })
         );
+    }
+
+    #[test]
+    fn mint_http_client_sends_the_repo_of_a_repo_session() {
+        let (base, seen) = fake_server(vec![(201, r#"{"sessionId":"8","token":"wss_fake"}"#), (201, r#"{"sessionId":"9","token":"wss_fake"}"#)]);
+        let mut req = request();
+        req.external_role = "repo".into();
+        req.repo = Some(MintRepo {
+            root: "C:/demo/Alpha".into(),
+            remote: Some("git@github.com:demo/alpha.git".into()),
+        });
+        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        assert_eq!(body["repo"], serde_json::json!({ "root": "C:/demo/Alpha", "remote": "git@github.com:demo/alpha.git" }));
+        req.repo = Some(MintRepo { root: "C:/demo/Beta".into(), remote: None });
+        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        assert_eq!(body["repo"], serde_json::json!({ "root": "C:/demo/Beta" }), "no origin, no remote");
+    }
+
+    #[test]
+    fn mint_git_repo_of_a_worktree_is_its_main_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = dir.path().join("main");
+        std::fs::create_dir(&main).unwrap();
+        let run = |cwd: &Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(cwd)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        run(&main, &["init", "-q"]);
+        run(&main, &["commit", "-q", "--allow-empty", "-m", "x"]);
+        let wt = dir.path().join("wt");
+        run(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+        let of_main = git_repo(&main).unwrap();
+        assert_eq!(of_main, MintRepo { root: of_main.root.clone(), remote: None }, "no origin");
+        let canon = |p: &str| std::fs::canonicalize(p).unwrap();
+        assert_eq!(canon(&of_main.root), canon(main.to_str().unwrap()));
+        assert_eq!(git_repo(&wt).unwrap().root, of_main.root, "a worktree sends its main checkout's root");
+        run(&main, &["remote", "add", "origin", "https://example.invalid/demo/alpha.git"]);
+        assert_eq!(git_repo(&wt).unwrap().remote.as_deref(), Some("https://example.invalid/demo/alpha.git"));
+        let plain = tempfile::tempdir().unwrap();
+        assert_eq!(git_repo(plain.path()), None, "not a repo");
     }
 
     #[test]
@@ -410,7 +506,10 @@ mod tests {
         let path = MintedSessions::path(home.path(), "demo");
         assert_eq!(path, home.path().join("supervisor").join("demo.sessions.json"));
         let mut s = MintedSessions::load(Some(path.clone())).unwrap();
-        s.insert("fm-demo-workspace", MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None });
+        s.insert(
+            "fm-demo-workspace",
+            MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None, last_active: Some(42) },
+        );
         s.save().unwrap();
         let back = MintedSessions::load(Some(path.clone())).unwrap();
         assert_eq!(back, s);

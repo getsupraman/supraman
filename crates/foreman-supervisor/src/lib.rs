@@ -67,7 +67,7 @@ pub use desired::{
 };
 pub use error::{Result, SupervisorError};
 pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider, session_identity};
-pub use mint::{HttpMinter, MintError, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base};
+pub use mint::{HttpMinter, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo};
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};
 pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};

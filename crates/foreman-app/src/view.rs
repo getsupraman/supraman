@@ -1106,7 +1106,7 @@ fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
     match kind {
         NeedsKind::Blocked | NeedsKind::TrustNeeded => status.warning,
-        NeedsKind::GaveUp | NeedsKind::LaunchFailed => status.error,
+        NeedsKind::GaveUp | NeedsKind::LaunchFailed | NeedsKind::TokenExpired => status.error,
         NeedsKind::Duplicate => status.hint,
     }
 }
@@ -1118,6 +1118,7 @@ fn needs_label(kind: NeedsKind) -> &'static str {
         NeedsKind::GaveUp => "gave up",
         NeedsKind::LaunchFailed => "launch failed",
         NeedsKind::Duplicate => "duplicate",
+        NeedsKind::TokenExpired => "token expired",
     }
 }
 
@@ -1141,6 +1142,7 @@ pub fn inbox_key(need: &NeedsYou) -> Option<String> {
         Remedy::Attach { .. } => "attach",
         Remedy::Retry => "retry",
         Remedy::RunInTerminal { .. } => "run",
+        Remedy::Remint { .. } => "remint",
     };
     Some(format!("inbox-{verb}-{}", need.name))
 }
@@ -1513,6 +1515,7 @@ impl FleetView {
                         Remedy::Attach { .. } => ("Attach", action.clone(), need.workspace.clone()),
                         Remedy::Retry => ("Retry", action.clone(), need.workspace.clone()),
                         Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.workspace.clone()),
+                        Remedy::Remint { .. } => ("Re-mint", action.clone(), need.workspace.clone()),
                     };
                     let name = need.name.clone();
                     Some(button(&self.hits, key, label, cx).on_click(cx.listener(
@@ -1520,7 +1523,7 @@ impl FleetView {
                             Remedy::Attach { id } => {
                                 this.attach_by_id(&workspace, id, window, cx);
                             }
-                            Remedy::Retry => this.retry(&workspace, &name, cx),
+                            Remedy::Retry | Remedy::Remint { .. } => this.retry(&workspace, &name, cx),
                             Remedy::RunInTerminal { cwd, command } => {
                                 this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
                             }

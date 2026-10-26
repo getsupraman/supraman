@@ -58,6 +58,25 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
 }
 
 #[test]
+fn skills_bind_every_repo_to_the_workspace_project() {
+    let skill = plugin("skills/workspace-controller/SKILL.md");
+    assert!(skill.contains("**Bind the repos.**"));
+    assert!(skill.contains("the project `<w>` holds the key of **every enabled repo**"));
+    assert!(skill.contains("whenever you create the project or first use it in a session"));
+    assert!(skill.contains("again when `fm workspace show <w>` lists a repo the project does not hold yet"));
+    assert!(skill.contains("`work_get(refs: [\"<w>\"])` prints the repos the project already holds"), "idempotent");
+    assert!(skill.contains("`git -C <repo dir> rev-parse --path-format=absolute --git-common-dir`"));
+    assert!(skill.contains("`git -C <repo dir> remote get-url origin`"));
+    assert!(skill.contains("`work_update(ref: \"<w>\", repo: {root: \"<root>\", remote: \"<remote>\"})`, one call per repo"));
+    assert!(skill.contains("project exists, **bind the repos** (below)"), "fresh start on an existing project");
+    assert!(skill.contains("Either way **bind the repos** (§3) before the runs"), "right after creating it");
+    assert!(skill.contains("repo-controllers keep their explicit `work_brief(scope: \"<run ref>\")`"), "runs are not repo-bound");
+    assert!(plugin("roles/workspace.md").contains("bind the workspace's repos to project {workspace}"));
+    let repo = plugin("skills/repo-controller/SKILL.md");
+    assert!(repo.contains("`work_brief(scope: \"<run ref>\")`") && !repo.contains("work_brief()"), "a repo-controller scopes its run");
+}
+
+#[test]
 fn the_repo_controller_never_reaches_the_human() {
     let skill = plugin("skills/repo-controller/SKILL.md");
     assert!(skill.contains("You never message `fm-<w>-relay` and never run `fm tell`"));
