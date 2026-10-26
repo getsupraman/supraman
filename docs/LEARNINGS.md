@@ -1760,3 +1760,36 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   supervise running), and 3 in a row (7–9) on the build before the row layout change; `--selftest-supervise` PASS on
   the build before the row layout change (that change is the Work tab journal's render only, which supervise does
   not open).
+
+## 2026-10-26 — m5/11 deterministic supervise selftest
+
+- **Step c's flake was the kill, not the supervisor.** Whether the workspace session's turn ends `done`, `working` or
+  `blocked` is the model's (the context decides, see the skills entry above); the daemon respawns a session killed
+  while `working`/`blocked` by itself (m2/4), and
+  Foreman's R13 deliberately leaves it to the daemon for 30 s — so "came back, but not by the supervisor" was Foreman
+  behaving as designed. Measured on two probe sessions mid-turn (`sleep 400`, `state=working status=busy`):
+  `taskkill /PID` → new pid 15 s later (`working/busy`, then `blocked/idle`), no resume issued; `claude stop` → row
+  `stopped`, no pid, for 100 s+. → Step c now ends the process with `claude stop <id>` (the daemon never respawns a
+  stopped session) and asserts the supervisor's resume (R3) as before: last attempt after the stop, same id and
+  sessionId, one row. On an idle-`done` row the stop leaves `state=done` (not `stopped`), no pid, in 1.4–2.2 s;
+  resumed by the supervisor after 31–37 s (the 30 s respawn grace + a tick). Daemon-respawns-a-crash stays R13's unit
+  test; a selftest cannot make the model's turn end deterministically, so it no longer depends on it.
+- **Step e's flake was the time the prompt stayed open.** In all ~30 park transcripts under `~/.claude/projects` the
+  park called `Bash: echo parked > parked.txt` and parked (no result) — default mode always asks for it. In the two
+  failing ones the call got a result 50 s and 2 min after it was made: someone approved the prompt (another Foreman
+  window shows every `fm-` session's Blocked row; m5/10). Step e looked only ~10 min after Start. → Step e runs right
+  after b and asserts Foreman's own observations: the Notification hook logged `permission_prompt` for the park's
+  session (10–18 s after launch) **and** the Inbox shows it Blocked with Attach to its row. A park whose command already
+  has a result fails at once with "answered before this step saw it parked" instead of timing out.
+- **Step w's flake was the reply text.** The repo session's `fm roster` call had the right result; the step read the
+  last assistant text on the first `Stop` event, and that text was the model's own ("Direct request: run the command
+  and answer."). → `tool_result(transcript, matches)` finds the first matching tool call's result (string or text
+  parts) and the step asserts a `fm-…-repo\trepo\t` line in it; the reply is not read. Test
+  `selftest_supervise::tests::finds_the_result_of_the_matching_tool_call`.
+- Red checks (each a temporary patch, built, run, reverted): no `NeedsYou::Blocked` in reconcile → FAIL step e "no
+  permission_prompt + Blocked Inbox row … (hook events: …, Notification(permission_prompt))"; no Resume for a pid-less
+  wanted row → FAIL step c "not resumed within 120 s of `claude stop`" (nothing else brought it back either); `fm
+  roster` without `-repo` rows → FAIL step w "its `fm roster` result does not list it as repo".
+- Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-11 + `plugins` junction, CLI 2.1.310): `cargo build --release --workspace` ok,
+  no warnings; `cargo test --workspace` 388 passed (387 + 1), 0 failed; `--selftest` PASS (p95 18.71 ms, max
+  21.13 ms, idle 131.9 MiB); `--selftest-supervise` PASS 5 of 5 consecutive (plus 1 PASS before the reds).
