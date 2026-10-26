@@ -1,5 +1,5 @@
-//! The left panel's model: registered workspaces → their supervised sessions and enabled repos → the
-//! sessions in them.
+//! The left panel's model: registered workspaces → their supervised sessions and repos → the sessions
+//! in the enabled ones. Disabled repos come last, without sessions.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -23,6 +23,8 @@ pub struct RepoNode {
     pub name: String,
     pub path: PathBuf,
     pub branch: Option<String>,
+    /// The registry's `enabled`; a disabled repo lists no sessions.
+    pub enabled: bool,
     pub sessions: Vec<SessionRow>,
 }
 
@@ -205,7 +207,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
             let mut supervised: Vec<SessionRow> = theirs.into_iter().map(row).collect();
             sort(&mut supervised);
             let mut by_repo = assign_with(&rest, workspace, &main_of).by_repo;
-            let repos = workspace
+            let mut repos: Vec<RepoNode> = workspace
                 .repos
                 .iter()
                 .filter(|r| r.enabled)
@@ -226,10 +228,18 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                         name: repo.name.clone(),
                         path: workspace.root.join(&repo.path),
                         branch: repo.branch.clone(),
+                        enabled: true,
                         sessions: rows,
                     }
                 })
                 .collect();
+            repos.extend(workspace.repos.iter().filter(|r| !r.enabled).map(|repo| RepoNode {
+                name: repo.name.clone(),
+                path: workspace.root.join(&repo.path),
+                branch: repo.branch.clone(),
+                enabled: false,
+                sessions: Vec::new(),
+            }));
             WorkspaceNode {
                 name: workspace.name.clone(),
                 root: workspace.root.clone(),
@@ -318,7 +328,8 @@ mod tests {
         let tree = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
         let p = &tree.workspaces[0];
         let repos: Vec<_> = p.repos.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(repos, ["Alpha", "Beta"], "disabled repo Off is not listed");
+        assert_eq!(repos, ["Alpha", "Beta", "Off"], "disabled repo Off comes last");
+        assert!(!p.repos[2].enabled && p.repos[2].sessions.is_empty(), "and lists no sessions");
         assert_eq!(names(&p.repos[0]), ["parked", "busy"]);
         assert_eq!(names(&p.repos[1]), ["term", "gone"]);
         assert_eq!(tree.hidden_stopped, 1);

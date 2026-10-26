@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, FontWeight, Hsla, Pixels, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px, relative};
 use theme::ActiveTheme as _;
 
-use super::{Cli, FleetView, INBOX_MAX_SHARE, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, REFRESH_EVERY, button, hit_target};
+use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, REFRESH_EVERY, button, hit_target};
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
 
@@ -119,6 +119,21 @@ impl FleetView {
                     )
                     .child(
                         div()
+                            .id("add-workspace")
+                            .relative()
+                            .flex_none()
+                            .px_2()
+                            .rounded_sm()
+                            .text_xs()
+                            .text_color(colors.text_muted)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(colors.ghost_element_hover))
+                            .child("+ workspace")
+                            .child(hit_target(&self.hits, "add-workspace".into()))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.add_workspace(cx))),
+                    )
+                    .child(
+                        div()
                             .id("busy-limit")
                             .flex_none()
                             .px_2()
@@ -191,9 +206,22 @@ impl FleetView {
         for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.action_error) {
             notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
         }
-        if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() {
+        for (name, r) in &self.removing {
+            let waiting = r.wanted.len();
             notices.push(notice(
-                "No workspaces registered. Add one with:  fm workspace add <dir>".into(),
+                format!("Removing {name}: waiting for its {waiting} supervised session(s) to stop…"),
+                colors.text,
+                colors.element_background,
+            ));
+        }
+        if let Some(info) = &self.action_info {
+            notices.push(notice(info.clone(), status.success, status.success.opacity(0.12)));
+        }
+        notices.extend(self.render_confirm(cx));
+        notices.extend(self.render_add(cx));
+        if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
+            notices.push(notice(
+                "No workspaces registered. Add one with + workspace above, or:  fm workspace add <dir>".into(),
                 colors.text,
                 colors.element_background,
             ));
@@ -249,6 +277,7 @@ impl FleetView {
             body = body.child(
                 div()
                     .id(SharedString::from(pkey.clone()))
+                    .relative()
                     .flex()
                     .items_center()
                     .gap_2()
@@ -293,6 +322,14 @@ impl FleetView {
                     }))
                     .children(task)
                     .child(start_stop)
+                    .child(hit_target(&self.hits, format!("ws-row-{}", workspace.name)))
+                    .on_mouse_down(MouseButton::Right, {
+                        let w = workspace.name.clone();
+                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.open_menu(MenuTarget::Workspace(w.clone()), e.position, cx);
+                        })
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx))),
             );
             if self.compose.as_ref().is_some_and(|c| c.workspace == workspace.name && c.reply_to.is_none()) {
@@ -328,6 +365,7 @@ impl FleetView {
                 body = body.child(
                     div()
                         .id(SharedString::from(rkey.clone()))
+                        .relative()
                         .flex()
                         .items_center()
                         .gap_2()
@@ -338,6 +376,7 @@ impl FleetView {
                         .cursor_pointer()
                         .hover(|s| s.bg(colors.ghost_element_hover))
                         .when(empty, |d| d.text_color(colors.text_muted))
+                        .when(!repo.enabled, |d| d.opacity(0.6))
                         .child(if empty { " " } else if ropen { "▾" } else { "▸" })
                         .child(SharedString::from(format!("./{}", repo.name)))
                         .child(
@@ -357,8 +396,17 @@ impl FleetView {
                                     .child(SharedString::from(format!("{}", repo.sessions.len()))),
                             )
                         })
+                        .when(!repo.enabled, |d| d.child(div().text_xs().text_color(colors.text_muted).child("disabled")))
                         .child(div().flex_1())
-                        .child(new_claude)
+                        .when(repo.enabled, |d| d.child(new_claude))
+                        .child(hit_target(&self.hits, format!("repo-row-{}/{}", workspace.name, repo.name)))
+                        .on_mouse_down(MouseButton::Right, {
+                            let (w, r) = (workspace.name.clone(), repo.name.clone());
+                            cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.open_menu(MenuTarget::Repo { workspace: w.clone(), repo: r.clone() }, e.position, cx);
+                            })
+                        })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx))),
                 );
                 if !ropen {
@@ -902,7 +950,9 @@ impl FleetView {
                 )
             });
 
+        let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
         div()
+            .relative()
             .flex()
             .flex_col()
             .pl(indent)
@@ -930,6 +980,175 @@ impl FleetView {
                         .child(SharedString::from(h)),
                 )
             })
+            .child(hit_target(&self.hits, format!("session-row-{}", s.session_id)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(target.clone(), e.position, cx);
+                }),
+            )
             .into_any_element()
+    }
+
+    /// The open question (Remove…, a Stop that asks): its text, the action's button and Cancel.
+    fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let confirm = self.confirm.as_ref()?;
+        let status = cx.theme().status().clone();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .mx_3()
+                .my_2()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(status.warning)
+                .bg(status.warning.opacity(0.12))
+                .text_sm()
+                .child(SharedString::from(confirm.text.clone()))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(button(&self.hits, "confirm-yes".into(), confirm.yes.clone(), cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.answer_confirm(true, window, cx);
+                            },
+                        )))
+                        .child(button(&self.hits, "confirm-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, window, cx| {
+                                cx.stop_propagation();
+                                this.answer_confirm(false, window, cx);
+                            },
+                        ))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The Add workspace review: folder, name (click to edit), the repos found with a tick each, the
+    /// reason it cannot be saved yet, Save and Cancel.
+    fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let draft = self.adding.as_ref()?;
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let caret = if draft.name_focused { "▏" } else { "" };
+        let mut repos = div().flex().flex_col().gap(px(2.));
+        if draft.scanning {
+            repos = repos.child(div().text_xs().text_color(colors.text_muted).child("scanning…"));
+        }
+        for (i, (repo, on)) in draft.repos.iter().enumerate() {
+            let key = format!("add-repo-{}", repo.name);
+            let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
+            repos = repos.child(
+                div()
+                    .id(SharedString::from(key.clone()))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .rounded_sm()
+                    .text_sm()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(colors.ghost_element_hover))
+                    .when(!*on, |d| d.text_color(colors.text_muted))
+                    .child(if *on { "☑" } else { "☐" })
+                    .child(SharedString::from(format!("./{}", repo.name)))
+                    .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
+                    .child(hit_target(&self.hits, key))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_add_repo(i, cx);
+                    })),
+            );
+        }
+        let ticked = draft.repos.iter().filter(|(_, on)| *on).count();
+        let summary = format!("{ticked} of {} repos enabled; unticked ones are registered disabled", draft.repos.len());
+        Some(
+            div()
+                .id("add-review")
+                .relative()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .mx_3()
+                .my_2()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(colors.border_focused)
+                .bg(colors.editor_background)
+                .child(hit_target(&self.hits, "add-review".into()))
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .child("ADD WORKSPACE")
+                        .child("Enter saves · Esc cancels"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(SharedString::from(draft.root.display().to_string())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .child("name")
+                        .child(
+                            div()
+                                .id("add-name")
+                                .relative()
+                                .flex_1()
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(if draft.name_focused { colors.border_focused } else { colors.border })
+                                .cursor_text()
+                                .child(SharedString::from(format!("{}{caret}", draft.name)))
+                                .child(hit_target(&self.hits, "add-name".into()))
+                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.focus_add_name(cx);
+                                })),
+                        ),
+                )
+                .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(summary)))
+                .child(repos)
+                .children(draft.error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(button(&self.hits, "add-save".into(), "Save", cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.save_add(cx);
+                            },
+                        )))
+                        .child(button(&self.hits, "add-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.cancel_add(cx);
+                            },
+                        ))),
+                )
+                .into_any_element(),
+        )
     }
 }

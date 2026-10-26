@@ -35,6 +35,11 @@ use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkInbox, WorkView};
 
 mod left;
+mod manage;
+mod menu;
+
+pub use manage::{AddDraft, NameKey, Removing};
+pub use menu::{Confirm, ContextMenu, MenuTarget};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -174,6 +179,18 @@ pub struct FleetView {
     work_live: Rc<RefCell<Vec<LiveSession>>>,
     /// Each workspace's WorkState inbox, shown in the Inbox under the supervisor's rows.
     pub work_inbox: Entity<WorkInbox>,
+    /// The open right-click menu, at most one.
+    pub menu: Option<ContextMenu>,
+    /// The question before Remove… or a Stop that asks, at most one.
+    pub confirm: Option<Confirm>,
+    /// The Add workspace review, while open.
+    pub adding: Option<AddDraft>,
+    /// Removes waiting for their workspace's sessions to stop.
+    pub removing: BTreeMap<String, Removing>,
+    /// What the last menu action did, when it says so (Rescan, Copy, Remove).
+    pub action_info: Option<String>,
+    /// The next Add workspace takes this folder instead of asking the OS picker (the selftest).
+    pub pick_folder: Option<PathBuf>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -308,6 +325,9 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
+                    if !this.removing.is_empty() {
+                        this.finish_removals(cx);
+                    }
                     let names = this.workspaces.iter().map(|w| w.name.clone()).collect();
                     this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(names, cx));
                     cx.notify();
@@ -365,6 +385,12 @@ impl FleetView {
             compose: None,
             work_live: Rc::default(),
             work_inbox,
+            menu: None,
+            confirm: None,
+            adding: None,
+            removing: BTreeMap::new(),
+            action_info: None,
+            pick_folder: None,
         }
     }
 
@@ -481,6 +507,9 @@ impl FleetView {
     /// Opens the task box (`reply_to: None`) or the reply to an outbox message, focused; an open one
     /// for something else is replaced.
     pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, cx: &mut Context<Self>) {
+        if let Some(draft) = &mut self.adding {
+            draft.name_focused = false;
+        }
         match &mut self.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.focused = true,
             compose => *compose = Some(Compose::new(workspace, reply_to)),
@@ -790,6 +819,16 @@ impl FleetView {
         id
     }
 
+    /// A shell tab in `cwd`.
+    pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let shell = util::shell::Shell::WithArguments {
+            program: "pwsh".into(),
+            args: self.shell_args.clone(),
+            title_override: None,
+        };
+        self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx)
+    }
+
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "pwsh".into(),
@@ -1009,6 +1048,24 @@ impl FleetView {
         let k = &event.keystroke;
         if k.key == "," && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift {
             self.open_settings(cx);
+            return;
+        }
+        if k.key == "escape" && (self.menu.is_some() || self.confirm.is_some()) {
+            if self.menu.take().is_none() {
+                self.confirm = None;
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if let Some(draft) = self.adding.as_mut().filter(|d| d.name_focused) {
+            match draft.key(&k.key, k.key_char.as_deref()) {
+                NameKey::Save => self.save_add(cx),
+                NameKey::Cancel => self.adding = None,
+                NameKey::Edited | NameKey::Ignored => {}
+            }
+            cx.notify();
+            cx.stop_propagation();
             return;
         }
         if let Some(compose) = self.compose.as_mut().filter(|c| c.focused) {
@@ -1345,6 +1402,7 @@ impl Render for FleetView {
                     )
                     .child(self.render_right(cx)),
             )
+            .children(self.render_menu(cx))
     }
 }
 
