@@ -34,6 +34,7 @@ use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkInbox, WorkView};
 
+mod icon;
 mod left;
 mod manage;
 mod menu;
@@ -161,8 +162,11 @@ pub struct FleetView {
     pub ticks: u64,
     /// Retries (`(workspace, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    /// Rows added to every `claude agents` snapshot, before the supervisor sees it: the selftest's fake
+    /// sessions (m5/10: another Foreman's parked row).
+    pub injected: Arc<Mutex<Vec<Session>>>,
     pub left_width: Pixels,
-    settings_window: Option<WindowHandle<SettingsView>>,
+    pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
     /// Per workspace that wants a relay: live, armed.
@@ -223,6 +227,7 @@ struct Poller {
     events: Option<EventReader>,
     supervision: Option<Supervision>,
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    injected: Arc<Mutex<Vec<Session>>>,
 }
 
 impl Poller {
@@ -246,7 +251,12 @@ impl Poller {
             .and_then(|r| r.list())
             .map_err(|e| e.to_string());
         let polled_at = now_ms();
-        let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
+        let sessions = with_sessions.then(|| {
+            list_sessions().map_err(|e| e.to_string()).map(|mut rows| {
+                rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
+                rows
+            })
+        });
         let main_repos = match &sessions {
             Some(Ok(sessions)) => fleet::main_repos(sessions),
             _ => StdHashMap::new(),
@@ -287,11 +297,13 @@ impl FleetView {
             .and_then(|s| s.left_width)
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let mut poller = Poller {
             home: home.clone(),
             events: None,
             supervision: None,
             retries: retries.clone(),
+            injected: injected.clone(),
         };
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -378,6 +390,7 @@ impl FleetView {
             polled_at: 0,
             ticks: 0,
             retries,
+            injected,
             left_width,
             settings_window: None,
             last_alive: StdHashMap::new(),
@@ -432,8 +445,11 @@ impl FleetView {
             HookSignal::record(&mut self.hooks, event);
         }
         if let Some(report) = refresh.report {
-            self.needs = report.needs;
             self.desired = report.desired;
+            // by construction only this home's wanted sessions raise one; kept so, whatever a tick reports
+            self.needs = report.needs;
+            let (workspaces, desired) = (&self.workspaces, &self.desired);
+            self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
             self.last_attempt = report.last_attempt.into_iter().collect();
@@ -661,20 +677,32 @@ impl FleetView {
 
     /// Brings the settings window forward, or opens it.
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.open_settings_at(None, cx);
+    }
+
+    /// [`Self::open_settings`], on `page` when given.
+    pub fn open_settings_at(&mut self, page: Option<settings_window::Page>, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window
-            && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+            && handle
+                .update(cx, |settings, window, cx| {
+                    if let Some(page) = page {
+                        settings.show(page, cx);
+                    }
+                    window.activate_window()
+                })
+                .is_ok()
         {
             return;
         }
         let (home, fleet) = (self.home.clone(), cx.weak_entity());
         let this = cx.weak_entity();
         cx.defer(move |cx| {
-            let handle = settings_window::open(home, fleet, cx);
+            let handle = settings_window::open(home, fleet, page, cx);
             this.update(cx, |this, _| this.settings_window = handle).ok();
         });
     }
 
-    fn close_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window.take() {
             handle.update(cx, |_, window, _| window.remove_window()).ok();
         }

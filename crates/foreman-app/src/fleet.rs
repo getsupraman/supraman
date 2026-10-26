@@ -34,6 +34,8 @@ pub struct SessionRow {
     pub health: Health,
     pub attachable: bool,
     pub hook: Option<HookSignal>,
+    /// [`is_foreign`]: shown dimmed as another Foreman's, never highlighted as blocked.
+    pub foreign: bool,
 }
 
 /// The latest hook event of one session (`fm hook`, `<FOREMAN_HOME>/events`), keyed by sessionId.
@@ -159,9 +161,19 @@ pub fn is_alive(health: &Health) -> bool {
     matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
 }
 
-/// Blocked first (it needs a human), then running, idle, unknown, orphaned, stopped.
-fn rank(health: &Health) -> u8 {
-    match health {
+/// An `fm-` session this home neither wants (its desired state) nor names (`fm-<workspace>-…` of a registered
+/// workspace): another `FOREMAN_HOME`'s, e.g. a selftest's (m5/10). Its prompts are not this user's to answer.
+pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) -> bool {
+    name.starts_with("fm-")
+        && !desired.is_some_and(|d| d.values().any(|(_, wanted)| wanted.iter().any(|w| w == name)))
+        && !workspaces.iter().any(|w| name.starts_with(&format!("fm-{}-", w.name)))
+}
+
+/// Blocked first (it needs a human), then running, idle, unknown, orphaned, stopped; another Foreman's
+/// blocked row ranks as running.
+fn rank(row: &SessionRow) -> u8 {
+    match &row.health {
+        Health::Blocked { .. } if row.foreign => 1,
         Health::Blocked { .. } => 0,
         Health::Running => 1,
         Health::Idle => 2,
@@ -173,8 +185,8 @@ fn rank(health: &Health) -> u8 {
 
 fn sort(rows: &mut [SessionRow]) {
     rows.sort_by(|a, b| {
-        rank(&a.health)
-            .cmp(&rank(&b.health))
+        rank(a)
+            .cmp(&rank(b))
             .then_with(|| b.session.started_at.cmp(&a.session.started_at))
     });
 }
@@ -186,6 +198,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         let health = with_hook(session.supervised_health(now_ms), hook.as_ref(), sup.polled_at);
         SessionRow {
             attachable: attachable(&session, &health),
+            foreign: is_foreign(&session.name, workspaces, sup.desired),
             session,
             health,
             hook,
@@ -405,6 +418,39 @@ mod tests {
         let sup = Supervised { hooks: Some(&hooks), polled_at: NOW - 1_000, ..Supervised::default() };
         let tree = build(&[workspace()], &rows, NOW, false, &sup);
         assert_eq!(tree.workspaces[0].repos[0].sessions[0].health, parked, "the hook's permission prompt still blocks it");
+    }
+
+    // m5/10
+    #[test]
+    fn another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked() {
+        let mut desired = BTreeMap::new();
+        desired.insert("demo".to_string(), (true, vec!["fm-demo-workspace".to_string(), "fm-x-workspace".to_string()]));
+        let ws = [workspace()];
+        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired));
+        assert!(foreign("fm-selftest-abc123-park"), "a selftest's session");
+        assert!(foreign("fm-other-workspace"), "another home's workspace");
+        assert!(!foreign("fm-demo-workspace"), "wanted here");
+        assert!(!foreign("fm-x-workspace"), "wanted here, whatever its name");
+        assert!(!foreign("fm-demo-alpha"), "named after a workspace of this home: retired, or wanted before the first tick");
+        assert!(!is_foreign("fm-demo-alpha", &ws, None));
+        assert!(!foreign("mine"), "the user's own session");
+
+        let old = NOW - 3_600_000;
+        let rows = parse(&format!(
+            r#"[
+  {{"id":"aaaa0021","sessionId":"aaaa0021-x","name":"fm-selftest-abc123-park","cwd":"C:\\demo\\Alpha","kind":"background","startedAt":{old},"state":"blocked","status":"waiting","waitingFor":"permission prompt","pid":21}},
+  {{"id":"aaaa0022","sessionId":"aaaa0022-x","name":"mine","cwd":"C:\\demo\\Alpha","kind":"background","startedAt":{},"state":"working","status":"busy","pid":22}},
+  {{"id":"aaaa0023","sessionId":"aaaa0023-x","name":"fm-demo-alpha","cwd":"C:\\demo\\Alpha","kind":"background","startedAt":{old},"state":"blocked","status":"waiting","waitingFor":"permission prompt","pid":23}}
+]"#,
+            NOW - 1_000
+        ))
+        .unwrap();
+        let sup = Supervised { desired: Some(&desired), ..Supervised::default() };
+        let tree = build(&ws, &rows, NOW, false, &sup);
+        let alpha: Vec<(&str, bool)> = tree.workspaces[0].repos[0].sessions.iter().map(|r| (r.session.name.as_str(), r.foreign)).collect();
+        assert_eq!(alpha, [("fm-demo-alpha", false), ("mine", false), ("fm-selftest-abc123-park", true)], "own blocked first, the foreign one as running");
+        let park = &tree.workspaces[0].repos[0].sessions[2];
+        assert_eq!(park.health, Health::Blocked { waiting_for: Some("permission prompt".into()) }, "its health is still shown");
     }
 
     #[test]

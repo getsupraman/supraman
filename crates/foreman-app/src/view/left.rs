@@ -5,10 +5,12 @@ use std::collections::BTreeMap;
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use theme::ActiveTheme as _;
 
-use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, REFRESH_EVERY, button, hit_target};
+use super::icon::{Icon, Tooltip};
+use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
 
@@ -69,101 +71,170 @@ fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
     }
 }
 
+/// One square, borderless icon button of the action bar: muted, the text colour on hover, a deeper fill
+/// pressed and while `on` (a toggle that is set).
+fn icon_button(hits: &super::HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    tinted_button(hits, key, icon, tip, on, if on { colors.text } else { colors.text_muted }, cx)
+}
+
+fn tinted_button(
+    hits: &super::HitTargets,
+    key: &'static str,
+    icon: Icon,
+    tip: impl Into<SharedString>,
+    on: bool,
+    fg: Hsla,
+    cx: &gpui::App,
+) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(key)
+        .group(key)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .h(px(26.))
+        .min_w(px(26.))
+        .px(px(5.))
+        .rounded_md()
+        .cursor_pointer()
+        .text_xs()
+        .text_color(fg)
+        .when(on, |d| d.bg(colors.ghost_element_selected))
+        .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
+        .active(|s| s.bg(colors.ghost_element_active))
+        .child(icon.svg(16., fg).group_hover(key, |s| s.text_color(colors.text)))
+        .child(hit_target(hits, key.into()))
+        .tooltip(Tooltip::text(tip))
+}
+
 impl FleetView {
+    /// The left panel's top row (m5/13): add workspace, expand / collapse all, show stopped, then the busy
+    /// limit, a CLI warning when there is one, and Settings. The claude version and the refresh live in
+    /// Settings → About.
+    fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let hits = &self.hits;
+        let separator = || div().w(px(1.)).h(px(16.)).mx_1().bg(colors.border_variant);
+        let stopped_tip: SharedString = if self.show_stopped {
+            "Hide stopped sessions".into()
+        } else {
+            format!("Show stopped sessions ({hidden_stopped} hidden)").into()
+        };
+        let n = self.max_working;
+        let busy_tip: SharedString = format!(
+            "At most {n} Foreman session(s) working at once, across all workspaces; launches wait while it is reached. 0 pauses them all."
+        )
+        .into();
+        let warning = match &self.cli {
+            Cli::Supported(version) => version.untested(),
+            _ => None,
+        };
+        div()
+            .id("action-bar")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.))
+            .px_2()
+            .py(px(3.))
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.add_workspace(cx))),
+            )
+            .child(separator())
+            .child(
+                icon_button(hits, "expand-all", Icon::ExpandAll, "Expand all", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(false, cx))),
+            )
+            .child(
+                icon_button(hits, "collapse-all", Icon::CollapseAll, "Collapse all", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.collapse_all(true, cx))),
+            )
+            .child(
+                icon_button(
+                    hits,
+                    "toggle-stopped",
+                    if self.show_stopped { Icon::Eye } else { Icon::EyeOff },
+                    stopped_tip,
+                    self.show_stopped,
+                    cx,
+                )
+                .when(!self.show_stopped && hidden_stopped > 0, |d| d.child(SharedString::from(hidden_stopped.to_string())))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.show_stopped = !this.show_stopped;
+                    cx.notify();
+                })),
+            )
+            .child(div().flex_1())
+            .children(warning.map(|w| {
+                tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(Page::About), cx)))
+            }))
+            .child(
+                div()
+                    .id("busy-limit")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .h(px(26.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border_variant)
+                    .child(
+                        icon_button(hits, "busy-dec", Icon::Minus, "One fewer busy session", false, cx)
+                            .h(px(24.))
+                            .min_w(px(22.))
+                            .px(px(3.))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working.saturating_sub(1), cx))),
+                    )
+                    .child(
+                        div()
+                            .id("busy-value")
+                            .px_1()
+                            .text_xs()
+                            .text_color(colors.text_muted)
+                            .child(SharedString::from(format!("busy ≤ {n}")))
+                            .tooltip(Tooltip::text(busy_tip)),
+                    )
+                    .child(
+                        icon_button(hits, "busy-inc", Icon::Plus, "One more busy session", false, cx)
+                            .h(px(24.))
+                            .min_w(px(22.))
+                            .px(px(3.))
+                            .when(n >= MAX_WORKING_LIMIT, |d| d.opacity(0.4))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_max_working(this.max_working + 1, cx))),
+                    ),
+            )
+            .child(
+                icon_button(hits, "bar-settings", Icon::Settings, "Settings (Ctrl+,)", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
+            )
+    }
+
+    /// Every workspace folded (`true`), or everything unfolded.
+    pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
+        if collapse {
+            self.collapsed.extend(self.workspaces.iter().map(|w| format!("workspace:{}", w.name)));
+        } else {
+            self.collapsed.clear();
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_left(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let tree = self.tree();
 
-        let cli_line: SharedString = match &self.cli {
-            Cli::Checking => "checking the claude CLI…".into(),
-            Cli::Supported(v) => format!("claude {}", v.raw).into(),
-            Cli::Failed(_) => "claude CLI unavailable".into(),
-        };
-        let refresh_line: SharedString = match self.last_refresh_took {
-            Some(took) => format!("refresh every {} s · last {} ms", REFRESH_EVERY.as_secs(), took.as_millis()).into(),
-            None => "loading…".into(),
-        };
-        let stopped_label: SharedString = if self.show_stopped {
-            "hide stopped".into()
-        } else {
-            format!("show stopped ({})", tree.hidden_stopped).into()
-        };
-        let busy: SharedString = format!("busy ≤ {}", self.max_working).into();
-
-        let header = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(colors.border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .gap_2()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .child(cli_line)
-                            .child("·")
-                            .child(refresh_line),
-                    )
-                    .child(
-                        div()
-                            .id("add-workspace")
-                            .relative()
-                            .flex_none()
-                            .px_2()
-                            .rounded_sm()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(colors.ghost_element_hover))
-                            .child("+ workspace")
-                            .child(hit_target(&self.hits, "add-workspace".into()))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.add_workspace(cx))),
-                    )
-                    .child(
-                        div()
-                            .id("busy-limit")
-                            .flex_none()
-                            .px_2()
-                            .rounded_sm()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(colors.ghost_element_hover))
-                            .child(busy)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx))),
-                    )
-                    .child(
-                        div()
-                            .id("toggle-stopped")
-                            .flex_none()
-                            .px_2()
-                            .rounded_sm()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(colors.ghost_element_hover))
-                            .child(stopped_label)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.show_stopped = !this.show_stopped;
-                                cx.notify();
-                            })),
-                    ),
-            );
+        let header = self.render_action_bar(tree.hidden_stopped, cx);
 
         let mut notices: Vec<AnyElement> = Vec::new();
         // A tint of the text colour, never the theme's `*_background` fills (unreadable in m1).
@@ -223,7 +294,7 @@ impl FleetView {
         notices.extend(self.render_add(cx));
         if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
-                "No workspaces registered. Add one with + workspace above, or:  fm workspace add <dir>".into(),
+                "No workspaces registered. Add one with the folder button above, or:  fm workspace add <dir>".into(),
                 colors.text,
                 colors.element_background,
             ));
@@ -870,9 +941,11 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let s = &row.session;
-        let dot = health_color(&row.health, cx);
-        let blocked = matches!(row.health, Health::Blocked { .. });
-        let dimmed = matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
+        // another Foreman's row (m5/10): its prompt is not this user's, so nothing about it asks for attention
+        let foreign = row.foreign;
+        let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
+        let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
+        let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
         let waiting_for = match &row.health {
             Health::Blocked { waiting_for: Some(w) } => Some(format!("waiting for: {w}")),
             _ => None,
@@ -965,12 +1038,34 @@ impl FleetView {
             .when(blocked, |d| d.bg(status.warning.opacity(0.12)))
             .when(dimmed, |d| d.opacity(0.5))
             .child(line)
+            .when(foreign, |d| {
+                let key = format!("foreign-{}", s.session_id);
+                d.child(
+                    div()
+                        .id(SharedString::from(key.clone()))
+                        .relative()
+                        .self_start()
+                        .ml(px(16.))
+                        .px_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(colors.border_variant)
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .child("another Foreman")
+                        .child(hit_target(&self.hits, key))
+                        .tooltip(Tooltip::text(
+                            "An fm- session this Foreman does not supervise (another FOREMAN_HOME, e.g. a selftest): \
+                             it never raises an Inbox row here. Leave its prompts to whoever runs it.",
+                        )),
+                )
+            })
             .when_some(waiting_for, |d, w| {
                 d.child(
                     div()
                         .pl(px(16.))
                         .text_xs()
-                        .text_color(status.warning)
+                        .text_color(if foreign { colors.text_muted } else { status.warning })
                         .child(SharedString::from(w)),
                 )
             })

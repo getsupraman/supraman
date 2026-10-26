@@ -1957,3 +1957,54 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   processes 48–61 %, which is what the parallel units leave): 3/3 PASS, interval checks applied (`quiet`), own work
   p10 5.2–6.2 ms. Red check 2/2 FAIL loaded, 2/2 FAIL quiet. `--selftest-supervise` PASS (supervise step d not
   touched).
+
+## 2026-10-26 — m5/13 the left panel's icon action bar
+
+- **The status line is gone; an icon bar replaces it** (`view/left.rs` `render_action_bar`): Add workspace, Expand all,
+  Collapse all, show/hide stopped (eye / eye-off, with the hidden count), then on the right a CLI warning when there is
+  one, the busy stepper (− `busy ≤ n` +) and Settings. 26×26 px buttons, 16 px glyphs, muted → text colour on hover
+  (`group_hover`, because an `svg` with its own colour does not inherit the parent's hover colour), a deeper fill
+  pressed and while a toggle is on; every one has a tooltip (`view/icon.rs` `Tooltip`).
+- **Icons: Zed's, compiled in.** `crates/foreman-app/assets/icons/*.svg` are copied from `.repos/zed/assets/icons`,
+  whose `LICENSES` says they are Lucide's (ISC; Feather portions MIT) — copied alongside. `svg().data(bytes)`
+  (`include_bytes!`) tints them with the text colour and needs no `AssetSource`, so `main.rs` (`Application::with_assets`)
+  stays untouched.
+- **Version and refresh moved to Settings → About** (`settings_window.rs` `Page::About`): Foreman's version, the claude
+  CLI's (with the newer-than-tested or failed text in its colour), the refresh interval and the last refresh's time, the
+  Foreman home. The settings window observes the fleet entity so About stays live. The newer-than-tested warning still
+  shows in the main window: the notice above the tree as before, plus a warning icon in the bar (tooltip = the text,
+  click = Settings → About). `FleetView::open_settings_at(Some(page))` turns an open settings window to that page.
+- **A stepper's click reads the live value, not the render's.** The first 7c run captured `n` in the − closure; the
+  click right after + landed before the next frame and set `n − 1` from the stale `n` (3 → 2 instead of 4 → 3).
+- `--selftest` step 7c (`selftest_left.rs`): the bar's icons share one size and one centre line; Collapse all hides
+  the gate workspace's 13 repo rows and Expand all brings them back; the stopped toggle and busy ±1 round-trip; a hover
+  shows the tooltip (`m5-13-bar-tooltip.png`); Settings opens, `open_settings_at(About)` turns it to About
+  (`m5-13-settings-about.png`, `scripts/shot.ps1 -Title` for a window other than the main one — PowerShell turns
+  `$null` into `""` for a `string` P/Invoke parameter: `[NullString]::Value`).
+- Screenshots: `target/m5-13/before.png` / `after.png` (scratch home, workspace `ws`).
+
+## 2026-10-26 — m5/10 alerts only for this Foreman's sessions
+
+- **Why it happened**: a unit's `--selftest-supervise` parks `fm-selftest-<hex>-park` with its cwd under the unit's
+  worktree, i.e. inside René's registered workspace, so his Foreman listed it under ./AutoWork as **blocked** with the
+  warning fill and "waiting for: permission prompt" — and he answered it. (His Inbox could not have had a row for it:
+  `NeedsYou` only ever comes from reconciling this home's desired state.)
+- **Rule** (`fleet::is_foreign`): an `fm-` session is another Foreman's when this home neither wants it (no desired
+  state lists it) nor names it (`fm-<w>-…` for a registered workspace `w`, which keeps this home's retired sessions and
+  the first frames before the first tick its own). Such a row is still listed, dimmed, with an "another Foreman" tag
+  on its second line (tooltip says why), a muted dot and waiting-for line, no warning fill, ranked as running; Attach stays. Non-`fm`
+  sessions and this home's own alert as before. `FleetView::apply` also drops any `NeedsYou` naming a foreign session,
+  so the Inbox holds the rule whatever a tick reports.
+- A selftest's sessions are told apart by that rule with no change to how they launch: their names are
+  `fm-selftest-<hex>…` and only the selftest's own home registers `selftest-<hex>` (its park stays Blocked there, step
+  e). A home that registered a workspace literally named `selftest-<hex>…` would claim them — not worth a reserved
+  prefix.
+- Not changed: the busy budget (`foreman_supervisor::budget::mid_turn`) still counts every mid-turn `fm-` row on the
+  machine, another home's included. Arguably right (it is machine load), but a running selftest lowers the user's
+  budget.
+- Tests: `fleet::tests::another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked`,
+  `reconcile::tests::another_homes_parked_session_raises_nothing` (a guard: reconcile already only looks at wanted
+  names). Red: `is_foreign` → `false` fails the fleet test. `--selftest-supervise` step e2 injects a fake
+  `fm-elsewhere-<hex>-park` (blocked on a permission prompt, cwd in the testbed's repo) into every snapshot
+  (`FleetView::injected`, which the supervisor sees too): after two ticks it is listed as another Foreman's with the
+  tag painted, no Inbox row, and the testbed's own park is still Blocked in the Inbox (`m5-10-another-foreman.png`).

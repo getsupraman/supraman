@@ -363,6 +363,15 @@ mod tests {
         }
     }
 
+    // m5/10: another FOREMAN_HOME's session (a selftest's park) is not this desired state's to report
+    #[test]
+    fn another_homes_parked_session_raises_nothing() {
+        let d = desired(true, &["fm-demo-workspace"]);
+        let mut park = row("fm-selftest-abc123-park", 2, Some(SessionState::Blocked), Some(Status::Waiting), Some(9));
+        park.waiting_for = Some("permission prompt".into());
+        assert_eq!(run(&d, &[running("fm-demo-workspace", 1), park]), []);
+    }
+
     // R4, m3/8: a Foreman session blocked with nothing it waits for waits on a peer, not on the human
     #[test]
     fn blocked_without_waiting_for_is_not_reported() {

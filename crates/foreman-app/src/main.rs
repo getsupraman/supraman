@@ -15,6 +15,7 @@ mod compose;
 mod fleet;
 mod instance;
 mod selftest;
+mod selftest_left;
 mod selftest_manage;
 mod selftest_supervise;
 mod selftest_work;

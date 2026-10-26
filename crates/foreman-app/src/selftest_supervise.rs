@@ -390,6 +390,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // right after b: the park parks seconds after Start, and a prompt left open for the whole run is one
     // anything else may answer before a later step looks (m5/11)
     park_step(tb, view, cx).await.context("step e")?;
+    let foreign = crate::selftest_left::foreign_row(view, &tb.a.0, &tb.a.1.join(REPO), &tb.park(), &tb.hex, cx).await.context("step e2")?;
+    println!("step e2: {foreign}");
 
     relay_step(tb, &relay_name, clicked, view, cx).await.context("step r")?;
 
