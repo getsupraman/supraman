@@ -340,7 +340,7 @@ impl FleetView {
                 status.warning.opacity(0.12),
             ));
         }
-        for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.action_error) {
+        for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.hand_notices).chain(&self.action_error) {
             notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
         }
         if let Some(problem) = self.workstate_notice() {

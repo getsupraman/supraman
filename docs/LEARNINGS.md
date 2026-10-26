@@ -2113,3 +2113,14 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   clicks landed in it. Clicks/wheel are now PostMessage'd to the target HWND (no foreground needed); typing needs
   real keystrokes (posted WM_CHAR is ignored), so it is guarded: type only while GetForegroundWindow's pid is the
   target, re-checked per chunk.
+
+## 2026-10-26 — m5/20 hand sessions minted
+
+- A `+` session (`crates/foreman-app/src/hand.rs`) is minted `role: worker`, `externalRole: "hand"`, `repo` =
+  `git_repo(cwd)`, name `hand-<folder>-<n>`, `launchedBy: foreman/hand`. A worker token cannot mint (doc 14 §2), so the
+  bearer is the repo role's static token, else the workspace's; a `.env` with only a worker line opens it plain.
+- The tab types `try { claude --mcp-config '<file>' } finally { Remove-Item -LiteralPath '<file>' }`: the shell
+  deleting the file is how the app sees claude exit (polled every 500 ms, then DELETE). Tab close, quit
+  (`on_app_quit`, synchronous: gpui polls quit futures for only 200 ms) and the next start (`supervisor/hands.json`)
+  revoke the rest. Not live-checked here (C21 is the controller's): interactive `claude` honouring a non-strict
+  `--mcp-config` over the user-scope `workstate` is (b) above, measured on `--bg` sessions.
