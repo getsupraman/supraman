@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Claude, Health, LaunchSpec, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
-    EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, inbox_dir, outbox_dir, read_answered, read_outbox,
+    EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
 };
 use foreman_supervisor::{
@@ -152,7 +152,7 @@ pub fn prepare() -> anyhow::Result<()> {
         };
         registry.save(&Workspace::new(name.as_str(), root.as_path(), repos), true)?;
     }
-    let plugin = cargo_root().join("plugins").join("foreman");
+    let plugin = plugin_dir()?;
     let mut desired = DesiredState::workspace_controller(&tb.a.0, &tb.a.1, role_prompt(&plugin, WORKSPACE_ROLE, &tb.a.0)?);
     desired.sessions.push(WantedSession {
         name: tb.park(),
@@ -281,6 +281,12 @@ async fn wait_painted(view: &Entity<FleetView>, key: &str, within: Duration, cx:
         sleep(cx, Duration::from_millis(100)).await;
     }
     Ok(())
+}
+
+/// The plugin the app under test found ([`find_plugin_dir`]), whose `bin/fm.exe` its setup installed: in a
+/// release folder that is its own `plugins/foreman`, not the repo's.
+fn plugin_dir() -> anyhow::Result<PathBuf> {
+    find_plugin_dir(&std::env::current_exe()?).map_err(anyhow::Error::msg)
 }
 
 fn secs(d: Duration) -> String {
@@ -909,7 +915,7 @@ async fn relay_step(
     }
 
     let target = tb.target();
-    let plugin = cargo_root().join("plugins").join("foreman");
+    let plugin = plugin_dir()?;
     let mut spec = LaunchSpec::new(&target, &tb.a.1, PROMPT_TARGET);
     spec.strict_mcp_config = true;
     spec.plugin_dirs = vec![plugin.clone()];
