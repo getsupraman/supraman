@@ -176,6 +176,13 @@ impl DesiredState {
         }
     }
 
+    /// The permission mode Foreman launches the wanted session `name` with, if it wants one: what
+    /// `foreman_claude::human` needs to know before it writes into that session's pipe.
+    pub fn launch_mode(home: &Path, workspace: &str, name: &str) -> Option<String> {
+        let desired = Self::load(home, workspace).ok()??;
+        desired.sessions.into_iter().find(|w| w.name == name).map(|w| w.permission_mode)
+    }
+
     pub fn path(home: &Path, workspace: &str) -> Result<PathBuf> {
         foreman_core::validate_name(workspace)?;
         Ok(home.join("supervisor").join(format!("{workspace}.toml")))
@@ -286,6 +293,21 @@ mod tests {
 
     fn plugin_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/foreman")
+    }
+
+    #[test]
+    fn the_launch_mode_of_a_wanted_session_and_none_otherwise() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(DesiredState::launch_mode(home.path(), "demo", "fm-demo-workspace"), None);
+        let mut desired = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        let mut park = desired.sessions[0].clone();
+        park.name = "fm-demo-park".into();
+        park.permission_mode = "bypassPermissions".into();
+        desired.sessions.push(park);
+        desired.save(home.path()).unwrap();
+        assert_eq!(DesiredState::launch_mode(home.path(), "demo", "fm-demo-workspace").as_deref(), Some("auto"));
+        assert_eq!(DesiredState::launch_mode(home.path(), "demo", "fm-demo-park").as_deref(), Some("bypassPermissions"));
+        assert_eq!(DesiredState::launch_mode(home.path(), "demo", "fm-demo-relay"), None, "not wanted: not known");
     }
 
     #[test]

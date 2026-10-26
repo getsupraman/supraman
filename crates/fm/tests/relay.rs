@@ -5,51 +5,49 @@ use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-fn fm(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_fm"))
-        .args(args)
+/// `USERPROFILE`/`HOME` = the scratch home: no `.claude/sessions` there, so `send` takes the relay.
+fn fm_cmd(home: &Path, args: &[&str]) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_fm"));
+    cmd.args(args)
         .env("FOREMAN_HOME", home)
+        .env("USERPROFILE", home)
+        .env("HOME", home)
         .env_remove("APPDATA")
         .env_remove("FOREMAN_ROLE")
-        .output()
-        .unwrap()
+        .env_remove("FOREMAN_WORKSPACE")
+        .env_remove("FOREMAN_SESSION")
+        .env_remove("FOREMAN_REPO");
+    cmd
+}
+
+fn fm(home: &Path, args: &[&str]) -> Output {
+    fm_cmd(home, args).output().unwrap()
 }
 
 #[test]
 fn send_is_refused_inside_a_foreman_session_before_touching_the_home() {
     let home = tempfile::tempdir().unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_fm"))
-        .args(["send", "demo", "fm-demo-workspace", "hello"])
-        .env("FOREMAN_HOME", home.path())
-        .env_remove("APPDATA")
-        .env("FOREMAN_ROLE", "workspace")
-        .output()
-        .unwrap();
+    let out = fm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "hello"]).env("FOREMAN_ROLE", "workspace").output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         "fm send speaks as the human through the relay and is refused inside a Foreman session \
-         (FOREMAN_ROLE=workspace); use SendMessage to reach a session\n"
+         (FOREMAN_ROLE=workspace); use SendMessage to reach a session, fm tell to reach the human\n"
     );
     assert!(out.stdout.is_empty(), "{out:?}");
     assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0, "nothing written under FOREMAN_HOME");
 }
 
 #[test]
-fn send_with_an_empty_or_absent_role_drops_as_before() {
+fn send_without_a_live_session_drops_for_the_relay_and_says_why() {
     let home = tempfile::tempdir().unwrap();
     let inbox = home.path().join("relay").join("demo").join("inbox");
-    let out = Command::new(env!("CARGO_BIN_EXE_fm"))
-        .args(["send", "demo", "fm-demo-workspace", "one"])
-        .env("FOREMAN_HOME", home.path())
-        .env_remove("APPDATA")
-        .env("FOREMAN_ROLE", "")
-        .output()
-        .unwrap();
+    let out = fm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "one"]).env("FOREMAN_ROLE", "").output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let out = fm(home.path(), &["send", "demo", "fm-demo-workspace", "two"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("dropped "), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with("dropped ") && stdout.contains("(via relay: fm-demo-workspace's launch mode is not known)"), "{out:?}");
     let drops = fs::read_dir(&inbox).unwrap().filter(|e| e.as_ref().unwrap().path().is_file()).count();
     assert_eq!(drops, 2);
 }
@@ -109,4 +107,47 @@ fn messages_prints_the_outbox_newest_last() {
     assert!(!text.contains("ready"), "{text}");
     assert_eq!(fm(home.path(), &["send", "demo", "x"]).status.code(), Some(1));
     assert_eq!(fm(home.path(), &["inbox"]).status.code(), Some(1));
+}
+
+#[test]
+fn tell_writes_the_outbox_as_the_session_and_is_refused_outside_one() {
+    let home = tempfile::tempdir().unwrap();
+    let out = fm(home.path(), &["tell", "hello"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("fm tell runs inside a Foreman session"), "{out:?}");
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
+
+    let tell = |args: &[&str], env: &[(&str, &str)]| {
+        let mut cmd = fm_cmd(home.path(), args);
+        cmd.env("FOREMAN_WORKSPACE", "demo");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        cmd.output().unwrap()
+    };
+    let out = tell(&["tell", "DONE: x
+second"], &[("FOREMAN_ROLE", "workspace")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("told the human (demo): "), "{out:?}");
+    let body_file = home.path().join("body.txt");
+    fs::write(&body_file, "from a file").unwrap();
+    let out = tell(&["tell", "--file", body_file.to_str().unwrap()], &[("FOREMAN_SESSION", "fm-demo-api"), ("FOREMAN_ROLE", "workspace")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let out = tell(&["tell", "x"], &[("FOREMAN_ROLE", "repo"), ("FOREMAN_REPO", "Nomos.Extract")]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(tell(&["tell", "x"], &[("FOREMAN_ROLE", "probe")]).status.code(), Some(1), "an unknown role names nobody");
+    assert_eq!(tell(&["tell"], &[("FOREMAN_ROLE", "workspace")]).status.code(), Some(1));
+
+    let out = fm(home.path(), &["messages", "demo"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let froms: Vec<&str> = text.lines().filter(|l| !l.starts_with("    ")).map(|l| l.split("  ").nth(1).unwrap_or("")).collect();
+    assert_eq!(froms, ["fm-demo-workspace", "fm-demo-api", "fm-demo-nomos-extract"], "{text}");
+    assert!(text.contains("
+    DONE: x
+    second
+"), "{text}");
+    assert!(text.contains("
+    from a file
+"), "{text}");
+    assert!(!home.path().join("relay").join("demo").join("inbox").read_dir().is_ok_and(|mut d| d.next().is_some()), "nothing for the relay");
 }

@@ -36,3 +36,30 @@ fn skills_end_a_waiting_turn_without_the_word_blocked() {
         assert!(!text.contains("`done: BLOCKED"), "{path}");
     }
 }
+
+#[test]
+fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
+    let skill = plugin("skills/workspace-controller/SKILL.md");
+    let role = plugin("roles/workspace.md");
+    assert!(skill.contains("**The human is reached only with `fm tell`**"));
+    assert!(skill.contains("`fm tell --file <path>`"));
+    assert!(!skill.contains("SendMessage(to: \"fm-<w>-relay\""), "the relay is not the human's mailbox any more");
+    assert!(!skill.contains("Send the plan to the relay") && !skill.contains("Report to the relay"));
+    assert!(role.contains("you reach the human with `fm tell` (never SendMessage to the relay"));
+    assert!(role.contains("announce ready to the human with `fm tell` once"));
+    // both shapes of the human's message (m5/4): Foreman's own frame, and the relay as fallback
+    assert!(skill.contains("<cross-session-message from-name=\"foreman\">` whose first line is `From the human (via Foreman, workspace <w>) [m-<id>]:`"));
+    assert!(skill.contains("from-name=\"fm-<w>-relay\">`: the relay carried it"));
+    assert!(skill.contains("**both are the human's voice**"));
+    let first_line = foreman_claude::human::framed("<w>", "", "m-<id>");
+    assert!(skill.contains(&format!("`{}`", first_line.trim_end())), "the skill quotes the first line Foreman writes: {first_line:?}");
+    assert!(skill.contains(&format!("from-name=\"{}\"", foreman_claude::peer::FROM_NAME)));
+    assert!(skill.contains("**Never run `fm send`.**"));
+}
+
+#[test]
+fn the_repo_controller_never_reaches_the_human() {
+    let skill = plugin("skills/repo-controller/SKILL.md");
+    assert!(skill.contains("You never message `fm-<w>-relay` and never run `fm tell`"));
+    assert!(plugin("roles/repo.md").contains("never to the human (no `fm tell`, no relay)"));
+}

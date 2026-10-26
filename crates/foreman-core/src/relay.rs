@@ -1,7 +1,9 @@
 //! The relay's files: `<FOREMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Foreman drops `{to, body}`
 //! into the inbox ([`send`]); the workspace's relay session watches it with `fm inbox` under its
 //! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
-//! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]). Facts
+//! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]), as does a
+//! session's own `fm tell` ([`tell`]). Since m5/4 the relay is the fallback: `foreman_claude::human`
+//! writes into a session's pipe first. Facts
 //! behind the shape: `docs/LEARNINGS.md` m0/4 and m3/1.
 
 use std::collections::{BTreeMap, HashSet};
@@ -78,6 +80,24 @@ pub fn send(home: &Path, workspace: &str, to: &str, body: &str) -> Result<PathBu
         body: body.to_string(),
     })
     .map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
+    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
+    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    Ok(path)
+}
+
+/// `fm tell`: a session's message to the human, written into the outbox as the relay writes what it
+/// receives (`{from, from_name, body}`, `from` = the session's name: it has no pipe address here).
+/// Named `<ms>-tell-<pid>-<seq>.json`, never `msg-NNNN.json`, the relay's own numbering.
+pub fn tell(home: &Path, workspace: &str, from_name: &str, body: &str) -> Result<PathBuf> {
+    let dir = ensure_relay_dirs(home, workspace)?.join("outbox");
+    if from_name.trim().is_empty() {
+        return Err(CoreError::io(&dir, io::Error::new(ErrorKind::InvalidInput, "a message needs a sender")));
+    }
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let name = format!("{:013}-tell-{}-{seq:04}.json", now_ms(), std::process::id());
+    let path = dir.join(&name);
+    let tmp = dir.join(format!("{name}.tmp"));
+    let text = serde_json::json!({ "from": from_name, "from_name": from_name, "body": body }).to_string();
     fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
     fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
     Ok(path)
@@ -368,6 +388,21 @@ mod tests {
         assert_eq!(lines[3]["body"], "bom");
         assert!(inbox.join("4.json.tmp").is_file(), "a .tmp is never read");
         assert_eq!(w.scan().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn tell_writes_an_outbox_message_the_list_reads_like_the_relays() {
+        let home = tempfile::tempdir().unwrap();
+        let path = tell(home.path(), "demo", "fm-demo-workspace", "DONE: x\nmore").unwrap();
+        let file = path.file_name().unwrap().to_str().unwrap().to_string();
+        assert!(file.contains("-tell-") && !file.starts_with("msg-"), "{file}");
+        let msgs = read_outbox(home.path(), "demo").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!((msgs[0].file.as_str(), msgs[0].from.as_str(), msgs[0].from_name.as_str()), (file.as_str(), "fm-demo-workspace", "fm-demo-workspace"));
+        assert_eq!(msgs[0].body, "DONE: x\nmore");
+        assert!(!msgs[0].is_notice());
+        assert!(tell(home.path(), "demo", " ", "x").is_err());
+        assert!(tell(home.path(), "../x", "a", "x").is_err());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The task box: a minimal multi-line text input for what the human sends through a workspace's relay
+//! The task box: a minimal multi-line text input for what the human sends a workspace session
 //! (a new task, or the answer to an `APPROVE?`/`DECIDE:`). gpui has no stock text area in our deps, so
 //! the box takes the window's `KeyDown`s while it has the focus ([`Compose::key`]): characters by their
 //! `key_char`, Enter a new line, Ctrl+Enter sends, Escape cancels. No IME composition, no selection.
@@ -18,6 +18,8 @@ pub struct Compose {
     pub error: Option<String>,
     /// The first line of the last task sent from this box.
     pub sent: Option<String>,
+    /// How it went: `sent direct` or `sent via relay (<why>)`.
+    pub route: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +40,7 @@ impl Compose {
             focused: true,
             error: None,
             sent: None,
+            route: None,
         }
     }
 
