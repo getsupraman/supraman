@@ -3960,6 +3960,68 @@ mod tests {
         });
     }
 
+    /// Foreman's tab passes `ReportToTerminal` for every wheel event (tf/6): a plain shell
+    /// scrolls its scrollback and writes nothing, later output keeps the view where the user
+    /// left it, and the next keystroke scrolls back to the bottom.
+    #[gpui::test]
+    async fn test_report_mode_wheel_without_mouse_mode_scrolls_scrollback(cx: &mut TestAppContext) {
+        let mut output = Vec::new();
+        for line in 0..80 {
+            output.extend_from_slice(format!("scrollback line {line}\r\n").as_bytes());
+        }
+        let (terminal, cx) = init_terminal_test_with_window(cx, &output);
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            assert!(!terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
+            let scroll_event = ScrollEvent {
+                position: point(px(50.0), px(10.0)),
+                delta: ScrollDelta::Lines(point(0.0, 3.0)),
+                ..Default::default()
+            };
+            terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::ReportToTerminal);
+            terminal.sync(window, cx);
+            assert_eq!(display_offset(&terminal.term.lock()), 3);
+            assert!(terminal.take_pty_write_log().is_empty());
+
+            terminal.write_output(b"more output\r\n", cx);
+        });
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            assert!(display_offset(&terminal.term.lock()) >= 3, "output must not yank the view down");
+
+            terminal.input(b"x".as_slice());
+            terminal.sync(window, cx);
+            assert_eq!(display_offset(&terminal.term.lock()), 0);
+        });
+    }
+
+    /// A full-screen program on the alternate screen with alternate scroll (`?1049h ?1007h`, no
+    /// mouse tracking) gets arrow keys; shift forces a local scroll.
+    #[gpui::test]
+    async fn test_report_mode_wheel_on_alt_screen_sends_arrow_keys(cx: &mut TestAppContext) {
+        let (terminal, cx) = init_terminal_test_with_window(cx, b"\x1b[?1049h\x1b[?1007h");
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            let up = ScrollEvent {
+                position: point(px(50.0), px(10.0)),
+                delta: ScrollDelta::Lines(point(0.0, 2.0)),
+                ..Default::default()
+            };
+            terminal.scroll_wheel(&up, 1.0, MouseInputMode::ReportToTerminal);
+            assert_eq!(terminal.take_pty_write_log(), vec![b"\x1bOA\x1bOA".to_vec()]);
+
+            let shifted = ScrollEvent { modifiers: Modifiers::shift(), ..up };
+            terminal.scroll_wheel(&shifted, 1.0, MouseInputMode::ReportToTerminal);
+            assert!(terminal.take_pty_write_log().is_empty());
+        });
+    }
+
     /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
     /// select terminal text. Shift+drag must start a selection rather than being
     /// swallowed as a "extend existing selection" no-op. Regression test for #60254.

@@ -686,6 +686,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let closed = close_attach(view, &attached, &name, cx).await.context("step 5")?;
     println!("step 5: tab closed, {closed}");
 
+    let scrolled = wheel_scroll(view, cx).await.context("step 6")?;
+    println!("step 6: {scrolled}");
+
     // 7. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
@@ -697,6 +700,70 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         bail!("step 7: the panel did not refresh during the 6 s frame window");
     }
     Ok(())
+}
+
+/// Step 6 (tf/6): a `+` tab with more than two screens of output; wheel notches dispatched over its
+/// grid move the scrollback (display_offset) up and back down to the bottom.
+async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let before = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max());
+    // the user's profile may print another prompt, or take long; the perf mode does the same
+    let args = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
+    let clicked = click(view, "new-shell", cx).await;
+    view.update(cx, |v, _| v.shell_args = args);
+    clicked?;
+    let tab = view
+        .read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max())
+        .filter(|id| Some(*id) != before)
+        .ok_or_else(|| anyhow!("clicking + opened no tab"))?;
+    let result = async {
+        let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
+        let lines = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds.num_lines());
+        let count = lines * 2 + 20;
+        let last = format!("wheel line {count}");
+        let opened = Instant::now();
+        let mut typed = false;
+        loop {
+            let content = terminal.read_with(cx, |t, _| t.get_content());
+            if !typed && content.contains("PS ") {
+                let command = format!("1..{count} | % {{ \"wheel line $_\" }}\r");
+                terminal.update(cx, |t, _| t.input(command.into_bytes()));
+                typed = true;
+            }
+            if typed && content.lines().any(|l| l.trim_end() == last) && content.trim_end().ends_with('>') {
+                break;
+            }
+            if opened.elapsed() > Duration::from_secs(15) {
+                let tail = content.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().to_string();
+                bail!("tab {tab}: no prompt after {last:?} within 15 s (typed: {typed}; last line {tail:?})");
+            }
+            sleep(cx, Duration::from_millis(50)).await;
+        }
+        let grid = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds.bounds);
+        let offset = async |notches: f32, cx: &mut AsyncWindowContext| -> anyhow::Result<usize> {
+            let position = grid.center();
+            cx.update(|window, cx| {
+                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+                // a Windows wheel notch: 3 lines, positive is up (gpui_windows events.rs)
+                let event = ScrollEvent { position, delta: ScrollDelta::Lines(point(0., 3. * notches)), ..Default::default() };
+                window.dispatch_event(PlatformInput::Scroll(event), cx);
+            })?;
+            sleep(cx, Duration::from_millis(200)).await;
+            Ok(terminal.read_with(cx, |t, _| t.last_content().display_offset))
+        };
+        let up = offset(2., cx).await?;
+        if up == 0 {
+            bail!("two wheel notches up over the grid {grid:?} left display_offset at 0");
+        }
+        let half = offset(-1., cx).await?;
+        let bottom = offset(-1., cx).await?;
+        if !(half > 0 && half < up) || bottom != 0 {
+            bail!("wheel down: display_offset {up} → {half} → {bottom}, expected {up} → 1..{up} → 0");
+        }
+        Ok(format!("{count} lines in a {lines}-line grid; display_offset 0 → {up} (2 notches up) → {half} → {bottom} (2 down)"))
+    }
+    .await;
+    view.update(cx, |v, cx| v.close_tab(tab, cx));
+    result
 }
 
 /// `--selftest-detach <n>`: one session, n attach/close cycles through the UI, alive after each.
