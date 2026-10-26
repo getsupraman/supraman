@@ -2070,6 +2070,9 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   and the Explorer icon: `crates/foreman-app/build.rs` + `assets/foreman.rc` (`1 ICON "foreman.ico"`) with
   `embed-resource` 3.0 (already in the lock via gpui's `windows-manifest`; uses the SDK's rc.exe). Checked with
   `[System.Drawing.Icon]::ExtractAssociatedIcon(foreman.exe)`.
+- **René picked B, the hard hat** (`docs/icon-proposals/b-hardhat.svg`): `icon-gen` → `assets/foreman.ico` (16–256,
+  exe + window) and `assets/tray.ico` (`b-hardhat-tray.ico`, 16–48). To change it: edit the SVG, rerun
+  `cargo run --release --manifest-path scripts/icon-gen/Cargo.toml -- <svg> <out>`, copy both, rebuild.
 - `FOREMAN_SHOTS` now also writes `m5-14-terminal-tab`, `m5-14-inbox`, `m5-14-work-board`, `m5-14-work-item`,
   `m5-14-work-journal` (`--selftest`) and `m5-14-messages` (`--selftest-supervise`). Before/after: `target/m5-14/before/`,
   `target/m5-14/after/`.
