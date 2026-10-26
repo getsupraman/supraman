@@ -1216,3 +1216,25 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   removed → 1 failed.
 - Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 300 passed (297 + 3), 0 failed;
   `--selftest` PASS (p95 21.88 ms, max 35.03 ms, 0 > 50 ms; idle 121.3 MiB); `--selftest-supervise` PASS.
+
+## 2026-10-26 — tf/8 the rest of a Claude Code tool shell's variables
+
+- **Rule** — `env_scrub` (`crates/foreman-app/src/main.rs`): with `CLAUDECODE=1` it now also drops `TOOL_SHELL`:
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_ENTRYPOINT`,
+  `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`,
+  `CLAUDE_EFFORT`, `CLAUDE_JOB_DIR`. They are the parent session's identity and settings; the messaging socket and
+  token would let a tab's process speak as that session. The list is the names a 2.1 tool shell had on 2026-10-26
+  (`CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` was not in tf/5's list; it is set neither in `~/.claude/settings.json` nor
+  in the user environment, so Claude Code sets it). Explicit names, not a `CLAUDE_CODE_*` prefix: a user's own
+  `CLAUDE_CODE_*` setting (e.g. a provider switch) passes through a tool shell too and must reach the tabs.
+- **Without `CLAUDECODE`** nothing but `CLAUDE_CODE_CHILD_SESSION` is touched: a `CLAUDE_EFFORT` (or any other of
+  these) set by the user is deliberate and stays.
+- **Not scrubbed**: `AI_AGENT` and `COREPACK_ENABLE_AUTO_PIN`, also exported by the tool shell, are not Claude
+  Code's own namespace and not in the brief; a tab inherits them when Foreman is started from a tool shell.
+- Tests: `tests::env_scrub_drops_the_parent_sessions_identity_from_a_claude_code_shell` (socket + token + every
+  `TOOL_SHELL` name), `tests::env_scrub_keeps_claude_vars_without_claudecode`. Red: `scrub.extend(TOOL_SHELL)`
+  removed → 1 failed.
+- Gate (P: had 4.2 GB free after the release build, so `CARGO_TARGET_DIR` on C: with the `plugins` junction):
+  `cargo build --release --workspace` ok; `cargo test --workspace` 307 passed (305 + 2), 0 failed; `cargo test -p
+  foreman-app env_scrub` 5 passed; `--selftest` PASS (p95 21.38 ms, max 30.41 ms, 0 > 50 ms; idle 121.6 MiB);
+  `--selftest-supervise` PASS (from exe copies in the worktree's `target/release`, deleted afterwards).
