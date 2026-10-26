@@ -928,7 +928,8 @@ impl FleetView {
             loop {
                 cx.background_executor().timer(Duration::from_millis(500)).await;
                 let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
-                if open && !hands.lock().unwrap_or_else(|e| e.into_inner()).ended(&name) {
+                // try_lock: another tab's mint may hold it over HTTP, and this is the UI thread.
+                if open && !hands.try_lock().is_ok_and(|h| h.ended(&name)) {
                     continue;
                 }
                 let hands = hands.clone();
