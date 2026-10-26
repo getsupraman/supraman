@@ -126,11 +126,12 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let home = target.join("selftest-home");
     let cwd = target.join("selftest-cwd");
     let work = target.join("selftest-work");
-    for dir in [&home, &cwd, &work] {
+    let add = target.join(crate::selftest_manage::FOLDER);
+    for dir in [&home, &cwd, &work, &add] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone(), work.clone()],
+        dirs: vec![home.clone(), cwd.clone(), work.clone(), add],
         session_name: None,
         name_prefix: None,
     });
@@ -339,6 +340,11 @@ pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
 /// ([`scrolled_into_view`]), through the window's own input dispatch, so it lands only if that element is
 /// really there and hit-testable.
 pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    press(view, key, MouseButton::Left, cx).await
+}
+
+/// [`click`] with any button: `MouseButton::Right` opens a row's context menu.
+pub(crate) async fn press(view: &Entity<FleetView>, key: &str, button: MouseButton, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let position = scrolled_into_view(view, key, cx).await?.center();
     let modifiers = Modifiers::default();
     cx.update(|window, cx| {
@@ -352,7 +358,7 @@ pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWin
         );
         window.dispatch_event(
             PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
+                button,
                 position,
                 modifiers,
                 click_count: 1,
@@ -362,7 +368,7 @@ pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWin
         );
         window.dispatch_event(
             PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
+                button,
                 position,
                 modifiers,
                 click_count: 1,
@@ -701,6 +707,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let work = crate::selftest_work::run(view, &row.session, cx).await.context("step 7")?;
     println!("step 7: {work}");
+
+    let managed = crate::selftest_manage::run(view, &row.session, cx).await.context("step 7b")?;
+    println!("step 7b: {managed}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();

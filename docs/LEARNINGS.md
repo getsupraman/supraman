@@ -1793,3 +1793,35 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-11 + `plugins` junction, CLI 2.1.310): `cargo build --release --workspace` ok,
   no warnings; `cargo test --workspace` 388 passed (387 + 1), 0 failed; `--selftest` PASS (p95 18.71 ms, max
   21.13 ms, idle 131.9 MiB); `--selftest-supervise` PASS 5 of 5 consecutive (plus 1 PASS before the reds).
+
+## 2026-10-26 — m5/12 workspace UI
+
+- **Own context menu, not Zed's `ui::ContextMenu`.** `ui` is not a dependency and pulls in `settings`/`workspace`
+  machinery; the menu we need is a list of labels. `view/menu.rs`: `deferred(anchored().position(click)
+  .snap_to_window_with_margin(8))` over everything, `.occlude()`, closed by `on_mouse_down_out` (capture phase, so a
+  right-click on another row closes the old menu first and the row's bubble-phase handler opens the new one), by Esc in
+  `FleetView::key_down`, and by choosing an item. Items are data (`MenuAction`), built by pure functions
+  (`workspace_items`/`repo_items`/`session_items`, unit-tested) and run by `FleetView::run_action`, so every item calls
+  the same method its button does (c3).
+- **Discovery is shared, not copied.** `foreman_core::discover(dir, name, depth)` is what `fm workspace add` and the
+  app's Add both run; `Registry::check_new` refuses a taken name **or an already-registered root** (new
+  `CoreError::RootTaken`; paths compared ignoring case, separators and a trailing `\`). `fm workspace add` now refuses
+  an already-registered folder too unless `--force`. `rescan` keeps each repo's `enabled`; `Registry::update` is
+  load-edit-save.
+- **Disabled repos are now listed** (dimmed, "disabled", last, no sessions, no `+`): without that, Disable from the
+  menu would hide the only place to Enable it again. Add's review registers unticked repos as `enabled = false` rather
+  than leaving them out, for the same reason.
+- **Remove waits for Stop to land.** Deleting the registry entry of a started workspace makes the supervisor drop it
+  without stopping anything (`Supervision::tick` retains only registered workspaces). So Remove → `stop_workspace`
+  (started = false) → the entry and `<home>/supervisor/<w>.toml` go only once a poll taken after the request shows none
+  of its wanted sessions alive (`finish_removals`, after each `apply`). Nothing else under the home, and nothing in the
+  workspace folder, is touched.
+- **Selftest clicks need the frame after a change.** `hits` are the last painted frame's: a press right after an action
+  that re-lays out the panel (a notice disappearing) lands on the old position — the first 7b run right-clicked the
+  wrong row. Step 7b waits for something only the new frame paints (beta's `+`) before the next press.
+- **Screenshots of our own window: `PrintWindow(hwnd, PW_RENDERFULLCONTENT)`, not `CopyFromScreen`.** The screen copy
+  caught another Foreman window (and its tray menu) lying over ours. `scripts/shot.ps1 -ProcessId -Out`;
+  `FOREMAN_SHOTS=<dir> foreman --selftest` writes add-review, menu-session, menu-workspace, menu-repo, confirm-remove.
+- "Show in Work tab" is offered only when an open Work tab's loaded boards show the session holding an unexpired claim
+  (no extra WorkState reads from the left panel). Rename is not offered: the name is in the desired-state file, every
+  `fm-<w>-…` session name and the WorkState project binding — not cheap.
