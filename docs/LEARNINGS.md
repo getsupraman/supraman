@@ -1181,3 +1181,34 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   walks up from the exe, and a target dir outside the repo has no `plugins/foreman` above it. `--selftest` PASS
   (p95 23.39 ms, max 38.73 ms, 0 > 50 ms; idle 121.9 MiB); `--selftest-supervise` PASS when run from exe copies in
   the worktree's `target/release` (it FAILs at step b from the C: path for the same reason).
+
+## 2026-10-26 — tf/5 NO_COLOR from a parent Claude Code shell
+
+- **Symptom** (René, 2026-10-24, "why is it white?"): every terminal tab monochrome. Cause: foreman.exe launched
+  from a Claude Code tool shell inherits `NO_COLOR=1` and `CLAUDECODE=1` from it, and so does every tab's pwsh,
+  git, `claude`. PSReadLine, `$PSStyle`, git and Claude Code all honour `NO_COLOR`.
+- **Rule** — `env_scrub` (`crates/foreman-app/src/main.rs`), applied with `remove_var` at the top of `main`
+  before any thread: `CLAUDE_CODE_CHILD_SESSION` always (as before); with `CLAUDECODE=1` also `NO_COLOR` and
+  `CLAUDECODE`. A `NO_COLOR` without `CLAUDECODE` is the user's own and stays.
+- **Why drop `CLAUDECODE` too**: in the claude 2.1.310 binary it is the "inside a Claude Code session" marker —
+  read with `CLAUDE_CODE_CHILD_SESSION` as the nested-session test (`Boolean(CHILD_SESSION||CLAUDECODE)`), it
+  turns off prompt history when stdin/stdout are not TTYs, and Claude Code itself deletes `CLAUDECODE` /
+  `CLAUDE_CODE_SESSION_ID` / `CLAUDE_CODE_CHILD_SESSION` from env it hands to sessions it starts fresh. A `claude`
+  in a Foreman tab is top-level, not nested.
+- **Not scrubbed (open)**: the tool shell also exports `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`,
+  `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_MESSAGING_SOCKET`/`_TOKEN`,
+  `CLAUDE_CODE_EXECPATH`, `CLAUDE_EFFORT`, `CLAUDE_JOB_DIR`; tabs still inherit them when Foreman is started that way.
+- **Proof**: foreman.exe started from a Claude Code tool shell (`CLAUDECODE=1 NO_COLOR=1`), scratch `FOREMAN_HOME`,
+  `+` tab: `$env:NO_COLOR`/`$env:CLAUDECODE` empty, `Write-Host -ForegroundColor Red` red, git log coloured,
+  PSReadLine syntax colours — `target/tf-5/tf-5-colour.png` (PrintWindow).
+- **Gotcha, gate off the repo**: with `CARGO_TARGET_DIR` outside the repo (P: was full), `fm` and
+  `--selftest-supervise` can't find `plugins/foreman`: both walk up from the exe (`fm::repos::plugin_of`,
+  `supervise::find_plugin_dir`). `crates/fm/tests/want.rs` fails 1 test and selftest-supervise fails step c. Fixes used:
+  a junction `<target dir>/../plugins` → the worktree's `plugins` for `cargo test`; copies of the exes under the
+  worktree's `target/release` for the selftest. PrintWindow from pwsh needs `SetProcessDPIAware` first, or the
+  rect and capture are scaled (150%: a 1415 px crop of a 2122 px window).
+- Tests: `tests::env_scrub_drops_no_color_from_a_claude_code_shell`, `tests::env_scrub_keeps_a_users_no_color`,
+  `tests::env_scrub_always_drops_child_session` (`cargo test -p foreman-app env_scrub` 3 passed). Red: NO_COLOR rule
+  removed → 1 failed.
+- Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 300 passed (297 + 3), 0 failed;
+  `--selftest` PASS (p95 21.88 ms, max 35.03 ms, 0 > 50 ms; idle 121.3 MiB); `--selftest-supervise` PASS.
