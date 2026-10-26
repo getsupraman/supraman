@@ -1911,7 +1911,7 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Seen once, while P: was full (0 bytes free): `FAIL step 7b: add-save is not fully inside its visible area after
   scrolling: 808..827 in 0..820` (unchanged on every scroll), and the next run failed in setup with os error 112.
   Probably the full disk, not load. Not chased further.
-- Gate (final binary, `CARGO_TARGET_DIR=C:mbuild\m5-15	arget`): `cargo test --workspace` 416 passed (414 + 2 in
+- Gate (final binary, `CARGO_TARGET_DIR=C:\fmbuild\m5-15\target`): `cargo test --workspace` 416 passed (414 + 2 in
   `selftest::frames`). `--selftest` beside a looping `cargo build --release --workspace` into a second target dir: 3/3
   PASS (other processes 97 % CPU; own work p10 8.5–8.7 ms; interval p50 16.4–16.7 ms, 0 frames > 50 ms). Quiet (other
   processes 48–61 %, which is what the parallel units leave): 3/3 PASS, interval checks applied (`quiet`), own work
