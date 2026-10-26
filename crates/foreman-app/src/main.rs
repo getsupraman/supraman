@@ -15,6 +15,7 @@ mod compose;
 mod fleet;
 mod instance;
 mod selftest;
+mod selftest_first_run;
 mod selftest_left;
 mod selftest_manage;
 mod selftest_supervise;
@@ -26,6 +27,7 @@ mod tokens;
 mod tray;
 mod view;
 mod work_view;
+mod workstate_setup;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};

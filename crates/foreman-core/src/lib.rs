@@ -12,7 +12,7 @@ mod settings;
 mod slug;
 
 pub use discover::{discover, rescan, same_root};
-pub use dotenv::read_env_value;
+pub use dotenv::{has_env_key, read_env_value};
 pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
