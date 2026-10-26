@@ -24,8 +24,9 @@ use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
 use gpui::{
-    App, AsyncWindowContext, Bounds, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window, point, px,
+    App, AsyncWindowContext, Bounds, ClipboardItem, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window,
+    point, px,
 };
 
 use crate::{
@@ -718,6 +719,87 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     Ok(())
 }
 
+/// Step 6b (m5/9), on step 6's shell tab: a left drag dispatched over a known output line selects exactly
+/// that line's text, Ctrl+Shift+C puts it on the clipboard, and Ctrl+V types the clipboard into the shell
+/// (PSReadLine echoes it at the prompt). The clipboard is put back as it was.
+async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let saved = cx.update(|_, cx| cx.read_from_clipboard())?;
+    let result = async {
+        let (bounds, found) = terminal.read_with(cx, |t, _| {
+            let content = t.last_content();
+            let mut rows: std::collections::BTreeMap<i32, String> = Default::default();
+            for cell in &content.cells {
+                rows.entry(cell.point.line).or_default().push(cell.cell.character());
+            }
+            let found = rows.into_iter().find_map(|(line, text)| {
+                let text = text.trim_end().to_string();
+                text.starts_with("wheel line ").then_some((line + content.display_offset as i32, text))
+            });
+            (content.terminal_bounds, found)
+        });
+        let (row, text) = found.ok_or_else(|| anyhow!("no `wheel line` row on screen"))?;
+        let y = bounds.bounds.origin.y + bounds.line_height * (row as f32 + 0.5);
+        let x = |column: f32| bounds.bounds.origin.x + bounds.cell_width * column;
+        let (from, to) = (point(x(0.25), y), point(x(text.chars().count() as f32 - 0.25), y));
+        let left = Some(MouseButton::Left);
+        cx.update(|window, cx| {
+            let none = Modifiers::default();
+            window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, pressed_button: None, modifiers: none }), cx);
+            window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: none, click_count: 1, first_mouse: false }), cx);
+            for step in 1..=4 {
+                let position = point(from.x + (to.x - from.x) * (step as f32 / 4.), y);
+                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: left, modifiers: none }), cx);
+            }
+            window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
+        })?;
+        sleep(cx, Duration::from_millis(200)).await;
+        let selected = terminal.read_with(cx, |t, _| t.last_content().selection_text.clone());
+        if selected.as_deref() != Some(text.as_str()) {
+            bail!("dragged over display row {row} ({text:?}) from {from:?} to {to:?}; selection is {selected:?}");
+        }
+
+        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("not copied".into())))?;
+        key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
+        sleep(cx, Duration::from_millis(200)).await;
+        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))?;
+        if copied.as_deref() != Some(text.as_str()) {
+            bail!("Ctrl+Shift+C with {text:?} selected left the clipboard at {copied:?}");
+        }
+
+        let marker = format!("fm-paste-{}", hex6());
+        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(marker.clone())))?;
+        key(cx, "v", Modifiers::control())?;
+        let pasted = Instant::now();
+        loop {
+            let content = terminal.read_with(cx, |t, _| t.get_content());
+            if content.lines().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.contains(&marker)) {
+                break;
+            }
+            if pasted.elapsed() > Duration::from_secs(5) {
+                bail!("Ctrl+V: {marker} not echoed at the prompt within 5 s");
+            }
+            sleep(cx, Duration::from_millis(50)).await;
+        }
+        Ok(format!(
+            "drag over row {row} selected {text:?}; Ctrl+Shift+C → clipboard {text:?}; Ctrl+V → {marker} at the prompt after {} ms",
+            pasted.elapsed().as_millis()
+        ))
+    }
+    .await;
+    if let Some(item) = saved {
+        cx.update(|_, cx| cx.write_to_clipboard(item))?;
+    }
+    result
+}
+
+fn key(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) -> anyhow::Result<()> {
+    let keystroke = Keystroke { modifiers, key: key.into(), key_char: None };
+    cx.update(|window, cx| {
+        window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx);
+    })?;
+    Ok(())
+}
+
 /// Step 6 (tf/6): a `+` tab with more than two screens of output; wheel notches dispatched over its
 /// grid move the scrollback (display_offset) up and back down to the bottom.
 async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -793,7 +875,10 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
         if !(half > 0 && half < up) || bottom != 0 {
             bail!("wheel down: display_offset {up} → {half} → {bottom}, expected {up} → 1..{up} → 0");
         }
-        Ok(format!("{count} lines in a {lines}-line grid; display_offset 0 → {up} (2 notches up) → {half} → {bottom} (2 down)"))
+        let wheel = format!("{count} lines in a {lines}-line grid; display_offset 0 → {up} (2 notches up) → {half} → {bottom} (2 down)");
+        let copied = select_copy_paste(&terminal, cx).await.context("step 6b")?;
+        println!("step 6b: {copied}");
+        Ok(wheel)
     }
     .await;
     view.update(cx, |v, cx| v.close_tab(tab, cx));

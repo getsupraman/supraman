@@ -1,20 +1,21 @@
 // Minimal terminal grid painter adapted from Zed's
 // crates/terminal_view/src/terminal_element.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
 // (GPL-3.0-or-later). Kept: cell batching into text runs, background rects,
-// colour conversion, block cursor, block-element glyph rects (U+2580-U+259F). Dropped:
-// selection/search highlights, hyperlinks, IME, sextant glyph rects, minimum-contrast
-// adjustment, mouse handling.
+// colour conversion, block cursor, block-element glyph rects (U+2580-U+259F), selection
+// highlight, mouse handling (register_mouse_listeners). Dropped: search highlights, hyperlink
+// hover, IME, sextant glyph rects, minimum-contrast adjustment, the context menu.
 
 use gpui::{
-    App, Bounds, Entity, Font, FontFeatures, FontStyle, FontWeight, Hsla, IntoElement, Pixels,
-    Point as GpuiPoint, StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, canvas, fill,
-    point, px, size,
+    App, Bounds, DispatchPhase, Entity, Font, FontFeatures, FontStyle, FontWeight, Hitbox,
+    HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point as GpuiPoint, StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window,
+    canvas, fill, point, px, size,
 };
 use itertools::Itertools as _;
 use std::mem;
 use foreman_term::{
-    Cell, Color, CursorShape, IndexedCell, NamedColor, Terminal, TerminalBounds,
-    is_default_background_color,
+    Cell, Color, CursorShape, IndexedCell, Modes, MouseInputMode, NamedColor, Terminal,
+    TerminalBounds, is_default_background_color,
 };
 use theme::{ActiveTheme, Theme};
 
@@ -322,6 +323,8 @@ pub struct LayoutState {
     block_rects: Vec<BlockElementLayoutRect>,
     runs: Vec<BatchedTextRun>,
     cursor: Option<(Bounds<Pixels>, Hsla)>,
+    selection: Vec<LayoutRect>,
+    hitbox: Hitbox,
 }
 
 fn base_font() -> Font {
@@ -344,9 +347,13 @@ pub fn cell_metrics(cx: &App) -> (Pixels, Pixels) {
 }
 
 pub fn terminal_grid(terminal: Entity<Terminal>) -> impl IntoElement {
+    let terminal_for_paint = terminal.clone();
     canvas(
         move |bounds, window, cx| prepaint(&terminal, bounds, window, cx),
-        |_bounds, state, window, cx| paint(state, window, cx),
+        move |_bounds, state, window, cx| {
+            register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
+            paint(state, window, cx)
+        },
     )
     .size_full()
 }
@@ -407,6 +414,22 @@ fn prepaint(
         })
     };
 
+    let selection = content
+        .selection
+        .as_ref()
+        .map(|sel| {
+            let offset = content.display_offset as i32;
+            selection_rects(
+                (sel.start.line + offset, sel.start.column),
+                (sel.end.line + offset, sel.end.column),
+                sel.is_block,
+                dims.num_lines(),
+                dims.num_columns(),
+                theme.players().local().selection,
+            )
+        })
+        .unwrap_or_default();
+
     LayoutState {
         dims,
         background: theme.colors().terminal_background,
@@ -414,7 +437,101 @@ fn prepaint(
         block_rects,
         runs,
         cursor,
+        selection,
+        hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
     }
+}
+
+/// One rect per visible line of an inclusive selection from `start` to `end` (display line,
+/// column), clipped to the viewport.
+fn selection_rects(
+    start: (i32, usize),
+    end: (i32, usize),
+    is_block: bool,
+    num_lines: usize,
+    num_columns: usize,
+    color: Hsla,
+) -> Vec<LayoutRect> {
+    let last_column = num_columns.saturating_sub(1);
+    (start.0.max(0)..=end.0.min(num_lines as i32 - 1))
+        .map(|line| {
+            let (first, last) = if is_block {
+                (start.1.min(end.1), start.1.max(end.1))
+            } else {
+                (
+                    if line == start.0 { start.1 } else { 0 },
+                    if line == end.0 { end.1.min(last_column) } else { last_column },
+                )
+            };
+            LayoutRect {
+                line,
+                column: first as i32,
+                num_of_cells: last.saturating_sub(first) + 1,
+                color,
+            }
+        })
+        .collect()
+}
+
+/// As Zed's `TerminalElement::register_mouse_listeners`: while the program has enabled mouse
+/// reporting (and Shift is not held) the Terminal encodes presses, motion and releases for the
+/// PTY; otherwise a left drag selects, double-click a word, triple-click a line, and a right
+/// click copies the selection or, without one, pastes the clipboard.
+fn register_mouse_listeners(terminal: &Entity<Terminal>, hitbox: &Hitbox, window: &mut Window) {
+    let mode = MouseInputMode::ReportToTerminal;
+    window.on_mouse_event({
+        let (terminal, hitbox) = (terminal.clone(), hitbox.clone());
+        move |e: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                return;
+            }
+            terminal.update(cx, |terminal, cx| {
+                if e.button == MouseButton::Left || terminal.mouse_mode(e.modifiers.shift, mode) {
+                    terminal.mouse_down(e, mode, cx);
+                } else if e.button == MouseButton::Right {
+                    if terminal.last_content().selection.is_some() {
+                        terminal.copy(Some(false));
+                    } else if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                        terminal.paste(&text);
+                    }
+                }
+                cx.notify();
+            });
+        }
+    });
+    window.on_mouse_event({
+        let (terminal, hitbox) = (terminal.clone(), hitbox.clone());
+        move |e: &MouseMoveEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            let hovered = hitbox.is_hovered(window);
+            terminal.update(cx, |terminal, cx| {
+                if e.pressed_button.is_some() && (terminal.selection_started() || hovered) {
+                    terminal.mouse_drag(e, hitbox.bounds, mode, cx);
+                }
+                if hovered {
+                    terminal.mouse_move(e, mode, cx);
+                }
+            });
+        }
+    });
+    window.on_mouse_event({
+        let (terminal, hitbox) = (terminal.clone(), hitbox.clone());
+        move |e: &MouseUpEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+            terminal.update(cx, |terminal, cx| {
+                let reporting = terminal.last_content().mode.intersects(Modes::MOUSE_MODE);
+                let ours = hitbox.is_hovered(window) || terminal.selection_started();
+                if ours && (e.button == MouseButton::Left || reporting) {
+                    terminal.mouse_up(e, mode, cx);
+                    cx.notify();
+                }
+            });
+        }
+    });
 }
 
 fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
@@ -422,6 +539,9 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     window.paint_quad(fill(dims.bounds, state.background));
     let origin = dims.bounds.origin;
     for rect in &state.rects {
+        rect.paint(origin, &dims, window);
+    }
+    for rect in &state.selection {
         rect.paint(origin, &dims, window);
     }
     for run in &state.runs {
@@ -629,6 +749,26 @@ fn indexed_color(index: usize, theme: &Theme) -> Hsla {
 mod tests {
     use super::*;
     use foreman_term::{Point, Rgb};
+
+    fn spans(rects: &[LayoutRect]) -> Vec<(i32, i32, usize)> {
+        rects.iter().map(|r| (r.line, r.column, r.num_of_cells)).collect()
+    }
+
+    #[test]
+    fn selection_spans_lines_from_start_column_to_end_column() {
+        let rects = selection_rects((1, 4), (3, 2), false, 10, 20, Hsla::default());
+        assert_eq!(spans(&rects), [(1, 4, 16), (2, 0, 20), (3, 0, 3)]);
+    }
+
+    #[test]
+    fn selection_is_clipped_to_the_viewport_and_block_selection_keeps_its_columns() {
+        // starts in scrollback above the viewport, ends below it
+        let rects = selection_rects((-5, 7), (12, 1), false, 3, 20, Hsla::default());
+        assert_eq!(spans(&rects), [(0, 0, 20), (1, 0, 20), (2, 0, 20)]);
+        let rects = selection_rects((0, 6), (1, 2), true, 3, 20, Hsla::default());
+        assert_eq!(spans(&rects), [(0, 2, 5), (1, 2, 5)]);
+        assert!(selection_rects((-4, 0), (-1, 5), false, 3, 20, Hsla::default()).is_empty());
+    }
 
     fn theme() -> std::sync::Arc<Theme> {
         let registry = theme::ThemeRegistry::default();

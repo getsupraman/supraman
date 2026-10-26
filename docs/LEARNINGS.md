@@ -1593,3 +1593,31 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   numbers of the original flake.
 - **Pattern**: before a selftest reads anything sized by layout (`terminal_bounds`, `num_lines`), wait for the
   first prepaint. A fresh `Terminal` reports 6 lines until then.
+
+## 2026-10-26 — m5/9 terminal input
+
+- **What was missing**: only wiring. `foreman-term` still had Zed's whole mouse model (`Terminal::mouse_down/drag/move/up`,
+  `mappings/mouse.rs` SGR/normal/UTF-8 reports, alacritty selection, `copy`, `paste` with bracketed paste); the
+  port's `term_element.rs` never called it and never painted `content.selection`. Now `term_element::register_mouse_listeners`
+  (window-level listeners + a hitbox, as Zed's `TerminalElement`) feeds them, `selection_rects` paints the highlight, and
+  `view.rs` `key_down` maps Ctrl+Shift+C (copy), Ctrl+Shift+V / Ctrl+V (paste; Ctrl+V with no text on the clipboard,
+  e.g. an image, still goes to the program as ^V). Right-click copies a selection, else pastes. Ctrl+C stays the program's.
+- **What `claude` negotiates** (2.1.310, measured with `crates/foreman-term/examples/pty_dump.rs`, a raw ConPTY dump):
+  conhost first asks for win32-input-mode and focus (`CSI ?9001h CSI ?1004h`, we ignore 9001); claude then enables
+  bracketed paste `?2004h`, `?2031h`, focus `?1004h`, mouse `?1000h ?1002h ?1003h ?1006h` (any-motion, SGR), queries
+  XTVERSION `CSI >0q`, kitty keyboard `CSI ?u`, OSC 7501, and resets modifyOtherKeys `CSI >4m`. `claude attach` sends the
+  same mouse/paste set. We answer neither query (alacritty's `kitty_keyboard` is off), so claude stays on legacy keys.
+- **Shift+Enter**: claude inserts a newline for LF (what `keys.rs` already sent for Shift+Enter), `ESC CR`, kitty
+  `CSI 13;2u` and `CSI 27;2;13~`, directly and through `claude attach`; a win32-input-mode Shift+Enter record submits.
+  With real OS keystrokes (SendInput) into a Foreman tab, Shift+Enter inserted a newline both in a `claude` tab and in a
+  `claude attach` tab (this change does not touch that key path). René's report did not reproduce on this machine with claude 2.1.310;
+  no key mapping was changed. If it recurs, capture the claude version and whether the task box had focus.
+- **Mouse in claude**: a real click inside the prompt text moves claude's cursor (`target/m5-9/s3-click-moves-cursor.png`);
+  Shift+drag selects locally while claude has mouse mode on (`s4-shift-drag-selection.png`).
+- **Tests**: `terminal.rs` `test_claude_mouse_modes_report_sgr_click_drag_release` (claude's modes → `CSI <0;6;3M`,
+  `CSI <32;8;3M`, `CSI <0;8;3m`), `keys.rs` `test_enter_variants_ignore_terminal_modes`, `term_element.rs` selection
+  span tests; selftest step 6b (drag over a `wheel line` row → selection text → Ctrl+Shift+C → clipboard → Ctrl+V →
+  echoed at the pwsh prompt; the user's clipboard is restored). Red: listeners not registered → `FAIL step 6: step 6b:
+  … selection is None`.
+- **Pattern**: before porting more of Zed's terminal, check `foreman-term` — the model side is usually already there and
+  only the element/view wiring is missing.

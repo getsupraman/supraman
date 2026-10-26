@@ -267,6 +267,26 @@ mod test {
 
     use super::*;
 
+    /// m5/9: `claude` negotiates no keyboard protocol with us (it queries kitty with `CSI ? u`,
+    /// which we do not answer, and resets modifyOtherKeys with `CSI > 4 m`), and takes LF as
+    /// "insert newline" both directly and through `claude attach`. So Shift+Enter stays LF in
+    /// every mode, Enter CR, Alt+Enter ESC CR.
+    #[test]
+    fn test_enter_variants_ignore_terminal_modes() {
+        let modes = [
+            Modes::NONE,
+            Modes::APP_CURSOR | Modes::APP_KEYPAD,
+            Modes::BRACKETED_PASTE | Modes::SGR_MOUSE | Modes::MOUSE_MODE | Modes::ALT_SCREEN,
+        ];
+        for mode in modes {
+            let enter = |s| to_esc_str(&Keystroke::parse(s).unwrap(), mode, false);
+            assert_eq!(enter("enter"), Some("\r".into()), "{mode:?}");
+            assert_eq!(enter("shift-enter"), Some("\n".into()), "{mode:?}");
+            assert_eq!(enter("alt-enter"), Some("\x1b\r".into()), "{mode:?}");
+            assert_eq!(enter("shift-tab"), Some("\x1b[Z".into()), "{mode:?}");
+        }
+    }
+
     #[test]
     fn test_plain_inputs() {
         let ks = Keystroke {

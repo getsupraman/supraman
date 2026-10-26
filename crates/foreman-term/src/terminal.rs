@@ -4022,6 +4022,33 @@ mod tests {
         });
     }
 
+    /// m5/9: the modes `claude` enables at startup (measured: `?1000h ?1002h ?1003h ?1006h`) make a
+    /// click at a cell, a drag and the release reach the PTY as SGR reports for that cell.
+    #[gpui::test]
+    async fn test_claude_mouse_modes_report_sgr_click_drag_release(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h> prompt\r\n");
+        terminal.update(cx, |terminal, cx| {
+            // 10 px cells, 20 px lines: (55, 45) is column 5, line 2, so 1-based 6;3
+            left_mouse_down_at(terminal, point(px(55.0), px(45.0)), cx);
+            assert_eq!(terminal.take_pty_write_log(), vec![b"\x1b[<0;6;3M".to_vec()]);
+
+            terminal.mouse_move(
+                &MouseMoveEvent {
+                    position: point(px(75.0), px(45.0)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::none(),
+                },
+                MouseInputMode::ReportToTerminal,
+                cx,
+            );
+            assert_eq!(terminal.take_pty_write_log(), vec![b"\x1b[<32;8;3M".to_vec()]);
+
+            left_mouse_up_at(terminal, point(px(75.0), px(45.0)), cx);
+            assert_eq!(terminal.take_pty_write_log(), vec![b"\x1b[<0;8;3m".to_vec()]);
+            assert!(terminal.events.is_empty(), "a reported click must not select");
+        });
+    }
+
     /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
     /// select terminal text. Shift+drag must start a selection rather than being
     /// swallowed as a "extend existing selection" no-op. Regression test for #60254.
