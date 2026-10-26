@@ -1017,6 +1017,27 @@ impl FleetView {
         else {
             return;
         };
+        // as Windows Terminal: Ctrl+Shift+C copies, Ctrl+Shift+V and Ctrl+V paste; Ctrl+C stays the
+        // program's, and Ctrl+V without text on the clipboard (an image) goes to it as ^V
+        let m = &k.modifiers;
+        if m.control && !m.alt && !m.platform {
+            let clipboard_text = || cx.read_from_clipboard().and_then(|c| c.text());
+            if k.key.eq_ignore_ascii_case("c") && m.shift {
+                terminal.update(cx, |terminal, cx| {
+                    terminal.copy(Some(false));
+                    cx.notify();
+                });
+                cx.stop_propagation();
+                return;
+            }
+            if k.key.eq_ignore_ascii_case("v")
+                && let Some(text) = clipboard_text()
+            {
+                terminal.update(cx, |terminal, _| terminal.paste(&text));
+                cx.stop_propagation();
+                return;
+            }
+        }
         terminal.update(cx, |terminal, _| {
             if !terminal.try_keystroke(&event.keystroke, false)
                 && let Some(text) = &event.keystroke.key_char
