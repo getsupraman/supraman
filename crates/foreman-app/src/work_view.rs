@@ -187,9 +187,22 @@ impl WorkHub {
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let home = home.ok_or_else(|| "No Foreman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
     let settings = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?;
-    client_from_settings(&settings)
-        .map(|(client, _)| client)
-        .map_err(|e| format!("WorkState is not configured: {e}. Choose its .env in Settings (Ctrl+,)."))
+    client_from_settings(&settings).map(|(client, _)| client).map_err(|e| {
+        // the main window's notice says it in the same words
+        crate::workstate_setup::detect_local(&settings, crate::workstate_setup::installed_env().as_deref())
+            .message()
+            .unwrap_or_else(|| format!("WorkState is not configured: {e}. Choose its .env in Settings (Ctrl+,)."))
+    })
+}
+
+/// A read's failure as the Work tab says it: an unreachable server in the notice's words.
+fn read_failed(e: foreman_workstate::Error) -> String {
+    match e {
+        foreman_workstate::Error::Transport { base, reason } => {
+            crate::workstate_setup::WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default()
+        }
+        e => format!("Cannot read WorkState: {e}"),
+    }
 }
 
 /// What the tab shows when it is not the runs.
@@ -431,7 +444,7 @@ impl WorkView {
 
 /// The project whose ref is `workspace` (resolved once, then by id), its runs and the overview's `seq`.
 fn read_overview(client: &Client, workspace: &str, project: Option<ItemRef>) -> Result<(ItemRef, i64, OverviewProject), String> {
-    let failed = |e: foreman_workstate::Error| format!("Cannot read WorkState: {e}");
+    let failed = read_failed;
     let project = match project {
         Some(project) => project,
         None => pick_project(client.resolve(workspace).map_err(failed)?, workspace)?,

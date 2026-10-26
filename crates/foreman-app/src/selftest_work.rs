@@ -249,6 +249,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, Vec::new()), true)?;
     let resolved = json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [project()] }).to_string();
     let fake = FakeWorkState::start(vec![
+        ("/health".into(), Answer::text("Healthy")),
         (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         ("/api/v1/overview".into(), Answer::json(overview(100))),
         (board_target(LIVE_RUN), Answer::json(live_board(100, false))),
@@ -275,7 +276,11 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         ),
     ]);
     let env = home.join("workstate-fake.env");
-    std::fs::write(&env, format!("WORKSTATE_READER_TOKEN={TOKEN}\n"))?;
+    // the role keys too, so the WorkState notice (m5/3) has nothing to say during the gate
+    std::fs::write(
+        &env,
+        format!("WORKSTATE_READER_TOKEN={TOKEN}\nWORKSTATE_CONTROLLER_TOKEN=fake-selftest-controller\nWORKSTATE_ORCHESTRATOR_TOKEN=fake-selftest-orchestrator\n"),
+    )?;
     let mut settings = Settings::load(home)?;
     settings.workstate_env = Some(env);
     settings.workstate_url = Some(fake.mcp_url());
@@ -411,16 +416,20 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     lines.push(item_page(view, &work, fake, launched, cx).await.context("item page")?);
     lines.push(inbox_and_journal(view, tab, &work, fake, cx).await.context("inbox and journal")?);
 
-    // Read only, with the fake token, and nothing but the read API.
+    // Read only, with the fake token, and nothing but the read API; `/health` (m5/3) is a GET with no token.
     let seen = fake.seen();
     let bearer = format!("Bearer {TOKEN}");
-    if let Some(bad) = seen.iter().find(|s| s.method != "GET" || s.authorization.as_deref() != Some(bearer.as_str())) {
-        bail!("a request that is not a GET with the fake reader token: {} {}", bad.method, bad.target);
+    let token_ok = |s: &foreman_workstate::fake::Seen| match s.target.as_str() {
+        "/health" => s.authorization.is_none(),
+        _ => s.authorization.as_deref() == Some(bearer.as_str()),
+    };
+    if let Some(bad) = seen.iter().find(|s| s.method != "GET" || !token_ok(s)) {
+        bail!("a request that is not a GET with the fake reader token (none for /health): {} {}", bad.method, bad.target);
     }
-    if let Some(bad) = seen.iter().find(|s| !(s.target.starts_with("/api/v1/") || s.target == "/api/stream")) {
+    if let Some(bad) = seen.iter().find(|s| !(s.target.starts_with("/api/v1/") || s.target == "/api/stream" || s.target == "/health")) {
         bail!("a request outside the read API: {}", bad.target);
     }
-    lines.push(format!("the fake saw {} requests, every one a GET with the fake reader token", seen.len()));
+    lines.push(format!("the fake saw {} requests, every one a GET with the fake reader token (none for /health)", seen.len()));
 
     // Middle-click closes it like any tab.
     let position = scrolled_into_view(view, &format!("tab-{tab}"), cx).await?.center();

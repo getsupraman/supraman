@@ -5,7 +5,10 @@ use std::{
     collections::{BTreeMap, HashMap as StdHashMap, HashSet},
     path::PathBuf,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -32,7 +35,8 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
-use crate::work_view::{FleetLink, LiveSession, WorkInbox, WorkView};
+use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
+use crate::workstate_setup::{self, WsStatus};
 
 mod icon;
 mod left;
@@ -198,6 +202,14 @@ pub struct FleetView {
     pub action_info: Option<String>,
     /// The next Add workspace takes this folder instead of asking the OS picker (the selftest).
     pub pick_folder: Option<PathBuf>,
+    /// Whether launched sessions get WorkState (m5/3), checked off the UI thread every
+    /// [`workstate_setup::RECHECK_EVERY`] and on [`Self::recheck_workstate`].
+    pub workstate: WsStatus,
+    /// The problem whose notice was dismissed; a different problem shows again.
+    workstate_dismissed: Option<String>,
+    workstate_recheck: Arc<AtomicBool>,
+    /// The last Start's warning that its sessions run without WorkState.
+    pub start_warning: Option<String>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -354,6 +366,8 @@ impl FleetView {
             }
         })
         .detach();
+        let workstate_recheck = Arc::new(AtomicBool::new(true));
+        Self::watch_workstate(home.clone(), workstate_recheck.clone(), cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
         Self {
@@ -408,7 +422,83 @@ impl FleetView {
             removing: BTreeMap::new(),
             action_info: None,
             pick_folder: None,
+            workstate: WsStatus::Checking,
+            workstate_dismissed: None,
+            workstate_recheck,
+            start_warning: None,
         }
+    }
+
+    /// [`workstate_setup::detect`] on the background executor at start, every
+    /// [`workstate_setup::RECHECK_EVERY`] and soon after `recheck` is set.
+    fn watch_workstate(home: Option<PathBuf>, recheck: Arc<AtomicBool>, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            let mut checked: Option<Instant> = None;
+            loop {
+                let due = checked.is_none_or(|t| t.elapsed() >= workstate_setup::RECHECK_EVERY);
+                if recheck.swap(false, Ordering::SeqCst) || due {
+                    checked = Some(Instant::now());
+                    let home = home.clone();
+                    let status = executor
+                        .spawn(async move { workstate_setup::detect(home.as_deref(), workstate_setup::installed_env().as_deref()) })
+                        .await;
+                    let alive = this.update(cx, |this, cx| {
+                        if this.workstate != status {
+                            if matches!(status, WsStatus::Ready { .. }) {
+                                this.start_warning = None;
+                            }
+                            this.workstate = status;
+                            cx.notify();
+                        }
+                    });
+                    if alive.is_err() {
+                        return;
+                    }
+                } else if this.upgrade().is_none() {
+                    return;
+                }
+                executor.timer(Duration::from_millis(250)).await;
+            }
+        })
+        .detach();
+    }
+
+    /// Check WorkState again now (Retry, a changed `.env`), off the UI thread.
+    pub fn recheck_workstate(&self) {
+        self.workstate_recheck.store(true, Ordering::SeqCst);
+    }
+
+    /// The notice's one click: `workstate_env = path` in settings.toml, then a recheck; the Work tabs
+    /// and the Inbox read WorkState with it from now on.
+    pub fn use_workstate_env(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        let saved = Settings::load(&home).and_then(|mut settings| {
+            settings.workstate_env = Some(path);
+            settings.save(&home)
+        });
+        match saved {
+            Ok(_) => {
+                self.workstate = WsStatus::Checking;
+                self.action_error = None;
+            }
+            Err(e) => self.action_error = Some(format!("Cannot save settings.toml: {e}")),
+        }
+        self.recheck_workstate();
+        WorkHub::shared(Some(home), cx);
+        cx.notify();
+    }
+
+    pub fn dismiss_workstate_notice(&mut self, cx: &mut Context<Self>) {
+        self.workstate_dismissed = self.workstate.problem();
+        cx.notify();
+    }
+
+    /// The WorkState notice's problem, unless it was dismissed.
+    pub fn workstate_notice(&self) -> Option<String> {
+        self.workstate.problem().filter(|p| self.workstate_dismissed.as_ref() != Some(p))
     }
 
     fn apply(&mut self, refresh: Refresh) {
@@ -488,6 +578,7 @@ impl FleetView {
                 let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
                 self.desired.insert(name.to_string(), (true, names));
                 self.action_error = None;
+                self.start_warning = self.workstate.start_warning(name);
             }
             Err(e) => self.action_error = Some(format!("Cannot start {name}: {e:#}")),
         }
@@ -505,6 +596,7 @@ impl FleetView {
                     entry.0 = false;
                 }
                 self.action_error = None;
+                self.start_warning = None;
             }
             Err(e) => self.action_error = Some(format!("Cannot stop {name}: {e:#}")),
         }
