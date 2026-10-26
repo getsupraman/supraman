@@ -1129,6 +1129,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   Skill tool anyway and it loaded; textcli trusted the listing and escalated `BLOCKED`, which reached the human as
   a `DECIDE` with two wrong options (add the plugin + restart / waive nested agents). Answered: "call the Skill
   tool directly". Fix queued as m3/8 (skills say: a missing listing entry is not a blocker, a failed Skill call is).
+  **Correction 2026-10-26**: not truncation — the two skills' SKILL.md YAML frontmatter did not parse, so they
+  loaded without a description and were left out of the listing (fixed in rlarch 2.2.0, Skills `e00f76b`; tf/7).
 - **The escalation path worked as designed**: repo-controller → workspace-controller (`BLOCKED`, verbatim) →
   relay → app Messages (`DECIDE:`) → human `fm send` → workspace-controller → repo-controller (`DECISION` forwarded).
 - **Seen by René in the UI** (queued in backlog): tabs monochrome — `NO_COLOR=1` inherited because I launched the
@@ -1144,6 +1146,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   such a `BLOCKED` itself ("call the Skill tool anyway"), never as a `DECIDE` to the human. A turn that waits on
   someone ends `done: waiting on <who> for <what>`, never with the word BLOCKED in the `done:` line (the
   `BLOCKED` message via `SendMessage` is unchanged). Pinned by `crates/fm/tests/skills.rs`.
+  **Correction 2026-10-26**: the listing was not truncated — rlarch's `controller` / `nested-claude` frontmatter
+  did not parse (fixed in rlarch 2.2.0); the skills now say a skill can be missing from the listing (tf/7).
 - **Rule chosen** — `Session::supervised_health` (`crates/foreman-claude/src/session.rs`): an `fm-…` row on a live
   pid that `health()` reads `Blocked` with **no `waitingFor`** (B1 `status=waiting` / B3 `state=blocked`, no status)
   is `Idle`. Used by the Inbox (`reconcile` R4), the fleet panel (`fleet::build`, before `with_hook`) and
