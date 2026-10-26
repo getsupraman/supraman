@@ -33,6 +33,7 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
+use crate::hand::{Hands, Launch};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
@@ -234,6 +235,10 @@ pub struct FleetView {
     workstate_recheck: Arc<AtomicBool>,
     /// The last Start's warning that its sessions run without WorkState.
     pub start_warning: Option<String>,
+    /// The `+` sessions' own WorkState tokens (m5/20); `None` without a Foreman home.
+    hands: Option<Arc<Mutex<Hands>>>,
+    /// What went wrong minting or revoking them.
+    pub hand_notices: Vec<String>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -394,6 +399,7 @@ impl FleetView {
         Self::watch_workstate(home.clone(), workstate_recheck.clone(), cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
+        let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
@@ -450,7 +456,36 @@ impl FleetView {
             workstate_dismissed: None,
             workstate_recheck,
             start_warning: None,
+            hands,
+            hand_notices: Vec::new(),
         }
+    }
+
+    /// Revokes the hand tokens an earlier run left, off the UI thread, and the live ones on quit.
+    fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
+        let (hands, notice) = Hands::open(home);
+        let hands = Arc::new(Mutex::new(hands));
+        let stale = hands.clone();
+        cx.spawn(async move |this, cx| {
+            let mut notices = cx
+                .background_executor()
+                .spawn(async move { stale.lock().unwrap_or_else(|e| e.into_inner()).release_all() })
+                .await;
+            notices.extend(notice);
+            this.update(cx, |this, cx| {
+                this.hand_notices.extend(notices);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        let live = hands.clone();
+        cx.on_app_quit(move |_, _| {
+            live.lock().unwrap_or_else(|e| e.into_inner()).release_all();
+            async {}
+        })
+        .detach();
+        hands
     }
 
     /// [`workstate_setup::detect`] on the background executor at start, every
@@ -756,6 +791,11 @@ impl FleetView {
     }
 
     fn type_in_shell(&mut self, cwd: PathBuf, title: String, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        self.type_in_shell_when(cwd, title, gpui::Task::ready(command), window, cx)
+    }
+
+    /// [`Self::type_in_shell`], typed once `command` is known as well.
+    fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "pwsh".into(),
             args: self.shell_args.clone(),
@@ -765,6 +805,7 @@ impl FleetView {
         // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
         // it look like), or after 15 s regardless.
         cx.spawn(async move |this, cx| {
+            let command = command.await;
             let started = Instant::now();
             let mut last = String::new();
             let mut since = Instant::now();
@@ -881,9 +922,57 @@ impl FleetView {
         }
     }
 
-    /// A shell tab in `cwd` running `claude`, as if typed there: the shell stays when it exits.
+    /// A shell tab in `cwd` running `claude`, as if typed there: the shell stays when it exits. With
+    /// WorkState it runs with its own token ([`crate::hand`]), revoked when claude exits or the tab closes.
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        self.type_in_shell(cwd, title, "claude\r".into(), window, cx)
+        let Some(hands) = self.hands.clone() else {
+            return self.type_in_shell(cwd, title, "claude\r".into(), window, cx);
+        };
+        let at = cwd.clone();
+        let mint = hands.clone();
+        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch(&at) });
+        let (tx, rx) = futures::channel::oneshot::channel::<String>();
+        let command = cx.background_executor().spawn(async move { rx.await.unwrap_or_else(|_| "claude\r".into()) });
+        let id = self.type_in_shell_when(cwd, title, command, window, cx);
+        cx.spawn(async move |this, cx| {
+            let launch = launch.await;
+            tx.send(launch.command()).ok();
+            let name = match launch {
+                Launch::Minted { name, .. } => name,
+                Launch::Unminted(notice) => {
+                    this.update(cx, |this, cx| {
+                        this.hand_notices.push(notice);
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Launch::Plain => return,
+            };
+            loop {
+                cx.background_executor().timer(Duration::from_millis(500)).await;
+                let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
+                // try_lock: another tab's mint may hold it over HTTP, and this is the UI thread.
+                if open && !hands.try_lock().is_ok_and(|h| h.ended(&name)) {
+                    continue;
+                }
+                let hands = hands.clone();
+                let notice = cx
+                    .background_executor()
+                    .spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) })
+                    .await;
+                if let Some(notice) = notice {
+                    this.update(cx, |this, cx| {
+                        this.hand_notices.push(notice);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                return;
+            }
+        })
+        .detach();
+        id
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {

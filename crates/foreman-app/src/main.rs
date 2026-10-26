@@ -13,6 +13,7 @@
 
 mod compose;
 mod fleet;
+mod hand;
 mod instance;
 mod selftest;
 mod selftest_first_run;

@@ -2122,3 +2122,14 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Unbound, Ctrl+Tab and Ctrl+Shift+Tab already sent no bytes (`to_esc_str` has no mapping); Ctrl+PgUp/PgDn did
   (`\x1b[5;5~`), and that is what selftest 7e's red check caught (handlers made to `cx.propagate()`: the pwsh
   `ReadKey` readers printed `PageUp 4`). `[Console]::ReadKey` modifiers: Alt = 1, Shift = 2, Control = 4.
+
+## 2026-10-26 — m5/20 hand sessions minted
+
+- A `+` session (`crates/foreman-app/src/hand.rs`) is minted `role: worker`, `externalRole: "hand"`, `repo` =
+  `git_repo(cwd)`, name `hand-<folder>-<n>`, `launchedBy: foreman/hand`. A worker token cannot mint (doc 14 §2), so the
+  bearer is the repo role's static token, else the workspace's; a `.env` with only a worker line opens it plain.
+- The tab types `try { claude --mcp-config '<file>' } finally { Remove-Item -LiteralPath '<file>' }`: the shell
+  deleting the file is how the app sees claude exit (polled every 500 ms, then DELETE). Tab close, quit
+  (`on_app_quit`, synchronous: gpui polls quit futures for only 200 ms) and the next start (`supervisor/hands.json`)
+  revoke the rest. Not live-checked here (C21 is the controller's): interactive `claude` honouring a non-strict
+  `--mcp-config` over the user-scope `workstate` is (b) above, measured on `--bg` sessions.
