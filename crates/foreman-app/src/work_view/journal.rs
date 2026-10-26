@@ -293,28 +293,33 @@ impl WorkView {
             let who = e.session.as_ref().map(|s| s.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| e.actor.clone());
             let target = e.item.as_ref().or(e.run.as_ref());
             let key = format!("journal-event-{}", e.seq);
+            // Two lines, so the summary keeps the full width of a pane narrowed by the item page.
+            let meta = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_xs()
+                .text_color(colors.text_muted)
+                .child(div().flex_none().child(SharedString::from(short_time(&e.at))))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(if e.item.is_some() { colors.text_accent } else { colors.text_muted })
+                        .child(SharedString::from(target.map(|t| t.qualified_ref.clone()).unwrap_or_else(|| "—".into()))),
+                )
+                .child(div().flex_none().child(SharedString::from(e.kind.clone())))
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(who)));
             let row = div()
                 .id(SharedString::from(key.clone()))
                 .relative()
                 .flex_none()
                 .flex()
-                .items_start()
-                .gap_2()
-                .py(px(2.))
-                .text_xs()
-                .child(div().flex_none().w(px(104.)).text_color(colors.text_muted).child(SharedString::from(short_time(&e.at))))
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(64.))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_color(if e.item.is_some() { colors.text_accent } else { colors.text_muted })
-                        .child(SharedString::from(target.map(|t| t.qualified_ref.clone()).unwrap_or_else(|| "—".into()))),
-                )
-                .child(div().flex_none().w(px(96.)).overflow_hidden().whitespace_nowrap().text_color(colors.text_muted).child(SharedString::from(who)))
-                .child(div().flex_none().w(px(76.)).overflow_hidden().whitespace_nowrap().text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
-                .child(div().flex_1().min_w_0().whitespace_normal().child(SharedString::from(e.summary.clone())))
+                .flex_col()
+                .py(px(3.))
+                .border_b_1()
+                .border_color(colors.border_variant)
+                .child(meta)
+                .child(div().text_sm().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(e.summary.clone())))
                 .child(hit_target(&self.hits, key));
             list = list.child(match e.item.as_ref() {
                 Some(item) => {

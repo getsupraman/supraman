@@ -1675,3 +1675,60 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   `cargo test --workspace` 382 passed, 0 failed (378 + plugin lookup 2, version cases 3 − 1 replaced); release zip
   extracted to `C:\fmbuild\dist-test\Foreman`, no junction, nothing named `plugins` above it: `--selftest` PASS and
   `--selftest-supervise` PASS (step r 30/30 direct), both on the first run after the fix. Copy deleted after.
+
+## 2026-10-26 — m4/4 inbox and journal
+
+- **WorkState rows in the Inbox**: `work_view::WorkInbox` (`crates/foreman-app/src/work_view/inbox.rs`), one per app
+  (a gpui global), created in `FleetView::new`, so the `WorkHub` (and its one `/api/stream`) now starts with the app,
+  not with the first Work tab; unconfigured → no rows, no error line (the Work tab explains). The refresh loop hands it
+  the registered workspace names after each poll (`set_workspaces`: only new names cause reads — resolve the ref,
+  `pick_project`, then `GET /api/v1/inbox?project=`); no project → nothing, quietly; a failed read keeps the last rows.
+  `render_inbox` paints them under the supervisor's needs: `WorkState · <kind>` (dashed left border), workspace ·
+  `qualifiedRef`, `since …`, `what`, and the `call` in small mono (shown, never run: C21). A click is
+  `FleetView::open_work_item` → `open_work` (focus or open the tab) + `WorkView::open_from_inbox` (the item page).
+  Keys: `inbox-ws-<row key>`, × `inbox-ws-dismiss-<row key>` (its click stops propagation).
+- **When it re-reads**: never on a timer. A stream event maps `runId` → project through the overview's runs (read at
+  start, on Configured/Resync, and again when an event names a run it does not know — a new run may be this
+  project's); a known run re-reads only its project's workspaces, another project's run nothing, no `runId` every
+  inbox. Events are debounced (`DEBOUNCE`, 300 ms) into one background read; Resync (Connected after Lost) re-reads
+  all; an older inbox `seq` is dropped. `WorkView` now also re-reads its open item on Configured (it could stay
+  "Reading the item…" when opened before the hub was ready).
+- **Dismissal** (`Dismissed`): `<home>/workstate-dismissed.json` = `{ workspace: { row key: since } }`, written off
+  the UI thread (one writer at a time, newest state wins). A row is hidden while key **and** `since` match. Shows
+  again when: its kind changes (another key), its `since` changes (the condition started over — also when it happened
+  while the app was closed), or a successful read saw it gone (pruned then, so it is new when it comes back). Foreman
+  writes nothing to WorkState.
+- **Journal** (`work_view/journal.rs`): a `Journal`/`Runs` toggle in the Work tab header (`work-journal=closed|open`)
+  replaces the runs with the project's events, newest last, auto-scrolled to the bottom on growth: time, item ref
+  (else the run's), session name (else actor), kind, summary; a row with an item opens its page. Opening reads the
+  newest page (`scope=<project>&limit=50`, no `since`); a stream event (debounced, one read in flight) or a resync
+  reads `since=<cursor>&limit=500` forward, following `hasMore`. **v1 pages only forward**: in the server
+  (`ApiV1.Lists.cs`) no `since` = newest page, `since` = the page after it (exclusive), `since=0` = no since. So
+  "load older" reads forward from a window `(oldest − 200, oldest)`, widened ×4 until it holds ≥ 50 events or reaches
+  `since=1`; more is offered while the window started above 1. Cost: `seq` 1 (the workspace's first event) is never
+  shown. A `before=` on `/api/v1/journal` would make this one call — a request for skills-5d via the controller.
+- **Selftest step 7** (`selftest_work.rs`, `--selftest`): the fake also answers the inbox (2 rows), `resolve?ref=larchsys`
+  (no project), sw2/2's page and the journal pages. At the start of step 7, before any Work tab: both rows painted.
+  After the m4/3 checks (`inbox_and_journal`): row click → the Work tab, sw2/2's page; × → row gone, item page
+  unchanged, the file holds the key; an inbox with a third row + an event without a run → the new row painted, the
+  dismissed one not; the row with a new `since` + an event → painted again; Journal → 150..152 + `journal-older`;
+  `seq` 153 pushed → painted ~340 ms later; load older → 20, 40, no more offered, order 20, 40, 150..153; event 40 →
+  sw1/1's page; frames ≤ 50 ms over all of it. `FOREMAN_SELFTEST_JOURNAL_HOLD_SECS` holds the journal for a screenshot.
+- Tests: `work_view::inbox::tests::*` (5: dismissal holds / starts over / pruned when gone / file round trip / event →
+  which inboxes, keys) and `work_view::journal::tests::*` (3: append/prepend, the older window on a `FakeWorkState`,
+  forward reads follow the cursor). Reds: the journal's `schedule_journal` in `on_hub` off → `FAIL step 7: inbox and
+  journal: the live journal event: not painted within 2000 ms`; `Dismissed::hides` forced false → `FAIL step 7: inbox
+  and journal: × left inbox-ws-done_unverified:… painted`.
+- **Journal rows are two lines** (time · ref · kind · who, then the summary): one line of fixed columns left the
+  summary ~0 px wide beside the item page at 150 % scaling (the first screenshot showed it wrapping per character).
+  Screenshot: `target/m4-4/inbox-journal-fake.png` (PrintWindow during `FOREMAN_SELFTEST_JOURNAL_HOLD_SECS`).
+- **Frame budgets under a parallel selftest**: with aw-m5-11's `--selftest-supervise` running at the same time,
+  `--selftest` failed its 50 ms frame checks in any of the three measured phases (m4/2 board load, m4/3 item page,
+  m4/4 inbox/journal: p50 21–48 ms, max 58–268 ms). On a quiet machine every phase measured p50 ~16.6 ms, max
+  20–39 ms. Run the gate's selftests when no other worker's selftest is open.
+- Gate (CARGO_TARGET_DIR=C:\fmbuild\m4-4\target, `plugins` junction at C:\fmbuild\m4-4\plugins, CLI 2.1.310):
+  `cargo build --release --workspace` ok, no warnings; `cargo test --workspace` 395 passed, 0 failed (387 + 8);
+  `--selftest` PASS 3 in a row on the final build (runs 2–5 of 6 there; 1 and 6 failed frame budgets with m5-11's
+  supervise running), and 3 in a row (7–9) on the build before the row layout change; `--selftest-supervise` PASS on
+  the build before the row layout change (that change is the Work tab journal's render only, which supervise does
+  not open).
