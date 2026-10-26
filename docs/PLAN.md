@@ -269,7 +269,23 @@ m4/5 task box and Approve/Reply on Messages (the relay, like `fm send`); m4/6 en
 Before it (2026-10-26): run `tf` (terminal: block glyphs, NO_COLOR/tool-shell env scrub, wheel scroll) and run `mint`
 (the supervisor mints a per-session `wss_` WorkState token, revoked on stop; live-checked 200 → 401).
 
-**M5 — hardening**: per-workspace cost budget, tray daemon, Nomos as first real workspace.
+**M5 — v1** (run `m5`; cut agreed with René 2026-10-26). v1 ships when M4 and these are done:
+- m5/1 **supervision outlives the window**: a background supervisor with a tray icon; the app attaches to it
+  (single instance); closing the window no longer stops restarts, the relay or the Inbox.
+- m5/2 **packaging**: a release folder with `foreman.exe`, `fm.exe` and `plugins/foreman` that starts sessions
+  from any path (today the plugin is found only by walking up from the exe inside the repo). The `claude` CLI
+  check warns about versions newer than tested and **never blocks them**; it refuses only below the minimum.
+- m5/3 **first run without WorkState**: say what is missing and how to fix it (`rlarch:workstate-setup`);
+  fleet and terminals keep working.
+- m5/4 **relay delivery**: no classifier refusals of the relay's `SendMessage` (3 of 18 selftest runs, 7-d2).
+  Supported routes first: the relay outside auto mode with a scoped toolset, or a per-session `autoMode` rule.
+- m5/7 an Inbox row when a minted session sat idle longer than its token window (was backlog/4).
+- m5/5 **René's hand check** on a real workspace (open since M2), then m5/6 **Nomos as the first real
+  workspace**: one real, small task end to end.
+
+**After v1**: per-workspace cost budget; units with their own WorkState identity via rlarch's `agent_launch`
+(backlog/6–7); the cold-start frame hitch (backlog/2); platforms other than Windows. Dropped: revoking tokens
+when a workspace is removed (backlog/5).
 
 ---
 
@@ -282,4 +298,4 @@ Before it (2026-10-26): run `tf` (terminal: block glyphs, NO_COLOR/tool-shell en
   nested sessions whatever the brief says. Design for supported routes.
 - **Depth.** workspace → repo → controller → orchestrate subagents: four hops. Complete worker briefs from
   the store (fixed in ws/2–ws/4) are what keeps it honest.
-- **Closing the app stops supervision** until M5's daemon.
+- **Closing the app stops supervision** until m5/1's background supervisor.
