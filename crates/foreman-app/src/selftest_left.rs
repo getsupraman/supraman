@@ -193,3 +193,241 @@ async fn check_foreign(
         view.read_with(cx, |v, _| v.ticks) - ticks
     ))
 }
+
+/// What of a hit is on screen: its bounds cut to its clip.
+fn painted_part(h: &crate::view::Hit) -> Option<Bounds<Pixels>> {
+    let b = h.bounds.intersect(&h.visible);
+    (b.size.width > Pixels::ZERO && b.size.height > Pixels::ZERO).then_some(b)
+}
+
+/// The least panel background between the Inbox's last painted row and the tree's first.
+const SEAM_MIN: f32 = 4.;
+
+fn tree_row(key: &str) -> bool {
+    ["ws-row-", "repo-row-", "session-row-"].iter().any(|p| key.starts_with(p))
+}
+
+fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
+    a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
+}
+
+/// `--selftest` step 7f (m5/16): with a full Inbox above it, the tree is wheeled down through several
+/// offsets, and at each the last Inbox row's painted bounds and the Inbox's own area meet no tree row's
+/// painted bounds: the tree clips to its own area.
+pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    // the Removed… line of step 7b would sit between them
+    view.update(cx, |v, cx| {
+        v.action_info = None;
+        cx.notify();
+    });
+    sleep(cx, Duration::from_millis(200)).await;
+    let inbox = until(view, cx, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
+    let tree = until(view, cx, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
+    if f32::from(tree.top() - inbox.bottom()) > 20. {
+        bail!("the tree starts at y {:.1}, {:.1} px under the Inbox: something sits between them", f32::from(tree.top()), f32::from(tree.top() - inbox.bottom()));
+    }
+    let position = tree.center();
+    let wheel = |dy: f32, cx: &mut AsyncWindowContext| {
+        cx.update(|window, cx| {
+            window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+            let event = gpui::ScrollEvent { position, delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))), ..Default::default() };
+            window.dispatch_event(PlatformInput::Scroll(event), cx);
+        })
+    };
+    wheel(100_000., cx)?;
+    sleep(cx, Duration::from_millis(300)).await;
+    let mut checked = Vec::new();
+    for step in [0., 7., 8., 15., 30., 100.] {
+        if step > 0. {
+            wheel(-step, cx)?;
+            sleep(cx, Duration::from_millis(300)).await;
+        }
+        let (offset, last, area, rows) = view.read_with(cx, |v, _| {
+            let hits = v.hits.borrow();
+            let last = hits
+                .iter()
+                .filter(|(k, _)| k.starts_with("inbox-ws-"))
+                .filter_map(|(k, h)| painted_part(h).map(|p| (k.clone(), p)))
+                .max_by(|a, b| a.1.bottom().partial_cmp(&b.1.bottom()).unwrap_or(std::cmp::Ordering::Equal));
+            let rows: Vec<(String, Bounds<Pixels>)> =
+                hits.iter().filter(|(k, _)| tree_row(k)).filter_map(|(k, h)| painted_part(h).map(|p| (k.clone(), p))).collect();
+            let top = hits.iter().filter(|(k, _)| tree_row(k)).map(|(_, h)| f32::from(h.bounds.top())).fold(f32::MAX, f32::min);
+            (f32::from(tree.top()) - top, last, hits.get("inbox-area").map(|h| h.visible), rows)
+        });
+        let (last_key, last) = last.ok_or_else(|| anyhow!("no Inbox row painted"))?;
+        let area = area.ok_or_else(|| anyhow!("the Inbox is gone"))?;
+        if let Some((key, b)) = rows.iter().find(|(_, b)| overlaps(b, &last) || overlaps(b, &area)) {
+            bail!(
+                "tree scrolled {offset:.1} px: {key} paints {:.1}..{:.1}, over the Inbox ({:.1}..{:.1}, last row {last_key} {:.1}..{:.1})",
+                f32::from(b.top()),
+                f32::from(b.bottom()),
+                f32::from(area.top()),
+                f32::from(area.bottom()),
+                f32::from(last.top()),
+                f32::from(last.bottom())
+            );
+        }
+        // and apart: a row cut by the tree's clip right under one cut by the Inbox's reads as one (m5/16)
+        if let Some((key, b)) = rows.iter().filter(|(_, b)| b.top() >= last.bottom()).min_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap_or(std::cmp::Ordering::Equal))
+            && f32::from(b.top() - last.bottom()) < SEAM_MIN
+        {
+            bail!(
+                "tree scrolled {offset:.1} px: {key} paints from {:.1}, {:.1} px under the last Inbox row {last_key} (ends {:.1}); at least {SEAM_MIN} px expected",
+                f32::from(b.top()),
+                f32::from(b.top() - last.bottom()),
+                f32::from(last.bottom())
+            );
+        }
+        checked.push(format!("{offset:.0}"));
+    }
+    shot("m5-16-tree-scrolled", cx).await;
+    Ok(format!(
+        "Inbox {:.1}..{:.1}, tree {:.1}..{:.1}: at tree offsets {} px no tree row painted over the Inbox or its last row",
+        f32::from(inbox.top()),
+        f32::from(inbox.bottom()),
+        f32::from(tree.top()),
+        f32::from(tree.bottom()),
+        checked.join(", ")
+    ))
+}
+
+/// The table [`steady_click`] drops into the outbox, a `work_tree` as an orchestrator pastes it: tabs and
+/// runs of spaces between columns.
+const TABLE: [&str; 5] = [
+    "selftest\tproj\topen\tselftest\t—\t0/6 done",
+    "  selftest-shout-textkit     run    open    shout: textkit.shout(text)    —    0/1 done",
+    "    selftest-shout-textkit-fn  task  open  Add textkit.shout(text) with unit tests  ✗0/3",
+    "  selftest-shout-textcli     run    open    shout: textcli greet --shout    —    0/1 done",
+    "    selftest-shout-textcli-flag  task  open  greet --shout prints textkit.shout(greet(name))  ✗0/3",
+];
+
+/// The outbox file [`steady_click`] wrote, for [`table_lines`].
+static TABLE_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    cx.update(|window, cx| {
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
+    })
+}
+
+/// `--selftest-supervise` step t0 (m5/18 c1): the pointer moves onto `key` (the workspace's Task…), a
+/// Messages row arrives above it from `outbox` while it does, and the button's painted bounds stay where
+/// they were until the click, sent at the spot first aimed at, lands on it.
+pub async fn steady_click(
+    view: &Entity<FleetView>,
+    key: &str,
+    outbox: &std::path::Path,
+    from_name: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<(String, Bounds<Pixels>)> {
+    let aimed = crate::selftest::scrolled_into_view(view, key, cx).await?;
+    let target = aimed.center();
+    move_to(target, cx)?;
+    let file = format!("{:013}-selftest-table.json", foreman_claude::now_ms());
+    let mut body = vec!["Plan for the selftest (a work_tree, not a question):".to_string()];
+    body.extend(TABLE.iter().map(|l| l.to_string()));
+    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body.join("\n")}).to_string();
+    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
+    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
+    *TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(file.clone());
+    // a hand still aiming moves a little; the hold lasts while it does
+    let started = Instant::now();
+    let mut nudge = 0.;
+    loop {
+        let read = view.read_with(cx, |v, _| v.messages.values().flatten().any(|m| m.file == file));
+        if read {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(15) {
+            bail!("the app did not read {file} from the outbox within 15 s");
+        }
+        nudge = if nudge == 0. { 1. } else { 0. };
+        move_to(gpui::point(target.x + gpui::px(nudge), target.y), cx)?;
+        sleep(cx, Duration::from_millis(250)).await;
+    }
+    let read_after = started.elapsed();
+    move_to(target, cx)?;
+    sleep(cx, Duration::from_millis(300)).await;
+    let (now, held, header) = view.read_with(cx, |v, _| (bounds(v, key), v.left_held(), v.hits.borrow().contains_key("messages-area")));
+    let now = now.ok_or_else(|| anyhow!("{key} is no longer painted after the message arrived"))?;
+    shot("m5-18-hover-hold", cx).await;
+    if now != aimed {
+        bail!(
+            "a Messages row arrived {} ms in and moved {key} from y {:.1} to y {:.1} under the pointer (held: {held})",
+            read_after.as_millis(),
+            f32::from(aimed.top()),
+            f32::from(now.top())
+        );
+    }
+    cx.update(|window, cx| {
+        let modifiers = Modifiers::default();
+        window.dispatch_event(
+            PlatformInput::MouseDown(gpui::MouseDownEvent { button: gpui::MouseButton::Left, position: target, modifiers, click_count: 1, first_mouse: false }),
+            cx,
+        );
+        window.dispatch_event(PlatformInput::MouseUp(gpui::MouseUpEvent { button: gpui::MouseButton::Left, position: target, modifiers, click_count: 1 }), cx);
+    })?;
+    let said = format!(
+        "pointer on {key} at y {:.1}; {file} read {} ms later and held back (Messages section {}), {key} still at y {:.1}; clicked there",
+        f32::from(aimed.top()),
+        read_after.as_millis(),
+        if header { "showing older rows only" } else { "not shown" },
+        f32::from(now.top())
+    );
+    Ok((said, aimed))
+}
+
+/// `--selftest-supervise` step t0 (m5/18 c2): the pointer leaves the panel and the held row appears; shown
+/// in full, its table is one painted line per row, all of one height, in a monospace block.
+/// `key` / `aimed`: the button [`steady_click`] held still, which the row must now push down, or the hold
+/// was never tested.
+pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let button = key.to_string();
+    let file = TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| anyhow!("no table message written"))?;
+    let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
+    move_to(gpui::point(right, gpui::px(300.)), cx)?;
+    let key = until(view, cx, "the held message once the pointer left", |v| {
+        (!v.left_held()).then(|| v.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
+    })
+    .await?;
+    sleep(cx, Duration::from_millis(300)).await;
+    let moved = view.read_with(cx, |v, _| bounds(v, &button)).ok_or_else(|| anyhow!("{button} gone once the pointer left"))?;
+    if moved == aimed {
+        bail!("{button} stayed at y {:.1} after the held row appeared too: the arrival never moved it, so the hold was not tested", f32::from(aimed.top()));
+    }
+    view.update(cx, |v, cx| {
+        v.expanded.insert(key.clone());
+        cx.notify();
+    });
+    let prefix = format!("msg-table-{key}#");
+    let lines = until(view, cx, "the table's lines painted", |v| {
+        let hits = v.hits.borrow();
+        let mut lines: Vec<(String, Bounds<Pixels>)> = hits.iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(k, h)| (k.clone(), h.bounds)).collect();
+        (lines.len() >= TABLE.len()).then(|| {
+            lines.sort_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap_or(std::cmp::Ordering::Equal));
+            lines
+        })
+    })
+    .await?;
+    crate::selftest::scrolled_into_view(view, &lines[0].0, cx).await?;
+    shot("m5-18-messages-table", cx).await;
+    if lines.len() != TABLE.len() {
+        bail!("{} table lines painted for {} rows: {:?}", lines.len(), TABLE.len(), lines.iter().map(|l| &l.0).collect::<Vec<_>>());
+    }
+    let heights: Vec<f32> = lines.iter().map(|(_, b)| f32::from(b.size.height)).collect();
+    let (low, high) = heights.iter().fold((f32::MAX, 0f32), |(l, h), x| (l.min(*x), h.max(*x)));
+    if high - low > 0.5 || high > 24. {
+        bail!("table rows painted {heights:?} px high: a row wrapped");
+    }
+    for pair in lines.windows(2) {
+        if (f32::from(pair[1].1.top() - pair[0].1.bottom())).abs() > 0.5 {
+            bail!("table rows {} and {} are not consecutive lines", pair[0].0, pair[1].0);
+        }
+    }
+    Ok(format!(
+        "pointer left: the held row appeared and moved {button} to y {:.1} (what the hold kept from under the pointer); its {}-row table painted {} lines, each {low:.1} px, unwrapped",
+        f32::from(moved.top()),
+        TABLE.len(),
+        lines.len()
+    ))
+}

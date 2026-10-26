@@ -18,6 +18,8 @@ use crate::tokens::token_from;
 
 pub const EXTERNAL_ROLE: &str = "hand";
 const LAUNCHED_BY: &str = "foreman/hand";
+/// What a recalled launch line prints before it starts plain `claude`, quoted for a pwsh '…' string.
+const STALE: &str = "This tab''s WorkState token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
 
 /// How the `+` session starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,12 +34,15 @@ pub enum Launch {
 
 impl Launch {
     /// The line typed into the pwsh tab. The shell deletes the config file once claude exits, however
-    /// it exits, which is how [`Hands::ended`] sees it.
+    /// it exits, which is how [`Hands::ended`] sees it. The line stays in the shell's history, so recalled
+    /// after that (Up+Enter) it finds the file gone and starts plain `claude`, saying why (m5/18).
     pub fn command(&self) -> String {
         match self {
             Launch::Minted { config, .. } => {
                 let path = config.to_string_lossy().replace('\'', "''");
-                format!("try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }}\r")
+                format!(
+                    "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}\r"
+                )
             }
             Launch::Plain | Launch::Unminted(_) => "claude\r".into(),
         }
@@ -295,9 +300,12 @@ mod tests {
     fn hand_command_passes_only_the_path_and_no_strict_flag() {
         let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
         let line = Launch::Minted { name: "hand-alpha-1".into(), config }.command();
+        let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
             line,
-            "try { claude --mcp-config 'C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json' } finally { Remove-Item -LiteralPath 'C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json' -ErrorAction SilentlyContinue }\r"
+            format!(
+                "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}\r"
+            )
         );
         assert!(!line.contains("--strict-mcp-config") && !line.contains("wss_"));
         assert_eq!(Launch::Plain.command(), "claude\r");
@@ -431,5 +439,30 @@ mod tests {
         std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
         assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), format!("--mcp-config {}", config.display()));
         assert!(!config.exists(), "deleted even though claude failed");
+    }
+
+    /// The same line recalled from history after claude exited (m5/18 c5): no `--mcp-config` to the
+    /// deleted file, plain claude after the notice.
+    #[test]
+    fn hand_recalled_line_runs_plain_claude_once_the_config_is_gone() {
+        let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
+            return;
+        };
+        assert!(probe.status.success());
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("workstate-hand-alpha-1.json");
+        std::fs::write(&config, "{}").unwrap();
+        let seen = dir.path().join("argv.txt");
+        let line = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() }.command();
+        let script = format!(
+            "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
+            seen.display(),
+            line = line.trim_end()
+        );
+        let out = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
+        let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();
+        assert_eq!(runs, [format!("[--mcp-config {}]", config.display()), "[]".to_string()]);
+        assert!(String::from_utf8_lossy(&out.stdout).contains("WorkState token was revoked"), "{out:?}");
+        assert!(!config.exists());
     }
 }

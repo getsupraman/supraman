@@ -1664,6 +1664,7 @@ name = "foreman-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "collections",
  "embed-resource",
  "foreman-claude",

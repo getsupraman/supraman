@@ -2133,3 +2133,48 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   (`on_app_quit`, synchronous: gpui polls quit futures for only 200 ms) and the next start (`supervisor/hands.json`)
   revoke the rest. Not live-checked here (C21 is the controller's): interactive `claude` honouring a non-strict
   `--mcp-config` over the user-scope `workstate` is (b) above, measured on `--bg` sessions.
+
+## 2026-10-26 — m5/16 the tree "painting over" a full Inbox
+
+- **It did not.** The tree's `overflow_y_scroll` already clips (gpui's `overflow_mask` intersects with every
+  ancestor's mask, and the Windows shaders clip quads and glyph sprites to it). In the m5-14 `m5-14-work-board`
+  shot the Inbox's content stops at y 392 (its own clip, inside its 1 px bottom border at 393, colour 27,29,35 on a
+  34,37,43 panel) and the tree's starts at 394. Both sections cut a row mid-text at the same, near-invisible line,
+  so the two half-rows read as one row painted over another.
+- Fix: below each capped, scrolling section (Inbox, Messages, notices) a border in `text_muted` at 35 % and 6 px of
+  panel background before the next (`SEAM_GAP`, `left.rs`). Hit targets `inbox-area`, `messages-area`, `tree-area`
+  record each section's clip.
+- `--selftest` step 7f: clears the 7b info line so the tree sits right under the Inbox, wheels the tree through six
+  offsets and, at each, checks every tree row's painted part (bounds ∩ clip) against the Inbox's area and its last
+  row: no overlap, and at least 4 px apart. The overlap half passes on the old layout too (nothing overlapped); the
+  gap half is what fails there.
+- Not this: 7b's one-off "nothing painted under repo-row-selftest-added/beta". A `hit_target` canvas records its
+  bounds at prepaint whatever the clip, so a key missing for 2 s means the row was not in the rendered tree.
+
+## 2026-10-26 — m5/18 rows that hold still, tables in Messages, local times, a recalled hand line
+
+- **Hold** (`view/left.rs` `Hold`): the first mouse move over the left panel records the Inbox (needs + WorkState
+  rows) and Messages keys there are; while the pointer keeps moving there only those rows render, so an arrival
+  above it moves nothing. A row that goes away still goes at once. The rest appear when the pointer leaves
+  (`on_hover(false)`) or has rested `HOLD_STILL` (2 s, a 200 ms timer task); the section header says
+  "· n new, shown when the pointer leaves" on the line it already had. Only the Inbox and Messages are held, the
+  tree's own rows are not.
+- **Tables** (`segments`): two or more consecutive lines that each hold a tab, a gap of two spaces after their first
+  word, or a box-drawing rule become one block: Cascadia Mono, one `whitespace_nowrap` line per row, the block
+  `overflow_hidden` (clipped at the panel's edge, not wrapped). Tabs expand to 8-column stops. A single gappy line or
+  an indent-only line stays prose.
+- **Times**: WorkState sends RFC 3339 in UTC; `work_view::short_time` now parses it and shows `chrono::Local`
+  (`clock` feature; `iana-time-zone` was already in the lock via zed). Unparseable text is shown cut to the
+  minute, as before. The Inbox's "since" uses it too.
+- **Hand line** (m5/20 follow-up): the typed line stays in PSReadLine history, so it now starts with
+  `if (Test-Path -LiteralPath '<config>')` and otherwise prints why and runs plain `claude`. Keeping it out of
+  history was the other option, but whether a line is kept depends on the user's PSReadLine settings and
+  `AddToHistoryHandler`; a line that is safe to rerun works on any profile.
+- `--selftest-supervise` step t0, at the start of step r (Task… just shown, Messages still short — a capped
+  section never grows, so later in the run the test would prove nothing): the pointer moves onto `task-<w>`, a five-row `work_tree` message is written to
+  the outbox while it keeps nudging 1 px (a hand still aiming), and once the app has read the file the button's
+  painted bounds must equal the aimed ones; the click is sent at the aimed spot. Then the pointer leaves, the row
+  appears and must now have moved Task… (else the step fails as void), is expanded, and the table must paint 5
+  `msg-table-…` lines of one height (< 24 px), back to back. Red checks: hold off → "moved task-… from y 516.7
+  to y 598.0 under the pointer"; segments off → "the table's lines painted: not within 5 s"; `SEAM_GAP` 0 →
+  7f "ws-row-larchsys paints from 264.0, 1.3 px under the last Inbox row".

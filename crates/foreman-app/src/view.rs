@@ -203,7 +203,10 @@ pub struct FleetView {
     /// Per workspace, what its relay received (oldest first).
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
     /// `<workspace>/<file>` of the messages shown in full.
-    expanded: HashSet<String>,
+    pub expanded: HashSet<String>,
+    /// While the pointer moves over the left panel, the Inbox and Messages rows it came in on (m5/18).
+    left_hold: Option<left::Hold>,
+    left_hold_timer: Option<gpui::Task<()>>,
     /// Per workspace, the questions answered from here: outbox file → the answer's first line (this
     /// session's, plus `answered.json` as each tick reads it).
     pub answered: BTreeMap<String, BTreeMap<String, String>>,
@@ -441,6 +444,8 @@ impl FleetView {
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
             expanded: HashSet::new(),
+            left_hold: None,
+            left_hold_timer: None,
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
