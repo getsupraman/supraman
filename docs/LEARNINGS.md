@@ -1483,3 +1483,34 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   --workspace` 355 passed, 0 failed; `--selftest` PASS (p95 39.82 ms, max 41.99 ms, 0 > 50 ms; idle 122.7 MiB —
   frame times on this machine were ~35 ms p50 the whole session, also before the Work step); `--selftest-supervise`
   PASS on the first run.
+
+## 2026-10-26 — m4/2b frame-time regression
+
+- **Cause**: `FleetView::render` rebuilds the tree every frame (`fleet::build` → `assign` → `repo_of`), and
+  `repo_of` falls back to `main_repo(cwd)` — a filesystem walk up to the nearest `.git` — for every session its
+  repos don't contain by prefix. m4/2's selftest registers workspace `selftest-work` with **no repos**, so every
+  session on the machine (271) missed the prefix and was walked on every frame, on the UI thread. Measured with a
+  walk counter over the 6 s idle window: ~85 000 walks over ~170 frames (≈500/frame). The pre-existing `larchsys`
+  workspace already walked ~237/frame (sessions in `*.worktrees` and outside its repos), which is why ccc7b4a sat
+  at ~19 ms rather than at vsync. The Work tab, `WorkHub`, the stream and the relay truncation were cleared by
+  measurement: idle frames were already ~35 ms *before* step 7 ran, and skipping only the registry entry in
+  `selftest_work::prepare` brought them back to 19.6 ms. In the real app any repo-less workspace, or any session
+  outside the registered repos, costs this per frame.
+- **Fix**: the poll (background thread) computes `fleet::main_repos(sessions)` once per distinct cwd; `FleetView`
+  keeps it beside `sessions` and passes it to `fleet::build` through `Supervised::main_repos`, which uses
+  `foreman_claude::assign_with` instead of walking. `repo_of` also returns `None` at once for a workspace without
+  repos. `assign`/`repo_of` keep their signature (fm uses them).
+- **Guard**: `foreman_claude::main_repo_walks()` counts walks; `--selftest` step 8 fails when the idle window sees
+  more than (refreshes + 1) × sessions walks, i.e. any rendering walk. Red: `main_repos: None` in `FleetView::tree`
+  → `FAIL step 8: 75387 main_repo walks over 318 idle frames, at most 1084 expected` — with p50 still 18.7 ms
+  (the empty-repos early return hid the frame cost), so the walk count is the check, not a frame budget. Unit
+  test: `fleet::tests::a_polls_main_repos_table_places_worktree_sessions_without_touching_the_disk`.
+- **Numbers** (same machine, alternating, release, `--selftest` idle line): ccc7b4a p50 19.0/19.6/19.3/20.0/19.3
+  ms, ~300-315 frames; b999d77 p50 34.9/35.4/37.5/35.7/36.1/35.0/35.9 ms, ~160-172 frames; fixed p50
+  16.66/16.63/16.64/16.64 ms, ~360 frames (vsync), p95 ≤ 20.5 ms, 660 walks (3 polls × 220 distinct cwds).
+- **Gotcha, comparing builds**: extracting another commit (`git archive | tar`) and building it with the *same*
+  `CARGO_TARGET_DIR` silently links the other tree's path crates — the extracted files carry old mtimes, so cargo
+  treats the existing `foreman-claude` rlib as fresh. A "clean b999d77" measured 20 ms that way because it had
+  linked the fix. Give each tree its own target dir (or `touch` its sources).
+- **Flake**: `--selftest` step 6 (`wheel down: display_offset 1 → 0 → 0`: two notches up moved only 1 line)
+  failed in a cluster of consecutive runs on all three builds, ccc7b4a included; unrelated to this change.

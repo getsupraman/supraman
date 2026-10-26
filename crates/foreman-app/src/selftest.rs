@@ -19,7 +19,7 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Session, check_supported, list_sessions, main_repo, now_ms};
+use foreman_claude::{Session, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
 use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
@@ -700,12 +700,20 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
+    let walks_before = main_repo_walks();
     let stats = record_frames(view, Duration::from_secs(6), cx).await;
-    let refreshes = view.read_with(cx, |v, _| v.refreshes) - refreshes_before;
+    let walks = main_repo_walks() - walks_before;
+    let (refreshes, sessions) = view.read_with(cx, |v, _| (v.refreshes - refreshes_before, v.sessions.len() as u64));
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
     println!("frame time over 6 s with {refreshes} panel refreshes: {stats}");
     if refreshes == 0 {
         bail!("step 8: the panel did not refresh during the 6 s frame window");
+    }
+    // A poll walks each session cwd once (one may be in flight at either edge); rendering walks none (m4/2b).
+    let polls_allowed = (refreshes + 1) * sessions;
+    println!("main_repo walks over those {} frames: {walks} (at most {polls_allowed}: {sessions} sessions × {} polls)", stats.frames, refreshes + 1);
+    if walks > polls_allowed {
+        bail!("step 8: {walks} main_repo walks over {} idle frames, at most {polls_allowed} expected: the render path walks the filesystem", stats.frames);
     }
     Ok(())
 }
