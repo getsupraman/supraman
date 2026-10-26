@@ -1,3 +1,4 @@
+mod discover;
 mod dotenv;
 mod error;
 mod events;
@@ -10,6 +11,7 @@ mod scan;
 mod settings;
 mod slug;
 
+pub use discover::{discover, rescan, same_root};
 pub use dotenv::read_env_value;
 pub use error::{CoreError, Result};
 pub use events::{

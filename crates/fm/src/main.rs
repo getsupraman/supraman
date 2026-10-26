@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, migrate_home, scan, slugify, validate_name};
+use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, discover, migrate_home};
 
 const USAGE: &str = "\
 usage:
@@ -248,21 +248,11 @@ fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> Result<&'a s
 
 fn add(args: &[&str]) -> Result<(), Failure> {
     let args = parse_add(args)?;
-    let root = std::path::absolute(&args.dir).map_err(|_| CoreError::NotADirectory(args.dir.clone()))?;
-    let name = match args.name {
-        Some(name) => name,
-        None => {
-            let folder = root.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
-            slugify(&folder)
-        }
-    };
-    validate_name(&name)?;
-    let repos = scan(&root, args.depth)?;
-    let workspace = Workspace::new(name, root, repos);
+    let workspace = discover(&args.dir, args.name.as_deref(), args.depth)?;
 
     let registry = registry()?;
-    if !args.force && registry.exists(&workspace.name)? {
-        return Err(CoreError::AlreadyExists(workspace.name).into());
+    if !args.force {
+        registry.check_new(&workspace)?;
     }
     if args.dry_run {
         println!("dry run: would register workspace {} (nothing written)", workspace.name);
