@@ -1917,3 +1917,43 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   19.6–22.6 ms); `--selftest-supervise` PASS 4 of 4 (step h: hidden 37–40 s, 12–14 ticks, the stopped workspace
   session resumed while hidden, Open → shown in ≤ 6 ms, repainted in ~110 ms; step q: Stop all in 3.9–6.0 s);
   `--selftest-detach-shutdown` PASS.
+
+## 2026-10-26 — m5/15 selftest under load
+
+- **Two things are measured per frame now, and only one depends on the machine.** `FrameProbe` keeps the frame
+  interval (render → render) and adds the window's own work: root `render` → `FrameProbe::paint_marker`, a zero-size
+  canvas painted as the root's last child, so render + layout + prepaint + paint of every view, without the wait for
+  vsync. `FrameStats` gains `work_p10/p50/p95`. The interval says how the user saw it; the own work says what Foreman
+  cost. A build stretches the first without Foreman doing more.
+- **Own work is judged always, on its fastest tenth (`work_p10 ≤ 16 ms`).** A per-frame cost (m4/2's filesystem walk,
+  the red check's sleep) lifts every frame; preemption lifts only some. Wall-clock own work was not enough on its own:
+  beside `cargo build --release` at 100 % CPU, p10 went 5 → 19 ms with no regression (rustc threads at normal priority
+  preempt the UI thread mid-frame; the cores' siblings are busy too). So the gate raises its UI thread to
+  `THREAD_PRIORITY_HIGHEST` (`frames::raise_ui_thread`, thread only, the process class stays normal so the sessions and
+  shells it starts are not raised). After that: p10 5–7 ms quiet, 8–10 ms at 97 % CPU — and frame intervals held vsync
+  at 97 % too (p50 16.3–16.9 ms).
+- **Interval checks run only on a quiet machine, decided in the same run.** Before each measured phase (step 7's board
+  load, item page, inbox+journal; step 8's 6 s idle window) a 1 s idle baseline is recorded, with the share of all
+  cores other processes used (`GetSystemTimes` − this process's `GetProcessTimes`). Busy = baseline p50 > 18.5 ms, a
+  baseline frame > 50 ms, or other processes ≥ 75 % CPU (before or during the phase) → `interval checks SKIP (machine
+  busy: …)` in the step's line. Quiet → no frame over 50 ms, as before; a failure is confirmed by a second baseline
+  after the phase (load that started mid-phase reads as SKIP). Step 8's idle window was only printed before; it is
+  judged now.
+- **Red check:** `FOREMAN_SELFTEST_FRAME_SLEEP_MS=15` (every root render sleeps 15 ms) → `FAIL step 7: step 7 board
+  load: own work per frame p10 20.2–23.8 ms, over the 16 ms budget`, quiet (4/4) and beside the build (4/4).
+- **Step 6b and a second selftest's clipboard.** The copied line carries the run's tag (`wheel line N fm-<hex>`, step 6
+  prints it), the clipboard is re-read until it holds this run's value (1 s), and Ctrl+Shift+C / Ctrl+V are pressed
+  again (5 tries) when a foreign value replaced ours. Seen in a loaded run: the first Ctrl+V was not echoed (gpui read
+  clipboard format 0 while another process held it), the second was.
+- **Step 7b under load:** `press` once found its row missing from `hits` for a frame (`nothing painted under
+  repo-row-…/beta`) at 100 % CPU; `scrolled_into_view` now waits up to 2 s for the key to be painted again and lists what
+  it saw if it never is.
+- Seen once, while P: was full (0 bytes free): `FAIL step 7b: add-save is not fully inside its visible area after
+  scrolling: 808..827 in 0..820` (unchanged on every scroll), and the next run failed in setup with os error 112.
+  Probably the full disk, not load. Not chased further.
+- Gate (final binary, `CARGO_TARGET_DIR=C:\fmbuild\m5-15\target`): `cargo test --workspace` 416 passed (414 + 2 in
+  `selftest::frames`). `--selftest` beside a looping `cargo build --release --workspace` into a second target dir: 3/3
+  PASS (other processes 97 % CPU; own work p10 8.5–8.7 ms; interval p50 16.4–16.7 ms, 0 frames > 50 ms). Quiet (other
+  processes 48–61 %, which is what the parallel units leave): 3/3 PASS, interval checks applied (`quiet`), own work
+  p10 5.2–6.2 ms. Red check 2/2 FAIL loaded, 2/2 FAIL quiet. `--selftest-supervise` PASS (supervise step d not
+  touched).

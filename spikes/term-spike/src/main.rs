@@ -358,10 +358,7 @@ async fn selftest(
         .collect();
 
     this.update(cx, |view, cx| {
-        view.probe = FrameProbe {
-            recording: true,
-            frames: Vec::new(),
-        };
+        view.probe.start();
         cx.notify();
     })
     .ok();
