@@ -178,16 +178,39 @@ fn task1_page(seq: i64, claimed_by: &Session, all_checked: bool) -> String {
     .to_string()
 }
 
-/// sw1/1: done, and only the worker's own verification says so.
+/// sw1/1: done, and only the worker's own verification says so. Shaped like the real server's done
+/// task (m5/19): every field it may null is null, the intent first of all.
 fn shipped_page() -> String {
+    let session = json!({ "id": "ws-session-0", "name": "aw-old", "role": "worker", "externalRole": null, "origin": null,
+                          "launchedBy": null, "claudeSessionId": null, "cwd": null, "tree": null, "client": null,
+                          "firstSeenAt": "2026-10-25T09:00:00+00:00", "lastSeenAt": "2026-10-25T17:55:00+00:00" });
+    let reports = json!([{ "attempt": 1, "session": session, "agent": null, "startedAt": "2026-10-25T17:00:00+00:00", "endedAt": null,
+                           "status": "done", "files": [], "verify": null, "redCheck": null, "deviations": null, "risks": null, "notDone": null,
+                           "at": "2026-10-25T17:50:00+00:00" }]);
+    let notes = json!([{ "id": "n-0", "kind": "decision", "body": "Ship as is.", "from": null, "to": null, "consumedAt": null,
+                         "createdAt": "2026-10-25T17:56:00+00:00", "session": null }]);
+    let events = json!([
+        { "seq": 38, "at": "2026-10-25T17:50:00+00:00", "item": null, "run": null, "session": session, "actor": "aw-old",
+          "role": "worker", "kind": "report", "summary": null, "payload": null },
+        { "seq": 39, "at": "2026-10-25T17:55:00+00:00", "item": null, "run": null, "session": session, "actor": "aw-old",
+          "role": "worker", "kind": "transition", "summary": "done",
+          "payload": { "from": "in_progress", "to": null, "forced": null, "reason": null } }
+    ]);
     json!({
         "asOf": "2026-10-26T12:02:00+00:00", "seq": 100, "item": item(SHIPPED, "sw1/1", "task", "Ship it", "done"),
-        "path": [project(), done_run()], "intent": "Ship the finished run.", "openedAt": "2026-10-25T09:00:00+00:00",
-        "closedAt": "2026-10-25T17:55:00+00:00", "resolution": "accepted",
-        "criteria": [{ "id": "c1", "text": "shipped", "checked": true }, { "id": "c2", "text": "announced", "checked": true }],
-        "reports": [{ "attempt": 1, "agent": "aw-old", "status": "done", "files": [], "at": "2026-10-25T17:50:00+00:00" }],
-        "verifications": [{ "command": "cargo test", "resultLine": "ok", "passed": true, "runBy": "worker", "at": "2026-10-25T17:55:00+00:00" }],
-        "artifacts": [{ "kind": "commit", "value": "abc1234def567890", "at": "2026-10-25T17:54:00+00:00" }]
+        "path": [project(), done_run()], "intent": null, "verifyCmd": null, "riskTags": [], "priority": 0,
+        "severity": null, "source": null, "resolution": "accepted", "closedBy": null, "openedAt": "2026-10-25T09:00:00+00:00",
+        "startedAt": null, "closedAt": "2026-10-25T17:55:00+00:00",
+        "criteria": [{ "id": "c1", "text": "shipped", "checked": true, "evidence": null, "checkedAt": null },
+                     { "id": "c2", "text": "announced", "checked": true, "evidence": null, "checkedAt": null }],
+        "claim": null,
+        "reports": reports,
+        "verifications": [{ "command": "cargo test", "resultLine": "ok", "passed": true, "counts": null, "runBy": "worker",
+                            "session": null, "redCheck": null, "at": "2026-10-25T17:55:00+00:00" }],
+        "artifacts": [{ "kind": "commit", "value": "abc1234def567890", "at": "2026-10-25T17:54:00+00:00" }],
+        "children": [], "findings": [],
+        "notes": notes, "links": { "out": [], "in": [] }, "assumptions": [], "events": events,
+        "eventsHasMore": false, "imported": null
     })
     .to_string()
 }
@@ -528,7 +551,10 @@ async fn item_page(
     // A link to sw1/1: done on the worker's word only.
     click(view, "item-link-in-relates-sw1/1", cx).await?;
     painted(view, &["item-header-sw1/1", "item-done-unverified", &verification_key(0, true), "item-report-1"], LOADED_WITHIN, "sw1/1 via the link", cx).await?;
-    lines.push("link → sw1/1: done with only a worker verification, warning painted".into());
+    if is_painted(view, "item-intent", cx) {
+        bail!("sw1/1's intent is null, yet an Intent section is painted");
+    }
+    lines.push("link → sw1/1 (the real server's nulls, intent null: no Intent section): done with only a worker verification, warning painted".into());
 
     click(view, "item-back", cx).await?;
     painted(view, &["item-header-sw2/1"], LOADED_WITHIN, "Back to sw2/1", cx).await?;

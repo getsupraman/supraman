@@ -243,8 +243,8 @@ impl WorkView {
             }
         };
         let mut pane = pane.child(self.render_header(page, cx));
-        if !page.intent.trim().is_empty() {
-            pane = pane.child(section("Intent", None).child(prose(&page.intent, colors.text)).child(hit_target(&self.hits, "item-intent".into())));
+        if let Some(intent) = page.intent.as_deref().filter(|i| !i.trim().is_empty()) {
+            pane = pane.child(section("Intent", None).child(prose(intent, colors.text)).child(hit_target(&self.hits, "item-intent".into())));
         }
         if let Some(cmd) = page.verify_cmd.as_deref().filter(|c| !c.trim().is_empty()) {
             pane = pane.child(section("Verify command", None).child(mono(cmd, colors.text)).child(hit_target(&self.hits, "item-verify-cmd".into())));
@@ -538,7 +538,7 @@ impl WorkView {
     fn render_report(&self, r: &Report, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let muted = colors.text_muted;
-        let by = r.session.as_ref().map(|s| s.name.as_str()).filter(|n| !n.is_empty()).unwrap_or(r.agent.as_str());
+        let by = r.session.as_ref().map(|s| s.name.as_str()).filter(|n| !n.is_empty()).or(r.agent.as_deref()).unwrap_or("");
         let mut card = div()
             .relative()
             .flex()
@@ -612,7 +612,7 @@ impl WorkView {
                     .child(small(format!("run by {by}"), colors.text_muted))
                     .child(small(short_time(&v.at), colors.text_muted)),
             )
-            .child(mono(&v.command, colors.text))
+            .when_some(v.command.as_deref().filter(|c| !c.is_empty()), |d, c| d.child(mono(c, colors.text)))
             .when(!v.result_line.is_empty(), |d| d.child(prose(&v.result_line, colors.text)))
             .when_some(v.red_check.as_deref().filter(|r| !r.is_empty()), |d, r| d.child(prose(&format!("red check: {r}"), colors.text_muted)))
             .child(hit_target(&self.hits, verification_key(index, v.passed)))
@@ -653,7 +653,7 @@ impl WorkView {
                         .child(div().flex_none().w(px(110.)).text_color(colors.text_muted).child(SharedString::from(short_time(&e.at))))
                         .child(div().flex_none().w(px(80.)).text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
                         .child(div().flex_none().w(px(110.)).overflow_hidden().whitespace_nowrap().text_color(colors.text_muted).child(SharedString::from(who)))
-                        .child(div().flex_1().min_w_0().child(SharedString::from(e.summary.clone())))
+                        .child(div().flex_1().min_w_0().child(SharedString::from(e.summary.clone().unwrap_or_default())))
                         .child(hit_target(&self.hits, format!("item-event-{}", e.seq))),
                 );
             }
