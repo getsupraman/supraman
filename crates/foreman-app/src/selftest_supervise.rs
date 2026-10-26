@@ -26,6 +26,9 @@
 //!   with Attach to its row.
 //! - c. its turn ended → `claude stop` (a stop the daemon never respawns; a kill of a `working` row it does,
 //!   m2/4) → the row drops the pid, and the supervisor resumes it: same sessionId, new pid.
+//! - h. (around c) the window hidden by WM_CLOSE, the close button's path, before the stop: c's resume
+//!   happens with it hidden. Then Open, the tray's command → shown, repainted, and the panel shows the resumed
+//!   pid, ticks counted while hidden, no Inbox row for the session.
 //! - w. `fm want <testbed> Repo --prompt-file …` (the testbed's repo is a plain dir `<root>/Repo`: a `git init`ed
 //!   one is untrusted, step d) → the supervisor launches `fm-selftest-<hex>-repo`; its first task runs
 //!   `fm roster` itself with the Bash tool (no park), and that call's result in its transcript lists it with role
@@ -37,6 +40,8 @@
 //! - s. the window made 480 px tall → the tree overflows; its lowest row is scrolled wholly into view, size
 //!   restored.
 //! - g. Stop (click) → the testbed's sessions stopped, the relay too, rows kept.
+//! - q. Stop all, the tray's command → every other started workspace of this run (`-u`, `-c1`, `-c2`)
+//!   saved as not started, and their sessions stopped.
 //!
 //! Cleanup (every exit path, see `selftest::cleanup`): supervisor off, then stop + rm every row named
 //! `fm-selftest-<hex>…`, then the dirs.
@@ -103,7 +108,7 @@ impl Testbed {
 
 pub fn prepare() -> anyhow::Result<()> {
     let target = cargo_root().join("target");
-    let home = target.join("selftest-home");
+    let home = crate::selftest::home();
     remove_dir_retrying(&home).with_context(|| format!("cannot clear {}", home.display()))?;
     let hex = hex6();
     let workspace = |suffix: &str| {
@@ -399,6 +404,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let (_, tools) = transcript_turn(&transcript);
     let ready = read_outbox(&tb.home, &tb.a.0)?.into_iter().find(|m| m.from_name == ctrl).map(|m| m.body);
     println!("step b: {ctrl}'s first turn: tools {tools:?} | its message to {relay_name}: {ready:?}");
+    let hidden = hide(view, cx).await.context("step h")?;
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
     let kill = Instant::now();
@@ -415,6 +421,9 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             Some(r) if r.pid.is_some() && r.id == idle.id => break r,
             Some(r) => bail!("step c: {ctrl} came back as another row: {} / {} ({})", r.id, r.session_id, raw(&r)),
             None => bail!("step c: {ctrl} is no longer listed"),
+        }
+        if cx.update(|window, _| crate::tray::is_shown(window))? {
+            bail!("step h: the window was shown again while step c waited for the resume");
         }
         if kill.elapsed() > Duration::from_secs(120) {
             bail!("step c: {ctrl} not resumed within 120 s of `claude stop` (pid dropped: {dropped:?})");
@@ -459,6 +468,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         settled.pid.unwrap_or_default(),
         raw(&settled)
     );
+
+    reopen(&tb.a.0, &ctrl, &settled, hidden, view, cx).await.context("step h")?;
 
     // after c, not right after r: the drops give the workspace session turns of its own, and c's stop must
     // not land mid-turn
@@ -662,6 +673,117 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if shown != 3 || still != 0 {
         bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
     }
+    stop_all_step(tb, view, cx).await.context("step q")
+}
+
+/// When step h hid the window, and the tick count then.
+struct Hidden {
+    at: Instant,
+    ticks: u64,
+}
+
+/// WM_CLOSE to this process's windows, as the caption button and Alt+F4 send it: the window hides.
+async fn hide(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<Hidden> {
+    let posted = crate::selftest::post_close_to_own_windows();
+    let at = Instant::now();
+    while cx.update(|window, _| crate::tray::is_shown(window))? {
+        if at.elapsed() > Duration::from_secs(5) {
+            bail!("the window is still shown 5 s after WM_CLOSE (posted to {posted} window(s))");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    let ticks = view.read_with(cx, |v, _| v.ticks);
+    println!("step h: WM_CLOSE posted to {posted} window(s) → hidden after {} ms, tick {ticks}", at.elapsed().as_millis());
+    Ok(Hidden { at, ticks })
+}
+
+/// Open, as the tray asks for it: the window is back and painting, and what it shows is the state the
+/// supervisor reached while it was hidden.
+async fn reopen(
+    workspace: &str,
+    ctrl: &str,
+    settled: &Session,
+    hidden: Hidden,
+    view: &Entity<FleetView>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    if cx.update(|window, _| crate::tray::is_shown(window))? {
+        bail!("the window was shown before Open");
+    }
+    let hidden_for = hidden.at.elapsed();
+    let ticks = view.read_with(cx, |v, _| v.ticks) - hidden.ticks;
+    if ticks == 0 {
+        bail!("no supervisor tick in the {} the window was hidden", secs(hidden_for));
+    }
+    // painted again after Open, not left over from before the hide
+    let key = format!("stop-{workspace}");
+    view.read_with(cx, |v, _| v.hits.borrow_mut().remove(&key));
+    let fleet = view.clone();
+    let opened = Instant::now();
+    let opened_ms = now_ms();
+    cx.update(|window, cx| crate::tray::apply(crate::tray::Command::Open, &fleet, window, cx))?;
+    while !cx.update(|window, _| crate::tray::is_shown(window))? {
+        if opened.elapsed() > Duration::from_secs(5) {
+            bail!("the window is not shown 5 s after Open");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    let shown_after = opened.elapsed();
+    wait_painted(view, &key, Duration::from_secs(10), cx).await?;
+    let painted_after = opened.elapsed();
+    loop {
+        let (polled_at, pid, needs) = view.read_with(cx, |v, _| {
+            (
+                v.polled_at,
+                v.sessions.iter().find(|s| s.name == ctrl).and_then(|s| s.pid),
+                v.needs.iter().filter(|n| n.name == ctrl).map(|n| format!("{:?}", n.kind)).collect::<Vec<_>>(),
+            )
+        });
+        if polled_at > opened_ms && pid == settled.pid && needs.is_empty() {
+            break;
+        }
+        if opened.elapsed() > Duration::from_secs(15) {
+            bail!("after Open the panel shows {ctrl} with pid {pid:?} (resumed as {:?}), Inbox rows {needs:?}", settled.pid);
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
+    println!(
+        "step h: hidden {} with {ticks} supervisor tick(s), {ctrl} resumed meanwhile | Open → shown after {} ms, `{key}` repainted after {} ms, a poll after Open shows {ctrl} with the resumed pid {} and no Inbox row for it",
+        secs(hidden_for),
+        shown_after.as_millis(),
+        painted_after.as_millis(),
+        settled.pid.unwrap_or_default()
+    );
+    Ok(())
+}
+
+/// Step q: Stop all through the tray's command, after g stopped the testbed by its button.
+async fn stop_all_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let others = [&tb.u.0, &tb.c1.0, &tb.c2.0];
+    let started = |w: &str| DesiredState::load(&tb.home, w).ok().flatten().is_some_and(|d| d.started);
+    let before: Vec<&String> = others.iter().copied().filter(|w| started(w)).collect();
+    if before.len() != others.len() {
+        bail!("before Stop all only {before:?} of {others:?} are started");
+    }
+    let fleet = view.clone();
+    let asked = Instant::now();
+    cx.update(|window, cx| crate::tray::apply(crate::tray::Command::StopAll, &fleet, window, cx))?;
+    if let Some(w) = others.iter().find(|w| started(w)) {
+        bail!("{w} is still saved as started right after Stop all");
+    }
+    let names: Vec<String> = [&tb.c1.0, &tb.c2.0].iter().map(|w| workspace_session_name(w)).collect();
+    let stopped = wait_for("step q: the budget workspaces' sessions stopped", Duration::from_secs(60), cx, |rows| {
+        let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
+        (ours.len() == names.len() && ours.iter().all(|s| s.pid.is_none()))
+            .then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
+    })
+    .await?;
+    println!(
+        "step q: Stop all → {} saved as not started at once, sessions stopped after {}: {}",
+        before.iter().map(|w| w.as_str()).collect::<Vec<_>>().join(", "),
+        secs(asked.elapsed()),
+        stopped.join(", ")
+    );
     Ok(())
 }
 
