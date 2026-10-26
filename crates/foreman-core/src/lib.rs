@@ -18,7 +18,8 @@ pub use model::{Repo, Workspace};
 pub use plugin::{HOOK_EXE, install_hook_exe};
 pub use registry::{Registry, home_from};
 pub use relay::{
-    InboxWatcher, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop, SENT_DIR, clear_ready, ensure_relay_dirs, inbox_dir,
+    ANSWERED_FILE, Ask, AskState, InboxWatcher, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop, SENT_DIR, ask_kind, ask_states,
+    clear_ready, ensure_relay_dirs, inbox_dir, mark_answered, read_answered,
     outbox_dir, read_outbox, relay_dir, relay_ready, send,
 };
 pub use scan::{DEFAULT_DEPTH, scan};

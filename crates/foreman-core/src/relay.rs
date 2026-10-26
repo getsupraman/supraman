@@ -4,7 +4,7 @@
 //! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]). Facts
 //! behind the shape: `docs/LEARNINGS.md` m0/4 and m3/1.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -183,6 +183,85 @@ pub fn clear_ready(home: &Path, workspace: &str) -> Result<()> {
     }
 }
 
+/// What a workspace session's message asks of the human, by its first word (the skills' formats:
+/// `plugins/foreman/skills/workspace-controller/SKILL.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// `APPROVE? …`: a plan waiting for the human's approval.
+    Approve,
+    /// `DECIDE: …`: a question only the human answers.
+    Decide,
+}
+
+pub fn ask_kind(body: &str) -> Option<Ask> {
+    let body = body.trim_start();
+    if body.starts_with("APPROVE?") {
+        Some(Ask::Approve)
+    } else if body.starts_with("DECIDE:") {
+        Some(Ask::Decide)
+    } else {
+        None
+    }
+}
+
+/// Where a question stands for the Messages list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskState {
+    Open(Ask),
+    /// The first line of the answer sent.
+    Answered(String),
+    /// An unanswered `APPROVE?` with a later `APPROVE?` from the same sender: a re-plan replaces the
+    /// plan, so only the newest one is approved. `DECIDE:` questions are separate and never superseded.
+    Superseded,
+}
+
+/// The state of every question `from_name` sent in `msgs` (oldest first, as [`read_outbox`] lists
+/// them), keyed by file name; `answered` is file name → first line of the answer.
+pub fn ask_states(msgs: &[OutboxMessage], from_name: &str, answered: &BTreeMap<String, String>) -> BTreeMap<String, AskState> {
+    let asks: Vec<(&OutboxMessage, Ask)> = msgs
+        .iter()
+        .filter(|m| m.error.is_none() && m.from_name == from_name)
+        .filter_map(|m| ask_kind(&m.body).map(|a| (m, a)))
+        .collect();
+    let newest_approve = asks.iter().rev().find(|(_, a)| *a == Ask::Approve).map(|(m, _)| m.file.as_str());
+    asks.iter()
+        .map(|(m, ask)| {
+            let state = match answered.get(&m.file) {
+                Some(line) => AskState::Answered(line.clone()),
+                None if *ask == Ask::Approve && newest_approve != Some(m.file.as_str()) => AskState::Superseded,
+                None => AskState::Open(*ask),
+            };
+            (m.file.clone(), state)
+        })
+        .collect()
+}
+
+/// The questions the human answered from Foreman: `relay/<w>/answered.json`, outbox file name → the
+/// answer's first line, so a restart does not offer Approve twice.
+pub const ANSWERED_FILE: &str = "answered.json";
+
+/// Missing file: nothing answered yet.
+pub fn read_answered(home: &Path, workspace: &str) -> Result<BTreeMap<String, String>> {
+    let path = relay_dir(home, workspace)?.join(ANSWERED_FILE);
+    match fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| CoreError::io(&path, io::Error::new(ErrorKind::InvalidData, e))),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(CoreError::io(&path, e)),
+    }
+}
+
+/// Adds `file → answer` to `answered.json` (written to a `.tmp`, then renamed).
+pub fn mark_answered(home: &Path, workspace: &str, file: &str, answer: &str) -> Result<()> {
+    let mut answered = read_answered(home, workspace)?;
+    answered.insert(file.to_string(), answer.to_string());
+    let dir = ensure_relay_dirs(home, workspace)?;
+    let path = dir.join(ANSWERED_FILE);
+    let tmp = dir.join(format!("{ANSWERED_FILE}.tmp"));
+    let text = serde_json::to_string_pretty(&answered).map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
+    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
+    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))
+}
+
 /// `fm inbox --dir <inbox>`'s state: each [`InboxWatcher::scan`] turns every new `*.json` drop into
 /// one JSON line and moves the file to `sent/` (a malformed one to `rejected/`), so a re-armed
 /// watcher neither loses nor replays a drop. A file it could not move is remembered, not re-printed.
@@ -337,5 +416,66 @@ mod tests {
         clear_ready(home.path(), "demo").unwrap();
         clear_ready(home.path(), "demo").unwrap();
         assert_eq!(relay_ready(home.path(), "demo"), None);
+    }
+
+    fn msg(file: &str, from_name: &str, body: &str) -> OutboxMessage {
+        OutboxMessage { file: file.into(), from: "uds:x".into(), from_name: from_name.into(), body: body.into(), at: 0, error: None }
+    }
+
+    #[test]
+    fn a_question_is_known_by_its_first_word() {
+        assert_eq!(ask_kind("APPROVE? Add dark mode — 2 repos"), Some(Ask::Approve));
+        assert_eq!(ask_kind("
+  DECIDE: which db (1.2, api)
+more"), Some(Ask::Decide));
+        assert_eq!(ask_kind("DONE: shipped"), None);
+        assert_eq!(ask_kind("approve? lower case is not the format"), None);
+        assert_eq!(ask_kind("I will send APPROVE? later"), None);
+        assert_eq!(ask_kind("DECIDE without colon"), None);
+    }
+
+    #[test]
+    fn a_later_approve_supersedes_earlier_unanswered_ones_and_decides_stay_open() {
+        let ctrl = "fm-demo-workspace";
+        let msgs = [
+            msg("1.json", ctrl, "APPROVE? plan v1"),
+            msg("2.json", ctrl, "DECIDE: a or b"),
+            msg("3.json", ctrl, "APPROVE? plan v2"),
+            msg("4.json", "fm-demo-relay", "APPROVE? not from the workspace session"),
+            msg("5.json", ctrl, "DECIDE: c or d"),
+            msg("6.json", ctrl, "DONE: something"),
+        ];
+        let mut answered = BTreeMap::new();
+        let states = ask_states(&msgs, ctrl, &answered);
+        assert_eq!(states.len(), 4, "{states:?}");
+        assert_eq!(states["1.json"], AskState::Superseded);
+        assert_eq!(states["2.json"], AskState::Open(Ask::Decide));
+        assert_eq!(states["3.json"], AskState::Open(Ask::Approve));
+        assert_eq!(states["5.json"], AskState::Open(Ask::Decide));
+        answered.insert("1.json".to_string(), "approve".to_string());
+        answered.insert("5.json".to_string(), "c".to_string());
+        let states = ask_states(&msgs, ctrl, &answered);
+        assert_eq!(states["1.json"], AskState::Answered("approve".into()), "answered before it was superseded");
+        assert_eq!(states["5.json"], AskState::Answered("c".into()));
+        assert_eq!(states["3.json"], AskState::Open(Ask::Approve));
+    }
+
+    #[test]
+    fn answered_questions_persist_per_workspace() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(read_answered(home.path(), "demo").unwrap(), BTreeMap::new());
+        mark_answered(home.path(), "demo", "1.json", "approve").unwrap();
+        mark_answered(home.path(), "demo", "2.json", "use postgres").unwrap();
+        mark_answered(home.path(), "demo", "1.json", "approve").unwrap();
+        let answered = read_answered(home.path(), "demo").unwrap();
+        assert_eq!(answered.len(), 2);
+        assert_eq!(answered["2.json"], "use postgres");
+        assert_eq!(read_answered(home.path(), "other").unwrap(), BTreeMap::new());
+        let dir = relay_dir(home.path(), "demo").unwrap();
+        assert!(dir.join(ANSWERED_FILE).is_file());
+        assert!(!dir.join(format!("{ANSWERED_FILE}.tmp")).exists());
+        fs::write(dir.join(ANSWERED_FILE), "not json").unwrap();
+        assert!(read_answered(home.path(), "demo").is_err(), "a broken file is an error, not an empty set");
+        assert!(mark_answered(home.path(), "../x", "1.json", "a").is_err());
     }
 }

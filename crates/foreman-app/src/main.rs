@@ -8,6 +8,7 @@
 //   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
 //   foreman --selftest-supervise        the M2 gate: Start, kill → resume, trust, park, budget, Stop
 
+mod compose;
 mod fleet;
 mod selftest;
 mod selftest_supervise;

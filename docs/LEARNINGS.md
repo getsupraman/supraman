@@ -1324,3 +1324,51 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (P: had 12 GB free, built in place): `cargo build --release --workspace` ok; `cargo test --workspace` 323
   passed (309 + 14), 0 failed; `--selftest` PASS (p95 20.45 ms, max 28.20 ms, 0 > 50 ms; idle 131.2 MiB);
   `--selftest-supervise` PASS on the first run.
+
+## 2026-10-26 — m4/5 task box
+
+- **Why**: in the m3/4 E2E the human threw the task and answered `APPROVE?`/`DECIDE:` with `fm send` in a terminal.
+- **Task box** (`crates/foreman-app/src/compose.rs`, `view.rs` `render_compose`): a started workspace whose row
+  shows `relay ready` has **Task…**; it opens a box under the row. Not shown otherwise: the relay label beside it
+  says why, and a long label (`relay up, watcher not armed yet`) plus the button pushed Stop past the panel's right
+  edge — step s failed on it ("stop-…-u is not fully inside its visible area": inside vertically, out on the right). gpui has no text area in our deps (Zed's `editor` is not vendored), so
+  the box is a minimal input of its own: while it has the focus the window's `KeyDown`s go to it, not to the active
+  tab (`key_down`) — characters by `key_char` (AltGr = Ctrl+Alt passes), Enter a new line, Ctrl+Enter sends,
+  Escape cancels, Backspace/Delete/arrows/Home/End, Ctrl+V pastes. No IME composition (a dead key or IME text
+  arrives as `WM_CHAR` → the platform input handler, which nothing registers — same as the terminal tabs), no
+  selection. A left click in the terminal gives the keys back; a click on the box takes them.
+- **Send** = `foreman_core::send(home, w, "fm-<w>-workspace", text.trim())` — what `fm send` does. Refused with the
+  reason shown in the box unless the row shows `relay ready` (`FleetView::relay_refusal`: stopped / relay not
+  running / watcher not armed / expired; the box shows "Cannot send now: …" while that holds). Success clears the
+  box and shows `sent: <first line>`; it stays open for the next one.
+- **Answers** (Messages, only rows from `fm-<w>-workspace`): `APPROVE?` → **Approve** (sends `approve`) and
+  **Reply…**; `DECIDE:` → **Reply…** (the same box, under the row, empty). After a send the row shows
+  `answered: <first line>`: in memory, and in `<home>/relay/<w>/answered.json` (`{outbox file: first line}`,
+  `foreman_core::mark_answered`, tmp + rename), read back by every tick, so a restart does not offer Approve twice.
+- **Decision — supersede**: an unanswered `APPROVE?` with a later `APPROVE?` from the same sender shows
+  "superseded by a later APPROVE?" and no buttons (`foreman_core::ask_states`): the skill re-sends `APPROVE?` after
+  every change request, so only the newest plan is approvable. `DECIDE:` questions are per unit and never
+  supersede each other.
+- **Selftest step t** (`--selftest-supervise`, run after c): Task… clicked, a two-line task typed with synthetic
+  `KeyDown`s through `window.dispatch_event`, Ctrl+Enter → a drop `{to: fm-selftest-<hex>-workspace, body}` (in
+  `inbox/` or `inbox/sent/`); an `APPROVE?` injected into the outbox as from the workspace session → Approve +
+  Reply… painted, Approve clicked → a drop `approve`, `msg-answered-…` painted, `answered.json` has it; text typed +
+  Escape → box closed, nothing dropped; then both drops in `sent/` and the workspace session idle 15 s without a
+  break (step f's budget of 1 must not meet it mid-turn). `FOREMAN_SELFTEST_HOLD_SECS` holds the screen for a
+  screenshot (`target/m4-5/task-box-answered.png`, PrintWindow).
+- **Gotcha — step t before step c fails c**: the drops reach the real workspace session as the human's prompts (a
+  non-task, then an `approve` with no plan); it answers, and ends those turns `working`/`blocked` rather than with
+  `done: …`. Step c then kills an idle-looking session whose `state` the daemon respawns by itself (m2/4), and c
+  fails "came back … but not by the supervisor". Run twice right after r: FAIL at c both times, the second even
+  after waiting for both drops delivered + 15 s idle. Step t now runs after c, as the brief's "after the relay step"
+  still allows.
+- Tests: `relay::tests::a_question_is_known_by_its_first_word`,
+  `…a_later_approve_supersedes_earlier_unanswered_ones_and_decides_stay_open`,
+  `…answered_questions_persist_per_workspace` (foreman-core); `compose::tests::*` (3, foreman-app). Red: supersede
+  rule disabled → 1 failed.
+- Gate (P: had 4–9 GB free; built in place, `target/debug` deleted after the first `cargo test` to make room):
+  `cargo build --release --workspace` ok; `cargo test --workspace` 329 passed (323 + 6), 0 failed; `--selftest`
+  PASS (p95 20.95 ms, max 24.73 ms, 0 > 50 ms; idle 132.1 MiB); `--selftest-supervise` PASS on run 5. Runs 1–2 (t
+  right after r) FAIL at c, see the gotcha; run 3 (t after c) FAIL at c with t not yet run — the m2/4 model-turn
+  case, independent of this change (c's message now names the killed row's state); run 4 passed c and t, FAIL at
+  s — the Task… overflow above, fixed.

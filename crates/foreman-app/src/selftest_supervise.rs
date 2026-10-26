@@ -13,6 +13,12 @@
 //! - r. the relay writes `ready.json`; a target `fm-selftest-<hex>-target` (launched here, auto, told to
 //!   answer with the nonce) gets a message sent with `foreman_core::send`, and the answer comes back as an
 //!   outbox message carrying the nonce, and into the app's Messages section.
+//! - t. (run after c) the task box: Task… (click) on the testbed, a two-line task typed key by key, Ctrl+Enter → an inbox
+//!   drop `{to: fm-selftest-<hex>-workspace, body: <the task>}` and the box cleared; an `APPROVE?` injected
+//!   into the outbox as from the workspace session → Approve (click) → a drop `approve` and the row shows
+//!   `answered: approve`, also in `answered.json`; text typed and Escape → the box closed, nothing sent.
+//!   `FOREMAN_SELFTEST_HOLD_SECS=<n>` holds the box and the answered row on screen for `n` s before
+//!   Escape (for a screenshot), after writing `<FOREMAN_HOME>/hold`.
 //! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
 //!   and the supervisor resumes it: same sessionId, new pid.
 //! - w. `fm want <testbed> Repo --prompt-file …` (the testbed's repo is a plain dir `<root>/Repo`: a `git init`ed
@@ -38,12 +44,15 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Claude, Health, LaunchSpec, Session, check_supported, list_sessions, now_ms};
-use foreman_core::{EventReader, Repo, Workspace, Registry, Settings, read_outbox, relay_ready, role_tag};
+use foreman_core::{
+    EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, inbox_dir, outbox_dir, read_answered, read_outbox,
+    relay_ready, role_tag,
+};
 use foreman_supervisor::{
     DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
-use gpui::{AsyncWindowContext, Entity, px, size};
+use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
 
 use crate::selftest::{
     Scratch, claude, click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
@@ -400,7 +409,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_secs(3)).await;
     let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&ctrl).copied());
     if !attempt.is_some_and(|t| t >= killed_at) {
-        bail!("step c: {ctrl} came back with pid {:?}, but not by the supervisor (its last attempt {attempt:?})", resumed.pid);
+        bail!(
+            "step c: {ctrl} came back with pid {:?}, but not by the supervisor (its last attempt {attempt:?}; killed as [{}])",
+            resumed.pid,
+            raw(&idle)
+        );
     }
     if process_alive(pid) {
         bail!("step c: the killed pid {pid} is still running");
@@ -428,6 +441,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         settled.pid.unwrap_or_default(),
         raw(&settled)
     );
+
+    // after c, not right after r: the drops give the workspace session turns of its own, and one that ends
+    // `working`/`blocked` is respawned by the daemon when step c kills it, not resumed by the supervisor (m2/4)
+    task_box_step(tb, view, cx).await.context("step t")?;
 
     want_step(tb, view, cx).await.context("step w")?;
 
@@ -938,6 +955,164 @@ async fn relay_step(
         reply.from_name,
         secs(round_trip),
         secs(shown_after),
+    );
+    Ok(())
+}
+
+/// Keys through the window's own input dispatch, as gpui_windows makes them: `enter` for a new line,
+/// `space`, else the character itself.
+fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, modifiers: Modifiers) -> anyhow::Result<()> {
+    let event = KeyDownEvent {
+        keystroke: Keystroke { modifiers, key: key.into(), key_char: key_char.map(String::from) },
+        is_held: false,
+        prefer_character_input: false,
+    };
+    cx.update(|window, cx| {
+        window.dispatch_event(PlatformInput::KeyDown(event), cx);
+    })?;
+    Ok(())
+}
+
+fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
+    for ch in text.chars() {
+        let c = ch.to_string();
+        match ch {
+            '\n' => keystroke(cx, "enter", None, Modifiers::default())?,
+            ' ' => keystroke(cx, "space", Some(" "), Modifiers::default())?,
+            _ => keystroke(cx, &c.to_lowercase(), Some(&c), Modifiers { shift: ch.is_uppercase(), ..Default::default() })?,
+        }
+    }
+    Ok(())
+}
+
+/// The drops in the inbox and in its `sent/` (where the relay's watcher moves each one it sent).
+fn drops(home: &std::path::Path, w: &str) -> anyhow::Result<Vec<(String, RelayDrop)>> {
+    let inbox = inbox_dir(home, w)?;
+    let mut out = Vec::new();
+    for dir in [inbox.clone(), inbox.join(SENT_DIR)] {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if let Some(d) = name
+                .ends_with(".json")
+                .then(|| std::fs::read_to_string(e.path()).ok())
+                .flatten()
+                .and_then(|t| serde_json::from_str::<RelayDrop>(&t).ok())
+            {
+                out.push((name, d));
+            }
+        }
+    }
+    Ok(out)
+}
+
+async fn wait_drop(home: &std::path::Path, w: &str, to: &str, body: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let started = Instant::now();
+    loop {
+        if let Some((name, _)) = drops(home, w)?.into_iter().find(|(_, d)| d.to == to && d.body == body) {
+            return Ok(name);
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            bail!("no drop {{to: {to}, body: {body:?}}} within 5 s; drops: {:?}", drops(home, w)?);
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
+}
+
+/// Step t: the task box and the Approve button, each through the UI, each a relay drop like `fm send`'s.
+async fn task_box_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let w = tb.a.0.as_str();
+    let ctrl = workspace_session_name(w);
+    let task_key = format!("task-{w}");
+    wait_painted(view, &task_key, Duration::from_secs(10), cx).await?;
+    click(view, &task_key, cx).await?;
+    wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
+    let open = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.focused)));
+    if open != Some((w.to_string(), None, true)) {
+        bail!("Task… opened {open:?}, not a focused task box for {w}");
+    }
+    let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
+    // the workspace session reads this as the human's: it must not start work
+    let task = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.\nDo nothing and send nothing.");
+    type_text(cx, &task)?;
+    let typed = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| c.text.clone()));
+    if typed.as_deref() != Some(task.as_str()) {
+        bail!("the box holds {typed:?} after typing {task:?}");
+    }
+    keystroke(cx, "enter", None, Modifiers::control())?;
+    let task_drop = wait_drop(&tb.home, w, &ctrl, &task, cx).await?;
+    let after = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.text.clone(), c.sent.clone(), c.error.clone())));
+    let Some((left, Some(sent), None)) = after else {
+        bail!("after Ctrl+Enter the box is {after:?}, expected open, cleared, `sent` set and no error");
+    };
+    if !left.is_empty() || !sent.starts_with(&nonce) {
+        bail!("after Ctrl+Enter the box holds {left:?}, sent {sent:?}");
+    }
+
+    // an APPROVE? as the workspace session would send it, newest in the outbox
+    let file = format!("{:013}-selftest-approve.json", now_ms());
+    let body = format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)");
+    let outbox = outbox_dir(&tb.home, w)?;
+    let text = serde_json::json!({"from": "uds:selftest", "from_name": ctrl, "body": body}).to_string();
+    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
+    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
+    let key = format!("{w}/{file}");
+    let approve_key = format!("msg-approve-{key}");
+    wait_painted(view, &approve_key, Duration::from_secs(10), cx).await?;
+    if !view.read_with(cx, |v, _| v.hits.borrow().contains_key(&format!("msg-reply-{key}"))) {
+        bail!("the APPROVE? row has Approve but no Reply…");
+    }
+    click(view, &approve_key, cx).await?;
+    let approve_drop = wait_drop(&tb.home, w, &ctrl, "approve", cx).await?;
+    wait_painted(view, &format!("msg-answered-{key}"), Duration::from_secs(5), cx).await?;
+    if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
+        bail!("the answered row still offers Approve");
+    }
+    let saved = read_answered(&tb.home, w)?;
+    if saved.get(&file).map(String::as_str) != Some("approve") {
+        bail!("answered.json has {saved:?}, not {file} → approve");
+    }
+
+    // text typed and Escape: closed, nothing sent
+    type_text(cx, "typed, not sent")?;
+    let hold = std::env::var("FOREMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse::<u64>().ok());
+    if let Some(secs) = hold {
+        std::fs::write(tb.home.join("hold"), "")?;
+        println!("step t: holding {secs} s for a screenshot");
+        sleep(cx, Duration::from_secs(secs)).await;
+    }
+    let before = drops(&tb.home, w)?.len();
+    keystroke(cx, "escape", None, Modifiers::default())?;
+    sleep(cx, Duration::from_millis(500)).await;
+    let closed = view.read_with(cx, |v, _| v.compose.is_none());
+    let after = drops(&tb.home, w)?.len();
+    if !closed || after != before {
+        bail!("Escape: box closed={closed}, drops {before} → {after}");
+    }
+    // Both drops reach the workspace session as two prompts; step c kills it once idle, and a kill in the gap
+    // between them is a kill mid-turn, which the daemon resumes instead of the supervisor. So: both sent,
+    // then idle for SETTLED without a break.
+    const SETTLED: Duration = Duration::from_secs(15);
+    let sent = inbox_dir(&tb.home, w)?.join(SENT_DIR);
+    let started = Instant::now();
+    let mut idle_since: Option<Instant> = None;
+    loop {
+        let delivered = [&task_drop, &approve_drop].iter().all(|d| sent.join(d).is_file());
+        let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.health(now_ms()) == Health::Idle);
+        idle_since = if idle { idle_since.or(Some(Instant::now())) } else { None };
+        if idle_since.is_some_and(|t| t.elapsed() >= SETTLED) {
+            break;
+        }
+        if started.elapsed() > Duration::from_secs(180) {
+            bail!("{ctrl} not idle for {} s within 180 s of the drops (both sent: {delivered})", SETTLED.as_secs());
+        }
+        sleep(cx, Duration::from_millis(500)).await;
+    }
+    println!(
+        "step t: Task… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → drop {task_drop} {{to: {ctrl}, body: the task}}, box cleared, shows `sent: …` | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked → drop {approve_drop} `approve`, row shows `answered: approve`, answered.json has it | typed + Escape → closed, nothing dropped | both delivered, {ctrl} idle {} s after {}",
+        task.chars().count(),
+        SETTLED.as_secs(),
+        secs(started.elapsed())
     );
     Ok(())
 }
