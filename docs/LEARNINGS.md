@@ -1162,3 +1162,22 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate: `cargo build --release --workspace` ok; `cargo test --workspace` 297 passed (293 + 4), 0 failed;
   `--selftest` PASS (p95 23.29 ms, max 30.36 ms, 0 > 50 ms; idle 121.1 MiB); `--selftest-supervise` PASS (step e:
   `state=blocked status=waiting waitingFor=permission prompt` → Inbox `blocked` with Attach); `cargo test -p fm skills` 2 passed.
+
+## 2026-10-26 — tf/4 block-element glyphs
+
+- **Cause**: `term_element.rs` painted U+2580–U+259F as Consolas glyphs; at `LINE_HEIGHT_FACTOR = 1.3` the glyph
+  box is shorter than the cell, so stacked rows of `█▛▜▐▌` (the Claude logo) showed gaps. Windows Terminal draws
+  these itself, as Zed does.
+- **Fix**: ported Zed's block-element rects (`collect_block_element_regions`, `push_block_element_region`,
+  `block_element_regions_to_rects`, the 8×24 subcell grid, shades as foreground at 25/50/75 % opacity). Those cells
+  leave the text run and become filled quads covering the full cell; adjacent same-colour regions merge, also
+  across lines. Painted after text runs, as in Zed. Sextants (U+1FB00–1FB3B) not ported (not in the brief).
+- `foreman_term::Cell::with_char(c, fg)` exists so foreman-ui tests can build cells; the fallback theme for tests
+  comes from `theme::ThemeRegistry::default()` (no `App` needed).
+- Tests: `block_element_*` (5) in `crates/foreman-ui/src/term_element.rs`. Red: block-element hook disabled in
+  `layout_grid` → 3 failed. Screenshot: `target/tf-4/foreman-block-glyphs.png` (logo solid, no row gaps).
+- Gate (built with `CARGO_TARGET_DIR` on C: because P: was full): release build ok; `cargo test --workspace
+  --no-fail-fast` 301 passed, 1 failed (302 = 297 + 5). The failure is `fm/tests/want.rs:41`: `fm::repos::plugin_of`
+  walks up from the exe, and a target dir outside the repo has no `plugins/foreman` above it. `--selftest` PASS
+  (p95 23.39 ms, max 38.73 ms, 0 > 50 ms; idle 121.9 MiB); `--selftest-supervise` PASS when run from exe copies in
+  the worktree's `target/release` (it FAILs at step b from the C: path for the same reason).

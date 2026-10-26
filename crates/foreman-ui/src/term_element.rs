@@ -1,8 +1,9 @@
 // Minimal terminal grid painter adapted from Zed's
 // crates/terminal_view/src/terminal_element.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
 // (GPL-3.0-or-later). Kept: cell batching into text runs, background rects,
-// colour conversion, block cursor. Dropped: selection/search highlights, hyperlinks,
-// IME, block-element glyph rects, minimum-contrast adjustment, mouse handling.
+// colour conversion, block cursor, block-element glyph rects (U+2580-U+259F). Dropped:
+// selection/search highlights, hyperlinks, IME, sextant glyph rects, minimum-contrast
+// adjustment, mouse handling.
 
 use gpui::{
     App, Bounds, Entity, Font, FontFeatures, FontStyle, FontWeight, Hsla, IntoElement, Pixels,
@@ -94,10 +95,231 @@ impl LayoutRect {
     }
 }
 
+/// Block element glyphs are painted on a subcell grid: each terminal cell is
+/// divided into 8 columns (for eighth blocks) and 24 lines.
+const BLOCK_SUBCELL_COLUMNS: i32 = 8;
+const BLOCK_SUBCELL_LINES: i32 = 24;
+
+#[derive(Clone, Debug, PartialEq)]
+struct BlockElementLayoutRect {
+    line: i32,
+    column: i32,
+    num_of_columns: usize,
+    num_of_lines: usize,
+    color: Hsla,
+}
+
+impl BlockElementLayoutRect {
+    fn paint(&self, origin: GpuiPoint<Pixels>, dims: &TerminalBounds, window: &mut Window) {
+        let subcell_width = dims.cell_width / BLOCK_SUBCELL_COLUMNS as f32;
+        let subcell_height = dims.line_height / BLOCK_SUBCELL_LINES as f32;
+        let position = point(
+            origin.x + self.column as f32 * subcell_width,
+            origin.y + self.line as f32 * subcell_height,
+        );
+        let size = size(
+            subcell_width * self.num_of_columns as f32,
+            subcell_height * self.num_of_lines as f32,
+        );
+        window.paint_quad(fill(Bounds::new(position, size), self.color));
+    }
+}
+
+/// An inclusive rectangle on the subcell grid.
+#[derive(Debug, Clone)]
+struct BlockRegion {
+    start_line: i32,
+    start_col: i32,
+    end_line: i32,
+    end_col: i32,
+    color: Hsla,
+}
+
+impl BlockRegion {
+    fn can_merge_with(&self, other: &BlockRegion) -> bool {
+        if self.color != other.color {
+            return false;
+        }
+        if self.start_line == other.start_line && self.end_line == other.end_line {
+            return self.end_col + 1 == other.start_col || other.end_col + 1 == self.start_col;
+        }
+        if self.start_col == other.start_col && self.end_col == other.end_col {
+            return self.end_line + 1 == other.start_line || other.end_line + 1 == self.start_line;
+        }
+        false
+    }
+
+    fn merge_with(&mut self, other: &BlockRegion) {
+        self.start_line = self.start_line.min(other.start_line);
+        self.start_col = self.start_col.min(other.start_col);
+        self.end_line = self.end_line.max(other.end_line);
+        self.end_col = self.end_col.max(other.end_col);
+    }
+}
+
+fn merge_block_regions(mut merged: Vec<BlockRegion>) -> Vec<BlockRegion> {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut i = 0;
+        while i < merged.len() {
+            let mut j = i + 1;
+            while j < merged.len() {
+                if merged[i].can_merge_with(&merged[j]) {
+                    let other = merged.remove(j);
+                    merged[i].merge_with(&other);
+                    changed = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+    merged
+}
+
+/// Filled quadrants as a bitmap, bit `row * 2 + column` per 2x2 subcell.
+fn quadrant_char_to_filled_bits(ch: char) -> Option<u8> {
+    Some(match ch {
+        '▘' => 0b0001,
+        '▝' => 0b0010,
+        '▖' => 0b0100,
+        '▗' => 0b1000,
+        '▚' => 0b1001,
+        '▞' => 0b0110,
+        '▛' => 0b0111,
+        '▜' => 0b1011,
+        '▙' => 0b1101,
+        '▟' => 0b1110,
+        _ => return None,
+    })
+}
+
+/// `(column, line, num_of_columns, num_of_lines)` in subcell units for block
+/// elements that are a single rectangle.
+fn block_char_to_rect(ch: char) -> Option<(i32, i32, i32, i32)> {
+    let codepoint = ch as u32;
+    Some(match codepoint {
+        // ▀
+        0x2580 => (0, 0, 8, 12),
+        // ▁▂▃▄▅▆▇█
+        0x2581..=0x2588 => {
+            let eighths = (codepoint - 0x2580) as i32;
+            (0, 24 - eighths * 3, 8, eighths * 3)
+        }
+        // ▉▊▋▌▍▎▏
+        0x2589..=0x258F => (0, 0, (0x2590 - codepoint) as i32, 24),
+        // ▐
+        0x2590 => (4, 0, 4, 24),
+        // ▔
+        0x2594 => (0, 0, 8, 3),
+        // ▕
+        0x2595 => (7, 0, 1, 24),
+        _ => return None,
+    })
+}
+
+/// `░▒▓` as the foreground at reduced opacity rather than a stipple pattern.
+fn shade_char_to_opacity(ch: char) -> Option<f32> {
+    match ch {
+        '░' => Some(0.25),
+        '▒' => Some(0.5),
+        '▓' => Some(0.75),
+        _ => None,
+    }
+}
+
+fn collect_block_element_regions(
+    line: i32,
+    column: i32,
+    ch: char,
+    color: Hsla,
+    regions: &mut Vec<BlockRegion>,
+) -> bool {
+    if let Some((sub_col, sub_line, cols, lines)) = block_char_to_rect(ch) {
+        push_block_element_region(line, column, sub_col, sub_line, cols, lines, color, regions);
+        return true;
+    }
+    if let Some(filled) = quadrant_char_to_filled_bits(ch) {
+        for row in 0..2 {
+            for col in 0..2 {
+                if filled & (1 << (row * 2 + col)) != 0 {
+                    push_block_element_region(
+                        line,
+                        column,
+                        col * 4,
+                        row * 12,
+                        4,
+                        12,
+                        color,
+                        regions,
+                    );
+                }
+            }
+        }
+        return true;
+    }
+    if let Some(opacity) = shade_char_to_opacity(ch) {
+        push_block_element_region(line, column, 0, 0, 8, 24, color.opacity(opacity), regions);
+        return true;
+    }
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_block_element_region(
+    line: i32,
+    column: i32,
+    sub_col: i32,
+    sub_line: i32,
+    num_of_columns: i32,
+    num_of_lines: i32,
+    color: Hsla,
+    regions: &mut Vec<BlockRegion>,
+) {
+    let start_line = line * BLOCK_SUBCELL_LINES + sub_line;
+    let start_col = column * BLOCK_SUBCELL_COLUMNS + sub_col;
+    let end_line = start_line + num_of_lines - 1;
+    let end_col = start_col + num_of_columns - 1;
+
+    // Extend the previous region eagerly so runs of `█` keep the quadratic merge small.
+    if let Some(last) = regions.last_mut()
+        && last.color == color
+        && last.start_line == start_line
+        && last.end_line == end_line
+        && last.end_col + 1 == start_col
+    {
+        last.end_col = end_col;
+        return;
+    }
+    regions.push(BlockRegion {
+        start_line,
+        start_col,
+        end_line,
+        end_col,
+        color,
+    });
+}
+
+fn block_element_regions_to_rects(regions: Vec<BlockRegion>) -> Vec<BlockElementLayoutRect> {
+    merge_block_regions(regions)
+        .into_iter()
+        .map(|r| BlockElementLayoutRect {
+            line: r.start_line,
+            column: r.start_col,
+            num_of_columns: (r.end_col - r.start_col + 1) as usize,
+            num_of_lines: (r.end_line - r.start_line + 1) as usize,
+            color: r.color,
+        })
+        .collect()
+}
+
 pub struct LayoutState {
     dims: TerminalBounds,
     background: Hsla,
     rects: Vec<LayoutRect>,
+    block_rects: Vec<BlockElementLayoutRect>,
     runs: Vec<BatchedTextRun>,
     cursor: Option<(Bounds<Pixels>, Hsla)>,
 }
@@ -152,7 +374,7 @@ fn prepaint(
 
     let theme = cx.theme().clone();
     let content = terminal.read(cx).last_content();
-    let (rects, runs) = layout_grid(content.cells.iter(), &theme);
+    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme);
 
     let cursor = if content.cursor.shape == CursorShape::Hidden {
         None
@@ -189,6 +411,7 @@ fn prepaint(
         dims,
         background: theme.colors().terminal_background,
         rects,
+        block_rects,
         runs,
         cursor,
     }
@@ -204,6 +427,9 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     for run in &state.runs {
         run.paint(origin, &dims, window, cx);
     }
+    for rect in &state.block_rects {
+        rect.paint(origin, &dims, window);
+    }
     if let Some((bounds, color)) = state.cursor {
         window.paint_quad(fill(bounds + origin, color));
     }
@@ -212,8 +438,9 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
 fn layout_grid<'a>(
     grid: impl Iterator<Item = &'a IndexedCell>,
     theme: &Theme,
-) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
+) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
     let mut runs = Vec::new();
+    let mut block_regions = Vec::new();
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut current: Option<BatchedTextRun> = None;
     let font = base_font();
@@ -266,6 +493,18 @@ fn layout_grid<'a>(
                 continue;
             }
             let style = cell_style(cell, fg, theme, &font);
+            if collect_block_element_regions(
+                display_line,
+                col,
+                cell.character(),
+                style.color,
+                &mut block_regions,
+            ) {
+                if let Some(batch) = current.take() {
+                    runs.push(batch);
+                }
+                continue;
+            }
             let zero_width = cell.zerowidth();
             match current.as_mut() {
                 Some(batch)
@@ -295,7 +534,7 @@ fn layout_grid<'a>(
     if let Some(batch) = current {
         runs.push(batch);
     }
-    (rects, runs)
+    (rects, block_element_regions_to_rects(block_regions), runs)
 }
 
 fn cell_style(cell: &Cell, fg: Color, theme: &Theme, font: &Font) -> TextRun {
@@ -384,4 +623,115 @@ fn indexed_color(index: usize, theme: &Theme) -> Hsla {
     static PALETTE: std::sync::OnceLock<foreman_term::terminal_settings::TerminalPalette> =
         std::sync::OnceLock::new();
     foreman_term::get_color_at_index(index, PALETTE.get_or_init(|| crate::palette(theme)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foreman_term::{Point, Rgb};
+
+    fn theme() -> std::sync::Arc<Theme> {
+        let registry = theme::ThemeRegistry::default();
+        let name = registry.list().into_iter().next().expect("fallback theme").name;
+        registry.get(&name).expect("fallback theme")
+    }
+
+    fn row(line: i32, text: &str, fg: Color) -> Vec<IndexedCell> {
+        text.chars()
+            .enumerate()
+            .map(|(column, c)| IndexedCell {
+                point: Point::new(line, column),
+                cell: Cell::with_char(c, fg),
+            })
+            .collect()
+    }
+
+    fn single(ch: char) -> Vec<BlockElementLayoutRect> {
+        let mut regions = Vec::new();
+        assert!(collect_block_element_regions(0, 0, ch, Hsla::default(), &mut regions));
+        block_element_regions_to_rects(regions)
+    }
+
+    fn rect(line: i32, column: i32, cols: usize, lines: usize) -> (i32, i32, usize, usize) {
+        (line, column, cols, lines)
+    }
+
+    fn shape(r: &BlockElementLayoutRect) -> (i32, i32, usize, usize) {
+        (r.line, r.column, r.num_of_columns, r.num_of_lines)
+    }
+
+    #[test]
+    fn block_element_full_block_row_is_one_rect_and_no_text_run() {
+        let theme = theme();
+        let fg = Color::Spec(Rgb { r: 215, g: 119, b: 87 });
+        let cells = row(0, "████", fg);
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        assert!(runs.is_empty(), "block elements must not become text runs");
+        assert_eq!(block_rects.len(), 1, "adjacent full blocks merge");
+        assert_eq!(shape(&block_rects[0]), rect(0, 0, 32, 24));
+        assert_eq!(block_rects[0].color, foreman_term::rgba_color(215, 119, 87));
+    }
+
+    #[test]
+    fn block_element_full_blocks_on_consecutive_lines_merge_vertically() {
+        let theme = theme();
+        let fg = Color::Named(NamedColor::Foreground);
+        let mut cells = row(0, "██", fg);
+        cells.extend(row(1, "██", fg));
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        assert!(runs.is_empty());
+        assert_eq!(block_rects.len(), 1);
+        assert_eq!(shape(&block_rects[0]), rect(0, 0, 16, 48));
+    }
+
+    #[test]
+    fn block_element_halves_quadrants_and_shades_map_to_sub_rects() {
+        assert_eq!(single('▀').iter().map(shape).collect_vec(), [rect(0, 0, 8, 12)]);
+        assert_eq!(single('▄').iter().map(shape).collect_vec(), [rect(12, 0, 8, 12)]);
+        assert_eq!(single('▌').iter().map(shape).collect_vec(), [rect(0, 0, 4, 24)]);
+        assert_eq!(single('▐').iter().map(shape).collect_vec(), [rect(0, 4, 4, 24)]);
+        assert_eq!(single('▘').iter().map(shape).collect_vec(), [rect(0, 0, 4, 12)]);
+        assert_eq!(single('▝').iter().map(shape).collect_vec(), [rect(0, 4, 4, 12)]);
+        let mut diagonal = single('▚').iter().map(shape).collect_vec();
+        diagonal.sort();
+        assert_eq!(diagonal, [rect(0, 0, 4, 12), rect(12, 4, 4, 12)]);
+        // ▛ = upper half plus lower-left quadrant.
+        let mut upper_left = single('▛').iter().map(shape).collect_vec();
+        upper_left.sort();
+        assert_eq!(upper_left, [rect(0, 0, 8, 12), rect(12, 0, 4, 12)]);
+        let shade = single('▒');
+        assert_eq!(shade.iter().map(shape).collect_vec(), [rect(0, 0, 8, 24)]);
+        assert_eq!(shade[0].color, Hsla::default().opacity(0.5));
+    }
+
+    #[test]
+    fn block_element_range_is_fully_custom_painted_inside_its_cell() {
+        for codepoint in 0x2580..=0x259F {
+            let ch = char::from_u32(codepoint).unwrap();
+            let rects = single(ch);
+            assert!(!rects.is_empty(), "U+{codepoint:04X} paints nothing");
+            for r in &rects {
+                assert!(
+                    r.line >= 0
+                        && r.column >= 0
+                        && r.line + r.num_of_lines as i32 <= BLOCK_SUBCELL_LINES
+                        && r.column + r.num_of_columns as i32 <= BLOCK_SUBCELL_COLUMNS,
+                    "U+{codepoint:04X} paints outside its cell: {r:?}"
+                );
+            }
+        }
+        let mut regions = Vec::new();
+        assert!(!collect_block_element_regions(0, 0, '─', Hsla::default(), &mut regions));
+        assert!(!collect_block_element_regions(0, 0, '\u{1FB00}', Hsla::default(), &mut regions));
+    }
+
+    #[test]
+    fn block_element_letters_stay_text_runs_beside_blocks() {
+        let theme = theme();
+        let cells = row(0, "ab█c", Color::Named(NamedColor::Foreground));
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        assert_eq!(runs.iter().map(|r| r.text.as_str()).collect_vec(), ["ab", "c"]);
+        assert_eq!(runs[1].column, 3);
+        assert_eq!(block_rects.iter().map(shape).collect_vec(), [rect(0, 16, 8, 24)]);
+    }
 }

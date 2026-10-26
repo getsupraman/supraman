@@ -485,6 +485,14 @@ fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
 }
 
 impl Cell {
+    /// A cell with default attributes, for painter tests outside this crate.
+    pub fn with_char(character: char, foreground: Color) -> Self {
+        let mut cell = AlacCell::default();
+        cell.c = character;
+        cell.fg = foreground;
+        Self { cell }
+    }
+
     #[inline]
     pub fn character(&self) -> char {
         self.cell.c
