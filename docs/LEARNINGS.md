@@ -1324,3 +1324,14 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (P: had 12 GB free, built in place): `cargo build --release --workspace` ok; `cargo test --workspace` 323
   passed (309 + 14), 0 failed; `--selftest` PASS (p95 20.45 ms, max 28.20 ms, 0 > 50 ms; idle 131.2 MiB);
   `--selftest-supervise` PASS on the first run.
+
+## 2026-10-26 — Foreman sessions use the published rlarch (2.2.1)
+
+- rlarch 2.2.1 is published and installed user-scope (`~/.claude/plugins/cache/rlarch/rlarch/2.2.1`, git fbbaf42).
+  Measured: `claude -p` with Foreman's session flags (`--plugin-dir plugins/foreman --strict-mcp-config
+  --mcp-config <file>`) loads `rlarch:code-comments` from that cache path. Foreman's sessions therefore get the
+  published plugin with **no** `extra_plugin_dirs`; René's real `settings.toml` never set it. Only the test homes of
+  m3/4 pointed it at the Skills checkout, which ran unreleased skills. Decision (René): use the published plugin and
+  keep `extra_plugin_dirs` for plugins that aren't installed.
+- Not yet measured: whether `--strict-mcp-config` also hides a plugin's own MCP servers (rlarch's `agents` server,
+  `agent_launch`). Queued after M4 (backlog 6, then 7: repo-controllers launching units via `agent_launch`).
