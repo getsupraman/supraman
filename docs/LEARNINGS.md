@@ -1432,3 +1432,54 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   right after r) FAIL at c, see the gotcha; run 3 (t after c) FAIL at c with t not yet run — the m2/4 model-turn
   case, independent of this change (c's message now names the killed row's state); run 4 passed c and t, FAIL at
   s — the Task… overflow above, fixed.
+
+## 2026-10-26 — m4/2 Work tab
+
+- **What**: a **Work** button on each workspace row (right after the name) opens or focuses the right-pane tab
+  `Work · <workspace>` (`TabKind::Work(Entity<WorkView>)`, no terminal; × and middle click close it like any tab).
+  It shows the WorkState project whose ref is the workspace's name: the overview's runs **in the overview's own
+  order** (stable while you click; newest-activity order would reshuffle on every event) with rollup bar,
+  `n/m done`, status, claims, inbox, last verification; a click expands a run into its board — rows by
+  `qualifiedRef`, indented by `depth`, status, criteria `checked/total`, claim (holder @ tree), verification
+  (pass/fail by whom), commit, `blocked by` refs, flags as badges. Open runs start expanded, done/cancelled/
+  superseded collapsed. Code: `crates/foreman-app/src/work_view.rs`; view.rs only wires the button, the tab kind,
+  `open_work` and the render arm.
+- **The run's own row**: the board lists the run first (numeric `ref`, e.g. `13`); `item_rows` drops the row whose
+  item id is the board's run id — the run is the section header.
+- **Live, one stream per app**: `WorkHub` is a gpui `Global` entity created by the first Work tab: it reads
+  `client_from_settings` on the background executor, starts one `Stream`, and forwards its signals as entity events
+  (a background task blocks on `recv_timeout(1 s)`, so a pool thread is parked on it; it ends when the hub is
+  gone). Each `WorkView` subscribes: any event → overview re-read, an event whose `runId` is an expanded run → that
+  board, both debounced 300 ms (a pending flag, so a burst costs one read); `Connected` after `Lost` → re-read the
+  overview and every expanded board. No timer polling at all. Answers carry `seq`: an older overview or board
+  arriving after a newer one is dropped. A failed board re-read keeps the shown board.
+- **Messages, nothing else**: no `workstate_env`/token → "WorkState is not configured: … Choose its .env in
+  Settings (Ctrl+,)."; resolve finds no project of that ref → "WorkState has no project with ref '<w>' …"; two →
+  says so; transport/HTTP errors → "Cannot read WorkState: …" (the client's errors are already token-free). An
+  unconfigured hub re-reads the settings when the next Work tab opens.
+- **Seam for m4/3**: a row click selects it (`element_selected` background) and calls `WorkView::on_select_item`,
+  which emits `WorkEvent::ItemSelected(item_id)`; the selftest subscribes to it.
+- **Header width** (m4/5's step s): the Work button adds fixed width to the row, so the relay label now truncates
+  (`min_w_0` + `overflow_hidden`) instead of pushing Task…/Stop past the panel edge; step s passed.
+- **Fake**: `FakeWorkState` routes are now mutable (`set`), and `/api/stream` (when not routed) is held open as SSE
+  — `push(data)` writes a frame to every open stream, `drop_streams` closes them. foreman-app depends on
+  foreman-workstate with `fake` on, since `--selftest` runs it. Test: `crates/foreman-workstate/tests/fake.rs` (2).
+- **Selftest step 7** (`--selftest`, between the wheel step and the idle measurement, now step 8): workspace
+  `selftest-work` (empty scratch dir `target/selftest-work`, not `selftest-cwd`, whose session belongs to
+  `larchsys`), a fake with project `selftest-work`, runs sw2 (in progress) and sw1 (done), and the scratch
+  home's settings → a fake `.env` + the fake's URL. Clicks Work, asserts both runs and sw2's 3 rows painted and the
+  run row/sw1 rows not, frames during the load (0 > 50 ms), expands sw1, selects sw2/2, then changes sw2/1 on the
+  fake and pushes 3 events: `work-status-sw2/1=done` painted within 2 s, exactly 1 board + 1 overview re-read; every
+  request a GET with the fake token; middle click closes the tab. Result: painted 52 ms after the click, live update
+  ~360 ms after the push. `FOREMAN_SELFTEST_HOLD_SECS` holds the tab for a screenshot
+  (`target/m4-2/work-tab-fake.png`, PrintWindow).
+- Tests: `work_view::tests::*` (5: project pick, run row as header, event → board only when shown, closed runs
+  collapsed, formatters), `tests/fake.rs` (2). Red: `board_to_reload` forced to `None` → step 7 FAIL "sw2/1 done
+  after the stream events: not painted within 2000 ms".
+- **Gotcha**: pwsh 7 `Add-Type` C# can't use `System.Drawing.Bitmap` (forwarded to assemblies Add-Type won't
+  reference); keep the C# to `EnumWindows`/`PrintWindow` on an HDC and build the `Bitmap` in PowerShell.
+- Gate (after merging master ccc7b4a; `CARGO_TARGET_DIR` on C: with the `plugins` junction, exe copies in the
+  worktree's `target/release` for supervise, deleted after): `cargo build --release --workspace` ok; `cargo test
+  --workspace` 355 passed, 0 failed; `--selftest` PASS (p95 39.82 ms, max 41.99 ms, 0 > 50 ms; idle 122.7 MiB —
+  frame times on this machine were ~35 ms p50 the whole session, also before the Work step); `--selftest-supervise`
+  PASS on the first run.

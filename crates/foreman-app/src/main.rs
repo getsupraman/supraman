@@ -2,7 +2,8 @@
 // Start/Stop per workspace, the Inbox and the shared busy-session limit; attached terminals in tabs on
 // the right. Only workspaces the human started are supervised (`foreman-supervisor`).
 //   foreman                  the app
-//   foreman --selftest       the M1 gate: one throwaway session, attach, detach, cleanup, perf
+//   foreman --selftest       the M1 gate: one throwaway session, attach, detach, the Work tab on a fake
+//                            WorkState, cleanup, perf
 //   foreman --selftest-detach <n>       one session, n attach/close cycles, alive after each
 //   foreman --selftest-detach-shutdown  attach, close the window, session still alive
 //   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
@@ -12,11 +13,13 @@ mod compose;
 mod fleet;
 mod selftest;
 mod selftest_supervise;
+mod selftest_work;
 mod settings_window;
 mod supervise;
 mod titlebar;
 mod tokens;
 mod view;
+mod work_view;
 
 use std::sync::atomic::{AtomicI32, Ordering};
 

@@ -124,11 +124,12 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let target = cargo_root().join("target");
     let home = target.join("selftest-home");
     let cwd = target.join("selftest-cwd");
-    for dir in [&home, &cwd] {
+    let work = target.join("selftest-work");
+    for dir in [&home, &cwd, &work] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone()],
+        dirs: vec![home.clone(), cwd.clone(), work.clone()],
         session_name: None,
         name_prefix: None,
     });
@@ -161,6 +162,10 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         workspace_root.display(),
         saved.display()
     );
+
+    if mode == Mode::Selftest {
+        crate::selftest_work::prepare(&home, &work)?;
+    }
 
     if mode.launches_session() {
         let version = check_supported()?;
@@ -689,7 +694,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let scrolled = wheel_scroll(view, cx).await.context("step 6")?;
     println!("step 6: {scrolled}");
 
-    // 7. Idle memory and frame times while the panel keeps refreshing.
+    let work = crate::selftest_work::run(view, cx).await.context("step 7")?;
+    println!("step 7: {work}");
+
+    // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
     let stats = record_frames(view, Duration::from_secs(6), cx).await;
@@ -697,7 +705,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
     println!("frame time over 6 s with {refreshes} panel refreshes: {stats}");
     if refreshes == 0 {
-        bail!("step 7: the panel did not refresh during the 6 s frame window");
+        bail!("step 8: the panel did not refresh during the 6 s frame window");
     }
     Ok(())
 }

@@ -32,6 +32,7 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
+use crate::work_view::WorkView;
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -85,6 +86,8 @@ pub enum Cli {
 pub enum TabKind {
     Attach { session_id: String },
     Shell,
+    /// The workspace's WorkState project ([`crate::work_view`]); no terminal.
+    Work(Entity<WorkView>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -711,6 +714,31 @@ impl FleetView {
         )
     }
 
+    /// Focuses the workspace's Work tab, or opens it.
+    pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
+        let open = self.tabs.iter().find(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == workspace));
+        if let Some(id) = open.map(|t| t.id) {
+            self.active = Some(id);
+            cx.notify();
+            return id;
+        }
+        let id = self.next_tab_id;
+        self.next_tab_id += 1;
+        let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), cx);
+        self.tabs.push(Tab {
+            id,
+            title: format!("Work · {workspace}"),
+            kind: TabKind::Work(view),
+            terminal: None,
+            error: None,
+            exited: false,
+            detach: Detach::None,
+        });
+        self.active = Some(id);
+        cx.notify();
+        id
+    }
+
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "pwsh".into(),
@@ -962,7 +990,7 @@ impl FleetView {
 }
 
 /// An invisible overlay that records its parent's painted bounds and clip under `key`.
-fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
+pub(crate) fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     let hits = hits.clone();
     canvas(
         move |bounds, window, _| {
@@ -1204,6 +1232,13 @@ impl FleetView {
                     },
                 ))
             });
+            let work_name = workspace.name.clone();
+            let work = button(&self.hits, format!("work-{}", workspace.name), "Work", cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_work(&work_name, cx);
+                },
+            ));
             body = body.child(
                 div()
                     .id(SharedString::from(pkey.clone()))
@@ -1221,6 +1256,7 @@ impl FleetView {
                             .font_weight(FontWeight::BOLD)
                             .child(SharedString::from(workspace.name.clone())),
                     )
+                    .child(work)
                     .child(
                         div()
                             .flex_1()
@@ -1240,6 +1276,10 @@ impl FleetView {
                     .children(self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).map(|(text, ok)| {
                         div()
                             .id(SharedString::from(format!("relay-{}", workspace.name)))
+                            // truncates rather than push the buttons after it past the panel's edge
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
                             .text_xs()
                             .text_color(if ok { status.success } else { status.warning })
                             .child(SharedString::from(text))
@@ -1884,6 +1924,7 @@ impl FleetView {
         let active = self.active.and_then(|id| self.tab(id));
         let status = cx.theme().status().clone();
         let content: AnyElement = match active {
+            Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
             Some(Tab { terminal: Some(terminal), detach, .. }) => div()
                 .size_full()
                 .flex()
