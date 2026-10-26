@@ -1359,6 +1359,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     if !view.read_with(cx, |v, _| v.hits.borrow().contains_key(&format!("msg-reply-{key}"))) {
         bail!("the APPROVE? row has Approve but no Reply…");
     }
+    crate::selftest_manage::shot("m5-14-messages", cx).await;
     click(view, &approve_key, cx).await?;
     wait_painted(view, &format!("msg-answered-{key}"), Duration::from_secs(5), cx).await?;
     if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
