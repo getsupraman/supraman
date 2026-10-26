@@ -1,0 +1,3 @@
+// Resource 1 is the icon gpui's Windows platform loads for its window class (gpui_windows load_icon)
+// and the one Explorer shows for foreman.exe.
+1 ICON "foreman.ico"

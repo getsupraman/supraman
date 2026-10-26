@@ -1665,6 +1665,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "embed-resource",
  "foreman-claude",
  "foreman-core",
  "foreman-supervisor",
