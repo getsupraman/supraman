@@ -553,9 +553,10 @@ impl WorkView {
             .border_color(colors.border)
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
             .child(div().flex_none().font_weight(FontWeight::BOLD).child(SharedString::from(run.item.qualified_ref.clone())))
-            .child(div().flex_1().min_w(px(120.)).overflow_hidden().whitespace_nowrap().child(SharedString::from(run.item.title.clone())))
+            .child(div().flex_1().min_w(px(120.)).truncate().child(SharedString::from(run.item.title.clone())))
             .child(rollup_bar(&run.rollup, cx))
             .child(small(done_text(&run.rollup), colors.text_muted))
             .child(small(run.item.status.as_str(), status_color(run.item.status, cx)))
@@ -615,7 +616,7 @@ impl WorkView {
                     .child(item.status.as_str())
                     .child(hit_target(&self.hits, status_key(&item.qualified_ref, item.status))),
             )
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(SharedString::from(item.title.clone())))
+            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(item.title.clone())))
             .when(row.criteria.total > 0, |d| {
                 let done = row.criteria.checked == row.criteria.total;
                 d.child(small(
@@ -664,6 +665,7 @@ impl WorkView {
             .cursor_pointer()
             .when(selected, |d| d.bg(colors.element_selected))
             .when(!selected, |d| d.hover(|s| s.bg(colors.ghost_element_hover)))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(line)
             .when(!meta.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2().pl(px(72.)).children(meta)))
             .child(hit_target(&self.hits, key))
@@ -703,6 +705,7 @@ impl WorkView {
             .text_xs()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(if open { "Runs" } else { "Journal" })
             .child(hit_target(&self.hits, format!("work-journal={}", if open { "open" } else { "closed" })))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_journal(cx)))
@@ -736,7 +739,7 @@ impl WorkView {
             .px_3()
             .py_2()
             .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(overview.item.qualified_ref.clone())))
-            .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(SharedString::from(overview.item.title.clone())))
+            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(overview.item.title.clone())))
             .child(rollup_bar(&overview.rollup, cx))
             .child(small(done_text(&overview.rollup), colors.text_muted))
             .child(small(connection, if live { status.success } else { status.warning }))

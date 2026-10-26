@@ -9,7 +9,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
@@ -110,6 +110,66 @@ fn tinted_button(
         .child(icon.svg(16., fg).group_hover(key, |s| s.text_color(colors.text)))
         .child(hit_target(hits, key.into()))
         .tooltip(Tooltip::text(tip))
+}
+
+/// The tree's row heights (m5/14): one per row kind, whatever the row holds.
+const WORKSPACE_ROW: f32 = 30.;
+const REPO_ROW: f32 = 26.;
+const SESSION_LINE: f32 = 24.;
+
+/// The chevron of a foldable row in a fixed box, so names line up whether a row folds (`Some`) or not.
+fn disclosure(open: Option<bool>, color: Hsla) -> Div {
+    let slot = div().flex().flex_none().items_center().justify_center().size(px(16.));
+    match open {
+        Some(open) => slot.child(if open { Icon::ChevronDown } else { Icon::ChevronRight }.svg(14., color)),
+        None => slot,
+    }
+}
+
+/// A square glyph button inside a row ([+], ×): the glyph centred in a 20 px hit area, muted, the text
+/// colour and a fill on hover, a deeper fill pressed.
+fn glyph_button(hits: &super::HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    let group = SharedString::from(key.clone());
+    div()
+        .id(group.clone())
+        .group(group.clone())
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(20.))
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.ghost_element_hover))
+        .active(|s| s.bg(colors.ghost_element_active))
+        .child(icon.svg(14., colors.text_muted).group_hover(group, |s| s.text_color(colors.text)))
+        .child(hit_target(hits, key))
+        .tooltip(Tooltip::text(tip))
+}
+
+/// A session row's `attach` / `resume`: a quiet outlined pill whose border and fill come up on hover.
+fn pill(hits: &super::HitTargets, key: String, label: &'static str, cx: &gpui::App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(SharedString::from(key.clone()))
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(px(20.))
+        .px_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(colors.border_variant)
+        .text_xs()
+        .text_color(colors.text_muted)
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text))
+        .active(|s| s.bg(colors.element_active))
+        .child(label)
+        .child(hit_target(hits, key))
 }
 
 impl FleetView {
@@ -352,43 +412,49 @@ impl FleetView {
                     .id(SharedString::from(pkey.clone()))
                     .relative()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap_2()
-                    .px_3()
-                    .py_1()
+                    .h(px(WORKSPACE_ROW))
+                    .pl(px(6.))
+                    .pr_2()
                     .mt_2()
                     .cursor_pointer()
                     .hover(|s| s.bg(colors.ghost_element_hover))
-                    .child(if open { "▾" } else { "▸" })
+                    .active(|s| s.bg(colors.ghost_element_active))
+                    .child(disclosure(Some(open), colors.text_muted))
                     .child(
                         div()
+                            .flex_none()
                             .font_weight(FontWeight::BOLD)
+                            .whitespace_nowrap()
                             .child(SharedString::from(workspace.name.clone())),
                     )
                     .child(work)
                     .child(
                         div()
                             .flex_1()
-                            .overflow_hidden()
+                            .min_w_0()
+                            .truncate()
                             .text_xs()
                             .text_color(colors.text_muted)
-                            .whitespace_nowrap()
                             .child(SharedString::from(workspace.root.display().to_string())),
                     )
                     .child(
                         div()
+                            .flex_none()
+                            .whitespace_nowrap()
                             .text_xs()
                             .text_color(colors.text_muted)
                             .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
                     )
-                    .child(div().text_xs().text_color(state_color).child(state_text))
+                    .child(div().flex_none().text_xs().text_color(state_color).child(state_text))
                     .children(self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).map(|(text, ok)| {
                         div()
                             .id(SharedString::from(format!("relay-{}", workspace.name)))
                             // truncates rather than push the buttons after it past the panel's edge
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .truncate()
                             .text_xs()
                             .text_color(if ok { status.success } else { status.warning })
                             .child(SharedString::from(text))
@@ -412,7 +478,7 @@ impl FleetView {
                 continue;
             }
             for row in &workspace.supervised {
-                body = body.child(self.render_session(&workspace.name, "supervised", row, px(28.), cx));
+                body = body.child(self.render_session(&workspace.name, "supervised", row, px(26.), cx));
             }
             for repo in &workspace.repos {
                 let rkey = format!("repo:{}/{}", workspace.name, repo.name);
@@ -421,16 +487,7 @@ impl FleetView {
                 let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
                 let new_key = format!("new-claude-{}/{}", workspace.name, repo.name);
                 let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", workspace.name, repo.name));
-                let new_claude = div()
-                    .id(SharedString::from(new_key.clone()))
-                    .relative()
-                    .flex_none()
-                    .px_1()
-                    .rounded_sm()
-                    .text_color(colors.text_muted)
-                    .hover(|s| s.bg(colors.element_hover).text_color(colors.text))
-                    .child("+")
-                    .child(hit_target(&self.hits, new_key))
+                let new_claude = glyph_button(&self.hits, new_key, Icon::Plus, "New claude session in this repo", cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.new_claude(new_cwd.clone(), new_title.clone(), window, cx);
@@ -440,23 +497,24 @@ impl FleetView {
                         .id(SharedString::from(rkey.clone()))
                         .relative()
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap_2()
-                        .pl(px(28.))
-                        .pr_3()
-                        .py(px(2.))
+                        .h(px(REPO_ROW))
+                        .pl(px(26.))
+                        .pr_2()
                         .text_sm()
                         .cursor_pointer()
                         .hover(|s| s.bg(colors.ghost_element_hover))
+                        .active(|s| s.bg(colors.ghost_element_active))
                         .when(empty, |d| d.text_color(colors.text_muted))
                         .when(!repo.enabled, |d| d.opacity(0.6))
-                        .child(if empty { " " } else if ropen { "▾" } else { "▸" })
-                        .child(SharedString::from(format!("./{}", repo.name)))
+                        .child(disclosure((!empty).then_some(ropen), colors.text_muted))
+                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(format!("./{}", repo.name))))
                         .child(
                             div()
                                 .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
+                                .truncate()
                                 .text_xs()
                                 .text_color(colors.text_muted)
                                 .child(SharedString::from(branch)),
@@ -464,12 +522,25 @@ impl FleetView {
                         .when(!empty, |d| {
                             d.child(
                                 div()
+                                    .flex_none()
                                     .text_xs()
                                     .text_color(colors.text_muted)
                                     .child(SharedString::from(format!("{}", repo.sessions.len()))),
                             )
                         })
-                        .when(!repo.enabled, |d| d.child(div().text_xs().text_color(colors.text_muted).child("disabled")))
+                        .when(!repo.enabled, |d| {
+                            d.child(
+                                div()
+                                    .flex_none()
+                                    .px_1()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(colors.border_variant)
+                                    .text_xs()
+                                    .text_color(colors.text_muted)
+                                    .child("disabled"),
+                            )
+                        })
                         .child(div().flex_1())
                         .when(repo.enabled, |d| d.child(new_claude))
                         .child(hit_target(&self.hits, format!("repo-row-{}/{}", workspace.name, repo.name)))
@@ -486,7 +557,7 @@ impl FleetView {
                     continue;
                 }
                 for row in &repo.sessions {
-                    body = body.child(self.render_session(&workspace.name, &repo.name, row, px(48.), cx));
+                    body = body.child(self.render_session(&workspace.name, &repo.name, row, px(46.), cx));
                 }
             }
         }
@@ -614,18 +685,7 @@ impl FleetView {
         let (open_ws, item) = (workspace.to_string(), row.item.id.clone());
         let (dismiss_ws, row_id) = (workspace.to_string(), row.key.clone());
         let inbox = self.work_inbox.clone();
-        let dismiss = div()
-            .id(SharedString::from(dismiss_key.clone()))
-            .relative()
-            .flex_none()
-            .px_1()
-            .rounded_sm()
-            .text_xs()
-            .text_color(colors.text_muted)
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.element_hover).text_color(colors.text))
-            .child("×")
-            .child(hit_target(&self.hits, dismiss_key))
+        let dismiss = glyph_button(&self.hits, dismiss_key, Icon::Close, "Dismiss here (WorkState is not changed)", cx)
             .on_click(move |_: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 inbox.update(cx, |inbox, cx| inbox.dismiss(&dismiss_ws, &row_id, cx));
@@ -809,6 +869,8 @@ impl FleetView {
                     .border_color(color)
                     .bg(color.opacity(0.10))
                     .cursor_pointer()
+                    .hover(|s| s.bg(color.opacity(0.16)))
+                    .active(|s| s.bg(color.opacity(0.22)))
                     .child(
                         div()
                             .flex()
@@ -961,7 +1023,8 @@ impl FleetView {
             .flex()
             .items_center()
             .gap_2()
-            .child(div().size(px(8.)).flex_none().rounded_full().bg(dot))
+            .h(px(SESSION_LINE))
+            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(div().size(px(8.)).rounded_full().bg(dot)))
             .child(
                 div()
                     .w(px(78.))
@@ -970,15 +1033,11 @@ impl FleetView {
                     .text_color(dot)
                     .child(SharedString::from(fleet::health_label(&row.health))),
             )
+            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(name)))
             .child(
                 div()
-                    .flex_1()
-                    .overflow_hidden()
+                    .flex_none()
                     .whitespace_nowrap()
-                    .child(SharedString::from(name)),
-            )
-            .child(
-                div()
                     .text_xs()
                     .text_color(colors.text_muted)
                     .child(SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s)))),
@@ -987,18 +1046,7 @@ impl FleetView {
                 let key = format!("resume-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
-                    div()
-                        .id(SharedString::from(key.clone()))
-                        .relative()
-                        .px_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(colors.border)
-                        .text_xs()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(colors.element_hover))
-                        .child("resume")
-                        .child(hit_target(&self.hits, key))
+                    pill(&self.hits, key, "resume", cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.resume(&workspace, &repo, &session, window, cx);
                         })),
@@ -1008,18 +1056,7 @@ impl FleetView {
                 let key = format!("attach-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
-                    div()
-                        .id(SharedString::from(key.clone()))
-                        .relative()
-                        .px_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(colors.border)
-                        .text_xs()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(colors.element_hover))
-                        .child("attach")
-                        .child(hit_target(&self.hits, key))
+                    pill(&self.hits, key, "attach", cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.attach(&workspace, &repo, &session, window, cx);
                         })),
@@ -1027,15 +1064,21 @@ impl FleetView {
             });
 
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
+        // the row whose attach tab is the active one
+        let shown = self.active.and_then(|id| self.tab(id)).is_some_and(|t| matches!(&t.kind, TabKind::Attach { session_id } if *session_id == s.id));
         div()
+            .id(SharedString::from(format!("session-{}", s.id)))
             .relative()
             .flex()
+            .flex_none()
             .flex_col()
             .pl(indent)
-            .pr_3()
-            .py(px(3.))
+            .pr_2()
+            .py(px(1.))
             .text_sm()
-            .when(blocked, |d| d.bg(status.warning.opacity(0.12)))
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .when(shown, |d| d.bg(colors.ghost_element_selected).border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
+            .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
             .when(dimmed, |d| d.opacity(0.5))
             .child(line)
             .when(foreign, |d| {
@@ -1045,7 +1088,8 @@ impl FleetView {
                         .id(SharedString::from(key.clone()))
                         .relative()
                         .self_start()
-                        .ml(px(16.))
+                        .mb(px(2.))
+                        .ml(px(24.))
                         .px_1()
                         .rounded_sm()
                         .border_1()
@@ -1063,7 +1107,8 @@ impl FleetView {
             .when_some(waiting_for, |d, w| {
                 d.child(
                     div()
-                        .pl(px(16.))
+                        .pl(px(24.))
+                        .truncate()
                         .text_xs()
                         .text_color(if foreign { colors.text_muted } else { status.warning })
                         .child(SharedString::from(w)),
@@ -1072,7 +1117,8 @@ impl FleetView {
             .when_some(hook, |d, h| {
                 d.child(
                     div()
-                        .pl(px(16.))
+                        .pl(px(24.))
+                        .truncate()
                         .text_xs()
                         .text_color(colors.text_muted)
                         .child(SharedString::from(h)),

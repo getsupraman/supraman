@@ -215,6 +215,7 @@ impl WorkView {
             .text_xs()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(back_label)
             .child(hit_target(&self.hits, "item-back".into()))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)));
@@ -510,6 +511,7 @@ impl WorkView {
                             .text_color(status.info)
                             .cursor_pointer()
                             .hover(|s| s.bg(colors.ghost_element_hover))
+                            .active(|s| s.bg(colors.ghost_element_active))
                             .child("Attach")
                             .child(hit_target(&self.hits, key))
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -630,6 +632,7 @@ impl WorkView {
             .text_color(colors.text_muted)
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(if open.events_open { "▾" } else { "▸" })
             .child(SharedString::from(format!("RECENT EVENTS {}{more}", page.events.len())))
             .child(hit_target(&self.hits, "item-events".into()))
@@ -671,6 +674,7 @@ impl WorkView {
             .text_sm()
             .cursor_pointer()
             .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
             .child(div().flex_none().text_color(colors.text_accent).child(SharedString::from(item.qualified_ref.clone())))
             .child(small(item.status.as_str(), status_color(item.status, cx)))
             .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(SharedString::from(item.title.clone())))

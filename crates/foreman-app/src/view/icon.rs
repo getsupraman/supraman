@@ -6,6 +6,9 @@ use theme::ActiveTheme as _;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
+    ChevronDown,
+    ChevronRight,
+    Close,
     ExpandAll,
     CollapseAll,
     Eye,
@@ -19,7 +22,10 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 9] = [
+    const ALL: [Icon; 12] = [
+        Icon::ChevronDown,
+        Icon::ChevronRight,
+        Icon::Close,
         Icon::ExpandAll,
         Icon::CollapseAll,
         Icon::Eye,
@@ -33,6 +39,9 @@ impl Icon {
 
     pub fn bytes(self) -> &'static [u8] {
         match self {
+            Icon::ChevronDown => include_bytes!("../../assets/icons/chevron_down.svg"),
+            Icon::ChevronRight => include_bytes!("../../assets/icons/chevron_right.svg"),
+            Icon::Close => include_bytes!("../../assets/icons/close.svg"),
             Icon::ExpandAll => include_bytes!("../../assets/icons/chevron_up_down.svg"),
             Icon::CollapseAll => include_bytes!("../../assets/icons/chevron_down_up.svg"),
             Icon::Eye => include_bytes!("../../assets/icons/eye.svg"),

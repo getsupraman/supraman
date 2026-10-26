@@ -281,6 +281,7 @@ impl WorkView {
                     .text_xs()
                     .cursor_pointer()
                     .hover(|s| s.bg(colors.ghost_element_hover))
+                    .active(|s| s.bg(colors.ghost_element_active))
                     .child(label)
                     .child(hit_target(&self.hits, "journal-older".into()))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.load_older(cx))),
@@ -326,6 +327,7 @@ impl WorkView {
                     let id = item.id.clone();
                     row.cursor_pointer()
                         .hover(|s| s.bg(colors.ghost_element_hover))
+                        .active(|s| s.bg(colors.ghost_element_active))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_event(id.clone(), cx)))
                         .into_any_element()
                 }

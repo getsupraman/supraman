@@ -412,6 +412,7 @@ fn small_button(id: &'static str, label: &'static str, cx: &App) -> gpui::Statef
         .text_sm()
         .cursor_pointer()
         .hover(|s| s.bg(colors.element_hover))
+        .active(|s| s.bg(colors.element_active))
         .child(label)
 }
 
@@ -443,6 +444,7 @@ impl Render for SettingsView {
                     .when(active, |d| d.bg(colors.element_selected))
                     .when(!active, |d| d.text_color(colors.text_muted))
                     .hover(|s| s.bg(colors.ghost_element_hover))
+                    .active(|s| s.bg(colors.ghost_element_active))
                     .child(page.title())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.page = page;
@@ -461,6 +463,7 @@ impl Render for SettingsView {
                 .text_color(colors.text_muted)
                 .cursor_pointer()
                 .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
+                .active(|s| s.bg(colors.ghost_element_active))
                 .child("Open settings.toml")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
