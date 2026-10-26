@@ -3,7 +3,12 @@
 
 pub mod term_element;
 
-use std::{sync::OnceLock, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::OnceLock,
+    time::Instant,
+};
 
 use foreman_term::terminal_settings::{TerminalConfig, TerminalPalette};
 use gpui::App;
@@ -124,36 +129,69 @@ pub fn process_start() -> Instant {
     *PROCESS_START.get_or_init(Instant::now)
 }
 
-/// Timestamps of frames the window drew and handed to the platform for presentation.
+/// Timestamps of frames the window drew and handed to the platform for presentation, and how long the
+/// window's own work took in each.
 ///
 /// A view's `render` runs only inside `Window::draw`, which gpui immediately follows with
 /// `Window::present`, so calling [`FrameProbe::on_render`] from the root view's `render` marks one
-/// frame handed to the swap chain.
+/// frame handed to the swap chain. [`FrameProbe::paint_marker`], the root's last child, paints last:
+/// render → marker is the frame's render, layout, prepaint and paint, without the wait for vsync or for
+/// the CPU, which another process can stretch (m5/15).
 #[derive(Default)]
 pub struct FrameProbe {
     pub recording: bool,
     pub frames: Vec<Instant>,
+    drawing: Rc<Cell<Option<Instant>>>,
+    work: Rc<RefCell<Vec<f64>>>,
 }
 
 impl FrameProbe {
     pub fn on_render(&mut self, window: &mut gpui::Window) {
         if self.recording {
-            self.frames.push(Instant::now());
+            let now = Instant::now();
+            self.frames.push(now);
+            self.drawing.set(Some(now));
             window.request_animation_frame();
         }
+    }
+
+    /// A zero-size element that records the frame's own work when it paints.
+    pub fn paint_marker(&self) -> impl gpui::IntoElement {
+        use gpui::Styled as _;
+        let (drawing, work) = (self.drawing.clone(), self.work.clone());
+        gpui::canvas(
+            |_, _, _| (),
+            move |_, _, _, _| {
+                if let Some(started) = drawing.take() {
+                    work.borrow_mut().push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+            },
+        )
+        .absolute()
+        .size_0()
     }
 
     pub fn start(&mut self) {
         self.recording = true;
         self.frames.clear();
+        self.drawing.set(None);
+        self.work.borrow_mut().clear();
     }
 
     pub fn stop(&mut self) -> FrameStats {
         self.recording = false;
-        FrameStats::from_frames(&std::mem::take(&mut self.frames))
+        self.drawing.set(None);
+        let mut stats = FrameStats::from_frames(&std::mem::take(&mut self.frames));
+        let mut work = std::mem::take(&mut *self.work.borrow_mut());
+        work.sort_by(|a, b| a.total_cmp(b));
+        stats.work_p10 = percentile(&work, 10.0);
+        stats.work_p50 = percentile(&work, 50.0);
+        stats.work_p95 = percentile(&work, 95.0);
+        stats
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FrameStats {
     pub frames: usize,
     pub p50: f64,
@@ -163,6 +201,11 @@ pub struct FrameStats {
     pub over_100: usize,
     /// When the slowest frame was presented, in ms since [`process_start`].
     pub max_at_ms: f64,
+    /// The window's own work per frame ([`FrameProbe::paint_marker`]); NaN without a marker. Another
+    /// process preempting the window stretches some frames' work; the fastest tenth stays near the cost.
+    pub work_p10: f64,
+    pub work_p50: f64,
+    pub work_p95: f64,
 }
 
 impl FrameStats {
@@ -184,6 +227,9 @@ impl FrameStats {
             over_50: intervals.iter().filter(|ms| **ms > 50.0).count(),
             over_100: intervals.iter().filter(|ms| **ms > 100.0).count(),
             max_at_ms,
+            work_p10: f64::NAN,
+            work_p50: f64::NAN,
+            work_p95: f64::NAN,
         }
     }
 }
@@ -192,8 +238,8 @@ impl std::fmt::Display for FrameStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms (at +{:.0} ms since process start) over {} frames; frames > 50 ms: {}, > 100 ms: {}",
-            self.p50, self.p95, self.max, self.max_at_ms, self.frames, self.over_50, self.over_100
+            "p50 {:.2} ms, p95 {:.2} ms, max {:.2} ms (at +{:.0} ms since process start) over {} frames; frames > 50 ms: {}, > 100 ms: {}; own work p10 {:.2} ms, p50 {:.2} ms, p95 {:.2} ms",
+            self.p50, self.p95, self.max, self.max_at_ms, self.frames, self.over_50, self.over_100, self.work_p10, self.work_p50, self.work_p95
         )
     }
 }

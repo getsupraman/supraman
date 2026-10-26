@@ -29,7 +29,7 @@ use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, Mouse
 use serde_json::{Value, json};
 
 use crate::{
-    selftest::{click, close_attach, open_attach, scrolled_into_view, sleep},
+    selftest::{click, close_attach, frames, open_attach, scrolled_into_view, sleep},
     view::{FleetView, TabKind},
     work_view::{DISMISSED_FILE, WorkEvent, WorkView, criterion_key, status_key, verification_key},
 };
@@ -332,10 +332,8 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     lines.push(format!("Inbox painted the fake's 2 WorkState rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
     // Open: the Work button on the workspace row; frames measured while the overview and boards load.
-    view.update(cx, |v, cx| {
-        v.probe.start();
-        cx.notify();
-    });
+    let before = frames::baseline(view, cx).await;
+    let recording = frames::start(view, cx);
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
     let (tab, work) = view
         .read_with(cx, |v, _| {
@@ -347,11 +345,9 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
         .ok_or_else(|| anyhow!("clicking work-{WORKSPACE} opened no active Work tab"))?;
     let loaded = painted(view, &["work-run-sw2", "work-run-sw1", "work-row-sw2/1", "work-row-sw2/2", "work-row-sw2/2.1"], LOADED_WITHIN, "runs and the live run's board", cx).await;
     sleep(cx, Duration::from_millis(200)).await;
-    let stats = view.update(cx, |v, _| v.probe.stop());
+    let during = recording.stop(view, cx);
     let loaded = loaded?;
-    if stats.over_50 > 0 {
-        bail!("frames over 50 ms while the board loaded: {stats}");
-    }
+    let stats = frames::judge("step 7 board load", &before, &during, view, cx).await?;
     for absent in ["work-row-13", "work-row-sw1/1"] {
         if is_painted(view, absent, cx) {
             bail!("{absent} is painted: the run's own row must be the header, and the done run must start collapsed");
@@ -451,10 +447,8 @@ async fn item_page(
 ) -> anyhow::Result<String> {
     let mut lines = Vec::new();
     fake.set(item_target(TASK_1), Answer::json(task1_page(110, launched, false)));
-    view.update(cx, |v, cx| {
-        v.probe.start();
-        cx.notify();
-    });
+    let before = frames::baseline(view, cx).await;
+    let recording = frames::start(view, cx);
 
     click(view, "work-row-sw2/1", cx).await?;
     let attach_key = format!("item-attach-{}", launched.id);
@@ -545,10 +539,8 @@ async fn item_page(
         bail!("Escape left the item page open");
     }
     sleep(cx, Duration::from_millis(200)).await;
-    let stats = view.update(cx, |v, _| v.probe.stop());
-    if stats.over_50 > 0 {
-        bail!("frames over 50 ms on the item page: {stats}");
-    }
+    let during = recording.stop(view, cx);
+    let stats = frames::judge("step 7 item page", &before, &during, view, cx).await?;
     lines.push(format!("Escape closed it; frames on the item page: {stats}"));
 
     // Attach from the claim: the fleet's own attach tab, detached the way step 5 does it.
@@ -567,10 +559,8 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     let mut lines = Vec::new();
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let question = format!("inbox-ws-question:{TASK_1}");
-    view.update(cx, |v, cx| {
-        v.probe.start();
-        cx.notify();
-    });
+    let before = frames::baseline(view, cx).await;
+    let recording = frames::start(view, cx);
 
     click(view, &blocked, cx).await?;
     painted(view, &["item-header-sw2/2"], LOADED_WITHIN, "sw2/2's page from the Inbox", cx).await?;
@@ -644,10 +634,8 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     click(view, "journal-event-40", cx).await?;
     painted(view, &["item-header-sw1/1"], LOADED_WITHIN, "sw1/1 from its journal event", cx).await?;
     sleep(cx, Duration::from_millis(200)).await;
-    let stats = view.update(cx, |v, _| v.probe.stop());
-    if stats.over_50 > 0 {
-        bail!("frames over 50 ms in the inbox and journal: {stats}");
-    }
+    let during = recording.stop(view, cx);
+    let stats = frames::judge("step 7 inbox and journal", &before, &during, view, cx).await?;
     lines.push(format!(
         "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page; frames: {stats}",
         live_after.as_millis()

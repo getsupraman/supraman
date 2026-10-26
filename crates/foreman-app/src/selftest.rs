@@ -35,6 +35,10 @@ use crate::{
     view::{DETACH_WITHIN, Detach, FleetView, TabKind, process_alive},
 };
 
+pub(crate) mod frames;
+
+pub(crate) use frames::injected_frame_sleep;
+
 pub const WORKSPACE: &str = "larchsys";
 const PROMPT: &str = "Reply with the word ready and then wait for input";
 const LISTED_WITHIN: Duration = Duration::from_secs(15);
@@ -387,9 +391,17 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
     let margin = px(4.);
     let mut seen = Vec::new();
     for _ in 0..20 {
-        let hit = view
-            .read_with(cx, |v, _| v.hits.borrow().get(key).copied())
-            .ok_or_else(|| anyhow!("nothing painted under {key}"))?;
+        // a refresh can rebuild the tree and drop the row from a frame or two, more often on a busy machine (m5/15)
+        let missing = Instant::now();
+        let hit = loop {
+            if let Some(hit) = view.read_with(cx, |v, _| v.hits.borrow().get(key).copied()) {
+                break hit;
+            }
+            if missing.elapsed() > Duration::from_secs(2) {
+                bail!("nothing painted under {key} for 2 s (seen before: {})", if seen.is_empty() { "nothing".into() } else { seen.join(" → ") });
+            }
+            sleep(cx, Duration::from_millis(50)).await;
+        };
         let (b, v) = (hit.bounds, hit.visible);
         seen.push(format!("{}..{} in {}..{}", f32::from(b.top()), f32::from(b.bottom()), f32::from(v.top()), f32::from(v.bottom())));
         if hit.fully_visible() {
@@ -467,19 +479,6 @@ pub(crate) async fn wait_for_tab_terminal(
         }
         sleep(cx, Duration::from_millis(20)).await;
     }
-}
-
-async fn record_frames(
-    view: &Entity<FleetView>,
-    window: Duration,
-    cx: &mut AsyncWindowContext,
-) -> foreman_ui::FrameStats {
-    view.update(cx, |v, cx| {
-        v.probe.start();
-        cx.notify();
-    });
-    sleep(cx, window).await;
-    view.update(cx, |v, _| v.probe.stop())
 }
 
 /// The session's row by name, alive by health and by its own pid. `state` describes the turn, not
@@ -679,6 +678,7 @@ pub(crate) async fn close_attach(
 
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
+    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
     let (row, listed_after) = wait_attachable(view, &name, cx).await.context("step 3")?;
     let id = row.session.id.clone();
     println!(
@@ -714,12 +714,16 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
+    let before = frames::baseline(view, cx).await;
     let walks_before = main_repo_walks();
-    let stats = record_frames(view, Duration::from_secs(6), cx).await;
+    let idle = frames::record(view, Duration::from_secs(6), cx).await;
     let walks = main_repo_walks() - walks_before;
+    let stats = idle.stats;
     let (refreshes, sessions) = view.read_with(cx, |v, _| (v.refreshes - refreshes_before, v.sessions.len() as u64));
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
-    println!("frame time over 6 s with {refreshes} panel refreshes: {stats}");
+    let judged = frames::judge("step 8", &before, &idle, view, cx).await;
+    println!("frame time over 6 s with {refreshes} panel refreshes: {}", judged.as_ref().map_or_else(|e| format!("{e:#}"), String::clone));
+    judged?;
     if refreshes == 0 {
         bail!("step 8: the panel did not refresh during the 6 s frame window");
     }
@@ -730,6 +734,24 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         bail!("step 8: {walks} main_repo walks over {} idle frames, at most {polls_allowed} expected: the render path walks the filesystem", stats.frames);
     }
     Ok(())
+}
+
+const CLIPBOARD_TRIES: usize = 5;
+
+/// The clipboard's text once `own` accepts it, or what it held after 1 s.
+async fn read_own(
+    cx: &mut AsyncWindowContext,
+    read: &impl Fn(&mut AsyncWindowContext) -> anyhow::Result<Option<String>>,
+    own: impl Fn(&str) -> bool,
+) -> anyhow::Result<Option<String>> {
+    let started = Instant::now();
+    loop {
+        let text = read(cx)?;
+        if text.as_deref().is_some_and(&own) || started.elapsed() > Duration::from_secs(1) {
+            return Ok(text);
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
 }
 
 /// Step 6b (m5/9), on step 6's shell tab: a left drag dispatched over a known output line selects exactly
@@ -771,27 +793,42 @@ async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowCont
             bail!("dragged over display row {row} ({text:?}) from {from:?} to {to:?}; selection is {selected:?}");
         }
 
-        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("not copied".into())))?;
-        key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
-        sleep(cx, Duration::from_millis(200)).await;
-        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))?;
+        // Another selftest may write the system clipboard at any moment (m5/15): the copied line carries
+        // this run's tag, and each read waits for this run's own value, pressing again if a foreign one
+        // replaced it.
+        let read = |cx: &mut AsyncWindowContext| cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
+        let mut copied = None;
+        for _ in 0..CLIPBOARD_TRIES {
+            cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("not copied".into())))?;
+            key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
+            copied = read_own(cx, &read, |c| c == text).await?;
+            if copied.as_deref() == Some(text.as_str()) {
+                break;
+            }
+        }
         if copied.as_deref() != Some(text.as_str()) {
-            bail!("Ctrl+Shift+C with {text:?} selected left the clipboard at {copied:?}");
+            bail!("Ctrl+Shift+C with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
         }
 
         let marker = format!("fm-paste-{}", hex6());
-        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(marker.clone())))?;
-        key(cx, "v", Modifiers::control())?;
-        let pasted = Instant::now();
-        loop {
+        let echoed = |cx: &mut AsyncWindowContext| {
             let content = terminal.read_with(cx, |t, _| t.get_content());
-            if content.lines().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.contains(&marker)) {
-                break;
+            content.lines().rev().find(|l| !l.trim().is_empty()).is_some_and(|l| l.contains(&marker))
+        };
+        let pasted = Instant::now();
+        'paste: for _ in 0..CLIPBOARD_TRIES {
+            cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(marker.clone())))?;
+            key(cx, "v", Modifiers::control())?;
+            let tried = Instant::now();
+            while tried.elapsed() < Duration::from_secs(2) {
+                if echoed(cx) {
+                    break 'paste;
+                }
+                sleep(cx, Duration::from_millis(50)).await;
             }
-            if pasted.elapsed() > Duration::from_secs(5) {
-                bail!("Ctrl+V: {marker} not echoed at the prompt within 5 s");
-            }
-            sleep(cx, Duration::from_millis(50)).await;
+        }
+        if !echoed(cx) {
+            bail!("Ctrl+V: {marker} not echoed at the prompt in {CLIPBOARD_TRIES} tries of 2 s");
         }
         Ok(format!(
             "drag over row {row} selected {text:?}; Ctrl+Shift+C → clipboard {text:?}; Ctrl+V → {marker} at the prompt after {} ms",
@@ -843,12 +880,14 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
             sleep(cx, Duration::from_millis(20)).await;
         };
         let count = lines * 2 + 20;
-        let last = format!("wheel line {count}");
+        // the tag makes step 6b's copied line this run's own
+        let tag = format!("fm-{}", hex6());
+        let last = format!("wheel line {count} {tag}");
         let mut typed = false;
         loop {
             let content = terminal.read_with(cx, |t, _| t.get_content());
             if !typed && content.contains("PS ") {
-                let command = format!("1..{count} | % {{ \"wheel line $_\" }}\r");
+                let command = format!("1..{count} | % {{ \"wheel line $_ {tag}\" }}\r");
                 terminal.update(cx, |t, _| t.input(command.into_bytes()));
                 typed = true;
             }
@@ -1064,7 +1103,7 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         sleep(cx, Duration::from_secs(2)).await;
         let (private, ws) = memory();
-        let stats = record_frames(view, Duration::from_secs(5), cx).await;
+        let stats = frames::record(view, Duration::from_secs(5), cx).await.stats;
         println!("{target} tabs: private bytes {} (working set {})", mib(private), mib(ws));
         println!("{target} tabs: frame time over 5 s: {stats}");
     }

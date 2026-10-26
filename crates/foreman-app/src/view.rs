@@ -1336,6 +1336,7 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
 impl Render for FleetView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.probe.on_render(window);
+        crate::selftest::injected_frame_sleep();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
         div()
@@ -1403,6 +1404,7 @@ impl Render for FleetView {
                     .child(self.render_right(cx)),
             )
             .children(self.render_menu(cx))
+            .child(self.probe.paint_marker())
     }
 }
 
