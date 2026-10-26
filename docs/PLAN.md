@@ -291,6 +291,17 @@ when a workspace is removed (backlog/5).
 
 ---
 
+**Roadmap after v1** (René 2026-10-26; WorkState run `roadmap`, r1–r5; each becomes its own run when its turn comes):
+- r1 layout `[workspaces | tab view | expandable panel]`. Closed, the right panel shows only its view actions as a
+  vertical activity bar (Files, Git). Proposal: Files opens a narrow right sidebar; Git opens as a full-width tab like
+  the Work tab, because a commit graph needs the width and tabs give back/forward and several repos side by side.
+- r2 file explorer bound to the active tab's repo or working dir (terminal cwd, attached session's cwd or worktree, Work
+  tab's run worktree); files open as tabs.
+- r3 Git view like GitKraken (commit graph, commit changes, file diffs, branches/worktrees) for the active context's
+  branch or worktree. A session's worktree comes from its cwd, its hook events and WorkState's claim tree.
+- r4 full git actions (checkout, merge, rebase, push, pull, stash), guarded around worktrees live sessions use.
+- r5 Zed extensions: themes (JSON) first, then languages (tree-sitter grammars, highlights) for the file viewer.
+
 ## 7. Risks
 
 - **Usage limits.** The supervisor needs a global cap on concurrently busy sessions from M2.
