@@ -53,7 +53,7 @@ mod error;
 mod launch;
 mod session;
 
-pub use assign::{Assignment, assign, main_repo, repo_of};
+pub use assign::{Assignment, assign, assign_with, main_repo, main_repo_walks, repo_of};
 pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, SUPPORTED_MAJOR, check_supported, check_version, cli_version,
     list_sessions, parse_version,

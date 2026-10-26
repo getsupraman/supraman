@@ -116,6 +116,8 @@ pub struct FleetView {
     pub workspaces: Vec<Workspace>,
     pub registry_error: Option<String>,
     pub sessions: Vec<Session>,
+    /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
+    main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub sessions_error: Option<String>,
     pub last_refresh_took: Option<Duration>,
     pub refreshes: u64,
@@ -178,6 +180,8 @@ impl Render for DraggedDivider {
 struct Refresh {
     workspaces: Result<Vec<Workspace>, String>,
     sessions: Option<Result<Vec<Session>, String>>,
+    /// [`fleet::main_repos`] of `sessions`.
+    main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
     report: Option<Report>,
@@ -215,6 +219,10 @@ impl Poller {
             .map_err(|e| e.to_string());
         let polled_at = now_ms();
         let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
+        let main_repos = match &sessions {
+            Some(Ok(sessions)) => fleet::main_repos(sessions),
+            _ => StdHashMap::new(),
+        };
         let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
         let took = started.elapsed();
         let report = match (&workspaces, &sessions, self.supervision.as_mut()) {
@@ -227,6 +235,7 @@ impl Poller {
         Refresh {
             workspaces,
             sessions,
+            main_repos,
             polled_at,
             events,
             report,
@@ -305,6 +314,7 @@ impl FleetView {
             workspaces: Vec::new(),
             registry_error: None,
             sessions: Vec::new(),
+            main_repos: StdHashMap::new(),
             sessions_error: None,
             last_refresh_took: None,
             refreshes: 0,
@@ -361,6 +371,7 @@ impl FleetView {
                     }
                 }
                 self.sessions = sessions;
+                self.main_repos = refresh.main_repos;
                 self.sessions_error = None;
                 self.polled_at = refresh.polled_at;
             }
@@ -395,6 +406,7 @@ impl FleetView {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
             polled_at: self.polled_at,
+            main_repos: Some(&self.main_repos),
         };
         fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
     }

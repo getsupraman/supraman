@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use foreman_core::{Workspace, Repo};
 
@@ -14,9 +15,15 @@ pub struct Assignment {
 }
 
 pub fn assign(sessions: &[Session], workspace: &Workspace) -> Assignment {
+    assign_with(sessions, workspace, main_repo)
+}
+
+/// [`assign`] with `main_of` in place of [`main_repo`]: the app renders every frame from a table
+/// filled once per poll, so the filesystem walk stays off the UI thread.
+pub fn assign_with(sessions: &[Session], workspace: &Workspace, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Assignment {
     let mut out = Assignment::default();
     for s in sessions {
-        match repo_of(&s.cwd, workspace) {
+        match repo_of_with(&s.cwd, workspace, &main_of) {
             Some(repo) => out.by_repo.entry(repo.name.clone()).or_default().push(s.clone()),
             None => out.unassigned.push(s.clone()),
         }
@@ -27,6 +34,13 @@ pub fn assign(sessions: &[Session], workspace: &Workspace) -> Assignment {
 /// The repo whose path is `cwd` or an ancestor of it (deepest wins), else the repo owning the
 /// linked worktree `cwd` lies in, found through the worktree's `.git` file.
 pub fn repo_of<'a>(cwd: &Path, workspace: &'a Workspace) -> Option<&'a Repo> {
+    repo_of_with(cwd, workspace, main_repo)
+}
+
+fn repo_of_with<'a>(cwd: &Path, workspace: &'a Workspace, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a Repo> {
+    if workspace.repos.is_empty() {
+        return None;
+    }
     let by_prefix = |dir: &str| {
         workspace
             .repos
@@ -36,15 +50,24 @@ pub fn repo_of<'a>(cwd: &Path, workspace: &'a Workspace) -> Option<&'a Repo> {
     };
     let cwd_norm = norm(cwd);
     by_prefix(&cwd_norm).or_else(|| {
-        let main = norm(&main_repo(cwd)?);
+        let main = norm(&main_of(cwd)?);
         workspace.repos.iter().find(|r| norm(&r.path) == main)
     })
+}
+
+static MAIN_REPO_WALKS: AtomicU64 = AtomicU64::new(0);
+
+/// How many times [`main_repo`] has walked the filesystem in this process; `--selftest` checks that
+/// idle frames add none.
+pub fn main_repo_walks() -> u64 {
+    MAIN_REPO_WALKS.load(Ordering::Relaxed)
 }
 
 /// Walks up from `dir` to the first `.git`. A directory: its folder is the main repo. A file with
 /// `gitdir: <repo>/.git/worktrees/<n>` (relative or absolute): a linked worktree of `<repo>`.
 /// Case is kept; the path is `/`-separated with `.`/`..` folded.
 pub fn main_repo(dir: &Path) -> Option<PathBuf> {
+    MAIN_REPO_WALKS.fetch_add(1, Ordering::Relaxed);
     for ancestor in dir.ancestors() {
         let git = ancestor.join(".git");
         if git.is_dir() {

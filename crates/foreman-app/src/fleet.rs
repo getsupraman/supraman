@@ -2,9 +2,9 @@
 //! sessions in them.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use foreman_claude::{Health, Kind, Session, assign};
+use foreman_claude::{Health, Kind, Session, assign_with, main_repo};
 use foreman_core::{Event, Workspace};
 
 #[derive(Debug, Clone)]
@@ -120,6 +120,18 @@ pub struct Supervised<'a> {
     pub hooks: Option<&'a HashMap<String, HookSignal>>,
     /// When the `claude agents` snapshot being shown was taken.
     pub polled_at: i64,
+    /// [`main_repos`] of that snapshot; `None` walks the filesystem instead.
+    pub main_repos: Option<&'a HashMap<PathBuf, Option<PathBuf>>>,
+}
+
+/// [`main_repo`] of every distinct session cwd: filled once per poll, off the UI thread, because
+/// [`build`] runs on every frame (m4/2b: a workspace without repos walked every cwd every frame).
+pub fn main_repos(sessions: &[Session]) -> HashMap<PathBuf, Option<PathBuf>> {
+    let mut out = HashMap::new();
+    for s in sessions {
+        out.entry(s.cwd.clone()).or_insert_with(|| main_repo(&s.cwd));
+    }
+    out
 }
 
 pub struct Tree {
@@ -177,6 +189,10 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
             hook,
         }
     };
+    let main_of = |cwd: &Path| match sup.main_repos {
+        Some(known) => known.get(cwd).cloned().flatten(),
+        None => main_repo(cwd),
+    };
     let workspaces = workspaces
         .iter()
         .map(|workspace| {
@@ -188,7 +204,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                 sessions.iter().cloned().partition(|s| wanted.contains(&s.name));
             let mut supervised: Vec<SessionRow> = theirs.into_iter().map(row).collect();
             sort(&mut supervised);
-            let mut by_repo = assign(&rest, workspace).by_repo;
+            let mut by_repo = assign_with(&rest, workspace, &main_of).by_repo;
             let repos = workspace
                 .repos
                 .iter()
@@ -284,6 +300,17 @@ mod tests {
 
     fn names(repo: &RepoNode) -> Vec<&str> {
         repo.sessions.iter().map(|r| r.session.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_polls_main_repos_table_places_worktree_sessions_without_touching_the_disk() {
+        // C:\other has no .git, so only the table can say it is a worktree of Beta
+        let known = HashMap::from([(PathBuf::from(r"C:\other"), Some(PathBuf::from("C:/demo/Beta")))]);
+        let sup = Supervised { main_repos: Some(&known), ..Supervised::default() };
+        let tree = build(&[workspace()], &sessions(), NOW, false, &sup);
+        assert!(names(&tree.workspaces[0].repos[1]).contains(&"elsewhere"));
+        let tree = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
+        assert!(!names(&tree.workspaces[0].repos[1]).contains(&"elsewhere"));
     }
 
     #[test]
