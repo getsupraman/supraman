@@ -32,7 +32,7 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
-use crate::work_view::WorkView;
+use crate::work_view::{FleetLink, LiveSession, WorkView};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -168,6 +168,8 @@ pub struct FleetView {
     pub answered_route: BTreeMap<String, String>,
     /// The open task box or reply, at most one.
     pub compose: Option<Compose>,
+    /// The attachable sessions, for the Work tabs' item pages (Claim → Attach).
+    work_live: Rc<RefCell<Vec<LiveSession>>>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -353,6 +355,7 @@ impl FleetView {
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
+            work_live: Rc::default(),
         }
     }
 
@@ -373,6 +376,11 @@ impl FleetView {
                         self.last_alive.insert(s.session_id.clone(), now);
                     }
                 }
+                *self.work_live.borrow_mut() = sessions
+                    .iter()
+                    .filter(|s| fleet::attachable(s, &s.health(now)))
+                    .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
+                    .collect();
                 self.sessions = sessions;
                 self.main_repos = refresh.main_repos;
                 self.sessions_error = None;
@@ -740,7 +748,15 @@ impl FleetView {
         }
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), cx);
+        let fleet = cx.weak_entity();
+        let name = workspace.to_string();
+        let link = FleetLink {
+            live: self.work_live.clone(),
+            attach: Rc::new(move |id, window, cx| {
+                fleet.update(cx, |fleet, cx| fleet.attach_by_id(&name, id, window, cx)).ok();
+            }),
+        };
+        let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), link, cx);
         self.tabs.push(Tab {
             id,
             title: format!("Work · {workspace}"),
@@ -984,6 +1000,13 @@ impl FleetView {
                 KeyOutcome::Ignored => {}
             }
             cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if k.key == "escape"
+            && let Some(Tab { kind: TabKind::Work(work), .. }) = self.active.and_then(|id| self.tab(id))
+            && work.update(cx, |work, cx| work.escape(cx))
+        {
             cx.stop_propagation();
             return;
         }

@@ -1593,3 +1593,57 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   numbers of the original flake.
 - **Pattern**: before a selftest reads anything sized by layout (`terminal_bounds`, `num_lines`), wait for the
   first prepaint. A fresh `Terminal` reports 6 lines until then.
+
+## 2026-10-26 — m4/3 item page
+
+- **Layout**: a pane to the **right of the board** in the same Work tab, not a stacked view: the board keeps 42%
+  (min 380 px) of a 1300–2000 px tab, so the next row is one click away and stays highlighted. Code:
+  `crates/foreman-app/src/work_view/item.rs` (child module of `work_view`). A board row opens the item with an
+  empty history; path elements, children, findings and links navigate inside the pane and push onto **Back**
+  (`← Back`, then `← Board`); **Escape** closes the pane. Escape goes through `FleetView::key_down` (the root
+  holds focus and a Work tab has no terminal), which hands it to the active Work tab's `WorkView::escape`, so
+  WorkView needs no focus handle of its own.
+- **Sections**, each hidden when empty: header (breadcrumbs from `path`, clickable; ref, kind, status,
+  resolution, severity, risk tags, title, opened/started/closed), intent, verify command, claim, criteria (☑/☐,
+  evidence, checkedAt), reports, verifications, artifacts, children, findings, notes (kind, from → to, by,
+  consumed or **not consumed**), links out ("this blocks it") and in ("it relates this"), assumptions, recent
+  events (collapsed by default; "older events are not shown" when `eventsHasMore`).
+- **Said vs proven**: reports are muted, italic, dashed border, badge `claimed`; verifications have a solid
+  border and tint in their result colour and a bold `✓ proven` / `✗ failed`. A passed verification with
+  `runBy == "worker"` is `✓ passed (worker's own run)` in warning colour and does not count as proof.
+  `done_unverified` = status `done` and no verification that passed with `runBy != "worker"` → a warning banner
+  "Done, but no orchestrator verification proves it". The fixtures use `runBy: "controller"` for the proven
+  case, so "orchestrator verification" here means any non-worker role.
+- **Claim → Attach**: `FleetView` keeps `work_live: Rc<RefCell<Vec<LiveSession>>>`, rewritten on each poll in
+  `apply` from the sessions `fleet::attachable` accepts (Claude uuid, 8-hex id, name), and passes it, plus an
+  attach callback that calls `FleetView::attach_by_id` through a weak handle, to `WorkView::open` as a
+  `FleetLink`. The page joins `claim.session.claudeSessionId` to `LiveSession::claude_session_id` (the name is
+  never a join): a match shows "worked on by <name>" + **Attach**; no match shows "claimed by <holder>" with
+  tree and expiry and no button. The attach tab's title reads `<workspace> · supervised · <name>` (the Inbox's
+  `attach_by_id` label).
+- **Live**: a stream event whose `itemId` is the open item, or whose `runId` is the item's run (from `path`, or
+  the item itself when it is a run), schedules one debounced re-read (`DEBOUNCE`, as the boards); a resync
+  re-reads it. Reads run on the background executor; an answer for an item the pane has left is dropped, an
+  older `seq` is dropped, a failed re-read keeps the page on screen. No new polling.
+- **Selftest step 7** (`--selftest`, after the m4/2 checks): uses the **session the gate launched** (step 2), not
+  an injected fleet row — `selftest_work::run` now takes that `Session`, and sw2/1's item route is set once its
+  `session_id` is known. Clicks sw2/1 → 19 keys painted (header, both path elements, intent, verify command,
+  claim, criteria c1/c2 checked and c3 unchecked, `item-report-1`, `item-verification-0=pass`,
+  `item-attach-<id>`, artifact, note, both links, assumption, events toggle) and no warning, events or empty
+  sections; pushes one event after checking c3 on the fake → `item-criterion-c3=checked` within 2 s and exactly
+  1 item re-read; holds here for `FOREMAN_SELFTEST_HOLD_SECS`; expands the events; follows the in-link to sw1/1
+  (done, only a worker verification; its board row now says so too) → `item-done-unverified`; Back → sw2/1
+  (no warning), Back → the board; reopens, Escape → closed; frames over all of that must be ≤ 50 ms; then
+  Attach from the claim, through `selftest::open_attach` / `close_attach` (now `pub(crate)`, `open_attach`
+  takes the click key): the tab paints the session and detaches with the session alive as the same pid.
+  Result: page 35 ms after the click, c3 ~330 ms after the push, item-page frames max 22.7–24.1 ms (one earlier
+  run 49.4 ms, the first time the pane laid out — near the budget, watch it), attach detached in ~500 ms.
+  Screenshot: `target/m4-3/item-page-fake.png` (PrintWindow during the hold).
+- Tests: `work_view::item::tests::*` (5: done-unverified rule, event → item re-read on item or run, run of an
+  item, claim join only on `claudeSessionId`, keys/labels). Red: the item re-read in `on_hub` forced off →
+  `FAIL step 7: item page: c3 checked after the stream event: not painted within 2000 ms`.
+- Gate: `CARGO_TARGET_DIR=C:\fmbuild\m4-3\target` with the `plugins` junction at `C:\fmbuild\m4-3\plugins` (one
+  level deeper than the brief's `C:\fmbuild\plugins`, so it cannot clash with another worker's junction; the
+  exes walk up and find it the same way); `cargo build --release --workspace` ok; `cargo test --workspace` 383
+  passed, 0 failed; `--selftest` PASS ×3 on the final build (and on the two screenshot runs); `--selftest-supervise` PASS on the
+  first run, from exe copies in the worktree's `target/release`.
