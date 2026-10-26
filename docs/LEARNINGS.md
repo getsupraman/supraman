@@ -2090,3 +2090,26 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   missing field defaults under `#[serde(default)]` — but the real server *sends* `"intent": null`, and null into a
   `String` is an error. Absent ≠ null: the model's types come from `WorkState.Api/App/V1/V1Contract.cs` (every C# `?`
   is an `Option`), and step 7's sw1/1 page now sends every nullable as an explicit null.
+
+## 2026-10-26 — m4/6 E2E: task box → Approve → Work tab → item page, all in the app
+Test Foreman on `target/e2e4-home` (workspace e2e4: `textkit`, `textcli`; max_working 3; real WorkState; published
+rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `textkit.shout`. Screenshots in
+`target/e2e4-shots/` (01–25, live-*). No `fm` command was typed.
+- **Timings.** Start 19:37:27 → workspace + relay up < 15 s. Task box Send 19:38:40 (`sent direct [m-a133a663]`,
+  prompt submitted at once) → APPROVE? in Messages ~19:40:30 (≈ 2 min, plan of 3 runs incl. an integration verify
+  blocked by both). Approve 19:44:01 (`sent direct [m-b7fc0378]`) → fm-e2e4-textkit launched < 15 s → textkit done
+  19:47 (e14d7a4) → textcli launched 19:48, done 19:51 (65cf5d8) → integration verify done 19:52. Approve → all
+  done ≈ 8 min. Workspace Stop 20:19: every e2e4 session stopped, none left in `claude agents`.
+- **Verified by me** in the repos: textkit and textcli tests OK, `greet --shout Ada` → `HELLO, ADA!`, plain greet
+  unchanged. The item page shows the agent's report ("claimed") beside the orchestrator's verification with its own
+  red check and the commit (22-item-verification.png).
+- **Found and fixed on the way:** the item page could not open on the real server (`"intent": null`) → m5/19.
+  Quitting the app and starting the new build on the same home reattached to the running workspace.
+- **Found, queued:** a Messages row arriving under the pointer moved the Task… button (missed click) and work_tree
+  tables wrap unreadably in Messages; Work tab times are UTC without a zone → m5/18. A `+` hand session in a repo is
+  not minted: its bare `work_brief` said "repo not given" and opened another project → m5/20 (m5/8 c4 stays open).
+- **Driving the app from outside.** PrintWindow shoots a window even when another covers it, so a screenshot says
+  nothing about what a click will hit: a selftest Foreman opened at the same position took the foreground and three
+  clicks landed in it. Clicks/wheel are now PostMessage'd to the target HWND (no foreground needed); typing needs
+  real keystrokes (posted WM_CHAR is ignored), so it is guarded: type only while GetForegroundWindow's pid is the
+  target, re-checked per chunk.
