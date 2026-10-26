@@ -5,8 +5,8 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use foreman_claude::{Session, check_supported, list_sessions, now_ms};
-use foreman_core::{HOOK_EXE, Registry, Repo, Workspace};
+use foreman_claude::{Session, list_sessions, now_ms};
+use foreman_core::{HOOK_EXE, Registry, Repo, Workspace, find_plugin_dir};
 use foreman_supervisor::{
     DesiredState, REPO_ROLE, Wanted, fill_paths, render_repo_role, repo_session, repo_session_name,
 };
@@ -94,19 +94,11 @@ fn repo_template(home: &Path) -> Result<String, Failure> {
         return Ok(text);
     }
     let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate fm.exe: {e}")))?;
-    let plugin = plugin_of(&exe).ok_or_else(|| {
-        Failure::Usage(format!("no {} and no plugins/foreman above {}: start Foreman once", home.join("roles").join(&file).display(), exe.display()))
-    })?;
+    let plugin = find_plugin_dir(&exe)
+        .map_err(|e| Failure::Usage(format!("no {}, and {e}: start Foreman once", home.join("roles").join(&file).display())))?;
     let template = std::fs::read_to_string(plugin.join("roles").join(&file))
         .map_err(|e| Failure::Usage(format!("{}: {e}", plugin.join("roles").join(&file).display())))?;
     Ok(fill_paths(&template, &plugin.join("bin").join(HOOK_EXE), home))
-}
-
-fn plugin_of(exe: &Path) -> Option<PathBuf> {
-    exe.ancestors()
-        .skip(1)
-        .flat_map(|dir| [dir.to_path_buf(), dir.join("plugins").join("foreman")])
-        .find(|dir| dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir())
 }
 
 /// One session of the roster: a row of `claude agents`, a wanted session without one, or both.
@@ -134,7 +126,7 @@ pub fn roster_cmd(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     registry.load(w)?;
     let others: Vec<String> = registry.list()?.into_iter().map(|p| p.name).filter(|n| n != w).collect();
     let desired = DesiredState::load(registry.home(), w)?.unwrap_or_else(|| DesiredState::new(w));
-    check_supported()?;
+    crate::check_claude()?;
     let entries = roster(&desired, &list_sessions()?, &others, now_ms());
     print!("{}", if as_json { render_json(&desired, &entries) } else { render(&entries) });
     Ok(())

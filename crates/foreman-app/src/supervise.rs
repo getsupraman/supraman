@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
 use foreman_core::{
-    HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, install_hook_exe, migrate_home,
+    HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
+    migrate_home,
     read_answered, read_outbox, relay_ready,
 };
 use foreman_supervisor::{
@@ -37,14 +38,6 @@ pub struct Setup {
     pub notices: Vec<String>,
 }
 
-/// `<repo>/plugins/foreman`, found by walking up from the exe (`<repo>/target/<profile>/foreman.exe`).
-pub fn find_plugin_dir(exe: &Path) -> Option<PathBuf> {
-    exe.ancestors()
-        .skip(1)
-        .map(|dir| dir.join("plugins").join("foreman"))
-        .find(|dir| dir.join("hooks").join("hooks.json").is_file())
-}
-
 /// [`migrate_home`] (before anything reads the registry), `fm plugin install` for the `fm.exe` built next
 /// to `foreman.exe`, and the role templates at `<home>/roles/{workspace,relay,repo}.md` (the SessionStart hook
 /// fills in `{workspace}`/`{repo}` from `FOREMAN_WORKSPACE`/`FOREMAN_REPO`; `{fm}` and `{home}` are filled here).
@@ -58,12 +51,12 @@ pub fn setup(home: &Path) -> Setup {
             return Setup { plugin_dir: None, notices };
         }
     };
-    let Some(plugin_dir) = find_plugin_dir(&exe) else {
-        notices.push(format!(
-            "No plugins/foreman above {}: sessions cannot be started from this build.",
-            exe.display()
-        ));
-        return Setup { plugin_dir: None, notices };
+    let plugin_dir = match find_plugin_dir(&exe) {
+        Ok(dir) => dir,
+        Err(e) => {
+            notices.push(format!("{e}: sessions cannot be started from this build."));
+            return Setup { plugin_dir: None, notices };
+        }
     };
     let fm = exe.with_file_name(HOOK_EXE);
     if fm.is_file() {
@@ -340,7 +333,7 @@ mod tests {
         let exe = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/foreman.exe");
         let found = find_plugin_dir(&exe).unwrap();
         assert!(found.join("roles").join("workspace.md").is_file(), "{}", found.display());
-        assert_eq!(find_plugin_dir(Path::new(r"C:\nowhere\foreman.exe")), None);
+        assert!(find_plugin_dir(Path::new(r"C:\nowhere\foreman.exe")).is_err());
     }
 
     #[test]

@@ -136,7 +136,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
         ["work", rest @ ..] => work::work(registry()?.home(), rest),
         ["probe", "launch"] => {
-            check_supported()?;
+            check_claude()?;
             if probe::launch() {
                 Ok(())
             } else {
@@ -145,7 +145,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         }
         ["probe", "hooks", rest @ ..] => {
             let root = probe_root(rest)?;
-            check_supported()?;
+            check_claude()?;
             if probe_hooks::run(root) {
                 Ok(())
             } else {
@@ -154,7 +154,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         }
         ["probe", "isolation", rest @ ..] => {
             let root = probe_root(rest)?;
-            check_supported()?;
+            check_claude()?;
             if probe_isolation::run(root) {
                 Ok(())
             } else {
@@ -173,6 +173,14 @@ fn run(args: &[String]) -> Result<(), Failure> {
         [] => Err(Failure::Usage("missing command".into())),
         _ => Err(Failure::Usage(format!("unrecognised arguments: {}", args.join(" ")))),
     }
+}
+
+/// [`check_supported`], warning on stderr about a claude newer than tested; only one too old fails.
+pub(crate) fn check_claude() -> Result<(), Failure> {
+    if let Some(warning) = check_supported()?.untested() {
+        eprintln!("fm: warning: {warning}");
+    }
+    Ok(())
 }
 
 fn probe_root(args: &[&str]) -> Result<Option<PathBuf>, Failure> {
@@ -337,7 +345,7 @@ fn sessions(args: &[&str]) -> Result<(), Failure> {
         Some(name) => vec![registry.load(name)?],
         None => registry.list()?,
     };
-    check_supported()?;
+    check_claude()?;
     let sessions = list_sessions()?;
     print!("{}", render(&workspaces, &sessions, all, workspace.is_none() && all, now_ms()));
     Ok(())

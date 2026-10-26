@@ -177,6 +177,9 @@ pub fn prepare() -> anyhow::Result<()> {
         workspace_session_name(&tb.a.0),
         tb.park()
     );
+    if let Some(warning) = version.untested() {
+        println!("WARNING {warning}");
+    }
     TESTBED.set(tb).map_err(|_| anyhow!("prepared twice"))?;
     Ok(())
 }

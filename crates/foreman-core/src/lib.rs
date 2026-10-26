@@ -17,7 +17,7 @@ pub use events::{
 };
 pub use migrate::migrate_home;
 pub use model::{Repo, Workspace};
-pub use plugin::{HOOK_EXE, install_hook_exe};
+pub use plugin::{HOOK_EXE, find_plugin_dir, install_hook_exe};
 pub use registry::{Registry, home_from};
 pub use relay::{
     ANSWERED_FILE, Ask, AskState, InboxWatcher, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop, SENT_DIR, ask_kind, ask_states,

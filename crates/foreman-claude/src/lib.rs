@@ -57,7 +57,7 @@ mod session;
 
 pub use assign::{Assignment, assign, assign_with, main_repo, main_repo_walks, repo_of};
 pub use cli::{
-    ClaudeVersion, LIST_TIMEOUT, SUPPORTED_MAJOR, check_supported, check_version, cli_version,
+    ClaudeVersion, LIST_TIMEOUT, MIN_VERSION, TESTED_VERSION, check_supported, check_version, cli_version,
     list_sessions, parse_version,
 };
 pub use error::{ClaudeError, Result};
