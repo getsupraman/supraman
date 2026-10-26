@@ -123,6 +123,9 @@ pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String
 /// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
+    // The WorkState install the app offers (m5/3) is a scratch folder, never the real ~/.workstate.
+    // Single-threaded still: nothing has started.
+    unsafe { std::env::set_var(crate::workstate_setup::INSTALL_DIR_VAR, home().join("fake-workstate-install")) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
@@ -720,6 +723,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let bar = crate::selftest_left::action_bar(view, cx).await.context("step 7c")?;
     println!("step 7c: {bar}");
+
+    let first_run = crate::selftest_first_run::run(view, cx).await.context("step 7d")?;
+    println!("step 7d: {first_run}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();

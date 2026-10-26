@@ -14,6 +14,7 @@ use theme::ActiveTheme as _;
 
 use crate::tokens::{self, DEFAULT_WORKSTATE_URL};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
+use crate::workstate_setup::{WsStatus, tilde};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -44,6 +45,8 @@ pub struct SettingsView {
     fleet: WeakEntity<FleetView>,
     page: Page,
     focus: FocusHandle,
+    /// The fleet's WorkState status as last shown: a change re-reads settings.toml.
+    workstate: WsStatus,
 }
 
 pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Page>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
@@ -70,15 +73,21 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
 
 impl SettingsView {
     fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, cx: &mut Context<Self>) -> Self {
-        // About shows the fleet's CLI check and refresh as they change
+        // About shows the fleet's CLI check and refresh as they change, WorkState its status
         if let Some(fleet) = fleet.upgrade() {
-            cx.observe(&fleet, |this, _, cx| {
-                if this.page == Page::About {
+            cx.observe(&fleet, |this, fleet, cx| {
+                let workstate = fleet.read(cx).workstate.clone();
+                if this.workstate != workstate {
+                    this.workstate = workstate;
+                    this.reload();
+                    cx.notify();
+                } else if this.page == Page::About {
                     cx.notify();
                 }
             })
             .detach();
         }
+        let workstate = fleet.upgrade().map_or(WsStatus::Checking, |f| f.read(cx).workstate.clone());
         let mut this = Self {
             home,
             settings: Settings::default(),
@@ -86,6 +95,7 @@ impl SettingsView {
             fleet,
             page,
             focus: cx.focus_handle(),
+            workstate,
         };
         this.reload();
         this
@@ -128,6 +138,7 @@ impl SettingsView {
             }
             Err(e) => self.error = Some(format!("Cannot save settings.toml: {e}")),
         }
+        self.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
         cx.notify();
     }
 
@@ -247,6 +258,7 @@ impl SettingsView {
 
         let url = self.settings.workstate_url.clone();
         vec![
+            self.render_workstate_status(cx),
             row(
                 "Token file",
                 "A .env file with WORKSTATE_<ROLE>_TOKEN=… lines, e.g. the WorkState server's own \
@@ -281,6 +293,53 @@ impl SettingsView {
                 cx,
             ),
         ]
+    }
+
+    /// The same status and fix as the main window's notice, live, with its one-click `.env` and Check now.
+    fn render_workstate_status(&self, cx: &mut Context<Self>) -> AnyElement {
+        let status = cx.theme().status().clone();
+        let colors = cx.theme().colors().clone();
+        let (text, color) = match (&self.workstate, self.workstate.problem()) {
+            (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
+            (WsStatus::Ready { url }, _) => (format!("Ready: {url} answers, and the .env has a token for workspace and repo sessions."), status.success),
+            (ws, Some(problem)) => (problem, if ws.unreachable() { status.error } else { status.warning }),
+            (_, None) => (String::new(), colors.text_muted),
+        };
+        let mut controls = div().flex().flex_col().items_end().gap_1();
+        if let Some(path) = self.workstate.offer() {
+            let path = path.to_path_buf();
+            let label = SharedString::from(format!("Use {}", tilde(&path)));
+            controls = controls.child(small_button("ws-use", "", cx).child(label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let path = path.clone();
+                this.fleet.update(cx, |fleet, cx| fleet.use_workstate_env(path, cx)).ok();
+                this.reload();
+                cx.notify();
+            })));
+        }
+        controls = controls.child(small_button("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
+        })));
+        row(
+            "Status",
+            "Whether the sessions Foreman launches get WorkState. Checked every 30 s and after every change here.",
+            controls.into_any_element(),
+            Some(
+                div()
+                    .id("ws-status")
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .pt_2()
+                    .child(div().text_sm().text_color(color).child(SharedString::from(text)))
+                    .children(self.workstate.fix().map(|fix| div().text_xs().child(SharedString::from(fix))))
+                    .into_any_element(),
+            ),
+            cx,
+        )
+    }
+
+    pub fn workstate(&self) -> &WsStatus {
+        &self.workstate
     }
 
     fn render_about(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

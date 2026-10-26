@@ -13,6 +13,10 @@ use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LI
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
+use crate::workstate_setup::tilde;
+
+/// The tree keeps at least this share of the panel's height, however many notices there are.
+const TREE_MIN_SHARE: f32 = 0.3;
 
 
 fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
@@ -339,6 +343,12 @@ impl FleetView {
         for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.action_error) {
             notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
         }
+        if let Some(problem) = self.workstate_notice() {
+            notices.push(self.render_workstate_notice(problem, cx));
+        }
+        if let Some(warning) = &self.start_warning {
+            notices.push(notice(warning.clone(), status.warning, status.warning.opacity(0.12)));
+        }
         for (name, r) in &self.removing {
             let waiting = r.wanted.len();
             notices.push(notice(
@@ -365,7 +375,7 @@ impl FleetView {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
+            .min_h(relative(TREE_MIN_SHARE))
             .overflow_y_scroll()
             .pb_4();
         for workspace in &tree.workspaces {
@@ -572,7 +582,8 @@ impl FleetView {
             .child(header)
             .children(self.render_inbox(cx))
             .children(self.render_messages(cx))
-            .children(notices)
+            // notices scroll rather than squeeze the tree below its share
+            .when(!notices.is_empty(), |d| d.child(div().id("notices").flex().flex_col().min_h_0().overflow_y_scroll().children(notices)))
             .child(body)
             .into_any_element()
     }
@@ -673,6 +684,62 @@ impl FleetView {
             inbox = inbox.child(self.render_work_row(workspace, row, cx));
         }
         Some(inbox.into_any_element())
+    }
+
+    /// What WorkState lacks and how to fix it (m5/3): the one-click `.env` when the setup skill's exists,
+    /// Retry when the server is down, the Settings page, × for this session.
+    fn render_workstate_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let color = if self.workstate.unreachable() { status.error } else { status.warning };
+        let mut actions = div().flex().flex_wrap().gap_2().pt_1();
+        if let Some(path) = self.workstate.offer() {
+            let path = path.to_path_buf();
+            // a path longer than the panel is cut in the middle, never wider than it
+            let label = format!("Use {}", tilde(&path));
+            let label = div().min_w_0().whitespace_nowrap().overflow_hidden().text_ellipsis_middle().child(SharedString::from(label));
+            let use_env = button(&self.hits, "ws-setup-use".into(), "", cx).flex_shrink_1().min_w_0().child(label);
+            actions = actions.child(use_env.on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.use_workstate_env(path.clone(), cx);
+                },
+            )));
+        }
+        if self.workstate.unreachable() {
+            actions = actions.child(button(&self.hits, "ws-setup-retry".into(), "Retry", cx).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.recheck_workstate();
+                },
+            )));
+        }
+        actions = actions.child(button(&self.hits, "ws-setup-settings".into(), "Settings…", cx).on_click(cx.listener(
+            |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_settings_at(Some(Page::WorkState), cx);
+            },
+        )));
+        let dismiss = glyph_button(&self.hits, "ws-setup-dismiss".into(), Icon::Close, "Hide until the problem changes", cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.dismiss_workstate_notice(cx);
+            }));
+        div()
+            .id("ws-setup-notice")
+            .relative()
+            .mx_3()
+            .my_2()
+            .p_2()
+            .rounded_md()
+            .bg(color.opacity(0.12))
+            .text_sm()
+            .text_color(color)
+            .child(div().flex().items_start().gap_2().child(div().flex_1().min_w_0().child(SharedString::from(problem))).child(dismiss))
+            .children(self.workstate.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
+            .child(actions)
+            .child(hit_target(&self.hits, "ws-setup-notice".into()))
+            .into_any_element()
     }
 
     /// A WorkState inbox row: kind, workspace and item ref, since, what, and the MCP call that would

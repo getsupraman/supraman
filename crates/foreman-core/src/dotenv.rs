@@ -7,7 +7,15 @@ use std::path::Path;
 /// The value of `key` in a dotenv file: `KEY=value`, optionally `export `-prefixed and quoted;
 /// `#` lines and blank lines skipped. `None` when the key is absent or empty.
 pub fn read_env_value(path: &Path, key: &str) -> io::Result<Option<String>> {
-    let text = std::fs::read_to_string(path)?;
+    Ok(value_in(&std::fs::read_to_string(path)?, key).map(str::to_string))
+}
+
+/// Whether `key` has a non-empty value in the file; the value itself never leaves this function.
+pub fn has_env_key(path: &Path, key: &str) -> io::Result<bool> {
+    Ok(value_in(&std::fs::read_to_string(path)?, key).is_some())
+}
+
+fn value_in<'a>(text: &'a str, key: &str) -> Option<&'a str> {
     for line in text.lines() {
         let line = line.trim();
         let line = line.strip_prefix("export ").unwrap_or(line);
@@ -25,9 +33,9 @@ pub fn read_env_value(path: &Path, key: &str) -> io::Result<Option<String>> {
             .iter()
             .find_map(|q| v.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
             .unwrap_or(v);
-        return Ok((!v.is_empty()).then(|| v.to_string()));
+        return (!v.is_empty()).then_some(v);
     }
-    Ok(None)
+    None
 }
 
 #[cfg(test)]
@@ -55,5 +63,9 @@ not a line\n",
         assert_eq!(read("WORKSTATE_EMPTY_TOKEN"), None);
         assert_eq!(read("WORKSTATE_WORKER_TOKEN"), None);
         assert!(read_env_value(&dir.path().join("missing.env"), "X").is_err());
+        assert!(has_env_key(&env, "WORKSTATE_WORKSPACE_TOKEN").unwrap());
+        assert!(!has_env_key(&env, "WORKSTATE_EMPTY_TOKEN").unwrap());
+        assert!(!has_env_key(&env, "WORKSTATE_WORKER_TOKEN").unwrap());
+        assert!(has_env_key(&dir.path().join("missing.env"), "X").is_err());
     }
 }

@@ -2009,6 +2009,39 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   (`FleetView::injected`, which the supervisor sees too): after two ticks it is listed as another Foreman's with the
   tag painted, no Inbox row, and the testbed's own park is still Blocked in the Inbox (`m5-10-another-foreman.png`).
 
+## 2026-10-26 — m5/3 first run
+
+- **Three states, one wording** (`workstate_setup::WsStatus`): (a) no `workstate_env`; (b) the `.env` cannot be read,
+  or has no token line for workspace sessions (`WORKSTATE_WORKSPACE_TOKEN` else `_CONTROLLER_`) or repo sessions
+  (`_REPO_` else `_ORCHESTRATOR_`) — the same fallback `tokens::token_from` launches with; (c) files fine but
+  `GET <origin>/health` (WorkState's unauthenticated route, Skills `12-install-harness-identity.md`) is not 2xx, as
+  `HTTP 503` / `connection refused` / `timed out`. `problem()` + `fix()` are the notice, the Settings → WorkState
+  Status row and the Work tab's message (`load_client`; a read's `Error::Transport` maps to (c)'s words).
+- Key presence only: `foreman_core::has_env_key` returns a bool and the value never leaves the parser; no message,
+  `Debug` or test output can carry a token (a unit test asserts a fake value is absent from the message).
+- Off the UI thread: `FleetView::watch_workstate` runs `detect` on the background executor at start, every 30 s and
+  within 250 ms of `recheck_workstate()` (Retry, Check now, any Settings change, the one-click Use). `/health` has
+  a 3 s timeout of its own, not the client's 15 s.
+- The offer: `~/.workstate/.env` (rlarch 2.3.0 `workstate-setup`'s home install) when `workstate_env` is unset and
+  the file exists → "Use ~/.workstate/.env" writes it into settings.toml and re-configures an unconfigured `WorkHub`
+  (the Inbox picks it up without a Work tab). A clone install (`<clone>/mcp/.env`) is not searched for: there is no
+  cheap way to know where a clone is; the fix text names it for Choose…. Test hook: `FOREMAN_WORKSTATE_INSTALL`
+  replaces `~/.workstate`; both selftests set it to a folder under the scratch home before anything runs.
+- Never blocks: Start goes ahead; `start_warning` says the sessions run without WorkState (a/b) or that the server is
+  unreachable (c); cleared on Stop or when the status turns Ready. The notice's × hides that problem for the session;
+  a different problem shows again.
+- The gate's fake `.env` now carries fake controller/orchestrator keys and the fake answers `/health`, so the gate runs
+  with no WorkState notice; `--selftest-supervise` runs with none configured, so it shows (a) and its Start warns.
+- Tests: `workstate_setup::tests` (no env ± installed file, missing file, keyless/half env, fake server Ready, closed
+  port), `health::tests` (2xx, 503, closed port, no Authorization sent), `dotenv` `has_env_key`. `--selftest` step 7d:
+  no env → notice naming `rlarch:workstate-setup`, no offer; fake install `.env` → offered, one click writes
+  settings.toml, fake answers, notice gone; closed port → URL + `connection refused` + Retry, × hides it; settings put back.
+- **Notices could squeeze the tree to 0 px**: the left panel is header, Inbox (≤25 %), Messages (≤30 %), then the
+  notices unbounded, then the tree (`min_h_0`). With the WorkState notice and a Start warning on top of the
+  supervise testbed's notices, step s found `ws-row-…-u` in a 0 px tall visible area. The notices now sit in their
+  own scroll container (`#notices`, shrinkable) and the tree keeps `TREE_MIN_SHARE` = 30 % of the panel; the Start
+  warning is one short line.
+
 ## 2026-10-26 — m5/14 UI detailing
 
 - **Text glyphs do not centre; icons in fixed boxes do.** `▸`/`▾`, `+` and `×` sat on the font's baseline, a few px
