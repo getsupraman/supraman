@@ -3,9 +3,12 @@
 //! live. Read only (C21): each read is a read API v1 GET on the background executor, and the token
 //! stays inside the hub's [`Client`] — no message here can carry it ([`foreman_workstate::Error`] and
 //! [`foreman_workstate::CredentialsError`] never print it). A row click opens its item page
-//! ([`item`]) in a pane right of the board.
+//! ([`item`]) in a pane right of the board. The journal ([`journal`]) can take the runs' place; the
+//! app's Inbox shows each workspace's WorkState inbox ([`inbox`]).
 
+mod inbox;
 mod item;
+mod journal;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -27,7 +30,9 @@ use theme::ActiveTheme as _;
 
 use crate::view::{HitTargets, hit_target};
 
+pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
 pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
+pub use journal::JournalView;
 
 /// Events arriving closer together than this cost one re-read.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -231,6 +236,7 @@ pub struct WorkView {
     pub item: Option<OpenItem>,
     item_pending: bool,
     pub item_reads: u64,
+    pub journal: JournalView,
 }
 
 impl WorkView {
@@ -260,6 +266,7 @@ impl WorkView {
             item: None,
             item_pending: false,
             item_reads: 0,
+            journal: JournalView::default(),
         };
         view.read_overview(cx);
         view
@@ -267,9 +274,13 @@ impl WorkView {
 
     fn on_hub(&mut self, _: Entity<WorkHub>, event: &HubEvent, cx: &mut Context<Self>) {
         match event {
-            HubEvent::Configured => self.read_overview(cx),
+            HubEvent::Configured => {
+                self.read_overview(cx);
+                self.read_item(cx);
+            }
             HubEvent::Changed(event) => {
                 self.schedule_overview(cx);
+                self.schedule_journal(cx);
                 if let Some(run) = board_to_reload(event, &self.expanded) {
                     self.schedule_board(run.to_string(), cx);
                 }
@@ -283,6 +294,9 @@ impl WorkView {
                     self.read_board(run, cx);
                 }
                 self.read_item(cx);
+                if self.journal.feed.is_some() {
+                    self.read_journal(cx);
+                }
             }
             HubEvent::Connection => cx.notify(),
         }
@@ -374,6 +388,7 @@ impl WorkView {
                 self.project = Some(project);
                 self.overview_seq = seq;
                 self.shown = Shown::Runs(overview);
+                self.journal_project_known(cx);
             }
             Err(message) => {
                 self.project = None;
@@ -673,6 +688,27 @@ impl Render for WorkView {
 }
 
 impl WorkView {
+    fn journal_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let open = self.journal.open;
+        div()
+            .id("work-journal")
+            .relative()
+            .flex_none()
+            .px_2()
+            .rounded_sm()
+            .border_1()
+            .border_color(if open { colors.border_focused } else { colors.border })
+            .when(open, |d| d.bg(colors.element_selected))
+            .text_xs()
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .child(if open { "Runs" } else { "Journal" })
+            .child(hit_target(&self.hits, format!("work-journal={}", if open { "open" } else { "closed" })))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_journal(cx)))
+            .into_any_element()
+    }
+
     fn render_board(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
@@ -703,7 +739,11 @@ impl WorkView {
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(SharedString::from(overview.item.title.clone())))
             .child(rollup_bar(&overview.rollup, cx))
             .child(small(done_text(&overview.rollup), colors.text_muted))
-            .child(small(connection, if live { status.success } else { status.warning }));
+            .child(small(connection, if live { status.success } else { status.warning }))
+            .child(self.journal_toggle(cx));
+        if self.journal.open {
+            return div().size_full().flex().flex_col().child(header).child(self.render_journal(cx)).into_any_element();
+        }
         let mut body = root.child(header);
         if overview.runs.is_empty() {
             body = body.child(div().px_3().py_2().text_color(colors.text_muted).child("This project has no runs."));
