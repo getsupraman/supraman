@@ -63,12 +63,25 @@ fn parse_args() -> Mode {
     }
 }
 
+/// Variables Foreman must not pass on when it was started from a Claude Code tool shell
+/// (LEARNINGS, fleet UI; tf/5). Without `CLAUDE_CODE_CHILD_SESSION` gone, every `claude` a tab runs
+/// keeps no transcript. `CLAUDECODE=1` marks the tool shell: with it, `NO_COLOR` is that shell's,
+/// not the user's, and would render every tab monochrome; `CLAUDECODE` itself makes a tab's
+/// `claude` count as nested. A `NO_COLOR` without `CLAUDECODE` is the user's choice and stays.
+fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
+    let mut scrub = vec!["CLAUDE_CODE_CHILD_SESSION"];
+    if get("CLAUDECODE").as_deref() == Some("1") {
+        scrub.extend(["CLAUDECODE", "NO_COLOR"]);
+    }
+    scrub
+}
+
 fn main() {
     foreman_ui::process_start();
-    // Inherited when Foreman is started from a shell inside a Claude Code session; every `claude`
-    // a tab then runs would keep no transcript (LEARNINGS, fleet UI).
-    // SAFETY: no other thread exists yet.
-    unsafe { std::env::remove_var("CLAUDE_CODE_CHILD_SESSION") };
+    for name in env_scrub(|name| std::env::var(name).ok()) {
+        // SAFETY: no other thread exists yet.
+        unsafe { std::env::remove_var(name) };
+    }
     let mode = parse_args();
     foreman_ui::init_logger();
     if mode != Mode::App
@@ -114,4 +127,37 @@ fn main() {
         selftest::cleanup();
     }
     std::process::exit(EXIT_CODE.load(Ordering::SeqCst));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::env_scrub;
+
+    fn scrub(vars: &[(&str, &str)]) -> Vec<&'static str> {
+        let env: HashMap<String, String> =
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        env_scrub(|name| env.get(name).cloned())
+    }
+
+    #[test]
+    fn env_scrub_drops_no_color_from_a_claude_code_shell() {
+        let scrubbed = scrub(&[("CLAUDECODE", "1"), ("NO_COLOR", "1")]);
+        assert!(scrubbed.contains(&"NO_COLOR"));
+        assert!(scrubbed.contains(&"CLAUDECODE"));
+    }
+
+    #[test]
+    fn env_scrub_keeps_a_users_no_color() {
+        let scrubbed = scrub(&[("NO_COLOR", "1")]);
+        assert!(!scrubbed.contains(&"NO_COLOR"));
+        assert!(!scrubbed.contains(&"CLAUDECODE"));
+    }
+
+    #[test]
+    fn env_scrub_always_drops_child_session() {
+        assert!(scrub(&[]).contains(&"CLAUDE_CODE_CHILD_SESSION"));
+        assert!(scrub(&[("CLAUDECODE", "1")]).contains(&"CLAUDE_CODE_CHILD_SESSION"));
+    }
 }
