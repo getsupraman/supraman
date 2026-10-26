@@ -25,6 +25,8 @@ pub struct Policy {
     /// an idle one still counts it as running, so a resume then starts a copy (5 s: copy, 10 s: woke
     /// the original; m2/4).
     pub respawn_grace: Millis,
+    /// A minted token's idle window: its expiry slides to last use + this (rlarch 2.2.0, 72 h).
+    pub token_window: Millis,
 }
 
 impl Default for Policy {
@@ -35,6 +37,7 @@ impl Default for Policy {
             settle: 20 * SECOND,
             stable_after: 60 * SECOND,
             respawn_grace: 30 * SECOND,
+            token_window: 72 * 3_600 * SECOND,
         }
     }
 }

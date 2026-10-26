@@ -25,6 +25,9 @@ pub enum NeedsKind {
     LaunchFailed,
     /// Two or more rows carry one wanted name; the supervisor touches none of them.
     Duplicate,
+    /// A live minted session had no turn for longer than its token's idle window: its next
+    /// WorkState call gets HTTP 401.
+    TokenExpired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,4 +38,7 @@ pub enum Remedy {
     Retry,
     /// Foreman never changes trust: the human runs `command` in `cwd`, accepts, then presses Retry.
     RunInTerminal { cwd: PathBuf, command: String },
+    /// Goes through Retry ([`crate::Supervisor::retry`]): stops the live row `id`; the supervisor then
+    /// resumes it with a freshly minted token in its config file.
+    Remint { id: String },
 }

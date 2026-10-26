@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use foreman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 
 use crate::{
-    Action, Budget, DesiredState, Failure, HttpMinter, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsYou,
-    Policy, SupervisorMemory, WantedSession, api_base, is_live, mid_turn, reconcile,
+    Action, Budget, DesiredState, Failure, HttpMinter, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
+    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, api_base, is_live, mid_turn, reconcile,
 };
 
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
@@ -108,6 +108,9 @@ pub struct Supervisor<L, T> {
     minted: MintedSessions,
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
+    /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
+    /// follows mints a fresh token.
+    remint_due: Vec<String>,
 }
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
@@ -132,6 +135,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             minted,
             needs: Vec::new(),
             notices,
+            remint_due: Vec::new(),
         }
     }
 
@@ -160,8 +164,12 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     /// The human's Retry: forgets `name`'s failures (incl. trust and give-up); the next tick acts.
+    /// On a [`NeedsKind::TokenExpired`] row it is the Re-mint: the next tick stops the live row.
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
+        if self.needs.iter().any(|n| n.kind == NeedsKind::TokenExpired && n.name == name) {
+            self.remint_due.push(name.to_string());
+        }
     }
 
     /// Wanted sessions started less than `settle` ago that the snapshot does not show mid-turn: each
@@ -191,6 +199,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// after execution (a launch refused for trust shows in the same tick). Launches and resumes
     /// go only while `budget` has free slots; each one that starts takes one.
     pub fn tick(&mut self, observed: &[Session], budget: &mut Budget, now: Millis) -> Vec<NeedsYou> {
+        let reminting = self.stop_for_remint(observed, now);
         for w in &self.desired.sessions {
             let mut rows = observed.iter().filter(|s| s.name == w.name);
             let alive = match (rows.next(), rows.next()) {
@@ -202,7 +211,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         for action in reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now) {
             match action {
                 Action::Launch(w) => {
-                    let result = self.launch(&w).map(drop);
+                    let result = self.launch(&w, now).map(drop);
                     if result.is_ok() && !w.exempt_from_budget() {
                         budget.take(1);
                     }
@@ -216,7 +225,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     let exempt = wanted.as_ref().is_some_and(|w| w.exempt_from_budget());
                     // the resume keeps its `--mcp-config` path: a fresh token goes into the same file
                     let result = match &wanted {
-                        Some(w) => self.remint(w),
+                        Some(w) => self.remint(w, now),
                         None => Ok(()),
                     }
                     .and_then(|()| self.launcher.resume(&session_id, &cwd, prompt.as_deref()).map_err(|e| Failure::from(&e)))
@@ -235,23 +244,25 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         self.bind_claude_sessions(observed, now);
         self.revoke_unwanted();
-        let needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
+        self.track_activity(observed, now);
+        let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
             .into_iter()
             .filter_map(|a| match a {
-                Action::NeedsYou(mut n) => {
-                    if let Some(prev) = self.needs.iter().find(|p| p.kind == n.kind && p.name == n.name) {
-                        n.since = n.since.min(prev.since);
-                    }
-                    Some(n)
-                }
+                Action::NeedsYou(n) => Some(n),
                 _ => None,
             })
             .collect();
+        needs.extend(self.expired_tokens(observed, &reminting, now));
+        for n in &mut needs {
+            if let Some(prev) = self.needs.iter().find(|p| p.kind == n.kind && p.name == n.name) {
+                n.since = n.since.min(prev.since);
+            }
+        }
         self.needs = needs.clone();
         needs
     }
 
-    fn launch(&mut self, w: &WantedSession) -> Result<String, Failure> {
+    fn launch(&mut self, w: &WantedSession, now: Millis) -> Result<String, Failure> {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
@@ -264,7 +275,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.extra_args.push("--allowedTools".into());
             spec.extra_args.extend(self.config.allowed_tools.iter().cloned());
         }
-        if let Some((url, token)) = self.mint(w)? {
+        if let Some((url, token)) = self.mint(w, now)? {
             spec = spec
                 .with_minted_token(&self.config.mcp_dir, &w.name, &url, &token)
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
@@ -276,7 +287,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// or resume gets a fresh token on the same WorkState row), and remembers its `sessionId`. Returns
     /// the MCP URL and the minted token; `None` when the role has no token (no WorkState for it).
     /// A failed mint fails the launch: there is no fallback to the static token.
-    fn mint(&mut self, w: &WantedSession) -> Result<Option<(String, String)>, Failure> {
+    fn mint(&mut self, w: &WantedSession, now: Millis) -> Result<Option<(String, String)>, Failure> {
         let Some(t) = self.tokens.token(&w.role) else {
             return Ok(None);
         };
@@ -300,6 +311,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 session_id: minted.session_id,
                 role: w.role.clone(),
                 claude_session_id: None,
+                last_active: Some(now),
             },
         );
         self.save_minted();
@@ -307,8 +319,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     /// Before a resume: a fresh token into the session's config file.
-    fn remint(&mut self, w: &WantedSession) -> Result<(), Failure> {
-        if let Some((url, token)) = self.mint(w)? {
+    fn remint(&mut self, w: &WantedSession, now: Millis) -> Result<(), Failure> {
+        if let Some((url, token)) = self.mint(w, now)? {
             foreman_claude::write_mcp_config(&self.config.mcp_dir, &w.name, &url, &token, &[])
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
         }
@@ -381,6 +393,86 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             }
             self.save_minted();
         }
+    }
+
+    /// The Re-mint: stops the single live row of each name whose Re-mint was pressed. The supervisor
+    /// resumes it after the respawn grace (R13, R3), and the resume mints a fresh token ([`Self::remint`]);
+    /// a `--bg --resume` of a live row would start a copy instead (m2/4). Returns the names stopped.
+    fn stop_for_remint(&mut self, observed: &[Session], now: Millis) -> Vec<String> {
+        let mut stopped = Vec::new();
+        for name in std::mem::take(&mut self.remint_due) {
+            let mut rows = observed.iter().filter(|s| s.name == name && is_live(s, now));
+            if let (Some(row), None) = (rows.next(), rows.next())
+                && self.launcher.stop(&row.id).is_ok()
+            {
+                stopped.push(name);
+            }
+        }
+        stopped
+    }
+
+    /// A turn seen on a minted session's single live row slides its token's expiry, unless the token
+    /// already lapsed (use does not renew a lapsed token). Saved at most once a minute, as the server
+    /// renews it.
+    fn track_activity(&mut self, observed: &[Session], now: Millis) {
+        let window = self.policy.token_window;
+        let mut changed = false;
+        for w in &self.desired.sessions {
+            let Some(m) = self.minted.get_mut(&w.name) else {
+                continue;
+            };
+            let mut rows = observed.iter().filter(|s| s.name == w.name && is_live(s, now));
+            let (Some(row), None) = (rows.next(), rows.next()) else {
+                continue;
+            };
+            let due = match m.last_active {
+                None => true,
+                Some(t) => mid_turn(row, now) && now - t <= window && now - t >= 60 * SECOND,
+            };
+            if due {
+                m.last_active = Some(now);
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_minted();
+        }
+    }
+
+    /// [`NeedsKind::TokenExpired`] for each wanted, minted session whose single live row had no turn
+    /// within the token window, except those stopped for a Re-mint this tick.
+    fn expired_tokens(&self, observed: &[Session], reminting: &[String], now: Millis) -> Vec<NeedsYou> {
+        if !self.desired.started {
+            return Vec::new();
+        }
+        let window = self.policy.token_window;
+        let mut out = Vec::new();
+        for w in &self.desired.sessions {
+            let Some(last) = self.minted.get(&w.name).and_then(|m| m.last_active) else {
+                continue;
+            };
+            if now - last <= window || reminting.contains(&w.name) {
+                continue;
+            }
+            let mut rows = observed.iter().filter(|s| s.name == w.name && is_live(s, now));
+            let (Some(row), None) = (rows.next(), rows.next()) else {
+                continue;
+            };
+            out.push(NeedsYou {
+                kind: NeedsKind::TokenExpired,
+                workspace: self.desired.workspace.clone(),
+                name: w.name.clone(),
+                since: last + window,
+                detail: format!(
+                    "no turn for {} h: its WorkState token lapsed after {} h idle, so its next WorkState call gets HTTP 401; \
+                     Re-mint stops it and resumes it with a fresh token",
+                    (now - last) / (3_600 * SECOND),
+                    window / (3_600 * SECOND)
+                ),
+                action: Some(Remedy::Remint { id: row.id.clone() }),
+            });
+        }
+        out
     }
 
     fn save_minted(&mut self) {
@@ -873,6 +965,69 @@ mod tests {
         sup.tick(&[], &mut free(), NOW + SECOND);
         assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
         assert_eq!(std::fs::read_to_string(MintedSessions::path(&home, "demo")).unwrap().trim(), "{}");
+    }
+
+    #[test]
+    fn mint_a_live_session_idle_past_its_token_window_asks_for_a_remint() {
+        const HOUR: Millis = 3_600 * SECOND;
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        let busy = row(SessionState::Working, Some(Status::Busy), Some(7));
+        let idle = row(SessionState::Working, Some(Status::Idle), Some(7));
+        sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 61 * SECOND);
+        sup.launcher().take();
+        minter.take();
+        // a turn at +50 h slides the window: idle until +122 h is fine
+        sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 50 * HOUR);
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + 122 * HOUR), []);
+        let needs = sup.tick(std::slice::from_ref(&idle), &mut free(), NOW + 122 * HOUR + SECOND);
+        assert_eq!(needs.len(), 1, "{needs:?}");
+        assert_eq!(needs[0].kind, NeedsKind::TokenExpired);
+        assert_eq!(needs[0].since, NOW + 122 * HOUR);
+        assert_eq!(needs[0].action, Some(Remedy::Remint { id: "aaaa0001".into() }));
+        assert!(needs[0].detail.contains("next WorkState call gets HTTP 401"), "{}", needs[0].detail);
+        // a turn after the lapse does not renew it: the row stays, its since kept
+        let needs = sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 130 * HOUR);
+        assert_eq!((needs.len(), needs[0].since), (1, NOW + 122 * HOUR));
+        assert_eq!(sup.launcher().take(), [], "nothing is done without the human");
+        assert_eq!(minter.take(), []);
+        // Re-mint: stopped this tick (no row for it), resumed with a fresh token after the respawn grace
+        sup.retry("fm-demo-workspace");
+        let t = NOW + 131 * HOUR;
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), t), []);
+        assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
+        let stopped = row(SessionState::Stopped, None, None);
+        assert_eq!(sup.tick(std::slice::from_ref(&stopped), &mut free(), t + 5 * SECOND), []);
+        assert_eq!(sup.launcher().take(), [], "respawn grace");
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), t + 31 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { request, .. }] if request.replace));
+        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().last_active, Some(t + 31 * SECOND));
+        assert!(config_text(dir.path(), "fm-demo-workspace").contains("wss_fake2"));
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), t + 40 * SECOND), [], "fresh window");
+        // a plain Retry elsewhere never stops a session
+        sup.retry("fm-demo-workspace");
+        sup.tick(std::slice::from_ref(&idle), &mut free(), t + 50 * SECOND);
+        assert_eq!(sup.launcher().take(), []);
+    }
+
+    #[test]
+    fn mint_no_token_row_for_a_stopped_workspace_or_an_unminted_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let idle = row(SessionState::Working, Some(Status::Idle), Some(7));
+        let later = NOW + 100 * 3_600 * SECOND;
+        // no role token: nothing minted, so no window to lapse
+        let mut sup = supervisor(true, None, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), later), []);
+        // minted, then the workspace is stopped: its session is stopped, not re-minted
+        let (mut sup, _minter) = minting(true, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        sup.launcher().take();
+        sup.desired.started = false;
+        assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), later), []);
+        assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
     }
 
     #[test]

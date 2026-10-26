@@ -4,7 +4,8 @@
 //! the mint, the PATCH of the claude session uuid and the revoke, never a file or an argument.
 //!
 //! The minted token's expiry slides on use (72 h idle window). A session idle longer gets HTTP 401 on
-//! `/mcp`; nothing polls for that: its next launch or resume mints again with `replace`.
+//! `/mcp`: the supervisor shows it as [`crate::NeedsKind::TokenExpired`] (no turn seen within the
+//! window), and its next launch or resume mints again with `replace`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -195,6 +196,10 @@ pub struct MintedSession {
     /// The claude session uuid PATCHed since the last mint; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
+    /// Epoch ms of the mint or of the last turn seen within the token's window: what slid its expiry
+    /// last. `None` for a file written before m5/7; the first tick sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_active: Option<crate::Millis>,
 }
 
 /// Per session name, its [`MintedSession`]; persisted at `<FOREMAN_HOME>/supervisor/<workspace>.sessions.json`
@@ -410,7 +415,10 @@ mod tests {
         let path = MintedSessions::path(home.path(), "demo");
         assert_eq!(path, home.path().join("supervisor").join("demo.sessions.json"));
         let mut s = MintedSessions::load(Some(path.clone())).unwrap();
-        s.insert("fm-demo-workspace", MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None });
+        s.insert(
+            "fm-demo-workspace",
+            MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None, last_active: Some(42) },
+        );
         s.save().unwrap();
         let back = MintedSessions::load(Some(path.clone())).unwrap();
         assert_eq!(back, s);

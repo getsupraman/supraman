@@ -1793,3 +1793,27 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - Gate (CARGO_TARGET_DIR=C:\fmbuild\m5-11 + `plugins` junction, CLI 2.1.310): `cargo build --release --workspace` ok,
   no warnings; `cargo test --workspace` 388 passed (387 + 1), 0 failed; `--selftest` PASS (p95 18.71 ms, max
   21.13 ms, idle 131.9 MiB); `--selftest-supervise` PASS 5 of 5 consecutive (plus 1 PASS before the reds).
+
+## 2026-10-26 — m5/7 Inbox row for a token idle past its window
+
+- **Signal**: no WorkState polling. Each minted session's `lastActive` (epoch ms, in `<w>.sessions.json`, no token)
+  is set at every mint and slid by a turn the tick sees on its single live row (`mid_turn`: `status=busy`), at most
+  once a minute — the cadence the server renews `expiresAt` at. A turn after the window has passed does **not** slide
+  it: use does not renew a lapsed token. A file from before m5/7 has no `lastActive`; the first tick sets it to now.
+  `expiresAt` is not used: it is right at the mint only, and the 72 h is `Policy::token_window`.
+- **Row**: `NeedsKind::TokenExpired` ("token expired", error colour) for a wanted, minted session of a started
+  workspace whose single live row had no turn for longer than the window; `since` = last activity + window. Remedy
+  `Remedy::Remint { id }`, button **Re-mint**, which goes through the existing Retry queue (`Supervisor::retry`): no
+  new wiring in `supervise.rs`.
+- **Re-mint = stop, then the normal resume**: a `--bg --resume` of a live row starts a copy (m2/4), so the next tick
+  `claude stop`s the live row (no Inbox row that tick), R13 waits the 30 s respawn grace, R3 resumes, and the resume
+  path (`remint`) mints with `replace` into the same config file, which the resumed process reloads. A Retry on any
+  other row never stops a session.
+- **Assumption**: a turn is taken as WorkState use. A turn that makes no WorkState call does not renew the token, so
+  the row can come late (never early) for a session that works without WorkState for 72 h.
+- `view.rs` got the two arms its exhaustive matches need (label, colour, key, button); nothing else in the app.
+- Tests (`cargo test -p foreman-supervisor mint`, 16 → 17 with m5/8): fake clock in
+  `mint_a_live_session_idle_past_its_token_window_asks_for_a_remint` (window slides on a turn, row at +window +1 s,
+  a late turn keeps it, Re-mint stops, resume after the grace re-mints, fresh window) and
+  `mint_no_token_row_for_a_stopped_workspace_or_an_unminted_session`. Reds: renewing a lapsed token on a turn → 1
+  failed; not adding the rows → 1 failed.
