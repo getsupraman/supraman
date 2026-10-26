@@ -1092,6 +1092,7 @@ async fn relay_step(
     if !ready_shown {
         bail!("ready.json is there, but the workspace row does not show the relay ready: {:?}", view.read_with(cx, |v, _| v.relays.get(w).cloned()));
     }
+    steady_step(tb, view, cx).await.context("step t0")?;
 
     let target = tb.target();
     let plugin = plugin_dir()?;
@@ -1311,6 +1312,26 @@ async fn wait_delivered(transcript: &str, w: &str, text: &str, id: &str, cx: &mu
         sleep(cx, Duration::from_millis(250)).await;
     }
     Ok(started.elapsed())
+}
+
+/// Step t0 (m5/18), as soon as Task… shows and while Messages holds a row or two (in the E2E the first one
+/// came a second after Start): a row arriving above the hovered Task… does not move it, and a work_tree in
+/// a message paints as table lines. The task box it opens is closed again for step r.
+async fn steady_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let w = tb.a.0.as_str();
+    let task_key = format!("task-{w}");
+    wait_painted(view, &task_key, Duration::from_secs(10), cx).await?;
+    let outbox = outbox_dir(&tb.home, w)?;
+    let (steady, aimed) = crate::selftest_left::steady_click(view, &task_key, &outbox, &workspace_session_name(w), cx).await?;
+    println!("step t0: {steady}");
+    wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
+    let table = crate::selftest_left::table_lines(view, &task_key, aimed, cx).await?;
+    println!("step t0: {table}");
+    view.update(cx, |v, cx| {
+        v.compose = None;
+        cx.notify();
+    });
+    Ok(())
 }
 
 /// Step t: the task box and the Approve button, each through the UI, each delivered direct like `fm send`'s.

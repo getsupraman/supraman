@@ -503,9 +503,21 @@ fn status_color(status: ItemStatus, cx: &App) -> Hsla {
     }
 }
 
-/// `2026-10-26T09:30:00+00:00` → `2026-10-26 09:30`.
-fn short_time(at: &str) -> String {
-    at.get(..16).unwrap_or(at).replace('T', " ")
+/// A server timestamp (`2026-10-26T09:30:00+00:00`) as this machine's local time, `2026-10-26 10:30` in
+/// CET (m5/18: the server's times are UTC).
+pub(crate) fn short_time(at: &str) -> String {
+    short_time_in(at, &chrono::Local)
+}
+
+/// [`short_time`] in `zone`; what does not parse as RFC 3339 is shown cut to the minute, as sent.
+fn short_time_in<Tz: chrono::TimeZone>(at: &str, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    match chrono::DateTime::parse_from_rfc3339(at) {
+        Ok(t) => t.with_timezone(zone).format("%Y-%m-%d %H:%M").to_string(),
+        Err(_) => at.get(..16).unwrap_or(at).replace('T', " "),
+    }
 }
 
 fn last_segment(path: &str) -> &str {
@@ -817,7 +829,11 @@ mod tests {
     fn small_formatters() {
         let r = Rollup { total: 14, done: 10, cancelled: 1, ..Default::default() };
         assert_eq!(done_text(&r), "10/13 done");
-        assert_eq!(short_time("2026-10-26T09:30:00+00:00"), "2026-10-26 09:30");
+        let cet = chrono::FixedOffset::east_opt(3600).unwrap();
+        assert_eq!(short_time_in("2026-10-26T18:46:12+00:00", &cet), "2026-10-26 19:46");
+        assert_eq!(short_time_in("2026-10-26T18:46:12.5Z", &cet), "2026-10-26 19:46");
+        assert_eq!(short_time_in("2026-10-26T23:30:00-02:00", &cet), "2026-10-27 02:30");
+        assert_eq!(short_time_in("2026-10-26T09:30", &cet), "2026-10-26 09:30");
         assert_eq!(short_time("x"), "x");
         assert_eq!(last_segment(r"P:\w\m4-1\"), "m4-1");
         assert_eq!(last_segment("P:/w/m4-1"), "m4-1");

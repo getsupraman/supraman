@@ -1,11 +1,14 @@
 //! The left panel: the header, the Inbox, the Messages, notices and the workspace tree.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
@@ -17,7 +20,37 @@ use crate::workstate_setup::tilde;
 
 /// The tree keeps at least this share of the panel's height, however many notices there are.
 const TREE_MIN_SHARE: f32 = 0.3;
+/// A [`Hold`] ends this long after the pointer last moved, or when it leaves the panel.
+pub const HOLD_STILL: Duration = Duration::from_secs(2);
 
+/// The Inbox and Messages rows there were when the pointer came over the left panel (m5/18). Only these
+/// are drawn while it moves there, so a row arriving above it never shifts what it is aiming at; a row
+/// that goes away still goes at once. The rest appear when the pointer leaves or rests for [`HOLD_STILL`].
+pub(crate) struct Hold {
+    keys: HashSet<String>,
+    moved: Instant,
+}
+
+fn need_key(need: &NeedsYou) -> String {
+    format!("need:{}/{}/{}", need.workspace, need.name, needs_label(need.kind))
+}
+
+fn work_key(workspace: &str, row: &foreman_workstate::InboxRow) -> String {
+    format!("work:{workspace}/{}", row.key)
+}
+
+fn message_key(workspace: &str, m: &OutboxMessage) -> String {
+    format!("{workspace}/{}", m.file)
+}
+
+/// Below each capped, scrolling section (Inbox, Messages, notices): a border that shows against the panel,
+/// then this much panel background before the next, so a row cut by one section's clip never reads as
+/// running into the row cut by the next (m5/16).
+const SEAM_GAP: f32 = 6.;
+
+fn seam_color(cx: &gpui::App) -> Hsla {
+    cx.theme().colors().text_muted.opacity(0.35)
+}
 
 fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
@@ -48,9 +81,9 @@ fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
     }
 }
 
-/// `2026-10-26T09:30:00+00:00` → `since 2026-10-26 09:30`.
+/// `2026-10-26T09:30:00+00:00` → `since 2026-10-26 10:30`, local time ([`work_view::short_time`]).
 fn short_since(at: &str) -> String {
-    if at.is_empty() { String::new() } else { format!("since {}", at.get(..16).unwrap_or(at).replace('T', " ")) }
+    if at.is_empty() { String::new() } else { format!("since {}", work_view::short_time(at)) }
 }
 
 /// The Inbox button's hit-target key for one need.
@@ -283,6 +316,49 @@ impl FleetView {
             )
     }
 
+    /// The pointer moved over the left panel: start a [`Hold`] on what is there now, or keep it.
+    fn pointer_on_left(&mut self, cx: &mut Context<Self>) {
+        if let Some(hold) = &mut self.left_hold {
+            hold.moved = Instant::now();
+            return;
+        }
+        let mut keys: HashSet<String> = self.needs.iter().map(need_key).collect();
+        keys.extend(self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| message_key(w, m))));
+        keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
+        self.left_hold = Some(Hold { keys, moved: Instant::now() });
+        self.left_hold_timer = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                let ended = this.update(cx, |this, cx| {
+                    if this.left_hold.as_ref().is_some_and(|h| h.moved.elapsed() < HOLD_STILL) {
+                        return false;
+                    }
+                    this.release_left(cx);
+                    true
+                });
+                if ended.unwrap_or(true) {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn release_left(&mut self, cx: &mut Context<Self>) {
+        if self.left_hold.take().is_some() {
+            cx.notify();
+        }
+        self.left_hold_timer = None;
+    }
+
+    /// Whether a [`Hold`] is keeping new Inbox or Messages rows back.
+    pub fn left_held(&self) -> bool {
+        self.left_hold.is_some()
+    }
+
+    fn shown_now(&self, key: &str) -> bool {
+        self.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
+    }
+
     /// Every workspace folded (`true`), or everything unfolded.
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
@@ -372,6 +448,8 @@ impl FleetView {
 
         let mut body = div()
             .id("fleet")
+            .relative()
+            .child(hit_target(&self.hits, "tree-area".into()))
             .flex()
             .flex_col()
             .flex_1()
@@ -573,17 +651,37 @@ impl FleetView {
         }
 
         div()
+            .id("left-panel")
             .flex()
             .flex_col()
             .w(self.left_width)
             .flex_none()
             .h_full()
             .bg(colors.panel_background)
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.pointer_on_left(cx)))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered {
+                    this.release_left(cx);
+                }
+            }))
             .child(header)
             .children(self.render_inbox(cx))
             .children(self.render_messages(cx))
             // notices scroll rather than squeeze the tree below its share
-            .when(!notices.is_empty(), |d| d.child(div().id("notices").flex().flex_col().min_h_0().overflow_y_scroll().children(notices)))
+            .when(!notices.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("notices")
+                        .flex()
+                        .flex_col()
+                        .min_h_0()
+                        .mb(px(SEAM_GAP))
+                        .border_b_1()
+                        .border_color(seam_color(cx))
+                        .overflow_y_scroll()
+                        .children(notices),
+                )
+            })
             .child(body)
             .into_any_element()
     }
@@ -591,17 +689,22 @@ impl FleetView {
     /// One row per [`NeedsYou`] across workspaces, oldest first, then each workspace's WorkState rows
     /// not dismissed ([`WorkInbox`]); nothing when both are empty.
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let work_rows: Vec<(String, foreman_workstate::InboxRow)> =
+        let all_work: Vec<(String, foreman_workstate::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
-        if self.needs.is_empty() && work_rows.is_empty() {
+        let total = self.needs.len() + all_work.len();
+        let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
+        let mut needs: Vec<&NeedsYou> = self.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
+        if needs.is_empty() && work_rows.is_empty() {
             return None;
         }
+        let waiting = total - needs.len() - work_rows.len();
         let colors = cx.theme().colors().clone();
         let now = now_ms();
-        let mut needs: Vec<&NeedsYou> = self.needs.iter().collect();
         needs.sort_by_key(|n| (n.since, n.kind));
         let mut inbox = div()
             .id("inbox")
+            .relative()
+            .child(hit_target(&self.hits, "inbox-area".into()))
             .flex()
             .flex_col()
             .flex_shrink_0()
@@ -610,14 +713,18 @@ impl FleetView {
             .gap_1()
             .px_3()
             .py_2()
+            .mb(px(SEAM_GAP))
             .border_b_1()
-            .border_color(colors.border)
+            .border_color(seam_color(cx))
             .child(
                 div()
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(colors.text_muted)
-                    .child(SharedString::from(format!("INBOX · {}", needs.len() + work_rows.len()))),
+                    .child(SharedString::from(match waiting {
+                        0 => format!("INBOX · {total}"),
+                        n => format!("INBOX · {total} · {n} new, shown when the pointer leaves"),
+                    })),
             );
         for need in needs {
             let color = needs_color(need.kind, cx);
@@ -816,13 +923,18 @@ impl FleetView {
     /// What the workspaces' relays received, newest first, across workspaces; nothing when empty. A body
     /// shows its first lines until clicked; Attach opens the sender's session when it is attachable.
     fn render_messages(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let mut all: Vec<(&String, &OutboxMessage)> =
-            self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| (w, m))).collect();
+        let total: usize = self.messages.values().map(Vec::len).sum();
+        let mut all: Vec<(&String, &OutboxMessage)> = self
+            .messages
+            .iter()
+            .flat_map(|(w, msgs)| msgs.iter().map(move |m| (w, m)))
+            .filter(|(w, m)| self.shown_now(&message_key(w, m)))
+            .collect();
         if all.is_empty() {
             return None;
         }
         all.sort_by_key(|(_, m)| std::cmp::Reverse((m.at, m.file.clone())));
-        let total = all.len();
+        let waiting = total - all.len();
         all.truncate(MESSAGES_LISTED);
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
@@ -835,6 +947,8 @@ impl FleetView {
             .collect();
         let mut section = div()
             .id("messages")
+            .relative()
+            .child(hit_target(&self.hits, "messages-area".into()))
             .flex()
             .flex_col()
             .flex_shrink_0()
@@ -843,17 +957,21 @@ impl FleetView {
             .gap_1()
             .px_3()
             .py_2()
+            .mb(px(SEAM_GAP))
             .border_b_1()
-            .border_color(colors.border)
+            .border_color(seam_color(cx))
             .child(
                 div()
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(colors.text_muted)
-                    .child(SharedString::from(format!("MESSAGES · {total}"))),
+                    .child(SharedString::from(match waiting {
+                        0 => format!("MESSAGES · {total}"),
+                        n => format!("MESSAGES · {total} · {n} new, shown when the pointer leaves"),
+                    })),
             );
         for (workspace, m) in all {
-            let key = format!("{workspace}/{}", m.file);
+            let key = message_key(workspace, m);
             let color = if m.is_notice() || m.error.is_some() { status.warning } else { status.info };
             let sender = match (&m.error, m.from_name.as_str()) {
                 (Some(_), _) => format!("unreadable {}", m.file),
@@ -863,9 +981,24 @@ impl FleetView {
             let lines: Vec<&str> = m.body.lines().collect();
             let open = self.expanded.contains(&key);
             let shown = if open { lines.len() } else { lines.len().min(MESSAGE_LINES) };
-            let mut body = lines[..shown].join("\n");
+            let mut body = div().flex().flex_col().min_w_0().text_xs().text_color(colors.text);
+            for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
+                body = body.child(match segment {
+                    Segment::Text(text) => div().child(SharedString::from(text)),
+                    // unwrapped and clipped at the panel's edge: a wrapped column is unreadable
+                    Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family("Cascadia Mono").children(
+                        rows.into_iter().enumerate().map(|(i, row)| {
+                            div()
+                                .relative()
+                                .whitespace_nowrap()
+                                .child(SharedString::from(row))
+                                .child(hit_target(&self.hits, format!("msg-table-{key}#{n}.{i}")))
+                        }),
+                    ),
+                });
+            }
             if shown < lines.len() {
-                body.push_str(&format!("\n… {} more line(s), click to show", lines.len() - shown));
+                body = body.child(SharedString::from(format!("… {} more line(s), click to show", lines.len() - shown)));
             }
             // every row, not the tree's: a sender in the workspace root but outside its repos has no tree row
             let target = self
@@ -959,7 +1092,7 @@ impl FleetView {
                                             .child(SharedString::from(fleet::ago(now - m.at))),
                                     ),
                             )
-                            .child(div().text_xs().text_color(colors.text).child(SharedString::from(body)))
+                            .child(body)
                             .children(answer),
                     )
                     .children(attach)
@@ -1361,5 +1494,90 @@ impl FleetView {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+/// A message body cut into prose and aligned-column runs (m5/18): a run is two or more lines in a row that
+/// each hold a tab or a gap of two or more spaces after their first word, or a box-drawing rule, the
+/// shape of a `work_tree` table. Tabs become spaces to the next multiple of 8.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Segment {
+    Text(String),
+    Table(Vec<String>),
+}
+
+fn columnar(line: &str) -> bool {
+    let body = line.trim();
+    body.contains('\t') || body.contains("  ") || body.contains(['│', '─', '┼', '├', '└'])
+}
+
+fn expand_tabs(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    for c in line.chars() {
+        if c == '\t' {
+            let n = 8 - out.chars().count() % 8;
+            out.extend(std::iter::repeat_n(' ', n));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+pub(crate) fn segments(lines: &[&str]) -> Vec<Segment> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let run = lines[i..].iter().take_while(|l| columnar(l)).count();
+        if run >= 2 {
+            out.push(Segment::Table(lines[i..i + run].iter().map(|l| expand_tabs(l.trim_end())).collect()));
+            i += run;
+            continue;
+        }
+        let start = i;
+        i += run.max(1);
+        while i < lines.len() && !(columnar(lines[i]) && lines.get(i + 1).is_some_and(|l| columnar(l))) {
+            i += 1;
+        }
+        let text = lines[start..i].join("\n");
+        match out.last_mut() {
+            Some(Segment::Text(prev)) => {
+                prev.push('\n');
+                prev.push_str(&text);
+            }
+            _ => out.push(Segment::Text(text)),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_tree_rows_are_one_table_between_prose() {
+        let body = "APPROVE? Add --shout\nRuns: two\n\ne2e4\tproj\topen\te2e4\n  e2e4-shout-textkit   run   open   shout\n    e2e4-shout-textkit-fn  task  open  ✗0/3\nReply approve.";
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(
+            segments(&lines),
+            [
+                Segment::Text("APPROVE? Add --shout\nRuns: two\n".into()),
+                Segment::Table(vec![
+                    "e2e4    proj    open    e2e4".into(),
+                    "  e2e4-shout-textkit   run   open   shout".into(),
+                    "    e2e4-shout-textkit-fn  task  open  ✗0/3".into(),
+                ]),
+                Segment::Text("Reply approve.".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn one_gappy_line_or_an_indent_is_prose() {
+        let lines = ["Done.  Next is m5/2.", "  indented only", "plain"];
+        assert_eq!(segments(&lines), [Segment::Text(lines.join("\n"))]);
+        assert_eq!(segments(&[]), []);
+        assert_eq!(expand_tabs("ab\tc\t"), "ab      c       ");
     }
 }
