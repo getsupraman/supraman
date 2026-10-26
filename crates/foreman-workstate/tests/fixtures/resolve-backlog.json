@@ -1,0 +1,25 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "matches": [
+    {
+      "id": "22222222-0000-4000-8000-0000000000bb",
+      "ref": "backlog",
+      "qualifiedRef": "autowork/backlog",
+      "kind": "run",
+      "title": "Backlog",
+      "status": "open"
+    },
+    {
+      "id": "66666666-0000-4000-8000-0000000000bb",
+      "ref": "backlog",
+      "qualifiedRef": "m0/backlog",
+      "kind": "phase",
+      "title": "Backlog phase",
+      "status": "done"
+    }
+  ]
+}

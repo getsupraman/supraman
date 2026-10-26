@@ -1,0 +1,25 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "matches": [
+    {
+      "id": "22222222-0000-4000-8000-00000000dead",
+      "ref": "m4",
+      "qualifiedRef": "other/m4",
+      "kind": "run",
+      "title": "Another project's m4",
+      "status": "open"
+    },
+    {
+      "id": "22222222-0000-4000-8000-000000000004",
+      "ref": "m4",
+      "qualifiedRef": "m4",
+      "kind": "run",
+      "title": "The work browser",
+      "status": "in_progress"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+TASK 1  ·  run m4  ·  project autowork
+GOAL One crate for every WorkState read

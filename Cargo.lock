@@ -1553,6 +1553,7 @@ dependencies = [
  "foreman-claude",
  "foreman-core",
  "foreman-supervisor",
+ "foreman-workstate",
  "serde_json",
  "tempfile",
 ]
@@ -1692,6 +1693,7 @@ version = "0.1.0"
 dependencies = [
  "foreman-claude",
  "foreman-core",
+ "foreman-workstate",
  "serde",
  "serde_json",
  "tempfile",
@@ -1738,6 +1740,19 @@ dependencies = [
  "log",
  "theme",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "foreman-workstate"
+version = "0.1.0"
+dependencies = [
+ "foreman-core",
+ "foreman-workstate",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "ureq",
 ]
 
 [[package]]

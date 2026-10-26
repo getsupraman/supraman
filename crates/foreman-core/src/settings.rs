@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 3;
+/// `workstate_url` when unset.
+pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -72,14 +72,8 @@ pub trait Minter {
     fn revoke(&self, base: &str, bearer: &str, session_id: &str) -> Result<(), MintError>;
 }
 
-/// `http://127.0.0.1:5290/mcp` → `http://127.0.0.1:5290`.
-pub fn api_base(mcp_url: &str) -> String {
-    let start = mcp_url.find("://").map_or(0, |i| i + 3);
-    match mcp_url[start..].find('/') {
-        Some(i) => mcp_url[..start + i].to_string(),
-        None => mcp_url.trim_end_matches('/').to_string(),
-    }
-}
+/// The server's origin, from its MCP URL; shared with the read API client.
+pub use foreman_workstate::api_base;
 
 /// Blocking HTTP/1.1 without TLS (WorkState is on localhost), no proxy, 15 s per call.
 pub struct HttpMinter {
@@ -408,13 +402,6 @@ mod tests {
         let e = m.mint(&format!("http://{free}"), "fake-static", &request()).unwrap_err();
         assert!(matches!(e, MintError::Unreachable { .. }), "{e:?}");
         assert!(!e.to_string().contains("fake-static"), "{e}");
-    }
-
-    #[test]
-    fn mint_api_base_is_the_mcp_urls_origin() {
-        assert_eq!(api_base("http://127.0.0.1:5290/mcp"), "http://127.0.0.1:5290");
-        assert_eq!(api_base("http://localhost:9/"), "http://localhost:9");
-        assert_eq!(api_base("http://localhost:9"), "http://localhost:9");
     }
 
     #[test]

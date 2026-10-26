@@ -6,13 +6,11 @@
 //! is only the bearer of the session's own `wss_` token's mint ([`foreman_supervisor::mint`]): it
 //! never reaches a file.
 
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+pub use foreman_core::{DEFAULT_WORKSTATE_URL, read_env_value};
 use foreman_core::Settings;
 use foreman_supervisor::{RoleToken, TokenProvider};
-
-pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 
 pub struct AppTokens {
     pub home: PathBuf,
@@ -52,34 +50,10 @@ pub fn token_key(role: &str) -> String {
     format!("WORKSTATE_{}_TOKEN", role.to_uppercase().replace('-', "_"))
 }
 
-/// The value of `key` in a dotenv file: `KEY=value`, optionally `export `-prefixed and quoted;
-/// `#` lines and blank lines skipped. `None` when the key is absent or empty.
-pub fn read_env_value(path: &Path, key: &str) -> io::Result<Option<String>> {
-    let text = std::fs::read_to_string(path)?;
-    for line in text.lines() {
-        let line = line.trim();
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        if line.starts_with('#') {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        if k.trim() != key {
-            continue;
-        }
-        let v = v.trim();
-        let v = ['"', '\'']
-            .iter()
-            .find_map(|q| v.strip_prefix(*q).and_then(|v| v.strip_suffix(*q)))
-            .unwrap_or(v);
-        return Ok((!v.is_empty()).then(|| v.to_string()));
-    }
-    Ok(None)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     const FAKE: &str = "# fake WorkState env for tests\n\
@@ -88,20 +62,6 @@ export WORKSTATE_WORKSPACE_TOKEN = \"fake-workspace\"\n\
 WORKSTATE_REPO_CONTROLLER_TOKEN='fake-repo'\n\
 WORKSTATE_EMPTY_TOKEN=\n\
 not a line\n";
-
-    #[test]
-    fn reads_plain_exported_and_quoted_values() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = dir.path().join(".env");
-        std::fs::write(&env, FAKE).unwrap();
-        let read = |k: &str| read_env_value(&env, k).unwrap();
-        assert_eq!(read("WORKSTATE_CONTROLLER_TOKEN").as_deref(), Some("fake-controller"));
-        assert_eq!(read(&token_key("workspace")).as_deref(), Some("fake-workspace"));
-        assert_eq!(read(&token_key("repo-controller")).as_deref(), Some("fake-repo"));
-        assert_eq!(read("WORKSTATE_EMPTY_TOKEN"), None);
-        assert_eq!(read("WORKSTATE_WORKER_TOKEN"), None);
-        assert!(read_env_value(&dir.path().join("missing.env"), "X").is_err());
-    }
 
     #[test]
     fn provider_uses_settings_and_falls_back_to_none() {

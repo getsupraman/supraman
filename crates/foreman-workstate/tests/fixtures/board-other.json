@@ -1,0 +1,37 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "run": {
+    "id": "22222222-0000-4000-8000-00000000dead",
+    "ref": "m4",
+    "qualifiedRef": "other/m4",
+    "kind": "run",
+    "title": "Another project's m4",
+    "status": "open"
+  },
+  "project": {
+    "id": "11111111-0000-4000-8000-0000000000ff",
+    "ref": "other",
+    "qualifiedRef": "other",
+    "kind": "project",
+    "title": "Other",
+    "status": "open"
+  },
+  "intent": "",
+  "branch": null,
+  "worktree": null,
+  "rollup": {
+    "total": 0,
+    "done": 0,
+    "inProgress": 0,
+    "review": 0,
+    "blocked": 0,
+    "open": 0,
+    "cancelled": 0,
+    "superseded": 0
+  },
+  "rows": []
+}

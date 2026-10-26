@@ -20,6 +20,8 @@ usage:
   fm send <workspace> <to> --file <path>
   fm messages <workspace>              (messages the relay received, newest last)
   fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
+  fm work overview <workspace>         (its WorkState project: runs with rollups, who works, the inbox)
+  fm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
   fm probe launch
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
@@ -32,6 +34,7 @@ mod probe_hooks;
 mod probe_isolation;
 mod relay;
 mod repos;
+mod work;
 
 enum Failure {
     Usage(String),
@@ -128,6 +131,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["want", rest @ ..] => repos::want(&registry()?, rest),
         ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
         ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
+        ["work", rest @ ..] => work::work(registry()?.home(), rest),
         ["probe", "launch"] => {
             check_supported()?;
             if probe::launch() {
