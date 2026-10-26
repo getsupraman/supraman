@@ -2,7 +2,10 @@
 //! order, each expandable into its board. One app-wide `/api/stream` ([`WorkHub`]) keeps every tab
 //! live. Read only (C21): each read is a read API v1 GET on the background executor, and the token
 //! stays inside the hub's [`Client`] — no message here can carry it ([`foreman_workstate::Error`] and
-//! [`foreman_workstate::CredentialsError`] never print it).
+//! [`foreman_workstate::CredentialsError`] never print it). A row click opens its item page
+//! ([`item`]) in a pane right of the board.
+
+mod item;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -23,6 +26,8 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use crate::view::{HitTargets, hit_target};
+
+pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
 
 /// Events arriving closer together than this cost one re-read.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -197,7 +202,7 @@ pub enum BoardState {
     Failed(String),
 }
 
-/// For m4/3's item page: a board row was clicked.
+/// A board row was clicked (its item page opens).
 pub enum WorkEvent {
     ItemSelected(String),
 }
@@ -221,15 +226,20 @@ pub struct WorkView {
     boards_pending: HashSet<String>,
     pub overview_reads: u64,
     pub board_reads: u64,
+    link: FleetLink,
+    /// The item page, when one is open.
+    pub item: Option<OpenItem>,
+    item_pending: bool,
+    pub item_reads: u64,
 }
 
 impl WorkView {
-    pub fn open<T: 'static>(workspace: &str, home: Option<PathBuf>, hits: HitTargets, cx: &mut Context<T>) -> Entity<WorkView> {
+    pub fn open<T: 'static>(workspace: &str, home: Option<PathBuf>, hits: HitTargets, link: FleetLink, cx: &mut Context<T>) -> Entity<WorkView> {
         let hub = WorkHub::shared(home, cx);
-        cx.new(|cx| WorkView::new(workspace.to_string(), hub, hits, cx))
+        cx.new(|cx| WorkView::new(workspace.to_string(), hub, hits, link, cx))
     }
 
-    fn new(workspace: String, hub: Entity<WorkHub>, hits: HitTargets, cx: &mut Context<Self>) -> Self {
+    fn new(workspace: String, hub: Entity<WorkHub>, hits: HitTargets, link: FleetLink, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
         let mut view = WorkView {
             workspace,
@@ -246,6 +256,10 @@ impl WorkView {
             boards_pending: HashSet::new(),
             overview_reads: 0,
             board_reads: 0,
+            link,
+            item: None,
+            item_pending: false,
+            item_reads: 0,
         };
         view.read_overview(cx);
         view
@@ -259,20 +273,24 @@ impl WorkView {
                 if let Some(run) = board_to_reload(event, &self.expanded) {
                     self.schedule_board(run.to_string(), cx);
                 }
+                if self.item.as_ref().is_some_and(|open| item::item_to_reload(event, open)) {
+                    self.schedule_item(cx);
+                }
             }
             HubEvent::Resync => {
                 self.read_overview(cx);
                 for run in self.expanded.clone() {
                     self.read_board(run, cx);
                 }
+                self.read_item(cx);
             }
             HubEvent::Connection => cx.notify(),
         }
     }
 
-    /// m4/3 hooks the item page here.
     pub fn on_select_item(&mut self, id: &str, cx: &mut Context<Self>) {
         cx.emit(WorkEvent::ItemSelected(id.to_string()));
+        self.show_item(id.to_string(), cx);
     }
 
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
@@ -642,22 +660,35 @@ impl WorkView {
 impl Render for WorkView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
+        let board = self.render_board(cx);
+        let root = div().size_full().flex().bg(colors.editor_background).text_color(colors.text);
+        match &self.item {
+            // The board keeps 42% of the tab (1300–2000 px wide), so another row is one click away.
+            Some(open) => root
+                .child(div().flex_none().w(relative(0.42)).min_w(px(380.)).h_full().child(board))
+                .child(self.render_item(open, cx)),
+            None => root.child(board),
+        }
+    }
+}
+
+impl WorkView {
+    fn render_board(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let root = div()
             .id(SharedString::from(format!("work-{}", self.workspace)))
             .size_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
-            .bg(colors.editor_background)
-            .text_color(colors.text);
+            .overflow_y_scroll();
         let overview = match &self.shown {
             Shown::Runs(overview) => overview,
             Shown::Loading => {
-                return root.child(div().p_4().text_color(colors.text_muted).child("Reading WorkState…"));
+                return root.child(div().p_4().text_color(colors.text_muted).child("Reading WorkState…")).into_any_element();
             }
             Shown::Message(message) => {
-                return root.child(div().p_4().text_color(colors.text_muted).child(SharedString::from(message.clone())));
+                return root.child(div().p_4().text_color(colors.text_muted).child(SharedString::from(message.clone()))).into_any_element();
             }
         };
         let (connection, live) = self.hub.read(cx).connection();
@@ -680,7 +711,7 @@ impl Render for WorkView {
         for run in &overview.runs {
             body = body.child(self.render_run(run, cx));
         }
-        body.child(div().h(px(24.)).flex_none())
+        body.child(div().h(px(24.)).flex_none()).into_any_element()
     }
 }
 

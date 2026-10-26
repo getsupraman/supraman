@@ -555,9 +555,9 @@ async fn wait_attachable(
     Ok((row, opened.elapsed()))
 }
 
-struct Attached {
-    tab: u64,
-    title: String,
+pub(crate) struct Attached {
+    pub(crate) tab: u64,
+    pub(crate) title: String,
     pid: u32,
     rendered: usize,
     from: usize,
@@ -565,11 +565,12 @@ struct Attached {
     first_line: String,
 }
 
-/// Step 4: click [attach]; a tab opens; its painted grid gains output within 10 s.
-async fn open_attach(view: &Entity<FleetView>, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
+/// Step 4: click [attach] (`key`; step 7 clicks the item page's Attach); a tab opens; its painted
+/// grid gains output within 10 s.
+pub(crate) async fn open_attach(view: &Entity<FleetView>, key: &str, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
     let before = view.read_with(cx, |v, _| v.tabs.len());
     let clicked = Instant::now();
-    click(view, &format!("attach-{id}"), cx).await?;
+    click(view, key, cx).await?;
     let (tab, title) = view
         .read_with(cx, |v, _| {
             v.tabs.iter().find_map(|t| match &t.kind {
@@ -577,7 +578,7 @@ async fn open_attach(view: &Entity<FleetView>, id: &str, cx: &mut AsyncWindowCon
                 _ => None,
             })
         })
-        .ok_or_else(|| anyhow!("clicking attach-{id} opened no tab for {id}"))?;
+        .ok_or_else(|| anyhow!("clicking {key} opened no tab for {id}"))?;
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
     if tabs != before + 1 {
         bail!("expected {} tab(s) after the click, found {tabs}", before + 1);
@@ -620,7 +621,7 @@ async fn session_now(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<
 
 /// Step 5: click the tab's ×. The tab detaches (Ctrl+Z, then waits for `claude attach` to exit) and
 /// goes away; the session is alive afterwards as the same process it was before the close.
-async fn close_attach(
+pub(crate) async fn close_attach(
     view: &Entity<FleetView>,
     attached: &Attached,
     name: &str,
@@ -677,7 +678,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         listed_after.as_millis()
     );
 
-    let attached = open_attach(view, &id, cx).await.context("step 4")?;
+    let attached = open_attach(view, &format!("attach-{id}"), &id, cx).await.context("step 4")?;
     println!(
         "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the click; first line: {}",
         attached.title,
@@ -694,7 +695,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let scrolled = wheel_scroll(view, cx).await.context("step 6")?;
     println!("step 6: {scrolled}");
 
-    let work = crate::selftest_work::run(view, cx).await.context("step 7")?;
+    let work = crate::selftest_work::run(view, &row.session, cx).await.context("step 7")?;
     println!("step 7: {work}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
@@ -809,7 +810,7 @@ async fn detach_cycles(view: &Entity<FleetView>, cycles: u32, cx: &mut AsyncWind
     for cycle in 1..=cycles {
         let result: anyhow::Result<String> = async {
             wait_attachable(view, &name, cx).await?;
-            let attached = open_attach(view, &id, cx).await?;
+            let attached = open_attach(view, &format!("attach-{id}"), &id, cx).await?;
             let closed = close_attach(view, &attached, &name, cx).await?;
             Ok(format!("attach pid {} painted after {} ms; {closed}", attached.pid, attached.after.as_millis()))
         }
@@ -842,7 +843,7 @@ static SHUTDOWN: Mutex<Option<ShutdownProbe>> = Mutex::new(None);
 async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     let (row, _) = wait_attachable(view, &name, cx).await?;
-    let attached = open_attach(view, &row.session.id, cx).await?;
+    let attached = open_attach(view, &format!("attach-{}", row.session.id), &row.session.id, cx).await?;
     let before = session_now(&name, cx).await.context("before the window close")?;
     println!(
         "attached: tab \"{}\" (claude attach, pid {}); {name} [{}]",
