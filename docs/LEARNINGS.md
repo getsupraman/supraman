@@ -2178,3 +2178,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `msg-table-…` lines of one height (< 24 px), back to back. Red checks: hold off → "moved task-… from y 516.7
   to y 598.0 under the pointer"; segments off → "the table's lines painted: not within 5 s"; `SEAM_GAP` 0 →
   7f "ws-row-larchsys paints from 264.0, 1.3 px under the last Inbox row".
+
+## 2026-10-26 — m5/21 step 7b after the seam/hold
+
+- **Not the seam or the hold:** `Poller::load` read the registry, then ran `claude agents` (~0.4 s); a Save inside that window was shown by `reload_workspaces`, then the poll's `apply` put the pre-Save list back, and the row was gone until the next poll (~2.4 s, over 7b's 2 s). F-01's `repo-row-…/beta` was the same. Fix: `registry_writes` (`view.rs`), bumped by `reload_workspaces`; a poll that read before a write keeps the shown list. 7b now holds one poll between its read and its apply across Save (`PollHold`); guard off → "a poll that read the registry before Save took selftest-added out of the tree".
+- Step 7's "the reloaded inbox: not painted within 2000 ms" was the m5/18 hold (pointer resting on the panel after the ×, `HOLD_STILL` 2 s vs `LIVE_WITHIN` 2 s): the step now moves the pointer off the panel first.

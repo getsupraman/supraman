@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -194,6 +194,10 @@ pub struct FleetView {
     /// Rows added to every `claude agents` snapshot, before the supervisor sees it: the selftest's fake
     /// sessions (m5/10: another Foreman's parked row).
     pub injected: Arc<Mutex<Vec<Session>>>,
+    /// Bumped by every registry write made from this window ([`FleetView::reload_workspaces`]): a poll
+    /// that read the registry before one carries the older count, and its list is not applied (m5/21).
+    registry_writes: Arc<AtomicU64>,
+    pub poll_hold: Arc<PollHold>,
     pub left_width: Pixels,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
@@ -253,7 +257,33 @@ impl Render for DraggedDivider {
     }
 }
 
+/// The selftest's grip on one poll (m5/21): armed, the next poll stops between its registry read and the
+/// rest, `holding` until cleared (at most [`PollHold::MAX`]).
+#[derive(Default)]
+pub struct PollHold {
+    pub armed: AtomicBool,
+    pub holding: AtomicBool,
+}
+
+impl PollHold {
+    const MAX: Duration = Duration::from_secs(10);
+
+    fn wait(&self) {
+        if !self.armed.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        self.holding.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Self::MAX;
+        while self.holding.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.holding.store(false, Ordering::SeqCst);
+    }
+}
+
 struct Refresh {
+    /// [`FleetView::registry_writes`] as it was before `workspaces` was read.
+    registry_writes: u64,
     workspaces: Result<Vec<Workspace>, String>,
     sessions: Option<Result<Vec<Session>, String>>,
     /// [`fleet::main_repos`] of `sessions`.
@@ -272,6 +302,8 @@ struct Poller {
     supervision: Option<Supervision>,
     retries: Arc<Mutex<Vec<(String, String)>>>,
     injected: Arc<Mutex<Vec<Session>>>,
+    registry_writes: Arc<AtomicU64>,
+    hold: Arc<PollHold>,
 }
 
 impl Poller {
@@ -291,9 +323,11 @@ impl Poller {
     /// The supervisor ticks only on a snapshot read in this poll: a stale list never drives a launch.
     fn load(&mut self, with_sessions: bool) -> Refresh {
         let started = Instant::now();
+        let registry_writes = self.registry_writes.load(Ordering::SeqCst);
         let workspaces = Registry::from_env()
             .and_then(|r| r.list())
             .map_err(|e| e.to_string());
+        self.hold.wait();
         let polled_at = now_ms();
         let sessions = with_sessions.then(|| {
             list_sessions().map_err(|e| e.to_string()).map(|mut rows| {
@@ -315,6 +349,7 @@ impl Poller {
             _ => None,
         };
         Refresh {
+            registry_writes,
             workspaces,
             sessions,
             main_repos,
@@ -342,12 +377,16 @@ impl FleetView {
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
+        let registry_writes: Arc<AtomicU64> = Arc::default();
+        let poll_hold: Arc<PollHold> = Arc::default();
         let mut poller = Poller {
             home: home.clone(),
             events: None,
             supervision: None,
             retries: retries.clone(),
             injected: injected.clone(),
+            registry_writes: registry_writes.clone(),
+            hold: poll_hold.clone(),
         };
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -438,6 +477,8 @@ impl FleetView {
             ticks: 0,
             retries,
             injected,
+            registry_writes,
+            poll_hold,
             left_width,
             settings_window: None,
             last_alive: StdHashMap::new(),
@@ -567,6 +608,8 @@ impl FleetView {
 
     fn apply(&mut self, refresh: Refresh) {
         match refresh.workspaces {
+            // read before a write from here, so older than the list `reload_workspaces` showed after it
+            Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
             Ok(workspaces) => {
                 self.workspaces = workspaces;
                 self.registry_error = None;

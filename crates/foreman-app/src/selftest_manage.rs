@@ -1,7 +1,7 @@
 //! `--selftest` step 7b (m5/12): managing workspaces through the window. Add workspace on a scratch folder
 //! ([`FOLDER`] under `<cargo root>/target/`, two fake repos; [`FleetView::pick_folder`] stands in for the OS
 //! picker): the review lists both, one is unticked, the name is edited with keys, Enter saves; the tree shows
-//! both repos (the unticked one disabled). The same folder again is refused inline. Then the right-click
+//! both repos (the unticked one disabled), also once a poll that read the registry before Save applies. The same folder again is refused inline. Then the right-click
 //! menus: the gate session's row (opened and dismissed with Esc, nothing run), the new workspace's (dismissed
 //! by a click outside it), the disabled repo's Enable, and the workspace's Remove… confirmed: it leaves the
 //! registry and the tree, and the folder is still there. With `FOREMAN_SHOTS=<dir>` each state is
@@ -9,6 +9,7 @@
 
 use std::{
     path::{Path, PathBuf},
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -162,6 +163,10 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
         bail!("the name reads {edited:?} after editing, expected {ADDED}");
     }
     shot("add-review", cx).await;
+    // m5/21: a poll held between its registry read and its apply, Save in between, as a slow poll does
+    let hold = view.read_with(cx, |v, _| v.poll_hold.clone());
+    hold.armed.store(true, Ordering::SeqCst);
+    until(view, cx, "a poll held after its registry read", |_| hold.holding.load(Ordering::SeqCst).then_some(())).await?;
     typed(cx, "enter", None)?;
     until(view, cx, "the review closed on Enter", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
@@ -171,6 +176,12 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     }
     let (alpha, beta) = (format!("repo-row-{ADDED}/alpha"), format!("repo-row-{ADDED}/beta"));
     until(view, cx, "the new workspace's repos in the tree", |v| (painted(v, &alpha) && painted(v, &beta)).then_some(())).await?;
+    let applied = view.read_with(cx, |v, _| v.refreshes);
+    hold.holding.store(false, Ordering::SeqCst);
+    until(view, cx, "the held poll applied", |v| (v.refreshes > applied).then_some(())).await?;
+    if !view.read_with(cx, |v, _| v.workspaces.iter().any(|w| w.name == ADDED)) {
+        bail!("a poll that read the registry before Save took {ADDED} out of the tree when it applied");
+    }
     let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), both repos in the tree", root.display())];
 
     // the same folder again: refused inline

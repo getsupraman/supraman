@@ -304,7 +304,7 @@ const TABLE: [&str; 5] = [
 /// The outbox file [`steady_click`] wrote, for [`table_lines`].
 static TABLE_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
     })
