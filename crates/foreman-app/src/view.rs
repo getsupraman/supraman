@@ -32,7 +32,7 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
-use crate::work_view::{FleetLink, LiveSession, WorkView};
+use crate::work_view::{self, FleetLink, LiveSession, WorkInbox, WorkView};
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
@@ -170,6 +170,8 @@ pub struct FleetView {
     pub compose: Option<Compose>,
     /// The attachable sessions, for the Work tabs' item pages (Claim → Attach).
     work_live: Rc<RefCell<Vec<LiveSession>>>,
+    /// Each workspace's WorkState inbox, shown in the Inbox under the supervisor's rows.
+    pub work_inbox: Entity<WorkInbox>,
 }
 
 /// What the fleet/terminal divider drags.
@@ -304,6 +306,8 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
+                    let names = this.workspaces.iter().map(|w| w.name.clone()).collect();
+                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(names, cx));
                     cx.notify();
                 });
                 if alive.is_err() {
@@ -313,6 +317,8 @@ impl FleetView {
             }
         })
         .detach();
+        let work_inbox = WorkInbox::shared(home.clone(), cx);
+        cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
@@ -356,6 +362,7 @@ impl FleetView {
             answered_route: BTreeMap::new(),
             compose: None,
             work_live: Rc::default(),
+            work_inbox,
         }
     }
 
@@ -771,6 +778,16 @@ impl FleetView {
         id
     }
 
+    /// A WorkState Inbox row: the workspace's Work tab, on the row's item page.
+    pub fn open_work_item(&mut self, workspace: &str, item_id: &str, cx: &mut Context<Self>) -> u64 {
+        let id = self.open_work(workspace, cx);
+        if let Some(Tab { kind: TabKind::Work(view), .. }) = self.tab(id) {
+            let (view, item) = (view.clone(), item_id.to_string());
+            view.update(cx, |view, cx| view.open_from_inbox(item, cx));
+        }
+        id
+    }
+
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "pwsh".into(),
@@ -1102,6 +1119,20 @@ fn needs_label(kind: NeedsKind) -> &'static str {
         NeedsKind::LaunchFailed => "launch failed",
         NeedsKind::Duplicate => "duplicate",
     }
+}
+
+fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
+    let status = cx.theme().status();
+    match kind {
+        "blocked" | "blocker_finding" => status.error,
+        "question" | "assumption_due" | "done_unverified" => status.warning,
+        _ => status.info,
+    }
+}
+
+/// `2026-10-26T09:30:00+00:00` → `since 2026-10-26 09:30`.
+fn short_since(at: &str) -> String {
+    if at.is_empty() { String::new() } else { format!("since {}", at.get(..16).unwrap_or(at).replace('T', " ")) }
 }
 
 /// The Inbox button's hit-target key for one need.
@@ -1443,9 +1474,12 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// One row per [`NeedsYou`] across workspaces, oldest first; nothing when empty.
+    /// One row per [`NeedsYou`] across workspaces, oldest first, then each workspace's WorkState rows
+    /// not dismissed ([`WorkInbox`]); nothing when both are empty.
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.needs.is_empty() {
+        let work_rows: Vec<(String, foreman_workstate::InboxRow)> =
+            self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
+        if self.needs.is_empty() && work_rows.is_empty() {
             return None;
         }
         let colors = cx.theme().colors().clone();
@@ -1469,7 +1503,7 @@ impl FleetView {
                     .text_xs()
                     .font_weight(FontWeight::BOLD)
                     .text_color(colors.text_muted)
-                    .child(SharedString::from(format!("INBOX · {}", needs.len()))),
+                    .child(SharedString::from(format!("INBOX · {}", needs.len() + work_rows.len()))),
             );
         for need in needs {
             let color = needs_color(need.kind, cx);
@@ -1531,7 +1565,92 @@ impl FleetView {
                     .children(remedy),
             );
         }
+        for (workspace, row) in &work_rows {
+            inbox = inbox.child(self.render_work_row(workspace, row, cx));
+        }
         Some(inbox.into_any_element())
+    }
+
+    /// A WorkState inbox row: kind, workspace and item ref, since, what, and the MCP call that would
+    /// resolve it (shown, never run: C21). A click opens the item page; × dismisses it here only.
+    fn render_work_row(&self, workspace: &str, row: &foreman_workstate::InboxRow, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let color = work_kind_color(&row.kind, cx);
+        let key = work_view::row_key(row);
+        let dismiss_key = work_view::dismiss_key(row);
+        let (open_ws, item) = (workspace.to_string(), row.item.id.clone());
+        let (dismiss_ws, row_id) = (workspace.to_string(), row.key.clone());
+        let inbox = self.work_inbox.clone();
+        let dismiss = div()
+            .id(SharedString::from(dismiss_key.clone()))
+            .relative()
+            .flex_none()
+            .px_1()
+            .rounded_sm()
+            .text_xs()
+            .text_color(colors.text_muted)
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.element_hover).text_color(colors.text))
+            .child("×")
+            .child(hit_target(&self.hits, dismiss_key))
+            .on_click(move |_: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                inbox.update(cx, |inbox, cx| inbox.dismiss(&dismiss_ws, &row_id, cx));
+            });
+        div()
+            .id(SharedString::from(key.clone()))
+            .relative()
+            .flex()
+            .items_start()
+            .gap_2()
+            .p_2()
+            .rounded_md()
+            .border_l_2()
+            .border_dashed()
+            .border_color(color)
+            .bg(color.opacity(0.06))
+            .cursor_pointer()
+            .hover(|s| s.bg(color.opacity(0.14)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().font_weight(FontWeight::BOLD).text_color(color).child(SharedString::from(format!(
+                                "WorkState · {}",
+                                work_view::kind_label(&row.kind)
+                            ))))
+                            .child(SharedString::from(format!("{workspace} · {}", row.item.qualified_ref)))
+                            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(short_since(&row.since)))),
+                    )
+                    .child(div().text_xs().text_color(colors.text).child(SharedString::from(row.what.clone())))
+                    .when(!row.call.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .font_family("Cascadia Mono")
+                                .text_xs()
+                                .text_color(colors.text_muted)
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(SharedString::from(row.call.clone())),
+                        )
+                    }),
+            )
+            .child(dismiss)
+            .child(hit_target(&self.hits, key))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.open_work_item(&open_ws, &item, cx);
+            }))
+            .into_any_element()
     }
 
     /// What the workspaces' relays received, newest first, across workspaces; nothing when empty. A body

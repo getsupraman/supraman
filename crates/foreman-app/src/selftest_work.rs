@@ -6,7 +6,9 @@
 //! for the new status to be painted. Then the item page (m4/3): sw2/1's page with criteria, one report and
 //! one verification, its claim joined to the session the gate launched (Attach opens and detaches it), a
 //! stream push checking a criterion, a link to sw1/1 (done on a worker's word only: the warning), Back,
-//! Back to the board, Escape.
+//! Back to the board, Escape. Then m4/4: the fake's inbox rows in the app's Inbox from the start; a
+//! click opens the item page; × dismisses a row, which stays hidden across a reload and shows again
+//! once it starts over; the Work tab's journal with a live event and an older page.
 
 use std::{
     cell::RefCell,
@@ -29,7 +31,7 @@ use serde_json::{Value, json};
 use crate::{
     selftest::{click, close_attach, open_attach, scrolled_into_view, sleep},
     view::{FleetView, TabKind},
-    work_view::{WorkEvent, WorkView, criterion_key, status_key, verification_key},
+    work_view::{DISMISSED_FILE, WorkEvent, WorkView, criterion_key, status_key, verification_key},
 };
 
 pub const WORKSPACE: &str = "selftest-work";
@@ -190,6 +192,53 @@ fn shipped_page() -> String {
     .to_string()
 }
 
+/// The project's inbox: sw2/2 blocked, sw1/1 done on a worker's word; `extra` adds a question on sw2/1,
+/// `restarted` gives sw1/1's row a new `since` (its condition started over).
+fn inbox(seq: i64, extra: bool, restarted: bool) -> String {
+    let mut rows = vec![
+        json!({ "key": format!("blocked:{TASK_2}"), "kind": "blocked", "item": item(TASK_2, "sw2/2", "task", "Render the board", "blocked"),
+                "run": live_run(), "what": "Blocked: waits for the board API", "since": "2026-10-26T11:30:00+00:00",
+                "call": "work_status(ref:\"selftest-work/sw2/2\", to:\"in_progress\")" }),
+        json!({ "key": format!("done_unverified:{SHIPPED}"), "kind": "done_unverified", "item": item(SHIPPED, "sw1/1", "task", "Ship it", "done"),
+                "run": done_run(), "what": "Done, but only the worker's verification says so",
+                "since": if restarted { "2026-10-26T12:30:00+00:00" } else { "2026-10-25T17:55:00+00:00" },
+                "call": "work_verify(ref:\"selftest-work/sw1/1\", …)" }),
+    ];
+    if extra {
+        rows.insert(0, json!({ "key": format!("question:{TASK_1}"), "kind": "question", "item": item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done"),
+                               "run": live_run(), "what": "Which frame budget?", "since": "2026-10-26T12:10:00+00:00", "call": "" }));
+    }
+    json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": seq, "rows": rows }).to_string()
+}
+
+fn inbox_target() -> String {
+    format!("/api/v1/inbox?project={PROJECT}")
+}
+
+fn task2_page() -> String {
+    json!({
+        "asOf": "2026-10-26T12:02:00+00:00", "seq": 120, "item": item(TASK_2, "sw2/2", "task", "Render the board", "blocked"),
+        "path": [project(), live_run()], "intent": "Render the board.", "openedAt": "2026-10-26T10:00:00+00:00"
+    })
+    .to_string()
+}
+
+fn journal_event(seq: i64, item_: Option<Value>, kind: &str, summary: &str) -> Value {
+    json!({ "seq": seq, "at": "2026-10-26T12:00:00+00:00", "item": item_, "run": live_run(), "session": { "name": "aw-selftest" },
+            "actor": "aw-selftest", "role": "worker", "kind": kind, "summary": summary, "payload": {} })
+}
+
+fn journal(cursor: i64, more: bool, events: Vec<Value>) -> String {
+    json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 200, "cursor": cursor, "hasMore": more, "events": events }).to_string()
+}
+
+fn journal_target(since: Option<i64>, limit: u32) -> String {
+    match since {
+        Some(since) => format!("/api/v1/journal?scope={PROJECT}&since={since}&limit={limit}"),
+        None => format!("/api/v1/journal?scope={PROJECT}&limit={limit}"),
+    }
+}
+
 fn board_target(run: &str) -> String {
     format!("/api/v1/runs/{run}/board")
 }
@@ -205,6 +254,25 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         (board_target(LIVE_RUN), Answer::json(live_board(100, false))),
         (board_target(DONE_RUN), Answer::json(done_board())),
         (item_target(SHIPPED), Answer::json(shipped_page())),
+        (item_target(TASK_2), Answer::json(task2_page())),
+        (inbox_target(), Answer::json(inbox(100, false, false))),
+        // The gate's other workspace has no project.
+        (
+            format!("/api/v1/resolve?ref={}", crate::selftest::WORKSPACE),
+            Answer::json(json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [] }).to_string()),
+        ),
+        (
+            journal_target(None, 50),
+            Answer::json(journal(
+                152,
+                true,
+                vec![
+                    journal_event(150, Some(item(TASK_1, "sw2/1", "task", "Wire the Work tab", "in_progress")), "claim", "claimed"),
+                    journal_event(151, None, "note", "a note on the run"),
+                    journal_event(152, Some(item(TASK_2, "sw2/2", "task", "Render the board", "blocked")), "transition", "open → blocked"),
+                ],
+            )),
+        ),
     ]);
     let env = home.join("workstate-fake.env");
     std::fs::write(&env, format!("WORKSTATE_READER_TOKEN={TOKEN}\n"))?;
@@ -257,6 +325,11 @@ fn escape(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
 pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = FAKE.get().ok_or_else(|| anyhow!("no fake WorkState (prepare did not run)"))?;
     let mut lines = Vec::new();
+
+    // The fake's inbox joined the app's Inbox without opening anything.
+    let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
+    let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the WorkState rows in the Inbox", cx).await?;
+    lines.push(format!("Inbox painted the fake's 2 WorkState rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
     // Open: the Work button on the workspace row; frames measured while the overview and boards load.
     view.update(cx, |v, cx| {
@@ -340,6 +413,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     lines.push(format!("3 stream events for sw2 → 1 board + 1 overview re-read; sw2/1 painted done {} ms after the push", live_after.as_millis()));
 
     lines.push(item_page(view, &work, fake, launched, cx).await.context("item page")?);
+    lines.push(inbox_and_journal(view, tab, &work, fake, cx).await.context("inbox and journal")?);
 
     // Read only, with the fake token, and nothing but the read API.
     let seen = fake.seen();
@@ -484,5 +558,105 @@ async fn item_page(
     let title = attached.title.clone();
     let closed = close_attach(view, &attached, &launched.name, cx).await?;
     lines.push(format!("claim joined {} on claudeSessionId → Attach opened \"{title}\"; {closed}", launched.name));
+    Ok(lines.join("; "))
+}
+
+/// m4/4: an Inbox row opens its item page; × dismisses one, across a reload, until it starts over; the
+/// journal reads the newest page, takes a live event and pages back.
+async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkState, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let mut lines = Vec::new();
+    let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
+    let question = format!("inbox-ws-question:{TASK_1}");
+    view.update(cx, |v, cx| {
+        v.probe.start();
+        cx.notify();
+    });
+
+    click(view, &blocked, cx).await?;
+    painted(view, &["item-header-sw2/2"], LOADED_WITHIN, "sw2/2's page from the Inbox", cx).await?;
+    let active = view.read_with(cx, |v, _| v.active);
+    if active != Some(tab) {
+        bail!("the Inbox row activated tab {active:?}, not the workspace's Work tab {tab}");
+    }
+    lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2's item page".into());
+
+    // Dismiss: gone, written to the file, and the click did not reach the row under the ×.
+    click(view, &format!("inbox-ws-dismiss-done_unverified:{SHIPPED}"), cx).await?;
+    sleep(cx, Duration::from_millis(100)).await;
+    if is_painted(view, &shipped, cx) {
+        bail!("× left {shipped} painted");
+    }
+    if work.read_with(cx, |w, _| w.item.as_ref().map(|o| o.id.clone())).as_deref() != Some(TASK_2) {
+        bail!("the × click reached the row under it: the item page left sw2/2");
+    }
+    let file = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Foreman home"))?.join(DISMISSED_FILE);
+    let deadline = Instant::now() + LIVE_WITHIN;
+    loop {
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.contains(&format!("done_unverified:{SHIPPED}")) && text.contains(WORKSPACE) {
+            break;
+        }
+        if Instant::now() > deadline {
+            bail!("{} does not hold the dismissal: {text:?}", file.display());
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+
+    // A reload (an event without a run re-reads every inbox) adds a row; the dismissed one stays hidden.
+    fake.set(inbox_target(), Answer::json(inbox(121, true, false)));
+    if fake.push(&json!({ "seq": 121, "runId": null, "itemId": null, "kind": "note" }).to_string()) == 0 {
+        bail!("the app's stream was gone when the inbox event was pushed");
+    }
+    painted(view, &[&question, &blocked], LIVE_WITHIN, "the reloaded inbox", cx).await?;
+    if is_painted(view, &shipped, cx) {
+        bail!("the dismissed {shipped} came back on a reload");
+    }
+    // It starts over (a new since): it shows again.
+    fake.set(inbox_target(), Answer::json(inbox(122, true, true)));
+    fake.push(&json!({ "seq": 122, "runId": DONE_RUN, "itemId": SHIPPED, "kind": "transition" }).to_string());
+    painted(view, &[&shipped], LIVE_WITHIN, "sw1/1's row after it started over", cx).await?;
+    lines.push(format!("× hid sw1/1's row and wrote {DISMISSED_FILE}; a reload added a question and kept it hidden; a new since showed it again"));
+
+    // The journal: the newest page, a live event, an older page.
+    click(view, "work-journal=closed", cx).await?;
+    painted(view, &["work-journal=open", "journal-event-150", "journal-event-151", "journal-event-152", "journal-older"], LOADED_WITHIN, "the journal", cx).await?;
+    let event_153 = journal_event(153, Some(item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done")), "verification", "verified: PASS");
+    fake.set(journal_target(Some(152), 500), Answer::json(journal(153, false, vec![event_153])));
+    let pushed = Instant::now();
+    fake.push(&json!({ "seq": 153, "runId": LIVE_RUN, "itemId": TASK_1, "kind": "verification" }).to_string());
+    painted(view, &["journal-event-153"], LIVE_WITHIN, "the live journal event", cx).await?;
+    let live_after = pushed.elapsed();
+    let older = vec![
+        journal_event(20, None, "created", "run created"),
+        journal_event(40, Some(item(SHIPPED, "sw1/1", "task", "Ship it", "done")), "report", "reported done"),
+    ];
+    fake.set(journal_target(Some(1), 500), Answer::json(journal(40, false, older)));
+    click(view, "journal-older", cx).await?;
+    painted(view, &["journal-event-20", "journal-event-40"], LOADED_WITHIN, "the older page", cx).await?;
+    sleep(cx, Duration::from_millis(100)).await;
+    if is_painted(view, "journal-older", cx) {
+        bail!("load older is still offered after a page that reached the start");
+    }
+    let order: Vec<i64> = work.read_with(cx, |w, _| w.journal.feed.as_ref().map(|f| f.events.iter().map(|e| e.seq).collect()).unwrap_or_default());
+    if order != [20, 40, 150, 151, 152, 153] {
+        bail!("the journal holds {order:?}, expected 20, 40, 150..153 ascending");
+    }
+    click(view, "journal-event-40", cx).await?;
+    painted(view, &["item-header-sw1/1"], LOADED_WITHIN, "sw1/1 from its journal event", cx).await?;
+    sleep(cx, Duration::from_millis(200)).await;
+    let stats = view.update(cx, |v, _| v.probe.stop());
+    if stats.over_50 > 0 {
+        bail!("frames over 50 ms in the inbox and journal: {stats}");
+    }
+    lines.push(format!(
+        "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page; frames: {stats}",
+        live_after.as_millis()
+    ));
+    if let Some(secs) = std::env::var("FOREMAN_SELFTEST_JOURNAL_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        println!("step 7: holding the journal {secs} s (FOREMAN_SELFTEST_JOURNAL_HOLD_SECS)");
+        sleep(cx, Duration::from_secs(secs)).await;
+    }
+    click(view, "work-journal=open", cx).await?;
+    painted(view, &["work-run-sw2"], LOADED_WITHIN, "the runs again", cx).await?;
     Ok(lines.join("; "))
 }

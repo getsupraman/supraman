@@ -98,6 +98,13 @@ impl WorkView {
         self.read_item(cx);
     }
 
+    /// A WorkState row of the app's Inbox: like a board row.
+    pub fn open_from_inbox(&mut self, id: String, cx: &mut Context<Self>) {
+        self.selected = Some(id.clone());
+        self.show_item(id, cx);
+        cx.notify();
+    }
+
     /// A path element, child or link: Back returns here.
     pub fn navigate(&mut self, id: String, cx: &mut Context<Self>) {
         let back = match self.item.take() {
