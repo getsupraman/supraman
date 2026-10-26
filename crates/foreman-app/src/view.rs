@@ -34,6 +34,7 @@ use crate::settings_window::{self, SettingsView};
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkInbox, WorkView};
 
+mod icon;
 mod left;
 mod manage;
 mod menu;
@@ -159,7 +160,7 @@ pub struct FleetView {
     /// Retries (`(workspace, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
     pub left_width: Pixels,
-    settings_window: Option<WindowHandle<SettingsView>>,
+    pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
     /// Per workspace that wants a relay: live, armed.
@@ -657,20 +658,32 @@ impl FleetView {
 
     /// Brings the settings window forward, or opens it.
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.open_settings_at(None, cx);
+    }
+
+    /// [`Self::open_settings`], on `page` when given.
+    pub fn open_settings_at(&mut self, page: Option<settings_window::Page>, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window
-            && handle.update(cx, |_, window, _| window.activate_window()).is_ok()
+            && handle
+                .update(cx, |settings, window, cx| {
+                    if let Some(page) = page {
+                        settings.show(page, cx);
+                    }
+                    window.activate_window()
+                })
+                .is_ok()
         {
             return;
         }
         let (home, fleet) = (self.home.clone(), cx.weak_entity());
         let this = cx.weak_entity();
         cx.defer(move |cx| {
-            let handle = settings_window::open(home, fleet, cx);
+            let handle = settings_window::open(home, fleet, page, cx);
             this.update(cx, |this, _| this.settings_window = handle).ok();
         });
     }
 
-    fn close_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window.take() {
             handle.update(cx, |_, window, _| window.remove_window()).ok();
         }

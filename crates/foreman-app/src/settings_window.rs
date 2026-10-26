@@ -13,23 +13,26 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use crate::tokens::{self, DEFAULT_WORKSTATE_URL};
-use crate::view::FleetView;
+use crate::view::{Cli, FleetView, REFRESH_EVERY};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Page {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Page {
     Sessions,
     WorkState,
     Plugins,
+    /// Foreman's and the claude CLI's versions, the refresh (m5/13: no longer in the left panel).
+    About,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Sessions, Page::WorkState, Page::Plugins];
+    const ALL: [Page; 4] = [Page::Sessions, Page::WorkState, Page::Plugins, Page::About];
 
     fn title(self) -> &'static str {
         match self {
             Page::Sessions => "Sessions",
             Page::WorkState => "WorkState",
             Page::Plugins => "Plugins",
+            Page::About => "About",
         }
     }
 }
@@ -43,7 +46,7 @@ pub struct SettingsView {
     focus: FocusHandle,
 }
 
-pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
+pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Page>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
     let bounds = Bounds::centered(None, size(px(760.), px(520.)), cx);
     cx.open_window(
         WindowOptions {
@@ -56,7 +59,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, cx: &mut App) -
             ..Default::default()
         },
         |window, cx| {
-            let view = cx.new(|cx| SettingsView::new(home, fleet, cx));
+            let view = cx.new(|cx| SettingsView::new(home, fleet, page.unwrap_or(Page::Sessions), cx));
             let focus = view.read(cx).focus.clone();
             window.focus(&focus, cx);
             view
@@ -66,17 +69,35 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, cx: &mut App) -
 }
 
 impl SettingsView {
-    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, cx: &mut Context<Self>) -> Self {
+    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, cx: &mut Context<Self>) -> Self {
+        // About shows the fleet's CLI check and refresh as they change
+        if let Some(fleet) = fleet.upgrade() {
+            cx.observe(&fleet, |this, _, cx| {
+                if this.page == Page::About {
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
         let mut this = Self {
             home,
             settings: Settings::default(),
             error: None,
             fleet,
-            page: Page::Sessions,
+            page,
             focus: cx.focus_handle(),
         };
         this.reload();
         this
+    }
+
+    pub fn page(&self) -> Page {
+        self.page
+    }
+
+    pub fn show(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
+        cx.notify();
     }
 
     fn reload(&mut self) {
@@ -262,6 +283,64 @@ impl SettingsView {
         ]
     }
 
+    fn render_about(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let status = cx.theme().status().clone();
+        let colors = cx.theme().colors().clone();
+        let (cli, warning, refresh) = match self.fleet.upgrade() {
+            Some(fleet) => {
+                let fleet = fleet.read(cx);
+                let (cli, warning) = match &fleet.cli {
+                    Cli::Checking => ("checking…".to_string(), None),
+                    Cli::Supported(v) => (v.raw.clone(), v.untested().map(|w| (w, status.warning))),
+                    Cli::Failed(e) => ("unavailable".to_string(), Some((e.clone(), status.error))),
+                };
+                let refresh = match fleet.last_refresh_took {
+                    Some(took) => format!("every {} s · the last took {} ms", REFRESH_EVERY.as_secs(), took.as_millis()),
+                    None => format!("every {} s · loading…", REFRESH_EVERY.as_secs()),
+                };
+                (cli, warning, refresh)
+            }
+            None => ("the main window is closed".to_string(), None, "-".to_string()),
+        };
+        let value = |id: &'static str, text: String| div().id(id).text_sm().child(SharedString::from(text)).into_any_element();
+        let home = self.home.as_ref().map_or("not set".to_string(), |h| h.display().to_string());
+        vec![
+            row("Foreman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
+            row(
+                "claude CLI",
+                "The Claude Code CLI Foreman lists, launches and attaches sessions with (`claude --version`).",
+                value("about-cli", cli),
+                warning.map(|(text, color)| {
+                    div()
+                        .id("about-cli-warning")
+                        .mt_2()
+                        .p_2()
+                        .rounded_md()
+                        .bg(color.opacity(0.12))
+                        .text_xs()
+                        .text_color(color)
+                        .child(SharedString::from(text))
+                        .into_any_element()
+                }),
+                cx,
+            ),
+            row(
+                "Refresh",
+                "How often the session list (`claude agents`) is polled and the supervisor ticks.",
+                value("about-refresh", refresh),
+                None,
+                cx,
+            ),
+            row(
+                "Foreman home",
+                "FOREMAN_HOME, else %APPDATA%\\Foreman: workspaces, desired state, settings.toml, hook events.",
+                div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
+                None,
+                cx,
+            ),
+        ]
+    }
+
     fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let dirs = &self.settings.extra_plugin_dirs;
@@ -390,6 +469,7 @@ impl Render for SettingsView {
             Page::Sessions => self.render_sessions(cx),
             Page::WorkState => self.render_workstate(cx),
             Page::Plugins => self.render_plugins(cx),
+            Page::About => self.render_about(cx),
         };
         let content = div()
             .id("settings-page")

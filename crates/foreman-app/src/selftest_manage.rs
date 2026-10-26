@@ -63,7 +63,13 @@ fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
 }
 
 /// `scripts/shot.ps1` on this process's window, into `$FOREMAN_SHOTS/<name>.png`, when that is set.
-async fn shot(name: &str, cx: &mut AsyncWindowContext) {
+pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
+    shot_window(name, None, cx).await
+}
+
+/// [`shot`] of this process's top-level window titled `title` (the settings window), or its main one.
+pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
+    let title = title.map(str::to_string);
     let Some(dir) = std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from) else {
         return;
     };
@@ -80,6 +86,7 @@ async fn shot(name: &str, cx: &mut AsyncWindowContext) {
                 .arg(&script)
                 .args(["-ProcessId", &pid, "-Out"])
                 .arg(&out)
+                .args(title.iter().flat_map(|t| ["-Title", t.as_str()]))
                 .output()
                 .map(|o| (out, o))
         })

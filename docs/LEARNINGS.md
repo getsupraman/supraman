@@ -1877,3 +1877,28 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - "Show in Work tab" is offered only when an open Work tab's loaded boards show the session holding an unexpired claim
   (no extra WorkState reads from the left panel). Rename is not offered: the name is in the desired-state file, every
   `fm-<w>-…` session name and the WorkState project binding — not cheap.
+
+## 2026-10-26 — m5/13 the left panel's icon action bar
+
+- **The status line is gone; an icon bar replaces it** (`view/left.rs` `render_action_bar`): Add workspace, Expand all,
+  Collapse all, show/hide stopped (eye / eye-off, with the hidden count), then on the right a CLI warning when there is
+  one, the busy stepper (− `busy ≤ n` +) and Settings. 26×26 px buttons, 16 px glyphs, muted → text colour on hover
+  (`group_hover`, because an `svg` with its own colour does not inherit the parent's hover colour), a deeper fill
+  pressed and while a toggle is on; every one has a tooltip (`view/icon.rs` `Tooltip`).
+- **Icons: Zed's, compiled in.** `crates/foreman-app/assets/icons/*.svg` are copied from `.repos/zed/assets/icons`,
+  whose `LICENSES` says they are Lucide's (ISC; Feather portions MIT) — copied alongside. `svg().data(bytes)`
+  (`include_bytes!`) tints them with the text colour and needs no `AssetSource`, so `main.rs` (`Application::with_assets`)
+  stays untouched.
+- **Version and refresh moved to Settings → About** (`settings_window.rs` `Page::About`): Foreman's version, the claude
+  CLI's (with the newer-than-tested or failed text in its colour), the refresh interval and the last refresh's time, the
+  Foreman home. The settings window observes the fleet entity so About stays live. The newer-than-tested warning still
+  shows in the main window: the notice above the tree as before, plus a warning icon in the bar (tooltip = the text,
+  click = Settings → About). `FleetView::open_settings_at(Some(page))` turns an open settings window to that page.
+- **A stepper's click reads the live value, not the render's.** The first 7c run captured `n` in the − closure; the
+  click right after + landed before the next frame and set `n − 1` from the stale `n` (3 → 2 instead of 4 → 3).
+- `--selftest` step 7c (`selftest_left.rs`): the bar's icons share one size and one centre line; Collapse all hides
+  the gate workspace's 13 repo rows and Expand all brings them back; the stopped toggle and busy ±1 round-trip; a hover
+  shows the tooltip (`m5-13-bar-tooltip.png`); Settings opens, `open_settings_at(About)` turns it to About
+  (`m5-13-settings-about.png`, `scripts/shot.ps1 -Title` for a window other than the main one — PowerShell turns
+  `$null` into `""` for a `string` P/Invoke parameter: `[NullString]::Value`).
+- Screenshots: `target/m5-13/before.png` / `after.png` (scratch home, workspace `ws`).
