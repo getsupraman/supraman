@@ -61,7 +61,7 @@ pub use cli::{
 pub use error::{ClaudeError, Result};
 pub use launch::{
     Claude, LaunchSpec, Output, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, resume_argv, workstate_mcp_config,
-    write_session_mcp_config,
+    write_mcp_config, write_session_mcp_config,
 };
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,

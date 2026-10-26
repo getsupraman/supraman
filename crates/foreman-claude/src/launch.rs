@@ -52,6 +52,15 @@ impl LaunchSpec {
         Ok(self)
     }
 
+    /// [`LaunchSpec::with_session_token`] for a per-session `wss_` token (mint/7): the file holds that
+    /// token and no identity headers, since the token's principal carries the name and role and the
+    /// mint stored the rest on WorkState's session row.
+    pub fn with_minted_token(mut self, dir: &Path, agent: &str, url: &str, token: &str) -> std::io::Result<Self> {
+        self.mcp_config = Some(write_mcp_config(dir, agent, url, token, &[])?);
+        self.strict_mcp_config = true;
+        Ok(self)
+    }
+
     /// Everything after the program name. The prompt goes after `--` because `--mcp-config` is
     /// variadic and would otherwise swallow it.
     pub fn argv(&self) -> Vec<OsString> {
@@ -153,7 +162,11 @@ pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) 
 /// filled, so the token is never readable by anyone else. Refuses an agent name that is not a plain
 /// file name (letters, digits, `-`, `_`, `.`).
 pub fn write_session_mcp_config(dir: &Path, identity: &SessionIdentity, url: &str, token: &str) -> std::io::Result<PathBuf> {
-    let agent = &identity.agent;
+    write_mcp_config(dir, &identity.agent, url, token, &identity.headers())
+}
+
+/// [`write_session_mcp_config`] with explicit `headers` beside the `Authorization` one.
+pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
     let plain = !agent.is_empty()
         && !agent.starts_with('.')
         && agent.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
@@ -164,7 +177,7 @@ pub fn write_session_mcp_config(dir: &Path, identity: &SessionIdentity, url: &st
     let path = dir.join(format!("workstate-{agent}.json"));
     std::fs::write(&path, b"")?;
     restrict_to_owner(&path)?;
-    std::fs::write(&path, workstate_mcp_config(url, token, &identity.headers()))?;
+    std::fs::write(&path, workstate_mcp_config(url, token, headers))?;
     Ok(path)
 }
 
