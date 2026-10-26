@@ -1514,3 +1514,28 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   linked the fix. Give each tree its own target dir (or `touch` its sources).
 - **Flake**: `--selftest` step 6 (`wheel down: display_offset 1 → 0 → 0`: two notches up moved only 1 line)
   failed in a cluster of consecutive runs on all three builds, ccc7b4a included; unrelated to this change.
+
+## 2026-10-26 — m4/2c wheel step flake
+
+- **Cause (a test bug, not an app bug)**: step 6 sized its output (`lines * 2 + 20`) from
+  `last_content().terminal_bounds` read right after the tab's terminal appeared. `TerminalBuilder` builds it with
+  placeholder bounds (`TerminalBounds::default()`: origin 0,0, 6 lines); the grid's first prepaint
+  (`term_element::prepaint` → `set_size`) gives it the real 41. Read in that window, the step typed `1..32`, which fit
+  on the 41-line screen and left 1 line of scrollback, so the 2-notch `Scroll::Delta(6)` was clamped to 1.
+- **Measured** (temporary `eprintln!` in `scroll_wheel`, the `Scroll` apply, `sync`, `Resize`, and the step's wait loop):
+  every run delivered `Lines(0, 6)` → `Delta(6)` with `scroll_px` 0 → 108 px. Passing runs: `history 64`,
+  `0 -> 6`. Failing runs: `history 1`, `0 -> 1`, wait loop `total_lines=6` 12 ms before the first `resize` to
+  754 px. 3 of 15 runs failed before the fix (runs 1, 10, 14). Wheel, notch size and the prepaint-applied `Scroll`
+  were all correct.
+- **Not user-visible**: the PTY gets the real size at the first prepaint, before the shell prints its prompt, and a
+  user cannot see or scroll the grid before it is painted. Only code that reads `terminal_bounds` before the first
+  paint sees 6 lines.
+- **Fix**: `selftest.rs` `wheel_scroll` waits until the terminal's bounds have a non-zero origin (laid out by the grid)
+  before sizing the output, and fails with `… left N lines of scrollback; two notches up need 6` if the scrollback
+  is too short, so a sizing bug cannot pass itself off as a wheel bug again.
+- **Proof**: 30 of 30 consecutive `--selftest` passes (`0 → 6 → 3 → 0`). Red: wheel handler call removed in `view.rs`
+  → `FAIL step 6: two wheel notches up … left display_offset at 0` (2/2). Race forced (`lines` = 6) →
+  `FAIL step 6: 32 lines in a 6-line grid left 1 lines of scrollback; two notches up need 6` (2/2), the exact
+  numbers of the original flake.
+- **Pattern**: before a selftest reads anything sized by layout (`terminal_bounds`, `num_lines`), wait for the
+  first prepaint. A fresh `Terminal` reports 6 lines until then.

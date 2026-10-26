@@ -733,10 +733,22 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
         .ok_or_else(|| anyhow!("clicking + opened no tab"))?;
     let result = async {
         let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
-        let lines = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds.num_lines());
+        let opened = Instant::now();
+        // a terminal is built with placeholder bounds at the origin (6 lines); the grid's first prepaint
+        // gives it the real ones. Sized from the placeholder, the output fit on screen and left 1 line of
+        // scrollback for two notches to scroll (m4/2c).
+        let lines = loop {
+            let bounds = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds);
+            if bounds.bounds.origin != point(px(0.), px(0.)) {
+                break bounds.num_lines();
+            }
+            if opened.elapsed() > Duration::from_secs(10) {
+                bail!("tab {tab}: the grid never laid the terminal out (bounds {bounds:?})");
+            }
+            sleep(cx, Duration::from_millis(20)).await;
+        };
         let count = lines * 2 + 20;
         let last = format!("wheel line {count}");
-        let opened = Instant::now();
         let mut typed = false;
         loop {
             let content = terminal.read_with(cx, |t, _| t.get_content());
@@ -754,7 +766,13 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
             }
             sleep(cx, Duration::from_millis(50)).await;
         }
-        let grid = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds.bounds);
+        let (grid, scrollback) = terminal.read_with(cx, |t, _| {
+            let bounds = t.last_content().terminal_bounds;
+            (bounds.bounds, t.total_lines().saturating_sub(bounds.num_lines()))
+        });
+        if scrollback < 6 {
+            bail!("{count} lines in a {lines}-line grid left {scrollback} lines of scrollback; two notches up need 6");
+        }
         let offset = async |notches: f32, cx: &mut AsyncWindowContext| -> anyhow::Result<usize> {
             let position = grid.center();
             cx.update(|window, cx| {
