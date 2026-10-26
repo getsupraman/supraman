@@ -22,15 +22,16 @@
 //!   also in `answered.json`; text typed and Escape → the box closed, nothing sent.
 //!   `FOREMAN_SELFTEST_HOLD_SECS=<n>` holds the box and the answered row on screen for `n` s before
 //!   Escape (for a screenshot), after writing `<FOREMAN_HOME>/hold`.
-//! - c. its turn ended → its pid is killed (`taskkill /PID`, that pid only) → the row drops the pid,
-//!   and the supervisor resumes it: same sessionId, new pid.
+//! - e. (run right after b) the park session → hook Notification(permission_prompt) for it, and Inbox Blocked
+//!   with Attach to its row.
+//! - c. its turn ended → `claude stop` (a stop the daemon never respawns; a kill of a `working` row it does,
+//!   m2/4) → the row drops the pid, and the supervisor resumes it: same sessionId, new pid.
 //! - w. `fm want <testbed> Repo --prompt-file …` (the testbed's repo is a plain dir `<root>/Repo`: a `git init`ed
 //!   one is untrusted, step d) → the supervisor launches `fm-selftest-<hex>-repo`; its first task runs
-//!   `fm roster` itself with the Bash tool (no park) and replies with it; `fm roster` from here lists it with role
-//!   `repo`; `fm unwant` → the supervisor stops it and does not bring it back.
+//!   `fm roster` itself with the Bash tool (no park), and that call's result in its transcript lists it with role
+//!   `repo` (the reply text is the model's, not asserted); `fm roster` from here lists it too; `fm unwant` → the supervisor stops it and does not bring it back.
 //! - d. Start `-u` → Inbox TrustNeeded with Run in terminal; the click opens a pwsh tab there with
 //!   `claude` typed and NOT run; the tab is closed. Nothing is accepted.
-//! - e. the park session → Inbox Blocked with Attach.
 //! - f. busy limit set to 1 with the stepper, Start `-c1` and `-c2` → never more than 1 of this run's
 //!   sessions `working`, and both get launched.
 //! - s. the window made 480 px tall → the tree overflows; its lowest row is scrolled wholly into view, size
@@ -381,9 +382,15 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         tb.a.0
     );
 
+    // right after b: the park parks seconds after Start, and a prompt left open for the whole run is one
+    // anything else may answer before a later step looks (m5/11)
+    park_step(tb, view, cx).await.context("step e")?;
+
     relay_step(tb, &relay_name, clicked, view, cx).await.context("step r")?;
 
-    // c. kill its process once its turn ended; the supervisor resumes it
+    // c. stop its process once its turn ended; the supervisor resumes it. `claude stop`, not a kill: the
+    // daemon respawns a session killed while `state=working`/`blocked` by itself (m2/4, R13), and which of
+    // those the workspace session's turn leaves is the model's (m5/11); a stopped one it never respawns.
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
         rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
@@ -395,14 +402,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
     let kill = Instant::now();
-    let out = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/F"])
-        .stdin(Stdio::null())
-        .output()
-        .context("taskkill")?;
-    if !out.status.success() {
-        bail!("step c: taskkill /PID {pid}: {}", String::from_utf8_lossy(&out.stderr).trim());
-    }
+    let stop = claude(&["stop", &idle.id], None).context("step c: claude stop")?;
     let mut dropped = None;
     let mut lingered = 0u32;
     let resumed = loop {
@@ -417,7 +417,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             None => bail!("step c: {ctrl} is no longer listed"),
         }
         if kill.elapsed() > Duration::from_secs(120) {
-            bail!("step c: {ctrl} not resumed within 120 s of the kill (pid dropped: {dropped:?})");
+            bail!("step c: {ctrl} not resumed within 120 s of `claude stop` (pid dropped: {dropped:?})");
         }
         sleep(cx, Duration::from_millis(250)).await;
     };
@@ -426,13 +426,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let attempt = view.read_with(cx, |v, _| v.last_attempt.get(&ctrl).copied());
     if !attempt.is_some_and(|t| t >= killed_at) {
         bail!(
-            "step c: {ctrl} came back with pid {:?}, but not by the supervisor (its last attempt {attempt:?}; killed as [{}])",
+            "step c: {ctrl} came back with pid {:?}, but not by the supervisor (its last attempt {attempt:?}; stopped as [{}])",
             resumed.pid,
             raw(&idle)
         );
     }
     if process_alive(pid) {
-        bail!("step c: the killed pid {pid} is still running");
+        bail!("step c: the stopped pid {pid} is still running");
     }
     // Right after `--bg --resume` the row shows a transient sessionId for a few seconds, then the
     // session's own again (m2/4).
@@ -448,7 +448,9 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     let (dropped_after, dropped_row) = dropped.map_or(("never seen".into(), String::new()), |(d, r)| (secs(d), r));
     println!(
-        "step c: killed pid {pid} (turn ended: {}) → row without pid after {dropped_after} [{dropped_row}], dead pid seen in {lingered} poll(s) | resumed by the supervisor after {}: same id {}, same sessionId {}{}, pid {pid} → {} [{}], one row",
+        "step c: `claude stop {}` ({}) on pid {pid} (turn ended: {}) → row without pid after {dropped_after} [{dropped_row}], old pid seen in {lingered} poll(s) | resumed by the supervisor after {}: same id {}, same sessionId {}{}, pid {pid} → {} [{}], one row",
+        idle.id,
+        stop.lines().next().unwrap_or_default(),
         raw(&idle),
         secs(resumed_after),
         settled.id,
@@ -458,8 +460,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         raw(&settled)
     );
 
-    // after c, not right after r: the drops give the workspace session turns of its own, and one that ends
-    // `working`/`blocked` is respawned by the daemon when step c kills it, not resumed by the supervisor (m2/4)
+    // after c, not right after r: the drops give the workspace session turns of its own, and c's stop must
+    // not land mid-turn
     task_box_step(tb, &transcript, view, cx).await.context("step t")?;
 
     want_step(tb, view, cx).await.context("step w")?;
@@ -535,37 +537,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if !closed {
         bail!("step d: the Run in terminal tab did not close");
     }
-
-    // e. the park session → Blocked with Attach
-    let park = tb.park();
-    let attach_key = format!("inbox-attach-{park}");
-    let started = Instant::now();
-    let need = loop {
-        let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
-        if let Some(need) = need
-            && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&attach_key))
-        {
-            break need;
-        }
-        if started.elapsed() > Duration::from_secs(180) {
-            bail!("step e: no Blocked Inbox row for {park} within 180 s (row: {:?})", row(&park, cx).await?.map(|r| raw(&r)));
-        }
-        sleep(cx, Duration::from_millis(250)).await;
-    };
-    let Some(Remedy::Attach { id }) = &need.action else {
-        bail!("step e: Blocked without Attach: {need:?}");
-    };
-    let park_row = row(&park, cx).await?.ok_or_else(|| anyhow!("step e: {park} not listed"))?;
-    if &park_row.id != id {
-        bail!("step e: Attach targets {id}, the row is {}", park_row.id);
-    }
-    let hook = view.read_with(cx, |v, _| v.hooks.get(&park_row.session_id).map(|h| h.label(now_ms())));
-    println!(
-        "step e: {park} parked → Inbox `blocked` ({}) with Attach {id} | row [{}] | last hook: {}",
-        need.detail,
-        raw(&park_row),
-        hook.unwrap_or_else(|| "none".into())
-    );
 
     // f. busy limit 1 (the settings window's stepper path), two more workspaces started: never
     // more than one working
@@ -671,7 +642,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // g. Stop through the UI: stopped, rows and transcripts kept
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
-    let names = [ctrl.clone(), park.clone(), relay_name.clone()];
+    let names = [ctrl.clone(), tb.park(), relay_name.clone()];
     let stopped = wait_for("step g: testbed sessions stopped", Duration::from_secs(60), cx, |rows| {
         let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
         (ours.len() == 3 && ours.iter().all(|s| s.pid.is_none())).then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
@@ -691,6 +662,61 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if shown != 3 || still != 0 {
         bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
     }
+    Ok(())
+}
+
+/// Step e: the park session (permission mode default, one Bash command that writes a file) stops at its
+/// permission prompt: Foreman's Notification hook records `permission_prompt` for it, and the Inbox shows it
+/// Blocked with Attach to its row. Fails, rather than waits, when the prompt was answered before (by whom
+/// this run cannot know: the transcript has the command's result).
+async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let park = tb.park();
+    let attach_key = format!("inbox-attach-{park}");
+    let started = Instant::now();
+    let mut events = EventReader::new(&tb.home);
+    let mut seen = Vec::new();
+    let (park_row, prompt, need) = loop {
+        if let Some(r) = row(&park, cx).await? {
+            seen.extend(events.poll_session(&r.session_id));
+            let prompt = seen
+                .iter()
+                .find(|e| e.event == "Notification" && e.notification_type.as_deref() == Some("permission_prompt"))
+                .cloned();
+            let transcript = seen.iter().find_map(|e| e.transcript_path.clone());
+            if let Some(path) = &transcript
+                && let Some(result) = tool_result(path, |t| t.starts_with("Bash: ") && t.contains("parked"))
+            {
+                bail!("{park}'s command was answered before this step saw it parked: {result:?} [{}]", raw(&r));
+            }
+            let need = view.read_with(cx, |v, _| v.needs.iter().find(|n| n.name == park && n.kind == NeedsKind::Blocked).cloned());
+            if let (Some(prompt), Some(need)) = (prompt, need)
+                && view.read_with(cx, |v, _| v.hits.borrow().contains_key(&attach_key))
+            {
+                break (r, prompt, need);
+            }
+        }
+        if started.elapsed() > Duration::from_secs(180) {
+            let events_line = seen.iter().map(|e| e.event.clone() + &e.notification_type.as_deref().map(|s| format!("({s})")).unwrap_or_default()).collect::<Vec<_>>().join(", ");
+            bail!(
+                "no permission_prompt + Blocked Inbox row with Attach for {park} within 180 s (row: {:?}; hook events: {events_line})",
+                row(&park, cx).await?.map(|r| raw(&r))
+            );
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    };
+    let Some(Remedy::Attach { id }) = &need.action else {
+        bail!("Blocked without Attach: {need:?}");
+    };
+    if &park_row.id != id {
+        bail!("Attach targets {id}, the row is {}", park_row.id);
+    }
+    println!(
+        "step e: {park} parked → hook Notification(permission_prompt) {} after its launch, Inbox `blocked` ({}) with Attach {id} seen {} into the step | row [{}]",
+        secs(Duration::from_millis(park_row.started_at.map_or(0, |t| (prompt.ts - t).max(0)) as u64)),
+        need.detail,
+        secs(started.elapsed()),
+        raw(&park_row),
+    );
     Ok(())
 }
 
@@ -769,19 +795,19 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     if attempt.is_none() {
         bail!("{name} is live, but the supervisor never launched it");
     }
-    // its first task: `fm roster` from inside the session, which must not park
+    // its first task: `fm roster` from inside the session, which must not park. Asserted on the command's
+    // result in the transcript, not on the reply: what the model writes around it is its own (m5/11).
     let mut events = EventReader::new(&tb.home);
     let mut transcript = None;
-    let (reply, tools) = loop {
+    let ran = |t: &str| t.starts_with("Bash: ") && t.contains("fm roster");
+    let result = loop {
         for e in events.poll_session(&live.session_id) {
-            if e.event == "Stop" {
-                transcript = e.transcript_path.clone().or(transcript);
-            }
+            transcript = e.transcript_path.clone().or(transcript);
         }
         if let Some(path) = &transcript
-            && let (Some(text), tools) = transcript_turn(path)
+            && let Some(result) = tool_result(path, ran)
         {
-            break (text, tools);
+            break result;
         }
         if let Some(r) = row(&name, cx).await?
             && let Health::Blocked { waiting_for } = r.health(now_ms())
@@ -789,15 +815,15 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
             bail!("{name} parked running fm ({waiting_for:?}): [{}]", raw(&r));
         }
         if started.elapsed() > Duration::from_secs(150) {
-            bail!("{name} did not end its first turn within 150 s");
+            let tools = transcript.as_deref().map(|p| transcript_turn(p).1).unwrap_or_default();
+            bail!("{name} has no result of a Bash `fm roster` within 150 s: tools {tools:?}");
         }
         sleep(cx, Duration::from_millis(500)).await;
     };
-    if !tools.iter().any(|t| t.starts_with("Bash: ") && t.contains("roster")) {
-        bail!("{name} did not run fm roster with Bash: tools {tools:?}, reply {reply:?}");
-    }
-    if !reply.contains(&name) {
-        bail!("{name} ran {tools:?}, but its reply does not list itself: {reply:?}");
+    let tools = transcript.as_deref().map(|p| transcript_turn(p).1).unwrap_or_default();
+    let own = format!("{name}\trepo\t");
+    if !result.lines().any(|l| l.starts_with(&own)) {
+        bail!("{name} ran {tools:?}; its `fm roster` result does not list it as repo: {result:?}");
     }
     let roster = fm(&["roster", w])?;
     let line = roster
@@ -817,11 +843,11 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
         bail!("{name} came back after fm unwant");
     }
     println!(
-        "step w: `fm want {w} {REPO}` ({}) → {name} ({}) launched by the supervisor, live after {} | its first turn ran {tools:?} itself, no park, its reply lists it ({} chars) | `fm roster {w}`: {line:?} | `fm unwant` ({}) → stopped after {} [{}], not resumed 5 s later",
+        "step w: `fm want {w} {REPO}` ({}) → {name} ({}) launched by the supervisor, live after {} | its first turn ran {tools:?} itself, no park, the result lists it ({} lines) | `fm roster {w}`: {line:?} | `fm unwant` ({}) → stopped after {} [{}], not resumed 5 s later",
         wanted.lines().next().unwrap_or_default(),
         live.id,
         secs(live_after),
-        reply.len(),
+        result.lines().count(),
         unwanted.lines().next().unwrap_or_default(),
         secs(stopped_after),
         raw(&stopped),
@@ -882,6 +908,35 @@ fn transcript_turn(path: &str) -> (Option<String>, Vec<String>) {
         }
     }
     (last, tools)
+}
+
+/// The result of the first tool call whose `tool: command` (as [`transcript_turn`] lists it) matches, once
+/// the transcript has it: a string, or the text parts of a list.
+fn tool_result(path: &str, matches: impl Fn(&str) -> bool) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut id = None;
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        for c in v["message"]["content"].as_array().into_iter().flatten() {
+            match c["type"].as_str() {
+                Some("tool_use") if id.is_none() => {
+                    let call = format!("{}: {}", c["name"].as_str().unwrap_or("?"), c["input"]["command"].as_str().unwrap_or(""));
+                    if matches(&call) {
+                        id = c["id"].as_str().map(String::from);
+                    }
+                }
+                Some("tool_result") if id.is_some() && c["tool_use_id"].as_str() == id.as_deref() => {
+                    return Some(match &c["content"] {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                        other => other.to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 /// Step r: the relay armed, a message from the Rust API to a session launched here, its answer back in
@@ -1244,6 +1299,27 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_result_of_the_matching_tool_call() {
+        let dir = std::env::temp_dir().join(format!("fm-tool-result-{}", hex6()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        let lines = [
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"Skill","input":{"skill":"x"}}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"Launching skill: x"}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"fm roster w"}}]}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b","content":[{"type":"text","text":"fm-w-repo\trepo\trunning"}]}]}}"#,
+        ];
+        std::fs::write(&path, lines[..3].join("\n")).unwrap();
+        let p = path.to_str().unwrap();
+        let roster = |t: &str| t.starts_with("Bash: ") && t.contains("fm roster");
+        assert_eq!(tool_result(p, roster), None, "called, no result yet");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        assert_eq!(tool_result(p, roster).as_deref(), Some("fm-w-repo\trepo\trunning"));
+        assert_eq!(tool_result(p, |t| t.starts_with("Skill: ")).as_deref(), Some("Launching skill: x"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn reads_the_discard_token() {
