@@ -1812,8 +1812,36 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 - **Assumption**: a turn is taken as WorkState use. A turn that makes no WorkState call does not renew the token, so
   the row can come late (never early) for a session that works without WorkState for 72 h.
 - `view.rs` got the two arms its exhaustive matches need (label, colour, key, button); nothing else in the app.
-- Tests (`cargo test -p foreman-supervisor mint`, 16 → 17 with m5/8): fake clock in
+- Tests (`cargo test -p foreman-supervisor mint`, 16): fake clock in
   `mint_a_live_session_idle_past_its_token_window_asks_for_a_remint` (window slides on a turn, row at +window +1 s,
   a late turn keeps it, Re-mint stops, resume after the grace re-mints, fresh window) and
   `mint_no_token_row_for_a_stopped_workspace_or_an_unminted_session`. Reds: renewing a lapsed token on a turn → 1
   failed; not adding the rows → 1 failed.
+
+## 2026-10-26 — m5/8 the workspace project binds its repos
+
+- **Mint**: a repo session's `POST /api/agent-sessions` body carries `repo: {root, remote?}` (`MintRequest::repo`,
+  `MintRepo`), so its bare `work_brief()` opens the project bound to that repo. `root` is the parent of
+  `git -C <cwd> rev-parse --path-format=absolute --git-common-dir` (a worktree gives its main checkout), `remote`
+  is `git remote get-url origin`, left out without one; both exactly as git prints them, since WorkState normalises
+  (Skills `docs/workstate/02-data-model.md`, Identity; `RepoKeys` in `Repos.cs`). `mint::git_repo` runs git at each
+  mint of a session with a `repo` (launch and every resume); the workspace session and the relay have none and send
+  no `repo` (the workspace root is not a repo). A cwd git cannot read sends no `repo` rather than failing the launch.
+  Seam: `Supervisor::with_repo_of`.
+- **Skill**: `workspace-controller` §3 **Bind the repos** — on a fresh start with an existing project, right after
+  creating it (§4.2), and when `fm workspace show` lists a repo the project lacks: `work_get(refs:["<w>"])` lists
+  the bound repos, then per missing enabled repo the two git commands and `work_update(ref:"<w>", repo:{root,
+  remote?})`. Refused because another project holds the key → `fm tell` the human, never work around it.
+  `roles/workspace.md`'s fresh start names it. Runs stay unbound: repo-controllers keep `work_brief(scope: "<run
+  ref>")` (pinned).
+- **Not checked live** (the controller's, C21): that a bare `work_brief()` from a minted repo session lands in the
+  workspace project, and that the server accepts git's `P:/…` form of the root for a key the skill bound.
+- Tests: `cargo test -p foreman-supervisor mint` 18 — `mint_http_client_sends_the_repo_of_a_repo_session` (fake
+  server: body `repo` with and without `remote`; the existing body test proves no `repo` for the workspace
+  session), `mint_git_repo_of_a_worktree_is_its_main_checkout` (real git in a temp dir: main, worktree, origin, not
+  a repo), `mint_each_session_gets_its_own_token_with_its_identity_in_the_mint` (repo session has it, workspace
+  session none). `cargo test -p fm skills`: `skills_bind_every_repo_to_the_workspace_project`. Red: `repo: None`
+  in the mint → 1 failed.
+- Gate for m5/7 + m5/8 (CARGO_TARGET_DIR=C:\fmbuild\m5-78 + `plugins` junction, CLI 2.1.310): `cargo build --release
+  --workspace` ok, no warnings; `cargo test --workspace` 405 passed (400 + 5), 0 failed; `--selftest` PASS (p95
+  20.74 ms, max 23.22 ms, 0 > 50 ms; idle 132.2 MiB); `--selftest-supervise` PASS on the first run.

@@ -79,13 +79,30 @@ Foreman's; to start or retire a repo session use `want`/`unwant`, to have anythi
 ## 3. Start, compaction, resume
 
 - **Fresh start** (your role says so): if `work_*` tools are visible, `work_search(q: "<w>")` and, when the
-  project exists, `work_brief(scope: "<w>")` — read only. Then tell the human **once**, with `fm tell`:
+  project exists, **bind the repos** (below) and `work_brief(scope: "<w>")` — nothing else is written.
+  Then tell the human **once**, with `fm tell`:
   `fm-<w>-workspace ready — <nothing in flight | in flight: <run refs>, next: <its NEXT line>>`.
   No `work_*` tools: `fm tell` `fm-<w>-workspace ready, but WorkState is not visible here — I can talk, not
   plan. Foreman's settings need workstate_env.` instead. Then end your turn with `done: ready sent`.
 - **After a compaction or a resume** (your role text arrives again in a session that has a history):
   invoke this skill again, `work_brief(scope: "<w>")`, continue from its NEXT line. Do not announce ready
   again: once per session is the rule, and the summary says whether you did.
+
+**Bind the repos.** WorkState knows a repo by its keys, and a repo bound to no project gets onboarding that
+suggests creating one — a second project for this workspace. So the project `<w>` holds the key of **every
+enabled repo** of the workspace. Do it whenever you create the project or first use it in a session, and
+again when `fm workspace show <w>` lists a repo the project does not hold yet:
+1. `work_get(refs: ["<w>"])` prints the repos the project already holds.
+2. For each enabled repo in `fm workspace show <w>` that is missing, in its folder (Bash, bare, read only):
+   `git -C <repo dir> rev-parse --path-format=absolute --git-common-dir` — the **root** is the parent of the
+   path it prints (a worktree prints its main checkout's), and `git -C <repo dir> remote get-url origin` —
+   the **remote**, if it prints one (no origin: no remote).
+3. `work_update(ref: "<w>", repo: {root: "<root>", remote: "<remote>"})`, one call per repo; leave `remote`
+   out when there is none. Already bound to `<w>`: nothing to do. Refused because the key belongs to another
+   project: never work around it — `fm tell` the human which repo and which project, once, and go on.
+
+The binding is the project's, not a run's: repo-controllers keep their explicit `work_brief(scope: "<run
+ref>")`, and Foreman mints each repo session with its repo, so a bare `work_brief()` there opens `<w>`.
 
 ## 4. A task arrives — plan it in WorkState
 
@@ -96,7 +113,8 @@ A task is a message from the human (§1) that asks for work. A question gets an 
    touches, and how the repos depend on each other — with `Read`/`Glob`/`Grep`, never by shelling out.
    `fm roster <w>` shows which repo sessions exist.
 2. **The project.** One WorkState project per workspace, ref = `<w>`: `work_search(q: "<w>")`; if absent,
-   `work_create(items: [{kind: "project", ref: "<w>", title: "<w>"}])`.
+   `work_create(items: [{kind: "project", ref: "<w>", title: "<w>"}])`. Either way **bind the repos** (§3)
+   before the runs: never create a project for one repo.
 3. **One run per repo that has work**, explicit refs: `<task-slug>-<repo-slug>` (`parent: "<w>"`,
    `kind: "run"`, `intent:` what this repo delivers and the contract it must keep). Under it the **units**
    as `kind: "task"`: `criteria` = the outcome, `verify_cmd` = a command that can fail, run in that repo

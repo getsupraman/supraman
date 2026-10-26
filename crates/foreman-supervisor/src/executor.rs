@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use foreman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 
 use crate::{
-    Action, Budget, DesiredState, Failure, HttpMinter, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
+    Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
     NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, api_base, is_live, mid_turn, reconcile,
 };
 
@@ -104,6 +104,8 @@ pub struct Supervisor<L, T> {
     launcher: L,
     tokens: T,
     minter: Box<dyn Minter + Send>,
+    /// The `repo` of a repo session's mint, from its cwd: [`crate::git_repo`]; tests use a fake.
+    repo_of: fn(&Path) -> Option<MintRepo>,
     /// The sessions this supervisor minted a token for, by name.
     minted: MintedSessions,
     needs: Vec<NeedsYou>,
@@ -132,6 +134,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             launcher,
             tokens,
             minter: Box::new(HttpMinter::default()),
+            repo_of: crate::git_repo,
             minted,
             needs: Vec::new(),
             notices,
@@ -141,6 +144,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     pub fn with_minter(mut self, minter: impl Minter + Send + 'static) -> Self {
         self.minter = Box::new(minter);
+        self
+    }
+
+    pub fn with_repo_of(mut self, repo_of: fn(&Path) -> Option<MintRepo>) -> Self {
+        self.repo_of = repo_of;
         self
     }
 
@@ -300,6 +308,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             cwd: identity.cwd,
             external_role: w.role.clone(),
             replace: true,
+            repo: w.repo.as_ref().and_then(|_| (self.repo_of)(&w.cwd)),
         };
         let minted = self
             .minter
@@ -674,7 +683,18 @@ mod tests {
             plugin_dirs: vec![r"C:\fm\plugins\foreman".into()],
             ..LaunchConfig::default()
         };
-        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens)).with_minter(FakeMinter::default())
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens))
+            .with_minter(FakeMinter::default())
+            .with_repo_of(fake_repo_of)
+    }
+
+    /// Alpha's checkout has an origin, Beta's none; any other cwd is not a repo.
+    fn fake_repo_of(dir: &Path) -> Option<MintRepo> {
+        match dir.file_name()?.to_str()? {
+            "Alpha" => Some(MintRepo { root: "C:/demo/Alpha".into(), remote: Some("https://example.invalid/demo/alpha.git".into()) }),
+            "Beta" => Some(MintRepo { root: "C:/demo/Beta".into(), remote: None }),
+            _ => None,
+        }
     }
 
     /// [`supervisor`] with the static role token, and a handle on its fake minter.
@@ -744,6 +764,7 @@ mod tests {
                     cwd: r"C:\demo\cwd".into(),
                     external_role: "workspace".into(),
                     replace: true,
+                    repo: None,
                 },
             }]
         );
@@ -797,6 +818,13 @@ mod tests {
         );
         assert_eq!((repo.launched_by.as_str(), repo.origin.as_str(), repo.cwd.as_str()), ("foreman/demo", "foreman/demo/Alpha", r"C:\demo\Alpha"));
         assert_eq!((requests[0].role.as_str(), requests[0].origin.as_str()), ("controller", "foreman/demo"));
+        assert_eq!(
+            repo.repo,
+            Some(MintRepo { root: "C:/demo/Alpha".into(), remote: Some("https://example.invalid/demo/alpha.git".into()) }),
+            "a repo session is minted with its repo"
+        );
+        assert_eq!(requests[0].repo, None, "the workspace root is not a repo");
+
         let ws = config_text(&mcp, "fm-demo-workspace");
         let repo = config_text(&mcp, "fm-demo-alpha");
         assert!(ws.contains("wss_fake1") && repo.contains("wss_fake2"), "{ws} {repo}");
