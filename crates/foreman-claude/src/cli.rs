@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 use crate::{ClaudeError, Result, Session, parse};
 
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-pub const SUPPORTED_MAJOR: u32 = 2;
+/// The oldest claude CLI Foreman runs on (docs/RELEASE.md): every CLI fact it relies on (`--bg`, the
+/// `agents --json --all` fields, `--plugin-dir`, the peer registry's `peerProtocol 1`) was measured on it.
+pub const MIN_VERSION: (u32, u32, u32) = (2, 1, 308);
+/// The newest claude CLI the release gate passed on. Newer ones run, with a warning.
+pub const TESTED_VERSION: (u32, u32, u32) = (2, 1, 310);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeVersion {
@@ -15,6 +19,27 @@ pub struct ClaudeVersion {
     pub patch: u32,
     /// The whole first line, e.g. `2.1.308 (Claude Code)`.
     pub raw: String,
+}
+
+impl ClaudeVersion {
+    fn triple(&self) -> (u32, u32, u32) {
+        (self.major, self.minor, self.patch)
+    }
+
+    /// A warning for a CLI newer than [`TESTED_VERSION`]; everything still runs.
+    pub fn untested(&self) -> Option<String> {
+        (self.triple() > TESTED_VERSION).then(|| {
+            format!(
+                "claude CLI {} is newer than {}, the newest Foreman was tested on: everything stays enabled; if something misbehaves, report it with this version.",
+                self.raw,
+                dotted(TESTED_VERSION)
+            )
+        })
+    }
+}
+
+fn dotted((major, minor, patch): (u32, u32, u32)) -> String {
+    format!("{major}.{minor}.{patch}")
 }
 
 /// One `claude agents --json --all` process: interactive and background, live and stopped.
@@ -46,13 +71,14 @@ pub fn parse_version(text: &str) -> Result<ClaudeVersion> {
     })
 }
 
+/// Refuses only a CLI older than [`MIN_VERSION`]; a newer one than tested passes ([`ClaudeVersion::untested`]).
 pub fn check_version(version: &ClaudeVersion) -> Result<()> {
-    if version.major == SUPPORTED_MAJOR {
+    if version.triple() >= MIN_VERSION {
         Ok(())
     } else {
         Err(ClaudeError::Unsupported {
             found: version.raw.clone(),
-            supported: SUPPORTED_MAJOR,
+            minimum: dotted(MIN_VERSION),
         })
     }
 }
@@ -124,14 +150,37 @@ mod tests {
     }
 
     #[test]
-    fn other_majors_are_refused_clearly() {
-        let v = parse_version("3.0.0 (Claude Code)").unwrap();
-        let err = check_version(&v).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "claude CLI 3.0.0 (Claude Code) is not supported: Foreman needs major version 2"
-        );
-        assert!(check_version(&parse_version("1.9.9").unwrap()).is_err());
+    fn below_the_minimum_is_refused_with_the_reason() {
+        for text in ["2.1.307 (Claude Code)", "2.0.999", "1.9.9"] {
+            let v = parse_version(text).unwrap();
+            let err = check_version(&v).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "claude CLI {} is too old: Foreman needs 2.1.308 or newer (`--bg`, `agents --json --all`, `--plugin-dir` and peerProtocol 1 as measured there); update claude",
+                    text
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn the_tested_range_is_fine_without_a_warning() {
+        for text in ["2.1.308 (Claude Code)", "2.1.309", "2.1.310 (Claude Code)"] {
+            let v = parse_version(text).unwrap();
+            assert!(check_version(&v).is_ok(), "{text}");
+            assert_eq!(v.untested(), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn newer_than_tested_runs_with_a_warning() {
+        for text in ["2.1.311 (Claude Code)", "2.2.0", "3.0.0 (Claude Code)"] {
+            let v = parse_version(text).unwrap();
+            assert!(check_version(&v).is_ok(), "never block a newer claude: {text}");
+            let warning = v.untested().expect(text);
+            assert!(warning.contains(text) && warning.contains("newer than 2.1.310"), "{warning}");
+        }
     }
 
     #[test]

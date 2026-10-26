@@ -33,8 +33,10 @@ pub enum ClaudeError {
     },
     #[error("cannot read a version from `claude --version` output {0:?}")]
     BadVersion(String),
-    #[error("claude CLI {found} is not supported: Foreman needs major version {supported}")]
-    Unsupported { found: String, supported: u32 },
+    #[error(
+        "claude CLI {found} is too old: Foreman needs {minimum} or newer (`--bg`, `agents --json --all`, `--plugin-dir` and peerProtocol 1 as measured there); update claude"
+    )]
+    Unsupported { found: String, minimum: String },
     #[error("workspace {} is not trusted: run `claude` there once and accept the trust prompt", .cwd.display())]
     TrustNeeded { cwd: std::path::PathBuf },
     #[error("a session named {name} already exists")]

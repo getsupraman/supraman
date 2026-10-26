@@ -7,6 +7,44 @@ use std::path::{Path, PathBuf};
 
 pub const HOOK_EXE: &str = "fm.exe";
 
+/// A plugin dir is one with the hooks and the role templates.
+fn is_plugin(dir: &Path) -> bool {
+    dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir()
+}
+
+/// The Foreman plugin for `exe` (`foreman.exe` or `fm.exe`), in this order (docs/RELEASE.md):
+/// 1. `<exe dir>/plugins/foreman`, the release layout;
+/// 2. the plugin the exe sits in, for the hooks' copy at `<plugin>/bin/fm.exe`;
+/// 3. `plugins/foreman` in any folder above, a dev build at `<repo>/target/<profile>/`.
+///
+/// The error names every place it looked.
+pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
+    let Some(exe_dir) = exe.parent() else {
+        return Err(format!("{} has no folder to look for plugins/foreman in", exe.display()));
+    };
+    let beside = exe_dir.join("plugins").join("foreman");
+    if is_plugin(&beside) {
+        return Ok(beside);
+    }
+    if exe_dir.file_name().is_some_and(|n| n == "bin")
+        && let Some(own) = exe_dir.parent().filter(|d| is_plugin(d))
+    {
+        return Ok(own.to_path_buf());
+    }
+    exe_dir
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("plugins").join("foreman"))
+        .find(|dir| is_plugin(dir))
+        .ok_or_else(|| {
+            format!(
+                r"No Foreman plugin for {}: looked next to it at {} (a release) and for plugins\foreman in every folder above it (a dev build)",
+                exe.display(),
+                beside.display()
+            )
+        })
+}
+
 /// Copies `exe` to `<plugin_dir>/bin/fm.exe` unless it is already byte-identical. A hook may be
 /// running the old file, which Windows will not let us overwrite but will let us rename, so the new
 /// copy is written beside it and swapped in by renames; the old one is left as `fm.exe.old`.
@@ -38,6 +76,37 @@ pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn plugin_at(dir: &Path) {
+        fs::create_dir_all(dir.join("hooks")).unwrap();
+        fs::create_dir_all(dir.join("roles")).unwrap();
+        fs::write(dir.join("hooks").join("hooks.json"), "{}").unwrap();
+    }
+
+    #[test]
+    fn finds_the_plugin_beside_the_exe_first_then_its_own_then_above() {
+        let root = tempfile::tempdir().unwrap();
+        let repo_plugin = root.path().join("plugins").join("foreman");
+        plugin_at(&repo_plugin);
+        let release = root.path().join("target").join("dist").join("Foreman");
+        let exe = release.join("foreman.exe");
+        assert_eq!(find_plugin_dir(&exe).unwrap(), repo_plugin, "a dev build walks up");
+
+        let beside = release.join("plugins").join("foreman");
+        plugin_at(&beside);
+        assert_eq!(find_plugin_dir(&exe).unwrap(), beside, "beside the exe wins over the walk");
+        assert_eq!(find_plugin_dir(&beside.join("bin").join(HOOK_EXE)).unwrap(), beside, "the hooks' copy");
+    }
+
+    #[test]
+    fn a_missing_plugin_names_both_places() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("plugins").join("foreman").join("hooks")).unwrap();
+        let exe = root.path().join("Foreman").join("foreman.exe");
+        let err = find_plugin_dir(&exe).unwrap_err();
+        assert!(err.contains(&root.path().join("Foreman").join("plugins").join("foreman").display().to_string()), "{err}");
+        assert!(err.contains("every folder above"), "{err}");
+    }
 
     #[test]
     fn installs_replaces_and_skips_identical() {

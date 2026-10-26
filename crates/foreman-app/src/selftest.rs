@@ -170,6 +170,9 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     if mode.launches_session() {
         let version = check_supported()?;
         println!("claude CLI: {}", version.raw);
+        if let Some(warning) = version.untested() {
+            println!("WARNING {warning}");
+        }
         let name = format!("fm-selftest-{}", hex6());
         // Recorded before launching, so cleanup looks for it even if the launch half-succeeds.
         if let Some(scratch) = lock().as_mut() {
