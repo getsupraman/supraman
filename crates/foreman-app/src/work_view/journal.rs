@@ -320,7 +320,7 @@ impl WorkView {
                 .border_b_1()
                 .border_color(colors.border_variant)
                 .child(meta)
-                .child(div().text_sm().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(e.summary.clone())))
+                .child(div().text_sm().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(e.summary.clone().unwrap_or_default())))
                 .child(hit_target(&self.hits, key));
             list = list.child(match e.item.as_ref() {
                 Some(item) => {

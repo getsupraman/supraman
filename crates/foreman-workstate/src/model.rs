@@ -110,7 +110,7 @@ pub struct Session {
 #[serde(default, rename_all = "camelCase")]
 pub struct Claim {
     pub item: ItemRef,
-    pub run: ItemRef,
+    pub run: Option<ItemRef>,
     pub session: Option<Session>,
     /// Legacy label.
     pub agent: String,
@@ -140,7 +140,7 @@ pub struct JournalEvent {
     pub actor: String,
     pub role: String,
     pub kind: String,
-    pub summary: String,
+    pub summary: Option<String>,
     pub payload: Value,
 }
 
@@ -202,8 +202,8 @@ pub struct Board {
     pub as_of: String,
     pub seq: i64,
     pub run: ItemRef,
-    pub project: ItemRef,
-    pub intent: String,
+    pub project: Option<ItemRef>,
+    pub intent: Option<String>,
     pub branch: Option<String>,
     pub worktree: Option<String>,
     pub rollup: Rollup,
@@ -262,7 +262,7 @@ pub struct ItemPage {
     pub item: ItemRef,
     /// Project → … → parent.
     pub path: Vec<ItemRef>,
-    pub intent: String,
+    pub intent: Option<String>,
     pub verify_cmd: Option<String>,
     pub risk_tags: Vec<String>,
     pub priority: i32,
@@ -305,7 +305,7 @@ pub struct Criterion {
 pub struct Report {
     pub attempt: u32,
     pub session: Option<Session>,
-    pub agent: String,
+    pub agent: Option<String>,
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
     pub status: String,
@@ -322,7 +322,7 @@ pub struct Report {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Verification {
-    pub command: String,
+    pub command: Option<String>,
     pub result_line: String,
     pub passed: bool,
     pub counts: Option<Value>,
@@ -413,7 +413,7 @@ pub struct InboxRow {
     /// `blocked|blocker_finding|question|expired_claim|assumption_due|done_unverified|stale_in_progress|unconsumed_note`.
     pub kind: String,
     pub item: ItemRef,
-    pub run: ItemRef,
+    pub run: Option<ItemRef>,
     pub what: String,
     pub since: String,
     /// The resolving MCP call, qualified.
@@ -490,4 +490,73 @@ pub struct StreamEvent {
     pub run_id: Option<String>,
     pub item_id: Option<String>,
     pub kind: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ITEM: &str = r#"{"id":"33333333-0000-4000-8000-000000000001","ref":"6","qualifiedRef":"m4/6","kind":"task","title":"E2E","status":"done"}"#;
+    const SESSION: &str = r#"{"id":"44444444-0000-4000-8000-000000000001","name":"aw-m4-6","role":"worker","externalRole":null,"origin":null,"launchedBy":null,"claudeSessionId":null,"cwd":null,"tree":null,"client":null,"firstSeenAt":"2026-10-26T10:00:00+00:00","lastSeenAt":"2026-10-26T12:00:00+00:00"}"#;
+
+    /// m5/19: a done task as the real server answered it, every field it may null null.
+    #[test]
+    fn item_page_takes_the_real_servers_nulls() {
+        let json = format!(
+            r#"{{"asOf":"2026-10-26T12:00:00+00:00","seq":7,"item":{ITEM},"path":[{ITEM}],"intent":null,"verifyCmd":null,
+            "riskTags":[],"priority":0,"severity":null,"source":null,"resolution":null,"closedBy":null,
+            "openedAt":"2026-10-26T10:00:00+00:00","startedAt":null,"closedAt":null,
+            "criteria":[{{"id":"c1","text":"t","checked":true,"evidence":null,"checkedAt":null}}],"claim":null,
+            "reports":[{{"attempt":1,"session":null,"agent":null,"startedAt":"2026-10-26T10:00:00+00:00","endedAt":null,"status":"done",
+              "files":[],"verify":null,"redCheck":null,"deviations":null,"risks":null,"notDone":null,"at":"2026-10-26T11:00:00+00:00"}}],
+            "verifications":[{{"command":null,"resultLine":"ok","passed":true,"counts":null,"runBy":"controller","session":null,"redCheck":null,"at":"2026-10-26T11:30:00+00:00"}}],
+            "artifacts":[],"children":[],"findings":[{{"item":{ITEM},"severity":null,"source":null}}],
+            "notes":[{{"id":"n","kind":"note","body":"b","from":null,"to":null,"consumedAt":null,"createdAt":"2026-10-26T11:00:00+00:00","session":null}}],
+            "links":{{"out":[],"in":[]}},"assumptions":[{{"ref":"A1","text":"t","status":"open","revisitWhen":null}}],
+            "events":[{{"seq":1,"at":"2026-10-26T11:00:00+00:00","item":null,"run":null,"session":{SESSION},"actor":"a","role":"worker",
+              "kind":"transition","summary":null,"payload":{{"from":"review","to":null,"forced":null,"reason":null}}}}],
+            "eventsHasMore":false,"imported":null}}"#
+        );
+        let page: ItemPage = serde_json::from_str(&json).unwrap();
+        assert_eq!((page.intent, page.severity, page.source, page.claim), (None, None, None, None));
+        assert_eq!((page.reports[0].agent.as_deref(), page.reports[0].risks.as_deref(), page.reports[0].not_done.as_deref()), (None, None, None));
+        assert_eq!((page.notes[0].to.as_ref(), page.notes[0].consumed_at.as_deref()), (None, None));
+        assert_eq!((page.verifications[0].command.as_deref(), page.events[0].summary.as_deref()), (None, None));
+        assert_eq!(page.events[0].session.as_ref().unwrap().tree, None);
+        assert!(page.events[0].payload["forced"].is_null());
+    }
+
+    /// The other views' nullables: a board without project or intent, a claim and an inbox row without a run.
+    #[test]
+    fn board_overview_inbox_and_journal_take_nulls() {
+        let claim = format!(
+            r#"{{"item":{ITEM},"run":null,"session":null,"agent":"a","role":"worker","tree":null,"acquiredAt":"2026-10-26T10:00:00+00:00",
+            "heartbeatAt":"2026-10-26T10:00:00+00:00","expiresAt":"2026-10-26T11:00:00+00:00","expired":false,"heldBySession":null}}"#
+        );
+        let board: Board = serde_json::from_str(&format!(
+            r#"{{"asOf":"x","seq":1,"run":{ITEM},"project":null,"intent":null,"branch":null,"worktree":null,"rollup":{{}},
+            "rows":[{{"item":{ITEM},"parentId":null,"depth":0,"seq":"1","hasChildren":false,"resolution":null,"priority":0,"severity":null,
+              "criteria":{{"checked":0,"total":0}},"rollup":null,"claim":{claim},"commit":null,"verification":null,"blockedBy":[],"flags":[],
+              "openedAt":"x","startedAt":null,"closedAt":null}}]}}"#
+        ))
+        .unwrap();
+        assert_eq!((board.project, board.intent), (None, None));
+        assert_eq!(board.rows[0].claim.as_ref().unwrap().run, None);
+        let overview: Overview = serde_json::from_str(&format!(
+            r#"{{"asOf":"x","seq":1,"projects":[{{"item":{ITEM},"rollup":{{}},"runs":[{{"item":{ITEM},"rollup":{{}},"branch":null,"worktree":null,
+              "activeClaims":0,"lastEventAt":null,"inboxCount":0,"lastVerification":null}}],"repos":[],"archivedAt":null,"lastActivityAt":null,"openRuns":1}}],
+            "workingNow":[{claim}],"inboxCount":0,"honesty":{{}}}}"#
+        ))
+        .unwrap();
+        assert_eq!(overview.working_now[0].run, None);
+        let inbox: Inbox =
+            serde_json::from_str(&format!(r#"{{"asOf":"x","seq":1,"rows":[{{"key":"k","kind":"question","item":{ITEM},"run":null,"what":"w","since":"x","call":"c"}}]}}"#))
+                .unwrap();
+        assert_eq!(inbox.rows[0].run, None);
+        let journal: Journal = serde_json::from_str(
+            r#"{"asOf":"x","seq":1,"cursor":0,"hasMore":false,"events":[{"seq":1,"at":"x","item":null,"run":null,"session":null,"actor":"a","role":"r","kind":"k","summary":null,"payload":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(journal.events[0].summary, None);
+    }
 }

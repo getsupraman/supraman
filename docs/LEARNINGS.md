@@ -2084,3 +2084,9 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   the machine; m5/15's clipboard race, the terminal is untouched here) — and PASS again on the icon build;
   `--selftest-supervise` PASS. Step 8's interval checks SKIPped as "machine busy" (baseline p50 ~45 ms) in every run,
   before the change too; own work p10 5–7 ms.
+
+## 2026-10-26 — m5/19 nulls from the real server
+- The fake's fixtures were written from doc 10's prose and simply left out the fields they had no value for, and a
+  missing field defaults under `#[serde(default)]` — but the real server *sends* `"intent": null`, and null into a
+  `String` is an error. Absent ≠ null: the model's types come from `WorkState.Api/App/V1/V1Contract.cs` (every C# `?`
+  is an `Option`), and step 7's sw1/1 page now sends every nullable as an explicit null.

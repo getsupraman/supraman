@@ -58,7 +58,7 @@ fn client_overview_decodes_the_fixture() {
 fn client_board_goes_by_run_id_and_tolerates_future_values() {
     let (fake, c) = server(vec![route(format!("/api/v1/runs/{RUN}/board"), "board.json")]);
     let b = c.board(RUN).unwrap();
-    assert_eq!((b.run.id.as_str(), b.project.ref_.as_str(), b.worktree.as_deref()), (RUN, "autowork", None));
+    assert_eq!((b.run.id.as_str(), b.project.as_ref().unwrap().ref_.as_str(), b.worktree.as_deref()), (RUN, "autowork", None));
     assert_eq!(b.rows.len(), 3);
     let (r0, r1, r2) = (&b.rows[0], &b.rows[1], &b.rows[2]);
     assert_eq!((r0.depth, r0.seq.as_str(), r0.has_children, r0.criteria.checked, r0.criteria.total), (1, "1", true, 1, 4));

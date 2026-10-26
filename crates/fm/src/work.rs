@@ -55,7 +55,7 @@ fn board(client: &Client, project: &ItemRef, workspace: &str, run: &str) -> Resu
     let runs = client.resolve(run).map_err(refused)?.matches.into_iter().filter(|m| m.kind == "run");
     for candidate in runs {
         let board = client.board(&candidate.id).map_err(refused)?;
-        if board.project.id == project.id {
+        if board.project.as_ref().is_some_and(|p| p.id == project.id) {
             return Ok(board);
         }
     }
@@ -97,7 +97,7 @@ fn render_overview(o: &Overview, project: &ItemRef) -> Result<String, Failure> {
         }
         out.push('\n');
     }
-    let ours: Vec<_> = o.working_now.iter().filter(|c| p.runs.iter().any(|r| r.item.id == c.run.id)).collect();
+    let ours: Vec<_> = o.working_now.iter().filter(|c| p.runs.iter().any(|r| c.run.as_ref().is_some_and(|run| run.id == r.item.id))).collect();
     if !ours.is_empty() {
         out.push_str("working now\n");
         for c in ours {
@@ -116,7 +116,7 @@ fn render_overview(o: &Overview, project: &ItemRef) -> Result<String, Failure> {
 
 fn render_board(b: &Board) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "{}  {}  ({})  {}  (seq {})", b.run.qualified_ref, b.run.title, b.project.ref_, rollup_text(&b.rollup), b.seq);
+    let _ = writeln!(out, "{}  {}  ({})  {}  (seq {})", b.run.qualified_ref, b.run.title, b.project.as_ref().map_or("—", |p| p.ref_.as_str()), rollup_text(&b.rollup), b.seq);
     if let Some(branch) = &b.branch {
         let _ = writeln!(out, "branch {branch}");
     }
