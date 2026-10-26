@@ -1902,3 +1902,29 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   (`m5-13-settings-about.png`, `scripts/shot.ps1 -Title` for a window other than the main one — PowerShell turns
   `$null` into `""` for a `string` P/Invoke parameter: `[NullString]::Value`).
 - Screenshots: `target/m5-13/before.png` / `after.png` (scratch home, workspace `ws`).
+
+## 2026-10-26 — m5/10 alerts only for this Foreman's sessions
+
+- **Why it happened**: a unit's `--selftest-supervise` parks `fm-selftest-<hex>-park` with its cwd under the unit's
+  worktree, i.e. inside René's registered workspace, so his Foreman listed it under ./AutoWork as **blocked** with the
+  warning fill and "waiting for: permission prompt" — and he answered it. (His Inbox could not have had a row for it:
+  `NeedsYou` only ever comes from reconciling this home's desired state.)
+- **Rule** (`fleet::is_foreign`): an `fm-` session is another Foreman's when this home neither wants it (no desired
+  state lists it) nor names it (`fm-<w>-…` for a registered workspace `w`, which keeps this home's retired sessions and
+  the first frames before the first tick its own). Such a row is still listed, dimmed, with an "another Foreman" tag
+  on its second line (tooltip says why), a muted dot and waiting-for line, no warning fill, ranked as running; Attach stays. Non-`fm`
+  sessions and this home's own alert as before. `FleetView::apply` also drops any `NeedsYou` naming a foreign session,
+  so the Inbox holds the rule whatever a tick reports.
+- A selftest's sessions are told apart by that rule with no change to how they launch: their names are
+  `fm-selftest-<hex>…` and only the selftest's own home registers `selftest-<hex>` (its park stays Blocked there, step
+  e). A home that registered a workspace literally named `selftest-<hex>…` would claim them — not worth a reserved
+  prefix.
+- Not changed: the busy budget (`foreman_supervisor::budget::mid_turn`) still counts every mid-turn `fm-` row on the
+  machine, another home's included. Arguably right (it is machine load), but a running selftest lowers the user's
+  budget.
+- Tests: `fleet::tests::another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked`,
+  `reconcile::tests::another_homes_parked_session_raises_nothing` (a guard: reconcile already only looks at wanted
+  names). Red: `is_foreign` → `false` fails the fleet test. `--selftest-supervise` step e2 injects a fake
+  `fm-elsewhere-<hex>-park` (blocked on a permission prompt, cwd in the testbed's repo) into every snapshot
+  (`FleetView::injected`, which the supervisor sees too): after two ticks it is listed as another Foreman's with the
+  tag painted, no Inbox row, and the testbed's own park is still Blocked in the Inbox (`m5-10-another-foreman.png`).

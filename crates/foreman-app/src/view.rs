@@ -159,6 +159,9 @@ pub struct FleetView {
     pub ticks: u64,
     /// Retries (`(workspace, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    /// Rows added to every `claude agents` snapshot, before the supervisor sees it: the selftest's fake
+    /// sessions (m5/10: another Foreman's parked row).
+    pub injected: Arc<Mutex<Vec<Session>>>,
     pub left_width: Pixels,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
@@ -221,6 +224,7 @@ struct Poller {
     events: Option<EventReader>,
     supervision: Option<Supervision>,
     retries: Arc<Mutex<Vec<(String, String)>>>,
+    injected: Arc<Mutex<Vec<Session>>>,
 }
 
 impl Poller {
@@ -244,7 +248,12 @@ impl Poller {
             .and_then(|r| r.list())
             .map_err(|e| e.to_string());
         let polled_at = now_ms();
-        let sessions = with_sessions.then(|| list_sessions().map_err(|e| e.to_string()));
+        let sessions = with_sessions.then(|| {
+            list_sessions().map_err(|e| e.to_string()).map(|mut rows| {
+                rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
+                rows
+            })
+        });
         let main_repos = match &sessions {
             Some(Ok(sessions)) => fleet::main_repos(sessions),
             _ => StdHashMap::new(),
@@ -285,11 +294,13 @@ impl FleetView {
             .and_then(|s| s.left_width)
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+        let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let mut poller = Poller {
             home: home.clone(),
             events: None,
             supervision: None,
             retries: retries.clone(),
+            injected: injected.clone(),
         };
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -375,6 +386,7 @@ impl FleetView {
             polled_at: 0,
             ticks: 0,
             retries,
+            injected,
             left_width,
             settings_window: None,
             last_alive: StdHashMap::new(),
@@ -429,8 +441,11 @@ impl FleetView {
             HookSignal::record(&mut self.hooks, event);
         }
         if let Some(report) = refresh.report {
-            self.needs = report.needs;
             self.desired = report.desired;
+            // by construction only this home's wanted sessions raise one; kept so, whatever a tick reports
+            self.needs = report.needs;
+            let (workspaces, desired) = (&self.workspaces, &self.desired);
+            self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
             self.last_attempt = report.last_attempt.into_iter().collect();

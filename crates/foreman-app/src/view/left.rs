@@ -941,9 +941,11 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let s = &row.session;
-        let dot = health_color(&row.health, cx);
-        let blocked = matches!(row.health, Health::Blocked { .. });
-        let dimmed = matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
+        // another Foreman's row (m5/10): its prompt is not this user's, so nothing about it asks for attention
+        let foreign = row.foreign;
+        let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
+        let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
+        let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
         let waiting_for = match &row.health {
             Health::Blocked { waiting_for: Some(w) } => Some(format!("waiting for: {w}")),
             _ => None,
@@ -1036,12 +1038,34 @@ impl FleetView {
             .when(blocked, |d| d.bg(status.warning.opacity(0.12)))
             .when(dimmed, |d| d.opacity(0.5))
             .child(line)
+            .when(foreign, |d| {
+                let key = format!("foreign-{}", s.session_id);
+                d.child(
+                    div()
+                        .id(SharedString::from(key.clone()))
+                        .relative()
+                        .self_start()
+                        .ml(px(16.))
+                        .px_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(colors.border_variant)
+                        .text_xs()
+                        .text_color(colors.text_muted)
+                        .child("another Foreman")
+                        .child(hit_target(&self.hits, key))
+                        .tooltip(Tooltip::text(
+                            "An fm- session this Foreman does not supervise (another FOREMAN_HOME, e.g. a selftest): \
+                             it never raises an Inbox row here. Leave its prompts to whoever runs it.",
+                        )),
+                )
+            })
             .when_some(waiting_for, |d, w| {
                 d.child(
                     div()
                         .pl(px(16.))
                         .text_xs()
-                        .text_color(status.warning)
+                        .text_color(if foreign { colors.text_muted } else { status.warning })
                         .child(SharedString::from(w)),
                 )
             })

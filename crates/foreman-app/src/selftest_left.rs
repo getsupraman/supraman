@@ -108,3 +108,88 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         f32::from(first.size.height),
     ))
 }
+
+/// `--selftest-supervise` step e2 (m5/10): another Foreman's parked session. A fake `fm-elsewhere-<hex>-park`
+/// row, blocked on a permission prompt with its cwd in `workspace`'s repo, is added to every snapshot
+/// ([`FleetView::injected`]): over two ticks the panel shows it under that repo, dimmed with "another
+/// Foreman", and the Inbox has no row for it, while this home's own park (`own_park`) is still Blocked there.
+pub async fn foreign_row(
+    view: &Entity<FleetView>,
+    workspace: &str,
+    cwd: &std::path::Path,
+    own_park: &str,
+    hex: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<String> {
+    let name = format!("fm-elsewhere-{hex}-park");
+    let session_id = format!("ffff{hex}-foreign");
+    let json = serde_json::json!([{
+        "id": format!("ffff{hex}"),
+        "sessionId": session_id,
+        "name": name,
+        "cwd": cwd,
+        "kind": "background",
+        "startedAt": foreman_claude::now_ms() - 60_000,
+        "state": "blocked",
+        "status": "waiting",
+        "waitingFor": "permission prompt",
+        "pid": std::process::id(),
+    }]);
+    let rows = foreman_claude::parse(&json.to_string())?;
+    view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
+    let result = check_foreign(view, workspace, &name, &session_id, own_park, cx).await;
+    view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear());
+    result
+}
+
+async fn check_foreign(
+    view: &Entity<FleetView>,
+    workspace: &str,
+    name: &str,
+    session_id: &str,
+    own_park: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<String> {
+    let ticks = view.read_with(cx, |v, _| v.ticks);
+    let started = Instant::now();
+    let row = loop {
+        let row = view.read_with(cx, |v, _| {
+            let tree = v.tree();
+            let ws = tree.workspaces.into_iter().find(|w| w.name == workspace)?;
+            ws.repos.into_iter().flat_map(|r| r.sessions.into_iter().map(move |s| (r.name.clone(), s))).find(|(_, s)| s.session.name == name)
+        });
+        if let Some(row) = row
+            && view.read_with(cx, |v, _| v.ticks >= ticks + 2)
+        {
+            break row;
+        }
+        if started.elapsed() > Duration::from_secs(30) {
+            bail!("{name} not in {workspace}'s tree after two ticks within 30 s");
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    };
+    let (repo, row) = row;
+    if !row.foreign {
+        bail!("{name} under {workspace}/{repo} is not marked as another Foreman's: {:?}", row.health);
+    }
+    let label = format!("foreign-{session_id}");
+    crate::selftest::scrolled_into_view(view, &label, cx).await?;
+    let (needs, own) = view.read_with(cx, |v, _| {
+        (
+            v.needs.iter().filter(|n| n.name == name).count(),
+            v.needs.iter().any(|n| n.name == own_park && n.kind == foreman_supervisor::NeedsKind::Blocked),
+        )
+    });
+    if needs != 0 {
+        bail!("{name}, another Foreman's, raised {needs} Inbox row(s)");
+    }
+    if !own {
+        bail!("this home's own {own_park} is no longer Blocked in the Inbox");
+    }
+    shot("m5-10-another-foreman", cx).await;
+    Ok(format!(
+        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Foreman's, \"another Foreman\" painted, \
+         0 Inbox rows for it over {} ticks; this home's {own_park} still Blocked in the Inbox",
+        view.read_with(cx, |v, _| v.ticks) - ticks
+    ))
+}

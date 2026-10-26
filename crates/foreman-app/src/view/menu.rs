@@ -211,7 +211,7 @@ mod tests {
 
     fn row(json: &str, health: Health) -> SessionRow {
         let session = parse(&format!("[{json}]")).unwrap().remove(0);
-        SessionRow { attachable: fleet::attachable(&session, &health), session, health, hook: None }
+        SessionRow { attachable: fleet::attachable(&session, &health), session, health, hook: None, foreign: false }
     }
 
     #[test]
