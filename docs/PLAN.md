@@ -99,14 +99,20 @@ Variant A is retired (m1/2): `term-spike` builds only `foreman-term`, and nothin
 - Names are the address and the join key: `fm-<workspace>-workspace`, `fm-<workspace>-<repo>`,
   `fm-<workspace>-<repo>-<unit>`, `fm-<workspace>-relay`. The app filters `agents --json --all` by prefix.
 - Every session is launched with `--mcp-config <FOREMAN_HOME>/mcp/workstate-<session name>.json --strict-mcp-config`
-  (m3/2; one file per session, was per role). The file holds the role's token (workspace → controller, repo →
-  orchestrator, unless the role has its own line) and the session's WorkState identity headers
-  (`X-WorkState-Agent: <name>`, `-Launched-By: foreman/<w>`, `-Origin: foreman/<w>[/<repo>]`, `-Cwd`,
-  `-Foreman-Role`; Skills `docs/workstate/11-sessions.md`); no `X-WorkState-Session`, because `--bg` ignores
-  `--session-id` and the uuid is unknown at launch. It is created owner-only (one ACE: the user, full control)
-  before it is filled, and only its path appears in argv and in the daemon's `roster.json`
-  (`LaunchSpec::with_session_token`); a resume re-applies it. M0 found that nested sessions otherwise inherit
-  the user-scope registration — a worker could write evidence as the controller.
+  (m3/2; one file per session, was per role). Since mint/7 the file holds only a per-session `wss_` token
+  (Skills `docs/workstate/14-agent-launch.md` §2): at each launch and resume the supervisor POSTs
+  `/api/agent-sessions` with the role's static token as bearer (workspace → controller, repo → orchestrator,
+  unless the role has its own line) and the session's identity in the body (`name`, `role`, `launchedBy:
+  foreman/<w>`, `origin: foreman/<w>[/<repo>]`, `cwd`, `externalRole`: Foreman's role), always `replace: true`
+  (same row and `sessionId`, old token revoked). The static token never reaches a file or argv; no
+  `X-WorkState-*` headers either (the token's principal carries name and role, the row the rest). The
+  `sessionId` is kept in `<FOREMAN_HOME>/supervisor/<w>.sessions.json`; the claude session uuid is PATCHed once
+  `agents --json` shows it; Stop, `fm unwant` and give-up DELETE (revoke) it and delete the file. A failed mint
+  is a `launch failed` Inbox row with Retry, never a fallback to the static token. The token's 72 h idle window
+  slides on use; a session idle longer gets 401 on `/mcp` until its next resume re-mints. The file is created
+  owner-only (one ACE: the user, full control) before it is filled, and only its path appears in argv and in
+  the daemon's `roster.json` (`LaunchSpec::with_minted_token`); a resume re-reads it. M0 found that nested
+  sessions otherwise inherit the user-scope registration — a worker could write evidence as the controller.
 - Repo sessions start on demand: `fm want <w> <repo> [--prompt-file]` adds `fm-<w>-<repo slug>` (role `repo`,
   cwd = the repo, auto, `bgIsolation:"none"`) to the desired state, `fm unwant` retires it (stopped, never rm),
   `fm roster <w> [--json]` lists the workspace's sessions. Controllers run `fm` themselves: the plugin's `bin/`

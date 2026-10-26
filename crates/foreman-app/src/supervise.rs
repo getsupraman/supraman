@@ -212,7 +212,11 @@ pub struct Supervision {
     plugin_dir: Option<PathBuf>,
     config: LaunchConfig,
     supervisors: BTreeMap<String, Supervisor<Claude, AppTokens>>,
+    /// The last [`NOTICES_KEPT`] supervisor notices (a failed revoke or PATCH), shown until the app restarts.
+    notices: Vec<String>,
 }
+
+pub const NOTICES_KEPT: usize = 5;
 
 /// Foreman's own plugin first, then `settings.toml` `extra_plugin_dirs` in their order.
 pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBuf> {
@@ -233,6 +237,7 @@ impl Supervision {
             plugin_dir,
             config,
             supervisors: BTreeMap::new(),
+            notices: Vec::new(),
         }
     }
 
@@ -277,6 +282,11 @@ impl Supervision {
                 report.needs = tick_all(self.supervisors.values_mut(), observed, settings.max_working, now);
             }
         }
+        for s in self.supervisors.values_mut() {
+            self.notices.extend(s.take_notices());
+        }
+        self.notices.drain(..self.notices.len().saturating_sub(NOTICES_KEPT));
+        report.errors.extend(self.notices.iter().cloned());
         for (workspace, s) in &self.supervisors {
             let names: Vec<String> = s.desired.sessions.iter().map(|w| w.name.clone()).collect();
             for name in &names {

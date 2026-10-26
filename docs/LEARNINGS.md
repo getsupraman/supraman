@@ -1272,3 +1272,55 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   from ~121 MiB, the step-6 shell tab ran and closed before the measurement); `--selftest-supervise` FAIL at step c
   on the first run (the daemon resumed the killed workspace session, not the supervisor — the known model-turn case
   above), PASS on the rerun.
+
+## 2026-10-26 — mint/7 per-session tokens
+
+- **What**: a session whose role has a static WorkState token no longer gets that token in its
+  `<FOREMAN_HOME>/mcp/workstate-<name>.json`. At each launch **and each resume** the supervisor POSTs
+  `{base}/api/agent-sessions` (`base` = the MCP URL's origin) with the static token as bearer and
+  `{name, role (controller/orchestrator), launchedBy, origin, cwd, externalRole (workspace/repo), replace: true}`
+  (Skills `docs/workstate/14-agent-launch.md` §2) and writes only the returned `wss_` token, owner-only as before
+  (`LaunchSpec::with_minted_token`, `foreman_claude::write_mcp_config`). Code: `crates/foreman-supervisor/src/mint.rs`
+  (`Minter` trait, `HttpMinter` on `ureq` 3 without default features — plain HTTP, no proxy, no redirects, 15 s —
+  and `MintedSessions`), wired in `executor.rs` (`mint`, `remint`, `bind_claude_sessions`, `revoke_unwanted`).
+- **Resume re-mints**: `--bg --resume` takes no flag (m2/1) and re-reads the saved `--mcp-config` path, so the
+  supervisor rewrites that same file with a fresh token before the resume. `replace: true` always: the row and
+  `sessionId` stay, the old token is revoked server side.
+- **Headers dropped**: the file carries `Authorization` only. A `wss_` principal carries name and role and the
+  server ignores `X-WorkState-Agent` for it; launcher, origin, cwd and Foreman role are on the row from the mint
+  body. Two sources (headers vs row) could only disagree.
+- **sessionId** per name in `<FOREMAN_HOME>/supervisor/<w>.sessions.json` (`.json`, not `.toml`: `migrate_home`
+  rewrites every `supervisor/*.toml`). No token in it. It survives an app restart, so a Stop after a restart still
+  revokes.
+- **PATCH** `{claudeSessionId}` once per mint, when the name's single live row shows a `sessionId` (the tick already
+  has the `agents --json --all` snapshot). Failed or not, it is not repeated until the next mint; a failure is a notice.
+- **Revoke**: every tick, each minted name that is not (workspace started ∧ still wanted ∧ not given up) is
+  DELETEd and its config file deleted — Stop, `fm unwant` (R14), give-up, removal from the desired state. A 404 is
+  revoked. A failed revoke is a notice (`Supervision` keeps the last 5 among the panel's warnings); the file goes
+  anyway, and the unused token lapses after its idle window.
+- **Failure**: a refused or unreachable mint fails the launch/resume into the existing `launch failed` row with
+  Retry and backoff, detail `cannot mint a WorkState token for <name>: WorkState answered HTTP <status>: <reason>`;
+  nothing is launched and **no fallback** to the static token. `RoleToken`'s and `Minted`'s `Debug` redact the token;
+  `MintError` never carries the bearer.
+- **Expiry**: 72 h idle window, sliding on use (rlarch 2.2.0). A session idle longer gets HTTP 401 on `/mcp`;
+  nothing polls for it — its next resume (or relaunch) re-mints with `replace`. A session that is live but idle past
+  the window and then prompted keeps failing its WorkState calls until it is restarted.
+- **Not covered**: sessions already running when this lands keep their old file (with the static token) until their
+  next resume rewrites it. A workspace removed from the registry drops its supervisor without revoking.
+- Tests (`cargo test -p foreman-supervisor mint`, 15): fake minter — mint body and bearer, only `wss_` in the file
+  and neither token in argv, identity per session, resume replaces on the same `sessionId`, PATCH once per mint,
+  DELETE on Stop / unwant / give-up, failed revoke = notice, persistence across a restart, mint failure = launch
+  failed with Retry and no file; real `HttpMinter` against a `TcpListener` thread (POST/PATCH/DELETE shapes, 409
+  reason, unreachable). `cargo test -p foreman-app mint`: `AppTokens` from a fake `.env` → `HttpMinter` → fake
+  server → config holds the fake `wss_`, DELETE on Stop. Red: returning the static token from `mint` fails 4.
+- **Selftest**: no new `--selftest-supervise` step — it launches real sessions, which would then load an MCP config
+  pointing at a fake server, and the selftests run without `workstate_env`; the app-level test above covers the
+  same path in-process. With no `workstate_env` there is no token, no mint, nothing changes (selftest PASS).
+- **Live check (controller's, needs the real token)**: with `settings.toml` `workstate_env` set, Start a workspace;
+  `<home>/supervisor/<w>.sessions.json` gets a `sessionId`; `<home>/mcp/workstate-fm-<w>-workspace.json` holds a
+  `Bearer wss_…` (check with `Select-String wss_ -Quiet`, do not print it) and not the static token; WorkState's
+  `agent_session` row has name, role, external_role and, after the first poll, the claude session uuid; Stop → the
+  row is revoked and the file is gone.
+- Gate (P: had 12 GB free, built in place): `cargo build --release --workspace` ok; `cargo test --workspace` 323
+  passed (309 + 14), 0 failed; `--selftest` PASS (p95 20.45 ms, max 28.20 ms, 0 > 50 ms; idle 131.2 MiB);
+  `--selftest-supervise` PASS on the first run.
