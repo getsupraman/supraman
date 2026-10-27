@@ -29,6 +29,10 @@ pub struct Settings {
     /// whose `/rlarch:controller` a repo-controller runs). Edited in the file; the app only shows them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
+    /// Start elevated (one UAC prompt per start), so Foreman reaches a claude background service an
+    /// elevated `claude --bg` started (m5/25).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_as_admin: bool,
 }
 
 fn default_max_working() -> usize {
@@ -43,6 +47,7 @@ impl Default for Settings {
             workstate_url: None,
             left_width: None,
             extra_plugin_dirs: Vec::new(),
+            run_as_admin: false,
         }
     }
 }
@@ -91,6 +96,7 @@ mod tests {
             workstate_url: Some("http://127.0.0.1:5290/mcp".into()),
             left_width: Some(512),
             extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
+            run_as_admin: true,
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);

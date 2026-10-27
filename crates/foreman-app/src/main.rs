@@ -13,6 +13,7 @@
 // (a selftest's home has its own), never to a console (m5/22).
 
 mod compose;
+mod elevate;
 mod fleet;
 mod hand;
 mod instance;
@@ -71,10 +72,16 @@ impl Mode {
 const USAGE: &str =
     "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
 
-fn parse_args() -> Mode {
+/// The mode, and for the elevated copy [`elevate::relaunch`] started what it was given.
+fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match args.as_slice() {
+    if let Some(relaunched) = elevate::parse_relaunch(&args) {
+        // SAFETY: no other thread exists yet.
+        unsafe { std::env::set_var("FOREMAN_HOME", &relaunched.home) };
+        return (Mode::App, Some(relaunched));
+    }
+    let mode = match args.as_slice() {
         [] => Mode::App,
         ["--selftest"] => Mode::Selftest,
         ["--selftest-detach", n] if n.parse::<u32>().is_ok_and(|n| n > 0) => {
@@ -87,7 +94,8 @@ fn parse_args() -> Mode {
             eprintln!("unknown arguments {other:?}; {USAGE}");
             std::process::exit(2);
         }
-    }
+    };
+    (mode, None)
 }
 
 /// Variables Foreman must not pass on when it was started from a Claude Code tool shell
@@ -147,7 +155,7 @@ fn main() {
         // SAFETY: no other thread exists yet.
         unsafe { std::env::remove_var(name) };
     }
-    let mode = parse_args();
+    let (mode, relaunched) = parse_args();
     if mode == Mode::App {
         release_own_console();
     }
@@ -158,8 +166,36 @@ fn main() {
     if mode == Mode::App {
         foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
     }
+    // Restarted as administrator from the Inbox: the old instance still holds the home until it quits.
+    if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
+        elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
+    }
     // Before `prepare`: a selftest clears its home, which a running one on the same home still uses.
-    let instance = match home.as_deref().map(instance::acquire) {
+    // First, so a launch that only hands off to a running instance never asks UAC.
+    let mut acquired = home.as_deref().map(instance::acquire);
+    if let Some(home) = home.as_deref()
+        && matches!(acquired, Some(Ok(Acquired::First(_))))
+    {
+        let toggle = mode == Mode::App && elevate::toggle(home);
+        let elevated = foreman_claude::is_elevated();
+        let start = elevate::start(mode == Mode::App, toggle, elevated, relaunched.is_some(), || {
+            // the copy takes the lock
+            acquired = None;
+            elevate::relaunch(home, None)
+        });
+        match start {
+            elevate::Start::Exit => std::process::exit(0),
+            elevate::Start::Run { declined } => {
+                if let Some(why) = declined {
+                    log::warn!("Run as administrator is on, but Foreman runs unelevated: {why}");
+                }
+                if acquired.is_none() {
+                    acquired = Some(instance::acquire(home));
+                }
+            }
+        }
+    }
+    let instance = match acquired {
         Some(Ok(Acquired::First(instance))) => Some(instance),
         Some(Ok(Acquired::Running)) => {
             let home = home.unwrap_or_default();
@@ -191,7 +227,10 @@ fn main() {
     let (commands, mut received) = futures::channel::mpsc::unbounded::<Command>();
     if let Some(instance) = &instance {
         let commands = commands.clone();
-        if let Err(error) = instance.on_open(move || { commands.unbounded_send(Command::Open).ok(); }) {
+        if let Err(error) = instance.on_open(move || {
+            log::info!("a second launch asked for the window");
+            commands.unbounded_send(Command::Open).ok();
+        }) {
             eprintln!("a second launch cannot bring this window forward: {error:#}");
         }
     }

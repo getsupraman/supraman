@@ -49,6 +49,7 @@
 
 mod assign;
 mod cli;
+mod daemon;
 mod error;
 pub mod human;
 mod launch;
@@ -60,6 +61,7 @@ pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, MIN_VERSION, TESTED_VERSION, check_supported, check_version, cli_version,
     list_sessions, no_window, parse_version,
 };
+pub use daemon::{DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, is_elevated, parse_daemon_status};
 pub use error::{ClaudeError, Result};
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{

@@ -41,4 +41,7 @@ pub enum Remedy {
     /// Goes through Retry ([`crate::Supervisor::retry`]): stops the live row `id`; the supervisor then
     /// resumes it with a freshly minted token in its config file.
     Remint { id: String },
+    /// The background service runs as administrator and Foreman does not (m5/25): turn Settings → Run
+    /// Foreman as administrator on and restart elevated.
+    RestartElevated,
 }
