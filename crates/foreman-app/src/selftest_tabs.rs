@@ -18,7 +18,7 @@ use crate::{
 const WITHIN: Duration = Duration::from_secs(10);
 const READY: &str = "fm-keys ready";
 const KEY: &str = "fm-key ";
-const READER: &str = "[Console]::TreatControlCAsInput = $true\n\
+pub(crate) const READER: &str = "[Console]::TreatControlCAsInput = $true\n\
 Write-Host 'fm-keys ready'\n\
 while ($true) { $k = [Console]::ReadKey($true); Write-Host ('fm-key ' + $k.Key + ' ' + [int]$k.Modifiers) }\n";
 
@@ -117,7 +117,7 @@ pub(crate) fn press(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers
     Ok(())
 }
 
-async fn reader(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<Entity<Terminal>> {
+pub(crate) async fn reader(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<Entity<Terminal>> {
     let terminal = wait_for_tab_terminal(view, tab, WITHIN, cx).await?;
     let started = Instant::now();
     while !terminal.read_with(cx, |t, _| t.get_content()).contains(READY) {
@@ -130,7 +130,7 @@ async fn reader(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWindowContext)
 }
 
 /// The reader's key lines once it has printed `count` of them, and a moment later in case more follow.
-async fn keys(terminal: &Entity<Terminal>, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<String>> {
+pub(crate) async fn keys(terminal: &Entity<Terminal>, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<String>> {
     let lines = |cx: &mut AsyncWindowContext| -> Vec<String> {
         let text = terminal.read_with(cx, |t, _| t.get_content());
         text.lines().map(str::trim).filter(|l| l.starts_with(KEY)).map(String::from).collect()

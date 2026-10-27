@@ -80,6 +80,14 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &
     }
 }
 
+/// The branch checked out at `dir`, from the nearest `.git` at or above it (a folder, or a linked
+/// worktree's file); `None` when HEAD is detached or there is no repo.
+pub fn branch_at(dir: &Path) -> Option<String> {
+    let git = dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())?;
+    let git_dir = if git.is_dir() { git } else { linked_git_dir(&git)? };
+    read_branch(&git_dir)
+}
+
 fn read_branch(git_dir: &Path) -> Option<String> {
     let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
     let reference = head.trim().strip_prefix("ref:")?.trim();

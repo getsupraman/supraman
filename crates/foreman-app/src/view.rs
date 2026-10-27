@@ -37,6 +37,7 @@ use crate::hand::{Hands, Launch};
 use crate::settings_window::{self, SettingsView};
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
+use crate::tab_card;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
@@ -49,7 +50,7 @@ mod term;
 pub use manage::{AddDraft, NameKey, Removing};
 pub use menu::{Confirm, ContextMenu, MenuTarget};
 
-gpui::actions!(foreman, [NextTab, PreviousTab, RefreshNow]);
+gpui::actions!(foreman, [NextTab, PreviousTab]);
 
 const KEY_CONTEXT: &str = "FleetView";
 
@@ -61,7 +62,6 @@ pub fn bind_keys(cx: &mut gpui::App) {
         KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-pageup", PreviousTab, Some(KEY_CONTEXT)),
-        KeyBinding::new("f5", RefreshNow, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -159,6 +159,30 @@ pub struct Tab {
     /// Ctrl+=/Ctrl+-/Ctrl+0 and Ctrl+wheel, per tab as in Windows Terminal.
     pub font_size: Pixels,
     pub find: Option<term::Find>,
+    /// What its program named it with OSC 0/2 ([`tab_card::sanitize`]d); the label while there is one.
+    pub program_title: Option<String>,
+    /// The claude session it runs, as its card names it, when the tab was opened for one.
+    pub session: Option<String>,
+    /// It runs `claude` from `+` or a resume in the tab.
+    pub hand: bool,
+    /// Epoch milliseconds.
+    pub opened_at: i64,
+}
+
+impl Tab {
+    /// What its tab shows: the program's title, else its own, and how it ended.
+    pub fn label(&self) -> String {
+        let mut title = self.program_title.clone().unwrap_or_else(|| self.title.clone());
+        if self.exited {
+            title.push_str(" (exited)");
+        }
+        match self.detach {
+            Detach::Pending | Detach::Detaching => title.push_str(" (detaching…)"),
+            Detach::Failed => title.push_str(" (detach failed)"),
+            Detach::None => {}
+        }
+        title
+    }
 }
 
 pub struct FleetView {
@@ -272,6 +296,8 @@ pub struct FleetView {
     pub transcripts_nudge: Arc<AtomicBool>,
     /// Set to poll `claude agents` now instead of at the end of [`REFRESH_EVERY`] (Refresh).
     poll_nudge: Arc<AtomicBool>,
+    /// [`Self::refresh_now`] calls.
+    pub refresh_asks: u64,
     pub stars: Stars,
     /// `<workspace>/<repo>` whose `more…` row was clicked.
     pub closed_expanded: HashSet<String>,
@@ -577,6 +603,7 @@ impl FleetView {
             transcript_scans: 0,
             transcripts_nudge,
             poll_nudge,
+            refresh_asks: 0,
             action_error: stars_notice,
             stars,
             closed_expanded: HashSet::new(),
@@ -649,8 +676,10 @@ impl FleetView {
         .detach();
     }
 
-    /// Polls `claude agents` and scans the transcripts now (m5/28): the action bar's Refresh, F5.
+    /// Polls `claude agents` and scans the transcripts now (m5/28): the action bar's Refresh, and F5 while no
+    /// terminal tab is active (a terminal's program gets its F5).
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        self.refresh_asks += 1;
         self.poll_nudge.store(true, Ordering::SeqCst);
         self.transcripts_nudge.store(true, Ordering::SeqCst);
         cx.notify();
@@ -1128,7 +1157,11 @@ impl FleetView {
         } else {
             // through the `+` launch (m5/27): its own WorkState token, and the shell stays when claude exits
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
-            self.hand_claude(session.cwd.clone(), title, resume, cx)
+            let id = self.hand_claude(session.cwd.clone(), title, resume, cx);
+            if let Some(tab) = self.tab_mut(id) {
+                tab.session = Some(tab_card::session_label(&session.name, sid));
+            }
+            id
         }
     }
 
@@ -1143,6 +1176,9 @@ impl FleetView {
     /// [`Self::new_claude`] running `claude` (pwsh's program and arguments).
     fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
+        if let Some(tab) = self.tab_mut(id) {
+            tab.hand = true;
+        }
         let Some(hands) = self.hands.clone() else {
             self.start_terminal(id, self.claude_shell(&Launch::Plain, &claude), Some(cwd), cx);
             return id;
@@ -1332,6 +1368,10 @@ impl FleetView {
             cwd,
             font_size: term_element::FONT_SIZE,
             find: None,
+            program_title: None,
+            session: None,
+            hand: false,
+            opened_at: now_ms(),
         });
         self.active = Some(id);
         cx.notify();
@@ -1346,6 +1386,36 @@ impl FleetView {
             view.update(cx, |view, cx| view.open_from_inbox(item, cx));
         }
         id
+    }
+
+    /// What `tab`'s hover card says, but its branch; `title` is the label as the tab shows it.
+    pub(crate) fn tab_card(&self, tab: &Tab, title: String) -> tab_card::Card {
+        let (workspace, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.workspaces)).unwrap_or_default();
+        let attached = match &tab.kind {
+            TabKind::Attach { session_id } => Some(self.sessions.iter().find(|s| &s.id == session_id).ok_or(session_id)),
+            _ => None,
+        };
+        let (session, started) = match attached {
+            Some(Ok(s)) => (Some(tab_card::session_label(&s.name, &s.session_id)), s.started_at.or(Some(tab.opened_at))),
+            Some(Err(id)) => (Some(id.clone()), Some(tab.opened_at)),
+            None => (tab.session.clone(), Some(tab.opened_at)),
+        };
+        let kind = match tab.kind {
+            TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
+            TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
+            TabKind::Shell => Some(tab_card::Kind::Shell),
+            TabKind::Work(_) => None,
+        };
+        tab_card::Card {
+            title,
+            workspace,
+            repo,
+            folder: tab.cwd.as_ref().map(|c| c.display().to_string()),
+            branch: None,
+            session,
+            kind,
+            started,
+        }
     }
 
     /// A shell tab in `cwd`.
@@ -1405,6 +1475,10 @@ impl FleetView {
             cwd,
             font_size: term_element::FONT_SIZE,
             find: None,
+            program_title: None,
+            session: None,
+            hand: false,
+            opened_at: now_ms(),
         });
         self.active = Some(id);
         cx.notify();
@@ -1434,8 +1508,15 @@ impl FleetView {
                 match built {
                     Ok(builder) => {
                         let terminal = cx.new(|cx| builder.subscribe(cx));
-                        cx.subscribe(&terminal, move |this, _, event, cx| match event {
+                        cx.subscribe(&terminal, move |this, emitter, event, cx| match event {
                             TerminalEvent::Wakeup | TerminalEvent::TitleChanged => cx.notify(),
+                            TerminalEvent::BreadcrumbsChanged => {
+                                let title = emitter.read(cx).breadcrumb_text.clone();
+                                if let Some(tab) = this.tab_mut(id) {
+                                    tab.program_title = tab_card::sanitize(&title);
+                                }
+                                cx.notify();
+                            }
                             TerminalEvent::CloseTerminal => {
                                 if let Some(tab) = this.tab_mut(id) {
                                     tab.exited = true;
@@ -1676,11 +1757,13 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        let Some(terminal) = self
-            .active
-            .and_then(|id| self.tab(id))
-            .and_then(|t| t.terminal.clone())
-        else {
+        let terminal = self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
+        if k.key == "f5" && !k.modifiers.modified() && terminal.is_none() {
+            self.refresh_now(cx);
+            cx.stop_propagation();
+            return;
+        }
+        let Some(terminal) = terminal else {
             return;
         };
         if let Some(id) = self.active
@@ -1765,15 +1848,7 @@ impl FleetView {
             let id = tab.id;
             let active = self.active == Some(id);
             let close_key = format!("close-tab-{id}");
-            let mut title = tab.title.clone();
-            if tab.exited {
-                title.push_str(" (exited)");
-            }
-            match tab.detach {
-                Detach::Pending | Detach::Detaching => title.push_str(" (detaching…)"),
-                Detach::Failed => title.push_str(" (detach failed)"),
-                Detach::None => {}
-            }
+            let title = tab.label();
             bar = bar.child(
                 div()
                     .id(SharedString::from(format!("tab-{id}")))
@@ -1793,7 +1868,12 @@ impl FleetView {
                     .when(active, |d| {
                         d.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(colors.border_focused))
                     })
-                    .child(crate::clipped::clipped(format!("tab-title-{id}"), title, false).max_w(px(280.)))
+                    .child(crate::clipped::clipped_with(format!("tab-title-{id}"), title.clone(), false, false).max_w(px(280.)))
+                    .tooltip({
+                        let card = self.tab_card(tab, title);
+                        let cwd = tab.cwd.clone();
+                        tab_card::tooltip(move || tab_card::Card { branch: cwd.as_deref().and_then(tab_card::branch_at), ..card.clone() })
+                    })
                     .child({
                         let group = SharedString::from(close_key.clone());
                         div()
@@ -1969,7 +2049,6 @@ impl Render for FleetView {
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(|this, _: &NextTab, _, cx| this.cycle_tab(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
-            .on_action(cx.listener(|this, _: &RefreshNow, _, cx| this.refresh_now(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .flex_col()
             .child(crate::titlebar::render(

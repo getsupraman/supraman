@@ -1,19 +1,21 @@
-//! `--selftest` step 7i (m5/28): a closed interactive session offers resume at once, and Refresh (the action bar's
+//! `--selftest` step 7j (m5/28): a closed interactive session offers resume at once, and Refresh (the action bar's
 //! button and F5) rescans now. [`ENDING`] is injected as a live interactive session in the gate's main repo, its pid
 //! a windowless `ping` of the selftest's own. Right after a poll the ping is killed and the row taken out of the
 //! `claude agents` snapshot with its transcript written to the fake claude dir (as claude leaves it when its terminal
-//! closes): the time until its closed row paints resume is measured, and must stay under [`CLOSE_TO_RESUME`]. Then, each right after a poll and a scan finished, a transcript appears for [`FRESH`]: the
-//! Refresh button, and F5 for a second one ([`FRESH_KEY`]), must poll and scan again within [`REFRESHED`], well
-//! before [`REFRESH_EVERY`] / [`TRANSCRIPTS_EVERY`] would.
+//! closes): the time until its closed row paints resume is measured, and must stay under [`CLOSE_TO_RESUME`]. Then,
+//! each right after a poll and a scan finished, a transcript appears for [`FRESH`]: the Refresh button, and F5 with a
+//! Work tab active for a second one ([`FRESH_KEY`]), must poll and scan again within [`REFRESHED`], well before
+//! [`REFRESH_EVERY`] / [`TRANSCRIPTS_EVERY`] would. Last, F5 with a shell tab active reaches its program (a pwsh key
+//! reader prints `F5 0`) and refreshes nothing.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use anyhow::bail;
+use anyhow::{Context as _, bail};
 use gpui::{AsyncWindowContext, Entity, Modifiers};
 
 use crate::{
-    selftest::{click, sleep},
+    selftest::{click, hex6, sleep},
     selftest_closed::{claude_dir, transcript},
     view::{FleetView, REFRESH_EVERY, TRANSCRIPTS_EVERY},
 };
@@ -65,10 +67,14 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let mut process = foreman_claude::no_window(std::process::Command::new("ping").args(["-n", "120", "127.0.0.1"]))
         .stdout(std::process::Stdio::null())
         .spawn()?;
+    let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
+    view.update(cx, |v, cx| earlier.into_iter().for_each(|id| v.close_tab(id, cx)));
     let result = check(view, home, &mut process, cx).await;
     process.kill().ok();
     process.wait().ok();
+    let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| {
+        mine.into_iter().for_each(|id| v.close_tab(id, cx));
         v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
         v.show_stopped = shown;
         cx.notify();
@@ -106,7 +112,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
     until(view, cx, WITHIN, "resume on the closed row", |v| row(v, ENDING).filter(|r| r.1)).await?;
     let resume = gone.elapsed();
     println!(
-        "step 7i: close → resume {} ms (left the snapshot {} ms, closed row {} ms)",
+        "step 7j: close → resume {} ms (left the snapshot {} ms, closed row {} ms)",
         resume.as_millis(),
         left.as_millis(),
         closed.as_millis()
@@ -116,10 +122,13 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
     }
 
     let button = refreshed(view, home, &main, FRESH, cx, |view, cx| Box::pin(click(view, "refresh", cx))).await?;
+    let work = view.update(cx, |v, cx| v.open_work(crate::selftest_work::WORKSPACE, cx));
+    click(view, &format!("tab-{work}"), cx).await?;
     let key = refreshed(view, home, &main, FRESH_KEY, cx, |_, cx| Box::pin(async move { crate::selftest_tabs::press(cx, "f5", Modifiers::default()) })).await?;
+    let in_terminal = f5_in_a_terminal(view, cx).await?;
     Ok(format!(
         "{ENDING} ended (out of the snapshot after {} ms): closed row at {} ms, resume at {} ms; \
-         Refresh button polled and scanned in {} ms, F5 in {} ms (every {} s / {} s otherwise)",
+         Refresh button polled and scanned in {} ms, F5 on a Work tab in {} ms (every {} s / {} s otherwise); {in_terminal}",
         left.as_millis(),
         closed.as_millis(),
         resume.as_millis(),
@@ -148,4 +157,39 @@ async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str,
     })
     .await?;
     Ok(asked.elapsed())
+}
+
+/// F5 with a shell tab active goes to its program, and [`FleetView::refresh_now`] is not called.
+async fn f5_in_a_terminal(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let script = std::env::temp_dir().join(format!("fm-selftest-f5-{}.ps1", hex6()));
+    std::fs::write(&script, crate::selftest_tabs::READER).context("the key reader script")?;
+    let result = f5_reaches(view, &script, cx).await;
+    std::fs::remove_file(&script).ok();
+    result
+}
+
+async fn f5_reaches(view: &Entity<FleetView>, script: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let args = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"].map(String::from).into_iter();
+    let args: Vec<String> = args.chain([script.display().to_string()]).collect();
+    let tab = cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            let saved = std::mem::replace(&mut v.shell_args, args);
+            let tab = v.open_shell_in(std::env::temp_dir(), "keys F5".into(), window, cx);
+            v.shell_args = saved;
+            tab
+        })
+    })?;
+    let terminal = crate::selftest_tabs::reader(view, tab, cx).await?;
+    click(view, &format!("tab-{tab}"), cx).await?;
+    let asks = view.read_with(cx, |v, _| v.refresh_asks);
+    crate::selftest_tabs::press(cx, "f5", Modifiers::default())?;
+    let got = crate::selftest_tabs::keys(&terminal, 1, cx).await.context("the key reader")?;
+    if got != ["fm-key F5 0"] {
+        bail!("F5 in the shell tab: the reader got {got:?}, expected only F5");
+    }
+    let after = view.read_with(cx, |v, _| v.refresh_asks);
+    if after != asks {
+        bail!("F5 in the shell tab also refreshed ({asks} → {after} refresh_now calls)");
+    }
+    Ok(format!("F5 in a shell tab reached its program ({got:?}) and refreshed nothing"))
 }

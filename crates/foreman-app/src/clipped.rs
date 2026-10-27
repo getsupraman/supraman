@@ -21,6 +21,11 @@ pub fn cut_at(key: &str) -> Option<Bounds<Pixels>> {
 /// `text` on one line, cut with an ellipsis (`middle`: in the middle, as a path reads best) when it does
 /// not fit, with the tooltip once it has been painted cut. Give it `min_w_0` / `flex_1` as a row needs.
 pub fn clipped(key: impl Into<SharedString>, text: impl Into<SharedString>, middle: bool) -> Stateful<Div> {
+    clipped_with(key, text, middle, true)
+}
+
+/// [`clipped`], without its tooltip when `own_tooltip` is false: its parent shows the full text another way.
+pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>, middle: bool, own_tooltip: bool) -> Stateful<Div> {
     let (key, text) = (key.into(), text.into());
     let label = div()
         .id(ElementId::Name(key.clone()))
@@ -60,5 +65,5 @@ pub fn clipped(key: impl Into<SharedString>, text: impl Into<SharedString>, midd
         .size_full()
     };
     let label = label.child(text.clone()).child(measure);
-    if tooltip { label.tooltip(Tooltip::text(text)) } else { label }
+    if tooltip && own_tooltip { label.tooltip(Tooltip::text(text)) } else { label }
 }

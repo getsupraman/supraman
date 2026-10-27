@@ -312,7 +312,7 @@ impl FleetView {
                 })),
             )
             .child(
-                icon_button(hits, "refresh", Icon::Refresh, "Refresh: read the running sessions and the closed ones' transcripts now (F5)", false, cx)
+                icon_button(hits, "refresh", Icon::Refresh, "Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)", false, cx)
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
             )
             .child(div().flex_1())

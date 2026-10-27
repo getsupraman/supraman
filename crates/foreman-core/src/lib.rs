@@ -26,6 +26,6 @@ pub use relay::{
     clear_ready, ensure_relay_dirs, inbox_dir, mark_answered, read_answered,
     outbox_dir, read_outbox, relay_dir, relay_ready, send, tell,
 };
-pub use scan::{DEFAULT_DEPTH, scan};
+pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{DEFAULT_MAX_WORKING, DEFAULT_WORKSTATE_URL, Settings};
 pub use slug::{slugify, validate_name};
