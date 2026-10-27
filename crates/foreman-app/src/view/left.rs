@@ -12,7 +12,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::{AddDraft, Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use super::{AddDraft, Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
@@ -473,9 +473,6 @@ impl FleetView {
                 colors.element_background,
             ));
         }
-        if let Some(info) = &self.action_info {
-            notices.push(notice(info.clone(), status.success, status.success.opacity(0.12)));
-        }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.render_add(cx));
         if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
@@ -705,8 +702,39 @@ impl FleetView {
             }
         }
 
+        let toast = self.toast.as_ref().map(|t| {
+            div()
+                .id("toast")
+                .absolute()
+                .bottom_3()
+                .left_3()
+                .right_3()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .relative()
+                        .max_w_full()
+                        .px_3()
+                        .py_1()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(status.success.opacity(0.5))
+                        .bg(colors.elevated_surface_background)
+                        .shadow_md()
+                        .text_sm()
+                        .text_color(colors.text)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(SharedString::from(format!("✓ {}", t.text)))
+                        .child(hit_target(&self.hits, "toast".into())),
+                )
+        });
+
         div()
             .id("left-panel")
+            .relative()
             .flex()
             .flex_col()
             .w(self.left_width)
@@ -738,6 +766,7 @@ impl FleetView {
                 )
             })
             .child(body)
+            .children(toast)
             .into_any_element()
     }
 
@@ -1316,6 +1345,12 @@ impl FleetView {
                         })),
                 )
             })
+            .when_some(self.session_tab(s).filter(|&id| self.active != Some(id)), |d, tab| {
+                d.child(
+                    pill(&self.hits, format!("tab-link-{}", s.id), "tab", cx)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(tab, cx))),
+                )
+            })
             .when(row.attachable, |d| {
                 let key = format!("attach-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
@@ -1328,8 +1363,8 @@ impl FleetView {
             });
 
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
-        // the row whose attach tab is the active one
-        let shown = self.active.and_then(|id| self.tab(id)).is_some_and(|t| matches!(&t.kind, TabKind::Attach { session_id } if *session_id == s.id));
+        // the row the active tab runs (m5/33)
+        let shown = self.is_marked(s);
         div()
             .id(SharedString::from(format!("session-{}", s.id)))
             .relative()
@@ -1380,6 +1415,7 @@ impl FleetView {
                 d.child(clipped(format!("hook-{}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}", s.session_id)))
+            .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}", s.session_id))))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {

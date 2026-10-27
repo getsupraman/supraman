@@ -110,8 +110,16 @@ pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
 }
 
 /// `resumable`: [`FleetView::resumable`]; `claimed`: the WorkState item the session holds a claim on, as an
-/// open Work tab knows it.
-pub fn session_items(workspace: &str, repo: &str, row: &SessionRow, resumable: bool, claimed: Option<String>) -> Vec<MenuItem> {
+/// open Work tab knows it; `send_name`: what SendMessage takes for it ([`foreman_claude::peer::send_name`]),
+/// which only a running session has.
+pub fn session_items(
+    workspace: &str,
+    repo: &str,
+    row: &SessionRow,
+    resumable: bool,
+    claimed: Option<String>,
+    send_name: Option<String>,
+) -> Vec<MenuItem> {
     let s = &row.session;
     let (w, r) = (workspace.to_string(), repo.to_string());
     let mut items = Vec::new();
@@ -123,6 +131,9 @@ pub fn session_items(workspace: &str, repo: &str, row: &SessionRow, resumable: b
     if fleet::is_alive(&row.health) && s.kind == Kind::Background && !s.id.is_empty() {
         let label = if is_foremans(s) { "Stop" } else { "Stop…" };
         items.push(item("stop-session", label, MenuAction::StopSession(s.clone())));
+    }
+    if let Some(name) = send_name {
+        items.push(item("copy-send-name", "Copy SendMessage name", MenuAction::Copy(name)));
     }
     if !s.name.is_empty() {
         items.push(item("copy-name", "Copy name", MenuAction::Copy(s.name.clone())));
@@ -244,24 +255,34 @@ mod tests {
     #[test]
     fn session_menu_asks_before_stopping_a_session_foreman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
-        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()));
+        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None);
         assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star"]);
         assert_eq!(items[1].label, "Stop…");
         assert_eq!(items[3].action, MenuAction::Copy("aaaa0001".into()));
 
         let fm = live.replace("\"mine\"", "\"fm-demo-alpha\"");
-        assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None)[1].label, "Stop");
+        assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None, None)[1].label, "Stop");
 
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-x","name":"","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None)), ["resume", "copy-id", "star"]);
+        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None)), ["resume", "copy-id", "star"]);
 
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
-        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None);
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None);
         assert_eq!(keys(&items), ["copy-name", "copy-id", "star"], "an interactive session is neither attached nor stopped from here");
         assert_eq!(items[1].action, MenuAction::Copy("bbbb0005".into()));
         assert_eq!(items[2].action, MenuAction::ToggleStar("bbbb0005-x".into()));
         let mut starred = row(interactive, Health::Idle);
         starred.starred = true;
-        assert_eq!(session_items("demo", "Alpha", &starred, false, None)[2].label, "Unstar");
+        assert_eq!(session_items("demo", "Alpha", &starred, false, None, None)[2].label, "Unstar");
+    }
+
+    #[test]
+    fn a_live_session_offers_its_sendmessage_name_beside_name_and_id() {
+        let interactive = r#"{"sessionId":"bbbb0005-x","name":"Fix the tree","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()));
+        assert_eq!(keys(&items), ["copy-send-name", "copy-name", "copy-id", "star"]);
+        assert_eq!(items[0].label, "Copy SendMessage name");
+        assert_eq!(items[0].action, MenuAction::Copy("twin [d923d7]".into()));
+        assert_eq!(items[1].action, MenuAction::Copy("Fix the tree".into()));
     }
 }

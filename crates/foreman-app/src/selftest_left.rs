@@ -268,12 +268,6 @@ fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
 /// offsets, and at each the last Inbox row's painted bounds and the Inbox's own area meet no tree row's
 /// painted bounds: the tree clips to its own area.
 pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    // the Removed… line of step 7b would sit between them
-    view.update(cx, |v, cx| {
-        v.action_info = None;
-        cx.notify();
-    });
-    sleep(cx, Duration::from_millis(200)).await;
     let inbox = until(view, cx, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
     let tree = until(view, cx, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
     if f32::from(tree.top() - inbox.bottom()) > 20. {

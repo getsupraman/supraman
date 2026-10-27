@@ -133,6 +133,11 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
         bail!("the name's caret was painted lit {lit} and unlit {unlit} times in {} ms: it does not blink", started.elapsed().as_millis());
     }
     post_keys(&["end", "backspace", "backspace", "backspace", "a", "d", "d", "e", "d"], cx).await?;
+    // the WM_CHARs TranslateMessage makes of the posted keys can trail the 150 ms under load
+    let typed = Instant::now();
+    while name(cx) != Some((ADDED.to_string(), ADDED.len())) && typed.elapsed() < Duration::from_secs(2) {
+        sleep(cx, Duration::from_millis(50)).await;
+    }
     if name(cx) != Some((ADDED.to_string(), ADDED.len())) {
         bail!("posted End, 3 Backspace and `added` left (name, caret) {:?}, expected ({ADDED}, {})", name(cx), ADDED.len());
     }
