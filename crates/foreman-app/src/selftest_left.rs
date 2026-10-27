@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Square icon buttons, left to right as painted.
-const ICONS: [&str; 4] = ["add-workspace", "expand-all", "collapse-all", "bar-settings"];
+const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refresh", "bar-settings"];
 const WITHIN: Duration = Duration::from_secs(5);
 
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {

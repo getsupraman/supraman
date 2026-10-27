@@ -16,6 +16,7 @@ pub enum Icon {
     FolderAdd,
     Minus,
     Plus,
+    Refresh,
     Settings,
     Star,
     StarFilled,
@@ -24,7 +25,7 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 14] = [
+    const ALL: [Icon; 15] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -35,6 +36,7 @@ impl Icon {
         Icon::FolderAdd,
         Icon::Minus,
         Icon::Plus,
+        Icon::Refresh,
         Icon::Settings,
         Icon::Star,
         Icon::StarFilled,
@@ -53,6 +55,7 @@ impl Icon {
             Icon::FolderAdd => include_bytes!("../../assets/icons/folder_add.svg"),
             Icon::Minus => include_bytes!("../../assets/icons/dash.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
+            Icon::Refresh => include_bytes!("../../assets/icons/refresh.svg"),
             Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
             Icon::Star => include_bytes!("../../assets/icons/star.svg"),
             Icon::StarFilled => include_bytes!("../../assets/icons/star_filled.svg"),

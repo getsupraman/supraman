@@ -2272,3 +2272,31 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   and showed `selftest-` — m5/26's step, a read-before-dispatch race, not code m5/32 touches), then 5 of 5 PASS;
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this worktree left (4 `fm-selftest-c5886c-*` rows with
   cwd in the main checkout are another run's, not touched).
+
+## 2026-10-27 — m5/28 closed sessions show up at once
+
+- **Where the 30 s went.** `claude agents --json --all` drops a killed interactive session at once (probe: 920 ms
+  after the kill, including the ~550 ms the list call itself takes). Foreman then waited three times: the 2 s poll,
+  the 10 s transcript scan (the row was gone from the tree until the scan read its transcript), and `RESUME_GRACE_MS`,
+  30 s after it was last seen alive. Step 7j measured close → resume **30.8 s** before (out of the snapshot 2.5 s,
+  closed row 8.2 s), **2.5 s** with the grace for bg only and a scan nudged when an interactive row leaves the
+  snapshot, and **1.2 s** with the pid watch. Why closing Foreman's own tab felt quicker was not measured.
+- Rules now: `view::offers_resume` keeps the grace only for `Kind::Background` (the daemon respawns those; an
+  interactive one is never respawned). Unit test `only_a_background_session_waits_out_the_grace_before_resume`.
+  `apply` nudges the transcript scan when an interactive session leaves the snapshot. Every 250 ms of the poll wait,
+  the pids of live interactive sessions are checked (`process_alive`), and one that was alive and has ended triggers
+  a poll at once. A pid this app cannot open is never watched, so it costs nothing. Refresh (action bar ↻, and F5
+  in `key_down` only while the active tab has no terminal, because programs in a terminal need F5 (mc, debuggers,
+  TUIs) and every key goes to the active terminal tab) sets both nudges. Step 7j: the ending session is injected with a windowless `ping` as its pid,
+  killed right after a poll, and must offer resume within 2.3 s (0.9–1.7 s measured). A plain poll takes `REFRESH_EVERY` plus
+  `claude agents` (≥ 2.5 s), so it cannot pass (red: pid watch off → 2.9 s, FAIL). Refresh and F5 with a Work tab active must poll and scan within 1.5 s of being triggered
+  right after both ran. F5 with a shell tab active must reach its pwsh key reader (`F5 0`) and leave
+  `refresh_asks` unchanged.
+- **Probing real claude.** `Start-Process claude` / `conhost claude` opened a visible console on René's desktop (do not do
+  this). The probe also inherited `CLAUDE_CODE_CHILD_SESSION` from this session: claude then says transcript saving
+  is off. Those sessions were never listed in `claude agents` (4 tries, 30–60 s each). Whether the marker or the
+  console was the cause was not separated. A headless probe works:
+  `ProcessStartInfo` with `UseShellExecute=false`, `CreateNoWindow=true`, and `CLAUDE_CODE_CHILD_SESSION` removed
+  from its environment, in a trusted cwd (the worktree's untrusted folder prompt also blocks it), named `fm-selftest-…`,
+  and killed by its pid.
+

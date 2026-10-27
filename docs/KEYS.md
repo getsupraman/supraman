@@ -11,6 +11,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Tab, Ctrl+PgDn | next tab |
 | Ctrl+Shift+Tab, Ctrl+PgUp | previous tab |
 | Ctrl+, | settings |
+| F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
 
 ## Terminal tab
 

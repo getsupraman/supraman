@@ -88,8 +88,9 @@ const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
 const MIN_LEFT_WIDTH: Pixels = px(280.);
 const MIN_RIGHT_WIDTH: Pixels = px(320.);
-/// A session the daemon may still respawn by itself (it does ~12 s after a death mid-turn) is not
-/// offered for resume: two resumes of one transcript run as two processes (m2/4, R13).
+/// A background session the daemon may still respawn by itself (it does ~12 s after a death mid-turn) is
+/// not offered for resume: two resumes of one transcript run as two processes (m2/4, R13). An interactive
+/// one is never respawned, so it is offered once its process is gone (m5/28).
 const RESUME_GRACE_MS: i64 = 30_000;
 /// The concurrency stepper's range; 0 pauses every launch and resume.
 pub const MAX_WORKING_LIMIT: usize = 20;
@@ -291,13 +292,26 @@ pub struct FleetView {
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     /// Transcript scans finished.
     pub transcript_scans: u64,
-    /// Set to scan the transcripts again now (a star, the selftest).
+    /// Set to scan the transcripts again now (a star, a closed interactive session, Refresh, the selftest).
     pub transcripts_nudge: Arc<AtomicBool>,
+    /// Set to poll `claude agents` now instead of at the end of [`REFRESH_EVERY`] (Refresh).
+    poll_nudge: Arc<AtomicBool>,
+    /// [`Self::refresh_now`] calls.
+    pub refresh_asks: u64,
     pub stars: Stars,
     /// `<workspace>/<repo>` whose `more…` row was clicked.
     pub closed_expanded: HashSet<String>,
     /// How a tab's pwsh calls claude for `+` and resume: `claude`, or the selftest's `& '<fake>'`.
     pub claude_command: String,
+}
+
+/// A session with no process, not the supervisor's (`fm-`: Start resumes it); a background one only when
+/// this app has not seen it alive in the last [`RESUME_GRACE_MS`], an interactive one at once.
+pub fn offers_resume(s: &Session, health: &foreman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
+    !fleet::is_alive(health)
+        && !s.session_id.is_empty()
+        && !s.name.starts_with("fm-")
+        && (s.kind != foreman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
 }
 
 /// What the fleet/terminal divider drags.
@@ -434,6 +448,8 @@ impl FleetView {
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
         let poll_hold: Arc<PollHold> = Arc::default();
+        let poll_nudge = Arc::new(AtomicBool::new(false));
+        let woken = poll_nudge.clone();
         let mut poller = Poller {
             home: home.clone(),
             events: None,
@@ -478,17 +494,35 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
+                    let pids: Vec<u32> = this
+                        .sessions
+                        .iter()
+                        .filter(|s| s.kind == foreman_claude::Kind::Interactive)
+                        .filter_map(|s| s.pid)
+                        .collect();
                     if !this.removing.is_empty() {
                         this.finish_removals(cx);
                     }
                     let names = this.workspaces.iter().map(|w| w.name.clone()).collect();
                     this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(names, cx));
                     cx.notify();
+                    pids
                 });
-                if alive.is_err() {
+                let Ok(pids) = alive else {
                     return;
+                };
+                // an interactive session closed outside Foreman: poll when its process ends (m5/28), not at the
+                // end of the wait; a pid this app cannot open is never watched
+                let watched: Vec<u32> = pids.into_iter().filter(|&pid| process_alive(pid)).collect();
+                let next = Instant::now() + REFRESH_EVERY;
+                let mut slices = 0u32;
+                while Instant::now() < next && !woken.swap(false, Ordering::SeqCst) {
+                    executor.timer(Duration::from_millis(50)).await;
+                    slices += 1;
+                    if slices % 5 == 0 && watched.iter().any(|&pid| !process_alive(pid)) {
+                        break;
+                    }
                 }
-                executor.timer(REFRESH_EVERY).await;
             }
         })
         .detach();
@@ -568,6 +602,8 @@ impl FleetView {
             closed_repos: StdHashMap::new(),
             transcript_scans: 0,
             transcripts_nudge,
+            poll_nudge,
+            refresh_asks: 0,
             action_error: stars_notice,
             stars,
             closed_expanded: HashSet::new(),
@@ -638,6 +674,15 @@ impl FleetView {
             }
         })
         .detach();
+    }
+
+    /// Polls `claude agents` and scans the transcripts now (m5/28): the action bar's Refresh, and F5 while no
+    /// terminal tab is active (a terminal's program gets its F5).
+    pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        self.refresh_asks += 1;
+        self.poll_nudge.store(true, Ordering::SeqCst);
+        self.transcripts_nudge.store(true, Ordering::SeqCst);
+        cx.notify();
     }
 
     /// Stars or unstars a session (m5/27); a starred one stays in the tree, stopped or closed.
@@ -762,6 +807,13 @@ impl FleetView {
         match refresh.sessions {
             Some(Ok(sessions)) => {
                 let now = now_ms();
+                // an interactive session leaves `claude agents` when it exits; its transcript makes it a closed row
+                let ended = self.sessions.iter().any(|old| {
+                    old.kind == foreman_claude::Kind::Interactive && !sessions.iter().any(|s| s.session_id == old.session_id)
+                });
+                if ended {
+                    self.transcripts_nudge.store(true, Ordering::SeqCst);
+                }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
                         self.last_alive.insert(s.session_id.clone(), now);
@@ -1074,17 +1126,9 @@ impl FleetView {
         }
     }
 
-    /// Whether [`Self::resume`] is offered: a session with no process that this app has not seen
-    /// alive in the last [`RESUME_GRACE_MS`]. `fm-` sessions are the supervisor's (Start resumes).
+    /// Whether [`Self::resume`] is offered: see [`offers_resume`].
     pub fn resumable(&self, row: &SessionRow) -> bool {
-        let s = &row.session;
-        !fleet::is_alive(&row.health)
-            && !s.session_id.is_empty()
-            && !s.name.starts_with("fm-")
-            && self
-                .last_alive
-                .get(&s.session_id)
-                .is_none_or(|t| now_ms() - t > RESUME_GRACE_MS)
+        offers_resume(&row.session, &row.health, self.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
 
     /// A background session wakes in the background (`claude --bg --resume`, no other flag: the
@@ -1712,11 +1756,13 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        let Some(terminal) = self
-            .active
-            .and_then(|id| self.tab(id))
-            .and_then(|t| t.terminal.clone())
-        else {
+        let terminal = self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone());
+        if k.key == "f5" && !k.modifiers.modified() && terminal.is_none() {
+            self.refresh_now(cx);
+            cx.stop_propagation();
+            return;
+        }
+        let Some(terminal) = terminal else {
             return;
         };
         if let Some(id) = self.active
@@ -2117,5 +2163,34 @@ mod tests {
         assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
         assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
         assert_eq!(cycled(0, None, 1), None);
+    }
+
+    #[test]
+    fn only_a_background_session_waits_out_the_grace_before_resume() {
+        let session = |kind, name: &str| Session {
+            id: "abcd0001".into(),
+            session_id: "abcd0001-0000".into(),
+            name: name.into(),
+            cwd: PathBuf::from(r"C:\demo"),
+            kind,
+            state: Some(foreman_claude::SessionState::Stopped),
+            status: None,
+            waiting_for: None,
+            pid: None,
+            started_at: None,
+        };
+        let (gone, live) = (foreman_claude::Health::Stopped, foreman_claude::Health::Idle);
+        let now = 1_000_000;
+        let just_seen = Some(now - 1_000);
+        let interactive = session(foreman_claude::Kind::Interactive, "3cx-bug-fixer");
+        assert!(offers_resume(&interactive, &gone, just_seen, now), "closed a second ago, never respawned: at once");
+        assert!(offers_resume(&interactive, &gone, None, now), "only ever seen in its transcript");
+        assert!(!offers_resume(&interactive, &live, just_seen, now), "still running");
+        let bg = session(foreman_claude::Kind::Background, "worker");
+        assert!(!offers_resume(&bg, &gone, just_seen, now), "the daemon may still respawn it");
+        assert!(!offers_resume(&bg, &gone, Some(now - RESUME_GRACE_MS), now), "the grace's last millisecond");
+        assert!(offers_resume(&bg, &gone, Some(now - RESUME_GRACE_MS - 1), now), "past the grace");
+        assert!(offers_resume(&bg, &gone, None, now), "never seen alive here");
+        assert!(!offers_resume(&session(foreman_claude::Kind::Interactive, "fm-alpha-workspace"), &gone, None, now), "the supervisor's");
     }
 }
