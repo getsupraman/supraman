@@ -717,6 +717,9 @@ enum InternalEvent {
     Scroll(Scroll),
     ScrollToPoint(Point),
     SetSelection(Option<Selection>),
+    /// Anchors a selection at a position, resolved against the grid as it is when processed,
+    /// as `UpdateSelection` is: output since the last frame may have moved `display_offset`.
+    BeginSelection(SelectionType, GpuiPoint<Pixels>),
     UpdateSelection(GpuiPoint<Pixels>),
     FindHyperlink(GpuiPoint<Pixels>, bool),
     ProcessHyperlink(HyperlinkMatch, bool),
@@ -1751,6 +1754,15 @@ impl Terminal {
                 }
                 cx.emit(Event::SelectionsChanged)
             }
+            InternalEvent::BeginSelection(selection_type, position) => {
+                let (point, side) = grid_point_and_side(
+                    *position,
+                    self.last_content.terminal_bounds,
+                    display_offset(term),
+                );
+                let selection = Some(Selection::new(*selection_type, point, side));
+                self.process_terminal_event(&InternalEvent::SetSelection(selection), term, window, cx);
+            }
             InternalEvent::UpdateSelection(position) => {
                 trace!("Updating selection: position={position:?}");
                 let (point, side) = grid_point_and_side(
@@ -2007,6 +2019,12 @@ impl Terminal {
 
     pub fn total_lines(&self) -> usize {
         total_lines(&self.term.lock_unfair())
+    }
+
+    /// `(display_offset, total_lines)` of the grid now; `last_content` has them as of the last frame.
+    pub fn grid_extent(&self) -> (usize, usize) {
+        let term = self.term.lock_unfair();
+        (display_offset(&term), total_lines(&term))
     }
 
     pub fn viewport_lines(&self) -> usize {
@@ -2614,14 +2632,8 @@ impl Terminal {
 
     pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
-        let (point, side) = grid_point_and_side(
-            position,
-            self.last_content.terminal_bounds,
-            self.last_content.display_offset,
-        );
-        let selection = Selection::new(SelectionType::Semantic, point, side);
         self.events
-            .push_back(InternalEvent::SetSelection(Some(selection)));
+            .push_back(InternalEvent::BeginSelection(SelectionType::Semantic, position));
     }
 
     pub fn mouse_drag(
@@ -2726,12 +2738,6 @@ impl Terminal {
             match e.button {
                 MouseButton::Left => {
                     self.mouse_down_position = Some(e.position);
-                    let (point, side) = grid_point_and_side(
-                        position,
-                        self.last_content.terminal_bounds,
-                        self.last_content.display_offset,
-                    );
-
                     let selection_type = match e.click_count {
                         0 => return, //This is a release
                         1 if e.modifiers.alt => Some(SelectionType::Block),
@@ -2750,19 +2756,17 @@ impl Terminal {
                             // With no selection yet, Shift is the escape hatch for
                             // selecting text while an app has mouse tracking enabled,
                             // so anchor a selection here for the drag to extend.
-                            self.events.push_back(InternalEvent::SetSelection(Some(
-                                Selection::new(SelectionType::Simple, point, side),
-                            )));
+                            self.events.push_back(InternalEvent::BeginSelection(
+                                SelectionType::Simple,
+                                position,
+                            ));
                         }
                         return;
                     }
 
-                    let selection = selection_type
-                        .map(|selection_type| Selection::new(selection_type, point, side));
-
-                    if let Some(selection) = selection {
+                    if let Some(selection_type) = selection_type {
                         self.events
-                            .push_back(InternalEvent::SetSelection(Some(selection)));
+                            .push_back(InternalEvent::BeginSelection(selection_type, position));
                     }
                 }
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -4042,6 +4046,50 @@ mod tests {
         });
     }
 
+    /// Scrolled back, output that arrives after the last frame bumps `display_offset` so the view
+    /// stays put (m5/24). A drag dispatched before the next frame must anchor on the row the
+    /// pointer is over, as its head does, not one line below it.
+    #[gpui::test]
+    async fn test_drag_anchors_on_the_shown_row_when_output_arrives_scrolled_back(cx: &mut TestAppContext) {
+        let mut output = Vec::new();
+        for line in 0..80 {
+            output.extend_from_slice(format!("scrollback line {line}\r\n").as_bytes());
+        }
+        let (terminal, cx) = init_terminal_test_with_window(cx, &output);
+        cx.run_until_parked();
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            terminal.sync(window, cx);
+            terminal.scroll_up_by(3);
+            terminal.sync(window, cx);
+            assert_eq!(terminal.last_content.display_offset, 3);
+            let row = 2;
+            let shown: String = terminal
+                .last_content
+                .cells
+                .iter()
+                .filter(|c| c.point.line + 3 == row)
+                .map(|c| c.cell.character())
+                .collect::<String>()
+                .trim_end()
+                .to_string();
+            assert!(shown.starts_with("scrollback line "), "row {row} shows {shown:?}");
+
+            terminal.write_output(b"more output\r\n", cx);
+            assert_eq!(display_offset(&terminal.term.lock()), 4, "output must not move the view");
+
+            let bounds = terminal.last_content.terminal_bounds;
+            let y = bounds.line_height * (row as f32 + 0.5);
+            let from = point(bounds.cell_width * 0.25, y);
+            let to = point(bounds.cell_width * (shown.len() as f32 - 0.25), y);
+            left_mouse_down_at(terminal, from, cx);
+            left_mouse_drag_to(terminal, to, cx);
+            left_mouse_up_at(terminal, to, cx);
+            terminal.sync(window, cx);
+            assert_eq!(terminal.last_content.selection_text.as_deref(), Some(shown.as_str()));
+        });
+    }
+
     /// A full-screen program on the alternate screen with alternate scroll (`?1049h ?1007h`, no
     /// mouse tracking) gets arrow keys; shift forces a local scroll.
     #[gpui::test]
@@ -4128,7 +4176,7 @@ mod tests {
                 terminal
                     .events
                     .iter()
-                    .any(|event| matches!(event, InternalEvent::SetSelection(Some(_)))),
+                    .any(|event| matches!(event, InternalEvent::BeginSelection(SelectionType::Simple, _))),
                 "shift+click with no existing selection should anchor a selection"
             );
             terminal.events.clear();
@@ -4197,7 +4245,10 @@ mod tests {
                 !terminal
                     .events
                     .iter()
-                    .any(|event| matches!(event, InternalEvent::SetSelection(Some(_)))),
+                    .any(|event| matches!(
+                        event,
+                        InternalEvent::SetSelection(Some(_)) | InternalEvent::BeginSelection(..)
+                    )),
                 "shift+click should extend, not re-anchor, an existing selection"
             );
         });

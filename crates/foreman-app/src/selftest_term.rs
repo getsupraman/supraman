@@ -174,7 +174,12 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("right-click with a selection → clipboard, cleared; without → pasted {marker}"));
 
-    // a blinking bar: lit and unlit frames while idle, lit right after a key
+    // a blinking bar: lit and unlit frames while idle, lit right after a key. PSReadLine hides the cursor
+    // (DECTCEM) while it redraws the line, and a frame painted then has none (m5/24): wait that out only.
+    let shown = until("the cursor shown after PSReadLine's redraw", Duration::from_secs(1), cx, |cx| {
+        terminal.read_with(cx, |t, _| t.last_content().cursor.shape != CursorShape::Hidden)
+    })
+    .await?;
     let (shape, blinking) = terminal.read_with(cx, |t, _| (t.last_content().cursor.shape, t.last_content().cursor_blinking));
     if shape != CursorShape::Bar || !blinking {
         bail!("cursor is {shape:?}, blinking {blinking}; expected a blinking Bar");
@@ -203,7 +208,10 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     if !solid_after_key {
         bail!("the cursor was not painted lit within 80 ms of a key, from an unlit frame");
     }
-    report.push(format!("cursor a blinking Bar: {lit} lit / {unlit} unlit samples idle, lit 80 ms after End (×4)"));
+    report.push(format!(
+        "cursor a blinking Bar (shown after {} ms): {lit} lit / {unlit} unlit samples idle, lit 80 ms after End (×4)",
+        shown.as_millis()
+    ));
 
     // Ctrl+Shift+F finds; Enter steps; Esc closes and clears the highlights
     key(cx, "f", Modifiers { control: true, shift: true, ..Default::default() })?;

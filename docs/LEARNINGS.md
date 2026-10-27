@@ -2195,6 +2195,15 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - PSReadLine's parameter colour is `\e[90m` (index 8); the theme's bright black was near the background. ANSI 0–15
   are now Campbell (`terminal_settings::CAMPBELL`). Selftest step 6c (`selftest_term.rs`) covers copy/^C/right-click/
   cursor/find/zoom; shot `m5-23-psreadline-parameter`.
+- m5/24, 6c flaky (2 of 5): "cursor is Hidden" was a frame painted while PSReadLine had DECTCEM off mid-redraw; the
+  next frame, 30–45 ms later, was a blinking Bar, so 6c waits up to 1 s for a shown cursor and still fails on any
+  other shape. "selection one line off" was the drag reading row 0 from a frame one line behind the grid (frame
+  `total_lines` 2402, live 2403: PSReadLine's echo wrapped and scrolled); `select_wheel_line` now waits until
+  `last_content` matches `Terminal::grid_extent()` and drags again only if the grid moved during the drag.
+- Product bug found on the way: `mouse_down` resolved its anchor with the last frame's `display_offset`, drags with the
+  live one, so scrolled back with output arriving the anchor landed a line below (selection `""`). It now queues
+  `BeginSelection(type, pixels)`, resolved on the live grid (`test_drag_anchors_on_the_shown_row_…`). A loop of 6b→6c
+  with fresh output each pass: 5 of 30 FAIL before, 0 of 40 after.
 
 ## 2026-10-27 — m5/22 GUI subsystem, logs, version triangle, hand launch, shell cwd
 

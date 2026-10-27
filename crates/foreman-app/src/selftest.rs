@@ -794,41 +794,63 @@ pub(crate) async fn read_own(
 }
 
 /// A left drag dispatched over the first `wheel line` row on screen (step 6's output) selects exactly its
-/// text; returns the display row and the text.
+/// text; returns the display row and the text. The row is read from the last frame but the drag lands on
+/// the grid as it is, so it waits for a frame that has caught up with the grid (output it has not shown,
+/// such as PSReadLine's echo wrapping a line, scrolls the grid under it: m5/24), and drags again only when
+/// the grid moved during the drag. The selftest's shell stays far below the scrollback limit, where
+/// `total_lines` stops growing.
 pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<(i32, String)> {
-    let (bounds, found) = terminal.read_with(cx, |t, _| {
-        let content = t.last_content();
-        let mut rows: std::collections::BTreeMap<i32, String> = Default::default();
-        for cell in &content.cells {
-            rows.entry(cell.point.line).or_default().push(cell.cell.character());
+    let mut moved = Vec::new();
+    for _ in 0..3 {
+        let started = Instant::now();
+        loop {
+            let (frame, grid) = terminal.read_with(cx, |t, _| ((t.last_content().display_offset, t.last_content().total_lines), t.grid_extent()));
+            if frame == grid {
+                break;
+            }
+            if started.elapsed() > Duration::from_secs(2) {
+                bail!("the frame never caught up with the grid: (display_offset, total_lines) {frame:?} painted, {grid:?} now");
+            }
+            sleep(cx, Duration::from_millis(20)).await;
         }
-        let found = rows.into_iter().find_map(|(line, text)| {
-            let text = text.trim_end().to_string();
-            text.starts_with("wheel line ").then_some((line + content.display_offset as i32, text))
+        let (bounds, found, grid) = terminal.read_with(cx, |t, _| {
+            let content = t.last_content();
+            let mut rows: std::collections::BTreeMap<i32, String> = Default::default();
+            for cell in &content.cells {
+                rows.entry(cell.point.line).or_default().push(cell.cell.character());
+            }
+            let found = rows.into_iter().find_map(|(line, text)| {
+                let text = text.trim_end().to_string();
+                text.starts_with("wheel line ").then_some((line + content.display_offset as i32, text))
+            });
+            (content.terminal_bounds, found, t.grid_extent())
         });
-        (content.terminal_bounds, found)
-    });
-    let (row, text) = found.ok_or_else(|| anyhow!("no `wheel line` row on screen"))?;
-    let y = bounds.bounds.origin.y + bounds.line_height * (row as f32 + 0.5);
-    let x = |column: f32| bounds.bounds.origin.x + bounds.cell_width * column;
-    let (from, to) = (point(x(0.25), y), point(x(text.chars().count() as f32 - 0.25), y));
-    let left = Some(MouseButton::Left);
-    cx.update(|window, cx| {
-        let none = Modifiers::default();
-        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, pressed_button: None, modifiers: none }), cx);
-        window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: none, click_count: 1, first_mouse: false }), cx);
-        for step in 1..=4 {
-            let position = point(from.x + (to.x - from.x) * (step as f32 / 4.), y);
-            window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: left, modifiers: none }), cx);
+        let (row, text) = found.ok_or_else(|| anyhow!("no `wheel line` row on screen"))?;
+        let y = bounds.bounds.origin.y + bounds.line_height * (row as f32 + 0.5);
+        let x = |column: f32| bounds.bounds.origin.x + bounds.cell_width * column;
+        let (from, to) = (point(x(0.25), y), point(x(text.chars().count() as f32 - 0.25), y));
+        let left = Some(MouseButton::Left);
+        cx.update(|window, cx| {
+            let none = Modifiers::default();
+            window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, pressed_button: None, modifiers: none }), cx);
+            window.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: none, click_count: 1, first_mouse: false }), cx);
+            for step in 1..=4 {
+                let position = point(from.x + (to.x - from.x) * (step as f32 / 4.), y);
+                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: left, modifiers: none }), cx);
+            }
+            window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
+        })?;
+        sleep(cx, Duration::from_millis(200)).await;
+        let (selected, now) = terminal.read_with(cx, |t, _| (t.last_content().selection_text.clone(), t.grid_extent()));
+        if selected.as_deref() == Some(text.as_str()) {
+            return Ok((row, text));
         }
-        window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
-    })?;
-    sleep(cx, Duration::from_millis(200)).await;
-    let selected = terminal.read_with(cx, |t, _| t.last_content().selection_text.clone());
-    if selected.as_deref() != Some(text.as_str()) {
-        bail!("dragged over display row {row} ({text:?}) from {from:?} to {to:?}; selection is {selected:?}");
+        if now == grid {
+            bail!("dragged over display row {row} ({text:?}) from {from:?} to {to:?}; selection is {selected:?} (the grid held at {grid:?})");
+        }
+        moved.push(format!("{text:?} → {selected:?} while the grid went {grid:?} → {now:?}"));
     }
-    Ok((row, text))
+    bail!("output moved the grid under each of 3 drags: {}", moved.join("; "))
 }
 
 /// Step 6b (m5/9), on step 6's shell tab: a left drag dispatched over a known output line selects exactly
