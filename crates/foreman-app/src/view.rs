@@ -20,7 +20,7 @@ use foreman_core::{
 use foreman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
 use foreman_term::{
     Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
-    terminal_settings::{AlternateScroll, CursorShape},
+    terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
@@ -43,6 +43,7 @@ mod icon;
 mod left;
 mod manage;
 mod menu;
+mod term;
 
 pub use manage::{AddDraft, NameKey, Removing};
 pub use menu::{Confirm, ContextMenu, MenuTarget};
@@ -146,6 +147,9 @@ pub struct Tab {
     pub error: Option<String>,
     pub exited: bool,
     pub detach: Detach,
+    /// Ctrl+=/Ctrl+-/Ctrl+0 and Ctrl+wheel, per tab as in Windows Terminal.
+    pub font_size: Pixels,
+    pub find: Option<term::Find>,
 }
 
 pub struct FleetView {
@@ -437,6 +441,7 @@ impl FleetView {
             }
         })
         .detach();
+        Self::blink_cursor(cx);
         let workstate_recheck = Arc::new(AtomicBool::new(true));
         Self::watch_workstate(home.clone(), workstate_recheck.clone(), cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
@@ -1023,6 +1028,30 @@ impl FleetView {
         id
     }
 
+    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar);
+    /// nothing while no terminal is shown or its cursor does not blink.
+    fn blink_cursor(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let wait = this.update(cx, |this, cx| {
+                    let terminal = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone());
+                    let next = terminal.and_then(|t| t.read(cx).cursor_blink(Instant::now()).1);
+                    if next.is_some() {
+                        cx.notify();
+                    }
+                    next
+                });
+                let Ok(wait) = wait else {
+                    return;
+                };
+                // a cursor move restarts the blink; the next edge is never later than one interval
+                let wait = wait.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL);
+                cx.background_executor().timer(wait + Duration::from_millis(5)).await;
+            }
+        })
+        .detach();
+    }
+
     pub fn tab(&self, id: u64) -> Option<&Tab> {
         self.tabs.iter().find(|t| t.id == id)
     }
@@ -1110,6 +1139,8 @@ impl FleetView {
             error: None,
             exited: false,
             detach: Detach::None,
+            font_size: term_element::FONT_SIZE,
+            find: None,
         });
         self.active = Some(id);
         cx.notify();
@@ -1165,6 +1196,8 @@ impl FleetView {
             error: None,
             exited: false,
             detach: Detach::None,
+            font_size: term_element::FONT_SIZE,
+            find: None,
         });
         self.active = Some(id);
         let build = TerminalBuilder::new(
@@ -1172,7 +1205,7 @@ impl FleetView {
             TerminalMode::interactive(),
             shell,
             HashMap::default(),
-            CursorShape::Block,
+            CursorShape::Bar,
             AlternateScroll::On,
             None,
             Vec::new(),
@@ -1415,26 +1448,11 @@ impl FleetView {
         else {
             return;
         };
-        // as Windows Terminal: Ctrl+Shift+C copies, Ctrl+Shift+V and Ctrl+V paste; Ctrl+C stays the
-        // program's, and Ctrl+V without text on the clipboard (an image) goes to it as ^V
-        let m = &k.modifiers;
-        if m.control && !m.alt && !m.platform {
-            let clipboard_text = || cx.read_from_clipboard().and_then(|c| c.text());
-            if k.key.eq_ignore_ascii_case("c") && m.shift {
-                terminal.update(cx, |terminal, cx| {
-                    terminal.copy(Some(false));
-                    cx.notify();
-                });
-                cx.stop_propagation();
-                return;
-            }
-            if k.key.eq_ignore_ascii_case("v")
-                && let Some(text) = clipboard_text()
-            {
-                terminal.update(cx, |terminal, _| terminal.paste(&text));
-                cx.stop_propagation();
-                return;
-            }
+        if let Some(id) = self.active
+            && self.terminal_key(id, &terminal, k, cx)
+        {
+            cx.stop_propagation();
+            return;
         }
         terminal.update(cx, |terminal, _| {
             if !terminal.try_keystroke(&event.keystroke, false)
@@ -1443,6 +1461,8 @@ impl FleetView {
                 terminal.input(text.clone().into_bytes());
             }
         });
+        // the cursor is lit at once after a key, also when the program echoes nothing
+        cx.notify();
         cx.stop_propagation();
     }
 }
@@ -1595,7 +1615,7 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let content: AnyElement = match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
-            Some(Tab { terminal: Some(terminal), detach, .. }) => div()
+            Some(Tab { id: tab_id, terminal: Some(terminal), detach, font_size, find, .. }) => div()
                 .size_full()
                 .flex()
                 .flex_col()
@@ -1613,27 +1633,44 @@ impl FleetView {
                             ))),
                     )
                 })
+                .when_some(find.as_ref(), |d, find| d.child(self.find_bar(*tab_id, find, cx)))
                 .child(
                     div()
                         .flex_1()
                         .min_h_0()
-                        // a click in the terminal gives it the keys back from the task box
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                        // a click in the terminal gives it the keys back from the task box and the
+                        // find bar
+                        .on_mouse_down(MouseButton::Left, {
+                            let tab_id = *tab_id;
+                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                                 if let Some(c) = &mut this.compose
                                     && c.focused
                                 {
                                     c.focused = false;
                                     cx.notify();
                                 }
-                            }),
-                        )
+                                if let Some(find) = this.tab_mut(tab_id).and_then(|t| t.find.as_mut())
+                                    && find.focused
+                                {
+                                    find.focused = false;
+                                    cx.notify();
+                                }
+                            })
+                        })
                         .on_scroll({
                             // as Zed's TerminalView::scroll_wheel: the Terminal decides between
-                            // scrollback, a mouse report and alternate-scroll arrow keys
+                            // scrollback, a mouse report and alternate-scroll arrow keys; Ctrl+wheel
+                            // zooms (Windows Terminal)
                             let terminal = terminal.clone();
-                            cx.listener(move |_, e: &ScrollEvent, _, cx| {
+                            let tab_id = *tab_id;
+                            cx.listener(move |this, e: &ScrollEvent, window, cx| {
+                                if e.modifiers.control {
+                                    let lines = e.delta.pixel_delta(window.line_height()).y;
+                                    if lines != px(0.) {
+                                        this.wheel_font_size(tab_id, lines > px(0.), cx);
+                                    }
+                                    return;
+                                }
                                 terminal.update(cx, |terminal, _| {
                                     terminal.scroll_wheel(e, SCROLL_MULTIPLIER, MouseInputMode::ReportToTerminal);
                                 });
@@ -1641,7 +1678,7 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone())),
+                        .child(term_element::terminal_grid(terminal.clone(), *font_size)),
                 )
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
