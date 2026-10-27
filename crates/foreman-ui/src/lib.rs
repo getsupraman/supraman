@@ -66,7 +66,11 @@ impl log::Log for Logger {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let line = format!("[{} {}] {}", record.level(), record.target(), record.args());
+        let message = record.args().to_string();
+        if is_vsync_race(record.target(), &message) {
+            return;
+        }
+        let line = format!("[{} {}] {message}", record.level(), record.target());
         match &self.file {
             Some(file) => {
                 let _guard = self.write.lock().unwrap_or_else(|e| e.into_inner());
@@ -78,6 +82,13 @@ impl log::Log for Logger {
     }
 
     fn flush(&self) {}
+}
+
+/// gpui_windows' VSync thread redraws every window in its list, and a destroyed window leaves that list
+/// only when the message its WM_DESTROY posts is handled; a redraw in between fails on the dead HWND
+/// (0x80070578). Harmless (nothing is drawn) and out of Foreman's reach (LEARNINGS, m5/22).
+pub fn is_vsync_race(target: &str, message: &str) -> bool {
+    target == "gpui_windows::platform" && message.starts_with("Invalid window handle") && message.contains("0x80070578")
 }
 
 /// Appends `text` to `file`, first moving a file of `cap` bytes or more to `<file>.1`. Opened per line
@@ -272,7 +283,15 @@ pub fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::append_capped;
+    use super::{append_capped, is_vsync_race};
+
+    #[test]
+    fn only_the_vsync_race_line_is_silenced() {
+        assert!(is_vsync_race("gpui_windows::platform", "Invalid window handle. (0x80070578)"));
+        assert!(!is_vsync_race("gpui_windows::window", "Invalid window handle. (0x80070578)"), "a window's own teardown still shows");
+        assert!(!is_vsync_race("gpui::window", "window not found"));
+        assert!(!is_vsync_race("gpui_windows::platform", "Device lost"));
+    }
 
     #[test]
     fn log_file_rotates_at_the_cap_and_keeps_one_previous() {
