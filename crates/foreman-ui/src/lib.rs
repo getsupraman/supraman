@@ -12,43 +12,22 @@ use std::{
     time::Instant,
 };
 
-use foreman_term::terminal_settings::{TerminalConfig, TerminalPalette};
+use foreman_term::terminal_settings::{TerminalConfig, TerminalPalette, campbell};
 use gpui::App;
 use theme::ActiveTheme as _;
 
-/// The active theme's terminal colours, for foreman-term's OSC colour replies and the painter's
-/// indexed colours.
+/// The terminal colours: Windows Terminal's Campbell for ANSI 0-15 (m5/23: the theme's bright black,
+/// PSReadLine's parameter colour, was near-black on the background), the theme for the rest.
 pub fn palette(theme: &theme::Theme) -> TerminalPalette {
     let c = theme.colors();
+    let ansi = campbell();
     TerminalPalette {
-        ansi: [
-            c.terminal_ansi_black,
-            c.terminal_ansi_red,
-            c.terminal_ansi_green,
-            c.terminal_ansi_yellow,
-            c.terminal_ansi_blue,
-            c.terminal_ansi_magenta,
-            c.terminal_ansi_cyan,
-            c.terminal_ansi_white,
-            c.terminal_ansi_bright_black,
-            c.terminal_ansi_bright_red,
-            c.terminal_ansi_bright_green,
-            c.terminal_ansi_bright_yellow,
-            c.terminal_ansi_bright_blue,
-            c.terminal_ansi_bright_magenta,
-            c.terminal_ansi_bright_cyan,
-            c.terminal_ansi_bright_white,
-        ],
-        dim: [
-            c.terminal_ansi_dim_black,
-            c.terminal_ansi_dim_red,
-            c.terminal_ansi_dim_green,
-            c.terminal_ansi_dim_yellow,
-            c.terminal_ansi_dim_blue,
-            c.terminal_ansi_dim_magenta,
-            c.terminal_ansi_dim_cyan,
-            c.terminal_ansi_dim_white,
-        ],
+        ansi,
+        dim: std::array::from_fn(|i| {
+            let mut dim = ansi[i];
+            dim.l *= 0.7;
+            dim
+        }),
         foreground: c.terminal_foreground,
         background: c.terminal_background,
         bright_foreground: c.terminal_bright_foreground,

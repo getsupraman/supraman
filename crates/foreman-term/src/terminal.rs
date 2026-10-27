@@ -33,7 +33,8 @@ use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use terminal_settings::{
-    AlternateScroll, CursorShape as SettingsCursorShape, TerminalConfig, TerminalPalette,
+    AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape as SettingsCursorShape, TerminalConfig,
+    TerminalPalette,
 };
 use urlencoding;
 pub use util::shell::Shell;
@@ -158,6 +159,7 @@ enum SelectionType {
     Simple,
     Semantic,
     Lines,
+    Block,
 }
 
 impl Selection {
@@ -504,6 +506,8 @@ pub struct Content {
     pub selection_text: Option<String>,
     pub selection: Option<SelectionRange>,
     pub cursor: Cursor,
+    /// The cursor style blinks: the default one does, a program's DECSCUSR may make it steady.
+    pub cursor_blinking: bool,
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
@@ -542,6 +546,7 @@ impl Default for Content {
                 shape: CursorShape::Block,
                 point: Point::new(0, 0),
             },
+            cursor_blinking: false,
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),
             last_hovered_word: None,
@@ -1056,6 +1061,8 @@ impl TerminalBuilder {
             },
             child_exited: None,
             keyboard_input_sent: false,
+            cursor_moved_at: Instant::now(),
+            cursor_painted_lit: true,
             init_command_startup_marker: None,
             init_command_startup_tx: None,
             event_loop_task: Task::ready(Ok(())),
@@ -1331,6 +1338,8 @@ impl TerminalBuilder {
                 },
                 child_exited: None,
                 keyboard_input_sent: false,
+            cursor_moved_at: Instant::now(),
+            cursor_painted_lit: true,
                 init_command_startup_marker: None,
                 init_command_startup_tx: None,
                 event_loop_task: Task::ready(Ok(())),
@@ -1527,6 +1536,10 @@ pub struct Terminal {
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
+    /// Input or a cursor move restarts the blink with the cursor lit (Windows Terminal).
+    cursor_moved_at: Instant,
+    /// Whether the painter last drew the cursor lit; the selftest reads it.
+    pub cursor_painted_lit: bool,
     init_command_startup_marker: Option<String>,
     init_command_startup_tx: Option<Sender<()>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
@@ -1760,7 +1773,7 @@ impl Terminal {
             InternalEvent::Copy(keep_selection) => {
                 trace!("Copying selection: keep_selection={keep_selection:?}");
                 if let Some(txt) = selection_text(term) {
-                    cx.write_to_clipboard(ClipboardItem::new_string(txt));
+                    cx.write_to_clipboard(ClipboardItem::new_string(trim_line_ends(&txt)));
                     if !keep_selection
                         .unwrap_or_else(|| TerminalConfig::get(cx).keep_selection_on_copy)
                     {
@@ -2045,6 +2058,15 @@ impl Terminal {
             .push_back(InternalEvent::SetSelection(selection));
     }
 
+    /// Whether the cursor is lit at `now`, and how long until that changes (`None`: it does not blink).
+    pub fn cursor_blink(&self, now: Instant) -> (bool, Option<Duration>) {
+        if !self.last_content.cursor_blinking {
+            return (true, None);
+        }
+        let (lit, next) = blink_phase(now.saturating_duration_since(self.cursor_moved_at));
+        (lit, Some(next))
+    }
+
     pub fn copy(&mut self, keep_selection: Option<bool>) {
         self.events.push_back(InternalEvent::Copy(keep_selection));
     }
@@ -2150,6 +2172,7 @@ impl Terminal {
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.keyboard_input_sent = true;
+        self.cursor_moved_at = Instant::now();
         self.complete_init_command_startup_handshake();
         self.write_input(input);
     }
@@ -2437,7 +2460,11 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
+        let cursor_before = self.last_content.cursor.point;
         self.last_content = make_content(&terminal, &self.last_content);
+        if self.last_content.cursor.point != cursor_before {
+            self.cursor_moved_at = Instant::now();
+        }
         if self.last_content.grid_lines_change == GridLinesChange::Changed {
             debug_assert!(self.last_content.last_hovered_word.is_none());
             self.refresh_hovered_word(window, cx);
@@ -2707,6 +2734,7 @@ impl Terminal {
 
                     let selection_type = match e.click_count {
                         0 => return, //This is a release
+                        1 if e.modifiers.alt => Some(SelectionType::Block),
                         1 => Some(SelectionType::Simple),
                         2 => Some(SelectionType::Semantic),
                         3 => Some(SelectionType::Lines),
@@ -3421,6 +3449,21 @@ fn rgb_for_index(i: u8) -> (u8, u8, u8) {
     let g = ((i % 36) - (i % 6)) / 6;
     let b = (i % 36) % 6;
     (r, g, b)
+}
+
+/// Lit for the first interval after a move, then off and on every [`CURSOR_BLINK_INTERVAL`]; with the
+/// time until the next change.
+pub fn blink_phase(since_move: Duration) -> (bool, Duration) {
+    let interval = CURSOR_BLINK_INTERVAL.as_nanos();
+    let elapsed = since_move.as_nanos();
+    let lit = (elapsed / interval) % 2 == 0;
+    let next = Duration::from_nanos((interval - elapsed % interval) as u64);
+    (lit, next)
+}
+
+/// Copied text as Windows Terminal puts it on the clipboard: each line without its trailing blanks.
+pub fn trim_line_ends(text: &str) -> String {
+    text.split('\n').map(|line| line.trim_end_matches([' ', '\t'])).join("\n")
 }
 
 pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
@@ -6248,5 +6291,91 @@ mod tests {
 
         assert!(terminal.cwd_history.is_empty());
         assert_eq!(terminal.pending_cwd_boundary, None);
+    }
+}
+
+#[cfg(test)]
+mod windows_terminal_tests {
+    use super::*;
+    use crate::terminal_settings::{CAMPBELL, WORD_DELIMITERS, campbell};
+    use gpui::TestAppContext;
+
+    #[test]
+    fn blink_is_lit_for_one_interval_after_a_move_then_alternates() {
+        let ms = Duration::from_millis;
+        assert_eq!(blink_phase(ms(0)), (true, ms(530)));
+        assert_eq!(blink_phase(ms(529)), (true, ms(1)));
+        assert_eq!(blink_phase(ms(530)), (false, ms(530)));
+        assert_eq!(blink_phase(ms(1000)), (false, ms(60)));
+        assert_eq!(blink_phase(ms(1060)), (true, ms(530)));
+    }
+
+    #[test]
+    fn copied_lines_lose_trailing_blanks_and_keep_line_breaks() {
+        assert_eq!(trim_line_ends("PS C:\\>   \nwheel line 1\t \n\n  x  "), "PS C:\\>\nwheel line 1\n\n  x");
+    }
+
+    #[test]
+    fn palette_is_campbell_and_index_8_is_bright_black() {
+        let palette = TerminalPalette { ansi: campbell(), ..Default::default() };
+        assert_eq!(get_color_at_index(8, &palette), rgba_color(0x76, 0x76, 0x76));
+        assert_eq!(CAMPBELL[8], 0x767676);
+        assert_eq!(get_color_at_index(1, &palette), rgba_color(0xC5, 0x0F, 0x1F));
+    }
+
+    #[test]
+    fn word_delimiters_are_windows_terminals() {
+        for c in [' ', '/', '\\', '(', '"', '\'','-', '.', ',', ':', ';', '=', '?', '│'] {
+            assert!(WORD_DELIMITERS.contains(c), "{c:?}");
+        }
+        assert!(!WORD_DELIMITERS.contains('_'));
+    }
+
+    #[gpui::test]
+    async fn double_click_selects_a_word_up_to_windows_terminal_delimiters(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::Bar,
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let text = cx.update(|cx| {
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(b"Get-Item -LiteralPath C:\\temp\\fm_x.txt\nabcdef\nghijkl", cx);
+                let term = terminal.term.clone();
+                let mut term = term.lock();
+                // "LiteralPath": columns 10..=20
+                let point = Point::new(0, 14);
+                set_term_selection(&mut term, Some(&Selection::new(SelectionType::Semantic, point, SelectionSide::Left)));
+                selection_text(&term)
+            })
+        });
+        assert_eq!(text.as_deref(), Some("LiteralPath"));
+        let text = cx.update(|cx| {
+            terminal.update(cx, |terminal, _| {
+                let term = terminal.term.clone();
+                let mut term = term.lock();
+                set_term_selection(&mut term, Some(&Selection::new(SelectionType::Semantic, Point::new(0, 33), SelectionSide::Left)));
+                selection_text(&term)
+            })
+        });
+        assert_eq!(text.as_deref(), Some("fm_x"));
+        // Alt+drag: a block from column 1 to 3 on both lines
+        let text = cx.update(|cx| {
+            terminal.update(cx, |terminal, _| {
+                let term = terminal.term.clone();
+                let mut term = term.lock();
+                let mut block = Selection::new(SelectionType::Block, Point::new(1, 1), SelectionSide::Left);
+                block.update(Point::new(2, 3), SelectionSide::Right);
+                set_term_selection(&mut term, Some(&block));
+                selection_text(&term)
+            })
+        });
+        assert_eq!(text.as_deref(), Some("bcd\nhij"));
     }
 }

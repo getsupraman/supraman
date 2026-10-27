@@ -1,9 +1,9 @@
 // Minimal terminal grid painter adapted from Zed's
 // crates/terminal_view/src/terminal_element.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
 // (GPL-3.0-or-later). Kept: cell batching into text runs, background rects,
-// colour conversion, block cursor, block-element glyph rects (U+2580-U+259F), selection
-// highlight, mouse handling (register_mouse_listeners). Dropped: search highlights, hyperlink
-// hover, IME, sextant glyph rects, minimum-contrast adjustment, the context menu.
+// colour conversion, cursor, block-element glyph rects (U+2580-U+259F), selection and search
+// highlights, mouse handling (register_mouse_listeners). Dropped: hyperlink hover, IME, sextant
+// glyph rects, minimum-contrast adjustment, the context menu.
 
 use gpui::{
     App, Bounds, DispatchPhase, Entity, Font, FontFeatures, FontStyle, FontWeight, Hitbox,
@@ -21,6 +21,13 @@ use theme::{ActiveTheme, Theme};
 
 pub const FONT_FAMILY: &str = "Consolas";
 pub const FONT_SIZE: Pixels = px(14.);
+pub const MIN_FONT_SIZE: Pixels = px(6.);
+pub const MAX_FONT_SIZE: Pixels = px(72.);
+
+/// `size` one step up (`delta` 1) or down (-1), within [`MIN_FONT_SIZE`]..=[`MAX_FONT_SIZE`].
+pub fn step_font_size(size: Pixels, delta: i32) -> Pixels {
+    (size + px(delta as f32)).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+}
 const LINE_HEIGHT_FACTOR: f32 = 1.3;
 
 struct BatchedTextRun {
@@ -60,14 +67,21 @@ impl BatchedTextRun {
         self.style.len += c.len_utf8();
     }
 
-    fn paint(&self, origin: GpuiPoint<Pixels>, dims: &TerminalBounds, window: &mut Window, cx: &mut App) {
+    fn paint(
+        &self,
+        origin: GpuiPoint<Pixels>,
+        dims: &TerminalBounds,
+        font_size: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let pos = point(
             origin.x + self.column as f32 * dims.cell_width,
             origin.y + self.line as f32 * dims.line_height,
         );
         let shaped = window.text_system().shape_line(
             self.text.clone().into(),
-            FONT_SIZE,
+            font_size,
             std::slice::from_ref(&self.style),
             Some(dims.cell_width),
         );
@@ -318,12 +332,14 @@ fn block_element_regions_to_rects(regions: Vec<BlockRegion>) -> Vec<BlockElement
 
 pub struct LayoutState {
     dims: TerminalBounds,
+    font_size: Pixels,
     background: Hsla,
     rects: Vec<LayoutRect>,
     block_rects: Vec<BlockElementLayoutRect>,
     runs: Vec<BatchedTextRun>,
     cursor: Option<(Bounds<Pixels>, Hsla)>,
     selection: Vec<LayoutRect>,
+    matches: Vec<LayoutRect>,
     hitbox: Hitbox,
 }
 
@@ -334,22 +350,22 @@ fn base_font() -> Font {
     }
 }
 
-/// Cell metrics for the fixed spike font; used for the grid and for the PTY size.
-pub fn cell_metrics(cx: &App) -> (Pixels, Pixels) {
+/// Cell metrics for the terminal font at `font_size`; used for the grid and for the PTY size.
+pub fn cell_metrics(font_size: Pixels, cx: &App) -> (Pixels, Pixels) {
     let text_system = cx.text_system();
     let font_id = text_system.resolve_font(&base_font());
     let cell_width = text_system
-        .advance(font_id, FONT_SIZE, 'm')
+        .advance(font_id, font_size, 'm')
         .map(|s| s.width)
-        .unwrap_or(px(8.));
-    let line_height = px((f32::from(FONT_SIZE) * LINE_HEIGHT_FACTOR).round());
+        .unwrap_or(font_size * 0.55);
+    let line_height = px((f32::from(font_size) * LINE_HEIGHT_FACTOR).round());
     (line_height, cell_width)
 }
 
-pub fn terminal_grid(terminal: Entity<Terminal>) -> impl IntoElement {
+pub fn terminal_grid(terminal: Entity<Terminal>, font_size: Pixels) -> impl IntoElement {
     let terminal_for_paint = terminal.clone();
     canvas(
-        move |bounds, window, cx| prepaint(&terminal, bounds, window, cx),
+        move |bounds, window, cx| prepaint(&terminal, font_size, bounds, window, cx),
         move |_bounds, state, window, cx| {
             register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
             paint(state, window, cx)
@@ -360,11 +376,12 @@ pub fn terminal_grid(terminal: Entity<Terminal>) -> impl IntoElement {
 
 fn prepaint(
     terminal: &Entity<Terminal>,
+    font_size: Pixels,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
 ) -> LayoutState {
-    let (line_height, cell_width) = cell_metrics(cx);
+    let (line_height, cell_width) = cell_metrics(font_size, cx);
     let gutter = cell_width;
     let mut grid_bounds = bounds;
     grid_bounds.origin.x += gutter;
@@ -380,10 +397,13 @@ fn prepaint(
     });
 
     let theme = cx.theme().clone();
-    let content = terminal.read(cx).last_content();
+    let (lit, _) = terminal.read(cx).cursor_blink(std::time::Instant::now());
+    terminal.update(cx, |terminal, _| terminal.cursor_painted_lit = lit);
+    let terminal_ref = terminal.read(cx);
+    let content = terminal_ref.last_content();
     let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme);
 
-    let cursor = if content.cursor.shape == CursorShape::Hidden {
+    let cursor = if content.cursor.shape == CursorShape::Hidden || !lit {
         None
     } else {
         let line = content.cursor.point.line + content.display_offset as i32;
@@ -406,7 +426,9 @@ fn prepaint(
                 px(0.)
             };
             let mut color = theme.players().local().cursor;
-            color.a *= 0.6;
+            if matches!(content.cursor.shape, CursorShape::Block | CursorShape::HollowBlock) {
+                color.a *= 0.6;
+            }
             (
                 Bounds::new(point(origin.x, origin.y + y_off), size(width, height)),
                 color,
@@ -429,15 +451,32 @@ fn prepaint(
             )
         })
         .unwrap_or_default();
+    let offset = content.display_offset as i32;
+    let matches = terminal_ref
+        .matches
+        .iter()
+        .flat_map(|m| {
+            selection_rects(
+                (m.start().line + offset, m.start().column),
+                (m.end().line + offset, m.end().column),
+                false,
+                dims.num_lines(),
+                dims.num_columns(),
+                theme.colors().search_match_background,
+            )
+        })
+        .collect();
 
     LayoutState {
         dims,
+        font_size,
         background: theme.colors().terminal_background,
         rects,
         block_rects,
         runs,
         cursor,
         selection,
+        matches,
         hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
     }
 }
@@ -541,11 +580,11 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     for rect in &state.rects {
         rect.paint(origin, &dims, window);
     }
-    for rect in &state.selection {
+    for rect in state.matches.iter().chain(&state.selection) {
         rect.paint(origin, &dims, window);
     }
     for run in &state.runs {
-        run.paint(origin, &dims, window, cx);
+        run.paint(origin, &dims, state.font_size, window, cx);
     }
     for rect in &state.block_rects {
         rect.paint(origin, &dims, window);
@@ -702,47 +741,35 @@ fn is_blank(cell: &Cell) -> bool {
 
 fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
     let colors = theme.colors();
+    let palette = palette(theme);
     match fg {
         Color::Named(color) => match color {
-            NamedColor::Black => colors.terminal_ansi_black,
-            NamedColor::Red => colors.terminal_ansi_red,
-            NamedColor::Green => colors.terminal_ansi_green,
-            NamedColor::Yellow => colors.terminal_ansi_yellow,
-            NamedColor::Blue => colors.terminal_ansi_blue,
-            NamedColor::Magenta => colors.terminal_ansi_magenta,
-            NamedColor::Cyan => colors.terminal_ansi_cyan,
-            NamedColor::White => colors.terminal_ansi_white,
-            NamedColor::BrightBlack => colors.terminal_ansi_bright_black,
-            NamedColor::BrightRed => colors.terminal_ansi_bright_red,
-            NamedColor::BrightGreen => colors.terminal_ansi_bright_green,
-            NamedColor::BrightYellow => colors.terminal_ansi_bright_yellow,
-            NamedColor::BrightBlue => colors.terminal_ansi_bright_blue,
-            NamedColor::BrightMagenta => colors.terminal_ansi_bright_magenta,
-            NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
-            NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
             NamedColor::Foreground => colors.terminal_foreground,
             NamedColor::Background => colors.terminal_ansi_background,
             NamedColor::Cursor => theme.players().local().cursor,
-            NamedColor::DimBlack => colors.terminal_ansi_dim_black,
-            NamedColor::DimRed => colors.terminal_ansi_dim_red,
-            NamedColor::DimGreen => colors.terminal_ansi_dim_green,
-            NamedColor::DimYellow => colors.terminal_ansi_dim_yellow,
-            NamedColor::DimBlue => colors.terminal_ansi_dim_blue,
-            NamedColor::DimMagenta => colors.terminal_ansi_dim_magenta,
-            NamedColor::DimCyan => colors.terminal_ansi_dim_cyan,
-            NamedColor::DimWhite => colors.terminal_ansi_dim_white,
             NamedColor::BrightForeground => colors.terminal_bright_foreground,
             NamedColor::DimForeground => colors.terminal_dim_foreground,
+            NamedColor::DimBlack
+            | NamedColor::DimRed
+            | NamedColor::DimGreen
+            | NamedColor::DimYellow
+            | NamedColor::DimBlue
+            | NamedColor::DimMagenta
+            | NamedColor::DimCyan
+            | NamedColor::DimWhite => palette.dim[*color as usize - NamedColor::DimBlack as usize],
+            // Black..=BrightWhite are 0..=15
+            _ => palette.ansi[*color as usize],
         },
         Color::Spec(rgb) => foreman_term::rgba_color(rgb.r, rgb.g, rgb.b),
-        Color::Indexed(i) => indexed_color(*i as usize, theme),
+        Color::Indexed(i) => foreman_term::get_color_at_index(*i as usize, palette),
     }
 }
 
-fn indexed_color(index: usize, theme: &Theme) -> Hsla {
+/// [`crate::palette`] of the theme the first terminal was painted with; Foreman has one theme.
+fn palette(theme: &Theme) -> &'static foreman_term::terminal_settings::TerminalPalette {
     static PALETTE: std::sync::OnceLock<foreman_term::terminal_settings::TerminalPalette> =
         std::sync::OnceLock::new();
-    foreman_term::get_color_at_index(index, PALETTE.get_or_init(|| crate::palette(theme)))
+    PALETTE.get_or_init(|| crate::palette(theme))
 }
 
 #[cfg(test)]

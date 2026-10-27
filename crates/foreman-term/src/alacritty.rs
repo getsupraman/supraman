@@ -20,7 +20,7 @@ use alacritty_terminal::{
     },
     sync::FairMutex,
     term::{
-        Config, Osc52, RenderableCursor, SEMANTIC_ESCAPE_CHARS, Term, TermMode,
+        Config, Osc52, RenderableCursor, Term, TermMode,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
         search::{Match, RegexIter, RegexSearch},
     },
@@ -44,7 +44,7 @@ use crate::{
     Selection, SelectionRange, SelectionSide, SelectionType, TerminalBackendEvent, TerminalBounds,
     ViMotion,
     pty_info::ProcessIdGetter,
-    terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape},
+    terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, WORD_DELIMITERS},
 };
 
 pub(super) use hyperlinks::{HyperlinkMatch, RegexSearches};
@@ -130,7 +130,7 @@ pub(super) fn display_only_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
-        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
+        semantic_escape_chars: format!("{WORD_DELIMITERS}─"),
         osc52: Osc52::Disabled,
         ..Config::default()
     }
@@ -143,7 +143,7 @@ pub(super) fn pty_term_config(
     Config {
         scrolling_history,
         default_cursor_style: alacritty_cursor_style(cursor_shape),
-        semantic_escape_chars: format!("{SEMANTIC_ESCAPE_CHARS}─"),
+        semantic_escape_chars: format!("{WORD_DELIMITERS}─"),
         ..Config::default()
     }
 }
@@ -291,7 +291,7 @@ pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion) {
 fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
     AlacCursorStyle {
         shape: alacritty_cursor_shape(cursor_shape),
-        blinking: false,
+        blinking: true,
     }
 }
 
@@ -398,6 +398,11 @@ impl Search {
         })
     }
 
+    /// `text` as typed, not a regex; case-insensitive unless it has an uppercase letter.
+    pub fn literal(text: &str) -> Option<Self> {
+        Self::new(&regex::escape(text))
+    }
+
     fn into_alacritty(self) -> RegexSearch {
         self.search.search
     }
@@ -418,6 +423,7 @@ impl SelectionType {
             Self::Simple => AlacSelectionType::Simple,
             Self::Semantic => AlacSelectionType::Semantic,
             Self::Lines => AlacSelectionType::Lines,
+            Self::Block => AlacSelectionType::Block,
         }
     }
 }
@@ -952,6 +958,7 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
             .selection
             .map(terminal_selection_range_from_alacritty),
         cursor: Cursor::from_alacritty(content.cursor),
+        cursor_blinking: term.cursor_style().blinking,
         cursor_char: term.grid()[content.cursor.point].c,
         terminal_bounds: last_content.terminal_bounds,
         last_hovered_word,
@@ -1203,6 +1210,7 @@ mod tests {
         );
         set_selection(&mut term, Some(&selection));
 
-        assert_eq!(selection_text(&term).as_deref(), Some("zms-demo.target"));
+        // Windows Terminal's delimiters split at - and . too (m5/23)
+        assert_eq!(selection_text(&term).as_deref(), Some("zms"));
     }
 }

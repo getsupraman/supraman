@@ -2,8 +2,27 @@
 // (GPL-3.0-or-later). The settings-store `TerminalSettings` is replaced by a plain `TerminalConfig`
 // global; `AlternateScroll` is copied from crates/settings_content/src/terminal.rs.
 
-use gpui::{App, Global, Hsla, black};
+use std::time::Duration;
+
+use gpui::{App, Global, Hsla, black, rgb};
 use serde::{Deserialize, Serialize};
+
+/// Windows Terminal's default scheme, Campbell (its defaults.json), as ANSI 0-15: black, red, green,
+/// yellow, blue, purple, cyan, white, then the bright variants.
+pub const CAMPBELL: [u32; 16] = [
+    0x0C0C0C, 0xC50F1F, 0x13A10E, 0xC19C00, 0x0037DA, 0x881798, 0x3A96DD, 0xCCCCCC, //
+    0x767676, 0xE74856, 0x16C60C, 0xF9F1A5, 0x3B78FF, 0xB4009E, 0x61D6D6, 0xF2F2F2,
+];
+
+pub fn campbell() -> [Hsla; 16] {
+    CAMPBELL.map(|hex| rgb(hex).into())
+}
+
+/// Windows Terminal's default `wordDelimiters`: a double-click selects up to these.
+pub const WORD_DELIMITERS: &str = " /\\()\"'-.,:;<>~!@#$%^&*|+=[]{}~?\u{2502}";
+
+/// Windows Terminal's caret blink: Windows' default `GetCaretBlinkTime`.
+pub const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

@@ -111,7 +111,7 @@ impl Render for SpikeView {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down));
         match &self.terminal {
-            Some(terminal) => root.child(term_element::terminal_grid(terminal.clone())),
+            Some(terminal) => root.child(term_element::terminal_grid(terminal.clone(), term_element::FONT_SIZE)),
             None => root,
         }
     }

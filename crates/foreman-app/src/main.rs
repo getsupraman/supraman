@@ -23,6 +23,7 @@ mod selftest_manage;
 mod selftest_shell;
 mod selftest_supervise;
 mod selftest_tabs;
+mod selftest_term;
 mod selftest_work;
 mod settings_window;
 mod supervise;
