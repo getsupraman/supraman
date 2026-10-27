@@ -17,12 +17,14 @@ pub enum Icon {
     Minus,
     Plus,
     Settings,
+    Star,
+    StarFilled,
     Warning,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 12] = [
+    const ALL: [Icon; 14] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -34,6 +36,8 @@ impl Icon {
         Icon::Minus,
         Icon::Plus,
         Icon::Settings,
+        Icon::Star,
+        Icon::StarFilled,
         Icon::Warning,
     ];
 
@@ -50,6 +54,8 @@ impl Icon {
             Icon::Minus => include_bytes!("../../assets/icons/dash.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
             Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
+            Icon::Star => include_bytes!("../../assets/icons/star.svg"),
+            Icon::StarFilled => include_bytes!("../../assets/icons/star_filled.svg"),
             Icon::Warning => include_bytes!("../../assets/icons/warning.svg"),
         }
     }

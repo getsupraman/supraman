@@ -35,24 +35,35 @@ pub enum Launch {
 }
 
 impl Launch {
-    /// What the tab's pwsh runs before its first prompt. It deletes the config file once claude exits,
-    /// however it exits, which is how [`Hands::ended`] sees it. Should the file be gone already (the
-    /// tab closed while it started), it starts plain `claude`, saying why (m5/18).
+    #[cfg(test)]
     pub fn script(&self) -> String {
+        self.script_with("claude")
+    }
+
+    /// What the tab's pwsh runs before its first prompt: `claude` (its program and arguments, e.g.
+    /// `claude --resume '<id>'`, m5/27). It deletes the config file once claude exits, however it exits,
+    /// which is how [`Hands::ended`] sees it. Should the file be gone already (the tab closed while it
+    /// started), it starts plain `claude`, saying why (m5/18).
+    pub fn script_with(&self, claude: &str) -> String {
         match self {
             Launch::Minted { config, .. } => {
                 let path = config.to_string_lossy().replace('\'', "''");
                 format!(
-                    "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
+                    "if (Test-Path -LiteralPath '{path}') {{ try {{ {claude} --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude} }}"
                 )
             }
-            Launch::Plain | Launch::Unminted(_) => "claude".into(),
+            Launch::Plain | Launch::Unminted(_) => claude.into(),
         }
     }
 
-    /// Appended to the tab's pwsh flags: [`Self::script`] runs unseen, and the shell stays when it ends.
+    #[cfg(test)]
     pub fn shell_args(&self) -> [String; 3] {
-        ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script())]
+        self.shell_args_with("claude")
+    }
+
+    /// Appended to the tab's pwsh flags: [`Self::script_with`] runs unseen, and the shell stays when it ends.
+    pub fn shell_args_with(&self, claude: &str) -> [String; 3] {
+        ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script_with(claude))]
     }
 }
 
@@ -325,6 +336,11 @@ mod tests {
         assert!(!script.contains("--strict-mcp-config") && !script.contains("wss_"));
         assert_eq!(launch.shell_args(), ["-NoExit".to_string(), "-EncodedCommand".into(), encoded_command(&script)]);
         assert_eq!(Launch::Plain.script(), "claude");
+        // m5/27: a closed session resumed through the same launch keeps its own token
+        let resume = launch.script_with("claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'");
+        assert!(resume.contains("try { claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' --mcp-config '"), "{resume}");
+        assert!(resume.ends_with("; claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' }"), "the stale branch resumes too: {resume}");
+        assert_eq!(Launch::Plain.script_with("claude --resume 'x'"), "claude --resume 'x'");
         assert_eq!(Launch::Unminted("x".into()).script(), "claude");
         // pwsh's own documented example
         assert_eq!(encoded_command("dir \"c:\\program files\" "), "ZABpAHIAIAAiAGMAOgBcAHAAcgBvAGcAcgBhAG0AIABmAGkAbABlAHMAIgAgAA==");

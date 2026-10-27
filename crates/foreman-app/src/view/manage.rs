@@ -343,6 +343,7 @@ impl FleetView {
                 });
             }
             MenuAction::StopSessionNow(session) => self.stop_session(session, cx),
+            MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                 self.action_info = Some(format!("Copied {text}"));

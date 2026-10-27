@@ -77,6 +77,11 @@ fn find_main_repo(from: &Path) -> anyhow::Result<PathBuf> {
     })
 }
 
+/// The main repo of the tree the exe was built in: the gate workspace's repo.
+pub(crate) fn main_repo_of_gate() -> anyhow::Result<PathBuf> {
+    find_main_repo(cargo_root())
+}
+
 pub(crate) fn hex6() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -126,6 +131,8 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // The WorkState install the app offers (m5/3) is a scratch folder, never the real ~/.workstate.
     // Single-threaded still: nothing has started.
     unsafe { std::env::set_var(crate::workstate_setup::INSTALL_DIR_VAR, home().join("fake-workstate-install")) };
+    // Closed sessions are read from a fake claude dir in the scratch home, never the user's (m5/27).
+    unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
@@ -175,6 +182,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
 
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
+        crate::selftest_closed::prepare(&home, &main)?;
     }
 
     if mode.launches_session() {
@@ -750,6 +758,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let shell = crate::selftest_shell::run(view, cx).await.context("step 7g")?;
     println!("step 7g: {shell}");
+
+    let closed = crate::selftest_closed::run(view, &home(), cx).await.context("step 7h")?;
+    println!("step 7h: {closed}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
