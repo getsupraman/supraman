@@ -37,6 +37,12 @@ pub struct Settings {
     /// Edited in the file; the selftest shortens it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
+    /// The theme's name: a bundled one or one in `<home>/themes/*.json` (m5/31). Unset: VS Code Dark Modern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    /// "campbell" paints ANSI 0-15 in Windows Terminal's Campbell. Unset: the theme's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_colors: Option<String>,
 }
 
 fn default_max_working() -> usize {
@@ -53,6 +59,8 @@ impl Default for Settings {
             extra_plugin_dirs: Vec::new(),
             run_as_admin: false,
             relay_idle_secs: None,
+            theme: None,
+            terminal_colors: None,
         }
     }
 }
@@ -107,6 +115,8 @@ mod tests {
             extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
             run_as_admin: true,
             relay_idle_secs: Some(20),
+            theme: Some("Foreman Dark".into()),
+            terminal_colors: Some("campbell".into()),
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);

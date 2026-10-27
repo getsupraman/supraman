@@ -49,12 +49,8 @@ fn message_key(workspace: &str, m: &OutboxMessage) -> String {
 /// running into the row cut by the next (m5/16).
 const SEAM_GAP: f32 = 6.;
 
-/// The tree's text against the panel (m5/26, LEARNINGS 2026-10-27): blends of the theme's text, so a name
-/// keeps >= 4.5:1 and secondary text >= 3:1 (WCAG), also in a row faded to [`DIMMED`] (a foreign or gone
-/// session). Over One Dark's panel: text 10.9, quiet 7.2, secondary 5.1; dimmed 5.2 and 3.8.
-pub(crate) const QUIET: f32 = 0.78;
-pub(crate) const SECONDARY: f32 = 0.62;
-pub(crate) const DIMMED: f32 = 0.8;
+/// The tree's text blends and their contrast floors live with the themes (m5/26, m5/31).
+pub(crate) use foreman_ui::themes::{DIMMED, QUIET, SECONDARY};
 
 /// A name that is a step back: a repo without sessions.
 pub(crate) fn quiet(cx: &gpui::App) -> Hsla {

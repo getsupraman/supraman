@@ -31,6 +31,7 @@ mod selftest_supervise;
 mod selftest_tabs;
 mod selftest_title;
 mod selftest_term;
+mod selftest_theme;
 mod selftest_work;
 mod settings_window;
 mod stars;
@@ -246,6 +247,10 @@ fn main() {
 
     gpui_platform::application().run(move |cx: &mut App| {
         foreman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
+        let home = foreman_core::home_from(std::env::var_os("FOREMAN_HOME"), std::env::var_os("APPDATA"));
+        if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
+            log::warn!("{problem}");
+        }
         view::bind_keys(cx);
         text_input::bind_keys(cx);
         cx.on_window_closed(|cx, _| {

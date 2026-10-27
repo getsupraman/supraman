@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
-use foreman_term::{Color, CursorShape, NamedColor, Terminal, terminal_settings::{CAMPBELL, TerminalConfig}};
+use foreman_term::{Color, CursorShape, NamedColor, Terminal, terminal_settings::TerminalConfig};
 use gpui::{
     AsyncWindowContext, ClipboardItem, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseUpEvent, PlatformInput, rgb,
@@ -105,7 +105,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("Ctrl+C with {text:?} selected → clipboard, selection cleared, prompt line unchanged"));
 
-    // PSReadLine colours a parameter as bright black (\e[90m): Campbell's #767676, not near-black
+    // PSReadLine colours a parameter as bright black (\e[90m): the theme's #666666, not near-black
     terminal.update(cx, |t, _| t.input(b" -LiteralPath fm".to_vec()));
     until("PSReadLine echoed -LiteralPath", Duration::from_secs(3), cx, |cx| last_line(terminal, cx).ends_with("-LiteralPath fm"))
         .await?;
@@ -118,16 +118,19 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
         let at = chars.windows(needle.len()).rposition(|w| w == needle.as_slice())?;
         Some(cells[at + 1].cell.foreground())
     });
-    let index_8 = cx.update(|_, cx| TerminalConfig::get(cx).palette.ansi[8])?;
-    let campbell_8: gpui::Hsla = rgb(CAMPBELL[8]).into();
-    if index_8 != campbell_8 {
-        bail!("palette index 8 is {index_8:?}, Campbell's brightBlack is {campbell_8:?}");
+    // m5/31: the default theme's own bright black (VS Code Dark Modern #666666), in the OSC answers too
+    let (index_8, theme_8, theme) = cx.update(|_, cx| {
+        let theme = theme::ActiveTheme::theme(cx);
+        (TerminalConfig::get(cx).palette.ansi[8], theme.colors().terminal_ansi_bright_black, theme.name.to_string())
+    })?;
+    if theme != foreman_ui::themes::DEFAULT_THEME || foreman_ui::themes::hex(index_8) != "#666666" || index_8 != theme_8 {
+        bail!("palette index 8 is {index_8:?} under {theme}, VS Code Dark Modern's bright black is #666666 ({theme_8:?})");
     }
     crate::selftest_manage::shot("m5-23-psreadline-parameter", cx).await;
     if !matches!(fg, Some(Color::Named(NamedColor::BrightBlack)) | Some(Color::Indexed(8))) {
         bail!("PSReadLine drew `-LiteralPath` in {fg:?}, expected bright black (index 8)");
     }
-    report.push(format!("palette[8] = Campbell brightBlack #767676; PSReadLine drew `-LiteralPath` in {fg:?}"));
+    report.push(format!("palette[8] = {theme} bright black #666666; PSReadLine drew `-LiteralPath` in {fg:?}"));
 
     // Ctrl+C without a selection: ^C reaches PSReadLine, which drops the line for a fresh prompt
     let line = last_line(terminal, cx);

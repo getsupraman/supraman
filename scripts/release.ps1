@@ -9,6 +9,8 @@
         <OutDir>\plugins\foreman\**          (hooks, roles, skills)
         <OutDir>\plugins\foreman\bin\fm.exe  (the hooks' copy, via fm plugin install)
         <OutDir>\VERSION
+        <OutDir>\THIRD_PARTY.md
+        <OutDir>\licenses\*.LICENSE           (third-party licences, THIRD_PARTY.md)
 
     and zips it to <OutDir>\..\Foreman-<version>.zip. Honours an existing CARGO_TARGET_DIR.
 .PARAMETER OutDir
@@ -50,6 +52,11 @@ try {
         Copy-Item -Destination $plugin -Recurse
     & (Join-Path $OutDir 'fm.exe') plugin install $plugin
     if ($LASTEXITCODE -ne 0) { throw "fm plugin install $plugin failed ($LASTEXITCODE)" }
+
+    Copy-Item (Join-Path $repo 'THIRD_PARTY.md') $OutDir
+    $licenses = Join-Path $OutDir 'licenses'
+    New-Item -ItemType Directory -Force $licenses | Out-Null
+    Copy-Item (Join-Path $repo 'crates/foreman-ui/assets/themes/*.LICENSE') $licenses
 
     $cli = Get-Content -Raw (Join-Path $repo 'crates\foreman-claude\src\cli.rs')
     $triple = {
