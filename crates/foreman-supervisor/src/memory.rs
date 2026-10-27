@@ -54,6 +54,9 @@ impl Policy {
 pub enum Failure {
     /// Never retried automatically; only Retry clears it.
     TrustNeeded { cwd: PathBuf },
+    /// `--bg` could not reach the background service; [`crate::Supervisor`] asks whether Foreman's
+    /// elevation is why (m5/25), else it counts like [`Failure::Other`].
+    DaemonUnreachable(String),
     Other(String),
 }
 
@@ -61,6 +64,7 @@ impl From<&ClaudeError> for Failure {
     fn from(e: &ClaudeError) -> Self {
         match e {
             ClaudeError::TrustNeeded { cwd } => Self::TrustNeeded { cwd: cwd.clone() },
+            e @ ClaudeError::DaemonUnreachable { .. } => Self::DaemonUnreachable(e.to_string()),
             other => Self::Other(other.to_string()),
         }
     }
@@ -108,7 +112,7 @@ impl SupervisorMemory {
                 a.trust_needed = Some(cwd);
                 a.started_at = None;
             }
-            Err(Failure::Other(e)) => fail(a, e, policy, now),
+            Err(Failure::Other(e) | Failure::DaemonUnreachable(e)) => fail(a, e, policy, now),
         }
     }
 

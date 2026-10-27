@@ -209,15 +209,35 @@ impl SettingsView {
             .child(small_button("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n + 1, cx);
             })));
-        vec![row(
-            "Busy sessions at most",
-            "How many Foreman sessions may be working (mid-turn) at the same time, counted across all \
-             workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
-             Your own sessions are not counted.",
-            stepper.into_any_element(),
-            None,
-            cx,
-        )]
+        let admin = self.settings.run_as_admin;
+        let toggle = small_button("run-as-admin", if admin { "On" } else { "Off" }, cx)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.run_as_admin = !admin, cx)));
+        let now: SharedString = if foreman_claude::is_elevated() {
+            "Foreman runs as administrator now.".into()
+        } else {
+            "Foreman runs unelevated now.".into()
+        };
+        let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
+        vec![
+            row(
+                "Busy sessions at most",
+                "How many Foreman sessions may be working (mid-turn) at the same time, counted across all \
+                 workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
+                 Your own sessions are not counted.",
+                stepper.into_any_element(),
+                None,
+                cx,
+            ),
+            row(
+                "Run Foreman as administrator",
+                "Turn this on when your terminals run as administrator: the claude background service they \
+                 start then refuses an unelevated Foreman, and its sessions cannot launch or resume. Each \
+                 start asks Windows (UAC) once. Takes effect the next time Foreman starts.",
+                toggle.into_any_element(),
+                Some(now),
+                cx,
+            ),
+        ]
     }
 
     fn render_workstate(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

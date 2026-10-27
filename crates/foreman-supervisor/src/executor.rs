@@ -113,6 +113,11 @@ pub struct Supervisor<L, T> {
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
     /// follows mints a fresh token.
     remint_due: Vec<String>,
+    /// While set, no launch or resume goes: they would only fail after 45 s. Why, and since when.
+    held: Option<(String, Millis)>,
+    /// Why a `--bg` that could not reach the background service will keep failing, if it will:
+    /// [`foreman_claude::daemon_mismatch`]; tests use a fake.
+    daemon_check: fn() -> Option<String>,
 }
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
@@ -139,7 +144,27 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
+            held: None,
+            daemon_check: foreman_claude::daemon_mismatch,
         }
+    }
+
+    pub fn with_daemon_check(mut self, check: fn() -> Option<String>) -> Self {
+        self.daemon_check = check;
+        self
+    }
+
+    /// The app's own [`foreman_claude::daemon_mismatch`] before launching (m5/25): `Some` holds every
+    /// launch and resume and shows one Inbox row saying why; `None` lets them go again.
+    pub fn hold(&mut self, why: Option<String>, now: Millis) {
+        self.held = why.map(|why| match self.held.take() {
+            Some((_, since)) => (why, since),
+            None => (why, now),
+        });
+    }
+
+    pub fn held(&self) -> Option<&str> {
+        self.held.as_ref().map(|(why, _)| why.as_str())
     }
 
     pub fn with_minter(mut self, minter: impl Minter + Send + 'static) -> Self {
@@ -175,6 +200,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// On a [`NeedsKind::TokenExpired`] row it is the Re-mint: the next tick stops the live row.
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
+        self.held = None;
         if self.needs.iter().any(|n| n.kind == NeedsKind::TokenExpired && n.name == name) {
             self.remint_due.push(name.to_string());
         }
@@ -218,12 +244,16 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         for action in reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now) {
             match action {
+                Action::Launch(_) | Action::Resume { .. } if self.held.is_some() => {}
                 Action::Launch(w) => {
                     let result = self.launch(&w, now).map(drop);
-                    if result.is_ok() && !w.exempt_from_budget() {
+                    let result = self.unless_held(result, now);
+                    if matches!(result, Some(Ok(()))) && !w.exempt_from_budget() {
                         budget.take(1);
                     }
-                    self.memory.record_result(&w.name, result, &self.policy, now);
+                    if let Some(result) = result {
+                        self.memory.record_result(&w.name, result, &self.policy, now);
+                    }
                 }
                 Action::Resume {
                     name, id, session_id, cwd,
@@ -238,10 +268,13 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     }
                     .and_then(|()| self.launcher.resume(&session_id, &cwd, prompt.as_deref()).map_err(|e| Failure::from(&e)))
                     .and_then(|out| woke_in_place(&out, &id));
-                    if result.is_ok() && !exempt {
+                    let result = self.unless_held(result, now);
+                    if matches!(result, Some(Ok(()))) && !exempt {
                         budget.take(1);
                     }
-                    self.memory.record_result(&name, result, &self.policy, now);
+                    if let Some(result) = result {
+                        self.memory.record_result(&name, result, &self.policy, now);
+                    }
                 }
                 // A failed stop is retried by the next tick: the row is still live.
                 Action::Stop { id, .. } => {
@@ -261,6 +294,10 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             })
             .collect();
         needs.extend(self.expired_tokens(observed, &reminting, now));
+        if let Some(need) = self.held_need(observed, now) {
+            needs.retain(|n| !matches!(n.kind, NeedsKind::LaunchFailed | NeedsKind::GaveUp));
+            needs.push(need);
+        }
         for n in &mut needs {
             if let Some(prev) = self.needs.iter().find(|p| p.kind == n.kind && p.name == n.name) {
                 n.since = n.since.min(prev.since);
@@ -268,6 +305,39 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         self.needs = needs.clone();
         needs
+    }
+
+    /// `None` when `result` could not reach the background service and [`Self::daemon_check`] says it
+    /// never will from here: then the supervisor holds instead of counting a failure.
+    fn unless_held(&mut self, result: Result<(), Failure>, now: Millis) -> Option<Result<(), Failure>> {
+        if matches!(result, Err(Failure::DaemonUnreachable(_)))
+            && let Some(why) = (self.daemon_check)()
+        {
+            self.hold(Some(why), now);
+            return None;
+        }
+        Some(result)
+    }
+
+    /// While held, the workspace's one Inbox row: on its first wanted session that is not live.
+    fn held_need(&self, observed: &[Session], now: Millis) -> Option<NeedsYou> {
+        let (why, since) = self.held.as_ref()?;
+        if !self.desired.started {
+            return None;
+        }
+        let waiting = self
+            .desired
+            .sessions
+            .iter()
+            .find(|w| !observed.iter().any(|s| s.name == w.name && is_live(s, now)))?;
+        Some(NeedsYou {
+            kind: NeedsKind::LaunchFailed,
+            workspace: self.desired.workspace.clone(),
+            name: waiting.name.clone(),
+            since: *since,
+            detail: why.clone(),
+            action: Some(Remedy::Retry),
+        })
     }
 
     fn launch(&mut self, w: &WantedSession, now: Millis) -> Result<String, Failure> {
@@ -686,6 +756,7 @@ mod tests {
         Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens))
             .with_minter(FakeMinter::default())
             .with_repo_of(fake_repo_of)
+            .with_daemon_check(|| None)
     }
 
     /// Alpha's checkout has an origin, Beta's none; any other cwd is not a repo.
@@ -1335,6 +1406,64 @@ mod tests {
         sup.retry("fm-demo-workspace");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 3_601 * SECOND), []);
         assert_eq!(sup.launcher().take().len(), 1);
+    }
+
+    fn unreachable() -> ClaudeError {
+        ClaudeError::DaemonUnreachable {
+            code: Some(1),
+            stderr: "Starting background service… Couldn't reach the background service (background service did not become reachable within 45s) — run 'claude daemon status'".into(),
+        }
+    }
+
+    /// m5/25: an unelevated Foreman facing an elevated service gets one row saying why, at once, and
+    /// no more launches — not five 45 s failures.
+    #[test]
+    fn an_unreachable_service_foreman_cannot_reach_holds_with_one_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path()).with_daemon_check(|| Some("runs as administrator".into()));
+        sup.launcher.errors.borrow_mut().push(unreachable());
+        let needs = sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.launcher().take().len(), 1);
+        assert_eq!(needs.len(), 1, "{needs:?}");
+        assert_eq!((needs[0].kind, needs[0].detail.as_str(), needs[0].since), (NeedsKind::LaunchFailed, "runs as administrator", NOW));
+        assert_eq!(needs[0].action, Some(Remedy::Retry));
+        assert_eq!(sup.memory.get("fm-demo-workspace").map(|a| a.failures).unwrap_or(0), 0, "not a counted failure");
+        for t in 1..600 {
+            assert_eq!(sup.tick(&[], &mut free(), NOW + t * SECOND).len(), 1);
+        }
+        assert_eq!(sup.launcher().take(), [], "held: nothing launched");
+        // the app's check finds it reachable again
+        sup.hold(None, NOW + 600 * SECOND);
+        assert_eq!(sup.tick(&[], &mut free(), NOW + 601 * SECOND), []);
+        assert_eq!(sup.launcher().take().len(), 1);
+    }
+
+    /// The app's check before any launch: held from the start, never launched.
+    #[test]
+    fn a_hold_from_the_apps_check_comes_before_any_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        sup.hold(Some("runs as administrator".into()), NOW);
+        let needs = sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.launcher().take(), []);
+        assert_eq!(needs.len(), 1);
+        assert_eq!(needs[0].detail, "runs as administrator");
+        sup.retry(&needs[0].name);
+        assert_eq!(sup.held(), None, "Retry tries again");
+        sup.tick(&[], &mut free(), NOW + SECOND);
+        assert_eq!(sup.launcher().take().len(), 1);
+    }
+
+    /// Unreachable for another reason (the check says elevation is not why): counted and backed off.
+    #[test]
+    fn an_unreachable_service_with_no_elevation_mismatch_backs_off_as_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path()).with_daemon_check(|| None);
+        sup.launcher.errors.borrow_mut().push(unreachable());
+        let needs = sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.held(), None);
+        assert_eq!(sup.memory.get("fm-demo-workspace").unwrap().failures, 1);
+        assert!(needs[0].detail.starts_with("failure 1 of 5: claude failed (exit 1): Starting background service…"), "{needs:?}");
     }
 
     #[test]

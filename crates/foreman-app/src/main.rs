@@ -13,6 +13,7 @@
 // (a selftest's home has its own), never to a console (m5/22).
 
 mod compose;
+mod elevate;
 mod fleet;
 mod hand;
 mod instance;
@@ -69,13 +70,19 @@ impl Mode {
 }
 
 const USAGE: &str =
-    "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
+    "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise | --home <dir>]";
 
 fn parse_args() -> Mode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         [] => Mode::App,
+        // the elevated copy `elevate::relaunch` starts
+        ["--home", home] => {
+            // SAFETY: no other thread exists yet.
+            unsafe { std::env::set_var("FOREMAN_HOME", home) };
+            Mode::App
+        }
         ["--selftest"] => Mode::Selftest,
         ["--selftest-detach", n] if n.parse::<u32>().is_ok_and(|n| n > 0) => {
             Mode::SelftestDetach(n.parse().unwrap_or(1))
@@ -157,6 +164,17 @@ fn main() {
     };
     if mode == Mode::App {
         foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
+    }
+    // Before the instance lock: the elevated copy takes it, and an unelevated process cannot open an
+    // elevated one's lock.
+    if mode == Mode::App
+        && let Some(home) = home.as_deref()
+        && elevate::wanted(home)
+    {
+        match elevate::relaunch(home) {
+            Ok(()) => std::process::exit(0),
+            Err(error) => eprintln!("Run as administrator is on but Foreman runs unelevated: {error:#}"),
+        }
     }
     // Before `prepare`: a selftest clears its home, which a running one on the same home still uses.
     let instance = match home.as_deref().map(instance::acquire) {
