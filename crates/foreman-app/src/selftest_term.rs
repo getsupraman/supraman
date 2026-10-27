@@ -231,6 +231,16 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     if !selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("wheel line 1")) {
         bail!("find: the selected match is {selected:?}");
     }
+    // m5/26: the selection as Windows Terminal paints it: white, its text in the terminal's background
+    let background = cx.update(|_, cx| theme::ActiveTheme::theme(cx).colors().terminal_background)?;
+    until("the selection painted", Duration::from_secs(2), cx, |cx| terminal.read_with(cx, |t, _| t.selection_painted.is_some())).await?;
+    let painted = terminal.read_with(cx, |t, _| t.selection_painted);
+    let white: gpui::Hsla = rgb(0xFFFFFF).into();
+    if painted != Some((white, background)) {
+        bail!("the selection was painted (background, text) {painted:?}, expected white with the text in the background {background:?}");
+    }
+    crate::selftest_manage::shot("m5-26-selection", cx).await;
+    report.push("selection painted white, its text in the terminal background (Windows Terminal)".into());
     key(cx, "escape", Modifiers::default())?;
     sleep(cx, Duration::from_millis(100)).await;
     let (open, highlights) = (

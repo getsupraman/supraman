@@ -62,10 +62,18 @@ impl Icon {
 /// A hover tooltip: one line, in the theme's popover colours.
 pub struct Tooltip(SharedString);
 
+thread_local! {
+    /// The text of the tooltip shown last; the selftest reads it.
+    pub static LAST_SHOWN: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
+}
+
 impl Tooltip {
     pub fn text(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
         let text = text.into();
-        move |_, cx| cx.new(|_| Tooltip(text.clone())).into()
+        move |_, cx| {
+            LAST_SHOWN.with(|last| *last.borrow_mut() = Some(text.clone()));
+            cx.new(|_| Tooltip(text.clone())).into()
+        }
     }
 }
 

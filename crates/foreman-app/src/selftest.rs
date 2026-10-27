@@ -134,11 +134,12 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let cwd = target.join("selftest-cwd");
     let work = target.join("selftest-work");
     let add = target.join(crate::selftest_manage::FOLDER);
-    for dir in [&home, &cwd, &work, &add] {
+    let single = target.join(crate::selftest_manage::SINGLE);
+    for dir in [&home, &cwd, &work, &add, &single] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone(), work.clone(), add],
+        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single],
         session_name: None,
         name_prefix: None,
     });

@@ -8,11 +8,12 @@ use std::{
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, TextRun, Window, div, prelude::*, px, relative, rems};
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use super::{AddDraft, Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use crate::clipped::clipped;
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
@@ -47,6 +48,23 @@ fn message_key(workspace: &str, m: &OutboxMessage) -> String {
 /// then this much panel background before the next, so a row cut by one section's clip never reads as
 /// running into the row cut by the next (m5/16).
 const SEAM_GAP: f32 = 6.;
+
+/// The tree's text against the panel (m5/26, LEARNINGS 2026-10-27): blends of the theme's text, so a name
+/// keeps >= 4.5:1 and secondary text >= 3:1 (WCAG), also in a row faded to [`DIMMED`] (a foreign or gone
+/// session). Over One Dark's panel: text 10.9, quiet 7.2, secondary 5.1; dimmed 5.2 and 3.8.
+pub(crate) const QUIET: f32 = 0.78;
+pub(crate) const SECONDARY: f32 = 0.62;
+pub(crate) const DIMMED: f32 = 0.8;
+
+/// A name that is a step back: a repo without sessions.
+pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
+    cx.theme().colors().text.opacity(QUIET)
+}
+
+/// Branches, counts, ids, states, paths.
+pub(crate) fn secondary(cx: &gpui::App) -> Hsla {
+    cx.theme().colors().text.opacity(SECONDARY)
+}
 
 fn seam_color(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text_muted.opacity(0.35)
@@ -201,7 +219,7 @@ fn pill(hits: &super::HitTargets, key: String, label: &'static str, cx: &gpui::A
         .border_1()
         .border_color(colors.border_variant)
         .text_xs()
-        .text_color(colors.text_muted)
+        .text_color(secondary(cx))
         .cursor_pointer()
         .hover(|s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text))
         .active(|s| s.bg(colors.element_active))
@@ -244,7 +262,7 @@ impl FleetView {
             .border_color(colors.border)
             .child(
                 icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.add_workspace(cx))),
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.add_workspace(window, cx))),
             )
             .child(separator())
             .child(
@@ -457,8 +475,8 @@ impl FleetView {
             let started = workspace.started == Some(true);
             let (state_text, state_color) = match workspace.started {
                 Some(true) => ("started", status.success),
-                Some(false) => ("stopped", colors.text_muted),
-                None => ("", colors.text_muted),
+                Some(false) => ("stopped", secondary(cx)),
+                None => ("", secondary(cx)),
             };
             let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, workspace.name);
             let pname = workspace.name.clone();
@@ -515,32 +533,25 @@ impl FleetView {
                     )
                     .child(work)
                     .child(
-                        div()
+                        clipped(format!("ws-root-{}", workspace.name), workspace.root.display().to_string(), true)
                             .flex_1()
-                            .min_w_0()
-                            .truncate()
                             .text_xs()
-                            .text_color(colors.text_muted)
-                            .child(SharedString::from(workspace.root.display().to_string())),
+                            .text_color(secondary(cx)),
                     )
                     .child(
                         div()
                             .flex_none()
                             .whitespace_nowrap()
                             .text_xs()
-                            .text_color(colors.text_muted)
+                            .text_color(secondary(cx))
                             .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
                     )
                     .child(div().flex_none().text_xs().text_color(state_color).child(state_text))
                     .children(self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).map(|(text, ok)| {
-                        div()
-                            .id(SharedString::from(format!("relay-{}", workspace.name)))
-                            // truncates rather than push the buttons after it past the panel's edge
-                            .min_w_0()
-                            .truncate()
+                        // truncates rather than push the buttons after it past the panel's edge
+                        clipped(format!("relay-{}", workspace.name), text, false)
                             .text_xs()
                             .text_color(if ok { status.success } else { status.warning })
-                            .child(SharedString::from(text))
                     }))
                     .children(task)
                     .child(start_stop)
@@ -590,24 +601,21 @@ impl FleetView {
                         .cursor_pointer()
                         .hover(|s| s.bg(colors.ghost_element_hover))
                         .active(|s| s.bg(colors.ghost_element_active))
-                        .when(empty, |d| d.text_color(colors.text_muted))
-                        .when(!repo.enabled, |d| d.opacity(0.6))
-                        .child(disclosure((!empty).then_some(ropen), colors.text_muted))
-                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(format!("./{}", repo.name))))
+                        .when(empty, |d| d.text_color(quiet(cx)))
+                        .when(!repo.enabled, |d| d.opacity(DIMMED))
+                        .child(disclosure((!empty).then_some(ropen), secondary(cx)))
+                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(repo_label(&repo.name, &repo.path, &workspace.root))))
                         .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
+                            clipped(format!("branch-{}/{}", workspace.name, repo.name), branch, false)
                                 .text_xs()
-                                .text_color(colors.text_muted)
-                                .child(SharedString::from(branch)),
+                                .text_color(secondary(cx)),
                         )
                         .when(!empty, |d| {
                             d.child(
                                 div()
                                     .flex_none()
                                     .text_xs()
-                                    .text_color(colors.text_muted)
+                                    .text_color(secondary(cx))
                                     .child(SharedString::from(format!("{}", repo.sessions.len()))),
                             )
                         })
@@ -620,7 +628,7 @@ impl FleetView {
                                     .border_1()
                                     .border_color(colors.border_variant)
                                     .text_xs()
-                                    .text_color(colors.text_muted)
+                                    .text_color(secondary(cx))
                                     .child("disabled"),
                             )
                         })
@@ -799,7 +807,7 @@ impl FleetView {
             let path = path.to_path_buf();
             // a path longer than the panel is cut in the middle, never wider than it
             let label = format!("Use {}", tilde(&path));
-            let label = div().min_w_0().whitespace_nowrap().overflow_hidden().text_ellipsis_middle().child(SharedString::from(label));
+            let label = clipped("ws-setup-use-label", label, true);
             let use_env = button(&self.hits, "ws-setup-use".into(), "", cx).flex_shrink_1().min_w_0().child(label);
             actions = actions.child(use_env.on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
@@ -896,14 +904,10 @@ impl FleetView {
                     .child(div().text_xs().text_color(colors.text).child(SharedString::from(row.what.clone())))
                     .when(!row.call.is_empty(), |d| {
                         d.child(
-                            div()
+                            clipped(format!("work-call-{workspace}/{}", row.item.qualified_ref), row.call.clone(), false)
                                 .font_family("Cascadia Mono")
                                 .text_xs()
-                                .text_color(colors.text_muted)
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(SharedString::from(row.call.clone())),
+                                .text_color(colors.text_muted),
                         )
                     }),
             )
@@ -1201,6 +1205,8 @@ impl FleetView {
         // another Foreman's row (m5/10): its prompt is not this user's, so nothing about it asks for attention
         let foreign = row.foreign;
         let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
+        // a gone or stopped session's state reads as secondary text, not in its grey dot's colour
+        let state = if foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
         let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
         let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
         let waiting_for = match &row.health {
@@ -1225,16 +1231,16 @@ impl FleetView {
                     .w(px(78.))
                     .flex_none()
                     .text_xs()
-                    .text_color(dot)
+                    .text_color(state)
                     .child(SharedString::from(fleet::health_label(&row.health))),
             )
-            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(name)))
+            .child(clipped(format!("session-name-{}", s.id), name, false).flex_1())
             .child(
                 div()
                     .flex_none()
                     .whitespace_nowrap()
                     .text_xs()
-                    .text_color(colors.text_muted)
+                    .text_color(secondary(cx))
                     .child(SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s)))),
             )
             .when(!row.attachable && self.resumable(row), |d| {
@@ -1274,7 +1280,7 @@ impl FleetView {
             .hover(|s| s.bg(colors.ghost_element_hover))
             .when(shown, |d| d.bg(colors.ghost_element_selected).border_l_2().border_color(colors.border_focused).pl(indent - px(2.)))
             .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
-            .when(dimmed, |d| d.opacity(0.5))
+            .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when(foreign, |d| {
                 let key = format!("foreign-{}", s.session_id);
@@ -1290,7 +1296,7 @@ impl FleetView {
                         .border_1()
                         .border_color(colors.border_variant)
                         .text_xs()
-                        .text_color(colors.text_muted)
+                        .text_color(secondary(cx))
                         .child("another Foreman")
                         .child(hit_target(&self.hits, key))
                         .tooltip(Tooltip::text(
@@ -1301,23 +1307,14 @@ impl FleetView {
             })
             .when_some(waiting_for, |d, w| {
                 d.child(
-                    div()
+                    clipped(format!("waiting-{}", s.id), w, false)
                         .pl(px(24.))
-                        .truncate()
                         .text_xs()
-                        .text_color(if foreign { colors.text_muted } else { status.warning })
-                        .child(SharedString::from(w)),
+                        .text_color(if foreign { secondary(cx) } else { status.warning }),
                 )
             })
             .when_some(hook, |d, h| {
-                d.child(
-                    div()
-                        .pl(px(24.))
-                        .truncate()
-                        .text_xs()
-                        .text_color(colors.text_muted)
-                        .child(SharedString::from(h)),
-                )
+                d.child(clipped(format!("hook-{}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}", s.session_id)))
             .on_mouse_down(
@@ -1370,13 +1367,63 @@ impl FleetView {
         )
     }
 
+    /// The name's text with its selection and the blinking caret; the caret takes no width, so a click
+    /// maps to the text as shaped ([`FleetView::name_index_at`]).
+    fn render_name_text(&self, draft: &AddDraft, cx: &mut Context<Self>) -> Div {
+        let colors = cx.theme().colors();
+        let (text, cursor, selection) = (&draft.name.text, draft.name.cursor(), draft.name.selection());
+        let lit = draft.name_focused && draft.name.caret_lit(Instant::now());
+        draft.caret_painted.set(lit);
+        let caret = || {
+            div()
+                .relative()
+                .flex_none()
+                .w(px(0.))
+                .h(px(16.))
+                .child(div().absolute().left(px(-1.)).w(px(1.5)).h_full().when(lit, |d| d.bg(colors.text)))
+        };
+        let part = |range: std::ops::Range<usize>| SharedString::from(text[range].to_string());
+        let mut row = div()
+            .relative()
+            .flex()
+            .items_center()
+            .h(px(18.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .child(hit_target(&self.hits, "add-name-text".into()))
+            .child(part(0..selection.start));
+        if cursor == selection.start {
+            row = row.child(caret());
+        }
+        if !selection.is_empty() {
+            row = row.child(div().bg(colors.element_selection_background).child(part(selection.clone())));
+            if cursor == selection.end {
+                row = row.child(caret());
+            }
+        }
+        row.child(part(selection.end..text.len()))
+    }
+
+    /// The byte of the name a click at window `x` lands nearest to, the name's text shaped as painted.
+    pub(super) fn name_index_at(&self, x: Pixels, window: &mut Window) -> usize {
+        let Some(draft) = &self.adding else {
+            return 0;
+        };
+        let Some(origin) = self.hits.borrow().get("add-name-text").map(|h| h.bounds.origin.x) else {
+            return draft.name.text.len();
+        };
+        let text = SharedString::from(draft.name.text.clone());
+        let run = TextRun { len: text.len(), font: gpui::font("Segoe UI"), color: Hsla::default(), background_color: None, underline: None, strikethrough: None };
+        let size = rems(0.875).to_pixels(window.rem_size());
+        window.text_system().shape_line(text, size, &[run], None).closest_index_for_x(x - origin)
+    }
+
     /// The Add workspace review: folder, name (click to edit), the repos found with a tick each, the
     /// reason it cannot be saved yet, Save and Cancel.
     fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let draft = self.adding.as_ref()?;
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let caret = if draft.name_focused { "▏" } else { "" };
         let mut repos = div().flex().flex_col().gap(px(2.));
         if draft.scanning {
             repos = repos.child(div().text_xs().text_color(colors.text_muted).child("scanning…"));
@@ -1398,7 +1445,7 @@ impl FleetView {
                     .hover(|s| s.bg(colors.ghost_element_hover))
                     .when(!*on, |d| d.text_color(colors.text_muted))
                     .child(if *on { "☑" } else { "☐" })
-                    .child(SharedString::from(format!("./{}", repo.name)))
+                    .child(SharedString::from(repo_label(&repo.name, &repo.path, &draft.root)))
                     .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
                     .child(hit_target(&self.hits, key))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1453,27 +1500,47 @@ impl FleetView {
                                 .id("add-name")
                                 .relative()
                                 .flex_1()
+                                .min_w_0()
                                 .px_1()
                                 .rounded_sm()
                                 .border_1()
                                 .border_color(if draft.name_focused { colors.border_focused } else { colors.border })
                                 .cursor_text()
-                                .child(SharedString::from(format!("{}{caret}", draft.name)))
+                                .child(self.render_name_text(draft, cx))
                                 .child(hit_target(&self.hits, "add-name".into()))
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    this.focus_add_name(cx);
-                                })),
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        let at = this.name_index_at(e.position.x, window);
+                                        this.focus_add_name(at, e.modifiers.shift, window, cx);
+                                    }),
+                                ),
                         ),
                 )
+                .children(draft.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(summary)))
                 .child(repos)
-                .children(draft.error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
                 .child(
+                    // why it cannot be saved sits next to Save, tinted, where the click lands (m5/26)
                     div()
                         .flex()
+                        .items_start()
                         .gap_2()
                         .justify_end()
+                        .children(draft.error.clone().map(|e| {
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_w_0()
+                                .px_1()
+                                .rounded_sm()
+                                .bg(status.error.opacity(0.14))
+                                .text_xs()
+                                .text_color(status.error)
+                                .child(SharedString::from(e))
+                                .child(hit_target(&self.hits, "add-error".into()))
+                        }))
                         .child(button(&self.hits, "add-save".into(), "Save", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
@@ -1490,6 +1557,12 @@ impl FleetView {
                 .into_any_element(),
         )
     }
+}
+
+/// How a repo row names it: `./<name>` below the workspace root, `<name> (root)` for a root that is
+/// itself the repo (m5/26).
+pub(crate) fn repo_label(name: &str, path: &std::path::Path, root: &std::path::Path) -> String {
+    if foreman_core::same_root(path, root) { format!("{name} (root)") } else { format!("./{name}") }
 }
 
 /// A message body cut into prose and aligned-column runs (m5/18): a run is two or more lines in a row that
@@ -1549,6 +1622,40 @@ pub(crate) fn segments(lines: &[&str]) -> Vec<Segment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// WCAG 2 contrast of `fg` (its alpha blended over `bg`) against the opaque `bg`.
+    fn contrast(fg: Hsla, bg: Hsla) -> f32 {
+        let (f, b) = (gpui::Rgba::from(fg), gpui::Rgba::from(bg));
+        let blend = |f: f32, b: f32| f * fg.a + b * (1. - fg.a);
+        let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+        let lum = |r: f32, g: f32, b: f32| 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+        let (lf, lb) = (lum(blend(f.r, b.r), blend(f.g, b.g), blend(f.b, b.b)), lum(b.r, b.g, b.b));
+        (lf.max(lb) + 0.05) / (lf.min(lb) + 0.05)
+    }
+
+    /// m5/26: names >= 4.5:1 and secondary text >= 3:1 against the panel, also in a dimmed row, and the
+    /// hierarchy kept: name > quiet > secondary.
+    #[test]
+    fn the_tree_text_is_readable_against_the_panel() {
+        let registry = theme::ThemeRegistry::default();
+        let name = registry.list().into_iter().next().expect("fallback theme").name;
+        let theme = registry.get(&name).expect("fallback theme");
+        let (text, bg) = (theme.colors().text, theme.colors().panel_background);
+        let ratio = |alpha: f32| contrast(text.opacity(alpha), bg);
+        let (name, quiet, secondary) = (ratio(1.), ratio(QUIET), ratio(SECONDARY));
+        let (dim_quiet, dim_secondary) = (ratio(QUIET * DIMMED), ratio(SECONDARY * DIMMED));
+        assert!(name > quiet && quiet > secondary, "{name} > {quiet} > {secondary}");
+        assert!(quiet >= 4.5 && dim_quiet >= 4.5, "names: {quiet}, dimmed {dim_quiet}");
+        assert!(secondary >= 3. && dim_secondary >= 3., "secondary: {secondary}, dimmed {dim_secondary}");
+        assert!(contrast(theme.colors().text_muted, bg) < 3.5, "text_muted ({}) was the too-dim colour", contrast(theme.colors().text_muted, bg));
+    }
+
+    #[test]
+    fn repo_labels_name_a_root_repo_as_the_root() {
+        use std::path::Path;
+        assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Path::new(r"p:/x/gaia/")), "Gaia (root)");
+        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Path::new(r"P:\x\Gaia")), "./child");
+    }
 
     #[test]
     fn work_tree_rows_are_one_table_between_prose() {

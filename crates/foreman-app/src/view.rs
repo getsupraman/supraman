@@ -39,7 +39,7 @@ use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
-mod icon;
+pub(crate) mod icon;
 mod left;
 mod manage;
 mod menu;
@@ -1047,14 +1047,18 @@ impl FleetView {
         }
     }
 
-    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar);
-    /// nothing while no terminal is shown or its cursor does not blink.
+    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar) and
+    /// of the Add review's name caret; nothing while neither blinks.
     fn blink_cursor(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 let wait = this.update(cx, |this, cx| {
+                    let now = Instant::now();
                     let terminal = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone());
-                    let next = terminal.and_then(|t| t.read(cx).cursor_blink(Instant::now()).1);
+                    let next = terminal.and_then(|t| t.read(cx).cursor_blink(now).1);
+                    // the Add review's name blinks too (m5/26)
+                    let name = this.adding.as_ref().filter(|d| d.name_focused).map(|d| d.name.next_blink(now));
+                    let next = next.into_iter().chain(name).min();
                     if next.is_some() {
                         cx.notify();
                     }
@@ -1455,7 +1459,7 @@ impl FleetView {
             return;
         }
         if let Some(draft) = self.adding.as_mut().filter(|d| d.name_focused) {
-            match draft.key(&k.key, k.key_char.as_deref()) {
+            match draft.key(k) {
                 NameKey::Save => self.save_add(cx),
                 NameKey::Cancel => self.adding = None,
                 NameKey::Edited | NameKey::Ignored => {}
@@ -1594,7 +1598,7 @@ impl FleetView {
                     .when(active, |d| {
                         d.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(colors.border_focused))
                     })
-                    .child(div().max_w(px(280.)).truncate().child(SharedString::from(title)))
+                    .child(crate::clipped::clipped(format!("tab-title-{id}"), title, false).max_w(px(280.)))
                     .child({
                         let group = SharedString::from(close_key.clone());
                         div()

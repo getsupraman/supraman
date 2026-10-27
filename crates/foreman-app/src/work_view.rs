@@ -28,6 +28,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
+use crate::clipped::clipped;
 use crate::view::{HitTargets, hit_target};
 
 pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
@@ -581,7 +582,7 @@ impl WorkView {
             .active(|s| s.bg(colors.ghost_element_active))
             .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
             .child(div().flex_none().font_weight(FontWeight::BOLD).child(SharedString::from(run.item.qualified_ref.clone())))
-            .child(div().flex_1().min_w(px(120.)).truncate().child(SharedString::from(run.item.title.clone())))
+            .child(clipped(format!("run-title-{}", run.item.qualified_ref), run.item.title.clone(), false).flex_1().min_w(px(120.)))
             .child(rollup_bar(&run.rollup, cx))
             .child(small(done_text(&run.rollup), colors.text_muted))
             .child(small(run.item.status.as_str(), status_color(run.item.status, cx)))
@@ -641,7 +642,7 @@ impl WorkView {
                     .child(item.status.as_str())
                     .child(hit_target(&self.hits, status_key(&item.qualified_ref, item.status))),
             )
-            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(item.title.clone())))
+            .child(clipped(format!("item-title-{}", item.qualified_ref), item.title.clone(), false).flex_1())
             .when(row.criteria.total > 0, |d| {
                 let done = row.criteria.checked == row.criteria.total;
                 d.child(small(
@@ -764,7 +765,7 @@ impl WorkView {
             .px_3()
             .py_2()
             .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(overview.item.qualified_ref.clone())))
-            .child(div().flex_1().min_w_0().truncate().child(SharedString::from(overview.item.title.clone())))
+            .child(clipped(format!("overview-title-{}", overview.item.qualified_ref), overview.item.title.clone(), false).flex_1())
             .child(rollup_bar(&overview.rollup, cx))
             .child(small(done_text(&overview.rollup), colors.text_muted))
             .child(small(connection, if live { status.success } else { status.warning }))

@@ -10,22 +10,27 @@ use std::{
 use foreman_claude::{Claude, Session, now_ms};
 use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover, rescan, validate_name};
 use foreman_supervisor::DesiredState;
-use gpui::{ClipboardItem, Context, Pixels, Point, Window};
+use gpui::{ClipboardItem, Context, Keystroke, Pixels, Point, Window};
 
 use super::FleetView;
 use super::menu::{Confirm, ContextMenu, MenuAction, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
+use crate::line_edit::{LineEdit, LineKey};
 use crate::work_view;
 
 /// The Add workspace review: what discovery found under `root`, each repo ticked to register it
-/// enabled (unticked ones are registered disabled), and the name, editable while `name_focused`.
+/// enabled (unticked ones are registered disabled), and the name, edited while `name_focused`.
 pub struct AddDraft {
     pub root: PathBuf,
-    pub name: String,
+    pub name: LineEdit,
     pub name_focused: bool,
     pub repos: Vec<(Repo, bool)>,
     pub scanning: bool,
     pub error: Option<String>,
+    /// Why the last key typed into the name was not taken.
+    pub hint: Option<String>,
+    /// Whether the last frame painted the name's caret lit; the selftest reads it.
+    pub caret_painted: std::cell::Cell<bool>,
 }
 
 /// A Remove waiting for its workspace's sessions to stop.
@@ -34,23 +39,39 @@ pub struct Removing {
     pub wanted: Vec<String>,
 }
 
+/// What a workspace name takes of a typed character: lowercase letters, digits and `-` as
+/// [`validate_name`] wants, capitals lowered, a space as `-`.
+fn name_char(c: char) -> Option<char> {
+    match c {
+        ' ' | '_' => Some('-'),
+        c if c.is_ascii_alphanumeric() || c == '-' => Some(c.to_ascii_lowercase()),
+        _ => None,
+    }
+}
+
 impl AddDraft {
+    pub fn new(root: PathBuf) -> Self {
+        Self { root, name: LineEdit::new(""), name_focused: true, repos: Vec::new(), scanning: true, error: None, hint: None, caret_painted: Default::default() }
+    }
+
     /// One keystroke while the name has the focus: Enter saves, Escape cancels; else the name is
-    /// edited (lowercase letters, digits and `-`, as [`validate_name`] wants).
-    pub fn key(&mut self, key: &str, key_char: Option<&str>) -> NameKey {
-        match key {
-            "escape" => return NameKey::Cancel,
-            "enter" => return NameKey::Save,
-            "backspace" => {
-                self.name.pop();
+    /// edited ([`LineEdit::key`]). A character a name cannot hold says so under the field.
+    pub fn key(&mut self, k: &Keystroke) -> NameKey {
+        match self.name.key(k, name_char) {
+            LineKey::Enter => NameKey::Save,
+            LineKey::Escape => NameKey::Cancel,
+            LineKey::Refused(c) => {
+                self.hint = Some(format!("'{c}' is not taken: a name is lowercase letters, digits and '-'."));
+                NameKey::Edited
             }
-            _ => match key_char {
-                Some(c) => self.name.extend(c.chars().flat_map(char::to_lowercase).filter(|c| c.is_ascii_alphanumeric() || *c == '-')),
-                None => return NameKey::Ignored,
-            },
+            LineKey::Edited => {
+                self.error = None;
+                self.hint = None;
+                NameKey::Edited
+            }
+            LineKey::Moved => NameKey::Edited,
+            LineKey::Ignored => NameKey::Ignored,
         }
-        self.error = None;
-        NameKey::Edited
     }
 }
 
@@ -79,7 +100,9 @@ fn add_error(e: &CoreError) -> String {
 impl FleetView {
     /// Add workspace: a folder picker, then the review ([`AddDraft`]) in the left panel. The one entry
     /// point for every Add button; [`FleetView::pick_folder`] stands in for the picker (the selftest).
-    pub fn add_workspace(&mut self, cx: &mut Context<Self>) {
+    /// The picker is modal on its own thread: once it returns, the window is activated and its focus
+    /// taken back, so the keys reach the review's name whatever Windows gave the activation to (m5/26).
+    pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         if let Some(path) = self.pick_folder.take() {
             self.begin_add(path, cx);
@@ -91,12 +114,17 @@ impl FleetView {
             multiple: false,
             prompt: Some("Add as a Foreman workspace".into()),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
                 return;
             };
             if let Some(path) = paths.into_iter().next() {
-                this.update(cx, |this, cx| this.begin_add(path, cx)).ok();
+                this.update_in(cx, |this, window, cx| {
+                    window.activate_window();
+                    this.focus.focus(window, cx);
+                    this.begin_add(path, cx);
+                })
+                .ok();
             }
         })
         .detach();
@@ -107,7 +135,7 @@ impl FleetView {
         if let Some(c) = &mut self.compose {
             c.focused = false;
         }
-        self.adding = Some(AddDraft { root: root.clone(), name: String::new(), name_focused: true, repos: Vec::new(), scanning: true, error: None });
+        self.adding = Some(AddDraft::new(root.clone()));
         cx.notify();
         let scan = cx.background_executor().spawn(async move {
             match discover(&root, None, DEFAULT_DEPTH) {
@@ -126,7 +154,7 @@ impl FleetView {
                 match found {
                     Ok((workspace, renamed)) => {
                         draft.root = workspace.root;
-                        draft.name = workspace.name;
+                        draft.name.set(&workspace.name);
                         draft.repos = workspace.repos.into_iter().map(|r| (r, true)).collect();
                         draft.error = if draft.repos.is_empty() {
                             Some(format!("No git repos found directly under {}.", draft.root.display()))
@@ -152,9 +180,12 @@ impl FleetView {
         }
     }
 
-    pub fn focus_add_name(&mut self, cx: &mut Context<Self>) {
+    /// A click in the name: it takes the keys, its caret at byte `at` (Shift: the selection grows to it).
+    pub fn focus_add_name(&mut self, at: usize, extend: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
         if let Some(draft) = &mut self.adding {
             draft.name_focused = true;
+            draft.name.place(at, extend);
             if let Some(c) = &mut self.compose {
                 c.focused = false;
             }
@@ -169,15 +200,17 @@ impl FleetView {
             return;
         };
         if draft.scanning {
+            draft.error = Some("Still reading the folder: Save once its repos are listed.".into());
+            cx.notify();
             return;
         }
         let result = (|| {
             if draft.repos.is_empty() {
                 return Err(format!("No git repos found directly under {}.", draft.root.display()));
             }
-            validate_name(&draft.name).map_err(|e| add_error(&e))?;
+            validate_name(&draft.name.text).map_err(|e| add_error(&e))?;
             let repos = draft.repos.iter().map(|(r, on)| Repo { enabled: *on, ..r.clone() }).collect();
-            let workspace = Workspace::new(draft.name.clone(), draft.root.clone(), repos);
+            let workspace = Workspace::new(draft.name.text.clone(), draft.root.clone(), repos);
             let registry = registry(self.home.as_deref())?;
             registry.check_new(&workspace).map_err(|e| add_error(&e))?;
             registry.save(&workspace, false).map_err(|e| add_error(&e))?;
@@ -201,7 +234,7 @@ impl FleetView {
     }
 
     /// The registry as it is now, without waiting for the next poll.
-    fn reload_workspaces(&mut self) {
+    pub(crate) fn reload_workspaces(&mut self) {
         self.registry_writes.fetch_add(1, Ordering::SeqCst);
         match registry(self.home.as_deref()).and_then(|r| r.list().map_err(|e| e.to_string())) {
             Ok(workspaces) => {
@@ -451,24 +484,32 @@ mod tests {
     use super::*;
 
     fn draft() -> AddDraft {
-        AddDraft { root: r"C:\x".into(), name: "ab".into(), name_focused: true, repos: vec![], scanning: false, error: Some("e".into()) }
+        let mut d = AddDraft::new(r"C:\x".into());
+        d.name.set("ab");
+        d.error = Some("e".into());
+        d
+    }
+
+    fn key(d: &mut AddDraft, key: &str, key_char: Option<&str>) -> NameKey {
+        d.key(&Keystroke { modifiers: Default::default(), key: key.into(), key_char: key_char.map(Into::into) })
     }
 
     #[test]
-    fn the_name_takes_only_what_a_workspace_name_allows() {
+    fn the_name_takes_only_what_a_workspace_name_allows_and_says_why_not() {
         let mut d = draft();
-        assert_eq!(d.key("x", Some("X")), NameKey::Edited);
+        assert_eq!(key(&mut d, "x", Some("X")), NameKey::Edited);
         assert_eq!(d.error, None);
-        d.key("space", Some(" "));
-        d.key("-", Some("-"));
-        d.key("ä", Some("ä"));
-        d.key("7", Some("7"));
-        assert_eq!(d.name, "abx-7");
-        d.key("backspace", None);
-        assert_eq!(d.name, "abx-");
-        assert_eq!(d.key("enter", None), NameKey::Save);
-        assert_eq!(d.key("escape", None), NameKey::Cancel);
-        assert_eq!(d.key("f5", None), NameKey::Ignored);
+        key(&mut d, "space", Some(" "));
+        key(&mut d, "ä", Some("ä"));
+        assert_eq!(d.hint.as_deref(), Some("'ä' is not taken: a name is lowercase letters, digits and '-'."));
+        key(&mut d, "7", Some("7"));
+        assert_eq!((d.name.text.as_str(), d.hint.as_deref()), ("abx-7", None));
+        key(&mut d, "left", None);
+        key(&mut d, "backspace", None);
+        assert_eq!(d.name.text, "abx7");
+        assert_eq!(key(&mut d, "enter", None), NameKey::Save);
+        assert_eq!(key(&mut d, "escape", None), NameKey::Cancel);
+        assert_eq!(key(&mut d, "f5", None), NameKey::Ignored);
     }
 
     #[test]

@@ -401,7 +401,18 @@ fn prepaint(
     terminal.update(cx, |terminal, _| terminal.cursor_painted_lit = lit);
     let terminal_ref = terminal.read(cx);
     let content = terminal_ref.last_content();
-    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme);
+    // Windows Terminal: a white selection, its text in the background colour, so it reads inverted (m5/26)
+    let selected = content.selection.as_ref().map(|sel| {
+        let offset = content.display_offset as i32;
+        Selected {
+            start: (sel.start.line + offset, sel.start.column),
+            end: (sel.end.line + offset, sel.end.column),
+            is_block: sel.is_block,
+            fg: theme.colors().terminal_background,
+        }
+    });
+    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme, selected.as_ref());
+    let selected_text = selected.as_ref().filter(|s| runs.iter().any(|r| r.style.color == s.fg && s.contains(r.line, r.column as usize)));
 
     let cursor = if content.cursor.shape == CursorShape::Hidden || !lit {
         None
@@ -436,21 +447,11 @@ fn prepaint(
         })
     };
 
-    let selection = content
-        .selection
+    let selection = selected
         .as_ref()
-        .map(|sel| {
-            let offset = content.display_offset as i32;
-            selection_rects(
-                (sel.start.line + offset, sel.start.column),
-                (sel.end.line + offset, sel.end.column),
-                sel.is_block,
-                dims.num_lines(),
-                dims.num_columns(),
-                theme.players().local().selection,
-            )
-        })
+        .map(|sel| selection_rects(sel.start, sel.end, sel.is_block, dims.num_lines(), dims.num_columns(), SELECTION_BACKGROUND))
         .unwrap_or_default();
+    let painted = selected_text.map(|s| (SELECTION_BACKGROUND, s.fg));
     let offset = content.display_offset as i32;
     let matches = terminal_ref
         .matches
@@ -466,6 +467,7 @@ fn prepaint(
             )
         })
         .collect();
+    terminal.update(cx, |terminal, _| terminal.selection_painted = painted);
 
     LayoutState {
         dims,
@@ -594,9 +596,33 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Windows Terminal's `selectionBackground`.
+pub const SELECTION_BACKGROUND: Hsla = Hsla { h: 0., s: 0., l: 1., a: 1. };
+
+/// The shown selection (display line, column), and the colour its text is drawn in.
+struct Selected {
+    start: (i32, usize),
+    end: (i32, usize),
+    is_block: bool,
+    fg: Hsla,
+}
+
+impl Selected {
+    fn contains(&self, line: i32, column: usize) -> bool {
+        if line < self.start.0 || line > self.end.0 {
+            return false;
+        }
+        if self.is_block {
+            return (self.start.1.min(self.end.1)..=self.start.1.max(self.end.1)).contains(&column);
+        }
+        (line > self.start.0 || column >= self.start.1) && (line < self.end.0 || column <= self.end.1)
+    }
+}
+
 fn layout_grid<'a>(
     grid: impl Iterator<Item = &'a IndexedCell>,
     theme: &Theme,
+    selected: Option<&Selected>,
 ) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
     let mut runs = Vec::new();
     let mut block_regions = Vec::new();
@@ -651,7 +677,16 @@ fn layout_grid<'a>(
             if is_blank(cell) {
                 continue;
             }
-            let style = cell_style(cell, fg, theme, &font);
+            let mut style = cell_style(cell, fg, theme, &font);
+            if let Some(selected) = selected.filter(|s| s.contains(display_line, col as usize)) {
+                style.color = selected.fg;
+                for color in [style.underline.as_mut().map(|u| &mut u.color), style.strikethrough.as_mut().map(|s| &mut s.color)]
+                    .into_iter()
+                    .flatten()
+                {
+                    *color = Some(selected.fg);
+                }
+            }
             if collect_block_element_regions(
                 display_line,
                 col,
@@ -828,11 +863,26 @@ mod tests {
     }
 
     #[test]
+    fn selected_text_is_drawn_in_the_background_colour_and_the_rest_is_not() {
+        let theme = theme();
+        let fg = Color::Named(NamedColor::Foreground);
+        let background = theme.colors().terminal_background;
+        let selected = Selected { start: (0, 2), end: (1, 1), is_block: false, fg: background };
+        let cells: Vec<_> = row(0, "abcdef", fg).into_iter().chain(row(1, "ghijkl", fg)).collect();
+        let (_, _, runs) = layout_grid(cells.iter(), &theme, Some(&selected));
+        let drawn: Vec<(i32, &str, bool)> = runs.iter().map(|r| (r.line, r.text.as_str(), r.style.color == background)).collect();
+        assert_eq!(drawn, [(0, "ab", false), (0, "cdef", true), (1, "gh", true), (1, "ijkl", false)]);
+        assert_eq!(SELECTION_BACKGROUND, gpui::rgb(0xFFFFFF).into());
+        assert!(Selected { start: (0, 4), end: (2, 1), is_block: true, ..selected }.contains(1, 3));
+        assert!(!Selected { start: (0, 4), end: (2, 1), is_block: true, ..selected }.contains(1, 0));
+    }
+
+    #[test]
     fn block_element_full_block_row_is_one_rect_and_no_text_run() {
         let theme = theme();
         let fg = Color::Spec(Rgb { r: 215, g: 119, b: 87 });
         let cells = row(0, "████", fg);
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
         assert!(runs.is_empty(), "block elements must not become text runs");
         assert_eq!(block_rects.len(), 1, "adjacent full blocks merge");
         assert_eq!(shape(&block_rects[0]), rect(0, 0, 32, 24));
@@ -845,7 +895,7 @@ mod tests {
         let fg = Color::Named(NamedColor::Foreground);
         let mut cells = row(0, "██", fg);
         cells.extend(row(1, "██", fg));
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
         assert!(runs.is_empty());
         assert_eq!(block_rects.len(), 1);
         assert_eq!(shape(&block_rects[0]), rect(0, 0, 16, 48));
@@ -896,7 +946,7 @@ mod tests {
     fn block_element_letters_stay_text_runs_beside_blocks() {
         let theme = theme();
         let cells = row(0, "ab█c", Color::Named(NamedColor::Foreground));
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme);
+        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
         assert_eq!(runs.iter().map(|r| r.text.as_str()).collect_vec(), ["ab", "c"]);
         assert_eq!(runs[1].column, 3);
         assert_eq!(block_rects.iter().map(shape).collect_vec(), [rect(0, 16, 8, 24)]);
