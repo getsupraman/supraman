@@ -2401,3 +2401,49 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   b7fc76c): `cargo build --release --workspace` ok; `cargo test --release --workspace` 520 passed, 0 failed;
   `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest`
   rows or registry entries from this worktree left.
+
+## 2026-10-27 — m5/31 themes: Zed theme JSON, VS Code Dark Modern as the default
+
+- **One source.** Every colour the app paints comes from `cx.theme()` (one hard-coded colour: the titlebar ✕
+  hover, Windows' red). `foreman_ui::themes::apply` builds a `theme::Theme`, sets it with
+  `GlobalTheme::update_theme`, updates `TerminalConfig.palette` (the OSC colour answers) and refreshes every
+  window. Call sites need no change. The terminal painter caches its palette per `Theme::id`, and every built theme gets a fresh id
+  (the old `OnceLock` would have kept the first theme's palette forever).
+- **Loader** (`themes.rs`, own serde types, not Zed's `theme_settings`, which pulls in the settings crate):
+  `#RRGGBB` / `#RRGGBBAA` only, unknown top-level and style keys ignored, `null` or a bad value keeps One
+  Dark's value for that key. A Zed key with `.`→`_` is the field name (`text.muted` → `text_muted`), via a
+  field list for `ThemeColors` and `StatusColors`, plus `players[0]` and `accents`. Terminal keys a file leaves
+  out fall back to its own terminal colours first: `terminal.ansi.background` → `terminal.background`,
+  bright/dim foreground → foreground, `dim_*` → 70 % of the normal colour, as before m5/31. The Dark Modern file: 160 keys,
+  97 set a colour, 14 are editor/minimap/debugger keys Foreman does not paint, `syntax` and
+  `background.appearance` skipped.
+- **Themes.** VS Code Dark Modern (bundled, `include_str!`, default), Foreman Dark (One Dark + Campbell ANSI,
+  i.e. the colours before m5/31), and each theme in `<home>\themes\*.json`. A name that is not found falls back to the
+  default with a note on the Appearance page. `settings.toml`: `theme = "<name>"`, `terminal_colors = "campbell"`
+  (unset = the theme's). Campbell swaps ANSI 0–15 only; background, foreground and cursor stay the theme's, and the
+  selection stays WT white (`SELECTION_BACKGROUND`, untouched). Settings → Appearance applies at once.
+- **Contrast floors** (`fit_floors`, run on every loaded file). The m5/26 blends are measured against the panel, where they are painted:
+  names (text × 0.78) ≥ 7, secondary (× 0.62) ≥ 4.5. `text.muted`, `text.accent`, error/warning/success/info/hint
+  must reach ≥ 4.5 on panel, background and editor background. `fit_backgrounds` (run for Foreman Dark too) fades the marked row
+  (`ghost_element.selected`, m5/33) and a search match (`search.match_background`, m5/30) toward the panel until
+  the text on them holds. Keys adjusted: Dark Modern `info` #BFBFBF66 → #868686 (2.58 → 4.54),
+  `ghost_element.selected` #04395E → #04395E80 (secondary 3.82 → 4.51), `search.match_background` #C6510666 →
+  #C6510661 (name 6.94 → 7.15); Foreman Dark `ghost_element.selected` #3B3F4A → #3B3F4A8A (3.97 → 4.50).
+  Measured, Dark Modern: names 7.16, secondary 4.98; Foreman Dark: 7.22, 5.11. Pinned in
+  `the_contrast_floors_hold_under_each_bundled_theme` and `the_newer_elements_read_under_each_bundled_theme`.
+  Not fitted, reported: Foreman Dark's `search.match_background` is the panel colour (#22252B), so a match
+  shows only as bold. The placeholder is 3.07 (Dark Modern) and 2.77 (Foreman Dark), and Foreman Dark's `text.muted` is 3.2; both are
+  as before. Dark Modern's `text.muted` equals `text` (#CCCCCC), kept as the file has it. Its bright black is
+  #666666 (3.1:1 on #181818, PSReadLine's parameter colour), where Campbell's is #767676: Campbell is one click away.
+- **Licence:** `THIRD_PARTY.md` and `crates/foreman-ui/assets/themes/vscode-dark-modern.LICENSE`. `release.ps1`
+  copies both into the zip (checked: `Foreman/THIRD_PARTY.md`, `Foreman/licenses/vscode-dark-modern.LICENSE`).
+- **Selftest:** 6c now expects the theme's bright black (#666666). Step 7m (`selftest_theme.rs`): starts in Dark
+  Modern (panel #181818, ANSI 8 #666666), Appearance → Foreman Dark + Campbell paints #22252B / #767676 and
+  saves them, then switches back. Shots `m5-31-tree-tabs`, `m5-31-settings-appearance`, `m5-31-settings-foreman-dark`. `m5-31-main-foreman-dark`
+  catches the Settings window, which is on top, not the main window.
+- **Environment:** git here refuses the worktree (dubious ownership: `.git` belongs to Administrators). Use
+  `git -c safe.directory=*`, or `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=*` for
+  `release.ps1`. Global config was not changed.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-31\target`, after merging master c3f564e): build ok; `cargo test --release
+  --workspace` 529 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (293 s);
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
