@@ -205,6 +205,28 @@ fn glyph_button(hits: &super::HitTargets, key: String, icon: Icon, tip: impl Int
         .tooltip(Tooltip::text(tip))
 }
 
+/// A session row's star (m5/27): filled in the warning colour while starred, else a muted outline.
+fn star_button(hits: &super::HitTargets, key: String, starred: bool, cx: &gpui::App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    let (icon, fg) = if starred { (Icon::StarFilled, cx.theme().status().warning) } else { (Icon::Star, colors.text_muted) };
+    let tip = if starred { "Unstar: shown only while it runs or stopped sessions are shown" } else { "Star: always shown, stopped or closed, however old" };
+    div()
+        .id(SharedString::from(key.clone()))
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(20.))
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.ghost_element_hover))
+        .active(|s| s.bg(colors.ghost_element_active))
+        .child(icon.svg(13., fg))
+        .child(hit_target(hits, key))
+        .tooltip(Tooltip::text(tip))
+}
+
 /// A session row's `attach` / `resume`: a quiet outlined pill whose border and fill come up on hover.
 fn pill(hits: &super::HitTargets, key: String, label: &'static str, cx: &gpui::App) -> Stateful<Div> {
     let colors = cx.theme().colors();
@@ -650,6 +672,30 @@ impl FleetView {
                 }
                 for row in &repo.sessions {
                     body = body.child(self.render_session(&workspace.name, &repo.name, row, px(46.), cx));
+                }
+                if repo.more > 0 {
+                    let key = format!("{}/{}", workspace.name, repo.name);
+                    let hit = format!("more-{key}");
+                    body = body.child(
+                        div()
+                            .id(SharedString::from(hit.clone()))
+                            .relative()
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .h(px(SESSION_LINE))
+                            .pl(px(46. + 24.))
+                            .text_xs()
+                            .text_color(secondary(cx))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
+                            .child(SharedString::from(format!("{} more closed…", repo.more)))
+                            .child(hit_target(&self.hits, hit))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.closed_expanded.insert(key.clone());
+                                cx.notify();
+                            })),
+                    );
                 }
             }
         }
@@ -1235,7 +1281,7 @@ impl FleetView {
                     .flex_none()
                     .text_xs()
                     .text_color(state)
-                    .child(SharedString::from(fleet::health_label(&row.health))),
+                    .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
             )
             .child(clipped(format!("session-name-{}", s.id), name, false).flex_1())
             .child(
@@ -1246,6 +1292,15 @@ impl FleetView {
                     .text_color(secondary(cx))
                     .child(SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s)))),
             )
+            .child({
+                let session_id = s.session_id.clone();
+                star_button(&self.hits, format!("star-{}", s.session_id), row.starred, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_star(&session_id, cx);
+                    },
+                ))
+            })
             .when(!row.attachable && self.resumable(row), |d| {
                 let key = format!("resume-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());

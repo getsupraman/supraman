@@ -1,0 +1,16 @@
+{"type":"mode","mode":"normal","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"permission-mode","permissionMode":"default","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"parentUuid":null,"isSidechain":false,"promptId":"p0","type":"user","message":{"role":"user","content":"meta text"},"isMeta":true,"uuid":"u0","timestamp":"2026-10-21T11:35:25.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"master"}
+{"parentUuid":"u0","isSidechain":false,"promptId":"p1","type":"user","message":{"role":"user","content":"<command-name>/model</command-name>"},"uuid":"u1","timestamp":"2026-10-21T11:35:25.050Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"master"}
+{"parentUuid":"u1","isSidechain":false,"promptId":"p2","type":"user","message":{"role":"user","content":[{"type":"text","text":"first prompt text"}]},"uuid":"u2","timestamp":"2026-10-21T11:35:25.113Z","permissionMode":"default","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"master"}
+{"type":"last-prompt","lastPrompt":"first prompt text","leafUuid":"u2","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"ai-title","aiTitle":"Fix the deploy step","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"parentUuid":"u2","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"answer text"}]},"type":"assistant","uuid":"a1","timestamp":"2026-10-21T11:35:31.034Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"master"}
+{"parentUuid":"a1","isSidechain":false,"promptId":"p3","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"tool output"}]},"uuid":"u3","timestamp":"2026-10-21T11:35:36.566Z","toolUseResult":{"stdout":"tool output"},"userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"master"}
+{"type":"custom-title","customTitle":"pipeline-one","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"agent-name","agentName":"pipeline-one","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"parentUuid":"u3","isSidechain":false,"type":"system","subtype":"stop_hook_summary","timestamp":"2026-10-21T16:37:44.952Z","uuid":"s1","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\Gaia\\.claude\\worktrees\\w","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","version":"2.1.306","gitBranch":"feat/merge","slug":"x"}
+{"type":"custom-title","customTitle":"pipeline-two","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"agent-name","agentName":"pipeline-two","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"last-prompt","lastPrompt":"latest prompt text","leafUuid":"u9","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f"}
+{"type":"cost-state","sessionId":"0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f","totalCostUSD":0.5}

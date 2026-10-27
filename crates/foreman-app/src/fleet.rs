@@ -1,7 +1,7 @@
 //! The left panel's model: registered workspaces → their supervised sessions and repos → the sessions
 //! in the enabled ones. Disabled repos come last, without sessions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use foreman_claude::{Health, Kind, Session, assign_with, main_repo};
@@ -26,6 +26,8 @@ pub struct RepoNode {
     /// The registry's `enabled`; a disabled repo lists no sessions.
     pub enabled: bool,
     pub sessions: Vec<SessionRow>,
+    /// Closed sessions past [`CLOSED_CAP`], behind its `more…` row.
+    pub more: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +38,15 @@ pub struct SessionRow {
     pub hook: Option<HookSignal>,
     /// [`is_foreign`]: shown dimmed as another Foreman's, never highlighted as blocked.
     pub foreign: bool,
+    pub starred: bool,
+    /// From its transcript (m5/27): an interactive session `claude agents` no longer lists.
+    pub closed: bool,
 }
+
+/// Closed sessions older than this are left out, unless starred.
+pub const CLOSED_WINDOW_MS: i64 = 14 * 24 * 3_600_000;
+/// Per repo, the newest closed sessions shown before its `more…` row.
+pub const CLOSED_CAP: usize = 5;
 
 /// The latest hook event of one session (`fm hook`, `<FOREMAN_HOME>/events`), keyed by sessionId.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +136,13 @@ pub struct Supervised<'a> {
     pub polled_at: i64,
     /// [`main_repos`] of that snapshot; `None` walks the filesystem instead.
     pub main_repos: Option<&'a HashMap<PathBuf, Option<PathBuf>>>,
+    /// Closed sessions from their transcripts ([`foreman_claude::Transcript::to_session`]); a session
+    /// `claude agents` lists is shown from there instead.
+    pub closed: &'a [Session],
+    /// Starred session ids: shown whatever `show_stopped` and however old.
+    pub starred: Option<&'a BTreeSet<String>>,
+    /// `<workspace>/<repo>` whose `more…` was clicked: every closed session of the window shown.
+    pub expanded: Option<&'a HashSet<String>>,
 }
 
 /// [`main_repo`] of every distinct session cwd: filled once per poll, off the UI thread, because
@@ -193,17 +210,29 @@ fn sort(rows: &mut [SessionRow]) {
 
 pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &Supervised) -> Tree {
     let mut hidden_stopped = 0;
+    let starred = |id: &str| sup.starred.is_some_and(|s| s.contains(id));
     let row = |session: Session| {
         let hook = sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
         let health = with_hook(session.supervised_health(now_ms), hook.as_ref(), sup.polled_at);
         SessionRow {
             attachable: attachable(&session, &health),
             foreign: is_foreign(&session.name, workspaces, sup.desired),
+            starred: starred(&session.session_id),
+            closed: false,
             session,
             health,
             hook,
         }
     };
+    let listed: HashSet<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
+    // a Foreman session's transcript (a selftest's, a supervised one removed) is not the user's to resume
+    let closed: Vec<Session> = sup
+        .closed
+        .iter()
+        .filter(|s| !listed.contains(s.session_id.as_str()))
+        .filter(|s| starred(&s.session_id) || (!s.name.starts_with("fm-") && s.started_at.is_some_and(|t| now_ms - t <= CLOSED_WINDOW_MS)))
+        .cloned()
+        .collect();
     let main_of = |cwd: &Path| match sup.main_repos {
         Some(known) => known.get(cwd).cloned().flatten(),
         None => main_repo(cwd),
@@ -220,6 +249,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
             let mut supervised: Vec<SessionRow> = theirs.into_iter().map(row).collect();
             sort(&mut supervised);
             let mut by_repo = assign_with(&rest, workspace, &main_of).by_repo;
+            let mut closed_by_repo = assign_with(&closed, workspace, &main_of).by_repo;
             let mut repos: Vec<RepoNode> = workspace
                 .repos
                 .iter()
@@ -231,18 +261,40 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                         .into_iter()
                         .map(row)
                         .filter(|row| {
-                            let keep = show_stopped || row.health != Health::Stopped;
+                            let keep = show_stopped || row.health != Health::Stopped || row.starred;
                             hidden_stopped += usize::from(!keep);
                             keep
                         })
                         .collect();
                     sort(&mut rows);
+                    let mut gone: Vec<SessionRow> = closed_by_repo
+                        .remove(&repo.name)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|s| SessionRow { closed: true, ..row(s) })
+                        .collect();
+                    gone.sort_by(|a, b| b.session.started_at.cmp(&a.session.started_at));
+                    let all = sup.expanded.is_some_and(|e| e.contains(&format!("{}/{}", workspace.name, repo.name)));
+                    let (mut shown, mut more) = (0, 0);
+                    for r in gone {
+                        if r.starred {
+                            rows.push(r);
+                        } else if !show_stopped {
+                            hidden_stopped += 1;
+                        } else if all || shown < CLOSED_CAP {
+                            shown += 1;
+                            rows.push(r);
+                        } else {
+                            more += 1;
+                        }
+                    }
                     RepoNode {
                         name: repo.name.clone(),
                         path: workspace.root.join(&repo.path),
                         branch: repo.branch.clone(),
                         enabled: true,
                         sessions: rows,
+                        more,
                     }
                 })
                 .collect();
@@ -252,6 +304,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                 branch: repo.branch.clone(),
                 enabled: false,
                 sessions: Vec::new(),
+                more: 0,
             }));
             WorkspaceNode {
                 name: workspace.name.clone(),
@@ -482,6 +535,60 @@ mod tests {
         assert_eq!(alpha, [("fm-demo-alpha", false), ("mine", false), ("fm-selftest-abc123-park", true)], "own blocked first, the foreign one as running");
         let park = &tree.workspaces[0].repos[0].sessions[2];
         assert_eq!(park.health, Health::Blocked { waiting_for: Some("permission prompt".into()) }, "its health is still shown");
+    }
+
+    fn closed(id: &str, name: &str, cwd: &str, age_ms: i64) -> Session {
+        foreman_claude::Transcript {
+            session_id: id.into(),
+            cwd: Some(cwd.into()),
+            custom_title: Some(name.into()),
+            modified_ms: NOW - age_ms,
+            ..Default::default()
+        }
+        .to_session()
+    }
+
+    // m5/27
+    #[test]
+    fn closed_sessions_show_with_stopped_newest_first_capped_and_starred_ones_always() {
+        const DAY: i64 = 24 * 3_600_000;
+        let mut gone = vec![
+            closed("cccc0001-x", "yesterday", r"C:\demo\Beta", DAY),
+            closed("bbbb0005-x", "term again", r"C:\demo\Beta", DAY),
+            closed("cccc0002-x", "old", r"C:\demo\Beta", 20 * DAY),
+            closed("cccc0003-x", "fm-selftest-abc123", r"C:\demo\Beta", DAY),
+        ];
+        gone.extend((0..7).map(|i| closed(&format!("dddd000{i}-x"), &format!("alpha{i}"), r"C:\demo\Alpha", (i + 1) * 3_600_000)));
+        let sup = |starred, expanded| Supervised { closed: &gone, starred, expanded, ..Supervised::default() };
+
+        let tree = build(&[workspace()], &sessions(), NOW, true, &sup(None, None));
+        let beta = &tree.workspaces[0].repos[1];
+        assert_eq!(names(beta), ["term", "gone", "done", "yesterday"], "listed by claude agents once; not past the window; no fm- transcript");
+        assert!(beta.sessions[3].closed && !beta.sessions[0].closed);
+        assert_eq!(beta.sessions[3].health, Health::Stopped);
+        assert_eq!(beta.sessions[3].session.kind, Kind::Interactive);
+        let alpha = &tree.workspaces[0].repos[0];
+        assert_eq!(names(alpha), ["parked", "busy", "alpha0", "alpha1", "alpha2", "alpha3", "alpha4"], "newest first, capped");
+        assert_eq!(alpha.more, 2);
+
+        let expanded = HashSet::from(["demo/Alpha".to_string()]);
+        let tree = build(&[workspace()], &sessions(), NOW, true, &sup(None, Some(&expanded)));
+        assert_eq!(tree.workspaces[0].repos[0].sessions.len(), 9, "more… shows the rest");
+        assert_eq!(tree.workspaces[0].repos[0].more, 0);
+
+        let hidden = build(&[workspace()], &sessions(), NOW, false, &sup(None, None));
+        assert_eq!(names(&hidden.workspaces[0].repos[1]), ["term", "gone"]);
+        assert_eq!(hidden.hidden_stopped, 1 + 1 + 7, "done, yesterday and Alpha's seven");
+
+        let starred = BTreeSet::from(["cccc0002-x".to_string(), "aaaa0004-x".to_string(), "dddd0006-x".to_string()]);
+        let tree = build(&[workspace()], &sessions(), NOW, false, &sup(Some(&starred), None));
+        assert_eq!(names(&tree.workspaces[0].repos[1]), ["term", "gone", "done", "old"], "stopped hidden, yet the starred stopped and 20-day-old ones stay");
+        assert!(tree.workspaces[0].repos[1].sessions[2].starred);
+        assert_eq!(names(&tree.workspaces[0].repos[0]), ["parked", "busy", "alpha6"]);
+        let tree = build(&[workspace()], &sessions(), NOW, true, &sup(Some(&starred), None));
+        let alpha = &tree.workspaces[0].repos[0];
+        assert_eq!(names(alpha).len(), 2 + 1 + CLOSED_CAP, "a starred one is not counted in the cap");
+        assert_eq!(alpha.more, 1);
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub enum MenuAction {
     StopSessionNow(Session),
     Copy(String),
     ShowInWork { workspace: String, item_id: String },
+    /// Stars or unstars a session by its `session_id` (m5/27).
+    ToggleStar(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +133,10 @@ pub fn session_items(workspace: &str, repo: &str, row: &SessionRow, resumable: b
     if let Some(item_id) = claimed {
         items.push(item("show-in-work", "Show in Work tab", MenuAction::ShowInWork { workspace: w, item_id }));
     }
+    if !s.session_id.is_empty() {
+        let label = if row.starred { "Unstar" } else { "Star" };
+        items.push(item("star", label, MenuAction::ToggleStar(s.session_id.clone())));
+    }
     items
 }
 
@@ -211,7 +217,7 @@ mod tests {
 
     fn row(json: &str, health: Health) -> SessionRow {
         let session = parse(&format!("[{json}]")).unwrap().remove(0);
-        SessionRow { attachable: fleet::attachable(&session, &health), session, health, hook: None, foreign: false }
+        SessionRow { attachable: fleet::attachable(&session, &health), session, health, hook: None, foreign: false, starred: false, closed: false }
     }
 
     #[test]
@@ -224,7 +230,7 @@ mod tests {
 
     #[test]
     fn repo_menu_offers_enable_or_disable() {
-        let mut repo = RepoNode { name: "Alpha".into(), path: r"C:\demo\Alpha".into(), branch: None, enabled: true, sessions: vec![] };
+        let mut repo = RepoNode { name: "Alpha".into(), path: r"C:\demo\Alpha".into(), branch: None, enabled: true, sessions: vec![], more: 0 };
         assert_eq!(keys(&repo_items("demo", &repo)), ["new-claude", "open-terminal", "open-folder", "disable"]);
         repo.enabled = false;
         let items = repo_items("demo", &repo);
@@ -239,7 +245,7 @@ mod tests {
     fn session_menu_asks_before_stopping_a_session_foreman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
         let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()));
-        assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work"]);
+        assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star"]);
         assert_eq!(items[1].label, "Stop…");
         assert_eq!(items[3].action, MenuAction::Copy("aaaa0001".into()));
 
@@ -247,11 +253,15 @@ mod tests {
         assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None)[1].label, "Stop");
 
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-x","name":"","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None)), ["resume", "copy-id"]);
+        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None)), ["resume", "copy-id", "star"]);
 
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
         let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None);
-        assert_eq!(keys(&items), ["copy-name", "copy-id"], "an interactive session is neither attached nor stopped from here");
+        assert_eq!(keys(&items), ["copy-name", "copy-id", "star"], "an interactive session is neither attached nor stopped from here");
         assert_eq!(items[1].action, MenuAction::Copy("bbbb0005".into()));
+        assert_eq!(items[2].action, MenuAction::ToggleStar("bbbb0005-x".into()));
+        let mut starred = row(interactive, Health::Idle);
+        starred.starred = true;
+        assert_eq!(session_items("demo", "Alpha", &starred, false, None)[2].label, "Unstar");
     }
 }

@@ -55,6 +55,7 @@ pub mod human;
 mod launch;
 pub mod peer;
 mod session;
+pub mod transcript;
 
 pub use assign::{Assignment, assign, assign_with, main_repo, main_repo_walks, repo_of};
 pub use cli::{
@@ -71,3 +72,4 @@ pub use launch::{
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };
+pub use transcript::{Transcript, Transcripts, claude_dir};

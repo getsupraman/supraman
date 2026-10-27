@@ -13,7 +13,7 @@ use std::{
 };
 
 use collections::HashMap;
-use foreman_claude::{ClaudeVersion, Sent, Session, check_supported, list_sessions, now_ms, send_from_human};
+use foreman_claude::{ClaudeVersion, Sent, Session, Transcripts, check_supported, list_sessions, main_repo, now_ms, send_from_human};
 use foreman_core::{
     DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings, mark_answered,
 };
@@ -35,6 +35,7 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::hand::{Hands, Launch};
 use crate::settings_window::{self, SettingsView};
+use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
@@ -73,6 +74,10 @@ fn cycled(len: usize, at: Option<usize>, step: isize) -> Option<usize> {
 }
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
+/// How often the transcripts of closed sessions are looked at again (m5/27); sooner when nudged.
+pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
+/// Where closed sessions' transcripts are read instead of `CLAUDE_CONFIG_DIR` / `~/.claude` (the selftest's fake).
+pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
 /// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
 /// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
@@ -255,6 +260,19 @@ pub struct FleetView {
     hands: Option<Arc<Mutex<Hands>>>,
     /// What went wrong minting or revoking them.
     pub hand_notices: Vec<String>,
+    /// Closed sessions from their transcripts (m5/27), as stopped interactive rows.
+    pub closed: Vec<Session>,
+    /// [`main_repo`] of each closed session's cwd, merged into `main_repos` after every poll.
+    closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
+    /// Transcript scans finished.
+    pub transcript_scans: u64,
+    /// Set to scan the transcripts again now (a star, the selftest).
+    pub transcripts_nudge: Arc<AtomicBool>,
+    pub stars: Stars,
+    /// `<workspace>/<repo>` whose `more…` row was clicked.
+    pub closed_expanded: HashSet<String>,
+    /// How a tab's pwsh calls claude for `+` and resume: `claude`, or the selftest's `& '<fake>'`.
+    pub claude_command: String,
 }
 
 /// What the fleet/terminal divider drags.
@@ -455,6 +473,10 @@ impl FleetView {
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
+        let (stars, stars_notice) = Stars::load(home.as_deref());
+        let transcripts_nudge = Arc::new(AtomicBool::new(true));
+        let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
+        Self::watch_transcripts(claude_dir, transcripts_nudge.clone(), cx);
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
@@ -484,7 +506,6 @@ impl FleetView {
             max_working: DEFAULT_MAX_WORKING,
             supervise_errors: Vec::new(),
             daemon_hold: None,
-            action_error: None,
             last_attempt: StdHashMap::new(),
             hooks: StdHashMap::new(),
             polled_at: 0,
@@ -518,7 +539,89 @@ impl FleetView {
             start_warning: None,
             hands,
             hand_notices: Vec::new(),
+            closed: Vec::new(),
+            closed_repos: StdHashMap::new(),
+            transcript_scans: 0,
+            transcripts_nudge,
+            action_error: stars_notice,
+            stars,
+            closed_expanded: HashSet::new(),
+            claude_command: "claude".into(),
         }
+    }
+
+    /// Closed sessions from the transcripts of the registered repos (m5/27), read on the background
+    /// executor every [`TRANSCRIPTS_EVERY`], at once when the repos change or `nudge` is set.
+    fn watch_transcripts(claude_dir: Option<PathBuf>, nudge: Arc<AtomicBool>, cx: &mut Context<Self>) {
+        let Some(claude_dir) = claude_dir else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            let mut scanner = Transcripts::in_claude_dir(&claude_dir);
+            let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
+            let mut last: Option<(Instant, Vec<PathBuf>)> = None;
+            loop {
+                let Ok((roots, keep, live)) = this.read_with(cx, |this, _| {
+                    let roots: Vec<PathBuf> = this
+                        .workspaces
+                        .iter()
+                        .flat_map(|w| w.repos.iter().filter(|r| r.enabled).map(|r| w.root.join(&r.path)))
+                        .collect();
+                    let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
+                    let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
+                    (roots, keep, live)
+                }) else {
+                    return;
+                };
+                let due = match &last {
+                    None => true,
+                    Some((at, scanned)) => at.elapsed() >= TRANSCRIPTS_EVERY || *scanned != roots,
+                };
+                if !(nudge.swap(false, Ordering::SeqCst) || due) {
+                    executor.timer(Duration::from_millis(250)).await;
+                    continue;
+                }
+                last = Some((Instant::now(), roots.clone()));
+                let since = now_ms() - fleet::CLOSED_WINDOW_MS;
+                let (back, known, closed) = executor
+                    .spawn(async move {
+                        let found = scanner.scan(&roots, since, &keep, &live);
+                        for t in &found {
+                            if let Some(cwd) = &t.cwd {
+                                repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
+                            }
+                        }
+                        let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
+                        (scanner, repos, closed)
+                    })
+                    .await;
+                scanner = back;
+                repos = known.clone();
+                if this
+                    .update(cx, |this, cx| {
+                        this.main_repos.extend(known.clone());
+                        this.closed_repos = known;
+                        this.closed = closed;
+                        this.transcript_scans += 1;
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Stars or unstars a session (m5/27); a starred one stays in the tree, stopped or closed.
+    pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        match self.stars.toggle(session_id) {
+            Ok(_) => self.transcripts_nudge.store(true, Ordering::SeqCst),
+            Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
+        }
+        cx.notify();
     }
 
     /// Revokes the hand tokens an earlier run left, off the UI thread, and the live ones on quit.
@@ -646,6 +749,7 @@ impl FleetView {
                     .collect();
                 self.sessions = sessions;
                 self.main_repos = refresh.main_repos;
+                self.main_repos.extend(self.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
                 self.sessions_error = None;
                 self.polled_at = refresh.polled_at;
             }
@@ -685,6 +789,9 @@ impl FleetView {
             hooks: Some(&self.hooks),
             polled_at: self.polled_at,
             main_repos: Some(&self.main_repos),
+            closed: &self.closed,
+            starred: Some(self.stars.ids()),
+            expanded: Some(&self.closed_expanded),
         };
         fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
     }
@@ -979,12 +1086,9 @@ impl FleetView {
             let kind = TabKind::Attach { session_id: session.id.clone() };
             self.open_tab(title, kind, shell, Some(session.cwd.clone()), window, cx)
         } else {
-            let shell = util::shell::Shell::WithArguments {
-                program: "claude".into(),
-                args: vec!["--resume".into(), sid.clone()],
-                title_override: None,
-            };
-            self.open_tab(title, TabKind::Shell, shell, Some(session.cwd.clone()), window, cx)
+            // through the `+` launch (m5/27): its own WorkState token, and the shell stays when claude exits
+            let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
+            self.hand_claude(session.cwd.clone(), title, resume, cx)
         }
     }
 
@@ -992,9 +1096,15 @@ impl FleetView {
     /// when it exits. With WorkState it runs with its own token ([`crate::hand`]), revoked when claude
     /// exits or the tab closes. The tab shows at once; its pwsh starts once the token is minted.
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let claude = self.claude_command.clone();
+        self.hand_claude(cwd, title, claude, cx)
+    }
+
+    /// [`Self::new_claude`] running `claude` (pwsh's program and arguments).
+    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
         let Some(hands) = self.hands.clone() else {
-            self.start_terminal(id, self.claude_shell(&Launch::Plain), Some(cwd), cx);
+            self.start_terminal(id, self.claude_shell(&Launch::Plain, &claude), Some(cwd), cx);
             return id;
         };
         let at = cwd.clone();
@@ -1004,7 +1114,7 @@ impl FleetView {
             let launch = launch.await;
             this.update(cx, |this, cx| {
                 if this.tab(id).is_some() {
-                    let shell = this.claude_shell(&launch);
+                    let shell = this.claude_shell(&launch, &claude);
                     this.start_terminal(id, shell, Some(cwd), cx);
                 }
             })
@@ -1048,13 +1158,13 @@ impl FleetView {
     }
 
     /// With [`Self::daemon_hold`] the tab says first why its claude cannot reach the background service.
-    fn claude_shell(&self, launch: &Launch) -> util::shell::Shell {
+    fn claude_shell(&self, launch: &Launch, claude: &str) -> util::shell::Shell {
         let launch_args = match &self.daemon_hold {
             Some(why) => {
-                let script = format!("{}; {}", held_line(why), launch.script());
+                let script = format!("{}; {}", held_line(why), launch.script_with(claude));
                 ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
             }
-            None => launch.shell_args(),
+            None => launch.shell_args_with(claude),
         };
         util::shell::Shell::WithArguments {
             program: "pwsh".into(),
