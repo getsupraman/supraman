@@ -1,3 +1,7 @@
 // Resource 1 is the icon gpui's Windows platform loads for its window class (gpui_windows load_icon)
 // and the one Explorer shows for foreman.exe.
 1 ICON "foreman.ico"
+// The application manifest (RT_MANIFEST 24), language-neutral so that it, not gpui's, applies
+// (foreman.manifest): no console window of its own (main.rs release_own_console).
+LANGUAGE 0, 0
+1 24 "foreman.manifest"

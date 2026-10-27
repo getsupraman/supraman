@@ -9,7 +9,7 @@ pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
 /// The oldest claude CLI Foreman runs on (docs/RELEASE.md): every CLI fact it relies on (`--bg`, the
 /// `agents --json --all` fields, `--plugin-dir`, the peer registry's `peerProtocol 1`) was measured on it.
 pub const MIN_VERSION: (u32, u32, u32) = (2, 1, 308);
-/// The newest claude CLI the release gate passed on. Newer ones run, with a warning.
+/// The newest claude CLI the release gate passed on. Newer ones run; a newer minor or major warns.
 pub const TESTED_VERSION: (u32, u32, u32) = (2, 1, 310);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,11 +26,13 @@ impl ClaudeVersion {
         (self.major, self.minor, self.patch)
     }
 
-    /// A warning for a CLI newer than [`TESTED_VERSION`]; everything still runs.
+    /// A warning for a CLI whose major.minor is newer than [`TESTED_VERSION`]'s; a newer patch of the
+    /// tested minor is not worth one. Everything still runs either way.
     pub fn untested(&self) -> Option<String> {
-        (self.triple() > TESTED_VERSION).then(|| {
+        let (major, minor, _) = TESTED_VERSION;
+        ((self.major, self.minor) > (major, minor)).then(|| {
             format!(
-                "claude CLI {} is newer than {}, the newest Foreman was tested on: everything stays enabled; if something misbehaves, report it with this version.",
+                "claude CLI {} is newer than {major}.{minor}, the newest Foreman was tested on ({}): everything stays enabled; if something misbehaves, report it with this version.",
                 self.raw,
                 dotted(TESTED_VERSION)
             )
@@ -83,9 +85,21 @@ pub fn check_version(version: &ClaudeVersion) -> Result<()> {
     }
 }
 
+/// A console child of the app gets no console window of its own: Foreman has no console to share
+/// when started from Explorer (m5/22), and every `claude`, `git` and `icacls` would flash one.
+pub fn no_window(command: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 fn run(args: &[&str], timeout: Duration) -> Result<String> {
     let command = format!("claude {}", args.join(" "));
-    let mut child = Command::new("claude")
+    let mut child = no_window(&mut Command::new("claude"))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -174,12 +188,21 @@ mod tests {
     }
 
     #[test]
-    fn newer_than_tested_runs_with_a_warning() {
-        for text in ["2.1.311 (Claude Code)", "2.2.0", "3.0.0 (Claude Code)"] {
+    fn a_newer_patch_runs_without_a_warning() {
+        for text in ["2.1.311 (Claude Code)", "2.1.999"] {
+            let v = parse_version(text).unwrap();
+            assert!(check_version(&v).is_ok(), "never block a newer claude: {text}");
+            assert_eq!(v.untested(), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_newer_minor_or_major_runs_with_a_warning() {
+        for text in ["2.2.0", "2.3.1 (Claude Code)", "3.0.0 (Claude Code)"] {
             let v = parse_version(text).unwrap();
             assert!(check_version(&v).is_ok(), "never block a newer claude: {text}");
             let warning = v.untested().expect(text);
-            assert!(warning.contains(text) && warning.contains("newer than 2.1.310"), "{warning}");
+            assert!(warning.contains(text) && warning.contains("newer than 2.1, the newest Foreman was tested on (2.1.310)"), "{warning}");
         }
     }
 

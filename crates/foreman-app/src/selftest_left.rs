@@ -99,14 +99,67 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     }
     shot_window("m5-13-settings-about", Some("Foreman Settings"), cx).await;
     view.update(cx, |v, cx| v.close_settings(cx));
+    sleep(cx, Duration::from_millis(1000)).await;
+    let errors = crate::selftest::teardown_errors();
+    if !errors.is_empty() {
+        bail!("close_settings logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
+    }
+    let closed = close_settings_by_wm_close(view, cx).await?;
 
     Ok(format!(
         "action bar: {} icons {:.0}×{:.0} px on one line; collapse all hid {open_rows} repo row(s), expand all restored them; \
-         stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown",
+         stopped toggle and busy ±1 (from {busy}) round-tripped; Settings opened, About shown; {closed}",
         ICONS.len(),
         f32::from(first.size.width),
         f32::from(first.size.height),
     ))
+}
+
+/// m5/22: the settings window again, closed the way its caption ✕ does (WM_CLOSE). Neither that nor
+/// the close before it may log gpui's "window not found" / "Invalid window handle" lines.
+#[cfg(windows)]
+async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    click(view, "bar-settings", cx).await?;
+    let started = Instant::now();
+    let handle = loop {
+        if let Some(handle) = view.read_with(cx, |v, _| v.settings_window)
+            && handle.read_with(cx, |_, _| ()).is_ok()
+        {
+            break handle;
+        }
+        if started.elapsed() > WITHIN {
+            bail!("Settings did not open a second time within {} s", WITHIN.as_secs());
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    };
+    let hwnd = handle
+        .update(cx, |_, window, _| crate::tray::hwnd(window))
+        .ok()
+        .flatten()
+        .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
+    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| anyhow!("WM_CLOSE: {e}"))?;
+    let asked = Instant::now();
+    while handle.read_with(cx, |_, _| ()).is_ok() {
+        if asked.elapsed() > WITHIN {
+            bail!("the settings window is still open {} s after WM_CLOSE", WITHIN.as_secs());
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    let gone = asked.elapsed();
+    // gpui destroys the HWND on a later turn of its executor; give that time to log
+    sleep(cx, Duration::from_millis(1000)).await;
+    let errors = crate::selftest::teardown_errors();
+    if !errors.is_empty() {
+        bail!("closing the settings window logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
+    }
+    Ok(format!("Settings closed again by WM_CLOSE in {} ms; no window-teardown line in the log", gone.as_millis()))
+}
+
+#[cfg(not(windows))]
+async fn close_settings_by_wm_close(_view: &Entity<FleetView>, _cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    Ok(String::new())
 }
 
 /// `--selftest-supervise` step e2 (m5/10): another Foreman's parked session. A fake `fm-elsewhere-<hex>-park`

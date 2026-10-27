@@ -2,9 +2,10 @@
 //! that claude gets its own minted `wss_` token like a supervised session ([`foreman_supervisor::mint`]):
 //! role worker, `externalRole` `hand`, `repo` of its cwd, in an owner-only file passed as
 //! `--mcp-config <file>` WITHOUT `--strict-mcp-config`, so the human keeps every other MCP server
-//! (LEARNINGS: `--mcp-config` beats the user-scope `workstate` registration). Only the path is typed.
+//! (LEARNINGS: `--mcp-config` beats the user-scope `workstate` registration). The tab's pwsh runs the
+//! launch as its `-EncodedCommand` (m5/22): nothing is typed or echoed, and only the path is in it.
 //!
-//! The token is revoked when that claude exits (the typed line deletes its file, [`Hands::ended`]),
+//! The token is revoked when that claude exits (the launch deletes its file, [`Hands::ended`]),
 //! when its tab closes, on quit, and on the next start for what an earlier run left
 //! ([`Hands::release_all`]). The mint's bearer is the repo role's static token, else the workspace's:
 //! a worker token cannot mint.
@@ -18,7 +19,8 @@ use crate::tokens::token_from;
 
 pub const EXTERNAL_ROLE: &str = "hand";
 const LAUNCHED_BY: &str = "foreman/hand";
-/// What a recalled launch line prints before it starts plain `claude`, quoted for a pwsh '…' string.
+/// What the launch prints before it starts plain `claude` when its file is already gone, quoted for a
+/// pwsh '…' string.
 const STALE: &str = "This tab''s WorkState token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
 
 /// How the `+` session starts.
@@ -33,20 +35,32 @@ pub enum Launch {
 }
 
 impl Launch {
-    /// The line typed into the pwsh tab. The shell deletes the config file once claude exits, however
-    /// it exits, which is how [`Hands::ended`] sees it. The line stays in the shell's history, so recalled
-    /// after that (Up+Enter) it finds the file gone and starts plain `claude`, saying why (m5/18).
-    pub fn command(&self) -> String {
+    /// What the tab's pwsh runs before its first prompt. It deletes the config file once claude exits,
+    /// however it exits, which is how [`Hands::ended`] sees it. Should the file be gone already (the
+    /// tab closed while it started), it starts plain `claude`, saying why (m5/18).
+    pub fn script(&self) -> String {
         match self {
             Launch::Minted { config, .. } => {
                 let path = config.to_string_lossy().replace('\'', "''");
                 format!(
-                    "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}\r"
+                    "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
                 )
             }
-            Launch::Plain | Launch::Unminted(_) => "claude\r".into(),
+            Launch::Plain | Launch::Unminted(_) => "claude".into(),
         }
     }
+
+    /// Appended to the tab's pwsh flags: [`Self::script`] runs unseen, and the shell stays when it ends.
+    pub fn shell_args(&self) -> [String; 3] {
+        ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script())]
+    }
+}
+
+/// pwsh's `-EncodedCommand`: base64 of the UTF-16LE script, so no quoting reaches the command line.
+pub fn encoded_command(script: &str) -> String {
+    use base64::Engine as _;
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// The hand sessions this app minted a token for, by name, persisted at [`Hands::path`].
@@ -297,19 +311,23 @@ mod tests {
     }
 
     #[test]
-    fn hand_command_passes_only_the_path_and_no_strict_flag() {
+    fn hand_script_passes_only_the_path_and_no_strict_flag() {
         let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), config }.command();
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), config };
+        let script = launch.script();
         let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
-            line,
+            script,
             format!(
-                "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}\r"
+                "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
             )
         );
-        assert!(!line.contains("--strict-mcp-config") && !line.contains("wss_"));
-        assert_eq!(Launch::Plain.command(), "claude\r");
-        assert_eq!(Launch::Unminted("x".into()).command(), "claude\r");
+        assert!(!script.contains("--strict-mcp-config") && !script.contains("wss_"));
+        assert_eq!(launch.shell_args(), ["-NoExit".to_string(), "-EncodedCommand".into(), encoded_command(&script)]);
+        assert_eq!(Launch::Plain.script(), "claude");
+        assert_eq!(Launch::Unminted("x".into()).script(), "claude");
+        // pwsh's own documented example
+        assert_eq!(encoded_command("dir \"c:\\program files\" "), "ZABpAHIAIAAiAGMAOgBcAHAAcgBvAGcAcgBhAG0AIABmAGkAbABlAHMAIgAgAA==");
     }
 
     #[test]
@@ -343,7 +361,7 @@ mod tests {
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
 
-        // exit: the typed line deleted the file
+        // exit: the launch deleted the file
         let Launch::Minted { name, config } = hands.launch(alpha) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert!(!hands.ended(&name));
@@ -414,14 +432,16 @@ mod tests {
                 "This claude session runs without its own WorkState token: cannot mint one (WorkState answered HTTP 409: name held by another launcher)".into()
             )
         );
-        assert_eq!(launch.command(), "claude\r");
+        assert_eq!(launch.script(), "claude");
         assert_eq!(seen.recv_timeout(WAIT).unwrap().1, "Bearer fake-static-ctl", "the workspace token when there is no repo one");
         assert!(hands.names().is_empty());
     }
 
-    /// The typed line deletes the file when claude exits, here a stand-in `claude` function.
+    /// The tab's pwsh as Foreman starts it, with a stand-in `claude.cmd` first on PATH that fails: it
+    /// gets only the path, the file is gone after it, and the terminal shows none of the script.
+    #[cfg(windows)]
     #[test]
-    fn hand_typed_line_deletes_the_config_when_claude_exits() {
+    fn hand_launch_deletes_the_config_when_claude_exits_and_shows_no_script() {
         let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
             return;
         };
@@ -430,21 +450,29 @@ mod tests {
         let config = dir.path().join("workstate-hand-alpha-1.json");
         std::fs::write(&config, "{}").unwrap();
         let seen = dir.path().join("argv.txt");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() }.command();
-        let script = format!(
-            "function claude {{ $args -join ' ' | Set-Content -LiteralPath '{}'; throw 'claude died' }}; {}",
-            seen.display(),
-            line.trim_end()
-        );
-        std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
+        let fake = format!("@echo %*> \"{}\"\r\n@echo fake claude ran\r\n@exit /b 3\r\n", seen.display());
+        std::fs::write(dir.path().join("claude.cmd"), fake).unwrap();
+        let path = format!("{};{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() };
+        // -NoExit's prompt reads stdin; a closed one ends it like a human typing `exit`.
+        let out = std::process::Command::new("pwsh")
+            .args(["-NoLogo", "-NoProfile"])
+            .args(launch.shell_args())
+            .env("PATH", path)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
         assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), format!("--mcp-config {}", config.display()));
         assert!(!config.exists(), "deleted even though claude failed");
+        let shown = String::from_utf8_lossy(&out.stdout);
+        assert!(shown.contains("fake claude ran"), "{out:?}");
+        assert!(!shown.contains("Test-Path") && !shown.contains("mcp-config"), "the script is not shown: {shown}");
     }
 
-    /// The same line recalled from history after claude exited (m5/18 c5): no `--mcp-config` to the
-    /// deleted file, plain claude after the notice.
+    /// The launch run again after claude exited (m5/18 c5): no `--mcp-config` to the deleted file,
+    /// plain claude after the notice.
     #[test]
-    fn hand_recalled_line_runs_plain_claude_once_the_config_is_gone() {
+    fn hand_launch_runs_plain_claude_once_the_config_is_gone() {
         let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
             return;
         };
@@ -453,11 +481,10 @@ mod tests {
         let config = dir.path().join("workstate-hand-alpha-1.json");
         std::fs::write(&config, "{}").unwrap();
         let seen = dir.path().join("argv.txt");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() }.command();
+        let line = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() }.script();
         let script = format!(
             "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
             seen.display(),
-            line = line.trim_end()
         );
         let out = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
         let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();

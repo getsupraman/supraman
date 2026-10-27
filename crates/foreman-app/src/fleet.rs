@@ -281,6 +281,21 @@ pub fn short_id(session: &Session) -> &str {
     session.id.get(..8).unwrap_or(&session.id)
 }
 
+/// Where a new shell starts (m5/22): the folder of the workspace holding `active` (the active tab's
+/// folder; the innermost root when roots nest), else the first workspace's, else `home`.
+pub fn shell_cwd(active: Option<&Path>, workspaces: &[Workspace], home: Option<PathBuf>) -> Option<PathBuf> {
+    // Registry roots may use `/` and another drive-letter case than a session's cwd.
+    let key = |p: &Path| -> Vec<String> { p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect() };
+    let holder = active.and_then(|cwd| {
+        let cwd = key(cwd);
+        workspaces
+            .iter()
+            .filter(|w| cwd.starts_with(&key(&w.root)))
+            .max_by_key(|w| w.root.components().count())
+    });
+    holder.or(workspaces.first()).map(|w| w.root.clone()).or(home)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +303,22 @@ mod tests {
     use foreman_core::Repo;
 
     const NOW: i64 = 1_800_000_000_000;
+
+    #[test]
+    fn shell_cwd_is_the_active_tabs_workspace_then_the_first_then_home() {
+        let a = Workspace::new("a", "P:/Projects/A", vec![]);
+        let b = Workspace::new("b", r"P:\Projects\B", vec![]);
+        let inner = Workspace::new("inner", r"P:\Projects\B\inner", vec![]);
+        let all = [a.clone(), b.clone(), inner.clone()];
+        let home = Some(PathBuf::from(r"C:\Users\me"));
+        let cwd = |active: Option<&str>, workspaces: &[Workspace]| shell_cwd(active.map(Path::new), workspaces, home.clone());
+        assert_eq!(cwd(Some(r"p:\projects\b\repo\src"), &all), Some(b.root.clone()), "another drive-letter case");
+        assert_eq!(cwd(Some(r"P:\Projects\A\x"), &all), Some(a.root.clone()), "forward-slash root");
+        assert_eq!(cwd(Some(r"P:\Projects\B\inner\r"), &all), Some(inner.root.clone()), "innermost root");
+        assert_eq!(cwd(Some(r"P:\Projects\Bee"), &all), Some(a.root.clone()), "a sibling with a common prefix is not inside");
+        assert_eq!(cwd(None, &all), Some(a.root.clone()), "no active tab: the first workspace");
+        assert_eq!(cwd(Some(r"D:\elsewhere"), &[]), home, "no workspace: home");
+    }
 
     fn workspace() -> Workspace {
         let repo = |name: &str, enabled: bool| Repo {

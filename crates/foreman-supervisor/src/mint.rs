@@ -59,7 +59,7 @@ pub fn git_repo(dir: &Path) -> Option<MintRepo> {
 
 /// `git -C <dir> <args>`: trimmed stdout when it succeeds and prints something.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("git")
+    let out = foreman_claude::no_window(&mut std::process::Command::new("git"))
         .arg("-C")
         .arg(dir)
         .args(args)
