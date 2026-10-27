@@ -134,6 +134,7 @@ pub fn prepare() -> anyhow::Result<()> {
         dirs: std::iter::once(home.clone()).chain(roots.iter().map(|r| (*r).clone())).collect(),
         session_name: None,
         name_prefix: Some(format!("fm-selftest-{hex}")),
+        kill: Vec::new(),
     });
     install_guards(Mode::SelftestSupervise);
     // Still single-threaded apart from the watchdog, which never reads the environment.

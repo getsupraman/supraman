@@ -2348,3 +2348,56 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   the 7b fix above); `--selftest-supervise` PASS (318 s); `--selftest-detach-shutdown` PASS; no `fm-selftest` rows
   from this worktree.
 
+
+## 2026-10-27 — m5/33 the active tab's session is marked in the tree
+
+- **Mapping.** An attach tab knows its 8-hex id. A shell tab (a `+` claude, a resume, a repo's New claude, or
+  `claude` typed by hand) is resolved by `foreman_claude::proc_tree`: one Toolhelp snapshot, a breadth-first
+  walk below the tab's pty pid (`Terminal::pid`, the pwsh ConPTY started), the nearest `claude.exe` that has a
+  live `~/.claude/sessions/<pid>.json` (`peer::entry_of`: the file's `pid` is that pid and it runs with the
+  registered `procStart`; read only). A claude whose `procStart` is older than the shell's start only
+  inherited a reused parent pid and is skipped. The tab keeps the entry's `sessionId` (`Tab::claude`);
+  `FleetView::tab_runs` matches it against a row's `session_id`, so `/clear` (new sessionId) moves the mark
+  when the registry and `claude agents` have the new id.
+- **When.** `FleetView::resolve_tabs` runs on the background executor, one run at a time (asked again while
+  running → once more after), on `TitleChanged`/`BreadcrumbsChanged` (claude names the console at start, idle,
+  work and exit, m5/29), on every poll, and a tab's `CloseTerminal` clears it. A session found that the last
+  `claude agents` does not list yet sets the poll nudge, so its row comes with the next list, not after
+  `REFRESH_EVERY`.
+- **Latency, claude+Enter → mark painted** (step 7l, a real `fm-selftest-<hex>-mark` typed into a `-NoProfile`
+  shell tab): 3.5–3.9 s without the poll nudge (registry ~1.5 s, then the 2 s poll + `claude agents`),
+  **1.8–3.3 s with it** (10 runs; one slow claude start: registered 5.5 s, marked 6.6 s). `/exit` clears the
+  mark in 0.17–0.73 s: claude removes its registry entry before its process ends, so the step waits for the
+  process separately.
+- **Mark**: `ghost_element_selected` background + a 2-px `border_focused` bar (as the attach mark before),
+  hit `marked-<sessionId>`. A row that runs in another tab gets a `tab` pill (`tab-link-<id>`) that brings
+  that tab forward; a search result click (m5/30's `open_result`) also brings a shell tab forward.
+- Tests: `proc_tree::tests` (4: nearest first and cycles, nearest registered live claude, a file written by
+  another pid, the real snapshot), `peer::tests::live_entries_and_entry_of_…`,
+  `view::tests::a_tab_runs_its_attached_id_or_the_claude_found_under_its_shell`. Step 7l kills its claude by
+  pid in cleanup (`Scratch::kill`, only while the pid has the recorded creation time).
+
+## 2026-10-27 — m5/34 Copy SendMessage name, a toast instead of the info line
+
+- **The ref, measured on claude 2.1.312**: ListAgents prints `name [ref]` where ref = the shortest prefix
+  (at least 6 hex, one more than the longest prefix it shares with a neighbour in the sorted list) of
+  `sha256("session:" + messagingSocketPath)`, the socket path exactly as registered. Found in the bundled JS
+  (`R(kind,id) = String(hash(`${kind}:${id}`))`, `M=6`, `_e()` widens shared prefixes; `stableId ?? id`) and
+  checked against 7 live sessions' ListAgents refs (all matched). With the remote flag
+  `tengu_session_stable_address` on, claude hashes `session:sid:<sessionId>` instead; Foreman cannot see the
+  flag. Names are compared trimmed and lowercased for ambiguity, entries without a pipe are not listed.
+- `peer::send_name(live, session_id)` → the registered name, or `name [ref]` only when another live listed
+  session shares it. The menu offers "Copy SendMessage name" when that lookup finds a live entry. The row's
+  health is not used: a just-started interactive row is `Unknown` for a poll or two, which hid the item in 2
+  of 2 runs once the poll nudge made the row appear earlier. "Copy name" and "Copy id" stay.
+- **Quiet feedback**: `action_info` and its notice above the tree are gone. Added / Removed / Rescanned /
+  Stopped / Copied go to `FleetView::show_toast`: an absolutely positioned box at the bottom of the left panel
+  (`elevated_surface_background`, success-tinted border, `✓ text`), gone after `TOAST_FOR` (2.5 s); the newest
+  replaces the last. Step 7l right-clicks its row, copies, checks the clipboard (own value, retried as 6b
+  does), the toast, and that `session-row-<id>`'s top is the same before and after (it was).
+- Step 7b (m5/26/m5/30's name field) flaked 2 of 7 runs before the merge with the name read right after the
+  posted keys; m5/30's version on master waits for the edited name, which the merge kept.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-3334\target` + `plugins` junction, claude 2.1.312, after merging master
+  b7fc76c): `cargo build --release --workspace` ok; `cargo test --release --workspace` 520 passed, 0 failed;
+  `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest`
+  rows or registry entries from this worktree left.
