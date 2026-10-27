@@ -1,4 +1,4 @@
-//! `--selftest` step 7k (m5/33, m5/34): a shell tab of this Foreman, in the gate's session cwd, where
+//! `--selftest` step 7l (m5/33, m5/34): a shell tab of this Foreman, in the gate's session cwd, where
 //! `claude --name fm-selftest-<hex>-mark` is typed. Its row must be marked (the time from Enter to the
 //! painted mark is measured); a plain shell tab marks nothing and shows the row's `tab` link, which brings
 //! the claude tab back. On that row, Copy SendMessage name puts the name `~/.claude/sessions` registered on
@@ -110,7 +110,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     let sid = entry.session_id.clone().unwrap_or_default();
     until(view, cx, STARTED_WITHIN, &format!("{name}'s row marked"), |v| marked(v).contains(&sid).then_some(())).await?;
     let to_mark = entered.elapsed();
-    println!("step 7k: claude+Enter → registered {} ms, row marked {} ms", registered.as_millis(), to_mark.as_millis());
+    println!("step 7l: claude+Enter → registered {} ms, row marked {} ms", registered.as_millis(), to_mark.as_millis());
     let others = view.read_with(cx, |v, _| marked(v));
     if others.len() != 1 {
         bail!("{} rows marked, expected only {name}'s: {others:?}", others.len());

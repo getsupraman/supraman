@@ -50,7 +50,7 @@ pub(crate) struct Scratch {
     /// `--selftest-supervise`: every row whose name starts with this is the run's own; cleanup
     /// first turns the app's supervisor off, then stops and removes each of them.
     pub(crate) name_prefix: Option<String>,
-    /// Processes this run started (pid, creation time), killed if still the same process (step 7k).
+    /// Processes this run started (pid, creation time), killed if still the same process (step 7l).
     pub(crate) kill: Vec<(u32, u64)>,
 }
 
@@ -774,8 +774,11 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let refreshed = crate::selftest_refresh::run(view, &home(), cx).await.context("step 7j")?;
     println!("step 7j: {refreshed}");
 
-    let mark = crate::selftest_mark::run(view, cx).await.context("step 7k")?;
-    println!("step 7k: {mark}");
+    let searched = crate::selftest_search::run(view, cx).await.context("step 7k")?;
+    println!("step 7k: {searched}");
+
+    let mark = crate::selftest_mark::run(view, cx).await.context("step 7l")?;
+    println!("step 7l: {mark}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();

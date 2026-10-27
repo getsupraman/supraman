@@ -270,8 +270,11 @@ fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
 pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let inbox = until(view, cx, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
     let tree = until(view, cx, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
-    if f32::from(tree.top() - inbox.bottom()) > 20. {
-        bail!("the tree starts at y {:.1}, {:.1} px under the Inbox: something sits between them", f32::from(tree.top()), f32::from(tree.top() - inbox.bottom()));
+    // the search box sits right above the tree (m5/30)
+    let search = view.read_with(cx, |v, _| v.hits.borrow().get("search-box").map(|h| h.bounds)).filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top());
+    let between = tree.top() - inbox.bottom() - search.map_or(Pixels::ZERO, |b| b.size.height);
+    if f32::from(between) > 20. {
+        bail!("the tree starts at y {:.1}, {:.1} px under the Inbox ({:.1} px besides the search box): something sits between them", f32::from(tree.top()), f32::from(tree.top() - inbox.bottom()), f32::from(between));
     }
     let position = tree.center();
     let wheel = |dy: f32, cx: &mut AsyncWindowContext| {

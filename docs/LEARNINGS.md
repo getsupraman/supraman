@@ -2300,3 +2300,104 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   from its environment, in a trusted cwd (the worktree's untrusted folder prompt also blocks it), named `fm-selftest-…`,
   and killed by its pid.
 
+## 2026-10-27 — m5/30 search box over the tree, one shared text input
+
+- **How a key reaches an input in gpui on Windows.** The platform hands every WM_KEYDOWN to gpui before
+  `TranslateMessage` (`translate_accelerator`). If anything takes the key down (a bound action, or a `key_down`
+  listener that calls `stop_propagation`), it is never translated, so no WM_CHAR follows. Characters, dead keys and
+  IME commits reach `EntityInputHandler::replace_text_in_range` only through WM_CHAR / WM_IME_COMPOSITION, and only
+  for the focus handle whose element called `window.handle_input` in the last paint. So `FleetView::key_down`
+  returns early, without stopping, while a text input has the focus (`input_focused`). Its edit and move keys are
+  actions bound in the `TextInput` context (`text_input::bind_keys`), so they run before that listener. A dead key
+  arrives with `prefer_character_input` and skips the bindings by itself.
+- **`text_input.rs`** replaces `line_edit.rs`. `LineText` is the gpui-free model: grapheme steps, Ctrl+arrow
+  words (`-`, `.` and space separate words), the double-click word, undo where typing runs join until a space or a
+  caret move and an IME composition is one step, and UTF-16↔byte maps. `TextInput` is the entity: the element
+  from `.repos/zed/crates/gpui/examples/input.rs` plus horizontal scroll, theme colours, a placeholder, its own
+  blink task (530 ms, lit after each edit or move), click / drag / Shift+click / double / triple click, Ctrl+C/X/V,
+  Ctrl+Z/Y, and an optional character filter (the Add name's `name_char`: a refused character emits `Refused`, and
+  the field shows the hint). Zed's `editor` crate is not used. Focus: the input stops its own mouse-down, and a
+  left mouse-down anywhere else focuses `FleetView` again. `on_focus_lost` does the same when the Add review's
+  input is dropped, because keys with no focus go to the window root, not to `FleetView`'s `key_down`.
+  Enter/Esc still save/cancel the review after a click on a repo took the keys from the name.
+- **Search** (`search.rs`, `view/results.rs`): case-insensitive. A session name or a workspace/repo name matches
+  anywhere; a session id matches from its start only (the short id or the full session id), so `5e1f` finds
+  `5e1f7e57…` and not `01d05e1f…`. It searches the whole tree (`search_tree`: stopped shown, every closed one, none
+  behind `more…`). Results are grouped workspace › repo with counts, a summary line, and `No results for "…"`. Session
+  rows are the tree's own `render_session` (star, attach/resume, menu), with marks from `search_marks`. A click
+  brings its attach tab forward, or attaches. A workspace/repo result row clicked clears the box and unfolds it.
+  The results use their own scroll id (`search-results`), so they start at the top, not at the tree's offset.
+  Key: **Ctrl+Shift+E** (KEYS.md). A Ctrl+letter would be taken from the program in a terminal tab. Esc clears the
+  box; on an empty box, Esc hands the keys back.
+- **F-04 fixed, and why 7b flaked.** The posted letters' WM_CHAR is queued behind the posted WM_KEYDOWN, so a read
+  right after posting can run first. Step 7b now waits for each state it checks (`until_app`: the caret at 0 after
+  the click, the edited name). A second cause showed while m5-3334's selftest ran in parallel: gpui takes modifiers
+  from `GetKeyState`, which posted messages never set. Alt was held in the UI thread's key state, so End,
+  Backspace and the letters arrived as `alt-end`, `alt-backspace`, `alt-a`… (trace from `observe_keystrokes`, run 9).
+  The letters still typed (WM_CHAR); End matched no binding. `post_keys` now waits until no modifier is held in that
+  state and fails naming the modifier if one stays held for 5 s. Not fixed: a modifier pressed mid-sequence.
+  Parallel gates also share the clipboard: step 6b failed twice (runs 2 and 7, "not copied") while the other
+  unit's selftest ran.
+- Step 7k (`selftest_search.rs`): dispatched Ctrl+Shift+E (a posted Ctrl is not in the key state), a query typed
+  as posted keys, and checks on the painted result rows: `5e1f` → the 7h closed session only, while stopped
+  sessions are hidden in the tree; `closed session` → it by title; `larchsys` → the workspace with its name marked;
+  `zzqx9` → No results. A posted Esc clears the box and the tree is back; a second Esc unfocuses it. Step 7f allows
+  the search box between the Inbox and the tree. Shot `m5-30-search-id`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-30\target`): build ok; `cargo test --release --workspace` 510 passed, 0
+  failed; `--selftest` 5 of 5 PASS on the final binary (runs 10–14, after 2 failures caused by the parallel run and
+  the 7b fix above); `--selftest-supervise` PASS (318 s); `--selftest-detach-shutdown` PASS; no `fm-selftest` rows
+  from this worktree.
+
+
+## 2026-10-27 — m5/33 the active tab's session is marked in the tree
+
+- **Mapping.** An attach tab knows its 8-hex id. A shell tab (a `+` claude, a resume, a repo's New claude, or
+  `claude` typed by hand) is resolved by `foreman_claude::proc_tree`: one Toolhelp snapshot, a breadth-first
+  walk below the tab's pty pid (`Terminal::pid`, the pwsh ConPTY started), the nearest `claude.exe` that has a
+  live `~/.claude/sessions/<pid>.json` (`peer::entry_of`: the file's `pid` is that pid and it runs with the
+  registered `procStart`; read only). A claude whose `procStart` is older than the shell's start only
+  inherited a reused parent pid and is skipped. The tab keeps the entry's `sessionId` (`Tab::claude`);
+  `FleetView::tab_runs` matches it against a row's `session_id`, so `/clear` (new sessionId) moves the mark
+  when the registry and `claude agents` have the new id.
+- **When.** `FleetView::resolve_tabs` runs on the background executor, one run at a time (asked again while
+  running → once more after), on `TitleChanged`/`BreadcrumbsChanged` (claude names the console at start, idle,
+  work and exit, m5/29), on every poll, and a tab's `CloseTerminal` clears it. A session found that the last
+  `claude agents` does not list yet sets the poll nudge, so its row comes with the next list, not after
+  `REFRESH_EVERY`.
+- **Latency, claude+Enter → mark painted** (step 7l, a real `fm-selftest-<hex>-mark` typed into a `-NoProfile`
+  shell tab): 3.5–3.9 s without the poll nudge (registry ~1.5 s, then the 2 s poll + `claude agents`),
+  **1.8–3.3 s with it** (10 runs; one slow claude start: registered 5.5 s, marked 6.6 s). `/exit` clears the
+  mark in 0.17–0.73 s: claude removes its registry entry before its process ends, so the step waits for the
+  process separately.
+- **Mark**: `ghost_element_selected` background + a 2-px `border_focused` bar (as the attach mark before),
+  hit `marked-<sessionId>`. A row that runs in another tab gets a `tab` pill (`tab-link-<id>`) that brings
+  that tab forward; a search result click (m5/30's `open_result`) also brings a shell tab forward.
+- Tests: `proc_tree::tests` (4: nearest first and cycles, nearest registered live claude, a file written by
+  another pid, the real snapshot), `peer::tests::live_entries_and_entry_of_…`,
+  `view::tests::a_tab_runs_its_attached_id_or_the_claude_found_under_its_shell`. Step 7l kills its claude by
+  pid in cleanup (`Scratch::kill`, only while the pid has the recorded creation time).
+
+## 2026-10-27 — m5/34 Copy SendMessage name, a toast instead of the info line
+
+- **The ref, measured on claude 2.1.312**: ListAgents prints `name [ref]` where ref = the shortest prefix
+  (at least 6 hex, one more than the longest prefix it shares with a neighbour in the sorted list) of
+  `sha256("session:" + messagingSocketPath)`, the socket path exactly as registered. Found in the bundled JS
+  (`R(kind,id) = String(hash(`${kind}:${id}`))`, `M=6`, `_e()` widens shared prefixes; `stableId ?? id`) and
+  checked against 7 live sessions' ListAgents refs (all matched). With the remote flag
+  `tengu_session_stable_address` on, claude hashes `session:sid:<sessionId>` instead; Foreman cannot see the
+  flag. Names are compared trimmed and lowercased for ambiguity, entries without a pipe are not listed.
+- `peer::send_name(live, session_id)` → the registered name, or `name [ref]` only when another live listed
+  session shares it. The menu offers "Copy SendMessage name" when that lookup finds a live entry. The row's
+  health is not used: a just-started interactive row is `Unknown` for a poll or two, which hid the item in 2
+  of 2 runs once the poll nudge made the row appear earlier. "Copy name" and "Copy id" stay.
+- **Quiet feedback**: `action_info` and its notice above the tree are gone. Added / Removed / Rescanned /
+  Stopped / Copied go to `FleetView::show_toast`: an absolutely positioned box at the bottom of the left panel
+  (`elevated_surface_background`, success-tinted border, `✓ text`), gone after `TOAST_FOR` (2.5 s); the newest
+  replaces the last. Step 7l right-clicks its row, copies, checks the clipboard (own value, retried as 6b
+  does), the toast, and that `session-row-<id>`'s top is the same before and after (it was).
+- Step 7b (m5/26/m5/30's name field) flaked 2 of 7 runs before the merge with the name read right after the
+  posted keys; m5/30's version on master waits for the edited name, which the merge kept.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-3334\target` + `plugins` junction, claude 2.1.312, after merging master
+  b7fc76c): `cargo build --release --workspace` ok; `cargo test --release --workspace` 520 passed, 0 failed;
+  `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest`
+  rows or registry entries from this worktree left.
