@@ -517,8 +517,9 @@ impl FleetView {
                     }
                 }),
             );
-            // only a workspace whose relay can take it now; otherwise the relay label beside it says why (and
-            // a long label plus this button would push Stop past the panel's edge)
+            // only a started workspace: a message goes direct, or waits in the inbox for the relay it starts
+            // (m5/32); the path label beside it says which (a long label plus this button would push Stop past
+            // the panel's edge)
             let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
                 let w = workspace.name.clone();
                 button(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(

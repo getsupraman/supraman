@@ -2235,7 +2235,43 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - **What claude sends.** claude 2.1.311 sets `process.title`, which ConPTY turns into OSC 0: `claude` at start, then `✳ <name>` while idle and `◐`/`◑` (alternating every 960 ms) while working, where the name is the session's custom title, then the ai title, then the agent type, then `Claude Code`. On exit it sets `""`. `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` turns it off. The step 2 bg session was seen as `◑ fm-selftest-…`. The glyph stays in the label: `✳` renders as a small green emoji glyph and reads well.
 - **ConPTY's own title is no title.** When nothing names the console, ConPTY sends the absolute path of the running executable: `C:\Program Files\WindowsApps\Microsoft.PowerShell_…\pwsh.exe` for a pwsh tab, `…\.local\bin\claude.exe` for an attach tab. Zed's guard compared the title with `shell_program`, but that is `Some("")` here, because `resolve_path` comes back empty for the App Execution Alias. Measured: the guard never fired. `terminal.rs::is_default_title` now also treats any absolute `*.exe` path as "no title". That empties `breadcrumb_text`, so the tab label falls back to its own.
 - `Tab::program_title` = `tab_card::sanitize(breadcrumb_text)` on `BreadcrumbsChanged`. Sanitising drops controls (C0/C1), bidi and zero-width characters, folds whitespace runs to one space, and caps the title at 200 chars plus `…`. `Tab::label()` is what the tab shows. The tab's label uses `clipped_with(…, own_tooltip: false)`, because the card on the whole tab carries the full text. The card is gpui's `.tooltip()`, which waits 500 ms (`DEFAULT_TOOLTIP_SHOW_DELAY`). Its branch is read when it opens (`foreman_core::branch_at`, walking up to the nearest `.git`). Step 7i measured the card at about 555 ms. The fields come from the tab: workspace/repo from its cwd (`tab_card::place`), session from the attached row or the interactive resume, kind is hand/bg attach/shell, started is the session's `started_at` or the time the tab opened. A Work tab has no kind.
+- **Elevated:** an elevated console prefixes the default title with `Administrator: ` (localised). The controller's elevated gate failed step 7i 5 of 5 until `is_default_title` also matched any `<prefix>: <absolute exe path>` (ecfc937). The agent's gate ran non-elevated, so it never saw this. René runs Foreman elevated.
 - Step 7i (`selftest_title.rs`): a pwsh tab prints `ESC]2;✳  name<TAB>BEL`, and the label must read `✳ name`. The step then hovers the tab: the card's first line is the title, it has the workspace, folder, `kind  shell`, a start time, and the branch when the folder is in a repo, and it must not show before 400 ms. Then `ESC]2;BEL`, and the label must be the fallback again. Shot `m5-29-tab-card`.
+
+## 2026-10-27 — m5/32 relay on demand
+
+- **Why**: on René's machine `relay/gaia` and `relay/nomos` had 0 relay sends (`inbox/sent` empty), the outbox
+  only `fm tell` files: since m5/4 the always-on relay was an idle session per workspace that never carried a
+  message. René chose (2026-10-27) to keep the fallback but run it only when needed; dropping it was not chosen.
+- **Shape**: the demand is read from files, not from a flag someone must set: `relay_demand` = a `*.json` drop waits
+  in `relay/<w>/inbox`, or `relay/<w>/last-drop` (written by every `foreman_core::send`) is younger than the
+  idle timeout. So `fm send` from a shell needs no access to the desired state, and a drop made while Foreman
+  was closed starts the relay on the next tick after Start. `supervise::sync_relay` runs in every tick between
+  loading the desired states and reconciling: wants the relay (first, `DesiredState::set_relay`) or retires it
+  (`unwant` → `retired` → R14 stops it). A relay wanted again comes back by **resume** of its stopped row with the
+  re-arm prompt, and a new watcher prints every drop still in the inbox, so nothing queued is lost.
+- **Upgrade**: a desired state that still lists the relay (Start wrote it before m5/32) is retired on the first
+  tick unless a drop waits; Start no longer touches the relay, except that a wanted one follows the root.
+- **The app no longer refuses** a send because the relay is not `relay ready`: a started workspace takes the
+  message (direct, or queued for the relay it starts); Task… shows on every started workspace.
+- **Timeout**: `settings.toml` `relay_idle_secs` (default 600), counted from the last drop, not from delivery.
+  A drop still waiting keeps the relay wanted however old it is. Not covered: a relay that takes longer than the
+  timeout to arm and is retired between the watcher printing the drop and its `SendMessage` (seconds, at 10 min).
+- **Selftest** (`--selftest-supervise`, `relay_idle_secs = 60`): the testbed's desired state is written with the
+  relay listed, as before m5/32. Step b: no relay row, it is retired, row `direct`. Step r: 30 direct sends, still no
+  relay row; the forced fallback → `relay starting` after 2.0 s, armed and `relay ready` after 17.8 s, nonce back in
+  the outbox after 23.0 s, in Messages with Attach; retired, stopped and `direct` 61.5 s after the drop. Step g counts
+  2 supervised rows (workspace, park): the retired relay is no longer the workspace's.
+- Tests: `relay::tests::the_relay_is_in_demand_…`, `desired::tests::set_relay_…`,
+  `supervise::tests::the_relay_is_wanted_on_a_fallback_and_retired_after_the_idle_timeout` (fallback, waiting drop,
+  timeout, upgrade with and without a queued drop), `relay_status_reads_direct_starting_ready_and_expired`,
+  settings round trip with `relay_idle_secs`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-32\target`): `cargo build --release --workspace` ok; `cargo test --release
+  --workspace` 491 passed, 0 failed; `--selftest-supervise` PASS (first run, 333 s); `--selftest` 4 of the first 5 (run 4
+  FAIL step 7b, `selftest_manage.rs` `edit_name`: the name was read right after posting End, 3 Backspace and `added`
+  and showed `selftest-` — m5/26's step, a read-before-dispatch race, not code m5/32 touches), then 5 of 5 PASS;
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this worktree left (4 `fm-selftest-c5886c-*` rows with
+  cwd in the main checkout are another run's, not touched).
 
 ## 2026-10-27 — m5/28 closed sessions show up at once
 

@@ -909,16 +909,15 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Why nothing can be sent through `workspace`'s relay now, if so: it must be started with its
-    /// relay live and its watcher armed (what the row shows as `relay ready`).
+    /// Why nothing can be sent through `workspace`'s relay now, if so: it must be started. The relay
+    /// itself need not run: a drop makes the supervisor start it (m5/32), and it waits in the inbox till then.
     pub fn relay_refusal(&self, workspace: &str) -> Option<String> {
         if self.home.is_none() {
             return Some("no Foreman home".into());
         }
-        match self.relays.get(workspace).and_then(|r| r.label(now_ms())) {
-            Some((_, true)) => None,
-            Some((text, false)) => Some(text),
-            None => Some(format!("{workspace} is stopped")),
+        match self.relays.get(workspace) {
+            Some(r) if r.started => None,
+            _ => Some(format!("{workspace} is stopped")),
         }
     }
 

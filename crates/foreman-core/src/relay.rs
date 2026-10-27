@@ -3,8 +3,9 @@
 //! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
 //! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]), as does a
 //! session's own `fm tell` ([`tell`]). Since m5/4 the relay is the fallback: `foreman_claude::human`
-//! writes into a session's pipe first. Facts
-//! behind the shape: `docs/LEARNINGS.md` m0/4 and m3/1.
+//! writes into a session's pipe first. Since m5/32 the relay runs only on demand ([`relay_demand`]): while
+//! a drop waits in the inbox, and until [`DEFAULT_RELAY_IDLE_MS`] after the last one. Facts behind the
+//! shape: `docs/LEARNINGS.md` m0/4, m3/1 and m5/32.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -24,6 +25,10 @@ pub const SENT_DIR: &str = "sent";
 pub const REJECTED_DIR: &str = "rejected";
 /// An outbox file that does not parse yet may still be being written; after this it is shown as is.
 pub const UNREADABLE_AFTER_MS: i64 = 5_000;
+/// `relay/<w>/last-drop`: when [`send`] last dropped a message, Unix epoch milliseconds as text.
+pub const LAST_DROP_FILE: &str = "last-drop";
+/// How long the relay stays wanted after the last drop (`settings.toml` `relay_idle_secs` overrides it).
+pub const DEFAULT_RELAY_IDLE_MS: i64 = 10 * 60 * 1000;
 
 pub fn relay_dir(home: &Path, workspace: &str) -> Result<PathBuf> {
     validate_name(workspace)?;
@@ -82,7 +87,32 @@ pub fn send(home: &Path, workspace: &str, to: &str, body: &str) -> Result<PathBu
     .map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
     fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
     fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    let stamp = dir.with_file_name(LAST_DROP_FILE);
+    fs::write(&stamp, now_ms().to_string()).map_err(|e| CoreError::io(&stamp, e))?;
     Ok(path)
+}
+
+/// Drops still waiting in the inbox (`*.json`; the watcher moves each one it printed out of it).
+pub fn pending_drops(home: &Path, workspace: &str) -> Result<usize> {
+    let dir = inbox_dir(home, workspace)?;
+    match fs::read_dir(&dir) {
+        Ok(entries) => Ok(entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && e.file_name().to_string_lossy().ends_with(".json"))
+            .count()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(CoreError::io(&dir, e)),
+    }
+}
+
+/// When [`send`] last dropped a message, if ever.
+pub fn last_drop(home: &Path, workspace: &str) -> Option<i64> {
+    fs::read_to_string(relay_dir(home, workspace).ok()?.join(LAST_DROP_FILE)).ok()?.trim().parse().ok()
+}
+
+/// Whether the workspace needs its relay now: a drop is waiting, or the last one is younger than `idle_ms`.
+pub fn relay_demand(home: &Path, workspace: &str, now: i64, idle_ms: i64) -> Result<bool> {
+    Ok(pending_drops(home, workspace)? > 0 || last_drop(home, workspace).is_some_and(|t| now - t < idle_ms))
 }
 
 /// `fm tell`: a session's message to the human, written into the outbox as the relay writes what it
@@ -349,6 +379,23 @@ mod tests {
         assert!(!path.exists());
         assert!(inbox.join(SENT_DIR).join(file).is_file());
         assert_eq!(w.scan().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_relay_is_in_demand_while_a_drop_waits_and_until_the_idle_timeout() {
+        let home = tempfile::tempdir().unwrap();
+        let idle = DEFAULT_RELAY_IDLE_MS;
+        let now = now_ms();
+        assert!(!relay_demand(home.path(), "demo", now, idle).unwrap(), "no relay dir: no demand");
+        send(home.path(), "demo", "fm-demo-workspace", "x").unwrap();
+        let at = last_drop(home.path(), "demo").unwrap();
+        assert!((at - now).abs() < 60_000, "{at} vs {now}");
+        assert_eq!(pending_drops(home.path(), "demo").unwrap(), 1);
+        assert!(relay_demand(home.path(), "demo", at + 2 * idle, idle).unwrap(), "a waiting drop keeps it wanted");
+        InboxWatcher::new(inbox_dir(home.path(), "demo").unwrap()).scan().unwrap();
+        assert_eq!(pending_drops(home.path(), "demo").unwrap(), 0);
+        assert!(relay_demand(home.path(), "demo", at + idle - 1, idle).unwrap());
+        assert!(!relay_demand(home.path(), "demo", at + idle, idle).unwrap(), "idle for the timeout: retired");
     }
 
     #[test]
