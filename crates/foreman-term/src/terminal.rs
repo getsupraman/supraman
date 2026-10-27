@@ -1590,6 +1590,17 @@ const FIND_HYPERLINK_THROTTLE: Duration = Duration::from_millis(100);
 /// clipboard. Mirrors the drag threshold used by gpui's `div` element.
 const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
+/// `title` is ConPTY's name for a console nothing named: the shell program itself, or the absolute path of
+/// whichever executable runs in it (`pwsh.exe` from its install folder, `claude.exe`). `program` is
+/// often `""`, as `resolve_path` leaves an App Execution Alias.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn is_default_title(program: Option<&str>, title: &str) -> bool {
+    let title = title.trim();
+    let path = Path::new(title);
+    program.is_some_and(|p| !p.is_empty() && p.eq_ignore_ascii_case(title))
+        || path.is_absolute() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+}
+
 impl Terminal {
     fn process_pty_event(&mut self, event: PtyEvent, cx: &mut Context<Self>) {
         match event {
@@ -1604,17 +1615,14 @@ impl Terminal {
     fn process_event(&mut self, event: TerminalBackendEvent, cx: &mut Context<Self>) {
         match event {
             TerminalBackendEvent::Title(title) => {
-                // ignore default shell program title change as windows always sends those events
-                // and it would end up showing the shell executable path in breadcrumbs
+                // ConPTY names the console after the running executable whenever nothing else names
+                // it (at start, and when a program clears its title): that is no title (m5/29)
                 #[cfg(windows)]
-                if self
-                    .shell_program
-                    .as_ref()
-                    .map(|e| *e == title)
-                    .unwrap_or(false)
-                {
-                    return;
-                }
+                let title = if is_default_title(self.shell_program.as_deref(), &title) {
+                    String::new()
+                } else {
+                    title
+                };
 
                 self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
@@ -5058,6 +5066,32 @@ mod tests {
             assert_eq!(terminal.get_content().trim(), "ok");
             assert_eq!(terminal.breadcrumb_text, "current");
         });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_shells_own_path_is_no_title() {
+        // as measured in the selftest (m5/29): the program did not resolve
+        let none = Some("");
+        assert!(is_default_title(none, r"C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.7.0_x64__8wekyb3d8bbwe\pwsh.exe"));
+        assert!(is_default_title(none, r"c:\users\me\.local\bin\claude.exe"));
+        assert!(is_default_title(Some("pwsh"), "pwsh"));
+        assert!(is_default_title(None, r"C:\WINDOWS\system32\CMD.EXE"));
+        assert!(!is_default_title(none, ""), "empty is a reset, not this");
+        assert!(!is_default_title(none, "pwsh.exe"), "not a path");
+        assert!(!is_default_title(none, "\u{25D1} fm-selftest-11fa0c"));
+        assert!(!is_default_title(none, r"P:\Projects\notes"), "a folder some prompt shows");
+    }
+
+    #[gpui::test]
+    async fn test_osc_2_sets_the_title_and_an_empty_one_clears_it(cx: &mut TestAppContext) {
+        let terminal = display_only_terminal(cx);
+        terminal.update(cx, |terminal, cx| terminal.write_raw_output("\x1b]2;\u{2733} fix tray\x07".as_bytes(), cx));
+        cx.run_until_parked();
+        terminal.read_with(cx, |terminal, _| assert_eq!(terminal.breadcrumb_text, "\u{2733} fix tray"));
+        terminal.update(cx, |terminal, cx| terminal.write_raw_output(b"\x1b]0;\x1b\\", cx));
+        cx.run_until_parked();
+        terminal.read_with(cx, |terminal, _| assert!(terminal.breadcrumb_text.is_empty()));
     }
 
     #[gpui::test]
