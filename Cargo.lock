@@ -1664,6 +1664,7 @@ name = "foreman-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "collections",
  "embed-resource",
@@ -1760,6 +1761,7 @@ dependencies = [
 name = "foreman-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "foreman-term",
  "gpui",
  "itertools",

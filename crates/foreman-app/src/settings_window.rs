@@ -62,6 +62,10 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
             ..Default::default()
         },
         |window, cx| {
+            window.on_window_should_close(cx, |window, cx| {
+                crate::tray::close(window, cx);
+                false
+            });
             let view = cx.new(|cx| SettingsView::new(home, fleet, page.unwrap_or(Page::Sessions), cx));
             let focus = view.read(cx).focus.clone();
             window.focus(&focus, cx);
@@ -179,9 +183,9 @@ impl SettingsView {
         cx.open_with_system(&path);
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, _cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key == "escape" {
-            window.remove_window();
+            crate::tray::close(window, cx);
         }
     }
 

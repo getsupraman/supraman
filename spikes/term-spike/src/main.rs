@@ -175,7 +175,7 @@ fn kill_tree(child: &mut Child) {
 fn main() {
     foreman_ui::process_start();
     let mode = parse_args();
-    foreman_ui::init_logger();
+    foreman_ui::init_logger(None);
     println!("terminal: foreman-term");
 
     if matches!(mode, Mode::Selftest(Load::External)) {

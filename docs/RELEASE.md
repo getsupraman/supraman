@@ -55,7 +55,8 @@ every folder above it (a dev build): sessions cannot be started from this build.
 |------------------------------|----------------------------------------------------------------|
 | below `MIN_VERSION` (2.1.308) | refuses, naming the minimum and why: "update claude"          |
 | 2.1.308 … `TESTED_VERSION` (2.1.310) | runs                                                    |
-| newer than tested (any, incl. a new major) | runs, with a visible warning (app notice, `fm` stderr, selftest line) |
+| a newer patch of the tested minor (2.1.311) | runs, says nothing                                     |
+| a newer minor or major (2.2.0, 3.0.0) | runs; the toolbar ⚠ (its tooltip says why), `fm` stderr, selftest line; no Inbox notice |
 
 Never block a newer claude (decision 2026-10-26): the CLI auto-updates, and blocking would stop every user on the
 day of a release. The minimum is the oldest version every CLI fact Foreman relies on was measured on

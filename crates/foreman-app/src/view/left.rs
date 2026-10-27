@@ -397,11 +397,6 @@ impl FleetView {
                 status.error.opacity(0.12),
             ));
         }
-        if let Cli::Supported(version) = &self.cli
-            && let Some(warning) = version.untested()
-        {
-            notices.push(notice(warning, status.warning, status.warning.opacity(0.12)));
-        }
         if let Some(error) = &self.registry_error {
             notices.push(notice(
                 format!("Cannot read the workspace registry: {error}"),

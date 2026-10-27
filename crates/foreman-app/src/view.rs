@@ -146,6 +146,8 @@ pub struct Tab {
     pub error: Option<String>,
     pub exited: bool,
     pub detach: Detach,
+    /// The folder it opened in (a Work tab: its workspace's), for [`fleet::shell_cwd`].
+    pub cwd: Option<PathBuf>,
 }
 
 pub struct FleetView {
@@ -367,7 +369,10 @@ impl FleetView {
         focus.focus(window, cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
-            this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true)
+            if this.update(cx, |this, cx| this.should_close(window, cx)).unwrap_or(true) {
+                crate::tray::close(window, cx);
+            }
+            false
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
         let left_width = home
@@ -909,7 +914,7 @@ impl FleetView {
 
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window.take() {
-            handle.update(cx, |_, window, _| window.remove_window()).ok();
+            handle.update(cx, |_, window, cx| crate::tray::close(window, cx)).ok();
         }
     }
 
@@ -970,21 +975,27 @@ impl FleetView {
         }
     }
 
-    /// A shell tab in `cwd` running `claude`, as if typed there: the shell stays when it exits. With
-    /// WorkState it runs with its own token ([`crate::hand`]), revoked when claude exits or the tab closes.
-    pub fn new_claude(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
+    /// A shell tab in `cwd` whose pwsh starts `claude` unseen ([`Launch::shell_args`]): the shell stays
+    /// when it exits. With WorkState it runs with its own token ([`crate::hand`]), revoked when claude
+    /// exits or the tab closes. The tab shows at once; its pwsh starts once the token is minted.
+    pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
         let Some(hands) = self.hands.clone() else {
-            return self.type_in_shell(cwd, title, "claude\r".into(), window, cx);
+            self.start_terminal(id, self.claude_shell(&Launch::Plain), Some(cwd), cx);
+            return id;
         };
         let at = cwd.clone();
         let mint = hands.clone();
         let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch(&at) });
-        let (tx, rx) = futures::channel::oneshot::channel::<String>();
-        let command = cx.background_executor().spawn(async move { rx.await.unwrap_or_else(|_| "claude\r".into()) });
-        let id = self.type_in_shell_when(cwd, title, command, window, cx);
         cx.spawn(async move |this, cx| {
             let launch = launch.await;
-            tx.send(launch.command()).ok();
+            this.update(cx, |this, cx| {
+                if this.tab(id).is_some() {
+                    let shell = this.claude_shell(&launch);
+                    this.start_terminal(id, shell, Some(cwd), cx);
+                }
+            })
+            .ok();
             let name = match launch {
                 Launch::Minted { name, .. } => name,
                 Launch::Unminted(notice) => {
@@ -1021,6 +1032,14 @@ impl FleetView {
         })
         .detach();
         id
+    }
+
+    fn claude_shell(&self, launch: &Launch) -> util::shell::Shell {
+        util::shell::Shell::WithArguments {
+            program: "pwsh".into(),
+            args: self.shell_args.iter().cloned().chain(launch.shell_args()).collect(),
+            title_override: None,
+        }
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -1102,6 +1121,7 @@ impl FleetView {
             }),
         };
         let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), link, cx);
+        let cwd = self.workspaces.iter().find(|w| w.name == workspace).map(|w| w.root.clone());
         self.tabs.push(Tab {
             id,
             title: format!("Work · {workspace}"),
@@ -1110,6 +1130,7 @@ impl FleetView {
             error: None,
             exited: false,
             detach: Detach::None,
+            cwd,
         });
         self.active = Some(id);
         cx.notify();
@@ -1143,7 +1164,15 @@ impl FleetView {
             title_override: None,
         };
         let title = format!("pwsh {}", self.next_tab_id);
-        self.open_tab(title, TabKind::Shell, shell, std::env::current_dir().ok(), window, cx)
+        let cwd = self.new_shell_cwd();
+        self.open_tab(title, TabKind::Shell, shell, cwd, window, cx)
+    }
+
+    /// [`fleet::shell_cwd`] for the active tab, never the exe's folder.
+    pub fn new_shell_cwd(&self) -> Option<PathBuf> {
+        let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
+        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
+        fleet::shell_cwd(active, &self.workspaces, home)
     }
 
     fn open_tab(
@@ -1152,9 +1181,16 @@ impl FleetView {
         kind: TabKind,
         shell: util::shell::Shell,
         cwd: Option<PathBuf>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> u64 {
+        let id = self.push_tab(title, kind, cwd.clone(), cx);
+        self.start_terminal(id, shell, cwd, cx);
+        id
+    }
+
+    /// The active tab, its terminal not started yet ([`Self::start_terminal`]).
+    fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
         self.tabs.push(Tab {
@@ -1165,8 +1201,14 @@ impl FleetView {
             error: None,
             exited: false,
             detach: Detach::None,
+            cwd,
         });
         self.active = Some(id);
+        cx.notify();
+        id
+    }
+
+    fn start_terminal(&mut self, id: u64, shell: util::shell::Shell, cwd: Option<PathBuf>, cx: &mut Context<Self>) {
         let build = TerminalBuilder::new(
             cwd,
             TerminalMode::interactive(),
@@ -1178,12 +1220,12 @@ impl FleetView {
             Vec::new(),
             Duration::ZERO,
             false,
-            window.window_handle().window_id().as_u64(),
+            self.window.window_id().as_u64(),
             cx,
             Vec::new(),
             PathStyle::local(),
         );
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let built = build.await;
             this.update(cx, |this, cx| {
                 match built {
@@ -1226,7 +1268,6 @@ impl FleetView {
         })
         .detach();
         cx.notify();
-        id
     }
 
     /// A shell tab ends its process. An Attach tab first asks `claude attach` to detach by itself
@@ -1309,7 +1350,7 @@ impl FleetView {
         if self.quitting && !self.has_attach_tabs() {
             self.close_settings(cx);
             self.window
-                .update(cx, |_, window, _| window.remove_window())
+                .update(cx, |_, window, cx| crate::tray::close(window, cx))
                 .ok();
         }
         cx.notify();
@@ -1323,7 +1364,7 @@ impl FleetView {
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.quit_asked = true;
         if self.should_close(window, cx) {
-            window.remove_window();
+            crate::tray::close(window, cx);
         }
     }
 
@@ -1333,7 +1374,7 @@ impl FleetView {
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.quit_asked {
             self.close_settings(cx);
-            crate::tray::hide(window);
+            crate::tray::hide(window, cx);
             return false;
         }
         if !self.has_attach_tabs() {

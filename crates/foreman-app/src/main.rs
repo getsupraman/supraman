@@ -9,7 +9,8 @@
 //   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
 //   foreman --selftest-supervise        the M2 gate: Start, kill → resume, trust, park, budget, Stop
 // One Foreman per FOREMAN_HOME (`instance`); closing its window hides it, the tray icon brings it back
-// or quits (`tray`), so supervision outlives the window (m5/1).
+// or quits (`tray`), so supervision outlives the window (m5/1). Log lines go to <home>\logs\foreman.log
+// (a selftest's home has its own), never to a console (m5/22).
 
 mod compose;
 mod fleet;
@@ -19,6 +20,7 @@ mod selftest;
 mod selftest_first_run;
 mod selftest_left;
 mod selftest_manage;
+mod selftest_shell;
 mod selftest_supervise;
 mod selftest_tabs;
 mod selftest_work;
@@ -119,6 +121,25 @@ const TOOL_SHELL: [&str; 10] = [
     "CLAUDE_JOB_DIR",
 ];
 
+/// foreman.exe is a console program whose manifest asks for no console of its own
+/// (`consoleAllocationPolicy` detached, assets/foreman.manifest): started from Explorer it has none,
+/// from a shell it shares the shell's, so `--selftest` prints there and the shell waits for its exit
+/// code (a GUI-subsystem exe gets neither from pwsh). A Windows without that policy gives the app a
+/// console of its own, which goes here, after a flash.
+#[cfg(windows)]
+fn release_own_console() {
+    use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+    let mut attached = [0u32; 2];
+    if unsafe { GetConsoleProcessList(&mut attached) } == 1 {
+        unsafe {
+            let _ = FreeConsole();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn release_own_console() {}
+
 fn main() {
     foreman_ui::process_start();
     for name in env_scrub(|name| std::env::var(name).ok()) {
@@ -126,11 +147,16 @@ fn main() {
         unsafe { std::env::remove_var(name) };
     }
     let mode = parse_args();
-    foreman_ui::init_logger();
+    if mode == Mode::App {
+        release_own_console();
+    }
     let home = match mode {
         Mode::App => Registry::from_env().ok().map(|r| r.home().to_path_buf()),
         _ => Some(selftest::home()),
     };
+    if mode == Mode::App {
+        foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
+    }
     // Before `prepare`: a selftest clears its home, which a running one on the same home still uses.
     let instance = match home.as_deref().map(instance::acquire) {
         Some(Ok(Acquired::First(instance))) => Some(instance),
@@ -155,6 +181,10 @@ fn main() {
         println!("FAIL setup: {error:#}");
         selftest::cleanup();
         std::process::exit(1);
+    }
+    // After `prepare` cleared the selftest's home.
+    if mode != Mode::App {
+        foreman_ui::init_logger(Some(&selftest::log_dir()));
     }
 
     let (commands, mut received) = futures::channel::mpsc::unbounded::<Command>();

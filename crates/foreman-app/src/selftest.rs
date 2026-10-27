@@ -236,6 +236,20 @@ pub fn home() -> PathBuf {
     cargo_root().join("target").join("selftest-home")
 }
 
+/// The selftest's own log folder ([`foreman_ui::init_logger`]), removed with its home.
+pub fn log_dir() -> PathBuf {
+    home().join("logs")
+}
+
+/// What gpui logs for a window dropped under Windows' feet (m5/22, [`crate::tray::close`]): none may appear.
+pub(crate) fn teardown_errors() -> Vec<String> {
+    let text = std::fs::read_to_string(log_dir().join("foreman.log")).unwrap_or_default();
+    text.lines()
+        .filter(|l| l.contains("window not found") || l.contains("Invalid window handle"))
+        .map(str::to_string)
+        .collect()
+}
+
 /// Idempotent; holds the lock throughout, so a second caller waits for the first to finish.
 pub fn cleanup() {
     let mut guard = lock();
@@ -733,6 +747,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let clipped = crate::selftest_left::tree_clip(view, cx).await.context("step 7f")?;
     println!("step 7f: {clipped}");
 
+    let shell = crate::selftest_shell::run(view, cx).await.context("step 7g")?;
+    println!("step 7g: {shell}");
+
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
@@ -1086,6 +1103,12 @@ pub(crate) fn post_close_to_own_windows() -> usize {
 static VERDICT: AtomicBool = AtomicBool::new(false);
 
 pub fn finish(mode: Mode) {
+    // the main window closed by now, on Quit or with the selftest
+    let errors = teardown_errors();
+    if !errors.is_empty() {
+        println!("FAIL log: {} window-teardown line(s) in {}: {}", errors.len(), log_dir().display(), errors.join(" | "));
+        EXIT_CODE.store(1, Ordering::SeqCst);
+    }
     if mode != Mode::SelftestDetachShutdown {
         // the window closed under the selftest, which ended with it (closing must only hide it)
         if !VERDICT.load(Ordering::SeqCst) && EXIT_CODE.load(Ordering::SeqCst) == 0 {

@@ -5,8 +5,10 @@ pub mod term_element;
 
 use std::{
     cell::{Cell, RefCell},
+    io::Write as _,
+    path::{Path, PathBuf},
     rc::Rc,
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
     time::Instant,
 };
 
@@ -64,27 +66,60 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
     });
 }
 
-/// Prints gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors.
-pub struct StderrLogger;
+/// gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors: to
+/// `<dir>/foreman.log` when it has a log folder, else to stderr.
+pub struct Logger {
+    file: Option<PathBuf>,
+    /// One writer at a time, so a rotation never races an append.
+    write: Mutex<()>,
+}
 
-impl log::Log for StderrLogger {
+/// Where a log file rotates: the previous one is kept as `foreman.log.1`, so at most twice this.
+pub const LOG_CAP: u64 = 1024 * 1024;
+
+impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Warn
             || (metadata.level() <= log::Level::Info && metadata.target().starts_with("gpui"))
     }
 
     fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            eprintln!("[{} {}] {}", record.level(), record.target(), record.args());
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let line = format!("[{} {}] {}", record.level(), record.target(), record.args());
+        match &self.file {
+            Some(file) => {
+                let _guard = self.write.lock().unwrap_or_else(|e| e.into_inner());
+                let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+                append_capped(file, &format!("{stamp} {line}\n"), LOG_CAP);
+            }
+            None => eprintln!("{line}"),
         }
     }
 
     fn flush(&self) {}
 }
 
-pub fn init_logger() {
-    static LOGGER: StderrLogger = StderrLogger;
-    log::set_logger(&LOGGER).ok();
+/// Appends `text` to `file`, first moving a file of `cap` bytes or more to `<file>.1`. Opened per line
+/// (lines are rare), so the folder can be removed while the app runs, as a selftest's home is.
+pub fn append_capped(file: &Path, text: &str, cap: u64) {
+    if std::fs::metadata(file).is_ok_and(|m| m.len() >= cap) {
+        let mut old = file.as_os_str().to_owned();
+        old.push(".1");
+        let _ = std::fs::rename(file, old);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
+/// Log lines go to `<dir>/foreman.log` (created here) when `dir` is given, never to a console;
+/// without one, to stderr. Call once.
+pub fn init_logger(dir: Option<&Path>) {
+    let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| dir.join("foreman.log")));
+    let logger = Box::leak(Box::new(Logger { file, write: Mutex::new(()) }));
+    log::set_logger(logger).ok();
     log::set_max_level(log::LevelFilter::Info);
 }
 
@@ -254,4 +289,25 @@ pub fn percentile(sorted: &[f64], p: f64) -> f64 {
     }
     let rank = ((p / 100.0) * (sorted.len() - 1) as f64).round() as usize;
     sorted[rank.min(sorted.len() - 1)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_capped;
+
+    #[test]
+    fn log_file_rotates_at_the_cap_and_keeps_one_previous() {
+        let dir = std::env::temp_dir().join(format!("foreman-ui-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("foreman.log");
+        for n in 0..25 {
+            append_capped(&file, &format!("line {n:02}\n"), 64);
+        }
+        let current = std::fs::read_to_string(&file).unwrap();
+        let previous = std::fs::read_to_string(dir.join("foreman.log.1")).unwrap();
+        assert!(current.ends_with("line 24\n") && current.len() < 64 + 8, "{current}");
+        assert!(previous.len() >= 64 && previous.len() < 64 + 8, "{previous}");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2, "never a third file");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

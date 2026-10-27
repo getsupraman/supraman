@@ -184,7 +184,7 @@ pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
-    let out = Command::new("icacls")
+    let out = crate::no_window(&mut Command::new("icacls"))
         .arg(path)
         .args(["/inheritance:r", "/grant:r", &format!("{user}:F")])
         .stdin(Stdio::null())
@@ -304,7 +304,7 @@ impl Claude {
             args.first().map(|a| a.to_string_lossy()).unwrap_or_default()
         );
         let mut cmd = Command::new(&self.program);
-        cmd.args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        crate::no_window(&mut cmd).args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }

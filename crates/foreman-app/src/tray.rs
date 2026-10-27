@@ -21,7 +21,7 @@ pub enum Command {
 /// What the tray's menu, its left click and a second launch ask of the running app.
 pub fn apply(command: Command, fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
     match command {
-        Command::Open => show(window),
+        Command::Open => show(window, cx),
         Command::StopAll => {
             let started = started(fleet, cx);
             fleet.update(cx, |view, cx| started.iter().for_each(|name| view.stop_workspace(name, cx)));
@@ -41,7 +41,7 @@ fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
         fleet.update(cx, |view, cx| view.quit(window, cx));
         return;
     }
-    show(window);
+    show(window, cx);
     if CONFIRMING.swap(true, Ordering::SeqCst) {
         return;
     }
@@ -123,7 +123,7 @@ pub fn install(_commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
 }
 
 #[cfg(windows)]
-fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+pub(crate) fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
         RawWindowHandle::Win32(handle) => Some(windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _)),
@@ -131,25 +131,32 @@ fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
     }
 }
 
+// `ShowWindow` sends the window its activation, focus and position messages before it returns, and
+// gpui takes a window out of the app while it updates it: called from inside an update (every caller
+// here is), each of those messages finds "window not found" (m5/22, LEARNINGS). So these run as a
+// task of their own, as gpui's own `activate` does.
+
 /// Off the screen and the taskbar; the window, its tabs and everything it drives stay alive.
 #[cfg(windows)]
-pub fn hide(window: &Window) {
+pub fn hide(window: &Window, cx: &mut App) {
     use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
     if let Some(hwnd) = hwnd(window) {
-        unsafe {
+        cx.spawn(async move |_| unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
-        }
+        })
+        .detach();
     }
 }
 
 #[cfg(windows)]
-pub fn show(window: &Window) {
+pub fn show(window: &Window, cx: &mut App) {
     use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, SetForegroundWindow, ShowWindow};
     if let Some(hwnd) = hwnd(window) {
-        unsafe {
+        cx.spawn(async move |_| unsafe {
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
-        }
+        })
+        .detach();
     }
     window.activate_window();
 }
@@ -160,13 +167,36 @@ pub fn is_shown(window: &Window) -> bool {
     hwnd(window).is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
 }
 
+/// Closes a window for good: hidden first, outside any update, so the deactivation reaches a window
+/// gpui still has; removed once what Windows posted it on the way (a mouse leave, a paint) has been
+/// handled; gpui destroys the HWND after. Every close goes this way, a caption ✕ included
+/// (`on_window_should_close` → `false`, so Windows never destroys the HWND under gpui, which then
+/// logs "Invalid window handle" for it).
+pub fn close(window: &Window, cx: &mut App) {
+    let handle = window.window_handle();
+    #[cfg(windows)]
+    let hwnd = hwnd(window);
+    cx.spawn(async move |cx| {
+        #[cfg(windows)]
+        if let Some(hwnd) = hwnd {
+            use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+        cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
+        handle.update(cx, |_, window, _| window.remove_window()).ok();
+    })
+    .detach();
+}
+
 #[cfg(not(windows))]
-pub fn hide(window: &Window) {
+pub fn hide(window: &Window, _cx: &mut App) {
     window.minimize_window();
 }
 
 #[cfg(not(windows))]
-pub fn show(window: &Window) {
+pub fn show(window: &Window, _cx: &mut App) {
     window.activate_window();
 }
 
