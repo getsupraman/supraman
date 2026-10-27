@@ -2229,3 +2229,29 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - **Why CI-CD-pipeline vanished.** `claude agents --json --all` lists background sessions, stopped ones too, but an interactive session only while it runs. A closed one leaves only `<claude dir>/projects/<slug>/<sessionId>.jsonl`. The slug turns every non-alphanumeric character into `-`, so it only narrows which dirs to scan (prefix of an enabled repo's slug, which includes its `.claude/worktrees` and `.worktrees` siblings). cwd, the custom title, the agent name, the ai-title and the first prompt come from the lines. In claude 2.1.306, meta lines are type-first (`{"type":"custom-title",…}`), they repeat, and the last one wins. A rename writes `custom-title` and `agent-name` together.
 - Cost on René's machine: 979 project dirs, 737 of them prefixed `P--Projects-LarchSys-AutoWork`. The first scan took 6 s for AutoWork (1958 transcripts within 14 days, 1808 of them `fm-` selftests) and 1.3 s for Gaia. A rescan takes ~100 ms because `foreman_claude::Transcripts` caches the dir list and each dir's listing by mtime and reads an appended file from its last offset. It runs on its own background loop every 10 s (`watch_transcripts`), never on the poll thread. `fm-` transcripts are dropped unless starred: background transcripts carry the same `entrypoint:"cli"` and `mode:"normal"`, so nothing else tells them apart.
 - Resume of a closed or interactive row goes through the `+` launch (`hand_claude`, `Launch::script_with`), with its own token when one can be minted. Stars live in `<FOREMAN_HOME>/starred.json`. The selftest reads transcripts from `FOREMAN_CLAUDE_DIR` = `<scratch home>/fake-claude` (step 7h; a fake `claude.cmd` through `FleetView::claude_command`), never `~/.claude`. Two fixture ids with the same first 8 hex digits collide in the tree's element ids and hit keys.
+
+## 2026-10-27 — m5/28 closed sessions show up at once
+
+- **Where the 30 s went.** `claude agents --json --all` drops a killed interactive session at once (probe: 920 ms
+  after the kill, including the ~550 ms the list call itself takes). Foreman then waited three times: the 2 s poll,
+  the 10 s transcript scan (the row was gone from the tree until the scan read its transcript), and `RESUME_GRACE_MS`,
+  30 s after it was last seen alive. Step 7i measured close → resume **30.8 s** before (out of the snapshot 2.5 s,
+  closed row 8.2 s), **2.5 s** with the grace for bg only and a scan nudged when an interactive row leaves the
+  snapshot, and **1.2 s** with the pid watch. Why closing Foreman's own tab felt quicker was not measured.
+- Rules now: `view::offers_resume` keeps the grace only for `Kind::Background` (the daemon respawns those; an
+  interactive one is never respawned). Unit test `only_a_background_session_waits_out_the_grace_before_resume`.
+  `apply` nudges the transcript scan when an interactive session leaves the snapshot. Every 250 ms of the poll wait,
+  the pids of live interactive sessions are checked (`process_alive`), and one that was alive and has ended triggers
+  a poll at once. A pid this app cannot open is never watched, so it costs nothing. Refresh (action bar ↻, F5,
+  action `RefreshNow`) sets both nudges. Step 7i: the ending session is injected with a windowless `ping` as its pid,
+  killed right after a poll, and must offer resume within 2.3 s (0.9–1.7 s measured). A plain poll takes `REFRESH_EVERY` plus
+  `claude agents` (≥ 2.5 s), so it cannot pass (red: pid watch off → 2.9 s, FAIL). Refresh and F5 must poll and scan within 1.5 s of being triggered right
+  after both ran.
+- **Probing real claude.** `Start-Process claude` / `conhost claude` opened a visible console on René's desktop (do not do
+  this). The probe also inherited `CLAUDE_CODE_CHILD_SESSION` from this session: claude then says transcript saving
+  is off. Those sessions were never listed in `claude agents` (4 tries, 30–60 s each). Whether the marker or the
+  console was the cause was not separated. A headless probe works:
+  `ProcessStartInfo` with `UseShellExecute=false`, `CreateNoWindow=true`, and `CLAUDE_CODE_CHILD_SESSION` removed
+  from its environment, in a trusted cwd (the worktree's untrusted folder prompt also blocks it), named `fm-selftest-…`,
+  and killed by its pid.
+

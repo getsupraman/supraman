@@ -109,7 +109,7 @@ fn chord(m: Modifiers) -> &'static str {
 }
 
 /// A KeyDown through the window's own dispatch, as the platform delivers it.
-fn press(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) -> anyhow::Result<()> {
+pub(crate) fn press(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) -> anyhow::Result<()> {
     let keystroke = Keystroke { modifiers, key: key.into(), key_char: None };
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx);

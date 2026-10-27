@@ -251,8 +251,8 @@ fn pill(hits: &super::HitTargets, key: String, label: &'static str, cx: &gpui::A
 }
 
 impl FleetView {
-    /// The left panel's top row (m5/13): add workspace, expand / collapse all, show stopped, then the busy
-    /// limit, a CLI warning when there is one, and Settings. The claude version and the refresh live in
+    /// The left panel's top row (m5/13): add workspace, expand / collapse all, show stopped, refresh, then the busy
+    /// limit, a CLI warning when there is one, and Settings. The claude version and the poll timing live in
     /// Settings → About.
     fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
@@ -310,6 +310,10 @@ impl FleetView {
                     this.show_stopped = !this.show_stopped;
                     cx.notify();
                 })),
+            )
+            .child(
+                icon_button(hits, "refresh", Icon::Refresh, "Refresh: read the running sessions and the closed ones' transcripts now (F5)", false, cx)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
             )
             .child(div().flex_1())
             .children(warning.map(|w| {

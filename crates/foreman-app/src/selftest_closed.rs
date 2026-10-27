@@ -38,7 +38,7 @@ fn fake_claude(home: &Path) -> PathBuf {
 }
 
 /// One transcript: a meta line, the prompt with its cwd, an ai-title, the custom title (claude's key order).
-fn transcript(id: &str, cwd: &Path, title: &str) -> String {
+pub(crate) fn transcript(id: &str, cwd: &Path, title: &str) -> String {
     let user = serde_json::json!({
         "parentUuid": null, "isSidechain": false, "type": "user",
         "message": {"role": "user", "content": "selftest prompt"},
