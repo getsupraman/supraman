@@ -169,6 +169,43 @@ pub struct Report {
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
     /// Per workspace with messages, its `answered.json` (outbox file → the answer's first line).
     pub answered: BTreeMap<String, BTreeMap<String, String>>,
+    /// Why no `claude --bg` from here can reach the background service ([`DaemonWatch`]); a tab
+    /// that would run one says so.
+    pub daemon_hold: Option<String>,
+}
+
+/// How often an unelevated Foreman asks `claude daemon status` whether it can reach the service.
+pub const DAEMON_CHECK_EVERY: Millis = 15_000;
+
+/// The app's check before launching (m5/25): [`foreman_claude::daemon_mismatch`] at most every
+/// [`DAEMON_CHECK_EVERY`], at once after a Retry, its result handed to every supervisor. An elevated
+/// Foreman reaches every service, and the check runs nothing for it.
+pub struct DaemonWatch {
+    check: fn() -> Option<String>,
+    checked_at: Option<Millis>,
+    why: Option<String>,
+}
+
+impl DaemonWatch {
+    pub fn new(check: fn() -> Option<String>) -> Self {
+        Self { check, checked_at: None, why: None }
+    }
+
+    pub fn current(&mut self, force: bool, now: Millis) -> Option<String> {
+        if force || self.checked_at.is_none_or(|t| now - t >= DAEMON_CHECK_EVERY) {
+            self.why = (self.check)();
+            self.checked_at = Some(now);
+        }
+        self.why.clone()
+    }
+
+    /// A supervisor's own launch found the mismatch: the others hold too, until the next check.
+    pub fn found(&mut self, why: &str, now: Millis) {
+        if self.why.is_none() {
+            self.why = Some(why.to_string());
+            self.checked_at = Some(now);
+        }
+    }
 }
 
 pub const MESSAGES_SHOWN: usize = 20;
@@ -209,6 +246,9 @@ pub struct Supervision {
     supervisors: BTreeMap<String, Supervisor<Claude, AppTokens>>,
     /// The last [`NOTICES_KEPT`] supervisor notices (a failed revoke or PATCH), shown until the app restarts.
     notices: Vec<String>,
+    pub daemon: DaemonWatch,
+    /// The hold as last logged.
+    daemon_logged: Option<String>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -233,6 +273,8 @@ impl Supervision {
             config,
             supervisors: BTreeMap::new(),
             notices: Vec::new(),
+            daemon: DaemonWatch::new(foreman_claude::daemon_mismatch),
+            daemon_logged: None,
         }
     }
 
@@ -266,10 +308,15 @@ impl Supervision {
                 Err(e) => report.errors.push(format!("Cannot read the desired state of {}: {e}", p.name)),
             }
         }
+        let retried = !retries.is_empty();
         for (workspace, name) in retries {
             if let Some(s) = self.supervisors.get_mut(&workspace) {
                 s.retry(&name);
             }
+        }
+        let held = self.daemon.current(retried, now);
+        for s in self.supervisors.values_mut() {
+            s.hold(held.clone(), now);
         }
         {
             let _tick = TICK.lock().unwrap_or_else(|e| e.into_inner());
@@ -277,6 +324,17 @@ impl Supervision {
                 report.needs = tick_all(self.supervisors.values_mut(), observed, settings.max_working, now);
             }
         }
+        if let Some(why) = self.supervisors.values().find_map(|s| s.held()) {
+            self.daemon.found(why, now);
+        }
+        if self.daemon_logged != self.daemon.why {
+            match &self.daemon.why {
+                Some(why) => log::warn!("launches and resumes held: {why}"),
+                None => log::info!("launches and resumes no longer held: the background service is reachable"),
+            }
+            self.daemon_logged = self.daemon.why.clone();
+        }
+        report.daemon_hold = self.daemon.why.clone();
         for s in self.supervisors.values_mut() {
             self.notices.extend(s.take_notices());
         }
@@ -460,6 +518,7 @@ mod tests {
         DesiredState::workspace_controller("beta", r"C:\b", "p").save(home.path()).unwrap();
         set_max_working(home.path(), 1).unwrap();
         let mut s = Supervision::new(home.path().to_path_buf(), None);
+        s.daemon = DaemonWatch::new(|| None);
         // beta is not started: nothing to launch, and no `claude` is run
         let report = s.tick(&workspaces, &[], Vec::new(), 1_800_000_000_000);
         assert_eq!(report.max_working, 1);
@@ -482,5 +541,39 @@ mod tests {
         assert!(!outbox.join("ready.json").exists());
         assert_eq!(report.messages["alpha"].len(), 1);
         assert_eq!(report.messages["alpha"][0].from_name, "fm-alpha-workspace");
+    }
+
+    static CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn counted_mismatch() -> Option<String> {
+        CHECKS.fetch_add(1, Ordering::SeqCst);
+        Some("runs as administrator".into())
+    }
+
+    /// m5/25: a started workspace whose service Foreman cannot reach is held before its first launch,
+    /// with one Inbox row and `daemon_hold` for the tabs; the check runs every 15 s, and at once on Retry.
+    #[test]
+    fn an_unreachable_service_holds_a_started_workspace_before_any_launch() {
+        let home = tempfile::tempdir().unwrap();
+        let workspaces = [Workspace::new("beta", r"C:", Vec::new())];
+        let mut d = DesiredState::workspace_controller("beta", r"C:", "p");
+        d.started = true;
+        d.save(home.path()).unwrap();
+        let mut s = Supervision::new(home.path().to_path_buf(), None);
+        s.daemon = DaemonWatch::new(counted_mismatch);
+        let t0 = 1_800_000_000_000;
+        // a launch would run the real `claude`: the hold keeps it from running at all
+        let report = s.tick(&workspaces, &[], Vec::new(), t0);
+        assert_eq!(report.needs.len(), 1, "{report:?}");
+        assert_eq!(report.needs[0].detail, "runs as administrator");
+        assert_eq!(report.daemon_hold.as_deref(), Some("runs as administrator"));
+        assert_eq!(CHECKS.load(Ordering::SeqCst), 1);
+        s.tick(&workspaces, &[], Vec::new(), t0 + 2_000);
+        assert_eq!(CHECKS.load(Ordering::SeqCst), 1, "not every tick");
+        s.tick(&workspaces, &[], Vec::new(), t0 + DAEMON_CHECK_EVERY);
+        assert_eq!(CHECKS.load(Ordering::SeqCst), 2);
+        let report = s.tick(&workspaces, &[], vec![("beta".into(), "fm-beta-workspace".into())], t0 + DAEMON_CHECK_EVERY + 2_000);
+        assert_eq!(CHECKS.load(Ordering::SeqCst), 3, "Retry checks at once");
+        assert_eq!(report.needs.len(), 1, "still held: {report:?}");
     }
 }

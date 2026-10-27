@@ -189,6 +189,9 @@ pub struct FleetView {
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
     pub supervise_errors: Vec<String>,
+    /// Why a `claude --bg` from here cannot reach the background service (m5/25): a tab that would
+    /// run one prints it instead of failing after 45 s.
+    pub daemon_hold: Option<String>,
     pub action_error: Option<String>,
     pub last_attempt: StdHashMap<String, i64>,
     pub hooks: StdHashMap<String, HookSignal>,
@@ -480,6 +483,7 @@ impl FleetView {
             desired: BTreeMap::new(),
             max_working: DEFAULT_MAX_WORKING,
             supervise_errors: Vec::new(),
+            daemon_hold: None,
             action_error: None,
             last_attempt: StdHashMap::new(),
             hooks: StdHashMap::new(),
@@ -659,6 +663,7 @@ impl FleetView {
             self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
+            self.daemon_hold = report.daemon_hold;
             self.last_attempt = report.last_attempt.into_iter().collect();
             self.relays = report.relays;
             self.messages = report.messages;
@@ -959,10 +964,13 @@ impl FleetView {
         let title = format!("{workspace} · {repo} · {name}");
         let sid = &session.session_id;
         if session.kind == foreman_claude::Kind::Background {
-            let script = format!(
-                "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",
-                session.id, session.id
-            );
+            let script = match &self.daemon_hold {
+                Some(why) => held_line(why),
+                None => format!(
+                    "Write-Host 'resuming {} in the background, then attaching…'; claude --bg --resume {sid}; if ($LASTEXITCODE -eq 0) {{ claude attach {} }}",
+                    session.id, session.id
+                ),
+            };
             let shell = util::shell::Shell::WithArguments {
                 program: "pwsh".into(),
                 args: vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script],
@@ -1039,10 +1047,18 @@ impl FleetView {
         id
     }
 
+    /// With [`Self::daemon_hold`] the tab says first why its claude cannot reach the background service.
     fn claude_shell(&self, launch: &Launch) -> util::shell::Shell {
+        let launch_args = match &self.daemon_hold {
+            Some(why) => {
+                let script = format!("{}; {}", held_line(why), launch.script());
+                ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
+            }
+            None => launch.shell_args(),
+        };
         util::shell::Shell::WithArguments {
             program: "pwsh".into(),
-            args: self.shell_args.iter().cloned().chain(launch.shell_args()).collect(),
+            args: self.shell_args.iter().cloned().chain(launch_args).collect(),
             title_override: None,
         }
     }
@@ -1397,6 +1413,30 @@ impl FleetView {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 
+    /// The Inbox's Restart as administrator (m5/25): Settings → Run Foreman as administrator on, then an
+    /// elevated copy (UAC) that waits for this one to quit. Declined, this one stays and says so.
+    pub fn restart_elevated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        let saved = Settings::load(&home).and_then(|mut settings| {
+            settings.run_as_admin = true;
+            settings.save(&home)
+        });
+        if let Err(e) = saved {
+            self.action_error = Some(format!("Cannot save Run Foreman as administrator: {e}"));
+            cx.notify();
+            return;
+        }
+        match crate::elevate::relaunch(&home, Some(std::process::id())) {
+            Ok(()) => self.quit(window, cx),
+            Err(e) => {
+                self.action_error = Some(format!("Foreman stays unelevated: {e:#}"));
+                cx.notify();
+            }
+        }
+    }
+
     /// Quit: the window closes as [`Self::should_close`] lets it, and the app ends with it.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.quit_asked = true;
@@ -1530,6 +1570,11 @@ pub(crate) fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
 
 /// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
 /// height, the label centred, a lighter fill and border on hover, a deeper fill pressed.
+/// The pwsh line a tab runs in place of a `claude --bg` that cannot reach the background service.
+fn held_line(why: &str) -> String {
+    format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
+}
+
 fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &gpui::App) -> gpui::Stateful<gpui::Div> {
     let colors = cx.theme().colors();
     div()

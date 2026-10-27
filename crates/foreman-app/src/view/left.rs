@@ -111,6 +111,7 @@ pub fn inbox_key(need: &NeedsYou) -> Option<String> {
         Remedy::Retry => "retry",
         Remedy::RunInTerminal { .. } => "run",
         Remedy::Remint { .. } => "remint",
+        Remedy::RestartElevated => "restart-elevated",
     };
     Some(format!("inbox-{verb}-{}", need.name))
 }
@@ -738,6 +739,7 @@ impl FleetView {
                         Remedy::Retry => ("Retry", action.clone(), need.workspace.clone()),
                         Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.workspace.clone()),
                         Remedy::Remint { .. } => ("Re-mint", action.clone(), need.workspace.clone()),
+                        Remedy::RestartElevated => ("Restart as administrator", action.clone(), need.workspace.clone()),
                     };
                     let name = need.name.clone();
                     Some(button(&self.hits, key, label, cx).on_click(cx.listener(
@@ -749,6 +751,7 @@ impl FleetView {
                             Remedy::RunInTerminal { cwd, command } => {
                                 this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
                             }
+                            Remedy::RestartElevated => this.restart_elevated(window, cx),
                         },
                     )))
                 }

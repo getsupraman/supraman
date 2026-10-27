@@ -59,7 +59,7 @@ pub const LOG_CAP: u64 = 1024 * 1024;
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Warn
-            || (metadata.level() <= log::Level::Info && metadata.target().starts_with("gpui"))
+            || (metadata.level() <= log::Level::Info && (metadata.target().starts_with("gpui") || metadata.target().starts_with("foreman")))
     }
 
     fn log(&self, record: &log::Record) {

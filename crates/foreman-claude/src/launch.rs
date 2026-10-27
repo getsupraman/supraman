@@ -354,6 +354,13 @@ pub fn classify(out: &Output) -> Option<ClaudeError> {
         return Some(ClaudeError::TrustNeeded { cwd });
     }
     let text = if out.stderr.trim().is_empty() { &out.stdout } else { &out.stderr };
+    if format!("{}
+{}", out.stderr, out.stdout).contains(crate::UNREACHABLE) {
+        return Some(ClaudeError::DaemonUnreachable {
+            code: out.code,
+            stderr: text.trim().to_string(),
+        });
+    }
     Some(ClaudeError::CliFailed {
         code: out.code,
         stderr: text.trim().to_string(),
@@ -528,6 +535,20 @@ mod tests {
         .unwrap();
         assert!(name_taken(&rows, "aw-x"));
         assert!(!name_taken(&rows, "aw-y"));
+    }
+
+    /// René's Inbox row on 2ae06cd (m5/25), verbatim.
+    #[test]
+    fn unreachable_background_service_is_its_own_error() {
+        let text = "Starting background service… Couldn't reach the background service (background service did not become reachable within 45s) — run 'claude daemon status'\n";
+        for o in [out(1, "", text), out(1, text, "")] {
+            match classify(&o) {
+                Some(e @ ClaudeError::DaemonUnreachable { .. }) => {
+                    assert!(e.to_string().starts_with("claude failed (exit 1): Starting background service…"), "{e}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
     }
 
     #[test]

@@ -43,4 +43,7 @@ pub enum ClaudeError {
     NameTaken { name: String },
     #[error("claude failed (exit {}): {stderr}", .code.map_or("none".to_string(), |c| c.to_string()))]
     CliFailed { code: Option<i32>, stderr: String },
+    /// `--bg` could not connect to the background service ([`crate::UNREACHABLE`], m5/25).
+    #[error("claude failed (exit {}): {stderr}", .code.map_or("none".to_string(), |c| c.to_string()))]
+    DaemonUnreachable { code: Option<i32>, stderr: String },
 }

@@ -49,6 +49,16 @@
 //! [`SupervisorMemory::observe`] counts a start that is dead again after `settle` (20 s) but within
 //! `stable_after` (60 s); 60 s alive clears the count. Backoff after failure 1..4: 5 s, 30 s, 2 min,
 //! 10 min; the 5th gives up. A trust refusal is not a counted failure: it waits for Retry.
+//!
+//! # Held (m5/25)
+//!
+//! An unelevated Foreman cannot reach a background service an elevated `claude --bg` started (its
+//! pipes refuse lower integrity levels), so every launch would fail after 45 s. [`Supervisor::hold`]
+//! (the app's check before launching) or a launch failing with [`Failure::DaemonUnreachable`] that
+//! [`foreman_claude::daemon_mismatch`] confirms holds every launch and resume of the workspace, and
+//! its Inbox shows one `LaunchFailed` row saying why (Restart as administrator), instead of the backoff rows. Tests
+//! `an_unreachable_service_foreman_cannot_reach_holds_with_one_row`,
+//! `a_hold_from_the_apps_check_comes_before_any_launch`.
 
 mod budget;
 mod desired;

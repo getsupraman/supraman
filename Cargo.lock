@@ -1678,6 +1678,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "image",
+ "log",
  "raw-window-handle",
  "serde_json",
  "tempfile",
