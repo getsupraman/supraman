@@ -1592,11 +1592,17 @@ const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 /// `title` is ConPTY's name for a console nothing named: the shell program itself, or the absolute path of
 /// whichever executable runs in it (`pwsh.exe` from its install folder, `claude.exe`). `program` is
-/// often `""`, as `resolve_path` leaves an App Execution Alias.
+/// often `""`, as `resolve_path` leaves an App Execution Alias. An elevated console prefixes it with
+/// "Administrator: " (localised), so any prefix ending in ": " before the path counts too.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn is_default_title(program: Option<&str>, title: &str) -> bool {
     let title = title.trim();
-    let path = Path::new(title);
+    let path_part = title
+        .match_indices(": ")
+        .map(|(i, _)| &title[i + 2..])
+        .find(|rest| Path::new(rest).is_absolute())
+        .unwrap_or(title);
+    let path = Path::new(path_part);
     program.is_some_and(|p| !p.is_empty() && p.eq_ignore_ascii_case(title))
         || path.is_absolute() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
 }
@@ -5077,6 +5083,9 @@ mod tests {
         assert!(is_default_title(none, r"c:\users\me\.local\bin\claude.exe"));
         assert!(is_default_title(Some("pwsh"), "pwsh"));
         assert!(is_default_title(None, r"C:\WINDOWS\system32\CMD.EXE"));
+        // an elevated Foreman (m5/29 gate)
+        assert!(is_default_title(none, r"Administrator: C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.7.0_x64__8wekyb3d8bbwe\pwsh.exe"));
+        assert!(!is_default_title(none, r"notes: P:\Projects\notes"), "a prefixed folder is still a title");
         assert!(!is_default_title(none, ""), "empty is a reset, not this");
         assert!(!is_default_title(none, "pwsh.exe"), "not a path");
         assert!(!is_default_title(none, "\u{25D1} fm-selftest-11fa0c"));
