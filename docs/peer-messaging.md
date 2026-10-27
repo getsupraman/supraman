@@ -19,6 +19,10 @@ No token values appear anywhere in this file.
   duplicate or queue drop would be silent. The selftest proves delivery by the receiver's answers.
 - Any failure (no entry, stale entry, unknown protocol, no key, pipe error, 5 s timeout, the burst budget)
   falls back to the relay inbox, and the app/`fm send` say which: `sent direct` / `sent via relay (<why>)`.
+- The relay runs only on demand (m5/32): no `fm-<w>-relay` until a send falls back. The drop waits in the inbox,
+  the supervisor launches (or resumes) the relay, and it sends the drop once armed (~18 s in the selftest); it is
+  retired `relay_idle_secs` (default 10 min) after the last drop. The workspace row shows `direct`,
+  `relay starting` or `relay ready`.
 - Limits respected through `relay/<w>/direct.json` (direct sends of the last minute): keep ≥ 10 of the
   receiver's 30-token burst (refill 0.5/s), else the relay.
 - Session → human: `fm tell "<body>"` / `fm tell --file <path>` writes the workspace outbox

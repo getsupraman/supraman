@@ -91,7 +91,9 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
         Route::Relay { reason, drop } => {
             println!("dropped {} (via relay: {reason})", drop.display());
             if relay_ready(home, workspace).is_none() {
-                eprintln!("notice: the relay of {workspace} has not armed its watcher yet; it sends this once it has");
+                eprintln!(
+                    "notice: the relay of {workspace} is not ready; Foreman starts it for this message (while the workspace is started), and it sends it once armed"
+                );
             }
         }
     }

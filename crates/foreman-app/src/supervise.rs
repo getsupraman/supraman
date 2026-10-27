@@ -13,7 +13,7 @@ use foreman_claude::{Claude, Session};
 use foreman_core::{
     HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
     migrate_home,
-    read_answered, read_outbox, relay_ready,
+    read_answered, read_outbox, relay_demand, relay_ready,
 };
 use foreman_supervisor::{
     DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, fill_paths, is_live,
@@ -109,32 +109,53 @@ pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow
     Ok(())
 }
 
-/// Start: the workspace's desired state with its `fm-<workspace>-relay` first and its
-/// `fm-<workspace>-workspace` session (cwd = the workspace root for both, prompt = the role),
-/// `started = true`, saved. Other wanted sessions (repo sessions `fm want` added) are kept, after these
-/// two. The relay's dirs are created and its last `ready.json` forgotten: the supervisor launches the
-/// relay before the workspace session. Read-modify-write through [`DesiredState::update`]: `fm want`
-/// writes the same file.
+/// Start: the workspace's desired state with its `fm-<workspace>-workspace` session first (cwd = the
+/// workspace root, prompt = the role), `started = true`, saved. Other wanted sessions (repo sessions
+/// `fm want` added) are kept, after it. The relay is not wanted here: the tick wants it on demand
+/// ([`sync_relay`]); one that is wanted already follows the root. Its dirs are created and its last
+/// `ready.json` forgotten. Read-modify-write through [`DesiredState::update`]: `fm want` writes the same file.
 pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Workspace) -> anyhow::Result<DesiredState> {
     let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/foreman found for this build"))?;
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
-    let relay_dir = ensure_relay_dirs(home, &workspace.name)?;
+    let relay = relay_wanted(home, workspace)?;
     clear_ready(home, &workspace.name)?;
-    // the rendered copy in <home>/roles has the relay's paths filled in
-    let relay = relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?);
     let controller = DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt)
         .sessions
         .into_iter()
         .next()
         .context("no controller session")?;
     let (desired, ()) = DesiredState::update(home, &workspace.name, |desired| {
-        desired.sessions.retain(|w| w.name != relay.name && w.name != controller.name);
-        desired.retired.retain(|n| n != &relay.name && n != &controller.name);
-        desired.sessions.insert(0, controller.clone());
-        desired.sessions.insert(0, relay.clone());
+        desired.sessions.retain(|w| w.name != controller.name);
+        desired.retired.retain(|n| n != &controller.name);
+        let at = usize::from(desired.wants_relay());
+        if let Some(r) = desired.sessions.iter_mut().find(|w| w.name == relay.name) {
+            *r = relay.clone();
+        }
+        desired.sessions.insert(at, controller.clone());
         desired.started = true;
     })?;
     Ok(desired)
+}
+
+/// `fm-<workspace>-relay` as the tick wants it: its dirs created (its `--add-dir` must exist before it
+/// launches), and the rendered role from `<home>/roles`, which has the relay's paths filled in.
+pub fn relay_wanted(home: &Path, workspace: &Workspace) -> anyhow::Result<foreman_supervisor::WantedSession> {
+    let relay_dir = ensure_relay_dirs(home, &workspace.name)?;
+    Ok(relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?))
+}
+
+/// The relay on demand (m5/32): wanted while the workspace is started and a fallback drop waits in its
+/// inbox or the last one is younger than `idle_ms` ([`relay_demand`]); otherwise a wanted relay is retired,
+/// which R14 stops, also one an older desired state lists. Queued drops stay in the inbox for the next relay.
+/// `Some` with the saved state when it changed.
+pub fn sync_relay(home: &Path, workspace: &Workspace, desired: &DesiredState, idle_ms: Millis, now: Millis) -> anyhow::Result<Option<DesiredState>> {
+    let demand = desired.started && relay_demand(home, &workspace.name, now, idle_ms)?;
+    if demand == desired.wants_relay() {
+        return Ok(None);
+    }
+    let relay = demand.then(|| relay_wanted(home, workspace)).transpose()?;
+    let (saved, _) = DesiredState::update(home, &workspace.name, |d| d.set_relay(relay.clone()))?;
+    Ok(Some(saved))
 }
 
 /// Stop: `started = false`, saved. The next tick stops the live wanted sessions (never removes them):
@@ -163,7 +184,7 @@ pub struct Report {
     pub errors: Vec<String>,
     /// Per wanted name, the supervisor's last launch/resume attempt.
     pub last_attempt: HashMap<String, Millis>,
-    /// Per workspace whose desired state wants a relay.
+    /// Per workspace with a desired-state file: its messaging path.
     pub relays: BTreeMap<String, RelayStatus>,
     /// Per registered workspace, the last [`MESSAGES_SHOWN`] outbox messages, oldest first.
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
@@ -212,10 +233,13 @@ pub const MESSAGES_SHOWN: usize = 20;
 /// Monitor expires after 30 min (m0/4); a relay that has not re-armed a minute later has lost it.
 pub const REARM_WITHIN_MS: Millis = 31 * 60 * 1000;
 
-/// What the workspace row says about its relay.
+/// What the workspace row says about its messaging path (m5/32): `direct` while no relay is wanted, else
+/// how far the relay is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayStatus {
     pub started: bool,
+    /// The desired state wants `fm-<w>-relay`: a message fell back to it within the idle timeout.
+    pub wanted: bool,
     /// The `fm-<w>-relay` row is live ([`is_live`]).
     pub live: bool,
     /// When it last armed its watcher (`ready.json`); forgotten whenever the row is not live.
@@ -228,13 +252,14 @@ impl RelayStatus {
         if !self.started && !self.live {
             return None;
         }
-        Some(match (self.live, self.ready_at) {
-            (false, _) => ("relay not running".into(), false),
-            (true, None) => ("relay up, watcher not armed yet".into(), false),
-            (true, Some(t)) if now - t > REARM_WITHIN_MS => {
+        Some(match (self.wanted, self.live, self.ready_at) {
+            // a relay being retired: messages go direct already
+            (false, _, _) => ("direct".into(), true),
+            (true, false, _) | (true, true, None) => ("relay starting".into(), false),
+            (true, true, Some(t)) if now - t > REARM_WITHIN_MS => {
                 (format!("relay watcher expired, not re-armed (armed {} min ago)", (now - t) / 60_000), false)
             }
-            (true, Some(_)) => ("relay ready".into(), true),
+            (true, true, Some(_)) => ("relay ready".into(), true),
         })
     }
 }
@@ -307,6 +332,16 @@ impl Supervision {
                 }
                 Err(e) => report.errors.push(format!("Cannot read the desired state of {}: {e}", p.name)),
             }
+            if let Some(s) = self.supervisors.get_mut(&p.name) {
+                match sync_relay(&self.home, p, &s.desired, settings.relay_idle_ms(), now) {
+                    Ok(Some(saved)) => {
+                        log::info!("{}: relay {}", p.name, if saved.wants_relay() { "wanted (a message falls back)" } else { "retired (idle)" });
+                        s.desired = saved;
+                    }
+                    Ok(None) => {}
+                    Err(e) => report.errors.push(format!("Cannot start or retire the relay of {}: {e:#}", p.name)),
+                }
+            }
         }
         let retried = !retries.is_empty();
         for (workspace, name) in retries {
@@ -348,14 +383,13 @@ impl Supervision {
                 }
             }
             let relay = relay_session_name(workspace);
-            if names.contains(&relay) {
-                let live = observed.iter().any(|r| r.name == relay && is_live(r, now));
-                if !live && let Err(e) = clear_ready(&self.home, workspace) {
-                    report.errors.push(format!("Cannot reset the relay of {workspace}: {e}"));
-                }
-                let ready_at = live.then(|| relay_ready(&self.home, workspace)).flatten();
-                report.relays.insert(workspace.clone(), RelayStatus { started: s.desired.started, live, ready_at });
+            let wanted = names.contains(&relay);
+            let live = observed.iter().any(|r| r.name == relay && is_live(r, now));
+            if !live && let Err(e) = clear_ready(&self.home, workspace) {
+                report.errors.push(format!("Cannot reset the relay of {workspace}: {e}"));
             }
+            let ready_at = live.then(|| relay_ready(&self.home, workspace)).flatten();
+            report.relays.insert(workspace.clone(), RelayStatus { started: s.desired.started, wanted, live, ready_at });
             report.desired.insert(workspace.clone(), (s.desired.started, names));
         }
         for p in workspaces {
@@ -440,9 +474,9 @@ mod tests {
         DesiredState::update(home.path(), "demo", |d| d.want(alpha.clone())).unwrap();
         let d = start_workspace(home.path(), Some(&plugin_dir()), &Workspace::new("demo", r"C:\demo", Vec::new())).unwrap();
         let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
-        assert_eq!(names, ["fm-demo-relay", "fm-demo-workspace", "fm-demo-alpha"]);
+        assert_eq!(names, ["fm-demo-workspace", "fm-demo-alpha"], "no relay: it starts on demand");
         stop_workspace(home.path(), "demo").unwrap();
-        assert_eq!(DesiredState::load(home.path(), "demo").unwrap().unwrap().sessions.len(), 3);
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap().unwrap().sessions.len(), 2);
     }
 
     #[test]
@@ -452,20 +486,23 @@ mod tests {
         write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
         let d = start_workspace(home.path(), Some(&plugin_dir()), &workspace).unwrap();
         assert!(d.started);
-        assert_eq!(d.sessions[0].name, "fm-demo-relay", "the relay comes first");
-        assert_eq!(d.sessions[1].name, "fm-demo-workspace");
-        assert_eq!(d.sessions[1].cwd, PathBuf::from(r"C:\demo"));
-        assert!(d.sessions[1].prompt.contains("workspace controller for demo"), "{}", d.sessions[1].prompt);
+        assert_eq!(d.sessions.len(), 1, "no relay wanted at Start");
+        assert_eq!(d.sessions[0].name, "fm-demo-workspace");
+        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\demo"));
+        assert!(d.sessions[0].prompt.contains("workspace controller for demo"), "{}", d.sessions[0].prompt);
 
+        // a relay wanted on demand, and a park
         let mut extra = d.clone();
         extra.started = false;
-        let mut park = extra.sessions[1].clone();
+        let mut park = extra.sessions[0].clone();
         park.name = "fm-demo-park".into();
         extra.sessions.push(park);
+        extra.set_relay(Some(relay_wanted(home.path(), &workspace).unwrap()));
         extra.save(home.path()).unwrap();
         let moved = Workspace::new("demo", r"C:\moved", Vec::new());
         let d = start_workspace(home.path(), Some(&plugin_dir()), &moved).unwrap();
-        assert_eq!(d.sessions.len(), 3);
+        let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["fm-demo-relay", "fm-demo-workspace", "fm-demo-park"], "a wanted relay stays first");
         assert_eq!(d.sessions[1].cwd, PathBuf::from(r"C:\moved"));
         assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\moved"), "the relay follows the root");
 
@@ -479,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn the_relay_role_gets_its_paths_and_start_wants_the_relay_with_its_dir() {
+    fn the_relay_role_gets_its_paths_and_the_wanted_relay_its_dir() {
         let home = tempfile::tempdir().unwrap();
         write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
         let rendered = std::fs::read_to_string(home.path().join("roles").join("relay.md")).unwrap();
@@ -490,8 +527,9 @@ mod tests {
 
         let outbox = ensure_relay_dirs(home.path(), "demo").unwrap().join("outbox");
         std::fs::write(outbox.join("ready.json"), "{}").unwrap();
-        let d = start_workspace(home.path(), Some(&plugin_dir()), &Workspace::new("demo", r"C:\demo", Vec::new())).unwrap();
-        let relay = &d.sessions[0];
+        let workspace = Workspace::new("demo", r"C:\demo", Vec::new());
+        start_workspace(home.path(), Some(&plugin_dir()), &workspace).unwrap();
+        let relay = &relay_wanted(home.path(), &workspace).unwrap();
         assert_eq!((relay.name.as_str(), relay.role.as_str()), ("fm-demo-relay", "relay"));
         assert_eq!(relay.add_dirs, [home.path().join("relay").join("demo")]);
         assert!(relay.prompt.contains("/relay/demo/outbox/ready.json"), "{}", relay.prompt);
@@ -500,14 +538,17 @@ mod tests {
     }
 
     #[test]
-    fn relay_status_reads_live_armed_and_expired() {
+    fn relay_status_reads_direct_starting_ready_and_expired() {
         let now = 1_800_000_000_000;
-        let st = |started, live, ready_at| RelayStatus { started, live, ready_at };
-        assert_eq!(st(false, false, None).label(now), None);
-        assert_eq!(st(true, false, None).label(now), Some(("relay not running".into(), false)));
-        assert!(!st(true, true, None).label(now).unwrap().1);
-        assert_eq!(st(true, true, Some(now - 60_000)).label(now), Some(("relay ready".into(), true)));
-        let expired = st(true, true, Some(now - 40 * 60_000)).label(now).unwrap();
+        let st = |started, wanted, live, ready_at| RelayStatus { started, wanted, live, ready_at };
+        assert_eq!(st(false, false, false, None).label(now), None);
+        assert_eq!(st(false, true, false, None).label(now), None);
+        assert_eq!(st(true, false, false, None).label(now), Some(("direct".into(), true)));
+        assert_eq!(st(true, false, true, Some(now)).label(now), Some(("direct".into(), true)), "being retired");
+        assert_eq!(st(true, true, false, None).label(now), Some(("relay starting".into(), false)));
+        assert_eq!(st(true, true, true, None).label(now), Some(("relay starting".into(), false)));
+        assert_eq!(st(true, true, true, Some(now - 60_000)).label(now), Some(("relay ready".into(), true)));
+        let expired = st(true, true, true, Some(now - 40 * 60_000)).label(now).unwrap();
         assert_eq!(expired, ("relay watcher expired, not re-armed (armed 40 min ago)".into(), false));
     }
 
@@ -525,7 +566,8 @@ mod tests {
         assert_eq!(report.desired.keys().collect::<Vec<_>>(), ["beta"]);
         assert_eq!(report.desired["beta"], (false, vec!["fm-beta-workspace".to_string()]));
         assert!(report.needs.is_empty() && report.errors.is_empty(), "{report:?}");
-        assert!(report.relays.is_empty() && report.messages.is_empty(), "{report:?}");
+        assert_eq!(report.relays["beta"], RelayStatus { started: false, wanted: false, live: false, ready_at: None });
+        assert!(report.messages.is_empty(), "{report:?}");
 
         // beta wants a relay that is not running: its stale ready.json is forgotten; alpha has a message
         let mut d = DesiredState::workspace_controller("beta", r"C:\b", "p");
@@ -537,10 +579,58 @@ mod tests {
         let msg = r#"{"from": "u", "from_name": "fm-alpha-workspace", "body": "hi"}"#;
         std::fs::write(alpha_outbox.join("msg-0001.json"), msg).unwrap();
         let report = s.tick(&workspaces, &[], Vec::new(), 1_800_000_000_000);
-        assert_eq!(report.relays["beta"], RelayStatus { started: false, live: false, ready_at: None });
+        assert_eq!(report.relays["beta"], RelayStatus { started: false, wanted: false, live: false, ready_at: None }, "stopped: retired");
+        assert_eq!(DesiredState::load(home.path(), "beta").unwrap().unwrap().retired, ["fm-beta-relay"]);
         assert!(!outbox.join("ready.json").exists());
         assert_eq!(report.messages["alpha"].len(), 1);
         assert_eq!(report.messages["alpha"][0].from_name, "fm-alpha-workspace");
+    }
+
+    /// m5/32: no relay by default; a fallback drop wants it (first), it stays wanted while a drop waits and
+    /// until the idle timeout after the last one, then it is retired; an older desired state that lists it
+    /// retires it the same way, and keeps a queued drop for the next relay.
+    #[test]
+    fn the_relay_is_wanted_on_a_fallback_and_retired_after_the_idle_timeout() {
+        let home = tempfile::tempdir().unwrap();
+        write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
+        let workspace = Workspace::new("demo", r"C:\demo", Vec::new());
+        let idle = 60_000;
+        let mut d = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        d.started = true;
+        d.save(home.path()).unwrap();
+        let now = foreman_claude::now_ms();
+        assert!(sync_relay(home.path(), &workspace, &d, idle, now).unwrap().is_none(), "no fallback: no relay");
+
+        foreman_core::send(home.path(), "demo", "fm-demo-workspace", "fell back").unwrap();
+        let d = sync_relay(home.path(), &workspace, &d, idle, now).unwrap().expect("wanted");
+        assert_eq!(d.sessions[0].name, "fm-demo-relay");
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap().unwrap(), d, "saved");
+        assert!(sync_relay(home.path(), &workspace, &d, idle, now + 10 * idle).unwrap().is_none(), "the drop still waits");
+
+        let inbox = foreman_core::inbox_dir(home.path(), "demo").unwrap();
+        foreman_core::InboxWatcher::new(&inbox).scan().unwrap();
+        let last = foreman_core::last_drop(home.path(), "demo").unwrap();
+        assert!(sync_relay(home.path(), &workspace, &d, idle, last + idle - 1).unwrap().is_none(), "within the timeout");
+        let d = sync_relay(home.path(), &workspace, &d, idle, last + idle).unwrap().expect("retired");
+        assert!(!d.wants_relay());
+        assert_eq!(d.retired, ["fm-demo-relay"]);
+        assert_eq!(d.sessions.len(), 1);
+
+        // upgrade: a desired state written before m5/32 lists the relay, with a drop queued
+        let mut old = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        old.started = true;
+        old.sessions.insert(0, relay_wanted(home.path(), &workspace).unwrap());
+        old.save(home.path()).unwrap();
+        let queued = foreman_core::send(home.path(), "demo", "fm-demo-workspace", "queued").unwrap();
+        let later = foreman_core::last_drop(home.path(), "demo").unwrap() + 2 * idle;
+        assert!(sync_relay(home.path(), &workspace, &old, idle, later).unwrap().is_none(), "kept while the drop waits");
+        assert!(queued.is_file());
+        foreman_core::InboxWatcher::new(&inbox).scan().unwrap();
+        let d = sync_relay(home.path(), &workspace, &old, idle, later).unwrap().expect("retired on upgrade");
+        assert_eq!(d.retired, ["fm-demo-relay"]);
+        // and without a drop, at once
+        old.save(home.path()).unwrap();
+        assert!(sync_relay(home.path(), &workspace, &old, idle, later).unwrap().is_some_and(|d| !d.wants_relay()));
     }
 
     static CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

@@ -159,6 +159,29 @@ impl DesiredState {
         self.sessions.len() != before
     }
 
+    /// The relay on demand (m5/32): `Some` wants it (first, as the supervisor launches it before the
+    /// others) unless it is wanted already; `None` retires a wanted one ([`DesiredState::unwant`], so R14
+    /// stops it). True when this changed the state.
+    pub fn set_relay(&mut self, relay: Option<WantedSession>) -> bool {
+        let name = relay_session_name(&self.workspace);
+        let wanted = self.sessions.iter().any(|w| w.name == name);
+        match relay {
+            Some(_) if wanted => false,
+            Some(r) => {
+                self.retired.retain(|n| n != &r.name);
+                self.sessions.insert(0, r);
+                true
+            }
+            None if wanted => self.unwant(&name),
+            None => false,
+        }
+    }
+
+    pub fn wants_relay(&self) -> bool {
+        let name = relay_session_name(&self.workspace);
+        self.sessions.iter().any(|w| w.name == name)
+    }
+
     /// M2's desired state: one `fm-<workspace>-workspace` session, not started.
     pub fn workspace_controller(workspace: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>) -> Self {
         Self {
@@ -382,6 +405,24 @@ mod tests {
         assert!(notices[0].contains("fm-nomos-platform"), "{}", notices[0]);
         old.started = false;
         assert_eq!(DesiredState::load(home.path(), "nomos").unwrap(), Some(old));
+    }
+
+    #[test]
+    fn set_relay_wants_it_first_and_retires_it() {
+        let mut d = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        let relay = relay_session("demo", r"C:\demo", r"C:\fm\relay\demo", "r");
+        assert!(!d.set_relay(None), "not wanted: nothing to retire");
+        assert!(d.retired.is_empty());
+        assert!(d.set_relay(Some(relay.clone())));
+        assert_eq!(d.sessions[0].name, "fm-demo-relay");
+        assert!(d.wants_relay());
+        assert!(!d.set_relay(Some(relay.clone())), "wanted already");
+        assert!(d.set_relay(None));
+        assert!(!d.wants_relay());
+        assert_eq!(d.retired, ["fm-demo-relay"]);
+        assert_eq!(d.sessions.len(), 1, "the workspace session stays");
+        assert!(d.set_relay(Some(relay)));
+        assert!(d.retired.is_empty(), "wanted again: no longer retired");
     }
 
     #[test]

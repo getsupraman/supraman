@@ -33,6 +33,10 @@ pub struct Settings {
     /// elevated `claude --bg` started (m5/25).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
+    /// How long a workspace's relay stays wanted after its last fallback send (m5/32). Unset: 10 min.
+    /// Edited in the file; the selftest shortens it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_idle_secs: Option<u64>,
 }
 
 fn default_max_working() -> usize {
@@ -48,11 +52,16 @@ impl Default for Settings {
             left_width: None,
             extra_plugin_dirs: Vec::new(),
             run_as_admin: false,
+            relay_idle_secs: None,
         }
     }
 }
 
 impl Settings {
+    pub fn relay_idle_ms(&self) -> i64 {
+        self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
+    }
+
     pub fn path(home: &Path) -> PathBuf {
         home.join("settings.toml")
     }
@@ -97,6 +106,7 @@ mod tests {
             left_width: Some(512),
             extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
             run_as_admin: true,
+            relay_idle_secs: Some(20),
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
@@ -110,6 +120,9 @@ mod tests {
         assert_eq!(s.max_working, DEFAULT_MAX_WORKING);
         assert_eq!(s.workstate_url.as_deref(), Some("http://x/mcp"));
         assert!(s.extra_plugin_dirs.is_empty());
+        assert_eq!(s.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
+        fs::write(Settings::path(home.path()), "relay_idle_secs = 20\n").unwrap();
+        assert_eq!(Settings::load(home.path()).unwrap().relay_idle_ms(), 20_000);
         fs::write(Settings::path(home.path()), "max_working = \"many\"").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })));
     }

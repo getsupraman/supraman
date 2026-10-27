@@ -18,7 +18,7 @@ lives in WorkState, so a compaction costs you nothing but a `work_brief`.
 | `fm-<w>-workspace` | you | **controller**: every project, cross-run `blocks` |
 | `fm-<w>-<repo-slug>` | the repo-controller of one repo (`/foreman:repo-controller`) | **orchestrator**: its own run |
 | `fm-<w>-<repo-slug>-<unit>` | a nested agent a repo-controller launched | not yours to address |
-| `fm-<w>-relay` | Foreman's fallback carrier for the human's messages; never message it | none |
+| `fm-<w>-relay` | Foreman's fallback carrier for the human's messages, running only while a message falls back (often absent); never message it | none |
 
 Get names from `fm roster <w>`, never by guessing: the slug is Foreman's (`Nomos.Extract` → `nomos-extract`).
 

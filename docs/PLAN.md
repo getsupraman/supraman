@@ -164,6 +164,16 @@ rewritten on every arm. A resumed relay is told to re-arm. The app shows relay h
 (live + armed within 31 min) and a Messages section under the Inbox (sender, time, first lines, click for
 all, Attach to the sender).
 
+Since m5/4 the relay is only the fallback (human → session straight into the pipe, session → human `fm tell`),
+and since m5/32 it runs **on demand**: it is not a wanted session by default. A send that must fall back
+(receiver's launch mode unknown or not prompting, pipe failure, `direct.json` budget spent) leaves its `{to, body}`
+in the inbox as before and stamps `relay/<w>/last-drop`; each tick (`supervise::sync_relay`) wants the relay while
+the workspace is started and a drop waits or the last drop is younger than `settings.toml` `relay_idle_secs`
+(default 600), and otherwise retires a wanted one (R14 stops it). A desired state written before m5/32 that still
+lists the relay retires it the same way; drops still queued keep it wanted until they are sent. The workspace row
+shows the path: `direct`, `relay starting`, `relay ready` (or the expired-watcher warning). `fm tell` and the
+outbox are unchanged.
+
 ### Data placement
 
 - workspace registry: `%APPDATA%\Foreman\workspaces\<name>.toml`
@@ -181,11 +191,11 @@ all, Attach to the sender).
 **Create workspace** — pick `<dir>` → scan for folders whose `.git` is a **directory** (a `.git` *file* is a
 worktree; `*.worktrees/` skipped) → review, untick → save. `P:\Projects\Magic\Nomos` yields 13 repos.
 
-**Start** — WorkState up + registration checked → `fm-<p>-relay` → `fm-<p>-workspace` with
+**Start** — WorkState up + registration checked → `fm-<p>-workspace` (the relay only on a fallback, m5/32) with
 `/foreman:workspace-controller` → **repo-controllers start on demand** when the workspace-controller assigns
 that repo work.
 
-**Throw a task** — text box → relay → workspace-controller decomposes into per-repo runs with cross-repo
+**Throw a task** — text box → straight into the session's pipe (the relay if it must fall back) → workspace-controller decomposes into per-repo runs with cross-repo
 `blocks` → one approval in the app → repo-controllers run their queues with `/rlarch:controller`.
 
 **Something needs you** — permission park, a `blocked` item with a decision reason, a migration/deploy
