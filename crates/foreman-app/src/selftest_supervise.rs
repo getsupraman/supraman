@@ -7,14 +7,17 @@
 //!   `-u` (`git init`ed: untrusted by construction), `-c1`/`-c2` (plain, for the budget). The testbed's
 //!   desired state also wants `fm-selftest-<hex>-park` (`--permission-mode default`, told to run one
 //!   Bash command): the workspace session itself is `auto`, so the park is a separate wanted session.
-//! - b. Start (click) → `fm-selftest-<hex>-relay` launched before `fm-selftest-<hex>-workspace`, both live;
-//!   the workspace session's event log has SessionStart(startup) and its transcript the role tag the hook
-//!   injected.
-//! - r. the relay writes `ready.json`; a target `fm-selftest-<hex>-target` (launched here, auto, Foreman's
-//!   plugin, told to answer each nonce with `fm tell`) gets 30 messages straight into its pipe, one a second
-//!   (`foreman_claude::human`), and answers every nonce: delivered, none held or dropped. Then one forced
-//!   fallback (a `Sender` whose registry dir is empty) goes through the relay, and its nonce comes back too,
-//!   into the app's Messages section with Attach.
+//!   The desired state also lists `fm-selftest-<hex>-relay`, as one written before m5/32 does (relay on demand).
+//! - b. Start (click) → `fm-selftest-<hex>-workspace` live and no relay: the old desired state's relay is retired
+//!   (R14) and never launched, the row shows `direct`; the workspace session's event log has
+//!   SessionStart(startup) and its transcript the role tag the hook injected.
+//! - r. a target `fm-selftest-<hex>-target` (launched here, auto, Foreman's plugin, told to answer each nonce
+//!   with `fm tell`) gets 30 messages straight into its pipe, one a second (`foreman_claude::human`), and
+//!   answers every nonce: delivered, none held or dropped, and still no relay row. Then one forced fallback (a
+//!   `Sender` whose registry dir is empty) drops into the inbox → the supervisor wants the relay (row `relay
+//!   starting`), launches it, it arms (`relay ready`) and sends the drop; the nonce comes back into the app's
+//!   Messages with Attach. [`RELAY_IDLE_SECS`] after the drop the relay is retired and stopped, the row
+//!   shows `direct` again.
 //! - t. (run after c) the task box: Task… (click) on the testbed, a two-line task typed key by key, Ctrl+Enter →
 //!   delivered direct (the box shows `sent direct: …`, the workspace session's transcript has it framed as the
 //!   human's, no relay drop) and the box cleared; an `APPROVE?` injected into the outbox as from the workspace
@@ -58,7 +61,7 @@ use foreman_core::{
     relay_ready, role_tag,
 };
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session_name, workspace_session_name,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
@@ -77,6 +80,8 @@ Do nothing else.";
 /// Step r's direct sends to the target, one a second: half the receiver's burst, none paced (m5/4).
 const DIRECT_SENDS: usize = 30;
 const REPO: &str = "Repo";
+/// `settings.toml` `relay_idle_secs` for this run: long enough for the relay to launch, arm and send.
+const RELAY_IDLE_SECS: u64 = 60;
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
 
@@ -170,7 +175,11 @@ pub fn prepare() -> anyhow::Result<()> {
         add_dirs: Vec::new(),
         resume_prompt: None,
     });
+    // as a desired state written before m5/32 has it: the relay first
+    let relay_dir = foreman_core::ensure_relay_dirs(&home, &tb.a.0)?;
+    desired.sessions.insert(0, relay_session(&tb.a.0, &tb.a.1, relay_dir, "relay"));
     desired.save(&home)?;
+    Settings { relay_idle_secs: Some(RELAY_IDLE_SECS), ..Settings::default() }.save(&home)?;
     println!(
         "step a: claude {} | FOREMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
         version.raw,
@@ -312,16 +321,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     click(view, &format!("start-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
     let relay_name = relay_session_name(&tb.a.0);
-    let (launched, relay) = wait_for("step b: workspace and relay sessions live", Duration::from_secs(60), cx, |rows| {
-        let live = |name: &str| rows.iter().find(|s| s.name == name && s.pid.is_some()).cloned();
-        live(&ctrl).zip(live(&relay_name))
+    let launched = wait_for("step b: workspace session live", Duration::from_secs(60), cx, |rows| {
+        rows.iter().find(|s| s.name == ctrl && s.pid.is_some()).cloned()
     })
     .await?;
     let live_after = clicked.elapsed();
-    let relay_first = match (relay.started_at, launched.started_at) {
-        (Some(r), Some(w)) if r < w => w - r,
-        other => bail!("step b: {relay_name} was not launched before {ctrl} (startedAt relay/workspace {other:?})"),
-    };
+    let relay_upgrade = no_relay(tb, &relay_name, view, cx).await.context("step b")?;
     let template = std::fs::read_to_string(tb.home.join("roles").join("workspace.md")).context("step b: role file")?;
     let tag = role_tag(WORKSPACE_ROLE, &render_role(&template, &tb.a.0));
     let mut events = EventReader::new(&tb.home);
@@ -380,8 +385,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("step b: the role must name /{WORKSPACE_SKILL} and the session list it and {REPO_SKILL}; listed {listed:?}");
     }
     println!(
-        "step b: Start clicked → {relay_name} ({}) launched {relay_first} ms before {ctrl} ({}), both live after {} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | row under {} in the panel",
-        relay.id,
+        "step b: Start clicked → {ctrl} ({}) live after {}, {relay_upgrade} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | row under {} in the panel",
         launched.id,
         secs(live_after),
         tb.a.0
@@ -393,7 +397,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let foreign = crate::selftest_left::foreign_row(view, &tb.a.0, &tb.a.1.join(REPO), &tb.park(), &tb.hex, cx).await.context("step e2")?;
     println!("step e2: {foreign}");
 
-    relay_step(tb, &relay_name, clicked, view, cx).await.context("step r")?;
+    relay_step(tb, &relay_name, view, cx).await.context("step r")?;
 
     // c. stop its process once its turn ended; the supervisor resumes it. `claude stop`, not a kill: the
     // daemon respawns a session killed while `state=working`/`blocked` by itself (m2/4, R13), and which of
@@ -405,7 +409,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // what the skill made of its first turn: reported, not asserted (a model's choice, not Foreman's)
     let (_, tools) = transcript_turn(&transcript);
     let ready = read_outbox(&tb.home, &tb.a.0)?.into_iter().find(|m| m.from_name == ctrl).map(|m| m.body);
-    println!("step b: {ctrl}'s first turn: tools {tools:?} | its message to {relay_name}: {ready:?}");
+    println!("step b: {ctrl}'s first turn: tools {tools:?} | its first message: {ready:?}");
     let hidden = hide(view, cx).await.context("step h")?;
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
@@ -655,6 +659,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // g. Stop through the UI: stopped, rows and transcripts kept
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
+    // the relay was retired in step r: stopped already, and no longer the workspace's
     let names = [ctrl.clone(), tb.park(), relay_name.clone()];
     let stopped = wait_for("step g: testbed sessions stopped", Duration::from_secs(60), cx, |rows| {
         let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
@@ -672,8 +677,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         stopped.join(", "),
         tb.a.0
     );
-    if shown != 3 || still != 0 {
-        bail!("step g: expected 3 rows shown (relay, workspace, park) and none restarted, got {shown} shown, {still} live");
+    if shown != 2 || still != 0 {
+        bail!("step g: expected 2 rows shown (workspace, park) and none restarted, got {shown} shown, {still} live");
     }
     stop_all_step(tb, view, cx).await.context("step q")
 }
@@ -1068,30 +1073,10 @@ fn tool_result(path: &str, matches: impl Fn(&str) -> bool) -> Option<String> {
 async fn relay_step(
     tb: &Testbed,
     relay_name: &str,
-    clicked: Instant,
     view: &Entity<FleetView>,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
-    let started = Instant::now();
-    while relay_ready(&tb.home, w).is_none() {
-        if started.elapsed() > Duration::from_secs(90) {
-            bail!("{relay_name} wrote no ready.json within 90 s (row: {:?})", row(relay_name, cx).await?.map(|r| raw(&r)));
-        }
-        sleep(cx, Duration::from_millis(200)).await;
-    }
-    let ready_after = clicked.elapsed();
-    let mut ready_shown = false;
-    for _ in 0..40 {
-        ready_shown = view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).is_some_and(|(_, ok)| ok));
-        if ready_shown {
-            break;
-        }
-        sleep(cx, Duration::from_millis(250)).await;
-    }
-    if !ready_shown {
-        bail!("ready.json is there, but the workspace row does not show the relay ready: {:?}", view.read_with(cx, |v, _| v.relays.get(w).cloned()));
-    }
     steady_step(tb, view, cx).await.context("step t0")?;
 
     let target = tb.target();
@@ -1152,6 +1137,7 @@ async fn relay_step(
         sleep(cx, Duration::from_millis(250)).await;
     };
     let direct_round_trip = direct_started.elapsed();
+    let still_direct = no_relay(tb, relay_name, view, cx).await.context("after the direct sends")?;
 
     // forced fallback: a registry dir with no entry, so the relay carries it
     let empty = tb.home.join("no-sessions");
@@ -1166,6 +1152,32 @@ async fn relay_step(
     if !reason.starts_with("no session named") {
         bail!("the forced fallback's reason is {reason:?}");
     }
+    // the drop wants the relay: `relay starting`, launched, armed, `relay ready`
+    let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
+    let mut starting_after = None;
+    let mut ready_after = None;
+    let mut labels = Vec::new();
+    while ready_after.is_none() {
+        let now = label(cx);
+        if labels.last() != Some(&now) {
+            labels.push(now.clone());
+        }
+        match now.as_deref() {
+            Some("relay starting") => {
+                starting_after.get_or_insert(sent_at.elapsed());
+            }
+            Some("relay ready") if relay_ready(&tb.home, w).is_some() => ready_after = Some(sent_at.elapsed()),
+            _ => {}
+        }
+        if sent_at.elapsed() > Duration::from_secs(120) {
+            bail!("the relay was not ready within 120 s of the drop: row labels {labels:?}, relay row {:?}", row(relay_name, cx).await?.map(|r| raw(&r)));
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
+    let Some(starting_after) = starting_after else {
+        bail!("the row never showed `relay starting` between the drop and `relay ready`: {labels:?}");
+    };
+    let relay_row = row(relay_name, cx).await?.ok_or_else(|| anyhow!("{relay_name} is ready but not listed"))?;
     let reply = loop {
         let found = read_outbox(&tb.home, w)?
             .into_iter()
@@ -1200,21 +1212,71 @@ async fn relay_step(
     // An idle target can keep `state=working` (m0/4), which the busy budget counts: step f's limit of 1
     // would wait on it for ever. Its job is done.
     claude(&["stop", &target_row.id], None).context("stop the target")?;
+
+    // idle for RELAY_IDLE_SECS after the drop: retired (R14), stopped, the row `direct` again
+    let retired = loop {
+        let desired = DesiredState::load(&tb.home, w)?.ok_or_else(|| anyhow!("{w} has no desired state"))?;
+        let stopped = row(relay_name, cx).await?.is_some_and(|r| r.pid.is_none());
+        if !desired.wants_relay() && desired.retired.iter().any(|n| n == relay_name) && stopped && label(cx).as_deref() == Some("direct") {
+            break sent_at.elapsed();
+        }
+        if sent_at.elapsed() > Duration::from_secs(RELAY_IDLE_SECS + 90) {
+            bail!(
+                "{relay_name} not retired and stopped within {} s of the drop (idle timeout {RELAY_IDLE_SECS} s): wanted {}, row {:?}, label {:?}",
+                RELAY_IDLE_SECS + 90,
+                desired.wants_relay(),
+                row(relay_name, cx).await?.map(|r| raw(&r)),
+                label(cx)
+            );
+        }
+        sleep(cx, Duration::from_millis(500)).await;
+    };
+    if Duration::from_secs(RELAY_IDLE_SECS) > retired {
+        bail!("{relay_name} retired {} after the drop, before the idle timeout of {RELAY_IDLE_SECS} s", secs(retired));
+    }
     println!(
-        "step r: {relay_name} wrote ready.json {} after Start; workspace row shows `relay ready` | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with fm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach",
-        secs(ready_after),
+        "step r: {still_direct} | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with fm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → row `relay starting` after {}, {relay_name} ({}) armed and `relay ready` after {} (labels {labels:?}) → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach | idle {RELAY_IDLE_SECS} s → retired, stopped, row `direct` {} after the drop",
         target_row.id,
         launch.lines().next().unwrap_or_default(),
         secs(sent_in),
         secs(direct_round_trip),
         fallback.label(),
         drop.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+        secs(starting_after),
+        relay_row.id,
+        secs(ready_after.unwrap_or_default()),
         reply.file,
         reply.from_name,
         secs(round_trip),
         secs(shown_after),
+        secs(retired),
     );
     Ok(())
+}
+
+/// m5/32: no relay row, the desired state does not want it (one listed before is retired), and the
+/// workspace row shows `direct`.
+async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let w = tb.a.0.as_str();
+    let started = Instant::now();
+    let label = loop {
+        let label = view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())));
+        if label.as_ref().is_some_and(|(t, _)| t == "direct") || started.elapsed() > Duration::from_secs(10) {
+            break label;
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    };
+    if let Some(r) = row(relay_name, cx).await? {
+        bail!("{relay_name} has a row although no message fell back: {}", raw(&r));
+    }
+    let desired = DesiredState::load(&tb.home, w)?.ok_or_else(|| anyhow!("{w} has no desired state"))?;
+    if desired.wants_relay() || !desired.retired.iter().any(|n| n == relay_name) {
+        bail!("the desired state wants the relay ({}) or did not retire it: retired {:?}", desired.wants_relay(), desired.retired);
+    }
+    if label.as_ref().map(|(t, _)| t.as_str()) != Some("direct") {
+        bail!("the workspace row shows {label:?}, not `direct`");
+    }
+    Ok(format!("no {relay_name} row, the old desired state's relay retired, row `direct`"))
 }
 
 /// Keys through the window's own input dispatch, as gpui_windows makes them: `enter` for a new line,

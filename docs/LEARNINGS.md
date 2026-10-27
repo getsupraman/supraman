@@ -2229,3 +2229,38 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - **Why CI-CD-pipeline vanished.** `claude agents --json --all` lists background sessions, stopped ones too, but an interactive session only while it runs. A closed one leaves only `<claude dir>/projects/<slug>/<sessionId>.jsonl`. The slug turns every non-alphanumeric character into `-`, so it only narrows which dirs to scan (prefix of an enabled repo's slug, which includes its `.claude/worktrees` and `.worktrees` siblings). cwd, the custom title, the agent name, the ai-title and the first prompt come from the lines. In claude 2.1.306, meta lines are type-first (`{"type":"custom-title",…}`), they repeat, and the last one wins. A rename writes `custom-title` and `agent-name` together.
 - Cost on René's machine: 979 project dirs, 737 of them prefixed `P--Projects-LarchSys-AutoWork`. The first scan took 6 s for AutoWork (1958 transcripts within 14 days, 1808 of them `fm-` selftests) and 1.3 s for Gaia. A rescan takes ~100 ms because `foreman_claude::Transcripts` caches the dir list and each dir's listing by mtime and reads an appended file from its last offset. It runs on its own background loop every 10 s (`watch_transcripts`), never on the poll thread. `fm-` transcripts are dropped unless starred: background transcripts carry the same `entrypoint:"cli"` and `mode:"normal"`, so nothing else tells them apart.
 - Resume of a closed or interactive row goes through the `+` launch (`hand_claude`, `Launch::script_with`), with its own token when one can be minted. Stars live in `<FOREMAN_HOME>/starred.json`. The selftest reads transcripts from `FOREMAN_CLAUDE_DIR` = `<scratch home>/fake-claude` (step 7h; a fake `claude.cmd` through `FleetView::claude_command`), never `~/.claude`. Two fixture ids with the same first 8 hex digits collide in the tree's element ids and hit keys.
+
+## 2026-10-27 — m5/32 relay on demand
+
+- **Why**: on René's machine `relay/gaia` and `relay/nomos` had 0 relay sends (`inbox/sent` empty), the outbox
+  only `fm tell` files: since m5/4 the always-on relay was an idle session per workspace that never carried a
+  message. René chose (2026-10-27) to keep the fallback but run it only when needed; dropping it was not chosen.
+- **Shape**: the demand is read from files, not from a flag someone must set: `relay_demand` = a `*.json` drop waits
+  in `relay/<w>/inbox`, or `relay/<w>/last-drop` (written by every `foreman_core::send`) is younger than the
+  idle timeout. So `fm send` from a shell needs no access to the desired state, and a drop made while Foreman
+  was closed starts the relay on the next tick after Start. `supervise::sync_relay` runs in every tick between
+  loading the desired states and reconciling: wants the relay (first, `DesiredState::set_relay`) or retires it
+  (`unwant` → `retired` → R14 stops it). A relay wanted again comes back by **resume** of its stopped row with the
+  re-arm prompt, and a new watcher prints every drop still in the inbox, so nothing queued is lost.
+- **Upgrade**: a desired state that still lists the relay (Start wrote it before m5/32) is retired on the first
+  tick unless a drop waits; Start no longer touches the relay, except that a wanted one follows the root.
+- **The app no longer refuses** a send because the relay is not `relay ready`: a started workspace takes the
+  message (direct, or queued for the relay it starts); Task… shows on every started workspace.
+- **Timeout**: `settings.toml` `relay_idle_secs` (default 600), counted from the last drop, not from delivery.
+  A drop still waiting keeps the relay wanted however old it is. Not covered: a relay that takes longer than the
+  timeout to arm and is retired between the watcher printing the drop and its `SendMessage` (seconds, at 10 min).
+- **Selftest** (`--selftest-supervise`, `relay_idle_secs = 60`): the testbed's desired state is written with the
+  relay listed, as before m5/32. Step b: no relay row, it is retired, row `direct`. Step r: 30 direct sends, still no
+  relay row; the forced fallback → `relay starting` after 2.0 s, armed and `relay ready` after 17.8 s, nonce back in
+  the outbox after 23.0 s, in Messages with Attach; retired, stopped and `direct` 61.5 s after the drop. Step g counts
+  2 supervised rows (workspace, park): the retired relay is no longer the workspace's.
+- Tests: `relay::tests::the_relay_is_in_demand_…`, `desired::tests::set_relay_…`,
+  `supervise::tests::the_relay_is_wanted_on_a_fallback_and_retired_after_the_idle_timeout` (fallback, waiting drop,
+  timeout, upgrade with and without a queued drop), `relay_status_reads_direct_starting_ready_and_expired`,
+  settings round trip with `relay_idle_secs`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-32\target`): `cargo build --release --workspace` ok; `cargo test --release
+  --workspace` 491 passed, 0 failed; `--selftest-supervise` PASS (first run, 333 s); `--selftest` 4 of the first 5 (run 4
+  FAIL step 7b, `selftest_manage.rs` `edit_name`: the name was read right after posting End, 3 Backspace and `added`
+  and showed `selftest-` — m5/26's step, a read-before-dispatch race, not code m5/32 touches), then 5 of 5 PASS;
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this worktree left (4 `fm-selftest-c5886c-*` rows with
+  cwd in the main checkout are another run's, not touched).
