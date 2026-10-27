@@ -26,7 +26,8 @@ impl Workspace {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
-    /// Path relative to the workspace root, `/`-separated; the folder name at depth 1.
+    /// Path relative to the workspace root, `/`-separated; the folder name at depth 1; for a root that is
+    /// itself a repo, the root folder's name ([`crate::scan`]).
     pub name: String,
     pub path: PathBuf,
     pub has_claude_md: bool,

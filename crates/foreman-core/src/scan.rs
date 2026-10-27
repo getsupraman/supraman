@@ -5,7 +5,9 @@ use crate::{CoreError, Repo, Result};
 
 pub const DEFAULT_DEPTH: usize = 1;
 
-/// Finds the git repos under `root`, at most `depth` levels down (1 = direct children).
+/// Finds the git repos under `root`, at most `depth` levels down (1 = direct children). A `root` that is
+/// itself a repo (a `.git` folder, or the `.git` file of a linked worktree) is one too, listed first
+/// (m5/26): named after its folder ([`root_repo_name`]), its path the root.
 ///
 /// Read-only: it never runs git and never writes inside a scanned folder.
 pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {
@@ -16,7 +18,37 @@ pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {
     let mut repos = Vec::new();
     walk(entries, "", 1, depth, &mut repos);
     repos.sort_by(|a, b| a.name.cmp(&b.name));
+    let git = root.join(".git");
+    if git.exists() {
+        let name = root_repo_name(root, &repos);
+        let git_dir = if git.is_dir() { Some(git) } else { linked_git_dir(&git) };
+        repos.insert(0, repo_at(name, root.to_path_buf(), git_dir.as_deref()));
+    }
     Ok(repos)
+}
+
+/// The root repo's name: its folder's name, `<folder>-root` when a repo below already has that name.
+fn root_repo_name(root: &Path, below: &[Repo]) -> String {
+    let folder = root.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "root".into());
+    if below.iter().any(|r| r.name.eq_ignore_ascii_case(&folder)) { format!("{folder}-root") } else { folder }
+}
+
+fn repo_at(name: String, path: std::path::PathBuf, git_dir: Option<&Path>) -> Repo {
+    Repo {
+        name,
+        has_claude_md: path.join("CLAUDE.md").is_file(),
+        has_agents_md: path.join("AGENTS.md").is_file(),
+        branch: git_dir.and_then(read_branch),
+        enabled: true,
+        path,
+    }
+}
+
+/// The git dir a linked worktree's `.git` file points at (`gitdir: <path>`, relative to the file).
+fn linked_git_dir(git_file: &Path) -> Option<std::path::PathBuf> {
+    let text = fs::read_to_string(git_file).ok()?;
+    let dir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
+    Some(git_file.parent()?.join(dir))
 }
 
 fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &mut Vec<Repo>) {
@@ -38,14 +70,7 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &
         let name = format!("{prefix}{folder}");
         let git = path.join(".git");
         if git.is_dir() {
-            repos.push(Repo {
-                name,
-                has_claude_md: path.join("CLAUDE.md").is_file(),
-                has_agents_md: path.join("AGENTS.md").is_file(),
-                branch: read_branch(&git),
-                enabled: true,
-                path,
-            });
+            repos.push(repo_at(name, path, Some(&git)));
         } else if git.exists() {
             // A `.git` file: a linked worktree of a repo that lives elsewhere.
             continue;
@@ -167,6 +192,40 @@ mod tests {
         let before = snapshot(tmp.path());
         scan(tmp.path(), 3).unwrap();
         assert_eq!(snapshot(tmp.path()), before);
+    }
+
+    #[test]
+    fn a_root_that_is_a_repo_is_one_listed_first_with_its_children() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = repo(&tmp.path().join("Gaia"), "ref: refs/heads/main
+");
+        let repos = scan(&root, 1).unwrap();
+        assert_eq!(names(&repos), ["Gaia"]);
+        assert_eq!((repos[0].path.as_path(), repos[0].branch.as_deref()), (root.as_path(), Some("main")));
+        repo(&root.join("child"), "ref: refs/heads/dev
+");
+        repo(&root.join("gaia"), "ref: refs/heads/x
+");
+        let repos = scan(&root, 1).unwrap();
+        assert_eq!(names(&repos), ["Gaia-root", "child", "gaia"], "a child of the same name keeps its own");
+        assert_eq!(repos[0].path, root);
+    }
+
+    #[test]
+    fn a_root_that_is_a_linked_worktree_is_a_repo_on_its_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = repo(&tmp.path().join("main"), "ref: refs/heads/main
+");
+        let gitdir = main.join(".git").join("worktrees").join("wt");
+        fs::create_dir_all(&gitdir).unwrap();
+        fs::write(gitdir.join("HEAD"), "ref: refs/heads/feat/security
+").unwrap();
+        let wt = tmp.path().join("wt");
+        fs::create_dir_all(&wt).unwrap();
+        fs::write(wt.join(".git"), format!("gitdir: {}
+", gitdir.display())).unwrap();
+        let repos = scan(&wt, 1).unwrap();
+        assert_eq!((names(&repos), repos[0].branch.as_deref()), (vec!["wt"], Some("feat/security")));
     }
 
     #[test]

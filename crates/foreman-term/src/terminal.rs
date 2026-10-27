@@ -1066,6 +1066,7 @@ impl TerminalBuilder {
             keyboard_input_sent: false,
             cursor_moved_at: Instant::now(),
             cursor_painted_lit: true,
+            selection_painted: None,
             init_command_startup_marker: None,
             init_command_startup_tx: None,
             event_loop_task: Task::ready(Ok(())),
@@ -1343,6 +1344,7 @@ impl TerminalBuilder {
                 keyboard_input_sent: false,
             cursor_moved_at: Instant::now(),
             cursor_painted_lit: true,
+            selection_painted: None,
                 init_command_startup_marker: None,
                 init_command_startup_tx: None,
                 event_loop_task: Task::ready(Ok(())),
@@ -1543,6 +1545,9 @@ pub struct Terminal {
     cursor_moved_at: Instant,
     /// Whether the painter last drew the cursor lit; the selftest reads it.
     pub cursor_painted_lit: bool,
+    /// The selection's background and its text's colour as last painted, while a selection with text
+    /// is shown; the selftest reads it.
+    pub selection_painted: Option<(Hsla, Hsla)>,
     init_command_startup_marker: Option<String>,
     init_command_startup_tx: Option<Sender<()>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,

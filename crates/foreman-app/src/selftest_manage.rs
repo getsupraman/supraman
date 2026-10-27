@@ -1,6 +1,9 @@
 //! `--selftest` step 7b (m5/12): managing workspaces through the window. Add workspace on a scratch folder
 //! ([`FOLDER`] under `<cargo root>/target/`, two fake repos; [`FleetView::pick_folder`] stands in for the OS
-//! picker): the review lists both, one is unticked, the name is edited with keys, Enter saves; the tree shows
+//! picker): the review lists both, one is unticked, the name is edited with keys, Enter saves. The name field
+//! gets Win32 messages posted to the window (m5/26), the path a real click and key take through gpui's window
+//! procedure: a click at its start puts the caret there, the caret blinks, End / Backspace / letters edit it,
+//! Save while the folder is still read says so. The tree shows
 //! both repos (the unticked one disabled), also once a poll that read the registry before Save applies. The same folder again is refused inline. Then the right-click
 //! menus: the gate session's row (opened and dismissed with Esc, nothing run), the new workspace's (dismissed
 //! by a click outside it), the disabled repo's Enable, and the workspace's Remove… confirmed: it leaves the
@@ -17,7 +20,8 @@ use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::Session;
 use foreman_core::Registry;
 use gpui::{
-    AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput, point, px,
+    AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
+    px,
 };
 
 use crate::{
@@ -26,6 +30,8 @@ use crate::{
 };
 
 pub const FOLDER: &str = "selftest-add";
+/// A folder that is itself a repo (m5/26).
+pub const SINGLE: &str = "selftest-single";
 /// What the review's name is edited into.
 const ADDED: &str = "selftest-added";
 const WITHIN: Duration = Duration::from_secs(5);
@@ -54,6 +60,166 @@ fn typed(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>) -> anyh
         window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx);
     })?;
     Ok(())
+}
+
+/// Posts `messages` to this window's HWND, as the OS queues a real click or key: they go through gpui's
+/// window procedure (and `TranslateMessage`), not straight to `dispatch_event`.
+fn post(cx: &mut AsyncWindowContext, messages: &[(u32, usize, isize)]) -> anyhow::Result<()> {
+    use windows::Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::PostMessageW,
+    };
+    let hwnd = cx.update(|window, _| crate::tray::hwnd(window))?.ok_or_else(|| anyhow!("no HWND"))?;
+    for &(message, wparam, lparam) in messages {
+        unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) }.map_err(|e| anyhow!("PostMessage: {e}"))?;
+    }
+    Ok(())
+}
+
+/// A left click posted at `key`'s painted left edge plus `dx`, in the window's physical pixels.
+async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE};
+    let bounds = crate::selftest::scrolled_into_view(view, key, cx).await?;
+    let scale = cx.update(|window, _| window.scale_factor())?;
+    let x = ((f32::from(bounds.left()) + dx) * scale) as isize;
+    let y = (f32::from(bounds.center().y) * scale) as isize;
+    let at = (y << 16) | (x & 0xffff);
+    post(cx, &[(WM_MOUSEMOVE, 0, at), (WM_LBUTTONDOWN, 1, at), (WM_LBUTTONUP, 0, at)])?;
+    sleep(cx, Duration::from_millis(150)).await;
+    Ok(())
+}
+
+/// Keys posted as WM_KEYDOWN / WM_KEYUP: a virtual key for each name (`end`, `backspace`, `enter`) or the
+/// key the keyboard layout has for each character.
+async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use windows::Win32::UI::{
+        Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_END, VK_RETURN, VkKeyScanW},
+        WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
+    };
+    for key in keys {
+        let vk = match *key {
+            "end" => VK_END.0 as u32,
+            "backspace" => VK_BACK.0 as u32,
+            "enter" => VK_RETURN.0 as u32,
+            c => (unsafe { VkKeyScanW(c.encode_utf16().next().unwrap_or_default()) } & 0xff) as u32,
+        };
+        let scan = unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) } as isize;
+        post(cx, &[(WM_KEYDOWN, vk as usize, 1 | (scan << 16)), (WM_KEYUP, vk as usize, 1 | (scan << 16) | (0b11 << 30))])?;
+    }
+    sleep(cx, Duration::from_millis(150)).await;
+    Ok(())
+}
+
+/// m5/26: the review's name edited `selftest-add` → [`ADDED`] by posted messages only. A click at the
+/// start of the text puts the caret at 0; idle, the painted caret blinks; End, three Backspaces and
+/// `added`; Save while the folder is "still read" answers with an error line instead of nothing.
+async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let name = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.adding.as_ref().map(|d| (d.name.text.clone(), d.name.cursor())));
+    post_click(view, "add-name-text", 1., cx).await?;
+    if name(cx) != Some((FOLDER.to_string(), 0)) {
+        bail!("a click at the start of the name left (name, caret) {:?}, expected ({FOLDER}, 0)", name(cx));
+    }
+    let (mut lit, mut unlit) = (0, 0);
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(2500) && (lit < 2 || unlit < 2) {
+        match view.read_with(cx, |v, _| v.adding.as_ref().map(|d| d.caret_painted.get())) {
+            Some(true) => lit += 1,
+            Some(false) => unlit += 1,
+            None => bail!("the review closed while its caret was watched"),
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
+    if lit == 0 || unlit == 0 {
+        bail!("the name's caret was painted lit {lit} and unlit {unlit} times in {} ms: it does not blink", started.elapsed().as_millis());
+    }
+    post_keys(&["end", "backspace", "backspace", "backspace", "a", "d", "d", "e", "d"], cx).await?;
+    if name(cx) != Some((ADDED.to_string(), ADDED.len())) {
+        bail!("posted End, 3 Backspace and `added` left (name, caret) {:?}, expected ({ADDED}, {})", name(cx), ADDED.len());
+    }
+    view.update(cx, |v, _| v.adding.as_mut().map(|d| d.scanning = true));
+    post_click(view, "add-save", 4., cx).await?;
+    let said = view.update(cx, |v, _| {
+        let d = v.adding.as_mut()?;
+        d.scanning = false;
+        d.error.take()
+    });
+    let Some(said) = said else {
+        bail!("Save while the folder was still read said nothing");
+    };
+    Ok(format!("name by posted messages: click → caret 0, caret {lit} lit / {unlit} unlit, edited to {ADDED}; Save while reading: \"{said}\""))
+}
+
+/// m5/26: a folder that is itself a git repo ([`SINGLE`], as René's `P:\Projects\LarchSys\Gaia`) is a
+/// one-repo workspace: the review lists the folder as its repo, a posted click on Save registers it with
+/// the root as the repo's path, and the tree shows the row. It is removed from the registry after.
+async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let root = cargo_root().join("target").join(SINGLE);
+    let git = root.join(".git");
+    std::fs::create_dir_all(&git)?;
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")?;
+    view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
+    click(view, "add-workspace", cx).await?;
+    let (repos, error) = until(view, cx, "the single repo's review", |v| {
+        let d = v.adding.as_ref().filter(|d| !d.scanning)?;
+        Some((d.repos.iter().map(|(r, _)| (r.name.clone(), r.path.clone())).collect::<Vec<_>>(), d.error.clone()))
+    })
+    .await?;
+    if repos != [(SINGLE.to_string(), root.clone())] || error.is_some() {
+        bail!("the review of a folder that is a repo lists {repos:?} and says {error:?}, expected [({SINGLE}, {})]", root.display());
+    }
+    shot("add-review-single-repo", cx).await;
+    post_click(view, "add-save", 4., cx).await?;
+    until(view, cx, "the single repo's review closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let saved = registry.load(SINGLE).context("the registry after Save")?;
+    let paths: Vec<_> = saved.repos.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
+    if paths != [(SINGLE, root.as_path())] {
+        bail!("registered {SINGLE} with repos {paths:?}");
+    }
+    let row = format!("repo-row-{SINGLE}/{SINGLE}");
+    until(view, cx, "the single repo's row in the tree", |v| painted(v, &row).then_some(())).await?;
+    registry.remove(SINGLE)?;
+    view.update(cx, |v, _| v.reload_workspaces());
+    Ok(format!("{SINGLE} (a folder that is a repo): one repo, the root, registered by a posted Save and shown"))
+}
+
+/// m5/26: a label shown cut shows its full text as a tooltip: [`ADDED`]'s root path, cut in its row, with
+/// the pointer held over it. The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE
+/// the real cursor's position sends at once.
+async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let key = format!("ws-root-{ADDED}");
+    let full = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == ADDED).map(|w| w.root.display().to_string()));
+    let full = full.ok_or_else(|| anyhow!("{ADDED} is not in the tree"))?;
+    let row = crate::selftest::scrolled_into_view(view, &format!("ws-row-{ADDED}"), cx).await?;
+    let started = Instant::now();
+    let bounds = loop {
+        let inside = |b: &gpui::Bounds<gpui::Pixels>| b.size.width > px(40.) && b.center().y > row.top() && b.center().y < row.bottom();
+        if let Some(b) = crate::clipped::cut_at(&key).filter(inside) {
+            break b;
+        }
+        if started.elapsed() > WITHIN {
+            bail!("{ADDED}'s root path {full:?} was not painted cut, 40 px or wider: {:?}", crate::clipped::cut_at(&key));
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    };
+    crate::view::icon::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    let position = bounds.center();
+    let started = Instant::now();
+    loop {
+        cx.update(|window, cx| {
+            let event = MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() };
+            window.dispatch_event(PlatformInput::MouseMove(event), cx);
+        })?;
+        sleep(cx, Duration::from_millis(100)).await;
+        let shown = crate::view::icon::LAST_SHOWN.with(|l| l.borrow().clone());
+        if shown.as_deref() == Some(full.as_str()) {
+            break;
+        }
+        if started.elapsed() > WITHIN {
+            bail!("hovering {ADDED}'s cut root path at {position:?} showed the tooltip {shown:?}, expected {full:?}");
+        }
+    }
+    shot("cut-label-tooltip", cx).await;
+    Ok(format!("{ADDED}'s root path painted cut ({:.0} px); hovered, its tooltip reads the whole path", f32::from(bounds.size.width)))
 }
 
 fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
@@ -141,7 +307,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     click(view, "add-workspace", cx).await?;
     let (name, repos) = until(view, cx, "the review's repos", |v| {
         let d = v.adding.as_ref().filter(|d| !d.scanning)?;
-        Some((d.name.clone(), d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>()))
+        Some((d.name.text.clone(), d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>()))
     })
     .await?;
     if name != FOLDER || repos != ["alpha", "beta"] {
@@ -150,24 +316,13 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, "Save painted", |v| painted(v, "add-save").then_some(())).await?;
     click(view, "add-repo-beta", cx).await?;
     until(view, cx, "beta unticked", |v| v.adding.as_ref().is_some_and(|d| !d.repos[1].1).then_some(())).await?;
-    click(view, "add-name", cx).await?;
-    for _ in 0.."add".len() {
-        typed(cx, "backspace", None)?;
-    }
-    for c in "added".chars() {
-        let c = c.to_string();
-        typed(cx, &c, Some(&c))?;
-    }
-    let edited = view.read_with(cx, |v, _| v.adding.as_ref().map(|d| d.name.clone()));
-    if edited.as_deref() != Some(ADDED) {
-        bail!("the name reads {edited:?} after editing, expected {ADDED}");
-    }
+    let name_edit = edit_name(view, cx).await?;
     shot("add-review", cx).await;
     // m5/21: a poll held between its registry read and its apply, Save in between, as a slow poll does
     let hold = view.read_with(cx, |v, _| v.poll_hold.clone());
     hold.armed.store(true, Ordering::SeqCst);
     until(view, cx, "a poll held after its registry read", |_| hold.holding.load(Ordering::SeqCst).then_some(())).await?;
-    typed(cx, "enter", None)?;
+    post_keys(&["enter"], cx).await?;
     until(view, cx, "the review closed on Enter", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
     let flags: Vec<(String, bool)> = saved.repos.iter().map(|r| (r.name.clone(), r.enabled)).collect();
@@ -182,7 +337,8 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     if !view.read_with(cx, |v, _| v.workspaces.iter().any(|w| w.name == ADDED)) {
         bail!("a poll that read the registry before Save took {ADDED} out of the tree when it applied");
     }
-    let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), both repos in the tree", root.display())];
+    let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), both repos in the tree", root.display()), name_edit];
+    out.push(cut_label_tooltip(view, cx).await?);
 
     // the same folder again: refused inline
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
@@ -197,6 +353,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     click(view, "add-cancel", cx).await?;
     until(view, cx, "the review closed on Cancel", |v| v.adding.is_none().then_some(())).await?;
     out.push(format!("the same folder again: \"{refused}\""));
+    out.push(single_repo(view, &registry, cx).await?);
 
     // the gate session's menu: opened and dismissed with Esc, nothing run
     let session_key = format!("session-row-{}", own.session_id);

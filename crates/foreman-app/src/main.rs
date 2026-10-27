@@ -12,11 +12,13 @@
 // or quits (`tray`), so supervision outlives the window (m5/1). Log lines go to <home>\logs\foreman.log
 // (a selftest's home has its own), never to a console (m5/22).
 
+mod clipped;
 mod compose;
 mod elevate;
 mod fleet;
 mod hand;
 mod instance;
+mod line_edit;
 mod selftest;
 mod selftest_first_run;
 mod selftest_left;

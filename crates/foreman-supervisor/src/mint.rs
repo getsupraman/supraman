@@ -460,6 +460,12 @@ mod tests {
         assert_eq!(git_repo(&wt).unwrap().remote.as_deref(), Some("https://example.invalid/demo/alpha.git"));
         let plain = tempfile::tempdir().unwrap();
         assert_eq!(git_repo(plain.path()), None, "not a repo");
+        // m5/26: a workspace root that is a repo, with a repo inside it: each sends its own root
+        let child = main.join("child");
+        std::fs::create_dir(&child).unwrap();
+        run(&child, &["init", "-q"]);
+        assert_eq!(git_repo(&main).unwrap().root, of_main.root, "the root repo");
+        assert_eq!(canon(&git_repo(&child).unwrap().root), canon(child.to_str().unwrap()), "the repo inside it");
     }
 
     #[test]

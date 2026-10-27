@@ -87,3 +87,27 @@ fn want_uses_the_role_the_app_rendered_and_keeps_the_apps_sessions() {
     assert_eq!(names, ["fm-demo-workspace", "fm-demo-alpha"]);
     assert_eq!(d.sessions[1].prompt, "Rendered for Alpha in demo.");
 }
+
+/// m5/26: a folder that is itself a repo is a one-repo workspace, its repo named after the folder; with
+/// repos below it, those are listed too. Registered, the root repo's session runs in the root.
+#[test]
+fn a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root() {
+    let ws = tempfile::tempdir().unwrap();
+    let root = ws.path().join("Gaia");
+    for dir in [root.clone(), root.join("Child")] {
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(dir.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    }
+    let home = tempfile::tempdir().unwrap();
+    let out = fm(home.path(), &["workspace", "add", root.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let saved = foreman_core::Registry::at(home.path()).load("gaia").unwrap();
+    let repos: Vec<(&str, &Path)> = saved.repos.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
+    assert_eq!(repos, [("Gaia", root.as_path()), ("Child", root.join("Child").as_path())]);
+
+    let out = fm(home.path(), &["want", "gaia", "Gaia"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let d = DesiredState::load(home.path(), "gaia").unwrap().unwrap();
+    let w = &d.sessions[0];
+    assert_eq!((w.name.as_str(), w.repo.as_deref(), w.cwd.as_path()), ("fm-gaia-gaia", Some("Gaia"), root.as_path()));
+}

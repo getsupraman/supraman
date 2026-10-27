@@ -176,6 +176,20 @@ mod tests {
         assert_eq!(repo_name(&plat.join("Alpha").join("not-created-yet"), &p), Some("Alpha"));
     }
 
+    /// m5/26: a workspace whose root is a repo too: its children keep their sessions, the rest of the
+    /// root is the root repo's.
+    #[test]
+    fn a_root_repo_takes_what_no_child_repo_does() {
+        let (tmp, mut p) = layout();
+        let plat = tmp.path().join("Plat");
+        p.repos.insert(0, Repo { name: "Plat".into(), path: plat.clone(), ..p.repos[0].clone() });
+        assert_eq!(repo_name(&plat, &p), Some("Plat"));
+        assert_eq!(repo_name(&plat.join("docs"), &p), Some("Plat"));
+        assert_eq!(repo_name(&plat.join("Alpha").join("src"), &p), Some("Alpha"));
+        assert_eq!(repo_name(&plat.join("Alpha.Ext"), &p), Some("Alpha.Ext"));
+        assert_eq!(repo_name(&tmp.path().join("Elsewhere"), &p), None);
+    }
+
     #[test]
     fn worktree_maps_to_its_repo() {
         let (tmp, p) = layout();

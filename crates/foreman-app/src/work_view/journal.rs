@@ -309,7 +309,7 @@ impl WorkView {
                         .child(SharedString::from(target.map(|t| t.qualified_ref.clone()).unwrap_or_else(|| "—".into()))),
                 )
                 .child(div().flex_none().child(SharedString::from(e.kind.clone())))
-                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(who)));
+                .child(crate::clipped::clipped(format!("{key}-who"), who, false).flex_1());
             let row = div()
                 .id(SharedString::from(key.clone()))
                 .relative()
@@ -320,7 +320,7 @@ impl WorkView {
                 .border_b_1()
                 .border_color(colors.border_variant)
                 .child(meta)
-                .child(div().text_sm().overflow_hidden().whitespace_nowrap().text_ellipsis().child(SharedString::from(e.summary.clone().unwrap_or_default())))
+                .child(crate::clipped::clipped(format!("{key}-summary"), e.summary.clone().unwrap_or_default(), false).text_sm())
                 .child(hit_target(&self.hits, key));
             list = list.child(match e.item.as_ref() {
                 Some(item) => {
