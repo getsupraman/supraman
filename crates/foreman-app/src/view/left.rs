@@ -8,11 +8,11 @@ use std::{
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, TextRun, Window, div, prelude::*, px, relative, rems};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::{AddDraft, Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
@@ -486,8 +486,11 @@ impl FleetView {
             ));
         }
 
+        // while the search box holds text, its results stand in for the tree (m5/30, `results.rs`), in a
+        // scroll of their own that starts at the top
+        let query = self.search_query(cx);
         let mut body = div()
-            .id("fleet")
+            .id(if query.is_empty() { "fleet" } else { "search-results" })
             .relative()
             .child(hit_target(&self.hits, "tree-area".into()))
             .flex()
@@ -496,7 +499,8 @@ impl FleetView {
             .min_h(relative(TREE_MIN_SHARE))
             .overflow_y_scroll()
             .pb_4();
-        for workspace in &tree.workspaces {
+        self.search_marks.clear();
+        for workspace in tree.workspaces.iter().filter(|_| query.is_empty()) {
             let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);
             let started = workspace.started == Some(true);
@@ -704,6 +708,9 @@ impl FleetView {
                 }
             }
         }
+        if !query.is_empty() {
+            body = self.render_results(body, &query, cx);
+        }
 
         div()
             .id("left-panel")
@@ -737,6 +744,7 @@ impl FleetView {
                         .children(notices),
                 )
             })
+            .child(self.render_search_box())
             .child(body)
             .into_any_element()
     }
@@ -1245,7 +1253,7 @@ impl FleetView {
         )
     }
 
-    fn render_session(
+    pub(super) fn render_session(
         &self,
         workspace: &str,
         repo: &str,
@@ -1268,6 +1276,7 @@ impl FleetView {
             _ => None,
         };
         let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
+        let marks = self.search_marks.get(&s.session_id);
         let hook = row
             .hook
             .as_ref()
@@ -1288,14 +1297,25 @@ impl FleetView {
                     .text_color(state)
                     .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
             )
-            .child(clipped(format!("session-name-{}", s.id), name, false).flex_1())
+            .child(match marks {
+                Some(m) if !s.name.is_empty() => super::results::marked(format!("session-name-{}", s.id), name, &m.name, cx).flex_1(),
+                _ => clipped(format!("session-name-{}", s.id), name, false).flex_1(),
+            })
             .child(
                 div()
                     .flex_none()
                     .whitespace_nowrap()
                     .text_xs()
                     .text_color(secondary(cx))
-                    .child(SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s)))),
+                    .child(match marks.and_then(|m| m.id.clone()) {
+                        // a search result's id prefix is marked (m5/30)
+                        Some(id) => {
+                            let kind = format!("{} · ", s.kind.as_str());
+                            let at = id.start + kind.len()..id.end + kind.len();
+                            super::results::marked(format!("session-id-{}", s.id), format!("{kind}{}", fleet::short_id(s)), &[at], cx).into_any_element()
+                        }
+                        None => SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s))).into_any_element(),
+                    }),
             )
             .child({
                 let session_id = s.session_id.clone();
@@ -1430,57 +1450,6 @@ impl FleetView {
         )
     }
 
-    /// The name's text with its selection and the blinking caret; the caret takes no width, so a click
-    /// maps to the text as shaped ([`FleetView::name_index_at`]).
-    fn render_name_text(&self, draft: &AddDraft, cx: &mut Context<Self>) -> Div {
-        let colors = cx.theme().colors();
-        let (text, cursor, selection) = (&draft.name.text, draft.name.cursor(), draft.name.selection());
-        let lit = draft.name_focused && draft.name.caret_lit(Instant::now());
-        draft.caret_painted.set(lit);
-        let caret = || {
-            div()
-                .relative()
-                .flex_none()
-                .w(px(0.))
-                .h(px(16.))
-                .child(div().absolute().left(px(-1.)).w(px(1.5)).h_full().when(lit, |d| d.bg(colors.text)))
-        };
-        let part = |range: std::ops::Range<usize>| SharedString::from(text[range].to_string());
-        let mut row = div()
-            .relative()
-            .flex()
-            .items_center()
-            .h(px(18.))
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .child(hit_target(&self.hits, "add-name-text".into()))
-            .child(part(0..selection.start));
-        if cursor == selection.start {
-            row = row.child(caret());
-        }
-        if !selection.is_empty() {
-            row = row.child(div().bg(colors.element_selection_background).child(part(selection.clone())));
-            if cursor == selection.end {
-                row = row.child(caret());
-            }
-        }
-        row.child(part(selection.end..text.len()))
-    }
-
-    /// The byte of the name a click at window `x` lands nearest to, the name's text shaped as painted.
-    pub(super) fn name_index_at(&self, x: Pixels, window: &mut Window) -> usize {
-        let Some(draft) = &self.adding else {
-            return 0;
-        };
-        let Some(origin) = self.hits.borrow().get("add-name-text").map(|h| h.bounds.origin.x) else {
-            return draft.name.text.len();
-        };
-        let text = SharedString::from(draft.name.text.clone());
-        let run = TextRun { len: text.len(), font: gpui::font("Segoe UI"), color: Hsla::default(), background_color: None, underline: None, strikethrough: None };
-        let size = rems(0.875).to_pixels(window.rem_size());
-        window.text_system().shape_line(text, size, &[run], None).closest_index_for_x(x - origin)
-    }
-
     /// The Add workspace review: folder, name (click to edit), the repos found with a tick each, the
     /// reason it cannot be saved yet, Save and Cancel.
     fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1564,21 +1533,10 @@ impl FleetView {
                                 .relative()
                                 .flex_1()
                                 .min_w_0()
-                                .px_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(if draft.name_focused { colors.border_focused } else { colors.border })
-                                .cursor_text()
-                                .child(self.render_name_text(draft, cx))
+                                .child(draft.name.clone())
+                                // the text starts 5 px in (the input's border and padding)
                                 .child(hit_target(&self.hits, "add-name".into()))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, e: &MouseDownEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        let at = this.name_index_at(e.position.x, window);
-                                        this.focus_add_name(at, e.modifiers.shift, window, cx);
-                                    }),
-                                ),
+                                .child(div().absolute().top_0().bottom_0().left(px(5.)).right(px(5.)).child(hit_target(&self.hits, "add-name-text".into()))),
                         ),
                 )
                 .children(draft.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))

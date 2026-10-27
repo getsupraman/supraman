@@ -10,27 +10,26 @@ use std::{
 use foreman_claude::{Claude, Session, now_ms};
 use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover, rescan, validate_name};
 use foreman_supervisor::DesiredState;
-use gpui::{ClipboardItem, Context, Keystroke, Pixels, Point, Window};
+use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
 use super::menu::{Confirm, ContextMenu, MenuAction, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
-use crate::line_edit::{LineEdit, LineKey};
+use crate::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
 /// The Add workspace review: what discovery found under `root`, each repo ticked to register it
-/// enabled (unticked ones are registered disabled), and the name, edited while `name_focused`.
+/// enabled (unticked ones are registered disabled), and the name, a [`TextInput`] that takes only what
+/// a workspace name can hold ([`name_char`]).
 pub struct AddDraft {
     pub root: PathBuf,
-    pub name: LineEdit,
-    pub name_focused: bool,
+    pub name: Entity<TextInput>,
     pub repos: Vec<(Repo, bool)>,
     pub scanning: bool,
     pub error: Option<String>,
     /// Why the last key typed into the name was not taken.
     pub hint: Option<String>,
-    /// Whether the last frame painted the name's caret lit; the selftest reads it.
-    pub caret_painted: std::cell::Cell<bool>,
+    _name_events: Subscription,
 }
 
 /// A Remove waiting for its workspace's sessions to stop.
@@ -50,28 +49,16 @@ fn name_char(c: char) -> Option<char> {
 }
 
 impl AddDraft {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root, name: LineEdit::new(""), name_focused: true, repos: Vec::new(), scanning: true, error: None, hint: None, caret_painted: Default::default() }
+    /// The review of `root`, its name focused.
+    pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<FleetView>) -> Self {
+        let name = cx.new(|cx| TextInput::new("workspace name", Some(name_char), window, cx));
+        let events = cx.subscribe_in(&name, window, |this: &mut FleetView, _, event: &InputEvent, window, cx| this.on_name_event(event, window, cx));
+        name.update(cx, |name, cx| name.focus_all(window, cx));
+        Self { root, name, repos: Vec::new(), scanning: true, error: None, hint: None, _name_events: events }
     }
 
-    /// One keystroke while the name has the focus: Enter saves, Escape cancels; else the name is
-    /// edited ([`LineEdit::key`]). A character a name cannot hold says so under the field.
-    pub fn key(&mut self, k: &Keystroke) -> NameKey {
-        match self.name.key(k, name_char) {
-            LineKey::Enter => NameKey::Save,
-            LineKey::Escape => NameKey::Cancel,
-            LineKey::Refused(c) => {
-                self.hint = Some(format!("'{c}' is not taken: a name is lowercase letters, digits and '-'."));
-                NameKey::Edited
-            }
-            LineKey::Edited => {
-                self.error = None;
-                self.hint = None;
-                NameKey::Edited
-            }
-            LineKey::Moved => NameKey::Edited,
-            LineKey::Ignored => NameKey::Ignored,
-        }
+    pub fn name_text(&self, cx: &gpui::App) -> String {
+        self.name.read(cx).text().to_string()
     }
 }
 
@@ -80,7 +67,24 @@ pub enum NameKey {
     Save,
     Cancel,
     Edited,
-    Ignored,
+}
+
+/// What an event of the name does to the review: Enter saves, Esc cancels, an edit clears the error and
+/// the hint, a character a name cannot hold says so under the field.
+pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Option<String>) -> NameKey {
+    match event {
+        InputEvent::Confirm => NameKey::Save,
+        InputEvent::Cancel => NameKey::Cancel,
+        InputEvent::Refused(c) => {
+            *hint = Some(format!("'{c}' is not taken: a name is lowercase letters, digits and '-'."));
+            NameKey::Edited
+        }
+        InputEvent::Edited => {
+            *error = None;
+            *hint = None;
+            NameKey::Edited
+        }
+    }
 }
 
 fn registry(home: Option<&Path>) -> Result<Registry, String> {
@@ -100,12 +104,12 @@ fn add_error(e: &CoreError) -> String {
 impl FleetView {
     /// Add workspace: a folder picker, then the review ([`AddDraft`]) in the left panel. The one entry
     /// point for every Add button; [`FleetView::pick_folder`] stands in for the picker (the selftest).
-    /// The picker is modal on its own thread: once it returns, the window is activated and its focus
-    /// taken back, so the keys reach the review's name whatever Windows gave the activation to (m5/26).
+    /// The picker is modal on its own thread: once it returns, the window is activated and the review's
+    /// name takes the focus, so the keys reach it whatever Windows gave the activation to (m5/26).
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         if let Some(path) = self.pick_folder.take() {
-            self.begin_add(path, cx);
+            self.begin_add(path, window, cx);
             return;
         }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -121,8 +125,7 @@ impl FleetView {
             if let Some(path) = paths.into_iter().next() {
                 this.update_in(cx, |this, window, cx| {
                     window.activate_window();
-                    this.focus.focus(window, cx);
-                    this.begin_add(path, cx);
+                    this.begin_add(path, window, cx);
                 })
                 .ok();
             }
@@ -131,11 +134,11 @@ impl FleetView {
     }
 
     /// The review of `root`: discovery runs off the UI thread (it walks the folder).
-    pub fn begin_add(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+    pub fn begin_add(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(c) = &mut self.compose {
             c.focused = false;
         }
-        self.adding = Some(AddDraft::new(root.clone()));
+        self.adding = Some(AddDraft::new(root.clone(), window, cx));
         cx.notify();
         let scan = cx.background_executor().spawn(async move {
             match discover(&root, None, DEFAULT_DEPTH) {
@@ -154,7 +157,7 @@ impl FleetView {
                 match found {
                     Ok((workspace, renamed)) => {
                         draft.root = workspace.root;
-                        draft.name.set(&workspace.name);
+                        draft.name.update(cx, |name, cx| name.set_text(&workspace.name, cx));
                         draft.repos = workspace.repos.into_iter().map(|r| (r, true)).collect();
                         draft.error = if draft.repos.is_empty() {
                             Some(format!("No git repos found directly under {}.", draft.root.display()))
@@ -180,17 +183,25 @@ impl FleetView {
         }
     }
 
-    /// A click in the name: it takes the keys, its caret at byte `at` (Shift: the selection grows to it).
-    pub fn focus_add_name(&mut self, at: usize, extend: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window, cx);
-        if let Some(draft) = &mut self.adding {
-            draft.name_focused = true;
-            draft.name.place(at, extend);
-            if let Some(c) = &mut self.compose {
-                c.focused = false;
+    fn on_name_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = &mut self.adding else {
+            return;
+        };
+        match name_event(event, &mut draft.error, &mut draft.hint) {
+            NameKey::Save => self.save_add(cx),
+            // Esc closes an open menu or question first
+            NameKey::Cancel if self.menu.is_some() || self.confirm.is_some() => {
+                if self.menu.take().is_none() {
+                    self.confirm = None;
+                }
             }
-            cx.notify();
+            NameKey::Cancel => self.adding = None,
+            NameKey::Edited => {}
         }
+        if self.adding.is_none() {
+            self.focus.focus(window, cx);
+        }
+        cx.notify();
     }
 
     /// Registers the reviewed workspace; a refusal (no repos, invalid or taken name, folder already
@@ -204,13 +215,14 @@ impl FleetView {
             cx.notify();
             return;
         }
+        let name = draft.name_text(cx);
         let result = (|| {
             if draft.repos.is_empty() {
                 return Err(format!("No git repos found directly under {}.", draft.root.display()));
             }
-            validate_name(&draft.name.text).map_err(|e| add_error(&e))?;
+            validate_name(&name).map_err(|e| add_error(&e))?;
             let repos = draft.repos.iter().map(|(r, on)| Repo { enabled: *on, ..r.clone() }).collect();
-            let workspace = Workspace::new(draft.name.text.clone(), draft.root.clone(), repos);
+            let workspace = Workspace::new(name, draft.root.clone(), repos);
             let registry = registry(self.home.as_deref())?;
             registry.check_new(&workspace).map_err(|e| add_error(&e))?;
             registry.save(&workspace, false).map_err(|e| add_error(&e))?;
@@ -484,33 +496,24 @@ impl FleetView {
 mod tests {
     use super::*;
 
-    fn draft() -> AddDraft {
-        let mut d = AddDraft::new(r"C:\x".into());
-        d.name.set("ab");
-        d.error = Some("e".into());
-        d
-    }
-
-    fn key(d: &mut AddDraft, key: &str, key_char: Option<&str>) -> NameKey {
-        d.key(&Keystroke { modifiers: Default::default(), key: key.into(), key_char: key_char.map(Into::into) })
+    #[test]
+    fn the_name_takes_only_what_a_workspace_name_allows() {
+        use crate::text_input::filtered;
+        assert_eq!(filtered("My Repo_2", name_char), ("my-repo-2".to_string(), None));
+        assert_eq!(filtered("aä7", name_char), ("a7".to_string(), Some('ä')));
+        assert_eq!(filtered("ä", name_char), (String::new(), Some('ä')));
     }
 
     #[test]
-    fn the_name_takes_only_what_a_workspace_name_allows_and_says_why_not() {
-        let mut d = draft();
-        assert_eq!(key(&mut d, "x", Some("X")), NameKey::Edited);
-        assert_eq!(d.error, None);
-        key(&mut d, "space", Some(" "));
-        key(&mut d, "ä", Some("ä"));
-        assert_eq!(d.hint.as_deref(), Some("'ä' is not taken: a name is lowercase letters, digits and '-'."));
-        key(&mut d, "7", Some("7"));
-        assert_eq!((d.name.text.as_str(), d.hint.as_deref()), ("abx-7", None));
-        key(&mut d, "left", None);
-        key(&mut d, "backspace", None);
-        assert_eq!(d.name.text, "abx7");
-        assert_eq!(key(&mut d, "enter", None), NameKey::Save);
-        assert_eq!(key(&mut d, "escape", None), NameKey::Cancel);
-        assert_eq!(key(&mut d, "f5", None), NameKey::Ignored);
+    fn the_name_says_why_a_character_is_not_taken_until_the_next_edit() {
+        let (mut error, mut hint) = (Some("e".to_string()), None);
+        assert_eq!(name_event(&InputEvent::Refused('ä'), &mut error, &mut hint), NameKey::Edited);
+        assert_eq!(hint.as_deref(), Some("'ä' is not taken: a name is lowercase letters, digits and '-'."));
+        assert_eq!(error.as_deref(), Some("e"));
+        name_event(&InputEvent::Edited, &mut error, &mut hint);
+        assert_eq!((error, hint), (None, None));
+        assert_eq!(name_event(&InputEvent::Confirm, &mut None, &mut None), NameKey::Save);
+        assert_eq!(name_event(&InputEvent::Cancel, &mut None, &mut None), NameKey::Cancel);
     }
 
     #[test]

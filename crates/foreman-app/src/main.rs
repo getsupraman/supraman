@@ -18,13 +18,14 @@ mod elevate;
 mod fleet;
 mod hand;
 mod instance;
-mod line_edit;
+mod search;
 mod selftest;
 mod selftest_closed;
 mod selftest_first_run;
 mod selftest_left;
 mod selftest_manage;
 mod selftest_refresh;
+mod selftest_search;
 mod selftest_shell;
 mod selftest_supervise;
 mod selftest_tabs;
@@ -35,6 +36,7 @@ mod settings_window;
 mod stars;
 mod supervise;
 mod tab_card;
+mod text_input;
 mod titlebar;
 mod tokens;
 mod tray;
@@ -245,6 +247,7 @@ fn main() {
     gpui_platform::application().run(move |cx: &mut App| {
         foreman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
         view::bind_keys(cx);
+        text_input::bind_keys(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
