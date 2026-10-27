@@ -1,7 +1,8 @@
-//! What every Foreman gpui binary shares: the terminal grid painter, theme → terminal palette,
+//! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! global init, and the frame / memory probes the selftests print.
 
 pub mod term_element;
+pub mod themes;
 
 use std::{
     cell::{Cell, RefCell},
@@ -12,37 +13,20 @@ use std::{
     time::Instant,
 };
 
-use foreman_term::terminal_settings::{TerminalConfig, TerminalPalette, campbell};
+use foreman_term::terminal_settings::TerminalConfig;
 use gpui::App;
-use theme::ActiveTheme as _;
 
-/// The terminal colours: Windows Terminal's Campbell for ANSI 0-15 (m5/23: the theme's bright black,
-/// PSReadLine's parameter colour, was near-black on the background), the theme for the rest.
-pub fn palette(theme: &theme::Theme) -> TerminalPalette {
-    let c = theme.colors();
-    let ansi = campbell();
-    TerminalPalette {
-        ansi,
-        dim: std::array::from_fn(|i| {
-            let mut dim = ansi[i];
-            dim.l *= 0.7;
-            dim
-        }),
-        foreground: c.terminal_foreground,
-        background: c.terminal_background,
-        bright_foreground: c.terminal_bright_foreground,
-        cursor: theme.players().local().cursor,
-    }
-}
+pub use themes::palette;
 
+/// The theme globals with [`themes::DEFAULT_THEME`] and the terminal config with its palette;
+/// `main` then applies the theme `settings.toml` names ([`themes::apply`]).
 pub fn init_globals(cx: &mut App, program_version: &str) {
     theme::init(theme::LoadThemes::JustBase, cx);
-    let palette = palette(cx.theme());
     cx.set_global(TerminalConfig {
         program_version: program_version.to_string(),
-        palette,
         ..Default::default()
     });
+    themes::apply(cx, None, themes::TerminalColors::Theme, None);
 }
 
 /// gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors: to

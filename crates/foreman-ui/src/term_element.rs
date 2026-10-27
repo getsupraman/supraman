@@ -796,15 +796,24 @@ fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
             _ => palette.ansi[*color as usize],
         },
         Color::Spec(rgb) => foreman_term::rgba_color(rgb.r, rgb.g, rgb.b),
-        Color::Indexed(i) => foreman_term::get_color_at_index(*i as usize, palette),
+        Color::Indexed(i) => foreman_term::get_color_at_index(*i as usize, &palette),
     }
 }
 
-/// [`crate::palette`] of the theme the first terminal was painted with; Foreman has one theme.
-fn palette(theme: &Theme) -> &'static foreman_term::terminal_settings::TerminalPalette {
-    static PALETTE: std::sync::OnceLock<foreman_term::terminal_settings::TerminalPalette> =
-        std::sync::OnceLock::new();
-    PALETTE.get_or_init(|| crate::palette(theme))
+/// [`crate::palette`] of `theme`, built once per theme (each built theme has its own id, m5/31).
+fn palette(theme: &Theme) -> std::rc::Rc<foreman_term::terminal_settings::TerminalPalette> {
+    thread_local! {
+        static PALETTE: std::cell::RefCell<Option<(String, std::rc::Rc<foreman_term::terminal_settings::TerminalPalette>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    PALETTE.with_borrow_mut(|cached| match cached {
+        Some((id, palette)) if *id == theme.id => palette.clone(),
+        _ => {
+            let palette = std::rc::Rc::new(crate::palette(theme));
+            *cached = Some((theme.id.clone(), palette.clone()));
+            palette
+        }
+    })
 }
 
 #[cfg(test)]

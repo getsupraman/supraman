@@ -2,11 +2,12 @@
 //! row per setting on the right. Every change is written to `settings.toml` at once; the
 //! supervisor re-reads it on its next tick.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use foreman_core::Settings;
+use foreman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, FocusHandle, FontWeight, KeyDownEvent,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, ElementId, FocusHandle, FontWeight, KeyDownEvent,
     PathPromptOptions, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
     WindowOptions, div, prelude::*, px, size,
 };
@@ -21,18 +22,21 @@ pub enum Page {
     Sessions,
     WorkState,
     Plugins,
+    /// The theme and the terminal colours (m5/31).
+    Appearance,
     /// Foreman's and the claude CLI's versions, the refresh (m5/13: no longer in the left panel).
     About,
 }
 
 impl Page {
-    const ALL: [Page; 4] = [Page::Sessions, Page::WorkState, Page::Plugins, Page::About];
+    const ALL: [Page; 5] = [Page::Sessions, Page::WorkState, Page::Plugins, Page::Appearance, Page::About];
 
     fn title(self) -> &'static str {
         match self {
             Page::Sessions => "Sessions",
             Page::WorkState => "WorkState",
             Page::Plugins => "Plugins",
+            Page::Appearance => "Appearance",
             Page::About => "About",
         }
     }
@@ -47,6 +51,18 @@ pub struct SettingsView {
     focus: FocusHandle,
     /// The fleet's WorkState status as last shown: a change re-reads settings.toml.
     workstate: WsStatus,
+    /// The themes on offer, read with settings.toml.
+    catalog: Catalog,
+    /// Why the theme settings.toml names is not the one shown.
+    theme_problem: Option<String>,
+}
+
+/// Paints the app with the theme and terminal colours `settings.toml` names (at start, and after
+/// every change on the Appearance page).
+pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
+    let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+    let terminal = TerminalColors::from_setting(settings.terminal_colors.as_deref());
+    themes::apply(cx, settings.theme.as_deref(), terminal, home).problem
 }
 
 pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Page>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
@@ -100,6 +116,8 @@ impl SettingsView {
             page,
             focus: cx.focus_handle(),
             workstate,
+            catalog: Catalog::default(),
+            theme_problem: None,
         };
         this.reload();
         this
@@ -123,6 +141,31 @@ impl SettingsView {
             Ok(settings) => self.settings = settings,
             Err(e) => self.error = Some(format!("Cannot read settings.toml: {e}")),
         }
+        self.catalog = themes::catalog(Some(home));
+    }
+
+    pub fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
+        self.change(
+            |s| {
+                s.theme = Some(name);
+                s.terminal_colors = terminal.setting();
+            },
+            cx,
+        );
+        self.theme_problem = apply_theme(self.home.as_deref(), cx);
+    }
+
+    fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = &self.home else {
+            return;
+        };
+        let dir = themes::themes_dir(home);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.error = Some(format!("Cannot create {}: {e}", dir.display()));
+            cx.notify();
+            return;
+        }
+        cx.open_with_system(&dir);
     }
 
     /// Load, change, save: the file may have been edited by hand or by the fleet window meanwhile.
@@ -424,6 +467,70 @@ impl SettingsView {
         ]
     }
 
+    fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let current = self.settings.theme.clone().unwrap_or_else(|| themes::DEFAULT_THEME.into());
+        let terminal = TerminalColors::from_setting(self.settings.terminal_colors.as_deref());
+        let mut list = div().flex().flex_col().gap_1().pt_2();
+        for (ix, entry) in self.catalog.entries.iter().enumerate() {
+            let selected = entry.name == current;
+            let name = entry.name.clone();
+            let from: SharedString = match &entry.file {
+                None if entry.name == themes::DEFAULT_THEME => "bundled · default".into(),
+                None => "bundled".into(),
+                Some(file) => file.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()).into(),
+            };
+            list = list.child(
+                choice(("theme", ix), SharedString::from(entry.name.clone()), selected, cx)
+                    .child(div().text_xs().text_color(colors.text_muted).child(from))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), terminal, cx))),
+            );
+        }
+        let notes = self
+            .theme_problem
+            .iter()
+            .chain(&self.catalog.errors)
+            .map(|e| div().text_xs().text_color(status.warning).child(SharedString::from(e.clone())).into_any_element())
+            .collect::<Vec<_>>();
+        list = list.children(notes).child(
+            div()
+                .pt_1()
+                .text_xs()
+                .text_color(colors.text_muted)
+                .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
+        );
+        let folder = small_button("themes-folder", "Open themes folder", cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_themes_folder(cx)));
+
+        let mut terminal_choices = div().flex().gap_1();
+        for (ix, (label, value)) in [("Theme", TerminalColors::Theme), ("Campbell", TerminalColors::Campbell)].into_iter().enumerate() {
+            let name = current.clone();
+            terminal_choices = terminal_choices.child(
+                choice(("terminal-colors", ix), label.into(), terminal == value, cx)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
+            );
+        }
+        vec![
+            row(
+                "Theme",
+                "The colours of every Foreman window. Zed theme files (*.json) in the themes folder of the \
+                 Foreman home are listed too; a key a file leaves out keeps One Dark's. Applied at once.",
+                folder.into_any_element(),
+                Some(list.into_any_element()),
+                cx,
+            ),
+            row(
+                "Terminal colours",
+                "The 16 ANSI colours in terminal tabs: the theme's, or Windows Terminal's Campbell. Background, \
+                 text and cursor stay the theme's; the selection stays white, as in Windows Terminal.",
+                terminal_choices.into_any_element(),
+                None,
+                cx,
+            ),
+        ]
+    }
+
     fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let dirs = &self.settings.extra_plugin_dirs;
@@ -499,6 +606,26 @@ fn small_button(id: &'static str, label: &'static str, cx: &App) -> gpui::Statef
         .child(label)
 }
 
+/// One option of a choice; the selected one is drawn as a selected list row.
+fn choice(id: impl Into<ElementId>, label: SharedString, selected: bool, cx: &App) -> gpui::Stateful<gpui::Div> {
+    let colors = cx.theme().colors();
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_0p5()
+        .rounded_sm()
+        .border_1()
+        .border_color(if selected { colors.border_focused } else { colors.border })
+        .when(selected, |d| d.bg(colors.element_selected))
+        .when(!selected, |d| d.bg(colors.element_background).hover(|s| s.bg(colors.element_hover)))
+        .text_sm()
+        .cursor_pointer()
+        .child(div().flex_1().child(label))
+}
+
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
@@ -555,6 +682,7 @@ impl Render for SettingsView {
             Page::Sessions => self.render_sessions(cx),
             Page::WorkState => self.render_workstate(cx),
             Page::Plugins => self.render_plugins(cx),
+            Page::Appearance => self.render_appearance(cx),
             Page::About => self.render_about(cx),
         };
         let content = div()
