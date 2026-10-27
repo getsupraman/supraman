@@ -2183,3 +2183,15 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 
 - **Not the seam or the hold:** `Poller::load` read the registry, then ran `claude agents` (~0.4 s); a Save inside that window was shown by `reload_workspaces`, then the poll's `apply` put the pre-Save list back, and the row was gone until the next poll (~2.4 s, over 7b's 2 s). F-01's `repo-row-…/beta` was the same. Fix: `registry_writes` (`view.rs`), bumped by `reload_workspaces`; a poll that read before a write keeps the shown list. 7b now holds one poll between its read and its apply across Save (`PollHold`); guard off → "a poll that read the registry before Save took selftest-added out of the tree".
 - Step 7's "the reloaded inbox: not painted within 2000 ms" was the m5/18 hold (pointer resting on the panel after the ×, `HOLD_STILL` 2 s vs `LIVE_WITHIN` 2 s): the step now moves the pointer off the panel first.
+
+## 2026-10-27 — m5/23 terminal like Windows Terminal
+
+- Zed's vendored terminal already had copy, paste, word/line/Shift-click selection and search; what was missing was
+  the wiring: Ctrl+C fell through to `try_keystroke` as ^C. The chord table is `view/term.rs::chord` (unit-tested);
+  the full key and mouse list is `docs/KEYS.md`. Alt+drag is alacritty's `SelectionType::Block`.
+- Blink: `Terminal::cursor_blink` (lit for 530 ms after input or a cursor move, then alternating); `FleetView`
+  repaints at each edge only while a blinking terminal is shown, and `key_down` notifies so a key lights it at once.
+  The default style is a blinking Bar; DECSCUSR from the program still wins (`Term::cursor_style`).
+- PSReadLine's parameter colour is `\e[90m` (index 8); the theme's bright black was near the background. ANSI 0–15
+  are now Campbell (`terminal_settings::CAMPBELL`). Selftest step 6c (`selftest_term.rs`) covers copy/^C/right-click/
+  cursor/find/zoom; shot `m5-23-psreadline-parameter`.
