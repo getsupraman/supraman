@@ -38,6 +38,7 @@ use crate::settings_window::{self, SettingsView};
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
+use crate::text_input::{InputEvent, TextInput};
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
@@ -45,12 +46,13 @@ pub(crate) mod icon;
 mod left;
 mod manage;
 mod menu;
+mod results;
 mod term;
 
-pub use manage::{AddDraft, NameKey, Removing};
+pub use manage::{AddDraft, Removing};
 pub use menu::{Confirm, ContextMenu, MenuTarget};
 
-gpui::actions!(foreman, [NextTab, PreviousTab]);
+gpui::actions!(foreman, [NextTab, PreviousTab, FocusSearch]);
 
 const KEY_CONTEXT: &str = "FleetView";
 
@@ -62,6 +64,7 @@ pub fn bind_keys(cx: &mut gpui::App) {
         KeyBinding::new("ctrl-pagedown", NextTab, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-pageup", PreviousTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-e", FocusSearch, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -303,6 +306,10 @@ pub struct FleetView {
     pub closed_expanded: HashSet<String>,
     /// How a tab's pwsh calls claude for `+` and resume: `claude`, or the selftest's `& '<fake>'`.
     pub claude_command: String,
+    /// The search box over the tree (m5/30); while it holds text, the tree shows its results.
+    pub search: Entity<TextInput>,
+    /// Per session id, where the shown result row matched; filled while the results are drawn.
+    search_marks: StdHashMap<String, crate::search::Marks>,
 }
 
 /// A session with no process, not the supervisor's (`fm-`: Start resumes it); a background one only when
@@ -536,6 +543,10 @@ impl FleetView {
         let transcripts_nudge = Arc::new(AtomicBool::new(true));
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
         Self::watch_transcripts(claude_dir, transcripts_nudge.clone(), cx);
+        // an input that held the focus went away (the Add review closed): the window's keys come back here
+        cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
+        let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
+        cx.subscribe_in(&search, window, Self::on_search_event).detach();
         Self {
             cli: Cli::Checking,
             workspaces: Vec::new(),
@@ -608,6 +619,8 @@ impl FleetView {
             stars,
             closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
+            search,
+            search_marks: StdHashMap::new(),
         }
     }
 
@@ -924,9 +937,6 @@ impl FleetView {
     /// Opens the task box (`reply_to: None`) or the reply to an outbox message, focused; an open one
     /// for something else is replaced.
     pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, cx: &mut Context<Self>) {
-        if let Some(draft) = &mut self.adding {
-            draft.name_focused = false;
-        }
         match &mut self.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.focused = true,
             compose => *compose = Some(Compose::new(workspace, reply_to)),
@@ -1248,8 +1258,8 @@ impl FleetView {
         }
     }
 
-    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar) and
-    /// of the Add review's name caret; nothing while neither blinks.
+    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar);
+    /// nothing while it does not blink. A text input blinks its own caret.
     fn blink_cursor(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -1257,9 +1267,6 @@ impl FleetView {
                     let now = Instant::now();
                     let terminal = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone());
                     let next = terminal.and_then(|t| t.read(cx).cursor_blink(now).1);
-                    // the Add review's name blinks too (m5/26)
-                    let name = this.adding.as_ref().filter(|d| d.name_focused).map(|d| d.name.next_blink(now));
-                    let next = next.into_iter().chain(name).min();
                     if next.is_some() {
                         cx.notify();
                     }
@@ -1299,11 +1306,9 @@ impl FleetView {
         }
     }
 
-    /// The window's keys are this view's: no task box or name field holds them.
+    /// The window's keys are this view's: no task box or text input holds them.
     pub fn has_keys(&self, window: &Window) -> bool {
-        self.focus.is_focused(window)
-            && !self.compose.as_ref().is_some_and(|c| c.focused)
-            && !self.adding.as_ref().is_some_and(|d| d.name_focused)
+        self.focus.is_focused(window) && !self.compose.as_ref().is_some_and(|c| c.focused)
     }
 
     pub fn attach(
@@ -1714,10 +1719,51 @@ impl FleetView {
         cx.notify();
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    /// Whether one of the text inputs (the search box, the Add review's name) has the keys.
+    pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.search.read(cx).is_focused(window) || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
+    }
+
+    /// Ctrl+Shift+E: the search box, its text selected.
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |s, cx| s.focus_all(window, cx));
+    }
+
+    /// The search box's text, trimmed; empty while it shows the tree.
+    pub fn search_query(&self, cx: &gpui::App) -> String {
+        self.search.read(cx).text().trim().to_string()
+    }
+
+    fn on_search_event(&mut self, _: &Entity<TextInput>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            InputEvent::Edited => cx.notify(),
+            // Esc closes an open menu first, then clears the box, then gives the keys back to the window
+            InputEvent::Cancel if self.menu.is_some() || self.confirm.is_some() => {
+                if self.menu.take().is_none() {
+                    self.confirm = None;
+                }
+                cx.notify();
+            }
+            InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
+            InputEvent::Cancel => self.focus.focus(window, cx),
+            InputEvent::Confirm | InputEvent::Refused(_) => {}
+        }
+    }
+
+    pub fn clear_search(&mut self, cx: &mut Context<Self>) {
+        self.search.update(cx, |s, cx| s.set_text("", cx));
+        cx.notify();
+    }
+
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         if k.key == "," && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift {
             self.open_settings(cx);
+            return;
+        }
+        // An input's own keys ran as its actions already. What is left must go on unhandled: Windows turns
+        // a key into its character (WM_CHAR, a dead key's too) only after nothing took the key down.
+        if self.input_focused(window, cx) {
             return;
         }
         if k.key == "escape" && (self.menu.is_some() || self.confirm.is_some()) {
@@ -1728,11 +1774,12 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        if let Some(draft) = self.adding.as_mut().filter(|d| d.name_focused) {
-            match draft.key(k) {
-                NameKey::Save => self.save_add(cx),
-                NameKey::Cancel => self.adding = None,
-                NameKey::Edited | NameKey::Ignored => {}
+        // the review keeps Enter and Esc after a click on one of its repos took the keys from its name
+        if self.adding.is_some() && !k.modifiers.modified() && matches!(k.key.as_str(), "enter" | "escape") {
+            if k.key == "enter" {
+                self.save_add(cx);
+            } else {
+                self.adding = None;
             }
             cx.notify();
             cx.stop_propagation();
@@ -2048,7 +2095,17 @@ impl Render for FleetView {
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(|this, _: &NextTab, _, cx| this.cycle_tab(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
+            // a click anywhere but in a text input gives the keys back to the window (an input stops its own)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                    if !this.focus.is_focused(window) {
+                        this.focus.focus(window, cx);
+                    }
+                }),
+            )
             .flex_col()
             .child(crate::titlebar::render(
                 "Foreman",

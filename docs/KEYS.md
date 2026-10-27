@@ -11,7 +11,32 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 | Ctrl+Tab, Ctrl+PgDn | next tab |
 | Ctrl+Shift+Tab, Ctrl+PgUp | previous tab |
 | Ctrl+, | settings |
+| Ctrl+Shift+E | the search box over the tree, its text selected; also from a terminal tab (VS Code's Explorer chord; Ctrl+Shift+F is the terminal's find bar, and a Ctrl+letter belongs to the program in the tab) |
 | F5 | refresh: read the running sessions (`claude agents`) and the closed ones' transcripts now, as the action bar's ↻ does, while no terminal tab is active (no tab, or a Work tab). With a terminal tab active, F5 goes to its program; use ↻ there |
+
+## Text inputs (search box, Add workspace name)
+
+One input (`crates/foreman-app/src/text_input.rs`), the keys of a Windows edit box. Characters, dead keys
+(`^` `´` `` ` ``) and IME compositions come from Windows' own text input, so German and Italian layouts type
+as anywhere else.
+
+| Keys / mouse | Does |
+|---|---|
+| Left, Right, Home, End | move the caret (with a selection: Left/Right go to its start/end) |
+| Ctrl+Left, Ctrl+Right | previous / next word (`-`, `.`, space separate words) |
+| Shift+ any of those | select |
+| Ctrl+A | select all |
+| Backspace, Delete; Ctrl+Backspace, Ctrl+Delete | delete a character; a word |
+| Ctrl+C / Ctrl+Insert, Ctrl+X / Shift+Delete, Ctrl+V / Shift+Insert | copy, cut, paste (line breaks pasted as spaces) |
+| Ctrl+Z; Ctrl+Y, Ctrl+Shift+Z | undo (typing runs to a space are one step); redo |
+| Enter | Add workspace: save. Search: nothing |
+| Esc | Search: clear the box (the tree is back); on an empty box, give the keys back to the window. Add workspace: cancel. An open menu closes first |
+| click, drag, Shift+click | place the caret, select, extend the selection |
+| double-click, triple-click | select the word, select all |
+
+The Add workspace name takes lowercase letters, digits and `-`: capitals are lowered, a space or `_` becomes
+`-`, anything else is refused with a hint under the field. A click anywhere outside an input gives the keys
+back to the window (the terminal, the task box).
 
 ## Terminal tab
 

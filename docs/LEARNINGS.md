@@ -2300,3 +2300,51 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   from its environment, in a trusted cwd (the worktree's untrusted folder prompt also blocks it), named `fm-selftest-…`,
   and killed by its pid.
 
+## 2026-10-27 — m5/30 search box over the tree, one shared text input
+
+- **How a key reaches an input in gpui on Windows.** The platform hands every WM_KEYDOWN to gpui before
+  `TranslateMessage` (`translate_accelerator`). If anything takes the key down (a bound action, or a `key_down`
+  listener that calls `stop_propagation`), it is never translated, so no WM_CHAR follows. Characters, dead keys and
+  IME commits reach `EntityInputHandler::replace_text_in_range` only through WM_CHAR / WM_IME_COMPOSITION, and only
+  for the focus handle whose element called `window.handle_input` in the last paint. So `FleetView::key_down`
+  returns early, without stopping, while a text input has the focus (`input_focused`). Its edit and move keys are
+  actions bound in the `TextInput` context (`text_input::bind_keys`), so they run before that listener. A dead key
+  arrives with `prefer_character_input` and skips the bindings by itself.
+- **`text_input.rs`** replaces `line_edit.rs`. `LineText` is the gpui-free model: grapheme steps, Ctrl+arrow
+  words (`-`, `.` and space separate words), the double-click word, undo where typing runs join until a space or a
+  caret move and an IME composition is one step, and UTF-16↔byte maps. `TextInput` is the entity: the element
+  from `.repos/zed/crates/gpui/examples/input.rs` plus horizontal scroll, theme colours, a placeholder, its own
+  blink task (530 ms, lit after each edit or move), click / drag / Shift+click / double / triple click, Ctrl+C/X/V,
+  Ctrl+Z/Y, and an optional character filter (the Add name's `name_char`: a refused character emits `Refused`, and
+  the field shows the hint). Zed's `editor` crate is not used. Focus: the input stops its own mouse-down, and a
+  left mouse-down anywhere else focuses `FleetView` again. `on_focus_lost` does the same when the Add review's
+  input is dropped, because keys with no focus go to the window root, not to `FleetView`'s `key_down`.
+  Enter/Esc still save/cancel the review after a click on a repo took the keys from the name.
+- **Search** (`search.rs`, `view/results.rs`): case-insensitive. A session name or a workspace/repo name matches
+  anywhere; a session id matches from its start only (the short id or the full session id), so `5e1f` finds
+  `5e1f7e57…` and not `01d05e1f…`. It searches the whole tree (`search_tree`: stopped shown, every closed one, none
+  behind `more…`). Results are grouped workspace › repo with counts, a summary line, and `No results for "…"`. Session
+  rows are the tree's own `render_session` (star, attach/resume, menu), with marks from `search_marks`. A click
+  brings its attach tab forward, or attaches. A workspace/repo result row clicked clears the box and unfolds it.
+  The results use their own scroll id (`search-results`), so they start at the top, not at the tree's offset.
+  Key: **Ctrl+Shift+E** (KEYS.md). A Ctrl+letter would be taken from the program in a terminal tab. Esc clears the
+  box; on an empty box, Esc hands the keys back.
+- **F-04 fixed, and why 7b flaked.** The posted letters' WM_CHAR is queued behind the posted WM_KEYDOWN, so a read
+  right after posting can run first. Step 7b now waits for each state it checks (`until_app`: the caret at 0 after
+  the click, the edited name). A second cause showed while m5-3334's selftest ran in parallel: gpui takes modifiers
+  from `GetKeyState`, which posted messages never set. Alt was held in the UI thread's key state, so End,
+  Backspace and the letters arrived as `alt-end`, `alt-backspace`, `alt-a`… (trace from `observe_keystrokes`, run 9).
+  The letters still typed (WM_CHAR); End matched no binding. `post_keys` now waits until no modifier is held in that
+  state and fails naming the modifier if one stays held for 5 s. Not fixed: a modifier pressed mid-sequence.
+  Parallel gates also share the clipboard: step 6b failed twice (runs 2 and 7, "not copied") while the other
+  unit's selftest ran.
+- Step 7k (`selftest_search.rs`): dispatched Ctrl+Shift+E (a posted Ctrl is not in the key state), a query typed
+  as posted keys, and checks on the painted result rows: `5e1f` → the 7h closed session only, while stopped
+  sessions are hidden in the tree; `closed session` → it by title; `larchsys` → the workspace with its name marked;
+  `zzqx9` → No results. A posted Esc clears the box and the tree is back; a second Esc unfocuses it. Step 7f allows
+  the search box between the Inbox and the tree. Shot `m5-30-search-id`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-30\target`): build ok; `cargo test --release --workspace` 510 passed, 0
+  failed; `--selftest` 5 of 5 PASS on the final binary (runs 10–14, after 2 failures caused by the parallel run and
+  the 7b fix above); `--selftest-supervise` PASS (318 s); `--selftest-detach-shutdown` PASS; no `fm-selftest` rows
+  from this worktree.
+

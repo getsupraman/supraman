@@ -50,6 +50,20 @@ async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &
     }
 }
 
+/// [`until`] with the app at hand, for state that lives in other entities (a text input's text).
+pub(crate) async fn until_app<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView, &gpui::App) -> Option<T>) -> anyhow::Result<T> {
+    let started = Instant::now();
+    loop {
+        if let Some(t) = view.read_with(cx, |v, cx| f(v, cx)) {
+            return Ok(t);
+        }
+        if started.elapsed() > WITHIN {
+            bail!("{what}: not within {} s", WITHIN.as_secs());
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+}
+
 fn painted(v: &FleetView, key: &str) -> bool {
     v.hits.borrow().contains_key(key)
 }
@@ -89,18 +103,40 @@ async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut Async
     Ok(())
 }
 
-/// Keys posted as WM_KEYDOWN / WM_KEYUP: a virtual key for each name (`end`, `backspace`, `enter`) or the
-/// key the keyboard layout has for each character.
-async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+/// Keys posted as WM_KEYDOWN / WM_KEYUP: a virtual key for each name (`end`, `backspace`, `enter`, `escape`)
+/// or the key the keyboard layout has for each character. A key that types goes on to `TranslateMessage`'s
+/// WM_CHAR, queued behind it: read what it typed with [`until_app`], never right after this returns (F-04).
+pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use windows::Win32::UI::{
-        Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_END, VK_RETURN, VkKeyScanW},
+        Input::KeyboardAndMouse::{
+            GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_CONTROL, VK_END, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
+            VkKeyScanW,
+        },
         WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
     };
+    // gpui takes a key's modifiers from this thread's key state (GetKeyState), which a posted message does
+    // not set: a modifier held there, by a real key or by another process's injected input (a parallel
+    // selftest's Alt, m5/30), would turn End into Alt+End. Wait it out first.
+    let held = || {
+        [(VK_CONTROL, "Ctrl"), (VK_MENU, "Alt"), (VK_SHIFT, "Shift"), (VK_LWIN, "Win"), (VK_RWIN, "Win")]
+            .into_iter()
+            .filter(|(vk, _)| unsafe { GetKeyState(vk.0 as i32) } < 0)
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>()
+    };
+    let started = Instant::now();
+    while !held().is_empty() {
+        if started.elapsed() > WITHIN {
+            bail!("{:?} held in this thread's key state for {} s: posted keys would carry it (another process's input?)", held(), WITHIN.as_secs());
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
     for key in keys {
         let vk = match *key {
             "end" => VK_END.0 as u32,
             "backspace" => VK_BACK.0 as u32,
             "enter" => VK_RETURN.0 as u32,
+            "escape" => VK_ESCAPE.0 as u32,
             c => (unsafe { VkKeyScanW(c.encode_utf16().next().unwrap_or_default()) } & 0xff) as u32,
         };
         let scan = unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC) } as isize;
@@ -110,19 +146,28 @@ async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result
     Ok(())
 }
 
-/// m5/26: the review's name edited `selftest-add` → [`ADDED`] by posted messages only. A click at the
-/// start of the text puts the caret at 0; idle, the painted caret blinks; End, three Backspaces and
-/// `added`; Save while the folder is "still read" answers with an error line instead of nothing.
+/// m5/26, m5/30: the review's name (a [`crate::text_input::TextInput`]) edited `selftest-add` → [`ADDED`] by
+/// posted messages only. A click at the start of the text puts the caret at 0; idle, the painted caret
+/// blinks; End, three Backspaces and `added`, the letters arriving as WM_CHAR through the input handler;
+/// Save while the folder is "still read" answers with an error line instead of nothing. Each check waits
+/// for the state it asserts: the posted messages are handled after this task yields (F-04).
 async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let name = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.adding.as_ref().map(|d| (d.name.text.clone(), d.name.cursor())));
+    let name = |v: &FleetView, cx: &gpui::App| {
+        v.adding.as_ref().map(|d| {
+            let n = d.name.read(cx);
+            (n.text().to_string(), n.line.cursor())
+        })
+    };
+    let now = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, cx| name(v, cx));
     post_click(view, "add-name-text", 1., cx).await?;
-    if name(cx) != Some((FOLDER.to_string(), 0)) {
-        bail!("a click at the start of the name left (name, caret) {:?}, expected ({FOLDER}, 0)", name(cx));
-    }
+    let at_start = Some((FOLDER.to_string(), 0));
+    until_app(view, cx, "the caret at the start of the name after a click there", |v, cx| (name(v, cx) == at_start).then_some(()))
+        .await
+        .map_err(|e| e.context(format!("(name, caret) {:?}, expected ({FOLDER}, 0)", now(cx))))?;
     let (mut lit, mut unlit) = (0, 0);
     let started = Instant::now();
     while started.elapsed() < Duration::from_millis(2500) && (lit < 2 || unlit < 2) {
-        match view.read_with(cx, |v, _| v.adding.as_ref().map(|d| d.caret_painted.get())) {
+        match view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name.read(cx).caret_painted.get())) {
             Some(true) => lit += 1,
             Some(false) => unlit += 1,
             None => bail!("the review closed while its caret was watched"),
@@ -132,10 +177,21 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     if lit == 0 || unlit == 0 {
         bail!("the name's caret was painted lit {lit} and unlit {unlit} times in {} ms: it does not blink", started.elapsed().as_millis());
     }
+    // the keystrokes as gpui dispatched them, with the action each ran, for a failure to name
+    let seen: std::rc::Rc<std::cell::RefCell<Vec<String>>> = Default::default();
+    let observer = cx.update(|_, cx| {
+        let (seen, view) = (seen.clone(), view.clone());
+        cx.observe_keystrokes(move |e, window, cx| {
+            let focused = view.read(cx).input_focused(window, cx);
+            let action = e.action.as_ref().map_or("-".to_string(), |a| a.name().to_string());
+            seen.borrow_mut().push(format!("{} [{action}{}]", e.keystroke.unparse(), if focused { "" } else { ", input not focused" }));
+        })
+    })?;
     post_keys(&["end", "backspace", "backspace", "backspace", "a", "d", "d", "e", "d"], cx).await?;
-    if name(cx) != Some((ADDED.to_string(), ADDED.len())) {
-        bail!("posted End, 3 Backspace and `added` left (name, caret) {:?}, expected ({ADDED}, {})", name(cx), ADDED.len());
-    }
+    let added = Some((ADDED.to_string(), ADDED.len()));
+    let edited = until_app(view, cx, "the name edited by posted End, 3 Backspace and `added`", |v, cx| (name(v, cx) == added).then_some(())).await;
+    drop(observer);
+    edited.map_err(|e| e.context(format!("(name, caret) {:?}, expected ({ADDED}, {}); keystrokes {:?}", now(cx), ADDED.len(), seen.borrow())))?;
     view.update(cx, |v, _| v.adding.as_mut().map(|d| d.scanning = true));
     post_click(view, "add-save", 4., cx).await?;
     let said = view.update(cx, |v, _| {
@@ -305,11 +361,12 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     // Add: the review
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
-    let (name, repos) = until(view, cx, "the review's repos", |v| {
+    let repos = until(view, cx, "the review's repos", |v| {
         let d = v.adding.as_ref().filter(|d| !d.scanning)?;
-        Some((d.name.text.clone(), d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>()))
+        Some(d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>())
     })
     .await?;
+    let name = view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name_text(cx)).unwrap_or_default());
     if name != FOLDER || repos != ["alpha", "beta"] {
         bail!("the review offers name {name} with repos {repos:?}, expected {FOLDER} with [alpha, beta]");
     }
