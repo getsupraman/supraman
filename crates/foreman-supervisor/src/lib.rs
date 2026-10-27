@@ -56,7 +56,7 @@
 //! pipes refuse lower integrity levels), so every launch would fail after 45 s. [`Supervisor::hold`]
 //! (the app's check before launching) or a launch failing with [`Failure::DaemonUnreachable`] that
 //! [`foreman_claude::daemon_mismatch`] confirms holds every launch and resume of the workspace, and
-//! its Inbox shows one `LaunchFailed` row saying why (Retry), instead of the backoff rows. Tests
+//! its Inbox shows one `LaunchFailed` row saying why (Restart as administrator), instead of the backoff rows. Tests
 //! `an_unreachable_service_foreman_cannot_reach_holds_with_one_row`,
 //! `a_hold_from_the_apps_check_comes_before_any_launch`.
 

@@ -1,6 +1,6 @@
 //! Whether this process can reach claude's background service (m5/25). The service listens on named
-//! pipes (`\\.\pipe\cc-daemon-<key>-control`) that take the integrity level of the process that made
-//! them: one started by an elevated `claude --bg` refuses every unelevated client (`ECONNREFUSED`). A
+//! pipes (`\\.\pipe\cc-daemon-<key>-control`); one started by an elevated `claude --bg` refuses every
+//! unelevated client (`ECONNREFUSED`, measured with `runas /trustlevel:0x20000`). A
 //! Foreman started from Explorer is unelevated, and so is every `claude` it or its tabs run; each
 //! then starts a service of its own, which loses the lock race to the running one, and gives up after
 //! 45 s with "Couldn't reach the background service". Nothing a child's flags or console change fixes.

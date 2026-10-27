@@ -336,7 +336,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             name: waiting.name.clone(),
             since: *since,
             detail: why.clone(),
-            action: Some(Remedy::Retry),
+            action: Some(Remedy::RestartElevated),
         })
     }
 
@@ -1426,7 +1426,7 @@ mod tests {
         assert_eq!(sup.launcher().take().len(), 1);
         assert_eq!(needs.len(), 1, "{needs:?}");
         assert_eq!((needs[0].kind, needs[0].detail.as_str(), needs[0].since), (NeedsKind::LaunchFailed, "runs as administrator", NOW));
-        assert_eq!(needs[0].action, Some(Remedy::Retry));
+        assert_eq!(needs[0].action, Some(Remedy::RestartElevated));
         assert_eq!(sup.memory.get("fm-demo-workspace").map(|a| a.failures).unwrap_or(0), 0, "not a counted failure");
         for t in 1..600 {
             assert_eq!(sup.tick(&[], &mut free(), NOW + t * SECOND).len(), 1);

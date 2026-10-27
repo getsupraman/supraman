@@ -1409,6 +1409,30 @@ impl FleetView {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 
+    /// The Inbox's Restart as administrator (m5/25): Settings → Run Foreman as administrator on, then an
+    /// elevated copy (UAC) that waits for this one to quit. Declined, this one stays and says so.
+    pub fn restart_elevated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        let saved = Settings::load(&home).and_then(|mut settings| {
+            settings.run_as_admin = true;
+            settings.save(&home)
+        });
+        if let Err(e) = saved {
+            self.action_error = Some(format!("Cannot save Run Foreman as administrator: {e}"));
+            cx.notify();
+            return;
+        }
+        match crate::elevate::relaunch(&home, Some(std::process::id())) {
+            Ok(()) => self.quit(window, cx),
+            Err(e) => {
+                self.action_error = Some(format!("Foreman stays unelevated: {e:#}"));
+                cx.notify();
+            }
+        }
+    }
+
     /// Quit: the window closes as [`Self::should_close`] lets it, and the app ends with it.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.quit_asked = true;

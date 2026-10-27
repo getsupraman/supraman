@@ -247,6 +247,8 @@ pub struct Supervision {
     /// The last [`NOTICES_KEPT`] supervisor notices (a failed revoke or PATCH), shown until the app restarts.
     notices: Vec<String>,
     pub daemon: DaemonWatch,
+    /// The hold as last logged.
+    daemon_logged: Option<String>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -272,6 +274,7 @@ impl Supervision {
             supervisors: BTreeMap::new(),
             notices: Vec::new(),
             daemon: DaemonWatch::new(foreman_claude::daemon_mismatch),
+            daemon_logged: None,
         }
     }
 
@@ -323,6 +326,13 @@ impl Supervision {
         }
         if let Some(why) = self.supervisors.values().find_map(|s| s.held()) {
             self.daemon.found(why, now);
+        }
+        if self.daemon_logged != self.daemon.why {
+            match &self.daemon.why {
+                Some(why) => log::warn!("launches and resumes held: {why}"),
+                None => log::info!("launches and resumes no longer held: the background service is reachable"),
+            }
+            self.daemon_logged = self.daemon.why.clone();
         }
         report.daemon_hold = self.daemon.why.clone();
         for s in self.supervisors.values_mut() {
