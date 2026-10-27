@@ -170,6 +170,8 @@ pub struct Tab {
     pub hand: bool,
     /// Epoch milliseconds.
     pub opened_at: i64,
+    /// The claude session found under a shell tab's pwsh ([`FleetView::resolve_tabs`]): its `sessionId`.
+    pub claude: Option<String>,
 }
 
 impl Tab {
@@ -273,8 +275,6 @@ pub struct FleetView {
     pub adding: Option<AddDraft>,
     /// Removes waiting for their workspace's sessions to stop.
     pub removing: BTreeMap<String, Removing>,
-    /// What the last menu action did, when it says so (Rescan, Copy, Remove).
-    pub action_info: Option<String>,
     /// The next Add workspace takes this folder instead of asking the OS picker (the selftest).
     pub pick_folder: Option<PathBuf>,
     /// Whether launched sessions get WorkState (m5/3), checked off the UI thread every
@@ -310,7 +310,22 @@ pub struct FleetView {
     pub search: Entity<TextInput>,
     /// Per session id, where the shown result row matched; filled while the results are drawn.
     search_marks: StdHashMap<String, crate::search::Marks>,
+    /// A [`Self::resolve_tabs`] runs; another is asked for while it does.
+    tabs_resolving: bool,
+    tabs_again: bool,
+    /// [`Self::resolve_tabs`] runs finished.
+    pub tab_resolves: u64,
+    /// The last quiet feedback (m5/34): it overlays the tree instead of pushing it down.
+    pub toast: Option<Toast>,
 }
+
+/// A short note over the bottom of the left panel, gone after [`TOAST_FOR`].
+pub struct Toast {
+    pub text: String,
+    pub shown_at: Instant,
+}
+
+pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 
 /// A session with no process, not the supervisor's (`fm-`: Start resumes it); a background one only when
 /// this app has not seen it alive in the last [`RESUME_GRACE_MS`], an interactive one at once.
@@ -501,6 +516,7 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
+                    this.resolve_tabs(cx);
                     let pids: Vec<u32> = this
                         .sessions
                         .iter()
@@ -601,7 +617,6 @@ impl FleetView {
             confirm: None,
             adding: None,
             removing: BTreeMap::new(),
-            action_info: None,
             pick_folder: None,
             workstate: WsStatus::Checking,
             workstate_dismissed: None,
@@ -621,6 +636,10 @@ impl FleetView {
             claude_command: "claude".into(),
             search,
             search_marks: StdHashMap::new(),
+            tabs_resolving: false,
+            tabs_again: false,
+            tab_resolves: 0,
+            toast: None,
         }
     }
 
@@ -1299,6 +1318,75 @@ impl FleetView {
         }
     }
 
+    /// Finds the claude session under every shell tab's pwsh off the UI thread (m5/33), on a title
+    /// change, a terminal's end and every refresh tick. One run at a time; asked for while one runs,
+    /// it runs once more after it.
+    pub fn resolve_tabs(&mut self, cx: &mut Context<Self>) {
+        if self.tabs_resolving {
+            self.tabs_again = true;
+            return;
+        }
+        let shells: Vec<(u64, u32)> = self
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.kind, TabKind::Shell) && !t.exited)
+            .filter_map(|t| Some((t.id, t.terminal.as_ref()?.read(cx).pid()?.as_u32())))
+            .collect();
+        if shells.is_empty() && self.tabs.iter().all(|t| t.claude.is_none()) {
+            return;
+        }
+        self.tabs_resolving = true;
+        let found = cx.background_executor().spawn(async move { tab_sessions(&shells) });
+        cx.spawn(async move |this, cx| {
+            let found = found.await;
+            this.update(cx, |this, cx| {
+                this.tabs_resolving = false;
+                this.tab_resolves += 1;
+                let mut changed = false;
+                let mut unlisted = false;
+                for tab in &mut this.tabs {
+                    let now = found.get(&tab.id).cloned();
+                    if tab.claude != now {
+                        unlisted |= now.as_ref().is_some_and(|id| !this.sessions.iter().any(|s| &s.session_id == id));
+                        tab.claude = now;
+                        changed = true;
+                    }
+                }
+                // a claude just started in a tab: its row comes with the next `claude agents`, so poll now
+                if unlisted {
+                    this.poll_nudge.store(true, Ordering::SeqCst);
+                }
+                if changed {
+                    cx.notify();
+                }
+                if std::mem::take(&mut this.tabs_again) {
+                    this.resolve_tabs(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Whether `tab` runs `session`: an attach tab by its id, a shell tab by the claude under it.
+    pub fn tab_runs(tab: &Tab, session: &Session) -> bool {
+        match &tab.kind {
+            TabKind::Attach { session_id } => *session_id == session.id,
+            TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
+            TabKind::Work(_) => false,
+        }
+    }
+
+    /// The row the active tab runs is marked in the tree (m5/33).
+    pub fn is_marked(&self, session: &Session) -> bool {
+        self.active.and_then(|id| self.tab(id)).is_some_and(|t| Self::tab_runs(t, session))
+    }
+
+    /// A tab that runs `session`.
+    pub fn session_tab(&self, session: &Session) -> Option<u64> {
+        self.tabs.iter().find(|t| Self::tab_runs(t, session)).map(|t| t.id)
+    }
+
     fn cycle_tab(&mut self, step: isize, cx: &mut Context<Self>) {
         let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
         if let Some(next) = cycled(self.tabs.len(), at, step) {
@@ -1376,6 +1464,7 @@ impl FleetView {
             session: None,
             hand: false,
             opened_at: now_ms(),
+            claude: None,
         });
         self.active = Some(id);
         cx.notify();
@@ -1483,6 +1572,7 @@ impl FleetView {
             session: None,
             hand: false,
             opened_at: now_ms(),
+            claude: None,
         });
         self.active = Some(id);
         cx.notify();
@@ -1513,17 +1603,24 @@ impl FleetView {
                     Ok(builder) => {
                         let terminal = cx.new(|cx| builder.subscribe(cx));
                         cx.subscribe(&terminal, move |this, emitter, event, cx| match event {
-                            TerminalEvent::Wakeup | TerminalEvent::TitleChanged => cx.notify(),
+                            TerminalEvent::Wakeup => cx.notify(),
+                            // claude names the console when it starts, idles, works and exits (m5/29)
+                            TerminalEvent::TitleChanged => {
+                                this.resolve_tabs(cx);
+                                cx.notify();
+                            }
                             TerminalEvent::BreadcrumbsChanged => {
                                 let title = emitter.read(cx).breadcrumb_text.clone();
                                 if let Some(tab) = this.tab_mut(id) {
                                     tab.program_title = tab_card::sanitize(&title);
                                 }
+                                this.resolve_tabs(cx);
                                 cx.notify();
                             }
                             TerminalEvent::CloseTerminal => {
                                 if let Some(tab) = this.tab_mut(id) {
                                     tab.exited = true;
+                                    tab.claude = None;
                                 }
                                 cx.notify();
                             }
@@ -2167,6 +2264,22 @@ impl Render for FleetView {
     }
 }
 
+/// Tab id → the `sessionId` of the claude under its shell pid, from one process snapshot.
+fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
+    use foreman_claude::{peer, proc_tree};
+    let Some(dir) = peer::sessions_dir().filter(|_| !shells.is_empty()) else {
+        return StdHashMap::new();
+    };
+    let procs = proc_tree::snapshot();
+    shells
+        .iter()
+        .filter_map(|&(tab, pid)| {
+            let entry = proc_tree::session_under(&procs, pid, peer::started(pid), &dir, &peer::System)?;
+            Some((tab, entry.session_id?))
+        })
+        .collect()
+}
+
 #[cfg(windows)]
 pub fn process_alive(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
@@ -2220,6 +2333,44 @@ mod tests {
         assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
         assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
         assert_eq!(cycled(0, None, 1), None);
+    }
+
+    #[test]
+    fn a_tab_runs_its_attached_id_or_the_claude_found_under_its_shell() {
+        let session = Session {
+            id: "abcd0001".into(),
+            session_id: "abcd0001-0000".into(),
+            name: "s".into(),
+            cwd: PathBuf::from(r"C:\demo"),
+            kind: foreman_claude::Kind::Interactive,
+            state: None,
+            status: None,
+            waiting_for: None,
+            pid: Some(5),
+            started_at: None,
+        };
+        let tab = |kind, claude: Option<&str>| Tab {
+            id: 1,
+            title: "t".into(),
+            kind,
+            terminal: None,
+            error: None,
+            exited: false,
+            detach: Detach::None,
+            cwd: None,
+            font_size: term_element::FONT_SIZE,
+            find: None,
+            program_title: None,
+            session: None,
+            hand: false,
+            opened_at: 0,
+            claude: claude.map(String::from),
+        };
+        assert!(FleetView::tab_runs(&tab(TabKind::Attach { session_id: "abcd0001".into() }, None), &session));
+        assert!(!FleetView::tab_runs(&tab(TabKind::Attach { session_id: "ffff0001".into() }, None), &session));
+        assert!(FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-0000")), &session));
+        assert!(!FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-ffff")), &session), "/clear gave the tab a new session");
+        assert!(!FleetView::tab_runs(&tab(TabKind::Shell, None), &session), "a shell without claude runs nothing");
     }
 
     #[test]

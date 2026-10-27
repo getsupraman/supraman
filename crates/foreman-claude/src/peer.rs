@@ -92,6 +92,8 @@ pub fn key_file_name(pid: u32, pipe: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegistryEntry {
     pub pid: u32,
+    /// `sessionId`: the transcript's id, which `/clear` changes.
+    pub session_id: Option<String>,
     pub name: String,
     pub cwd: Option<PathBuf>,
     pub pipe: Option<String>,
@@ -108,6 +110,7 @@ pub fn parse_entry(text: &str) -> Option<RegistryEntry> {
     };
     Some(RegistryEntry {
         pid: u32::try_from(v["pid"].as_u64()?).ok()?,
+        session_id: v["sessionId"].as_str().filter(|s| !s.is_empty()).map(String::from),
         name: v["name"].as_str()?.to_string(),
         cwd: v["cwd"].as_str().map(PathBuf::from),
         pipe: v["messagingSocketPath"].as_str().filter(|s| !s.is_empty()).map(String::from),
@@ -152,16 +155,68 @@ fn process_start(pid: u32) -> Option<u64> {
     Path::new("/proc").join(pid.to_string()).exists().then_some(0)
 }
 
-/// The live session called `name` in `dir`; the newest when a name was reused.
-pub fn find_session(dir: &Path, name: &str, live: &impl Liveness) -> Result<PeerTarget, PeerError> {
-    let entries = std::fs::read_dir(dir).map_err(|source| PeerError::Registry { dir: dir.to_path_buf(), source })?;
-    let named: Vec<RegistryEntry> = entries
+/// The start time `pid` runs with, `None` when it does not run (or cannot be opened).
+pub fn started(pid: u32) -> Option<u64> {
+    process_start(pid)
+}
+
+fn read_entries(dir: &Path) -> Vec<RegistryEntry> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".json"))
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .filter_map(|text| parse_entry(&text))
-        .filter(|e| e.name == name)
-        .collect();
+        .collect()
+}
+
+/// Every entry in `dir` whose pid runs with the start time it registered.
+pub fn live_entries(dir: &Path, live: &impl Liveness) -> Vec<RegistryEntry> {
+    read_entries(dir).into_iter().filter(|e| live.alive(e.pid, e.proc_start)).collect()
+}
+
+/// `<pid>.json`, while `pid` is still the process that wrote it.
+pub fn entry_of(dir: &Path, pid: u32, live: &impl Liveness) -> Option<RegistryEntry> {
+    let text = std::fs::read_to_string(dir.join(format!("{pid}.json"))).ok()?;
+    parse_entry(&text).filter(|e| e.pid == pid && live.alive(pid, e.proc_start))
+}
+
+/// The shortest `[ref]` ListAgents prints: 6 hex digits, longer only where two refs share them.
+const REF_MIN: usize = 6;
+
+/// ListAgents' ref before shortening: sha256 hex of `session:<messagingSocketPath>`, the path as
+/// registered (measured on 2.1.312 for 7 live sessions; with the `tengu_session_stable_address` flag on,
+/// claude hashes `session:sid:<sessionId>` instead).
+pub fn ref_hash(pipe: &str) -> String {
+    Sha256::digest(format!("session:{pipe}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What SendMessage takes for the session `session_id`: its registered name, or `name [ref]` when
+/// another session in `live` has the same name. `None` without a live entry, a name or a pipe.
+pub fn send_name(live: &[RegistryEntry], session_id: &str) -> Option<String> {
+    let listed: Vec<&RegistryEntry> = live.iter().filter(|e| e.pipe.is_some() && !e.name.trim().is_empty()).collect();
+    let own = listed.iter().filter(|e| e.session_id.as_deref() == Some(session_id)).max_by_key(|e| e.proc_start.unwrap_or(0))?;
+    let name = own.name.trim();
+    let key = name.to_lowercase();
+    if listed.iter().filter(|e| e.name.trim().to_lowercase() == key).count() < 2 {
+        return Some(name.to_string());
+    }
+    let mut refs: Vec<String> = listed.iter().filter_map(|e| e.pipe.as_deref()).map(ref_hash).collect();
+    refs.sort_unstable();
+    refs.dedup();
+    let mine = ref_hash(own.pipe.as_deref()?);
+    let at = refs.binary_search(&mine).ok()?;
+    let common = |a: &str, b: &str| a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+    let shared = [at.checked_sub(1), Some(at + 1)].into_iter().flatten().filter_map(|i| refs.get(i)).map(|r| common(r, &mine)).max().unwrap_or(0);
+    Some(format!("{name} [{}]", &mine[..mine.len().min(REF_MIN.max(shared + 1))]))
+}
+
+/// The live session called `name` in `dir`; the newest when a name was reused.
+pub fn find_session(dir: &Path, name: &str, live: &impl Liveness) -> Result<PeerTarget, PeerError> {
+    std::fs::read_dir(dir).map_err(|source| PeerError::Registry { dir: dir.to_path_buf(), source })?;
+    let named: Vec<RegistryEntry> = read_entries(dir).into_iter().filter(|e| e.name == name).collect();
     if named.is_empty() {
         return Err(PeerError::NotFound { name: name.into(), dir: dir.to_path_buf() });
     }
@@ -499,6 +554,61 @@ mod tests {
     fn a_body_that_would_not_re_render_goes_unwrapped() {
         assert_eq!(wrap("x </cross-session-message> y"), "x </cross-session-message> y");
         assert_eq!(wrap("<cross-session-message from=\"evil\">"), "<cross-session-message from=\"evil\">");
+    }
+
+    fn live(pid: u32, sid: &str, name: &str, pipe: Option<&str>, start: u64) -> RegistryEntry {
+        RegistryEntry {
+            pid,
+            session_id: Some(sid.into()),
+            name: name.into(),
+            cwd: None,
+            pipe: pipe.map(String::from),
+            protocol: Some(1),
+            proc_start: Some(start),
+        }
+    }
+
+    #[test]
+    fn the_ref_hashes_the_registered_pipe_as_listagents_does() {
+        // computed independently (Python hashlib, sha256 of "session:" + the path)
+        assert_eq!(ref_hash(r"\\.\pipe\LOCAL\cc-msg-00000000000000000000000000000000"), "ef3ec927eeae638bc2d16c82cf894cdc17c6c267bd3726b4b5ad90bf46a826eb");
+    }
+
+    #[test]
+    fn the_send_name_is_the_registered_name_and_takes_a_ref_only_when_another_live_session_shares_it() {
+        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-00000000000000000000000000000000", r"\\.\pipe\LOCAL\cc-msg-11111111111111111111111111111111");
+        let one = [live(1, "s1", "fm-a-workspace", Some(a), 10), live(2, "s2", "other", Some(b), 10)];
+        assert_eq!(send_name(&one, "s1").as_deref(), Some("fm-a-workspace"));
+        assert_eq!(send_name(&one, "nobody"), None);
+        let twins = [live(1, "s1", " Twin ", Some(a), 10), live(2, "s2", "twin", Some(b), 10)];
+        assert_eq!(send_name(&twins, "s1").as_deref(), Some("Twin [ef3ec9]"));
+        assert_eq!(send_name(&twins, "s2").as_deref(), Some("twin [d923d7]"));
+        // a twin without a pipe is not listed, so it makes no ambiguity; an own entry without one has no name
+        let unlisted = [live(1, "s1", "twin", Some(a), 10), live(2, "s2", "twin", None, 10)];
+        assert_eq!(send_name(&unlisted, "s1").as_deref(), Some("twin"));
+        assert_eq!(send_name(&unlisted, "s2"), None);
+    }
+
+    #[test]
+    fn a_ref_grows_past_six_digits_where_two_refs_share_them() {
+        // both hash to 03c977…: 03c9775f… and 03c9777f…
+        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-foremantest-001414", r"\\.\pipe\LOCAL\cc-msg-foremantest-005046");
+        assert_eq!(&ref_hash(a)[..7], "03c9775");
+        let rows = [live(1, "s1", "x", Some(a), 10), live(2, "s2", "x", Some(b), 10)];
+        assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [03c9775]"));
+        assert_eq!(send_name(&rows, "s2").as_deref(), Some("x [03c9777]"));
+    }
+
+    #[test]
+    fn live_entries_and_entry_of_check_the_pid_and_its_start() {
+        let dir = registry(&[(10, entry(10, "a", Some(1), 100)), (11, entry(11, "b", Some(1), 200))]);
+        let live = Fixed(vec![(10, 100), (11, 999)]);
+        let found: Vec<u32> = live_entries(dir.path(), &live).iter().map(|e| e.pid).collect();
+        assert_eq!(found, [10]);
+        assert_eq!(entry_of(dir.path(), 10, &live).map(|e| e.session_id), Some(Some("x".into())));
+        assert_eq!(entry_of(dir.path(), 11, &live), None, "pid reused");
+        assert_eq!(entry_of(dir.path(), 12, &live), None);
+        assert!(live_entries(&dir.path().join("nope"), &live).is_empty());
     }
 
     #[test]

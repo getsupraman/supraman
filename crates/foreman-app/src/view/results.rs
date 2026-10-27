@@ -12,7 +12,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, HighlightStyle, Sha
 use theme::ActiveTheme as _;
 
 use super::left::{quiet, repo_label, secondary};
-use super::{FleetView, TabKind, hit_target};
+use super::{FleetView, hit_target};
 use crate::fleet::{Supervised, Tree};
 use crate::search::{self, Results, SessionHit};
 
@@ -87,12 +87,12 @@ impl FleetView {
         self.clear_search(cx);
     }
 
-    /// A click on a session result: its attach tab comes forward, or one opens when it can attach. Its
-    /// own attach pill ran first, so the tab it opened is the one brought forward.
+    /// A click on a session result: the tab it runs in comes forward (an attach tab, or a shell tab whose claude
+    /// it is, m5/33), or one opens when it can attach. Its own attach pill ran first, so the tab it opened is
+    /// the one brought forward.
     fn open_result(&mut self, workspace: &str, repo: &str, hit: &SessionHit, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let s = &hit.row.session;
-        let open = self.tabs.iter().find(|t| matches!(&t.kind, TabKind::Attach { session_id } if *session_id == s.id)).map(|t| t.id);
-        match open {
+        match self.session_tab(s) {
             Some(id) => self.activate_tab(id, cx),
             None if hit.row.attachable => {
                 self.attach(workspace, repo, s, window, cx);

@@ -50,6 +50,8 @@ pub(crate) struct Scratch {
     /// `--selftest-supervise`: every row whose name starts with this is the run's own; cleanup
     /// first turns the app's supervisor off, then stops and removes each of them.
     pub(crate) name_prefix: Option<String>,
+    /// Processes this run started (pid, creation time), killed if still the same process (step 7l).
+    pub(crate) kill: Vec<(u32, u64)>,
 }
 
 static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
@@ -149,6 +151,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single],
         session_name: None,
         name_prefix: None,
+        kill: Vec::new(),
     });
     install_guards(mode);
 
@@ -217,7 +220,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
-        Mode::Selftest => Duration::from_secs(150),
+        Mode::Selftest => Duration::from_secs(210),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(900),
         _ => Duration::from_secs(120),
@@ -270,6 +273,9 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
         return;
     };
     let mut ok = true;
+    for &(pid, start) in &scratch.kill {
+        crate::selftest_mark::kill_own(pid, start);
+    }
     if let Some(prefix) = &scratch.name_prefix {
         ok &= crate::selftest_supervise::remove_own_rows(prefix);
     }
@@ -771,8 +777,11 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let searched = crate::selftest_search::run(view, cx).await.context("step 7k")?;
     println!("step 7k: {searched}");
 
-    let themed = crate::selftest_theme::run(view, &home(), cx).await.context("step 7l")?;
-    println!("step 7l: {themed}");
+    let mark = crate::selftest_mark::run(view, cx).await.context("step 7l")?;
+    println!("step 7l: {mark}");
+
+    let themed = crate::selftest_theme::run(view, &home(), cx).await.context("step 7m")?;
+    println!("step 7m: {themed}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();

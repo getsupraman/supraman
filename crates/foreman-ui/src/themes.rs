@@ -194,13 +194,15 @@ pub fn one_dark() -> Theme {
     (*theme).clone()
 }
 
-/// Today's Foreman dark: One Dark with Campbell's ANSI colours (m5/23).
-pub fn foreman_dark() -> Theme {
+/// Today's Foreman dark: One Dark with Campbell's ANSI colours (m5/23); only the backgrounds of the
+/// marked row and the search matches are faded to [`BACKGROUND_FLOORS`].
+pub fn foreman_dark() -> Loaded {
     let mut theme = one_dark();
     theme.name = FOREMAN_DARK.into();
     theme.id = fresh_id(FOREMAN_DARK);
     set_ansi(&mut theme.styles.colors, campbell());
-    theme
+    let adjusted = fit_backgrounds(&mut theme);
+    Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
 
 pub fn dark_modern() -> Loaded {
@@ -425,6 +427,47 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
         *floor_color(theme, key) = color;
         adjusted.push(Adjustment { key, old: hex(old), new: hex(color), was, now: worst_contrast(theme, color, alpha, on) });
     }
+    adjusted.extend(fit_backgrounds(theme));
+    adjusted
+}
+
+/// Backgrounds text is painted on, over the panel: (key, the alpha of the theme's text on it, floor).
+/// The marked row (m5/33) holds its ids and states in secondary text; a search result (m5/30) marks
+/// the matched part of a name.
+pub const BACKGROUND_FLOORS: [(&str, f32, f32); 2] = [
+    ("ghost_element.selected", SECONDARY, SECONDARY_FLOOR),
+    ("search.match_background", 1., NAME_FLOOR),
+];
+
+pub fn background_color<'a>(theme: &'a mut Theme, key: &str) -> &'a mut Hsla {
+    let c = &mut theme.styles.colors;
+    match key {
+        "ghost_element.selected" => &mut c.ghost_element_selected,
+        _ => &mut c.search_match_background,
+    }
+}
+
+/// The contrast of the theme's text at `alpha` on `key`'s background over the panel.
+pub fn on_background(theme: &mut Theme, key: &str, alpha: f32) -> f32 {
+    let bg: Hsla = over(*background_color(theme, key), theme.colors().panel_background).into();
+    contrast(theme.colors().text.opacity(alpha), bg)
+}
+
+/// Fades each [`BACKGROUND_FLOORS`] background toward the panel (lowers its alpha) until the text on it
+/// holds the floor. Returns what changed.
+pub fn fit_backgrounds(theme: &mut Theme) -> Vec<Adjustment> {
+    let mut adjusted = Vec::new();
+    for (key, alpha, floor) in BACKGROUND_FLOORS {
+        let old = *background_color(theme, key);
+        let was = on_background(theme, key, alpha);
+        while on_background(theme, key, alpha) < floor && background_color(theme, key).a > 0.02 {
+            background_color(theme, key).a -= 0.02;
+        }
+        let now = on_background(theme, key, alpha);
+        if was < floor {
+            adjusted.push(Adjustment { key, old: hex(old), new: hex(*background_color(theme, key)), was, now });
+        }
+    }
     adjusted
 }
 
@@ -507,7 +550,8 @@ pub struct Resolved {
 pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
     let name = name.unwrap_or(DEFAULT_THEME);
     let (theme, adjusted, problem) = if name == FOREMAN_DARK {
-        (foreman_dark(), Vec::new(), None)
+        let loaded = foreman_dark();
+        (loaded.theme, loaded.adjusted, None)
     } else if name == DARK_MODERN {
         let loaded = dark_modern();
         (loaded.theme, loaded.adjusted, None)
@@ -606,7 +650,7 @@ mod tests {
         let c = palette(&campbell_theme);
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
-        assert_eq!(palette(&foreman_dark()).ansi, campbell(), "Foreman Dark is One Dark with Campbell, as before m5/31");
+        assert_eq!(palette(&foreman_dark().theme).ansi, campbell(), "Foreman Dark is One Dark with Campbell, as before m5/31");
     }
 
     #[test]
@@ -641,8 +685,8 @@ mod tests {
     /// Every key the loader had to change is printed (`cargo test -- --nocapture`) and pinned.
     #[test]
     fn the_contrast_floors_hold_under_each_bundled_theme() {
-        let modern = dark_modern();
-        for theme in [&modern.theme, &foreman_dark()] {
+        let (modern, dark) = (dark_modern(), foreman_dark());
+        for theme in [&modern.theme, &dark.theme] {
             let text = theme.colors().text;
             let ratio = |alpha: f32| worst_contrast(theme, text, alpha, On::Panel);
             let (name, quiet, secondary) = (ratio(1.), ratio(QUIET), ratio(SECONDARY));
@@ -660,16 +704,52 @@ mod tests {
             println!("{}: {key} {got:.2} (floor {floor})", theme.name);
             assert!(got >= floor, "{key}: {got} < {floor}");
         }
-        for a in &modern.adjusted {
-            println!("adjusted {}: {} -> {} ({:.2} -> {:.2})", a.key, a.old, a.new, a.was, a.now);
+        for loaded in [&modern, &dark] {
+            for a in &loaded.adjusted {
+                println!("{} adjusted {}: {} -> {} ({:.2} -> {:.2})", loaded.theme.name, a.key, a.old, a.new, a.was, a.now);
+            }
         }
-        let keys: Vec<(&str, &str, &str)> = modern.adjusted.iter().map(|a| (a.key, a.old.as_str(), a.new.as_str())).collect();
-        assert_eq!(keys, EXPECTED_ADJUSTMENTS);
+        let keys = |l: &Loaded| l.adjusted.iter().map(|a| (a.key, a.old.clone(), a.new.clone())).collect::<Vec<_>>();
+        let pinned = |e: &[(&'static str, &str, &str)]| e.iter().map(|(k, o, n)| (*k, o.to_string(), n.to_string())).collect::<Vec<_>>();
+        assert_eq!(keys(&modern), pinned(&EXPECTED_ADJUSTMENTS));
+        assert_eq!(keys(&dark), pinned(&EXPECTED_FOREMAN_DARK));
+    }
+
+    /// The elements m5/30 and m5/33+34 added, on their own backgrounds, under each bundled theme: the search
+    /// box's text, a matched name, the marked row's name, secondary and warning text, the toast's text.
+    #[test]
+    fn the_newer_elements_read_under_each_bundled_theme() {
+        for mut theme in [dark_modern().theme, foreman_dark().theme] {
+            let (c, s) = (theme.colors().clone(), theme.status().clone());
+            let marked: Hsla = over(c.ghost_element_selected, c.panel_background).into();
+            let checks = [
+                ("search box text", contrast(c.text, c.editor_background), NAME_FLOOR),
+                ("matched name", on_background(&mut theme, "search.match_background", 1.), NAME_FLOOR),
+                ("marked row name", contrast(c.text, marked), NAME_FLOOR),
+                ("marked row secondary", on_background(&mut theme, "ghost_element.selected", SECONDARY), SECONDARY_FLOOR),
+                ("marked row warning", contrast(s.warning, marked), SECONDARY_FLOOR),
+                ("toast text", contrast(c.text, c.elevated_surface_background), NAME_FLOOR),
+            ];
+            for (what, got, floor) in checks {
+                println!("{}: {what} {got:.2} (floor {floor})", theme.name);
+                assert!(got >= floor, "{}: {what} {got} < {floor}", theme.name);
+            }
+            // the mark still shows: its background and its left edge differ from the panel
+            assert!(contrast(marked, c.panel_background) > 1.1, "{}: the marked row's background is the panel's", theme.name);
+            assert!(contrast(c.border_focused, c.panel_background) >= 3., "{}: the marked row's edge", theme.name);
+        }
     }
 
     /// What VS Code Dark Modern needed (reported in LEARNINGS m5/31).
     /// `info` is a 40% grey there (`#BFBFBF66`, 2.58:1 on #1F1F1F); the tree paints Idle in it.
-    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 1] = [("info", "#BFBFBF66", "#868686")];
+    /// The marked row's `#04395E` left the ids on it at 3.82:1; a match's `#C6510666` a name at 6.94:1.
+    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 3] = [
+        ("info", "#BFBFBF66", "#868686"),
+        ("ghost_element.selected", "#04395E", "#04395E80"),
+        ("search.match_background", "#C6510666", "#C6510661"),
+    ];
+    /// One Dark's marked-row background left the ids on it at 3.97:1.
+    const EXPECTED_FOREMAN_DARK: [(&str, &str, &str); 1] = [("ghost_element.selected", "#3B3F4A", "#3B3F4A8A")];
 
     #[test]
     fn a_dim_theme_is_lifted_to_the_floors_and_reported() {
@@ -719,3 +799,4 @@ mod tests {
         }
     }
 }
+

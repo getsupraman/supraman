@@ -5,6 +5,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::atomic::Ordering,
+    time::Instant,
 };
 
 use foreman_claude::{Claude, Session, now_ms};
@@ -12,7 +13,7 @@ use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover
 use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
-use super::FleetView;
+use super::{FleetView, TOAST_FOR, Toast};
 use super::menu::{Confirm, ContextMenu, MenuAction, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
 use crate::text_input::{InputEvent, TextInput};
@@ -85,6 +86,13 @@ pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Opt
             NameKey::Edited
         }
     }
+}
+
+/// What SendMessage takes for the live session `session_id`, from `~/.claude/sessions` (read only).
+fn send_name_of(session_id: &str) -> Option<String> {
+    use foreman_claude::peer;
+    let live = peer::live_entries(&peer::sessions_dir()?, &peer::System);
+    peer::send_name(&live, session_id)
 }
 
 fn registry(home: Option<&Path>) -> Result<Registry, String> {
@@ -233,7 +241,7 @@ impl FleetView {
                 self.adding = None;
                 self.collapsed.remove(&format!("workspace:{name}"));
                 self.reload_workspaces();
-                self.action_info = Some(format!("Added workspace {name}."));
+                self.show_toast(format!("Added workspace {name}."), cx);
             }
             Err(e) => draft.error = Some(e),
         }
@@ -259,6 +267,24 @@ impl FleetView {
         self.removing.retain(|name, _| names.contains(name));
     }
 
+    /// Says what an action did over the bottom of the left panel for [`TOAST_FOR`], moving nothing (m5/34).
+    pub fn show_toast(&mut self, text: String, cx: &mut Context<Self>) {
+        let shown_at = Instant::now();
+        self.toast = Some(Toast { text, shown_at });
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TOAST_FOR).await;
+            this.update(cx, |this, cx| {
+                if this.toast.as_ref().is_some_and(|t| t.shown_at == shown_at) {
+                    this.toast = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Opens the menu of the row under the pointer; nothing when the row is gone.
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
         let tree = self.tree();
@@ -279,7 +305,9 @@ impl FleetView {
                 rows.into_iter().find(|r| &r.session.session_id == session_id).map(|row| {
                     let claimed = self.claimed_item(workspace, &row.session.name, cx);
                     let name = if row.session.name.is_empty() { fleet::short_id(&row.session).to_string() } else { row.session.name.clone() };
-                    (name, session_items(workspace, repo, row, self.resumable(row), claimed))
+                    // a live registry entry is the proof it runs: a just-started row's health is still unknown
+                    let send_name = send_name_of(&row.session.session_id);
+                    (name, session_items(workspace, repo, row, self.resumable(row), claimed, send_name))
                 })
             }
         };
@@ -307,7 +335,6 @@ impl FleetView {
     }
 
     pub fn run_action(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
-        self.action_info = None;
         match action {
             MenuAction::Start(w) => self.start_workspace(&w, cx),
             MenuAction::Stop(w) => self.stop_workspace(&w, cx),
@@ -358,7 +385,7 @@ impl FleetView {
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                self.action_info = Some(format!("Copied {text}"));
+                self.show_toast(format!("Copied {text}"), cx);
             }
             MenuAction::ShowInWork { workspace, item_id } => {
                 self.open_work_item(&workspace, &item_id, cx);
@@ -419,7 +446,7 @@ impl FleetView {
                         self.compose = None;
                     }
                     self.reload_workspaces();
-                    self.action_info = Some(format!("Removed workspace {name}; no files were deleted."));
+                    self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
                 }
                 Err(e) => self.action_error = Some(format!("Cannot remove {name}: {e}")),
             }
@@ -444,7 +471,7 @@ impl FleetView {
                 match done {
                     Ok((name, added, removed)) => {
                         let list = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.join(", ") };
-                        this.action_info = Some(format!("Rescanned {name}: added {}; gone {}.", list(&added), list(&removed)));
+                        this.show_toast(format!("Rescanned {name}: added {}; gone {}.", list(&added), list(&removed)), cx);
                         this.reload_workspaces();
                     }
                     Err(e) => this.action_error = Some(format!("Cannot rescan: {e}")),
@@ -481,7 +508,7 @@ impl FleetView {
             let done = task.await;
             this.update(cx, |this, cx| {
                 match done {
-                    Ok(_) => this.action_info = Some(format!("Stopped {} ({}).", session.name, session.id)),
+                    Ok(_) => this.show_toast(format!("Stopped {} ({}).", session.name, session.id), cx),
                     Err(e) => this.action_error = Some(format!("Cannot stop {}: {e}", session.id)),
                 }
                 cx.notify();

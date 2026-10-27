@@ -54,6 +54,7 @@ mod error;
 pub mod human;
 mod launch;
 pub mod peer;
+pub mod proc_tree;
 mod session;
 pub mod transcript;
 

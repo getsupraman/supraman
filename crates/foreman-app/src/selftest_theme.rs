@@ -1,4 +1,4 @@
-//! `--selftest` step 7l (m5/31): the theme. The app starts in VS Code Dark Modern with its terminal colours;
+//! `--selftest` step 7m (m5/31): the theme. The app starts in VS Code Dark Modern with its terminal colours;
 //! Settings → Appearance switches to Foreman Dark with Campbell's ANSI colours at once (the theme every
 //! window paints with, the terminals' palette, `settings.toml`), and back. Shots with `FOREMAN_SHOTS`.
 
