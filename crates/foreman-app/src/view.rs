@@ -168,6 +168,8 @@ pub struct Tab {
     pub session: Option<String>,
     /// It runs `claude` from `+` or a resume in the tab.
     pub hand: bool,
+    /// How a hand session reaches WorkState, as its card says: `Foreman token · <role> · <session>`.
+    pub workstate: Option<String>,
     /// Epoch milliseconds.
     pub opened_at: i64,
     /// The claude session found under a shell tab's pwsh ([`FleetView::resolve_tabs`]): its `sessionId`.
@@ -1185,7 +1187,8 @@ impl FleetView {
         } else {
             // through the `+` launch (m5/27): its own WorkState token, and the shell stays when claude exits
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
-            let id = self.hand_claude(session.cwd.clone(), title, resume, cx);
+            let own = (!session.name.is_empty()).then(|| session.name.clone());
+            let id = self.hand_claude(session.cwd.clone(), title, resume, own, cx);
             if let Some(tab) = self.tab_mut(id) {
                 tab.session = Some(tab_card::session_label(&session.name, sid));
             }
@@ -1198,11 +1201,12 @@ impl FleetView {
     /// exits or the tab closes. The tab shows at once; its pwsh starts once the token is minted.
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let claude = self.claude_command.clone();
-        self.hand_claude(cwd, title, claude, cx)
+        self.hand_claude(cwd, title, claude, None, cx)
     }
 
-    /// [`Self::new_claude`] running `claude` (pwsh's program and arguments).
-    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, cx: &mut Context<Self>) -> u64 {
+    /// [`Self::new_claude`] running `claude` (pwsh's program and arguments); `own` is the session's
+    /// name in the tree, for its WorkState session (m5/35).
+    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
@@ -1213,10 +1217,16 @@ impl FleetView {
         };
         let at = cwd.clone();
         let mint = hands.clone();
-        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch(&at) });
+        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch(&at, own.as_deref()) });
         cx.spawn(async move |this, cx| {
             let launch = launch.await;
             this.update(cx, |this, cx| {
+                if let Launch::Minted { session, notice, .. } = &launch {
+                    if let Some(tab) = this.tab_mut(id) {
+                        tab.workstate = Some(format!("Foreman token · {} · {session}", crate::hand::ROLE));
+                    }
+                    this.hand_notices.extend(notice.clone());
+                }
                 if this.tab(id).is_some() {
                     let shell = this.claude_shell(&launch, &claude);
                     this.start_terminal(id, shell, Some(cwd), cx);
@@ -1463,6 +1473,7 @@ impl FleetView {
             program_title: None,
             session: None,
             hand: false,
+            workstate: None,
             opened_at: now_ms(),
             claude: None,
         });
@@ -1507,6 +1518,7 @@ impl FleetView {
             branch: None,
             session,
             kind,
+            workstate: tab.workstate.clone(),
             started,
         }
     }
@@ -1571,6 +1583,7 @@ impl FleetView {
             program_title: None,
             session: None,
             hand: false,
+            workstate: None,
             opened_at: now_ms(),
             claude: None,
         });
@@ -2363,6 +2376,7 @@ mod tests {
             program_title: None,
             session: None,
             hand: false,
+            workstate: None,
             opened_at: 0,
             claude: claude.map(String::from),
         };

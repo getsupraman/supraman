@@ -2125,7 +2125,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 
 ## 2026-10-26 — m5/20 hand sessions minted
 
-- A `+` session (`crates/foreman-app/src/hand.rs`) is minted `role: worker`, `externalRole: "hand"`, `repo` =
+- A `+` session (`crates/foreman-app/src/hand.rs`) is minted `role: worker` (orchestrator since m5/35), `externalRole: "hand"`, `repo` =
   `git_repo(cwd)`, name `hand-<folder>-<n>`, `launchedBy: foreman/hand`. A worker token cannot mint (doc 14 §2), so the
   bearer is the repo role's static token, else the workspace's; a `.env` with only a worker line opens it plain.
 - The tab types `try { claude --mcp-config '<file>' } finally { Remove-Item -LiteralPath '<file>' }`: the shell
@@ -2447,3 +2447,44 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-31\target`, after merging master c3f564e): build ok; `cargo test --release
   --workspace` 529 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (293 s);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
+
+## 2026-10-28 — m5/35 hand sessions: orchestrator token, their own name, a visible override
+
+- **The bug** (skills-9a, from WorkState's `agent_session`): René resumed mw-workflow in a Foreman tab. Before, it
+  was `nomos-0c`, an orchestrator on his user registration, named through the session-header helper. After, it was
+  `hand-Nomos-1`, a worker minted by Foreman, and lost work_status/work_update mid-queue. Cause: `hand.rs` minted
+  `role: "worker"`, and its `--mcp-config` overrides the user-scope `workstate` entry (mint/7).
+- **Role**: every hand launch (`+` and resume) mints `hand::ROLE` = orchestrator. The bearer is unchanged (repo
+  role's static token = orchestrator, else the workspace's = controller), and the server caps the mint by it
+  (`AgentSessionEndpoints.cs`: 403 "a role is never raised"). A refused mint opens the tab plain with the reason
+  ("cannot mint an orchestrator one (…)"); there is no worker fallback. Supervised sessions (`executor.rs`) are
+  untouched and keep controller/orchestrator.
+- **Name, measured in WorkState's source (read-only)**: a minted token's name cannot change after the mint.
+  Resolution order (a) in `docs/workstate/11-sessions.md`: a `wss_` token is its session, and both
+  `X-WorkState-Agent` and `X-WorkState-Client` are ignored. `work_session` is refused for a minted session's name
+  (`SessionStore.ClientKeys.cs:132`, "its name comes from its token"). There is no rename endpoint: PATCH takes
+  only `claudeSessionId`. So "let the header win" is not possible, and the name has to be right at mint time.
+  The helper (`session-header.mjs`) never reaches a hand session, because `--mcp-config` replaces the whole
+  `workstate` entry, `headersHelper` included.
+- **So**: a resume mints with the name the tree shows (`Session.name`: the `claude agents` name, else the
+  transcript's custom title / agent name / ai title, `Transcript::title`), cut by `hand::session_name` to one
+  sanitised line of at most 64 characters. A fresh `+` mints `hand-<folder>-<n>` and keeps it for the life of
+  that claude. Its next resume carries whatever name it has given itself by then. `hand-<folder>-<n>` stays the
+  key of `mcp/workstate-<key>.json` and `supervisor/hands.json` in every case, because a title is no file name.
+  Fallbacks (both with a notice in the panel): when another open tab already holds that WorkState name
+  (`replace: true` would revoke its token), and on a 409 (a name held by another launcher, e.g. a row the helper
+  created with no launcher). Both use the generated name.
+- **Not covered**: renaming a running `+` session (needs a WorkState rename for minted sessions, or a re-mint
+  that a running claude cannot pick up). A resumed session lands on a new `foreman/hand` row, not on its earlier
+  helper-named row (`nomos-0c`). That row has no launcher and the launcher rule refuses sharing it. Its claims
+  stay there.
+- **Visible override**: `hand.rs`'s header documents it. The tab card adds `WorkState  Foreman token ·
+  orchestrator · <session>` for a minted hand tab (`Tab::workstate`, `tab_card::Card::workstate`).
+- **Follow-up** `backlog/9`: after a WorkState restart, detect sessions whose MCP connection dropped and say
+  which need /mcp → Reconnect.
+- Tests: `hand::tests::hand_resume_mints_an_orchestrator_under_the_sessions_own_name` (fake server: resume
+  body `name: mw-workflow, role: orchestrator`, same bearer, file key `hand-alpha-1`, second tab → generated
+  name, title cut, blank title, name free after release), `…_name_held_by_another_launcher_falls_back_…` (409 →
+  second POST with `hand-alpha-1`), `…_refused_orchestrator_is_not_minted_as_a_worker` (403 → one POST, plain),
+  `tab_card::…_known_fields_in_order` (the WorkState line). Red: `ROLE = "worker"` plus the generated name
+  always → 5 of 11 hand tests fail.
