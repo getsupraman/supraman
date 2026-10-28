@@ -72,7 +72,7 @@ fn needs_color(kind: NeedsKind, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
     match kind {
         NeedsKind::Blocked | NeedsKind::TrustNeeded => status.warning,
-        NeedsKind::GaveUp | NeedsKind::LaunchFailed | NeedsKind::TokenExpired => status.error,
+        NeedsKind::GaveUp | NeedsKind::LaunchFailed | NeedsKind::TokenExpired | NeedsKind::OtherServer => status.error,
         NeedsKind::Duplicate => status.hint,
     }
 }
@@ -85,6 +85,7 @@ fn needs_label(kind: NeedsKind) -> &'static str {
         NeedsKind::LaunchFailed => "launch failed",
         NeedsKind::Duplicate => "duplicate",
         NeedsKind::TokenExpired => "token expired",
+        NeedsKind::OtherServer => "other server",
     }
 }
 

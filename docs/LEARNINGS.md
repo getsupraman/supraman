@@ -2923,3 +2923,59 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-47\target`): `cargo build --release --workspace` ok, no warnings; `cargo
   test --release --workspace` 586 passed, 0 failed; `--selftest` 5 of 5 PASS (120–131 s); `--selftest-supervise`
   PASS (303 s); `--selftest-detach-shutdown` PASS (14 s); `claude agents --json --all`: 0 `fm-selftest` rows.
+
+## 2026-10-28 — m5/48 sessions minted on another WorkState server are re-minted; the hosted server is the default
+
+- **The bug**: after the cut-over René's `fm-nomos-workspace` kept `mcp/workstate-fm-nomos-workspace.json` on
+  `http://127.0.0.1:5290` (ECONNREFUSED on `/mcp`). m5/43 re-minted only when `Supervision::tick` saw the origin in
+  `settings.toml` change between two ticks, and only `FleetView::sign_in_to(…, from: Some(old))` revoked the old grant.
+  His URL was saved by one attempt (which then hung on the server) and signed in to by a plain Sign in, so the
+  origin had already changed while not signed in, and nothing was re-minted. A minted record did not say which
+  server its token came from.
+- **Origin on every token**: `MintedSession.origin` (`api_base` of the minted MCP URL) in
+  `<home>/supervisor/<workspace>.sessions.json` and `supervisor/hands.json`. A record without one (a file from
+  before) takes the origin of the URL in its config file at load (`MintedSessions::adopt_origins`, via the new
+  `foreman_claude::mcp_config_url`, which reads only `url`, never the header); without a config file it stays unknown.
+  `MintedSessions::elsewhere(origin)` lists the records not on `origin` (unknown counts as elsewhere).
+- **One path** (`Supervisor::server_changed(Option<origin>)`): `Supervision::tick` calls it on every supervisor every
+  tick with the configured origin when `Auth::status` says signed in there (`supervise::signed_in_server`, no network),
+  else `None`. The first call with an origin it has not checked puts every wanted session minted elsewhere on
+  `remint_due` (stop of the live row, resume with a fresh `replace: true` mint into the same file), once per origin.
+  This one call covers start-up, a plain sign-in and the URL change; the old "origin differs from last tick" branch is gone.
+- **Inbox**: a wanted session whose single live row still holds another server's token (checked while it was not
+  live, a failed stop) gets `NeedsKind::OtherServer` ("other server") with `Remedy::Remint`; `retry` treats it like
+  TokenExpired.
+- **Never the wrong server by id**: PATCH (`bind_claude_sessions`), DELETE (`revoke_unwanted`) and a hand
+  `release` skip a record whose origin is not the signed-in server's: its session id means nothing there (or another
+  session). Those tokens go with their server's grant.
+- **Hand tabs**: `Tab.hand_key` (the `hands.json` key) and `Tab.restart_to`. `FleetView::sync_server` runs whenever the
+  status becomes Ready on an origin not yet synced (start-up, after any sign-in): open hand tabs whose token is
+  elsewhere get " · restart to use <url>" on their card, plus one notice (`hand::restart_notice`).
+- **Old grants**: `FleetView::leave_servers` signs out of each origin left behind (the supervisors'
+  `Report::left_servers`, the hands' elsewhere and `Hands::take_left` of released ones, the URL change's `from`), once
+  per origin per run, on the background executor; failures make one notice. `Auth::sign_out` now drops the held token,
+  reads and deletes the credential under the locks, and only then posts the revoke, with its own 4 s agent
+  (`REVOKE_TIMEOUT`). Before, it held the auth mutex and `refresh.lock` across a 15 s call, so revoking an unreachable
+  old server stalled every `access_token` and so every mint. The local server is gone, so that is now the normal case.
+- **Default** (controller): `DEFAULT_WORKSTATE_URL` = `https://workstate.dikaia.ai`. The Unreachable fix no longer
+  offers to start a local server. Selftests and tests keep their own fake or closed ports; the `fm` probe keeps
+  `127.0.0.1:5290` (an invalid token must not reach the real server).
+- Tests: `tokens::tests::a_plain_sign_in_on_another_server_restarts_each_session_minted_on_the_old_one` (fake A and
+  fake B with their own OAuth, the URL saved alone → `None`, a plain sign-in on B → stop, resume, the file names B with
+  B's token, the record's origin is B, nothing DELETEd on A); `executor::tests::mint_of_unknown_origin_is_reminted_once_…`,
+  `mint_on_another_server_offers_re_mint_and_is_never_revoked_or_patched_on_this_one`, the m5/43 test on the new
+  signature; `mint::tests::minted_sessions_of_unknown_origin_take_their_config_files_…`;
+  `hand::tests::a_hand_tab_minted_on_another_server_is_told_to_restart_and_left_to_its_grant`,
+  `a_hands_file_from_before_m5_48_takes_its_config_files_origin`; `tests/oauth.rs`
+  `signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_token` (a revoke endpoint that accepts
+  and never answers: the other server's token in < 1 s meanwhile, the sign-out fails within the timeout, a second one
+  is silent; a closed port fails at once). Red: `server_changed` scheduling nothing → the end-to-end test fails.
+- **Flaky, not from this unit**: `fm --test work` `work_errors_are_one_line_without_the_token` fails about half the
+  time with `sign in … again: the server refused the refresh (invalid_grant)` mid-sequence; 6 of 10 failed with
+  HEAD's `auth.rs` swapped in, 4 of 10 with this one. Not investigated.
+- **Not covered**: no selftest step for the plain sign-in path (unit-tested); the hand restart notice is drawn by the
+  view only.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-48\target`): `cargo build --release --workspace` ok, no warnings; `cargo test
+  --release --workspace --no-fail-fast` 594 passed, 0 failed (the `fm` flake above failed in an earlier run);
+  `--selftest` 5 of 5 PASS (123–126 s); `--selftest-supervise` PASS (303 s); `--selftest-detach-shutdown` PASS (12 s);
+  no `fm-selftest` rows of this worktree left (the four listed were m5-49's).

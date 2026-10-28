@@ -28,6 +28,8 @@ pub enum NeedsKind {
     /// A live minted session had no turn for longer than its token's idle window: its next
     /// WorkState call gets HTTP 401.
     TokenExpired,
+    /// A live minted session's token is from another WorkState server than the one Foreman uses.
+    OtherServer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -189,7 +189,7 @@ fn work_errors_are_one_line_without_the_token() {
         .env_remove("APPDATA")
         .output()
         .unwrap();
-    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to WorkState at http://127.0.0.1:5290");
+    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to WorkState at https://workstate.dikaia.ai");
 }
 
 #[test]

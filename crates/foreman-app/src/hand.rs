@@ -106,6 +106,16 @@ pub struct Hands {
     minted: MintedSessions,
     /// The WorkState name of each key in `minted` launched by this run.
     sessions: std::collections::HashMap<String, String>,
+    /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
+    left: Vec<String>,
+}
+
+/// What the panel says when `n` open claude tabs hold tokens from another server than `to`.
+pub fn restart_notice(n: usize, to: &str) -> Option<String> {
+    (n > 0).then(|| {
+        let (tabs, them) = if n == 1 { ("tab", "it") } else { ("tabs", "them") };
+        format!("{n} open claude {tabs} still use another WorkState server: restart {them} to use {to}.")
+    })
 }
 
 /// `raw` (a session's name as the tree shows it) as a WorkState session name: one line, no control or
@@ -134,13 +144,14 @@ impl Hands {
         repo_of: fn(&Path) -> Option<MintRepo>,
     ) -> (Self, Option<String>) {
         let path = Self::path(home);
-        let (minted, notice) = match MintedSessions::load(Some(path.clone())) {
+        let (mut minted, notice) = match MintedSessions::load(Some(path.clone())) {
             Ok(m) => (m, None),
             Err(e) => (
                 MintedSessions::empty(Some(path.clone())),
                 Some(format!("Cannot read {} ({e}): hand-session tokens minted before lapse after their idle window", path.display())),
             ),
         };
+        let notice = notice.or_else(|| minted.adopt_origins(&home.join("mcp")).err().map(|e| format!("Cannot save {} ({e})", path.display())));
         let hands = Self {
             home: home.to_path_buf(),
             auth,
@@ -148,6 +159,7 @@ impl Hands {
             repo_of,
             minted,
             sessions: Default::default(),
+            left: Vec::new(),
         };
         (hands, notice)
     }
@@ -238,6 +250,7 @@ impl Hands {
                 role: EXTERNAL_ROLE.into(),
                 claude_session_id: claude_session,
                 last_active: None,
+                origin: Some(base),
             },
         );
         let _ = self.minted.save();
@@ -264,7 +277,18 @@ impl Hands {
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
         let _ = std::fs::remove_file(self.config_path(name));
-        let result = match self.bearer() {
+        let bearer = self.bearer();
+        let other = match (&bearer, &m.origin) {
+            (Ok(Some((url, _))), Some(o)) if *o != api_base(url) => Some(o.clone()),
+            _ => None,
+        };
+        if let Some(other) = &other
+            && !self.left.contains(other)
+        {
+            self.left.push(other.clone());
+        }
+        let result = match bearer {
+            Ok(Some(_)) if other.is_some() => Ok(()),
             Ok(Some((url, token))) => self.minter.revoke(&api_base(&url), &token, &m.session_id).map_err(|e| e.to_string()),
             Ok(None) => Err("not signed in to WorkState any more".into()),
             Err(e) => Err(e),
@@ -290,6 +314,16 @@ impl Hands {
     pub fn release_all(&mut self) -> Vec<String> {
         let names: Vec<String> = self.minted.names().cloned().collect();
         names.iter().filter_map(|n| self.release(n)).collect()
+    }
+
+    /// The open sessions whose token is not from `origin`, with the server it is from (`None`: unknown).
+    pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
+        self.minted.elsewhere(origin)
+    }
+
+    /// The servers of tokens [`Self::release`] left to their server's grant revoke, since the last call.
+    pub fn take_left(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.left)
     }
 
     #[cfg(test)]
@@ -371,6 +405,52 @@ mod tests {
     /// The sign-in's access token is the bearer.
     fn oauth(auth: &str) -> bool {
         auth.starts_with("Bearer eyJ")
+    }
+
+    #[test]
+    fn a_hand_tab_minted_on_another_server_is_told_to_restart_and_left_to_its_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, seen_a, _) = fake_workstate(vec![]);
+        let (b, seen_b, _) = fake_workstate(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&a));
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demolpha"), None) else { panic!() };
+        seen_a.recv_timeout(WAIT).unwrap();
+        assert!(hands.elsewhere(&a).is_empty(), "minted there");
+
+        let mut settings = foreman_core::Settings::load(&home).unwrap();
+        settings.workstate_url = Some(b.clone());
+        settings.save(&home).unwrap();
+        auth.sign_in(&b, &foreman_workstate::auth::http_browser()).unwrap();
+        assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);
+        assert_eq!(
+            restart_notice(1, &b).as_deref(),
+            Some(format!("1 open claude tab still use another WorkState server: restart it to use {b}.").as_str())
+        );
+        assert_eq!(restart_notice(0, &b), None);
+
+        assert_eq!(hands.release(&name), None, "no notice");
+        assert_eq!(hands.take_left(), [a.clone()], "A's grant revoke covers it");
+        assert!(hands.take_left().is_empty());
+        assert!(seen_b.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no DELETE of A's session id on B");
+        assert!(seen_a.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_hands_file_from_before_m5_48_takes_its_config_files_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join("supervisor")).unwrap();
+        std::fs::write(Hands::path(&home), r#"{"hand-alpha-1":{"sessionId":"h1","role":"hand"},"hand-beta-1":{"sessionId":"h2","role":"hand"}}"#).unwrap();
+        foreman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        let (_, auth) = home_with(dir.path(), None);
+        let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        assert_eq!(notice, None);
+        assert_eq!(hands.elsewhere("https://b.example"), [
+            ("hand-alpha-1".to_string(), Some("http://127.0.0.1:5290".to_string())),
+            ("hand-beta-1".to_string(), None),
+        ]);
+        assert!(std::fs::read_to_string(Hands::path(&home)).unwrap().contains("http://127.0.0.1:5290"), "saved");
     }
 
     #[test]

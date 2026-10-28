@@ -193,6 +193,14 @@ pub struct Report {
     /// Why no `claude --bg` from here can reach the background service ([`DaemonWatch`]); a tab
     /// that would run one says so.
     pub daemon_hold: Option<String>,
+    /// Servers whose minted tokens were replaced this tick ([`Supervisor::server_changed`]): their grants go.
+    pub left_servers: Vec<String>,
+}
+
+/// The server `settings.toml` names, when Foreman is signed in to it.
+pub fn signed_in_server(auth: &foreman_workstate::Auth, settings: &Settings) -> Option<String> {
+    let origin = settings.workstate_origin();
+    matches!(auth.status(&origin), foreman_workstate::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 
 /// How often an unelevated Foreman asks `claude daemon status` whether it can reach the service.
@@ -274,8 +282,6 @@ pub struct Supervision {
     pub daemon: DaemonWatch,
     /// The hold as last logged.
     daemon_logged: Option<String>,
-    /// The WorkState server of the last tick: a change re-mints every held session there (m5/43).
-    origin: Option<String>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -302,7 +308,6 @@ impl Supervision {
             notices: Vec::new(),
             daemon: DaemonWatch::new(foreman_claude::daemon_mismatch),
             daemon_logged: None,
-            origin: None,
         }
     }
 
@@ -315,16 +320,6 @@ impl Supervision {
             Settings::default()
         });
         report.max_working = settings.max_working;
-        let origin = settings.workstate_origin();
-        if self.origin.as_ref().is_some_and(|o| *o != origin) {
-            for (name, s) in &mut self.supervisors {
-                let names = s.server_changed();
-                if !names.is_empty() {
-                    log::info!("{name}: WorkState is now {origin}; restarting {} with tokens minted there", names.join(", "));
-                }
-            }
-        }
-        self.origin = Some(origin);
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {
@@ -353,6 +348,19 @@ impl Supervision {
                     }
                     Ok(None) => {}
                     Err(e) => report.errors.push(format!("Cannot start or retire the relay of {}: {e:#}", p.name)),
+                }
+            }
+        }
+        let server = signed_in_server(&crate::signin::auth(&self.home), &settings);
+        for (name, s) in &mut self.supervisors {
+            let stale = s.server_changed(server.as_deref());
+            if !stale.is_empty() {
+                let names: Vec<&str> = stale.iter().map(|(n, _)| n.as_str()).collect();
+                log::info!("{name}: WorkState is {}; restarting {} with tokens minted there", server.as_deref().unwrap_or_default(), names.join(", "));
+            }
+            for origin in stale.into_iter().filter_map(|(_, o)| o) {
+                if !report.left_servers.contains(&origin) {
+                    report.left_servers.push(origin);
                 }
             }
         }

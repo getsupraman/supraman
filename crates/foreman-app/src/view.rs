@@ -171,6 +171,10 @@ pub struct Tab {
     pub hand: bool,
     /// How a hand session reaches WorkState, as its card says: `Foreman token · <role> · <session>`.
     pub workstate: Option<String>,
+    /// The `hands.json` key of its minted token.
+    pub hand_key: Option<String>,
+    /// The server it should be restarted for: its token is from another one.
+    pub restart_to: Option<String>,
     /// Epoch milliseconds.
     pub opened_at: i64,
     /// The claude session found under a shell tab's pwsh ([`FleetView::resolve_tabs`]): its `sessionId`.
@@ -310,6 +314,12 @@ pub struct FleetView {
     hands: Option<Arc<Mutex<Hands>>>,
     /// What went wrong minting or revoking them.
     pub hand_notices: Vec<String>,
+    /// The server open hand tabs were last checked against ([`Self::sync_server`]).
+    synced_server: Option<String>,
+    /// Servers whose grant this run revoked or tried to ([`Self::leave_servers`]).
+    left_servers: std::collections::HashSet<String>,
+    /// [`supervise::Report::left_servers`] of the last poll, for [`Self::leave_servers`].
+    left_pending: Vec<String>,
     /// Closed sessions from their transcripts (m5/27), as stopped interactive rows.
     pub closed: Vec<Session>,
     /// [`main_repo`] of each closed session's cwd, merged into `main_repos` after every poll.
@@ -548,6 +558,8 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     this.apply(refresh);
+                    let left = std::mem::take(&mut this.left_pending);
+                    this.leave_servers(left, cx);
                     this.resolve_tabs(cx);
                     let pids: Vec<u32> = this
                         .sessions
@@ -666,6 +678,9 @@ impl FleetView {
             sign_in_error: None,
             hands,
             hand_notices: Vec::new(),
+            synced_server: None,
+            left_servers: Default::default(),
+            left_pending: Vec::new(),
             closed: Vec::new(),
             closed_repos: StdHashMap::new(),
             transcript_scans: 0,
@@ -833,6 +848,12 @@ impl FleetView {
                             this.workstate = status;
                             cx.notify();
                         }
+                        if let WsStatus::Ready { url, .. } = &this.workstate
+                            && this.synced_server.as_ref() != Some(url)
+                        {
+                            let url = url.clone();
+                            this.sync_server(url, cx);
+                        }
                     });
                     if alive.is_err() {
                         return;
@@ -862,7 +883,7 @@ impl FleetView {
 
     /// Signs in to `origin` off the UI thread: the browser opens WorkState's sign-in page and the
     /// loopback waits up to 5 minutes. With `from` (Settings changed the server URL) the URL is saved
-    /// only once that worked, and [`Self::server_changed`] follows.
+    /// only once that worked, and `from`'s grant goes. Either way [`Self::sync_server`] follows.
     pub fn sign_in_to(&mut self, origin: String, from: Option<String>, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -882,9 +903,14 @@ impl FleetView {
                 this.signing_in = None;
                 match result {
                     Ok(_) => {
+                        this.left_servers.remove(&origin);
                         if let Some(from) = from {
-                            this.server_changed(&home, from, origin, cx);
+                            match save_workstate_url(&home, &origin) {
+                                Ok(()) => this.leave_servers(vec![from], cx),
+                                Err(e) => this.action_error = Some(e),
+                            }
                         }
+                        this.synced_server = None;
                     }
                     Err(e) => this.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
                 }
@@ -951,34 +977,55 @@ impl FleetView {
         Ok(())
     }
 
-    /// Signed in on the new server `to` (m5/43): `settings.toml` names it, so each supervisor stops and
-    /// resumes its minted sessions with tokens minted there at its next tick ([`Supervision::tick`]);
-    /// every open hand tab is told to restart; the old server's grant is revoked if it can be reached.
-    fn server_changed(&mut self, home: &std::path::Path, from: String, to: String, cx: &mut Context<Self>) {
-        if let Err(e) = save_workstate_url(home, &to) {
-            self.action_error = Some(e);
+    /// Signed in on `origin`, at start or after a sign-in: every open claude tab whose token is from
+    /// another server is told to restart, and the grants of the servers left go. The supervisors re-mint
+    /// their own sessions ([`foreman_supervisor::Supervisor::server_changed`]).
+    fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
+        self.synced_server = Some(origin.clone());
+        let Some(hands) = self.hands.clone() else {
+            return;
+        };
+        let at = origin.clone();
+        let task = cx.background_executor().spawn(async move {
+            let mut hands = hands.lock().unwrap_or_else(|e| e.into_inner());
+            (hands.elsewhere(&at), hands.take_left())
+        });
+        cx.spawn(async move |this, cx| {
+            let (elsewhere, left) = task.await;
+            this.update(cx, |this, cx| {
+                let mut restart = 0;
+                for tab in this.tabs.iter_mut().filter(|t| t.hand && !t.exited) {
+                    let stale = tab.hand_key.as_ref().is_some_and(|k| elsewhere.iter().any(|(n, _)| n == k));
+                    tab.restart_to = stale.then(|| origin.clone());
+                    restart += usize::from(stale);
+                }
+                this.hand_notices.extend(crate::hand::restart_notice(restart, &origin));
+                this.leave_servers(elsewhere.into_iter().filter_map(|(_, o)| o).chain(left).collect(), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Revokes the grant of each of `origins` that is not the server in use, once per run: every token
+    /// minted under it goes with it. One that cannot be reached costs one notice, off the UI thread.
+    fn leave_servers(&mut self, origins: Vec<String>, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone().filter(|_| !origins.is_empty()) else {
+            return;
+        };
+        let current = Settings::load(&home).unwrap_or_default().workstate_origin();
+        let origins: Vec<String> = origins.into_iter().filter(|o| *o != current && self.left_servers.insert(o.clone())).collect();
+        if origins.is_empty() {
             return;
         }
-        let mut restart = 0;
-        for tab in self.tabs.iter_mut().filter(|t| t.hand && !t.exited) {
-            if let Some(ws) = &mut tab.workstate {
-                ws.push_str(&format!(" · restart to use {to}"));
-                restart += 1;
-            }
-        }
-        if restart > 0 {
-            self.hand_notices.push(format!(
-                "{restart} open claude tab{} still use WorkState at {from}: restart {} to use {to}.",
-                if restart == 1 { "" } else { "s" },
-                if restart == 1 { "it" } else { "them" }
-            ));
-        }
-        let auth = crate::signin::auth(home);
-        let revoke = cx.background_executor().spawn(async move { auth.sign_out(&from) });
+        let auth = crate::signin::auth(&home);
+        let revoke = cx.background_executor().spawn(async move { origins.iter().filter_map(|o| auth.sign_out(o).err()).collect::<Vec<_>>() });
         cx.spawn(async move |this, cx| {
-            if let Err(e) = revoke.await {
+            let failed = revoke.await;
+            if !failed.is_empty() {
                 this.update(cx, |this, cx| {
-                    this.hand_notices.push(format!("The old server's grant was not revoked: {e}"));
+                    this.hand_notices.push(format!("The old server's grant was not revoked: {}", failed.join("; ")));
                     cx.notify();
                 })
                 .ok();
@@ -1051,6 +1098,7 @@ impl FleetView {
             self.supervise_errors = report.errors;
             notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
             self.daemon_hold = report.daemon_hold;
+            self.left_pending.extend(report.left_servers);
             self.last_attempt = report.last_attempt.into_iter().collect();
             self.relays = report.relays;
             self.messages = report.messages;
@@ -1420,9 +1468,10 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let launch = launch.await;
             this.update(cx, |this, cx| {
-                if let Launch::Minted { session, notice, .. } = &launch {
+                if let Launch::Minted { name, session, notice, .. } = &launch {
                     if let Some(tab) = this.tab_mut(id) {
                         tab.workstate = Some(format!("Foreman token · {} · {session}", crate::hand::ROLE));
+                        tab.hand_key = Some(name.clone());
                     }
                     this.hand_notices.extend(notice.clone());
                 }
@@ -1672,6 +1721,8 @@ impl FleetView {
             session: None,
             hand: false,
             workstate: None,
+            hand_key: None,
+            restart_to: None,
             opened_at: now_ms(),
             claude: None,
         });
@@ -1716,7 +1767,10 @@ impl FleetView {
             branch: None,
             session,
             kind,
-            workstate: tab.workstate.clone(),
+            workstate: tab.workstate.clone().map(|w| match &tab.restart_to {
+                Some(to) => format!("{w} · restart to use {to}"),
+                None => w,
+            }),
             started,
         }
     }
@@ -1781,6 +1835,8 @@ impl FleetView {
             session: None,
             hand: false,
             workstate: None,
+            hand_key: None,
+            restart_to: None,
             opened_at: now_ms(),
             claude: None,
         });
@@ -2545,6 +2601,8 @@ mod tests {
             session: None,
             hand: false,
             workstate: None,
+            hand_key: None,
+            restart_to: None,
             opened_at: 0,
             claude: claude.map(String::from),
         };

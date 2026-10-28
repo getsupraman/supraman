@@ -235,3 +235,46 @@ fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replac
     assert_ne!(auth.access_token(fake.base()).unwrap(), held);
     assert!(oauth.revoked() == 0);
 }
+
+/// Points `origin`'s revocation endpoint in `<home>/oauth/servers.json` at `url`.
+fn revoke_at(home: &Path, origin: &str, url: &str) {
+    let path = home.join("oauth").join("servers.json");
+    let mut known: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    known["servers"][origin]["revocation_endpoint"] = url.into();
+    std::fs::write(&path, known.to_string()).unwrap();
+}
+
+#[test]
+fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_token() {
+    let (dir, old, _old_oauth, _store, auth) = setup();
+    auth.sign_in(old.base(), &http_browser()).unwrap();
+    let new = FakeWorkState::start(vec![]);
+    new.enable_oauth();
+    auth.sign_in(new.base(), &http_browser()).unwrap();
+    // accepts the connection and never answers: the slowest a gone server can be
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    revoke_at(dir.path(), old.base(), &format!("http://{}/connect/revoke", silent.local_addr().unwrap()));
+
+    let signing_out = auth.clone();
+    let origin = old.base().to_string();
+    let started = std::time::Instant::now();
+    let revoke = std::thread::spawn(move || signing_out.sign_out(&origin));
+    std::thread::sleep(Duration::from_millis(300));
+    let asked = std::time::Instant::now();
+    auth.access_token(new.base()).unwrap();
+    assert!(asked.elapsed() < Duration::from_secs(1), "the new server's token waited {:?} on the revoke", asked.elapsed());
+    let e = revoke.join().unwrap().unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
+    assert!(e.contains("lapses"), "{e}");
+    assert_eq!(auth.status(old.base()), AuthStatus::NotSignedIn, "forgotten even though the revoke failed");
+    assert_eq!(auth.sign_out(old.base()), Ok(()), "nothing left: no second notice");
+    assert!(matches!(auth.status(new.base()), AuthStatus::SignedIn { .. }));
+
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    auth.sign_in(old.base(), &http_browser()).unwrap();
+    revoke_at(dir.path(), old.base(), &format!("http://{closed}/connect/revoke"));
+    let started = std::time::Instant::now();
+    assert!(auth.sign_out(old.base()).is_err());
+    assert!(started.elapsed() < Duration::from_secs(3), "a closed port answers at once: {:?}", started.elapsed());
+    drop(silent);
+}

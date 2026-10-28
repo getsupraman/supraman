@@ -239,6 +239,9 @@ pub struct MintedSession {
     /// last. `None` for a file written before m5/7; the first tick sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active: Option<crate::Millis>,
+    /// The server the token is from ([`api_base`] of its MCP URL); `None`: unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// Per session name, its [`MintedSession`]; persisted at `<FOREMAN_HOME>/supervisor/<workspace>.sessions.json`
@@ -302,6 +305,29 @@ impl MintedSessions {
 
     pub fn names(&self) -> impl Iterator<Item = &String> {
         self.names.keys()
+    }
+
+    /// Gives each session of unknown origin the origin of the URL in its config file under `mcp_dir`, if
+    /// that is still there; saved when one changed.
+    pub fn adopt_origins(&mut self, mcp_dir: &Path) -> std::io::Result<()> {
+        let mut changed = false;
+        for (name, m) in self.names.iter_mut().filter(|(_, m)| m.origin.is_none()) {
+            if let Some(url) = foreman_claude::mcp_config_url(mcp_dir, name) {
+                m.origin = Some(api_base(&url));
+                changed = true;
+            }
+        }
+        if changed { self.save() } else { Ok(()) }
+    }
+
+    /// Every session whose token is not from `origin`, with the origin it is from (`None`: unknown).
+    pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
+        let origin = api_base(origin);
+        self.names
+            .iter()
+            .filter(|(_, m)| m.origin.as_deref() != Some(origin.as_str()))
+            .map(|(name, m)| (name.clone(), m.origin.clone()))
+            .collect()
     }
 }
 
@@ -524,7 +550,13 @@ mod tests {
         let mut s = MintedSessions::load(Some(path.clone())).unwrap();
         s.insert(
             "fm-demo-workspace",
-            MintedSession { session_id: "7".into(), role: "workspace".into(), claude_session_id: None, last_active: Some(42) },
+            MintedSession {
+                session_id: "7".into(),
+                role: "workspace".into(),
+                claude_session_id: None,
+                last_active: Some(42),
+                origin: Some("http://127.0.0.1:5290".into()),
+            },
         );
         s.save().unwrap();
         let back = MintedSessions::load(Some(path.clone())).unwrap();
@@ -532,5 +564,30 @@ mod tests {
         assert!(!home.path().join("supervisor").join("demo.sessions.json.tmp").exists());
         std::fs::write(&path, "not json").unwrap();
         assert!(MintedSessions::load(Some(path)).is_err());
+    }
+
+    #[test]
+    fn minted_sessions_of_unknown_origin_take_their_config_files_and_count_as_elsewhere_without_one() {
+        let home = tempfile::tempdir().unwrap();
+        let (path, mcp) = (MintedSessions::path(home.path(), "demo"), home.path().join("mcp"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"fm-demo-workspace":{"sessionId":"7","role":"workspace"},"fm-demo-alpha":{"sessionId":"8","role":"repo"},
+                "fm-demo-beta":{"sessionId":"9","role":"repo","origin":"https://b.example"}}"#,
+        )
+        .unwrap();
+        foreman_claude::write_mcp_config(&mcp, "fm-demo-workspace", "http://127.0.0.1:5290/mcp", "wss_fake", &[]).unwrap();
+        let mut s = MintedSessions::load(Some(path.clone())).unwrap();
+        assert_eq!(s.get("fm-demo-workspace").unwrap().origin, None, "a file from before m5/48");
+        s.adopt_origins(&mcp).unwrap();
+        let back = MintedSessions::load(Some(path)).unwrap();
+        assert_eq!(back.get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:5290"), "saved");
+        assert_eq!(back.get("fm-demo-alpha").unwrap().origin, None, "no config file: unknown");
+        assert_eq!(
+            back.elsewhere("https://b.example/"),
+            [("fm-demo-alpha".to_string(), None), ("fm-demo-workspace".to_string(), Some("http://127.0.0.1:5290".to_string()))]
+        );
+        assert_eq!(back.elsewhere("http://127.0.0.1:5290").len(), 2, "alpha unknown, beta on b");
     }
 }
