@@ -82,6 +82,9 @@ pub struct Card {
     pub branch: Option<String>,
     pub session: Option<String>,
     pub kind: Option<Kind>,
+    /// A hand tab's WorkState credential: Foreman's token overrides the user's `workstate` entry
+    /// ([`crate::hand`]).
+    pub workstate: Option<String>,
     /// Epoch milliseconds.
     pub started: Option<i64>,
 }
@@ -101,6 +104,7 @@ impl Card {
         put("branch", self.branch.clone());
         put("session", self.session.clone());
         put("kind", self.kind.map(|k| k.label().to_string()));
+        put("WorkState", self.workstate.clone());
         put("started", self.started.and_then(local_time));
         rows
     }
@@ -236,6 +240,13 @@ mod tests {
             ..Card::default()
         };
         assert_eq!(card.text(), "✳ fix the tray\nworkspace  autowork\nfolder  P:\\x\nkind  bg attach");
+        let hand = Card {
+            title: "✳ mw-workflow".into(),
+            kind: Some(Kind::Hand),
+            workstate: Some("Foreman token · orchestrator · mw-workflow".into()),
+            ..Card::default()
+        };
+        assert_eq!(hand.text(), "✳ mw-workflow\nkind  hand\nWorkState  Foreman token · orchestrator · mw-workflow");
     }
 
     #[test]

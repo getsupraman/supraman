@@ -1,23 +1,39 @@
 //! Hand sessions (m5/20): the `+` on a repo row types `claude` into a shell. With WorkState set up
 //! that claude gets its own minted `wss_` token like a supervised session ([`foreman_supervisor::mint`]):
-//! role worker, `externalRole` `hand`, `repo` of its cwd, in an owner-only file passed as
-//! `--mcp-config <file>` WITHOUT `--strict-mcp-config`, so the human keeps every other MCP server
-//! (LEARNINGS: `--mcp-config` beats the user-scope `workstate` registration). The tab's pwsh runs the
+//! role orchestrator (m5/35: a human drives it and runs queues, so it needs work_status/work_update),
+//! `externalRole` `hand`, `repo` of its cwd, in an owner-only file passed as `--mcp-config <file>`
+//! WITHOUT `--strict-mcp-config`, so the human keeps every other MCP server. The tab's pwsh runs the
 //! launch as its `-EncodedCommand` (m5/22): nothing is typed or echoed, and only the path is in it.
+//!
+//! **The override is deliberate.** `--mcp-config` beats the user-scope `workstate` registration
+//! (LEARNINGS mint/7), so a hand session talks to WorkState with Foreman's token, not the user's: it is
+//! revoked with the tab and labelled `foreman/hand`. The tab card says so (`WorkState  Foreman token ·
+//! orchestrator · <name>`).
+//!
+//! **Its name** is the session's own (m5/35): a resume mints with the name the tree shows for it
+//! (registered name, else the transcript's title), a fresh `+` with `hand-<folder>-<n>`. It cannot be
+//! renamed later: a minted token's name is its credential's, WorkState ignores `X-WorkState-Agent` and
+//! refuses `work_session` for it (Skills `docs/workstate/11-sessions.md`, resolution order (a)). The
+//! generated name stays the key of the config file and of `hands.json` either way.
 //!
 //! The token is revoked when that claude exits (the launch deletes its file, [`Hands::ended`]),
 //! when its tab closes, on quit, and on the next start for what an earlier run left
 //! ([`Hands::release_all`]). The mint's bearer is the repo role's static token, else the workspace's:
-//! a worker token cannot mint.
+//! a worker token cannot mint, and the bearer's role caps the orchestrator mint. A refused orchestrator
+//! mint opens the tab plain with the reason; it never falls back to a worker token.
 
 use std::path::{Path, PathBuf};
 
 use foreman_core::Settings;
-use foreman_supervisor::{HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, RoleToken, api_base, git_repo};
+use foreman_supervisor::{HttpMinter, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, RoleToken, api_base, git_repo};
 
 use crate::tokens::token_from;
 
 pub const EXTERNAL_ROLE: &str = "hand";
+/// The WorkState role of every hand session, `+` and resume alike.
+pub const ROLE: &str = "orchestrator";
+/// A session's own name is cut to this many characters for WorkState.
+const MAX_NAME: usize = 64;
 const LAUNCHED_BY: &str = "foreman/hand";
 /// What the launch prints before it starts plain `claude` when its file is already gone, quoted for a
 /// pwsh '…' string.
@@ -28,8 +44,9 @@ const STALE: &str = "This tab''s WorkState token was revoked when its claude exi
 pub enum Launch {
     /// No WorkState: plain `claude`, as before m5/20.
     Plain,
-    /// Its own token in `config`.
-    Minted { name: String, config: PathBuf },
+    /// Its own token in `config`. `name` keys the file and `hands.json`; `session` is the WorkState
+    /// session's name; `notice` says why it is not the one asked for.
+    Minted { name: String, session: String, config: PathBuf, notice: Option<String> },
     /// WorkState is set up but the mint failed: plain `claude`, and this notice.
     Unminted(String),
 }
@@ -80,6 +97,17 @@ pub struct Hands {
     minter: Box<dyn Minter + Send>,
     repo_of: fn(&Path) -> Option<MintRepo>,
     minted: MintedSessions,
+    /// The WorkState name of each key in `minted` launched by this run.
+    sessions: std::collections::HashMap<String, String>,
+}
+
+/// `raw` (a session's name as the tree shows it) as a WorkState session name: one line, no control or
+/// bidi characters, at most [`MAX_NAME`] characters. `None` when nothing is left.
+pub fn session_name(raw: &str) -> Option<String> {
+    let line = crate::tab_card::sanitize(raw)?;
+    let cut: String = line.chars().take(MAX_NAME).collect();
+    let cut = cut.trim_end().to_string();
+    (!cut.is_empty()).then_some(cut)
 }
 
 impl Hands {
@@ -106,6 +134,7 @@ impl Hands {
             minter: Box::new(minter),
             repo_of,
             minted,
+            sessions: Default::default(),
         };
         (hands, notice)
     }
@@ -138,16 +167,19 @@ impl Hands {
         (1..).map(|n| format!("hand-{folder}-{n}")).find(|n| self.minted.get(n).is_none()).unwrap()
     }
 
-    /// Mints the token of a new `+` session in `cwd` and writes its config file.
-    pub fn launch(&mut self, cwd: &Path) -> Launch {
+    /// Mints the token of a `+` session in `cwd` and writes its config file. `own` is the session's
+    /// own name when it has one (a resume); else, or when another launcher holds that name, it is
+    /// `hand-<folder>-<n>`.
+    pub fn launch(&mut self, cwd: &Path, own: Option<&str>) -> Launch {
         let Some((role, bearer)) = self.bearer(None) else {
             return Launch::Plain;
         };
         let name = self.next_name(cwd);
         let folder = cwd.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        let request = MintRequest {
-            name: name.clone(),
-            role: "worker".into(),
+        let base = api_base(&bearer.url);
+        let mut request = MintRequest {
+            name: own.and_then(session_name).unwrap_or_else(|| name.clone()),
+            role: ROLE.into(),
             launched_by: LAUNCHED_BY.into(),
             origin: format!("{LAUNCHED_BY}/{folder}"),
             cwd: cwd.to_string_lossy().into_owned(),
@@ -155,10 +187,24 @@ impl Hands {
             replace: true,
             repo: (self.repo_of)(cwd),
         };
-        let base = api_base(&bearer.url);
+        let mut notice = None;
+        // `replace` would take the token of another tab's session of that name
+        if self.sessions.values().any(|s| *s == request.name) {
+            notice = Some(format!("WorkState session {name}, not {}: another tab holds that name", request.name));
+            request.name = name.clone();
+        }
         let minted = match self.minter.mint(&base, &bearer.token, &request) {
+            // `replace` covers a live token, so a 409 is another launcher's name (doc 14 §2)
+            Err(MintError::Refused { status: 409, reason }) if request.name != name => {
+                notice = Some(format!("WorkState session {name}, not {}: {reason}", request.name));
+                request.name = name.clone();
+                self.minter.mint(&base, &bearer.token, &request)
+            }
+            other => other,
+        };
+        let minted = match minted {
             Ok(m) => m,
-            Err(e) => return Launch::Unminted(format!("This claude session runs without its own WorkState token: cannot mint one ({e})")),
+            Err(e) => return Launch::Unminted(format!("This claude session runs without its own WorkState token: cannot mint an {ROLE} one ({e})")),
         };
         self.minted.insert(
             &name,
@@ -170,8 +216,9 @@ impl Hands {
             },
         );
         let _ = self.minted.save();
+        self.sessions.insert(name.clone(), request.name.clone());
         match foreman_claude::write_mcp_config(&self.mcp_dir(), &name, &bearer.url, &minted.token, &[]) {
-            Ok(config) => Launch::Minted { name, config },
+            Ok(config) => Launch::Minted { name, session: request.name, config, notice },
             Err(e) => {
                 let revoked = self.release(&name);
                 Launch::Unminted(format!(
@@ -190,6 +237,7 @@ impl Hands {
     /// Revokes `name`'s token and deletes its config file. `Some` notice when the revoke failed.
     pub fn release(&mut self, name: &str) -> Option<String> {
         let m = self.minted.remove(name)?;
+        self.sessions.remove(name);
         let _ = std::fs::remove_file(self.config_path(name));
         let result = match self.bearer(Some(&m.role)) {
             Some((_, t)) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
@@ -295,7 +343,7 @@ mod tests {
         let (mut hands, notice) = Hands::with(&home, HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
 
-        let Launch::Minted { name, config } = hands.launch(Path::new(r"C:\demo\alpha")) else { panic!() };
+        let Launch::Minted { name, config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         assert_eq!(name, "hand-alpha-1");
         let (line, auth, body) = seen.recv_timeout(WAIT).unwrap();
         assert_eq!(line, "POST /api/agent-sessions HTTP/1.1");
@@ -304,7 +352,7 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({
-                "name": "hand-alpha-1", "role": "worker", "launchedBy": "foreman/hand", "origin": "foreman/hand/alpha",
+                "name": "hand-alpha-1", "role": "orchestrator", "launchedBy": "foreman/hand", "origin": "foreman/hand/alpha",
                 "cwd": r"C:\demo\alpha", "externalRole": "hand", "replace": true,
                 "repo": { "root": "C:/demo/alpha", "remote": "https://example.invalid/demo/alpha.git" }
             })
@@ -313,18 +361,18 @@ mod tests {
         assert!(text.contains("Bearer wss_fake1") && text.contains(&url), "the minted token, not the static one");
         assert!(!text.contains("fake-static"));
 
-        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo")) else { panic!() };
+        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };
         assert_eq!(name, "hand-demo-1");
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body.get("repo"), None, "not in a repo: no repo");
-        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo\alpha")) else { panic!() };
+        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         assert_eq!(name, "hand-alpha-2", "a second + in the same repo");
     }
 
     #[test]
     fn hand_script_passes_only_the_path_and_no_strict_flag() {
         let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
-        let launch = Launch::Minted { name: "hand-alpha-1".into(), config };
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None };
         let script = launch.script();
         let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
@@ -352,7 +400,7 @@ mod tests {
         let (url, _seen) = fake_workstate(vec![]);
         let home = home_with(dir.path(), Some(&url), ENV);
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
-        let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha")) else { panic!() };
+        let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         #[cfg(windows)]
         {
             let out = std::process::Command::new("icacls").arg(&config).output().unwrap();
@@ -378,7 +426,7 @@ mod tests {
         let alpha = Path::new(r"C:\demo\alpha");
 
         // exit: the launch deleted the file
-        let Launch::Minted { name, config } = hands.launch(alpha) else { panic!() };
+        let Launch::Minted { name, config, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert!(!hands.ended(&name));
         std::fs::remove_file(&config).unwrap();
@@ -389,15 +437,15 @@ mod tests {
         assert!(!hands.ended(&name), "forgotten");
 
         // close: the tab went while claude ran
-        let Launch::Minted { name, config } = hands.launch(alpha) else { panic!() };
+        let Launch::Minted { name, config, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert_eq!(hands.release(&name), None);
         assert_eq!(seen.recv_timeout(WAIT).unwrap().0, "DELETE /api/agent-sessions/h2 HTTP/1.1");
         assert!(!config.exists(), "close deletes the file");
 
         // quit
-        let Launch::Minted { config: c3, .. } = hands.launch(alpha) else { panic!() };
-        let Launch::Minted { config: c4, .. } = hands.launch(Path::new(r"C:\demo")) else { panic!() };
+        let Launch::Minted { config: c3, .. } = hands.launch(alpha, None) else { panic!() };
+        let Launch::Minted { config: c4, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         seen.recv_timeout(WAIT).unwrap();
         assert!(hands.release_all().is_empty());
@@ -407,7 +455,7 @@ mod tests {
         assert!(!c3.exists() && !c4.exists() && hands.names().is_empty());
 
         // restart: a run that ended without quitting left one; the next start revokes it
-        let Launch::Minted { config: c5, .. } = hands.launch(alpha) else { panic!() };
+        let Launch::Minted { config: c5, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         drop(hands);
         let (mut again, _) = Hands::with(&home, HttpMinter::default(), a_repo);
@@ -425,14 +473,14 @@ mod tests {
         let (_url, seen) = fake_workstate(vec![]);
         let home = home_with(dir.path(), None, "");
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
-        assert_eq!(hands.launch(Path::new(r"C:\demo\alpha")), Launch::Plain);
+        assert_eq!(hands.launch(Path::new(r"C:\demo\alpha"), None), Launch::Plain);
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no request");
         assert!(!home.join("mcp").exists());
         assert!(hands.release_all().is_empty());
         // a .env with only a worker line cannot mint either
         let home = home_with(dir.path(), Some("http://127.0.0.1:9/mcp"), "WORKSTATE_WORKER_TOKEN=fake-worker\n");
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
-        assert_eq!(hands.launch(Path::new(r"C:\demo\alpha")), Launch::Plain);
+        assert_eq!(hands.launch(Path::new(r"C:\demo\alpha"), None), Launch::Plain);
     }
 
     #[test]
@@ -441,15 +489,85 @@ mod tests {
         let (url, seen) = fake_workstate(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
         let home = home_with(dir.path(), Some(&url), "WORKSTATE_CONTROLLER_TOKEN=fake-static-ctl\n");
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
-        let launch = hands.launch(Path::new(r"C:\demo\alpha"));
+        let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
         assert_eq!(
             launch,
             Launch::Unminted(
-                "This claude session runs without its own WorkState token: cannot mint one (WorkState answered HTTP 409: name held by another launcher)".into()
+                "This claude session runs without its own WorkState token: cannot mint an orchestrator one (WorkState answered HTTP 409: name held by another launcher)".into()
             )
         );
         assert_eq!(launch.script(), "claude");
         assert_eq!(seen.recv_timeout(WAIT).unwrap().1, "Bearer fake-static-ctl", "the workspace token when there is no repo one");
+        assert!(hands.names().is_empty());
+    }
+
+    /// m5/35: a resume mints an orchestrator under the session's own name, on the same bearer; the
+    /// file key stays Foreman's.
+    #[test]
+    fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_workstate(vec![]);
+        let home = home_with(dir.path(), Some(&url), ENV);
+        let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
+        let alpha = Path::new(r"C:\demo\alpha");
+
+        let Launch::Minted { name, session, config, notice } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
+        assert_eq!((name.as_str(), session.as_str(), notice), ("hand-alpha-1", "mw-workflow", None));
+        assert!(config.ends_with("workstate-hand-alpha-1.json"), "the file keeps Foreman's key: {config:?}");
+        let (_, auth, body) = seen.recv_timeout(WAIT).unwrap();
+        assert_eq!(auth, "Bearer fake-static-orch");
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!((body["name"].as_str(), body["role"].as_str()), (Some("mw-workflow"), Some("orchestrator")));
+        assert_eq!((body["launchedBy"].as_str(), body["externalRole"].as_str()), (Some("foreman/hand"), Some("hand")));
+
+        // the same session in a second tab would take the first one's token: it gets the generated name
+        let Launch::Minted { session, notice, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
+        assert_eq!(session, "hand-alpha-2");
+        assert!(notice.is_some_and(|n| n.contains("another tab holds that name")));
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!(body["name"].as_str(), Some("hand-alpha-2"));
+
+        // a title is cut to one line of 64 characters; a blank one is no name
+        let Launch::Minted { session, .. } = hands.launch(alpha, Some(&format!("  Fix the\tdeploy\n{}", "x".repeat(80)))) else { panic!() };
+        assert_eq!(session, format!("Fix the deploy {}", "x".repeat(49)));
+        seen.recv_timeout(WAIT).unwrap();
+        let Launch::Minted { session, .. } = hands.launch(alpha, Some(" \u{200B} ")) else { panic!() };
+        assert_eq!(session, "hand-alpha-4");
+        seen.recv_timeout(WAIT).unwrap();
+
+        // released, the name is free again
+        assert!(hands.release_all().is_empty());
+        let Launch::Minted { session, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
+        assert_eq!(session, "mw-workflow");
+    }
+
+    #[test]
+    fn hand_name_held_by_another_launcher_falls_back_to_the_generated_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_workstate(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
+        let home = home_with(dir.path(), Some(&url), ENV);
+        let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
+        let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
+        assert_eq!((name.as_str(), session.as_str()), ("hand-alpha-1", "hand-alpha-1"));
+        assert!(notice.unwrap().starts_with("WorkState session hand-alpha-1, not nomos-0c: "));
+        let names: Vec<String> = (0..2)
+            .map(|_| serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["nomos-0c", "hand-alpha-1"]);
+    }
+
+    /// A bearer whose role cannot mint an orchestrator: plain, with the reason, and no worker mint.
+    #[test]
+    fn hand_refused_orchestrator_is_not_minted_as_a_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_workstate(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
+        let home = home_with(dir.path(), Some(&url), ENV);
+        let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
+        let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow")) else { panic!() };
+        assert!(notice.contains("cannot mint an orchestrator one (WorkState answered HTTP 403"), "{notice}");
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!(body["role"].as_str(), Some("orchestrator"));
+        assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no second mint");
         assert!(hands.names().is_empty());
     }
 
@@ -469,7 +587,7 @@ mod tests {
         let fake = format!("@echo %*> \"{}\"\r\n@echo fake claude ran\r\n@exit /b 3\r\n", seen.display());
         std::fs::write(dir.path().join("claude.cmd"), fake).unwrap();
         let path = format!("{};{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
-        let launch = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() };
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None };
         // -NoExit's prompt reads stdin; a closed one ends it like a human typing `exit`.
         let out = std::process::Command::new("pwsh")
             .args(["-NoLogo", "-NoProfile"])
@@ -497,7 +615,7 @@ mod tests {
         let config = dir.path().join("workstate-hand-alpha-1.json");
         std::fs::write(&config, "{}").unwrap();
         let seen = dir.path().join("argv.txt");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), config: config.clone() }.script();
+        let line = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None }.script();
         let script = format!(
             "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
             seen.display(),
