@@ -182,8 +182,8 @@ impl FleetView {
                 div()
                     .px_3()
                     .pb_1()
-                    .text_xs()
-                    .text_color(colors.text_muted)
+                    .text_size(px(10.))
+                    .text_color(colors.text_placeholder)
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .child(SharedString::from(menu.title.clone())),
