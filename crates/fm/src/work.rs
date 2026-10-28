@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use foreman_workstate::{Auth, Board, BoardRow, Client, ItemRef, Overview, Rollup};
+use foreman_workstate::{Auth, AuthStatus, Board, BoardRow, Client, ItemRef, Overview, Rollup};
 
 use crate::Failure;
 
@@ -38,6 +38,9 @@ fn client(home: &Path) -> Result<Client, Failure> {
     let auth = Auth::open(home);
     let origin = auth.configured_origin();
     auth.access_token(&origin).map_err(refused)?;
+    if let AuthStatus::SignedIn { unsaved: Some(why), .. } = auth.status(&origin) {
+        eprintln!("warning: {why}");
+    }
     Ok(Client::with_source(origin.as_str(), auth.bearer_for(&origin)))
 }
 

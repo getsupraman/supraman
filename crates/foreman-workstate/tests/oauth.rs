@@ -52,7 +52,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
             browser(url)
         })
         .unwrap();
-    assert_eq!(status, AuthStatus::SignedIn { who: Some("Fake Operator".into()) });
+    assert_eq!(status, AuthStatus::SignedIn { who: Some("Fake Operator".into()), unsaved: None });
     assert_eq!(oauth.registrations(), 1);
 
     let url = asked.lock().unwrap().clone();
@@ -67,7 +67,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
 
     assert!(store.get(&oauth.issuer()).unwrap().is_some(), "the refresh token, keyed by issuer");
     let known = std::fs::read_to_string(dir.path().join("oauth").join("servers.json")).unwrap();
-    assert!(known.contains("fake-client-1") && known.contains(&oauth.issuer()), "{known}");
+    assert!(known.contains(&oauth.registered()[0]) && known.contains(&oauth.issuer()), "{known}");
 
     let client = Client::with_source(fake.base(), auth.bearer_for(fake.base()));
     client.overview().unwrap();
@@ -112,11 +112,11 @@ fn a_fresh_process_refreshes_from_the_store() {
     let (dir, fake, _oauth, store, auth) = setup();
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     let other = Auth::with_store(dir.path(), store.clone());
-    assert_eq!(other.status(fake.base()), AuthStatus::SignedIn { who: None }, "known without a call");
+    assert_eq!(other.status(fake.base()), AuthStatus::SignedIn { who: None, unsaved: None }, "known without a call");
     let (origin, token) = other.current().unwrap();
     assert_eq!(origin, fake.base());
     assert!(token.starts_with("eyJ"));
-    assert_eq!(other.status(fake.base()), AuthStatus::SignedIn { who: Some("Fake Operator".into()) });
+    assert_eq!(other.status(fake.base()), AuthStatus::SignedIn { who: Some("Fake Operator".into()), unsaved: None });
 }
 
 #[test]
@@ -146,7 +146,8 @@ fn every_sign_in_registers_a_fresh_client_kept_with_its_refresh_token() {
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     assert_eq!(oauth.registrations(), 2, "a cached client_id is never sent to authorize");
     let known = std::fs::read_to_string(dir.path().join("oauth").join("servers.json")).unwrap();
-    assert!(known.contains("fake-client-2") && !known.contains("fake-client-1"), "{known}");
+    let ids = oauth.registered();
+    assert!(known.contains(&ids[1]) && !known.contains(&ids[0]), "{known}");
     assert!(auth.access_token(fake.base()).is_ok());
 }
 
@@ -163,7 +164,7 @@ fn a_wiped_server_is_sign_in_again_then_a_fresh_registration() {
     assert!(matches!(auth.status(fake.base()), AuthStatus::SignInAgain(_)));
     assert_eq!(store.get(&oauth.issuer()).unwrap(), None, "the refresh token is dropped");
     let known = std::fs::read_to_string(dir.path().join("oauth").join("servers.json")).unwrap();
-    assert!(!known.contains("fake-client-1"), "and its client_id: {known}");
+    assert!(!known.contains(&oauth.registered()[0]), "and its client_id: {known}");
     let fresh = Auth::with_store(dir.path(), store.clone());
     assert_eq!(fresh.status(fake.base()), AuthStatus::NotSignedIn, "a new process sees no grant");
 
@@ -181,6 +182,7 @@ fn a_refused_refresh_is_sign_in_again_without_retrying() {
     oauth.fail_refresh(true);
     let e = auth.access_token(fake.base()).unwrap_err();
     assert!(matches!(&e, AuthError::SignInAgain { why, .. } if why.contains("invalid_grant")), "{e}");
+    assert_eq!(oauth.refusals(), ["token (refresh_token) invalid_grant: refused on request"]);
     assert!(matches!(auth.status(fake.base()), AuthStatus::SignInAgain(_)));
     let refreshes = || fake.seen().iter().filter(|s| s.body.contains("grant_type=refresh_token")).count();
     let before = refreshes();
@@ -277,4 +279,178 @@ fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_to
     assert!(auth.sign_out(old.base()).is_err());
     assert!(started.elapsed() < Duration::from_secs(3), "a closed port answers at once: {:?}", started.elapsed());
     drop(silent);
+}
+
+#[test]
+fn the_fake_names_why_it_refuses_a_refresh_and_its_ids_are_not_guessable() {
+    let (_dir, fake, oauth, store, auth) = setup();
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    let first = store.get(&oauth.issuer()).unwrap().unwrap();
+    auth.access_token(fake.base()).unwrap();
+    let other = FakeWorkState::start(vec![]);
+    let other_oauth = other.enable_oauth();
+    Auth::with_store(_dir.path(), Arc::new(MemoryStore::default())).sign_in(other.base(), &http_browser()).unwrap();
+    for id in oauth.registered().iter().chain(oauth.issued().iter()) {
+        assert!(!other_oauth.registered().contains(id) && !other_oauth.issued().contains(id), "an id repeats across fakes");
+    }
+    store.set(&oauth.issuer(), &first).unwrap();
+    assert!(auth.access_token(fake.base()).is_err());
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    store.set(&oauth.issuer(), "fake-rt-never-issued").unwrap();
+    assert!(auth.access_token(fake.base()).is_err());
+    assert_eq!(
+        oauth.refusals(),
+        ["token (refresh_token) invalid_grant: redeemed", "token (refresh_token) invalid_grant: unknown"]
+    );
+}
+
+/// A refresh in flight holds only the refresh lock: `status()`, which the UI thread calls, answers
+/// meanwhile (F-08).
+#[test]
+fn status_answers_while_a_refresh_is_in_flight() {
+    let (_dir, fake, oauth, _store, auth) = setup();
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    oauth.stall_tokens(true);
+    let refreshing = auth.clone();
+    let origin = fake.base().to_string();
+    let refresh = std::thread::spawn(move || refreshing.access_token(&origin));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while oauth.stalled() == 0 {
+        assert!(std::time::Instant::now() < deadline, "the refresh never reached the token endpoint");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let asking = auth.clone();
+    let origin = fake.base().to_string();
+    std::thread::spawn(move || tx.send(asking.status(&origin)).unwrap());
+    let status = rx.recv_timeout(Duration::from_secs(2));
+    oauth.stall_tokens(false);
+    assert!(matches!(status, Ok(AuthStatus::SignedIn { .. })), "status() waited on the refresh: {status:?}");
+    assert!(refresh.join().unwrap().is_ok());
+}
+
+/// Two threads that both need a refresh: one refreshes, the other takes its token (one rotation).
+#[test]
+fn concurrent_callers_share_one_refresh() {
+    let (_dir, fake, oauth, _store, auth) = setup();
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    auth.forget_access(&auth.access_token(fake.base()).unwrap());
+    oauth.stall_tokens(true);
+    let callers: Vec<_> = (0..2)
+        .map(|_| {
+            let (auth, origin) = (auth.clone(), fake.base().to_string());
+            std::thread::spawn(move || auth.access_token(&origin))
+        })
+        .collect();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while oauth.stalled() == 0 {
+        assert!(std::time::Instant::now() < deadline, "no refresh reached the token endpoint");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    oauth.stall_tokens(false);
+    let tokens: Vec<String> = callers.into_iter().map(|c| c.join().unwrap().unwrap()).collect();
+    assert_eq!(tokens[0], tokens[1]);
+    let refreshes = fake.seen().iter().filter(|s| s.body.contains("grant_type=refresh_token")).count();
+    assert_eq!(refreshes, 1);
+    assert!(oauth.refusals().is_empty(), "{:?}", oauth.refusals());
+}
+
+/// A `servers.json` that cannot be parsed is reported and left as it is: it holds other origins'
+/// clients (F-09).
+#[test]
+fn a_damaged_servers_json_is_reported_and_never_written_over() {
+    let (dir, fake, _oauth, _store, auth) = setup();
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    let path = dir.path().join("oauth").join("servers.json");
+    let damaged = b"{\"servers\": {\"https://other.example\": ".to_vec();
+    std::fs::write(&path, &damaged).unwrap();
+    let fresh = Auth::with_store(dir.path(), Arc::new(MemoryStore::default()));
+
+    let status = fresh.status(fake.base());
+    assert!(matches!(&status, AuthStatus::SignInAgain(why) if why.contains("servers.json") && why.contains("damaged")), "{status:?}");
+    assert!(matches!(fresh.access_token(fake.base()), Err(AuthError::Store(why)) if why.contains("damaged")));
+    assert!(matches!(fresh.sign_in(fake.base(), &http_browser()), Err(AuthError::Store(_))));
+    assert!(fresh.sign_out(fake.base()).unwrap_err().contains("damaged"));
+    assert_eq!(std::fs::read(&path).unwrap(), damaged, "the file is untouched");
+
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(fresh.status(fake.base()), AuthStatus::NotSignedIn, "no file is an empty one");
+}
+
+/// A store that refuses what Credential Manager's single blob could not hold.
+#[derive(Default)]
+struct BlobLimited(MemoryStore);
+
+impl SecretStore for BlobLimited {
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        self.0.get(key)
+    }
+
+    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+        if secret.len() > 2560 { Err("Credential Manager: The stub received bad data.".into()) } else { self.0.set(key, secret) }
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        self.0.delete(key)
+    }
+}
+
+/// The server spent the old refresh token, so a new one the store refuses is kept for this process
+/// and the status says the sign-in will not outlive it.
+#[test]
+fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
+    let (dir, fake, oauth, _store, _auth) = setup();
+    let store = Arc::new(BlobLimited::default());
+    let auth = Auth::with_store(dir.path(), store.clone());
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    oauth.set_refresh_len(6 * 1024);
+    auth.access_token(fake.base()).unwrap();
+    let status = auth.status(fake.base());
+    assert!(
+        matches!(&status, AuthStatus::SignedIn { unsaved: Some(why), .. } if why.contains("stub received bad data") && why.contains("until this process ends")),
+        "{status:?}"
+    );
+    for _ in 0..2 {
+        auth.access_token(fake.base()).unwrap();
+    }
+    assert!(oauth.refusals().is_empty(), "each refresh used the token held in memory: {:?}", oauth.refusals());
+    oauth.set_refresh_len(0);
+    auth.access_token(fake.base()).unwrap();
+    assert_eq!(auth.status(fake.base()), AuthStatus::SignedIn { who: Some("Fake Operator".into()), unsaved: None }, "stored again");
+    assert_eq!(store.get(&oauth.issuer()).unwrap().as_ref(), oauth.issued().last());
+}
+
+/// WorkState 1.0.0's refresh tokens are longer than one Credential Manager blob.
+#[cfg(windows)]
+#[test]
+fn a_6_kb_refresh_token_rotates_through_credential_manager() {
+    use foreman_workstate::secret::CredentialStore;
+    let (dir, fake, oauth, _store, _auth) = setup();
+    let mut r = [0u8; 8];
+    getrandom::fill(&mut r).unwrap();
+    let prefix = format!("fm-test-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    struct Cleanup(CredentialStore, String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = self.0.delete(&self.1);
+        }
+    }
+    let cleanup = Cleanup(CredentialStore::new(&prefix), oauth.issuer());
+    oauth.set_access_ttl(60);
+    oauth.set_refresh_len(6 * 1024);
+    let auth = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    for _ in 0..2 {
+        auth.access_token(fake.base()).unwrap();
+        let stored = cleanup.0.get(&cleanup.1).unwrap().unwrap();
+        assert_eq!((stored.len(), Some(&stored)), (6 * 1024, oauth.issued().last()));
+    }
+    assert_eq!(auth.status(fake.base()), AuthStatus::SignedIn { who: Some("Fake Operator".into()), unsaved: None });
+    let next = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
+    next.access_token(fake.base()).unwrap();
+    assert!(oauth.refusals().is_empty(), "{:?}", oauth.refusals());
 }

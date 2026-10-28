@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -213,10 +213,17 @@ struct Code {
     grant: u64,
 }
 
+/// `fake-<what>-<16 random hex>`: no id is guessable from another fake or another run.
+fn fresh_id(what: &str) -> String {
+    let mut r = [0u8; 8];
+    getrandom::fill(&mut r).expect("the OS random source");
+    format!("fake-{what}-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
 #[derive(Default)]
 struct AuthState {
     clients: Vec<String>,
-    registrations: usize,
+    registered: Vec<String>,
     codes: HashMap<String, Code>,
     /// Access token → (grant, expiry).
     access: HashMap<String, (u64, Instant)>,
@@ -225,9 +232,11 @@ struct AuthState {
     revoked: HashSet<u64>,
     next: u64,
     access_ttl: u64,
+    refresh_len: usize,
     fail_refresh: bool,
     deny: bool,
     issued: Vec<String>,
+    refusals: Vec<String>,
 }
 
 /// A fake OAuth 2.1 authorization server for the resource `<base>/api`, shaped like WorkState's
@@ -236,6 +245,8 @@ struct AuthState {
 pub struct FakeAuth {
     base: String,
     state: Mutex<AuthState>,
+    /// (stalled, token requests waiting): see [`Self::stall_tokens`].
+    stall: (Mutex<(bool, usize)>, Condvar),
 }
 
 impl FakeAuth {
@@ -243,6 +254,7 @@ impl FakeAuth {
         Self {
             base: base.trim_end_matches('/').to_string(),
             state: Mutex::new(AuthState { access_ttl: 3600, ..AuthState::default() }),
+            stall: (Mutex::new((false, 0)), Condvar::new()),
         }
     }
 
@@ -267,6 +279,11 @@ impl FakeAuth {
         self.st().access_ttl = secs;
     }
 
+    /// Refresh tokens issued from now on are padded to `bytes` (WorkState 1.0.0's exceed 2560).
+    pub fn set_refresh_len(&self, bytes: usize) {
+        self.st().refresh_len = bytes;
+    }
+
     /// Every refresh from now on is `invalid_grant`.
     pub fn fail_refresh(&self, fail: bool) {
         self.st().fail_refresh = fail;
@@ -278,7 +295,39 @@ impl FakeAuth {
     }
 
     pub fn registrations(&self) -> usize {
-        self.st().registrations
+        self.st().registered.len()
+    }
+
+    /// Every client_id registered so far, in order.
+    pub fn registered(&self) -> Vec<String> {
+        self.st().registered.clone()
+    }
+
+    /// While on, `/connect/token` requests wait unanswered; off releases them.
+    pub fn stall_tokens(&self, on: bool) {
+        let (lock, cvar) = &self.stall;
+        lock.lock().unwrap_or_else(|e| e.into_inner()).0 = on;
+        cvar.notify_all();
+    }
+
+    /// Token requests waiting in a stall.
+    pub fn stalled(&self) -> usize {
+        self.stall.0.lock().unwrap_or_else(|e| e.into_inner()).1
+    }
+
+    fn wait_out_stall(&self) {
+        let (lock, cvar) = &self.stall;
+        let mut s = lock.lock().unwrap_or_else(|e| e.into_inner());
+        s.1 += 1;
+        while s.0 {
+            s = cvar.wait(s).unwrap_or_else(|e| e.into_inner());
+        }
+        s.1 -= 1;
+    }
+
+    /// Every OAuth error this fake answered: `<endpoint> <error>: <why>`. Never a token.
+    pub fn refusals(&self) -> Vec<String> {
+        self.st().refusals.clone()
     }
 
     /// Every token issued so far, access and refresh: what a test greps a home for.
@@ -304,11 +353,12 @@ impl FakeAuth {
     }
 
     fn issue(&self, st: &mut AuthState, grant: u64) -> serde_json::Value {
-        st.next += 1;
-        let n = st.next;
-        let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"fake-operator","name":"Fake Operator","jti":{n}}}"#));
-        let access = format!("eyJhbGciOiJub25lIn0.{claims}.fake-at-{n}");
-        let refresh = format!("fake-rt-{n}");
+        let jti = fresh_id("jti");
+        let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"fake-operator","name":"Fake Operator","jti":"{jti}"}}"#));
+        let access = format!("eyJhbGciOiJub25lIn0.{claims}.{}", fresh_id("at"));
+        let mut refresh = fresh_id("rt");
+        let pad = st.refresh_len.saturating_sub(refresh.len());
+        refresh.push_str(&"r".repeat(pad));
         st.access.insert(access.clone(), (grant, Instant::now() + Duration::from_secs(st.access_ttl)));
         st.refresh.insert(refresh.clone(), (grant, false));
         st.issued.push(access.clone());
@@ -321,6 +371,13 @@ impl FakeAuth {
 
     fn error(status: u16, error: &str) -> Answer {
         Answer { api: None, ..Answer::status(status, format!(r#"{{"error":"{error}"}}"#)) }
+    }
+
+    /// An OAuth error with an `error_description`, recorded in [`Self::refusals`].
+    fn refuse(st: &mut AuthState, endpoint: &str, error: &str, why: &str) -> Answer {
+        st.refusals.push(format!("{endpoint} {error}: {why}"));
+        let body = serde_json::json!({ "error": error, "error_description": why });
+        Answer { api: None, ..Answer::status(400, body.to_string()) }
     }
 
     fn json(v: serde_json::Value) -> Answer {
@@ -360,8 +417,8 @@ impl FakeAuth {
                     return Some(Self::error(400, "invalid_client_metadata"));
                 }
                 let mut st = self.st();
-                st.registrations += 1;
-                let id = format!("fake-client-{}", st.registrations);
+                let id = fresh_id("client");
+                st.registered.push(id.clone());
                 st.clients.push(id.clone());
                 Answer { status: 201, ..Self::json(serde_json::json!({ "client_id": id, "token_endpoint_auth_method": "none" })) }
             }
@@ -393,7 +450,7 @@ impl FakeAuth {
                 }
                 st.next += 1;
                 let grant = st.next;
-                let code = format!("fake-code-{grant}");
+                let code = fresh_id("code");
                 st.codes.insert(
                     code.clone(),
                     Code { client_id: get("client_id"), redirect_uri: redirect.clone(), challenge: get("code_challenge"), grant },
@@ -401,34 +458,43 @@ impl FakeAuth {
                 Self::plain(302, "").header("Location", format!("{redirect}?code={code}&state={state}"))
             }
             ("POST", "/connect/token") => {
+                self.wait_out_stall();
                 let f = form_decode(body);
                 let get = |k: &str| f.get(k).cloned().unwrap_or_default();
                 let mut st = self.st();
+                let grant_type = get("grant_type");
+                let endpoint = format!("token ({grant_type})");
                 if !st.clients.contains(&get("client_id")) {
-                    return Some(Self::error(400, "invalid_client"));
+                    return Some(Self::refuse(&mut st, &endpoint, "invalid_client", "unknown client"));
                 }
-                match get("grant_type").as_str() {
+                match grant_type.as_str() {
                     "authorization_code" => {
-                        let Some(code) = st.codes.remove(&get("code")) else { return Some(Self::error(400, "invalid_grant")) };
+                        let Some(code) = st.codes.remove(&get("code")) else {
+                            return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "unknown or used code"));
+                        };
                         let pkce = URL_SAFE_NO_PAD.encode(Sha256::digest(get("code_verifier").as_bytes()));
                         if code.client_id != get("client_id") || code.redirect_uri != get("redirect_uri") || code.challenge != pkce {
-                            return Some(Self::error(400, "invalid_grant"));
+                            return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "client, redirect or PKCE mismatch"));
                         }
                         Self::json(self.issue(&mut st, code.grant))
                     }
                     "refresh_token" => {
                         if st.fail_refresh {
-                            return Some(Self::error(400, "invalid_grant"));
+                            return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "refused on request"));
                         }
                         let rt = get("refresh_token");
-                        let grant = match st.refresh.get(&rt) {
-                            Some((grant, false)) if !st.revoked.contains(grant) => *grant,
-                            _ => return Some(Self::error(400, "invalid_grant")),
+                        let grant = match st.refresh.get(&rt).copied() {
+                            Some((grant, _)) if st.revoked.contains(&grant) => {
+                                return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "revoked"));
+                            }
+                            Some((grant, false)) => grant,
+                            Some(_) => return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "redeemed")),
+                            None => return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "unknown")),
                         };
                         st.refresh.insert(rt, (grant, true));
                         Self::json(self.issue(&mut st, grant))
                     }
-                    _ => Self::error(400, "unsupported_grant_type"),
+                    _ => Self::refuse(&mut st, &endpoint, "unsupported_grant_type", "unsupported grant_type"),
                 }
             }
             ("POST", "/connect/revoke") => {
