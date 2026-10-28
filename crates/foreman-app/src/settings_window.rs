@@ -4,19 +4,20 @@
 
 use std::path::{Path, PathBuf};
 
-use foreman_core::Settings;
+use foreman_core::{DEFAULT_WORKSTATE_URL, Settings};
 use foreman_ui::term_element;
+use foreman_workstate::AuthStatus;
 use foreman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, ElementId, FocusHandle, FontWeight, KeyDownEvent,
-    PathPromptOptions, Pixels, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
-    WindowOptions, div, prelude::*, px, size,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, ElementId, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    Pixels, SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div,
+    prelude::*, px, size,
 };
 use theme::ActiveTheme as _;
 
-use crate::tokens::{self, DEFAULT_WORKSTATE_URL};
+use crate::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
-use crate::workstate_setup::{WsStatus, tilde};
+use crate::workstate_setup::WsStatus;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -58,6 +59,12 @@ pub struct SettingsView {
     theme_problem: Option<String>,
     /// The terminal font size Appearance last painted, for the selftest (step 7q).
     shown_font_size: std::cell::Cell<Option<Pixels>>,
+    /// The WorkState server URL as typed (m5/43); Enter or Apply uses it.
+    url_input: Entity<TextInput>,
+    url_error: Option<String>,
+    /// Whether a grant is held for the configured server, read with settings.toml.
+    auth: AuthStatus,
+    _url_events: Subscription,
 }
 
 /// Paints the app with the theme and terminal colours `settings.toml` names (at start, and after
@@ -85,7 +92,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
                 crate::tray::close(window, cx);
                 false
             });
-            let view = cx.new(|cx| SettingsView::new(home, fleet, page.unwrap_or(Page::Sessions), cx));
+            let view = cx.new(|cx| SettingsView::new(home, fleet, page.unwrap_or(Page::Sessions), window, cx));
             let focus = view.read(cx).focus.clone();
             window.focus(&focus, cx);
             view
@@ -95,7 +102,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
 }
 
 impl SettingsView {
-    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, cx: &mut Context<Self>) -> Self {
+    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // About shows the fleet's CLI check and refresh as they change, WorkState its status, Appearance
         // the terminal font size a zoom in a terminal changed
         if let Some(fleet) = fleet.upgrade() {
@@ -112,6 +119,15 @@ impl SettingsView {
             .detach();
         }
         let workstate = fleet.upgrade().map_or(WsStatus::Checking, |f| f.read(cx).workstate.clone());
+        let url_input = cx.new(|cx| TextInput::new(DEFAULT_WORKSTATE_URL, None, window, cx));
+        let url_events = cx.subscribe_in(&url_input, window, |this: &mut Self, _, event: &InputEvent, _, cx| match event {
+            InputEvent::Confirm => this.apply_url(cx),
+            InputEvent::Edited => {
+                this.url_error = None;
+                cx.notify();
+            }
+            _ => {}
+        });
         let mut this = Self {
             home,
             settings: Settings::default(),
@@ -123,8 +139,14 @@ impl SettingsView {
             catalog: Catalog::default(),
             theme_problem: None,
             shown_font_size: Default::default(),
+            url_input,
+            url_error: None,
+            auth: AuthStatus::NotSignedIn,
+            _url_events: url_events,
         };
         this.reload();
+        let url = this.settings.workstate_origin();
+        this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
         this
     }
 
@@ -147,6 +169,34 @@ impl SettingsView {
             Err(e) => self.error = Some(format!("Cannot read settings.toml: {e}")),
         }
         self.catalog = themes::catalog(Some(home));
+        self.auth = crate::signin::auth(home).status(&self.settings.workstate_origin());
+    }
+
+    /// The selftest types into the URL field.
+    pub fn set_url_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.url_input.update(cx, |input, cx| input.set_text(text, cx));
+    }
+
+    pub fn url_error(&self) -> Option<String> {
+        self.url_error.clone()
+    }
+
+    /// The URL field's Enter and Apply: a valid URL goes to the fleet, which switches servers through a
+    /// sign-in when one is held ([`FleetView::set_workstate_url`]).
+    pub fn apply_url(&mut self, cx: &mut Context<Self>) {
+        let text = self.url_input.read(cx).text().to_string();
+        let result = self.fleet.update(cx, |fleet, cx| fleet.set_workstate_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));
+        match result {
+            Ok(()) => {
+                self.url_error = None;
+                self.reload();
+                if let Ok(origin) = foreman_core::validate_workstate_url(&text) {
+                    self.url_input.update(cx, |input, cx| input.set_text(&origin, cx));
+                }
+            }
+            Err(e) => self.url_error = Some(e),
+        }
+        cx.notify();
     }
 
     pub fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
@@ -209,25 +259,6 @@ impl SettingsView {
         self.fleet.update(cx, |fleet, cx| fleet.set_max_working(n, cx)).ok();
         self.reload();
         cx.notify();
-    }
-
-    fn choose_env(&mut self, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Use as WorkState token file".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.into_iter().next() else {
-                return;
-            };
-            this.update(cx, |this, cx| this.change(|s| s.workstate_env = Some(path), cx)).ok();
-        })
-        .detach();
     }
 
     fn open_file(&mut self, cx: &mut Context<Self>) {
@@ -299,102 +330,98 @@ impl SettingsView {
     }
 
     fn render_workstate(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
-        let env_text: SharedString = match &self.settings.workstate_env {
-            Some(path) => path.display().to_string().into(),
-            None => "not set".into(),
-        };
-        let env_control = div()
+        let field = div()
             .flex()
             .items_center()
             .gap_2()
-            .child(small_button("env-choose", "Choose…", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.choose_env(cx);
-            })))
-            .when(self.settings.workstate_env.is_some(), |d| {
-                d.child(small_button("env-clear", "Clear", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.change(|s| s.workstate_env = None, cx);
-                })))
-            });
-
-        // Which line each role would use; the token itself is never shown.
-        let found = ["workspace", "repo"].map(|role| {
-            let own = tokens::token_key(role);
-            let via = tokens::workstate_role(role).map(tokens::token_key);
-            let via = via.as_deref();
-            let text = match &self.settings.workstate_env {
-                None => format!("{role} sessions: no WorkState"),
-                Some(env) => {
-                    let has = |key: &str| tokens::read_env_value(env, key).ok().flatten().is_some();
-                    if has(&own) {
-                        format!("{role} sessions: {own} ✓")
-                    } else if let Some(via) = via.filter(|k| has(k)) {
-                        format!("{role} sessions: {via} ✓")
-                    } else {
-                        format!("{role} sessions: no {own} or {} line, so no WorkState", via.unwrap_or("-"))
-                    }
-                }
-            };
-            div().text_xs().text_color(colors.text_muted).child(SharedString::from(text)).into_any_element()
-        });
-
-        let url = self.settings.workstate_url.clone();
+            .child(
+                div()
+                    .id("ws-url")
+                    .w(px(280.))
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.editor_background)
+                    .text_sm()
+                    .child(self.url_input.clone()),
+            )
+            .child(small_button("ws-url-apply", "Apply", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
+        let below = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .pt_2()
+            .children(self.url_error.clone().map(|e| div().id("ws-url-error").text_xs().text_color(status.error).child(SharedString::from(e))))
+            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!(
+                "Now {}{}.",
+                self.settings.workstate_origin(),
+                if self.settings.workstate_url.is_none() { " (the default)" } else { "" }
+            ))));
         vec![
             self.render_workstate_status(cx),
             row(
-                "Token file",
-                "A .env file with WORKSTATE_<ROLE>_TOKEN=… lines, e.g. the WorkState server's own \
-                 mcp/.env. A workspace session uses WORKSTATE_WORKSPACE_TOKEN, else \
-                 WORKSTATE_CONTROLLER_TOKEN; a repo session WORKSTATE_REPO_TOKEN, else \
-                 WORKSTATE_ORCHESTRATOR_TOKEN. Read when a session launches; tokens are never shown \
-                 or logged. Not set: Foreman's sessions run without WorkState.",
-                env_control.into_any_element(),
-                Some(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .pt_2()
-                        .child(div().text_sm().child(env_text))
-                        .children(found)
-                        .into_any_element(),
-                ),
-                cx,
-            ),
-            row(
                 "Server URL",
-                "The WorkState MCP endpoint. Change it in settings.toml (workstate_url).",
-                div()
-                    .text_sm()
-                    .child(SharedString::from(match url {
-                        Some(url) => url,
-                        None => format!("{DEFAULT_WORKSTATE_URL} (default)"),
-                    }))
-                    .into_any_element(),
-                None,
+                "The WorkState server Foreman signs in to, e.g. https://workstate.dikaia.ai (http only for this \
+                 machine). While signed in, a new server is used only once you have signed in there: Foreman then \
+                 restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
+                 the old one.",
+                field.into_any_element(),
+                Some(below.into_any_element()),
                 cx,
             ),
         ]
     }
 
-    /// The same status and fix as the main window's notice, live, with its one-click `.env` and Check now.
+    /// Signed in or not, on which server and as whom; Sign in, Sign out and Check now.
     fn render_workstate_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
-        let (text, color) = match (&self.workstate, self.workstate.problem()) {
+        let (signing_in, sign_in_error) = self
+            .fleet
+            .upgrade()
+            .map(|f| {
+                let f = f.read(cx);
+                (f.signing_in.clone(), f.sign_in_error.clone())
+            })
+            .unwrap_or_default();
+        let url = self.settings.workstate_origin();
+        let (text, color) = match (&self.workstate, &self.auth) {
             (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
-            (WsStatus::Ready { url }, _) => (format!("Ready: {url} answers, and the .env has a token for workspace and repo sessions."), status.success),
-            (ws, Some(problem)) => (problem, if ws.unreachable() { status.error } else { status.warning }),
-            (_, None) => (String::new(), colors.text_muted),
+            (WsStatus::Ready { url, who }, _) => (
+                match who {
+                    Some(who) => format!("Signed in on {url} as {who}."),
+                    None => format!("Signed in on {url}."),
+                },
+                status.success,
+            ),
+            (WsStatus::NotSignedIn { .. }, _) => ("Not signed in.".to_string(), status.warning),
+            (WsStatus::SignInAgain { why, .. }, _) => (format!("Sign in again: {why}."), status.warning),
+            (WsStatus::Unreachable { url, error }, AuthStatus::SignedIn { .. }) => {
+                (format!("Signed in on {url}, but it is unreachable ({error})."), status.error)
+            }
+            (ws, _) => (ws.problem().unwrap_or_default(), status.error),
         };
+        let held = !matches!(self.auth, AuthStatus::NotSignedIn);
         let mut controls = div().flex().flex_col().items_end().gap_1();
-        if let Some(path) = self.workstate.offer() {
-            let path = path.to_path_buf();
-            let label = SharedString::from(format!("Use {}", tilde(&path)));
-            controls = controls.child(small_button("ws-use", "", cx).child(label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let path = path.clone();
-                this.fleet.update(cx, |fleet, cx| fleet.use_workstate_env(path, cx)).ok();
-                this.reload();
+        controls = match &signing_in {
+            Some(_) => controls.child(small_button("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
+            }))),
+            None if !held || matches!(self.workstate, WsStatus::SignInAgain { .. }) => {
+                controls.child(small_button("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
+                    cx.notify();
+                })))
+            }
+            None => controls,
+        };
+        if held && signing_in.is_none() {
+            controls = controls.child(small_button("ws-signout", "Sign out", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.fleet.update(cx, |fleet, cx| fleet.sign_out(cx)).ok();
                 cx.notify();
             })));
         }
@@ -403,7 +430,10 @@ impl SettingsView {
         })));
         row(
             "Status",
-            "Whether the sessions Foreman launches get WorkState. Checked every 30 s and after every change here.",
+            "Foreman signs in to WorkState in your browser (OAuth). The grant is kept in Windows Credential \
+             Manager, never in a file; Foreman uses it to read WorkState and to give each session it starts a \
+             token of its own. Sign out revokes the grant, and with it every session token minted under it. \
+             Checked every 30 s and after every change here.",
             controls.into_any_element(),
             Some(
                 div()
@@ -413,11 +443,31 @@ impl SettingsView {
                     .gap_1()
                     .pt_2()
                     .child(div().text_sm().text_color(color).child(SharedString::from(text)))
-                    .children(self.workstate.fix().map(|fix| div().text_xs().child(SharedString::from(fix))))
+                    .children(signing_in.map(|to| {
+                        div().text_xs().child(SharedString::from(format!("Waiting for the sign-in to {to} in your browser…")))
+                    }))
+                    .children(sign_in_error.map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
+                    .children(
+                        matches!(self.workstate, WsStatus::Unreachable { .. })
+                            .then(|| self.workstate.fix())
+                            .flatten()
+                            .map(|fix| div().text_xs().child(SharedString::from(fix))),
+                    )
+                    .children((url != self.workstate_url()).then(|| div().text_xs().child(SharedString::from(format!("Checking {url}…")))))
                     .into_any_element(),
             ),
             cx,
         )
+    }
+
+    /// The URL the last status is about.
+    fn workstate_url(&self) -> String {
+        match &self.workstate {
+            WsStatus::Ready { url, .. } | WsStatus::NotSignedIn { url } | WsStatus::SignInAgain { url, .. } | WsStatus::Unreachable { url, .. } => {
+                url.clone()
+            }
+            WsStatus::Checking => self.settings.workstate_origin(),
+        }
     }
 
     pub fn workstate(&self) -> &WsStatus {

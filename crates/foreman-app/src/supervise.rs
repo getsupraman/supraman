@@ -274,6 +274,8 @@ pub struct Supervision {
     pub daemon: DaemonWatch,
     /// The hold as last logged.
     daemon_logged: Option<String>,
+    /// The WorkState server of the last tick: a change re-mints every held session there (m5/43).
+    origin: Option<String>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -300,6 +302,7 @@ impl Supervision {
             notices: Vec::new(),
             daemon: DaemonWatch::new(foreman_claude::daemon_mismatch),
             daemon_logged: None,
+            origin: None,
         }
     }
 
@@ -312,6 +315,16 @@ impl Supervision {
             Settings::default()
         });
         report.max_working = settings.max_working;
+        let origin = settings.workstate_origin();
+        if self.origin.as_ref().is_some_and(|o| *o != origin) {
+            for (name, s) in &mut self.supervisors {
+                let names = s.server_changed();
+                if !names.is_empty() {
+                    log::info!("{name}: WorkState is now {origin}; restarting {} with tokens minted there", names.join(", "));
+                }
+            }
+        }
+        self.origin = Some(origin);
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {
@@ -322,7 +335,7 @@ impl Supervision {
                         s.config.plugin_dirs = self.config.plugin_dirs.clone();
                     }
                     None => {
-                        let tokens = AppTokens { home: self.home.clone() };
+                        let tokens = AppTokens { auth: crate::signin::auth(&self.home) };
                         let s = Supervisor::new(desired, self.config.clone(), Claude::default(), tokens);
                         self.supervisors.insert(p.name.clone(), s);
                     }

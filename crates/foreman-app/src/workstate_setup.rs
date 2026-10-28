@@ -1,95 +1,53 @@
-//! First run (m5/3): whether the sessions Foreman launches will have WorkState, and if not, what is
+//! Whether the sessions Foreman launches will have WorkState (m5/3, m5/43), and if not, what is
 //! missing and how to fix it — one wording for the notice above the tree, Settings → WorkState and the
-//! Work tab. [`detect_local`] reads `settings.toml` and checks the `.env` for its keys (presence only,
-//! never a value); [`detect`] adds one `GET /health`, so it runs off the UI thread.
+//! Work tab. [`detect`] asks `GET /health` and then the sign-in for an access token (a refresh when one
+//! is due), so it runs off the UI thread.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
-use foreman_core::{DEFAULT_WORKSTATE_URL, Settings, has_env_key};
+use foreman_core::Settings;
+use foreman_workstate::{Auth, AuthError, AuthStatus};
 
-use crate::tokens::{token_key, workstate_role};
-
-/// Test hook: the folder `rlarch:workstate-setup` installs WorkState into, instead of `~/.workstate`.
-pub const INSTALL_DIR_VAR: &str = "FOREMAN_WORKSTATE_INSTALL";
 pub const SETUP_SKILL: &str = "rlarch:workstate-setup";
 /// How often the status is checked again while the app runs.
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// The roles whose sessions want WorkState, each with its own key and the key of the WorkState role it acts as.
-const ROLES: [&str; 2] = ["workspace", "repo"];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WsStatus {
     Checking,
-    Ready { url: String },
-    /// (a) No `workstate_env`; `offer` is the setup skill's `.env` when it exists.
-    NoEnv { offer: Option<PathBuf> },
-    /// (b) The named `.env` cannot be read.
-    EnvUnreadable { path: PathBuf, reason: String },
-    /// (b) The `.env` has no line for some roles: their keys, e.g. `WORKSTATE_CONTROLLER_TOKEN`.
-    MissingKeys { path: PathBuf, roles: Vec<&'static str>, keys: Vec<String> },
-    /// (c) The `.env` is fine but `/health` did not answer 2xx.
+    /// Signed in, and the server answers; `who` is the token's name or subject when it says.
+    Ready { url: String, who: Option<String> },
+    NotSignedIn { url: String },
+    /// The grant no longer works (a refused refresh, a wiped server).
+    SignInAgain { url: String, why: String },
+    /// `/health` did not answer 2xx, or the refresh could not reach the server.
     Unreachable { url: String, error: String },
 }
 
-/// `<FOREMAN_WORKSTATE_INSTALL or ~/.workstate>/.env`, where `rlarch:workstate-setup` writes it.
-pub fn installed_env() -> Option<PathBuf> {
-    let dir = match std::env::var_os(INSTALL_DIR_VAR) {
-        Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?).join(".workstate"),
+/// `/health`, then an access token for the configured server. Blocks up to a few seconds.
+pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
+    let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+    let url = settings.workstate_origin();
+    if let Err(error) = foreman_workstate::health(&url, HEALTH_TIMEOUT) {
+        return WsStatus::Unreachable { url, error };
+    }
+    let Some(auth) = auth else {
+        return WsStatus::NotSignedIn { url };
     };
-    Some(dir.join(".env"))
-}
-
-/// Everything but the server: (a) and (b), or `Ready` meaning "the files are fine".
-pub fn detect_local(settings: &Settings, installed: Option<&Path>) -> WsStatus {
-    let url = settings.workstate_url.clone().unwrap_or_else(|| DEFAULT_WORKSTATE_URL.into());
-    let Some(path) = settings.workstate_env.clone() else {
-        return WsStatus::NoEnv { offer: installed.filter(|p| p.is_file()).map(Path::to_path_buf) };
-    };
-    let (mut roles, mut keys) = (Vec::new(), Vec::new());
-    for role in ROLES {
-        let fallback = workstate_role(role).map(token_key);
-        let found = match has_env_key(&path, &token_key(role)) {
-            Ok(true) => true,
-            Ok(false) => fallback.as_deref().is_some_and(|key| has_env_key(&path, key).unwrap_or(false)),
-            Err(e) => {
-                let reason = if e.kind() == std::io::ErrorKind::NotFound { "no such file".to_string() } else { e.to_string() };
-                return WsStatus::EnvUnreadable { path, reason };
-            }
-        };
-        if !found {
-            roles.push(role);
-            keys.push(fallback.unwrap_or_else(|| token_key(role)));
+    match auth.access_token(&url) {
+        Ok(_) => {
+            let who = match auth.status(&url) {
+                AuthStatus::SignedIn { who } => who,
+                _ => None,
+            };
+            WsStatus::Ready { url, who }
         }
-    }
-    if roles.is_empty() { WsStatus::Ready { url } } else { WsStatus::MissingKeys { path, roles, keys } }
-}
-
-/// [`detect_local`], then `GET /health` when the files are fine. Blocks up to a few seconds.
-pub fn detect(home: Option<&Path>, installed: Option<&Path>) -> WsStatus {
-    let settings = match home.map(Settings::load) {
-        Some(Ok(settings)) => settings,
-        // no home or an unreadable settings.toml is reported elsewhere (the setup notices, Settings)
-        _ => Settings::default(),
-    };
-    match detect_local(&settings, installed) {
-        WsStatus::Ready { url } => match foreman_workstate::health(&url, HEALTH_TIMEOUT) {
-            Ok(()) => WsStatus::Ready { url },
-            Err(error) => WsStatus::Unreachable { url, error },
-        },
-        other => other,
-    }
-}
-
-/// `C:\Users\x\.workstate\.env` → `~/.workstate/.env`; any other path as it is.
-pub fn tilde(path: &Path) -> String {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
-    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rest) => format!("~/{}", rest.display().to_string().replace('\\', "/")),
-        None => path.display().to_string(),
+        Err(AuthError::NotSignedIn { .. }) => WsStatus::NotSignedIn { url },
+        Err(AuthError::SignInAgain { why, .. }) => WsStatus::SignInAgain { url, why },
+        Err(AuthError::Unreachable { reason, .. }) => WsStatus::Unreachable { url, error: reason },
+        Err(e) => WsStatus::SignInAgain { url, why: e.to_string() },
     }
 }
 
@@ -98,37 +56,23 @@ impl WsStatus {
     pub fn problem(&self) -> Option<String> {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
-            WsStatus::NoEnv { .. } => {
-                Some("WorkState is not set up: settings.toml names no WorkState .env, so sessions run without WorkState.".into())
+            WsStatus::NotSignedIn { url } => Some(format!("Not signed in to WorkState at {url}, so sessions run without WorkState.")),
+            WsStatus::SignInAgain { url, why } => {
+                Some(format!("Sign in to WorkState at {url} again ({why}); until then sessions with WorkState cannot start."))
             }
-            WsStatus::EnvUnreadable { path, reason } => Some(format!(
-                "WorkState's .env {} cannot be read ({reason}), so sessions run without WorkState.",
-                path.display()
-            )),
-            WsStatus::MissingKeys { path, roles, keys } => Some(format!(
-                "{} has no {} line, so {} sessions run without WorkState.",
-                path.display(),
-                keys.join(" or "),
-                roles.join(" and ")
-            )),
             WsStatus::Unreachable { url, error } => Some(format!("WorkState at {url} is unreachable ({error}).")),
         }
     }
 
     /// How to fix it, in one sentence.
     pub fn fix(&self) -> Option<String> {
-        let choose = format!(
-            "Choose the .env {SETUP_SKILL} wrote (~/.workstate/.env, or <clone>/mcp/.env) in Settings → WorkState, or install WorkState with the {SETUP_SKILL} skill."
-        );
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
-            WsStatus::NoEnv { offer: Some(path) } => Some(format!("Found {}: use it, or choose another .env in Settings → WorkState.", tilde(path))),
-            WsStatus::NoEnv { offer: None } => Some(format!(
-                "Install WorkState with the {SETUP_SKILL} skill, or choose an existing .env in Settings → WorkState."
-            )),
-            WsStatus::EnvUnreadable { .. } | WsStatus::MissingKeys { .. } => Some(choose),
+            WsStatus::NotSignedIn { .. } | WsStatus::SignInAgain { .. } => {
+                Some("Sign in: your browser opens WorkState's sign-in page, and Foreman keeps the grant in Windows Credential Manager.".into())
+            }
             WsStatus::Unreachable { .. } => Some(format!(
-                "Start it with the {SETUP_SKILL} skill, or docker compose up in its install folder. Checked again every {} s.",
+                "Check the server URL in Settings → WorkState, or start the local server with the {SETUP_SKILL} skill. Checked again every {} s.",
                 RECHECK_EVERY.as_secs()
             )),
         }
@@ -139,12 +83,9 @@ impl WsStatus {
         Some(format!("{} {}", self.problem()?, self.fix()?))
     }
 
-    /// The `.env` the notice offers with one click.
-    pub fn offer(&self) -> Option<&Path> {
-        match self {
-            WsStatus::NoEnv { offer } => offer.as_deref(),
-            _ => None,
-        }
+    /// The notice offers Sign in.
+    pub fn signed_out(&self) -> bool {
+        matches!(self, WsStatus::NotSignedIn { .. } | WsStatus::SignInAgain { .. })
     }
 
     pub fn unreachable(&self) -> bool {
@@ -156,88 +97,64 @@ impl WsStatus {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
             WsStatus::Unreachable { url, .. } => {
-                Some(format!("Started {workspace}; WorkState at {url} is unreachable, so its sessions run without it."))
+                Some(format!("Started {workspace}; WorkState at {url} is unreachable, so its sessions cannot start with it."))
             }
-            _ => Some(format!("Started {workspace} without WorkState: its sessions can talk, not plan.")),
+            WsStatus::SignInAgain { .. } => Some(format!("Started {workspace}; its sessions wait for a WorkState sign-in.")),
+            WsStatus::NotSignedIn { .. } => Some(format!("Started {workspace} without WorkState: its sessions can talk, not plan.")),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use foreman_workstate::MemoryStore;
     use foreman_workstate::fake::{Answer, FakeWorkState};
 
     use super::*;
 
-    fn settings(env: Option<PathBuf>, url: Option<String>) -> Settings {
-        Settings { workstate_env: env, workstate_url: url, ..Settings::default() }
-    }
-
     #[test]
-    fn no_env_offers_the_installed_env_only_when_it_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let installed = dir.path().join(".workstate").join(".env");
-        let none = detect_local(&settings(None, None), Some(&installed));
-        assert_eq!(none, WsStatus::NoEnv { offer: None });
-        assert!(none.fix().unwrap().contains(SETUP_SKILL), "{:?}", none.fix());
-        assert!(none.message().unwrap().contains("settings.toml names no WorkState .env"));
-
-        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
-        std::fs::write(&installed, "WORKSTATE_CONTROLLER_TOKEN=fake-c\n").unwrap();
-        let offered = detect_local(&settings(None, None), Some(&installed));
-        assert_eq!(offered.offer(), Some(installed.as_path()));
-        assert!(offered.start_warning("demo").unwrap().contains("without WorkState"));
-    }
-
-    #[test]
-    fn a_missing_or_keyless_env_names_what_is_missing_and_never_a_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let env = dir.path().join("ws.env");
-        let gone = detect_local(&settings(Some(env.clone()), None), None);
-        assert_eq!(gone, WsStatus::EnvUnreadable { path: env.clone(), reason: "no such file".into() });
-
-        std::fs::write(&env, "WORKSTATE_READER_TOKEN=fake-reader-secret\nWORKSTATE_CONTROLLER_TOKEN=\n").unwrap();
-        let none = detect_local(&settings(Some(env.clone()), None), None);
-        let WsStatus::MissingKeys { roles, keys, .. } = &none else { panic!("{none:?}") };
-        assert_eq!((roles.as_slice(), keys.as_slice()), (&["workspace", "repo"][..], &["WORKSTATE_CONTROLLER_TOKEN".to_string(), "WORKSTATE_ORCHESTRATOR_TOKEN".into()][..]));
-        let text = format!("{} {:?}", none.message().unwrap(), none);
-        assert!(!text.contains("fake-reader-secret"), "{text}");
-
-        std::fs::write(&env, "WORKSTATE_CONTROLLER_TOKEN=fake-c\n").unwrap();
-        let half = detect_local(&settings(Some(env.clone()), None), None);
-        assert!(matches!(&half, WsStatus::MissingKeys { roles, .. } if roles == &["repo"]), "{half:?}");
-        assert!(half.problem().unwrap().contains("WORKSTATE_ORCHESTRATOR_TOKEN"));
-
-        std::fs::write(&env, "WORKSTATE_WORKSPACE_TOKEN=fake-w\nWORKSTATE_ORCHESTRATOR_TOKEN=fake-o\n").unwrap();
-        assert_eq!(detect_local(&settings(Some(env), None), None), WsStatus::Ready { url: DEFAULT_WORKSTATE_URL.into() });
-    }
-
-    #[test]
-    fn a_complete_env_asks_the_server_a_closed_port_is_unreachable() {
+    fn signed_out_signed_in_and_broken_each_say_what_to_do() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
-        let env = dir.path().join("ws.env");
-        std::fs::write(&env, "WORKSTATE_CONTROLLER_TOKEN=fake-c\nWORKSTATE_ORCHESTRATOR_TOKEN=fake-o\n").unwrap();
         let fake = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
-        settings(Some(env.clone()), Some(fake.mcp_url())).save(&home).unwrap();
-        assert_eq!(detect(Some(&home), None), WsStatus::Ready { url: fake.mcp_url() });
-        assert!(fake.seen().iter().all(|s| s.authorization.is_none()), "/health carries no token");
+        let oauth = fake.enable_oauth();
+        Settings { workstate_url: Some(fake.base().into()), ..Settings::default() }.save(&home).unwrap();
+        let url = fake.base().to_string();
 
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let closed = format!("http://127.0.0.1:{port}/mcp");
-        settings(Some(env), Some(closed.clone())).save(&home).unwrap();
-        let down = detect(Some(&home), None);
-        assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
-        assert!(down.problem().unwrap().contains(&closed) && down.problem().unwrap().contains("connection refused"));
-        assert!(down.fix().unwrap().contains("docker compose up"));
-        assert!(down.start_warning("demo").unwrap().contains("unreachable"));
-        assert_eq!(WsStatus::Ready { url: closed }.start_warning("demo"), None);
+        let fresh = Auth::with_store(&home, Arc::new(MemoryStore::default()));
+        let out = detect(Some(&home), Some(&fresh));
+        assert_eq!(out, WsStatus::NotSignedIn { url: url.clone() });
+        assert!(out.signed_out() && out.problem().unwrap().contains("Not signed in") && out.fix().unwrap().contains("Sign in"));
+        assert!(out.start_warning("demo").unwrap().contains("without WorkState"));
+
+        oauth.set_access_ttl(60);
+        let auth = crate::tokens::signed_in(&home, fake.base());
+        assert_eq!(detect(Some(&home), Some(&auth)), WsStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()) });
+        assert!(fake.seen().iter().filter(|s| s.target == "/health").all(|s| s.authorization.is_none()), "/health carries no token");
+
+        oauth.fail_refresh(true);
+        let broken = detect(Some(&home), Some(&auth));
+        assert!(matches!(&broken, WsStatus::SignInAgain { why, .. } if why.contains("invalid_grant")), "{broken:?}");
+        assert!(broken.signed_out() && broken.problem().unwrap().contains("again"));
+        let text = format!("{} {broken:?}", broken.message().unwrap());
+        for t in oauth.issued() {
+            assert!(!text.contains(&t), "{text}");
+        }
     }
 
     #[test]
-    fn tilde_shortens_the_profile_only() {
-        let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) else { return };
-        assert_eq!(tilde(&PathBuf::from(home).join(".workstate").join(".env")), "~/.workstate/.env");
-        assert_eq!(tilde(Path::new(r"Q:\elsewhere\.env")), r"Q:\elsewhere\.env");
+    fn a_closed_port_is_unreachable_before_any_sign_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let closed = format!("http://127.0.0.1:{port}");
+        Settings { workstate_url: Some(closed.clone()), ..Settings::default() }.save(dir.path()).unwrap();
+        let down = detect(Some(dir.path()), None);
+        assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
+        assert!(down.problem().unwrap().contains(&closed));
+        assert!(down.fix().unwrap().contains("Settings → WorkState"));
+        assert!(down.start_warning("demo").unwrap().contains("unreachable"));
+        assert_eq!(WsStatus::Ready { url: closed, who: None }.start_warning("demo"), None);
     }
 }

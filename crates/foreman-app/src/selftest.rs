@@ -169,9 +169,10 @@ pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String
 /// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
-    // The WorkState install the app offers (m5/3) is a scratch folder, never the real ~/.workstate.
-    // Single-threaded still: nothing has started.
-    unsafe { std::env::set_var(crate::workstate_setup::INSTALL_DIR_VAR, home().join("fake-workstate-install")) };
+    // The sign-in (m5/43) never opens a browser, and its refresh tokens go to Credential Manager entries
+    // under a prefix of this run's own, deleted at cleanup: never René's. Single-threaded still.
+    crate::signin::use_http_browser();
+    unsafe { std::env::set_var(foreman_workstate::secret::PREFIX_VAR, format!("fm-selftest-{}", hex6())) };
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's (m5/27).
     unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
     if mode == Mode::SelftestSupervise {
@@ -374,6 +375,10 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
     transcripts.sort();
     transcripts.dedup();
     ok &= forget_transcripts(&transcripts);
+    for e in crate::signin::forget_own_credentials() {
+        println!("cleanup: cannot delete the selftest's credential: {e}");
+        ok = false;
+    }
     for dir in &scratch.dirs {
         match remove_dir_retrying(dir) {
             Ok(()) => println!("cleanup: removed {}", dir.display()),

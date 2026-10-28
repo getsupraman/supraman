@@ -45,6 +45,7 @@ mod supervise;
 mod tab_card;
 mod text_input;
 mod titlebar;
+mod signin;
 mod tokens;
 mod tray;
 mod view;

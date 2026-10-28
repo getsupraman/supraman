@@ -1,5 +1,6 @@
 //! `GET /api/stream`: a subscriber thread that delivers [`StreamSignal`]s over a channel and
-//! reconnects with backoff. Plain HTTP/1.1 on a `TcpStream` with a short read timeout, so
+//! reconnects with backoff. HTTP/1.1 on a `TcpStream` (TLS through the OS for `https://`) with a
+//! short read timeout, so
 //! [`Stream::stop`] returns within one poll even when the server is silent. An event means "re-read";
 //! `Connected` after a `Lost` means "re-read everything", since frames sent in between are gone.
 //!
@@ -63,8 +64,7 @@ impl Stream {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let worker = Worker {
-            base: client.base().to_string(),
-            token: client.token().to_string(),
+            client: client.clone(),
             config,
             stop: stop.clone(),
             tx,
@@ -97,8 +97,8 @@ impl Drop for Stream {
 }
 
 struct Worker {
-    base: String,
-    token: String,
+    /// Asked for a bearer at each connect: an access token refreshed meanwhile is used.
+    client: Client,
     config: StreamConfig,
     stop: Arc<AtomicBool>,
     tx: Sender<StreamSignal>,
@@ -138,24 +138,45 @@ impl Worker {
     }
 
     fn connect(&mut self, backoff: &mut Duration) -> End {
-        let Some(rest) = self.base.strip_prefix("http://") else {
-            return End::Lost(format!("{} is not plain http", self.base));
+        let base = self.client.base().to_string();
+        let (tls, rest) = match (base.strip_prefix("http://"), base.strip_prefix("https://")) {
+            (Some(rest), _) => (false, rest),
+            (_, Some(rest)) => (true, rest),
+            _ => return End::Lost(format!("{base} is not http or https")),
+        };
+        let token = match self.client.bearer() {
+            Ok(token) => token,
+            Err(e) => return End::Lost(e.to_string()),
         };
         let (authority, prefix) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
         let prefix = if prefix.is_empty() { String::new() } else { format!("/{}", prefix.trim_end_matches('/')) };
-        let addr = match authority.to_socket_addrs().map(|mut a| a.next()) {
+        let host = authority.rsplit_once(':').filter(|(_, p)| p.parse::<u16>().is_ok()).map_or(authority, |(h, _)| h);
+        let dial = if authority.contains(':') { authority.to_string() } else { format!("{authority}:{}", if tls { 443 } else { 80 }) };
+        let addr = match dial.to_socket_addrs().map(|mut a| a.next()) {
             Ok(Some(addr)) => addr,
             Ok(None) => return End::Lost(format!("{authority} has no address")),
             Err(e) => return End::Lost(format!("{authority}: {e}")),
         };
-        let mut socket = match TcpStream::connect_timeout(&addr, self.config.connect_timeout) {
+        let tcp = match TcpStream::connect_timeout(&addr, self.config.connect_timeout) {
             Ok(s) => s,
-            Err(e) => return End::Lost(format!("{} is unreachable ({e})", self.base)),
+            Err(e) => return End::Lost(format!("{base} is unreachable ({e})")),
         };
-        let _ = socket.set_read_timeout(Some(self.config.poll));
+        let _ = tcp.set_read_timeout(Some(self.config.connect_timeout));
+        let mut socket = if tls {
+            let connector = match native_tls::TlsConnector::new() {
+                Ok(c) => c,
+                Err(e) => return End::Lost(format!("no TLS ({e})")),
+            };
+            match connector.connect(host, tcp) {
+                Ok(s) => Conn::Tls(Box::new(s)),
+                Err(e) => return End::Lost(format!("{base}: TLS failed ({e})")),
+            }
+        } else {
+            Conn::Plain(tcp)
+        };
+        socket.set_read_timeout(self.config.poll);
         let mut request = format!(
-            "GET {prefix}/api/stream HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\n",
-            self.token
+            "GET {prefix}/api/stream HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\n"
         );
         if let Some(id) = &self.last_id {
             request.push_str(&format!("Last-Event-ID: {id}\r\n"));
@@ -180,7 +201,12 @@ impl Worker {
             };
             let (body, head) = match http.feed(&buf[..n]) {
                 Ok(x) => x,
-                Err(reason) => return End::Lost(reason),
+                Err(reason) => {
+                    if http.status == Some(401) {
+                        self.client.rejected(&token);
+                    }
+                    return End::Lost(crate::client::scrub(&token, &reason));
+                }
             };
             if head {
                 *backoff = self.config.initial_backoff;
@@ -206,11 +232,52 @@ impl Worker {
     }
 }
 
+enum Conn {
+    Plain(TcpStream),
+    Tls(Box<native_tls::TlsStream<TcpStream>>),
+}
+
+impl Conn {
+    fn set_read_timeout(&self, poll: Duration) {
+        let tcp = match self {
+            Conn::Plain(s) => s,
+            Conn::Tls(s) => s.get_ref(),
+        };
+        let _ = tcp.set_read_timeout(Some(poll));
+    }
+}
+
+impl Read for Conn {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Conn::Plain(s) => s.read(buf),
+            Conn::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for Conn {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Conn::Plain(s) => s.write(buf),
+            Conn::Tls(s) => s.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Conn::Plain(s) => s.flush(),
+            Conn::Tls(s) => s.flush(),
+        }
+    }
+}
+
 /// The response head, then the body: chunked, `Content-Length`, or until close.
 #[derive(Default)]
 struct HttpReader {
     head: Vec<u8>,
     body: Option<Body>,
+    status: Option<u16>,
 }
 
 enum Body {
@@ -247,6 +314,7 @@ impl HttpReader {
             let head = String::from_utf8_lossy(&self.head[..end]).into_owned();
             let mut lines = head.split("\r\n");
             let status = lines.next().and_then(|l| l.split_whitespace().nth(1)).and_then(|s| s.parse::<u16>().ok());
+            self.status = status;
             match status {
                 Some(200) => {}
                 Some(status) => return Err(format!("WorkState answered HTTP {status}")),

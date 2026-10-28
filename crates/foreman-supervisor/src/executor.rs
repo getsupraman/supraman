@@ -30,8 +30,8 @@ impl Launcher for Claude {
     }
 }
 
-/// A static role token: the bearer of the mint, PATCH and DELETE of a session's own token
-/// ([`crate::mint`]), never written anywhere.
+/// The bearer of the mint, PATCH and DELETE of a session's own token ([`crate::mint`]): the app's
+/// OAuth access token (m5/43), never written anywhere.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoleToken {
     /// The WorkState MCP URL; its origin is the API's base.
@@ -47,10 +47,11 @@ impl std::fmt::Debug for RoleToken {
     }
 }
 
-/// Where role tokens come from; the supervisor never reads `.env` itself.
+/// Where the bearer comes from: the app's sign-in.
 pub trait TokenProvider {
-    /// `None`: launch the role without a WorkState server.
-    fn token(&self, role: &str) -> Option<RoleToken>;
+    /// `Ok(None)`: not signed in, so the role launches without a WorkState server. `Err`: signed in but
+    /// no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
+    fn token(&self, role: &str) -> Result<Option<RoleToken>, String>;
 }
 
 /// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
@@ -204,6 +205,26 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         if self.needs.iter().any(|n| n.kind == NeedsKind::TokenExpired && n.name == name) {
             self.remint_due.push(name.to_string());
         }
+    }
+
+    /// The WorkState server changed (m5/43): every minted session that is still wanted is stopped at the
+    /// next tick and resumed (by its full uuid) with a token minted on the new server, `replace: true`,
+    /// in the same config file; a stopped one gets it at its next resume anyway. Returns their names.
+    pub fn server_changed(&mut self) -> Vec<String> {
+        let names: Vec<String> = self
+            .minted
+            .names()
+            .filter(|n| self.desired.sessions.iter().any(|w| &w.name == *n))
+            .filter(|n| !self.remint_due.contains(n))
+            .cloned()
+            .collect();
+        self.remint_due.extend(names.iter().cloned());
+        names
+    }
+
+    #[cfg(test)]
+    fn tokens_mut(&mut self) -> &mut T {
+        &mut self.tokens
     }
 
     /// Wanted sessions started less than `settle` ago that the snapshot does not show mid-turn: each
@@ -361,16 +382,19 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
     }
 
-    /// Mints `w`'s own token with its role's static token as bearer, always with `replace` (a relaunch
-    /// or resume gets a fresh token on the same WorkState row), and remembers its `sessionId`. Returns
-    /// the MCP URL and the minted token; `None` when the role has no token (no WorkState for it).
-    /// A failed mint fails the launch: there is no fallback to the static token.
+    /// Mints `w`'s own token with the signed-in bearer, always with `replace` (a relaunch or resume gets a
+    /// fresh token on the same WorkState row), and remembers its `sessionId`. Returns the MCP URL and the
+    /// minted token; `None` when the role has no WorkState (not signed in). A failed mint fails the launch.
     ///
     /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
     /// ignores `--session-id` (m5/40 probe), so a launch sends none and its row's id is PATCHed later
     /// ([`Self::bind_claude_sessions`]).
     fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, String)>, Failure> {
-        let Some(t) = self.tokens.token(&w.role) else {
+        let Some(t) = self
+            .tokens
+            .token(&w.role)
+            .map_err(|e| Failure::Other(format!("cannot mint a WorkState token for {}: {e}", w.name)))?
+        else {
             return Ok(None);
         };
         let identity = session_identity(&self.desired.workspace, w);
@@ -434,8 +458,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             m.claude_session_id = Some(claude_session_id.clone());
             let (role, session_id) = (m.role.clone(), m.session_id.clone());
             let result = match self.tokens.token(&role) {
-                Some(t) => self.minter.bind(&api_base(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
-                None => Err(format!("role {role} has no WorkState token any more")),
+                Ok(Some(t)) => self.minter.bind(&api_base(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
+                Ok(None) => Err(format!("role {role} has no WorkState token any more")),
+                Err(e) => Err(e),
             };
             if let Err(e) = result {
                 self.notices.push(format!("Cannot tell WorkState the claude session of {name} (session {session_id}): {e}"));
@@ -459,8 +484,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 continue;
             };
             let result = match self.tokens.token(&m.role) {
-                Some(t) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
-                None => Err(format!("role {} has no WorkState token any more", m.role)),
+                Ok(Some(t)) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
+                Ok(None) => Err(format!("role {} has no WorkState token any more", m.role)),
+                Err(e) => Err(e),
             };
             if let Err(e) = result {
                 self.notices.push(format!(
@@ -659,18 +685,21 @@ mod tests {
         }
     }
 
-    /// The same static token for every role, with the WorkState role the app maps it to.
-    struct FakeTokens(Option<RoleToken>);
+    /// The same bearer for every role, with the WorkState role the app maps it to; `.1` an error instead.
+    struct FakeTokens(Option<RoleToken>, Option<String>);
 
     impl TokenProvider for FakeTokens {
-        fn token(&self, role: &str) -> Option<RoleToken> {
-            let mut t = self.0.clone()?;
+        fn token(&self, role: &str) -> Result<Option<RoleToken>, String> {
+            if let Some(e) = &self.1 {
+                return Err(e.clone());
+            }
+            let Some(mut t) = self.0.clone() else { return Ok(None) };
             t.role = match role {
                 "workspace" => "controller".into(),
                 "repo" => "orchestrator".into(),
                 other => other.into(),
             };
-            Some(t)
+            Ok(Some(t))
         }
     }
 
@@ -758,7 +787,7 @@ mod tests {
             plugin_dirs: vec![r"C:\fm\plugins\foreman".into()],
             ..LaunchConfig::default()
         };
-        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens))
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens, None))
             .with_minter(FakeMinter::default())
             .with_repo_of(fake_repo_of)
             .with_daemon_check(|| None)
@@ -936,6 +965,54 @@ mod tests {
     }
 
     #[test]
+    fn mint_on_a_new_server_stops_and_resumes_every_minted_session_with_its_new_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
+        let (mut sup, minter) = minting(true, &mcp);
+        sup.tick(&[], &mut free(), NOW);
+        sup.launcher().take();
+        minter.take();
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
+        sup.launcher().take();
+        minter.take();
+
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        assert_eq!(sup.server_changed(), ["fm-demo-workspace"]);
+        assert!(sup.server_changed().is_empty(), "once");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "the live row is stopped");
+        let stopped = row(SessionState::Stopped, None, None);
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 130 * SECOND);
+        let calls = sup.launcher().take();
+        assert!(matches!(calls.as_slice(), [Call::Resume { session_id, .. }] if *session_id == stopped.session_id), "{calls:?}");
+        match minter.take().as_slice() {
+            [MintCall::Mint { base, request, .. }] => {
+                assert_eq!(base, "https://workstate.example");
+                assert!(request.replace);
+                assert_eq!(request.claude_session_id, Some(stopped.session_id.clone()));
+            }
+            other => panic!("{other:?}"),
+        }
+        let text = config_text(&mcp, "fm-demo-workspace");
+        assert!(text.contains("https://workstate.example/mcp") && text.contains("wss_fake2"), "{text}");
+    }
+
+    #[test]
+    fn mint_without_a_bearer_now_fails_the_launch_with_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.tokens_mut().1 = Some("sign in to WorkState at http://127.0.0.1:5290 again: the server refused the refresh (invalid_grant)".into());
+        let needs = sup.tick(&[], &mut free(), NOW);
+        assert!(sup.launcher().take().is_empty(), "nothing launched without WorkState");
+        assert!(minter.take().is_empty());
+        assert!(
+            needs.iter().any(|n| n.kind == NeedsKind::LaunchFailed && n.detail.contains("sign in to WorkState") && n.detail.contains("again")),
+            "{needs:?}"
+        );
+    }
+
+    #[test]
     fn mint_patches_the_claude_session_once_per_mint() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
@@ -1060,7 +1137,7 @@ mod tests {
         let config = sup.config.clone();
         sup.tick(&[], &mut free(), NOW);
         // no persistence without a home at construction: rebuild the way the app does
-        let mut sup = Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token()))
+        let mut sup = Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None))
             .with_minter(minter.clone());
         assert_eq!(sup.minted().get("fm-demo-workspace"), None, "nothing saved yet");
         sup.tick(&[], &mut free(), NOW);
@@ -1070,7 +1147,7 @@ mod tests {
         // the app restarts, then the workspace is stopped
         let mut desired = sup.desired.clone();
         desired.started = false;
-        let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token())).with_minter(minter.clone());
+        let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None)).with_minter(minter.clone());
         sup.tick(&[], &mut free(), NOW + SECOND);
         assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
         assert_eq!(std::fs::read_to_string(MintedSessions::path(&home, "demo")).unwrap().trim(), "{}");
@@ -1202,7 +1279,7 @@ mod tests {
             mcp_dir: mcp_dir.into(),
             ..LaunchConfig::default()
         };
-        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None))
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None, None))
     }
 
     fn live(name: &str, n: u32, state: SessionState, status: Status) -> Session {
