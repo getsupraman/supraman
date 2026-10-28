@@ -5,10 +5,11 @@
 use std::path::{Path, PathBuf};
 
 use foreman_core::Settings;
+use foreman_ui::term_element;
 use foreman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
     AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, ElementId, FocusHandle, FontWeight, KeyDownEvent,
-    PathPromptOptions, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
+    PathPromptOptions, Pixels, SharedString, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
     WindowOptions, div, prelude::*, px, size,
 };
 use theme::ActiveTheme as _;
@@ -55,6 +56,8 @@ pub struct SettingsView {
     catalog: Catalog,
     /// Why the theme settings.toml names is not the one shown.
     theme_problem: Option<String>,
+    /// The terminal font size Appearance last painted, for the selftest (step 7q).
+    shown_font_size: std::cell::Cell<Option<Pixels>>,
 }
 
 /// Paints the app with the theme and terminal colours `settings.toml` names (at start, and after
@@ -93,7 +96,8 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
 
 impl SettingsView {
     fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, cx: &mut Context<Self>) -> Self {
-        // About shows the fleet's CLI check and refresh as they change, WorkState its status
+        // About shows the fleet's CLI check and refresh as they change, WorkState its status, Appearance
+        // the terminal font size a zoom in a terminal changed
         if let Some(fleet) = fleet.upgrade() {
             cx.observe(&fleet, |this, fleet, cx| {
                 let workstate = fleet.read(cx).workstate.clone();
@@ -101,7 +105,7 @@ impl SettingsView {
                     this.workstate = workstate;
                     this.reload();
                     cx.notify();
-                } else if this.page == Page::About {
+                } else if matches!(this.page, Page::About | Page::Appearance) {
                     cx.notify();
                 }
             })
@@ -118,6 +122,7 @@ impl SettingsView {
             workstate,
             catalog: Catalog::default(),
             theme_problem: None,
+            shown_font_size: Default::default(),
         };
         this.reload();
         this
@@ -153,6 +158,16 @@ impl SettingsView {
             cx,
         );
         self.theme_problem = apply_theme(self.home.as_deref(), cx);
+    }
+
+    /// The fleet window owns the size (one path for Settings, the keys and the wheel) and saves it.
+    pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        self.fleet.update(cx, |fleet, cx| fleet.set_term_font_size(size, cx)).ok();
+        cx.notify();
+    }
+
+    pub fn shown_font_size(&self) -> Option<Pixels> {
+        self.shown_font_size.get()
     }
 
     fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
@@ -511,6 +526,34 @@ impl SettingsView {
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
             );
         }
+        let size = self.fleet.upgrade().map(|f| f.read(cx).term_font_size);
+        self.shown_font_size.set(size);
+        let font_size = match size {
+            Some(size) => div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(small_button("term-font-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.set_term_font_size(size - px(1.), cx);
+                })))
+                .child(
+                    div()
+                        .id("term-font-size")
+                        .w(px(28.))
+                        .flex()
+                        .justify_center()
+                        .font_weight(FontWeight::BOLD)
+                        .child(SharedString::from(format!("{}", f32::from(size)))),
+                )
+                .child(small_button("term-font-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.set_term_font_size(size + px(1.), cx);
+                })))
+                .child(small_button("term-font-reset", "Reset", cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.set_term_font_size(term_element::FONT_SIZE, cx);
+                })))
+                .into_any_element(),
+            None => div().text_sm().text_color(colors.text_muted).child("the main window is closed").into_any_element(),
+        };
         vec![
             row(
                 "Theme",
@@ -525,6 +568,13 @@ impl SettingsView {
                 "The 16 ANSI colours in terminal tabs: the theme's, or Windows Terminal's Campbell. Background, \
                  text and cursor stay the theme's; the selection stays white, as in Windows Terminal.",
                 terminal_choices.into_any_element(),
+                None,
+                cx,
+            ),
+            row(
+                "Terminal font size",
+                "The text size in every terminal tab, in pixels (6 to 72, default 14). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml (terminal_font_size).",
+                font_size,
                 None,
                 cx,
             ),

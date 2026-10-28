@@ -2646,3 +2646,32 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   --workspace` ok, no warnings; `cargo test --release --workspace` 559 passed, 0 failed; `--selftest` 5 of 5 PASS
   (124/121/120/120/125 s); `--selftest-supervise` PASS (310 s); `--selftest-detach-shutdown` PASS (16 s); no
   `fm-selftest` or `aw-m2-probe` rows left (`claude agents --json --all`).
+
+## 2026-10-28 — m5/41 one terminal font size, kept in settings
+
+- **One value.** `Tab.font_size` is gone; `FleetView::term_font_size` is the size every terminal grid paints with
+  (only the active tab paints, so another tab takes the new size the moment it is shown: 30–48 ms in the selftest).
+  `set_term_font_size` is the one path for Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel and Settings → Appearance: it
+  rounds and clamps to `MIN_FONT_SIZE..=MAX_FONT_SIZE`, repaints, and replaces a pending write task (dropping a
+  gpui `Task` cancels it), so the file is written once, `FONT_SAVE_AFTER` (500 ms) after the last step.
+- **settings.toml** `terminal_font_size` (px, integer; a float is rounded). Read with `Settings::terminal_font_size()`:
+  unset → 14, out of range → clamped to 6..72. An invalid value (string, bool, array, nan) reads as unset through
+  a lenient deserializer instead of failing the whole file. 14 is saved as unset (`set_terminal_font_size`). The
+  bounds live in `foreman_core` (u32) and in `term_element` (px); `the_settings_bounds_are_the_painters` pins them equal.
+  Read once at window start; a hand edit of the file while Foreman runs is not picked up until the next start.
+- **Settings → Appearance** "Terminal font size": − value + and Reset. The page reads the fleet's value on every
+  render and now re-renders on a fleet notify while Appearance is shown (as About did), so a zoom in a terminal shows
+  there at once.
+- **Selftest step 7q** (`selftest_zoom.rs`): two `+` tabs; Ctrl+=×2 in the second → 16 px, both grids laid out with
+  `cell_metrics(16)` (the first on showing), settings.toml 16 after ~490 ms; 3 Ctrl+wheel notches → 19 px with the
+  file still at 16 right after the spin, then 19; Settings → Appearance shows 19, its + → 20 in the open tab and the
+  file, Ctrl+- in the terminal → 19 on the page; Ctrl+0 → 14 and the key gone from the file. Step 6c reads the shared
+  size. Shot `m5-41-settings-font-size`.
+- Not covered: a zoom within 500 ms of quitting is not saved.
+- Tests: `settings::tests::terminal_font_size_is_14_unless_set_and_clamped`,
+  `terminal_font_size_saves_clamped_and_the_default_as_unset`, `view::term::tests::the_settings_bounds_are_the_painters`,
+  round trip extended. Red: clamp removed from `terminal_font_size()` → 1 of 2 fail.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-41\target`): `cargo build --release --workspace` ok, no warnings; `cargo test
+  --release --workspace` 561 passed, 0 failed; `--selftest` 5 of 5 PASS (~123 s each; plus 6 earlier PASS while
+  building the step); `--selftest-supervise` PASS (317 s); `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of
+  this worktree left (one `fm-selftest-e430b8` with cwd in the main checkout is another run's, not touched).

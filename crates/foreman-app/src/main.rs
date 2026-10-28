@@ -38,6 +38,7 @@ mod selftest_title;
 mod selftest_term;
 mod selftest_theme;
 mod selftest_work;
+mod selftest_zoom;
 mod settings_window;
 mod stars;
 mod supervise;

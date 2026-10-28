@@ -2,8 +2,11 @@
 //! find, font size and scrolling. [`chord`] decides; [`FleetView::terminal_key`] carries it out. The
 //! full list, with the mouse, is docs/KEYS.md.
 
+use std::time::Duration;
+
+use foreman_core::Settings;
 use foreman_term::{Search, Terminal};
-use gpui::{AnyElement, Context, Entity, Keystroke, MouseButton, MouseDownEvent, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
@@ -26,6 +29,9 @@ pub enum Chord {
     ScrollTop,
     ScrollBottom,
 }
+
+/// A zoom is written to `settings.toml` this long after the last step, so a wheel spin writes it once.
+pub const FONT_SAVE_AFTER: Duration = Duration::from_millis(500);
 
 /// The chord `k` is in a terminal tab, if any; everything else goes to the program. Ctrl+C is the
 /// program's ^C unless text is selected.
@@ -154,16 +160,8 @@ impl FleetView {
                     tab.find.get_or_insert_with(Find::default).focused = true;
                 }
             }
-            Chord::FontSize(delta) => {
-                if let Some(tab) = self.tab_mut(tab_id) {
-                    tab.font_size = step_font_size(tab.font_size, delta);
-                }
-            }
-            Chord::FontReset => {
-                if let Some(tab) = self.tab_mut(tab_id) {
-                    tab.font_size = FONT_SIZE;
-                }
-            }
+            Chord::FontSize(delta) => self.set_term_font_size(step_font_size(self.term_font_size, delta), cx),
+            Chord::FontReset => self.set_term_font_size(FONT_SIZE, cx),
             Chord::ScrollLines(n) if n > 0 => terminal.update(cx, |t, _| t.scroll_up_by(n as usize)),
             Chord::ScrollLines(n) => terminal.update(cx, |t, _| t.scroll_down_by(n.unsigned_abs() as usize)),
             Chord::ScrollPage(n) if n > 0 => terminal.update(cx, |t, _| t.scroll_page_up()),
@@ -176,11 +174,42 @@ impl FleetView {
     }
 
     /// Ctrl+wheel over a terminal: one font step per notch.
-    pub(super) fn wheel_font_size(&mut self, tab_id: u64, up: bool, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tab_mut(tab_id) {
-            tab.font_size = step_font_size(tab.font_size, if up { 1 } else { -1 });
-            cx.notify();
+    pub(super) fn wheel_font_size(&mut self, up: bool, cx: &mut Context<Self>) {
+        self.set_term_font_size(step_font_size(self.term_font_size, if up { 1 } else { -1 }), cx);
+    }
+
+    /// Every terminal tab's font size, clamped, painted at once and saved [`FONT_SAVE_AFTER`] later.
+    pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        let size = step_font_size(size.round(), 0);
+        if size == self.term_font_size {
+            return;
         }
+        self.term_font_size = size;
+        cx.notify();
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        // replacing the task drops (cancels) the write still waiting
+        self.font_save = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FONT_SAVE_AFTER).await;
+            let saved = Settings::load(&home).and_then(|mut settings| {
+                settings.set_terminal_font_size(f32::from(size) as u32);
+                settings.save(&home)
+            });
+            this.update(cx, |this, cx| {
+                this.font_save = None;
+                if let Err(e) = saved {
+                    this.action_error = Some(format!("Cannot save the terminal font size: {e}"));
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+
+    /// The debounced write is still waiting.
+    pub fn font_save_pending(&self) -> bool {
+        self.font_save.is_some()
     }
 
     fn run_find(&mut self, tab_id: u64, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
@@ -290,6 +319,15 @@ mod tests {
 
     fn k(key: &str, control: bool, shift: bool) -> Keystroke {
         Keystroke { modifiers: Modifiers { control, shift, ..Default::default() }, key: key.into(), key_char: None }
+    }
+
+    #[test]
+    fn the_settings_bounds_are_the_painters() {
+        use foreman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE};
+        use foreman_ui::term_element::{MAX_FONT_SIZE, MIN_FONT_SIZE};
+        assert_eq!(FONT_SIZE, px(DEFAULT_TERMINAL_FONT_SIZE as f32));
+        assert_eq!(MIN_FONT_SIZE, px(MIN_TERMINAL_FONT_SIZE as f32));
+        assert_eq!(MAX_FONT_SIZE, px(MAX_TERMINAL_FONT_SIZE as f32));
     }
 
     #[test]

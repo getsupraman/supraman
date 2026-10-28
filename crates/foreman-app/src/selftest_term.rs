@@ -2,7 +2,7 @@
 //! step 6b left its marker at the PSReadLine prompt: Ctrl+C with a selection copies it and the shell gets
 //! no ^C; PSReadLine's parameter colour is Campbell's bright black; Ctrl+C without a selection cancels the
 //! line; a right-click with a selection copies it and without one pastes; the cursor is a blinking bar,
-//! lit right after a key; Ctrl+Shift+F finds; Ctrl+= / Ctrl+0 zoom the tab. The clipboard is shared with
+//! lit right after a key; Ctrl+Shift+F finds; Ctrl+= / Ctrl+0 zoom the terminals. The clipboard is shared with
 //! other selftests (m5/15), so every clipboard check retries as step 6b does, and the clipboard is put back.
 
 use std::time::{Duration, Instant};
@@ -255,8 +255,8 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("Ctrl+Shift+F \"wheel line 1\": {count} matches, Enter {first:?} → {second:?}, Esc closed"));
 
-    // Ctrl+= / Ctrl+- / Ctrl+0 zoom this tab
-    let size = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.tab(tab).map(|t| t.font_size));
+    // Ctrl+= / Ctrl+- / Ctrl+0 zoom every terminal (m5/41; step 7q checks a second tab and the file)
+    let size = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.term_font_size);
     let before = size(cx);
     key(cx, "=", ctrl)?;
     key(cx, "=", ctrl)?;
