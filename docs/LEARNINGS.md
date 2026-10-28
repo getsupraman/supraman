@@ -3031,3 +3031,34 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   insufficient_scope"). `fm` depends on neither foreman-ui nor foreman-app, so this unit's change cannot cause
   it. `--selftest` 5 of 5 PASS (125–137 s). `--selftest-supervise` FAIL once at step s ("the tree does not
   overflow a 480 px window"), then PASS (298 s). `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.2 terminal links open only on Ctrl+click (audit U1: A-26, A-49)
+
+- **Rule** (René, m5/44 decision 5): an OSC 8 link or a detected URL opens only on Ctrl+click
+  (`modifiers.secondary()`), for any scheme, with no allowlist. A plain click selects or positions as usual.
+- **A-26 confirmed and fixed.** `Terminal::mouse_up` called `cx.open_url(link.uri())` for any OSC 8 cell under
+  a plain left click. That branch is gone. A plain release now only queues `FindHyperlink(open)` when Ctrl is
+  held. A Ctrl press on a link is already captured in `mouse_down` (`find_hyperlink_at_point` finds OSC 8 cells as
+  well as regex URLs), so both kinds go through `ProcessHyperlink` → `Event::Open`.
+- **A-49 confirmed and fixed.** `Event::Open` was dropped by the `_ => {}` arm in `view.rs`. It now goes to
+  `open_link`: `Url` → `cx.open_url`; `PathLike` (a `file://` link, decoded) → `cx.open_with_system`, joined to
+  the line's cwd when it is relative. Foreman passes no path regexes, so a bare path in the output is never a
+  `PathLike`.
+- **Hover:** the Ctrl-gated hover state (`last_hovered_word`, set only while Ctrl is held) is unchanged. Nothing
+  draws it: `term_element.rs:5` drops hyperlink hover, and OSC 8 cells are always underlined (`:981`), as in WT.
+  Ctrl-gating that underline would mean editing `foreman-ui`, which is outside this unit's files. Not done.
+- **Hit-test pitfall:** the removed path found the cell with `content_index_for_mouse`, which rounds. y = 10 px on
+  a 20 px line is row 1 there but row 0 for `grid_point`. A click test at y = 10 misses the link on the old code
+  and passes green for the wrong reason. The tests click at y = 5. `content_index_for_mouse` is `#[cfg(test)]` now
+  (only its own tests use it).
+- **Tests:** `terminal.rs` `tests::hyperlinks::{test_plain_click_opens_no_link, test_ctrl_click_opens_osc8_link_of_any_scheme,
+  test_ctrl_click_opens_plain_url}` subscribe to `Event::Open` and read the test platform's `opened_url`; nothing
+  real is opened. `view.rs` `an_open_event_opens_any_scheme_and_resolves_relative_paths` drives `open_link` with
+  fake openers.
+- **Red:** with the old `mouse_up` branch restored, `test_plain_click_opens_no_link` FAILS: "a plain click reached the
+  platform opener, left: Some(\"vscode://file/c:/x.exe\")".
+- **Pitfall:** `Copy-Item` keeps the source's mtime, so restoring a backup older than the last build leaves cargo
+  running the stale binary. Touch the file after restoring it.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-2\target`): build ok, no warnings; `cargo test --release --workspace`
+  all green (no F-05 flake this time); `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS;
+  `--selftest-detach-shutdown` PASS; 0 `fm-selftest` sessions.
