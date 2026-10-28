@@ -61,6 +61,8 @@ struct BatchedTextRun {
     cell_starts: Vec<usize>,
     /// One character fitted into its cells ([`BatchedTextRun::paint_fitted`]).
     fit: bool,
+    /// The blank cells before and after a fitted character that its ink may overhang ([`give_room`]).
+    room: (usize, usize),
     style: TextRun,
 }
 
@@ -75,6 +77,7 @@ impl BatchedTextRun {
             cell_count: 1,
             cell_starts: vec![0],
             fit: false,
+            room: (0, 0),
             style,
         }
     }
@@ -133,41 +136,60 @@ impl BatchedTextRun {
         })
     }
 
-    /// As Windows Terminal: a glyph wider than its cells is scaled down and centred in them, and
-    /// nothing is painted outside them.
+    /// As Windows Terminal: full size on the terminal font's baseline; moved, and scaled about its
+    /// centre only when its ink is wider than its cells and `room`; nothing is painted outside them.
     fn paint_fitted(&self, origin: GpuiPoint<Pixels>, pos: GpuiPoint<Pixels>, dims: &TerminalBounds, font_size: Pixels, window: &mut Window, cx: &mut App) {
-        let cells = dims.cell_width * self.cell_count as f32;
+        let cell = dims.cell_width;
+        let (before, after) = (cell * self.room.0 as f32, cell * self.room.1 as f32);
+        let cells = cell * self.cell_count as f32;
+        let text_system = window.text_system().clone();
         let runs = std::slice::from_ref(&self.style);
-        let mut shaped = window.text_system().shape_line(self.text.clone().into(), font_size, runs, None);
-        let (left, right) = ink(&self.text, &shaped, window.text_system()).unwrap_or((px(0.), shaped.width));
-        let (left, right) = (left.min(px(0.)), right.max(shaped.width));
-        let mut at = pos;
-        if right - left > cells + px(0.5) {
-            let scale = cells / (right - left);
-            shaped = window.text_system().shape_line(self.text.clone().into(), font_size * scale, runs, None);
-            at.x -= left * scale;
-        }
+        let natural = text_system.shape_line(self.text.clone().into(), font_size, runs, None);
+        let base_style = TextRun { len: 1, ..self.style.clone() };
+        let base = text_system.shape_line("m".into(), font_size, &[base_style], None);
+        let ink_at = |shaped: &ShapedLine| {
+            ink(&self.text, shaped, &text_system).unwrap_or_else(|| Bounds::new(point(px(0.), -shaped.ascent), size(shaped.width, shaped.ascent)))
+        };
+        let full = ink_at(&natural);
+        let scale = ((before + cells + after) / full.size.width.max(px(0.01))).min(1.);
+        let shaped = if scale < 0.99 {
+            text_system.shape_line(self.text.clone().into(), font_size * scale, runs, None)
+        } else {
+            natural.clone()
+        };
+        let scaled = ink_at(&shaped);
+        let ink_left = (full.left() + (full.size.width - scaled.size.width) / 2.).min(cells + after - scaled.size.width).max(-before);
+        let centre_y = baseline(&base, dims.line_height) + full.center().y;
+        let at = point(
+            pos.x + ink_left - scaled.left(),
+            pos.y + centre_y - scaled.center().y - baseline(&shaped, dims.line_height),
+        );
         record(self, &shaped, at - origin, true, window);
-        let mask = ContentMask { bounds: Bounds::new(pos, size(cells, dims.line_height)) };
+        let mask = ContentMask { bounds: Bounds::new(point(pos.x - before, pos.y), size(before + cells + after, dims.line_height)) };
         window.with_content_mask(Some(mask), |window| {
             let _ = shaped.paint(at, dims.line_height, gpui::TextAlign::Left, None, window, cx);
         });
     }
 }
 
-/// The leftmost and rightmost inked x of `shaped`, relative to its origin.
-fn ink(text: &str, shaped: &ShapedLine, text_system: &WindowTextSystem) -> Option<(Pixels, Pixels)> {
+/// Where [`ShapedLine::paint`] puts `shaped`'s baseline below the top of a line `line_height` high.
+fn baseline(shaped: &ShapedLine, line_height: Pixels) -> Pixels {
+    (line_height - shaped.ascent - shaped.descent) / 2. + shaped.ascent
+}
+
+/// The inked box of `shaped`, relative to its origin and baseline (y grows downwards).
+fn ink(text: &str, shaped: &ShapedLine, text_system: &WindowTextSystem) -> Option<Bounds<Pixels>> {
     shaped
         .runs
         .iter()
         .flat_map(|run| run.glyphs.iter().map(move |g| (run.font_id, g)))
         .filter_map(|(font_id, glyph)| {
             let ch = text[glyph.index..].chars().next()?;
-            let bounds = text_system.typographic_bounds(font_id, shaped.font_size, ch).ok()?;
-            let left = glyph.position.x + bounds.origin.x;
-            Some((left, left + bounds.size.width))
+            let b = text_system.typographic_bounds(font_id, shaped.font_size, ch).ok()?;
+            let left = glyph.position.x + b.origin.x;
+            Some(Bounds::from_corners(point(left, -(b.origin.y + b.size.height)), point(left + b.size.width, -b.origin.y)))
         })
-        .reduce(|(l1, r1), (l2, r2)| (l1.min(l2), r1.max(r2)))
+        .reduce(|a, b| a.union(&b))
 }
 
 /// A glyph as the grid last painted it, for the selftest ([`record_painted_glyphs`]).
@@ -181,6 +203,7 @@ pub struct PaintedGlyph {
     /// Relative to the grid's origin, as is `ink`.
     pub x: Pixels,
     pub ink: Option<(Pixels, Pixels)>,
+    pub ink_height: Option<Pixels>,
     pub fitted: bool,
     pub font_size: Pixels,
 }
@@ -211,10 +234,8 @@ fn record(run: &BatchedTextRun, shaped: &ShapedLine, at: GpuiPoint<Pixels>, fitt
             let ch = run.text[glyph.index..].chars().next()?;
             let cell = run.cell_starts.partition_point(|&start| start <= glyph.index).saturating_sub(1);
             let x = at.x + glyph.position.x;
-            let ink = text_system
-                .typographic_bounds(font_id, shaped.font_size, ch)
-                .ok()
-                .map(|b| (x + b.origin.x, x + b.origin.x + b.size.width));
+            let bounds = text_system.typographic_bounds(font_id, shaped.font_size, ch).ok();
+            let ink = bounds.map(|b| (x + b.origin.x, x + b.origin.x + b.size.width));
             Some(PaintedGlyph {
                 line: run.line,
                 column: run.column + cell as i32,
@@ -222,6 +243,7 @@ fn record(run: &BatchedTextRun, shaped: &ShapedLine, at: GpuiPoint<Pixels>, fitt
                 glyph: glyph.id.0,
                 x,
                 ink,
+                ink_height: bounds.map(|b| b.size.height),
                 fitted,
                 font_size: shaped.font_size,
             })
@@ -805,17 +827,27 @@ fn layout_grid<'a>(
     let mut block_regions = Vec::new();
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut current: Option<BatchedTextRun> = None;
+    let mut line_runs = 0;
+    let mut inked: Vec<Inked> = Vec::new();
 
     for (line_index, (_, line)) in grid.chunk_by(|c| c.point.line).into_iter().enumerate() {
         let display_line = line_index as i32;
         if let Some(batch) = current.take() {
             runs.push(batch);
         }
+        give_room(&mut runs[line_runs..], &inked);
+        line_runs = runs.len();
+        inked.clear();
         let mut previous_cell_had_extras = false;
 
         for indexed in line {
             let cell = &indexed.cell;
             let col = indexed.point.column as i32;
+            let at = col as usize;
+            if inked.len() <= at {
+                inked.resize(at + 1, Inked::Blank);
+            }
+            inked[at] = Inked::Text;
             let mut fg = cell.foreground();
             let mut bg = cell.background();
             if cell.is_inverse() {
@@ -842,6 +874,7 @@ fn layout_grid<'a>(
             }
 
             if cell.is_wide_char_spacer() {
+                inked[at] = at.checked_sub(1).map_or(Inked::Text, |before| inked[before]);
                 continue;
             }
             if cell.character() == ' ' && previous_cell_had_extras {
@@ -851,6 +884,7 @@ fn layout_grid<'a>(
             previous_cell_had_extras = matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
             if is_blank(cell) {
+                inked[at] = Inked::Blank;
                 continue;
             }
             let mut style = cell_style(cell, fg, theme, font);
@@ -882,6 +916,7 @@ fn layout_grid<'a>(
                 let mut batch = BatchedTextRun::new_from_char(display_line, col, cell.character(), style);
                 batch.cell_count = cells;
                 batch.fit = true;
+                inked[at] = Inked::Fitted;
                 for &c in zero_width.unwrap_or_default() {
                     batch.append_char(c, false);
                 }
@@ -916,7 +951,26 @@ fn layout_grid<'a>(
     if let Some(batch) = current {
         runs.push(batch);
     }
+    give_room(&mut runs[line_runs..], &inked);
     (rects, block_element_regions_to_rects(block_regions), runs)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Inked {
+    Blank,
+    Text,
+    Fitted,
+}
+
+/// Each fitted run of one line may overhang the blank cell after it, and the blank cell before it
+/// unless a fitted character before that may overhang it already.
+fn give_room(runs: &mut [BatchedTextRun], inked: &[Inked]) {
+    let at = |column: i32| usize::try_from(column).ok().and_then(|c| inked.get(c).copied());
+    for run in runs.iter_mut().filter(|r| r.fit) {
+        let after = at(run.column + run.cell_count as i32) == Some(Inked::Blank);
+        let before = at(run.column - 1) == Some(Inked::Blank) && at(run.column - 2) != Some(Inked::Fitted);
+        run.room = (before as usize, after as usize);
+    }
 }
 
 fn cell_style(cell: &Cell, fg: Color, theme: &Theme, font: &Font) -> TextRun {
@@ -1057,6 +1111,15 @@ mod tests {
         let shown: Vec<(&str, i32, usize, bool)> = runs.iter().map(|r| (r.text.as_str(), r.column, r.cell_count, r.fit)).collect();
         assert_eq!(shown, [("a->", 0, 3, false), ("◯", 3, 1, true), ("x->y", 4, 4, false)]);
         assert_eq!(runs[2].cell_starts, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_fitted_character_may_overhang_a_blank_neighbour_that_no_other_fitted_one_claims() {
+        let theme = theme();
+        let cells = row(0, "⏵⏵ a ⏵ ⏵", Color::Named(NamedColor::Foreground));
+        let (_, _, runs) = layout_grid(cells.iter(), &theme, None, &gpui::font("Consolas"), &|c, _| c == '⏵');
+        let room: Vec<(i32, (usize, usize))> = runs.iter().filter(|r| r.fit).map(|r| (r.column, r.room)).collect();
+        assert_eq!(room, [(0, (0, 0)), (1, (0, 1)), (5, (1, 1)), (7, (0, 0))]);
     }
 
     #[test]

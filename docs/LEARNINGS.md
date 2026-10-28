@@ -2923,3 +2923,55 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-47\target`): `cargo build --release --workspace` ok, no warnings; `cargo
   test --release --workspace` 586 passed, 0 failed; `--selftest` 5 of 5 PASS (120–131 s); `--selftest-supervise`
   PASS (303 s); `--selftest-detach-shutdown` PASS (14 s); `claude agents --json --all`: 0 `fm-selftest` rows.
+
+## 2026-10-28 — m5/49 fallback glyphs sized like Windows Terminal: full size, overhang into a blank neighbour
+
+- **Which font draws what** (selftest 7s `probe`, 14 px, measured on this machine). Cascadia Code (8.20 px
+  cells): `⏵` U+23F5 is Segoe UI Symbol, advance 14.0, ink 4.4 × 8.8; `◯` U+25EF 8.2 × 8.2, `≥` `≤` 6.5 × 7.5
+  and `→` 7.1 × 7.1 are Cascadia Code's own (advance 8.2). Consolas (7.70 px): `⏵` Segoe UI Symbol as above,
+  `◯` Segoe UI Symbol advance 15.7, ink 13.8 × 13.8; `≥` `≤` (5.9 × 8.5) and `→` (7.4 × 5.4) are Consolas's own.
+  gpui's `get_font_for_id` does not know fallback faces, so `probe` matches the shaped run's font id against
+  `resolve_font` of the usual fallback families (`FALLBACKS`).
+- **Why `⏵⏵` looked like `››`.** m5/47 fitted ink ∪ advance into the cell. Segoe UI Symbol's `⏵` is 14.0 px
+  wide by advance but its ink is only 4.4 px, so it was shrunk to 8.2 px (59%, ink 5.1 px high) for no reason.
+- **What Windows Terminal does** (microsoft/terminal @ f356093, read in `.repos/terminal/src/renderer/atlas`):
+  - Fallback: `IDWriteFontFallback::MapCharacters` from the configured family (`AtlasEngine.cpp:987`); its
+    `scale` out-parameter is ignored (`assert(scale == 1)`, `:1037`). The fallback face is shaped at the same em
+    size as the main font (`fontEmSize = font->fontSize`, `:1137`). This is the same system fallback DirectWrite
+    gives gpui, so WT very likely picks Segoe UI Symbol for `⏵` too. I did not check that in a running WT: UI
+    automation is only allowed on our own Foreman.
+  - Grid: each glyph's advance is forced to its cells (`AtlasEngine.cpp:929`; complex runs `:1173`), so the
+    next glyph starts on its own cell whatever the font's advance is.
+  - Size and overhang: the glyph is rasterised at full size from its black box (`GetGlyphRunWorldBounds`,
+    `BackendD3D.cpp:1496`) and placed at the cell's x plus the glyph's own bearing, on the main font's baseline
+    (`BackendD3D.cpp:1122`, `:1182`). It is **never scaled to the cell, never centred, and not clipped**: it
+    overhangs into any neighbour, blank or not. The only exceptions are a ligature-wide glyph
+    (`overlapSplit`, `:1562`), which is split so each cell gets its own colour (still not clipped), and
+    builtin glyphs (box drawing, blocks, `BuiltinGlyphs.cpp:1785`), which are drawn by code into one cell.
+- **Foreman's rule** (`paint_fitted`, `term_element.rs`): full size on the terminal font's baseline (the
+  baseline of a shaped `m`), at the font's own x, like WT. Two differences from WT, both on purpose:
+  - Ink must not cover a non-blank cell. It may overhang into `room`: the blank cell after it, and the blank
+    cell before it unless a fitted character two cells back can already claim that cell (`give_room`, computed
+    per line in `layout_grid` from an `Inked` map; one cell each way).
+  - If the ink does not fit, it is first moved inside the cells plus room, and only then scaled about its centre,
+    just enough to fit (`(cells + room) / ink width`, ink only, not advance). The mask is the cells plus room.
+  - No 85% floor in the code. A floor would break the m5/47 guarantee: `◯` in Consolas needs 0.56 to stay out of
+    `x`'s cell. Every glyph measured here that needs no shrinking (all of them in Cascadia Code) stays at 100%,
+    and the selftest makes the 85% a check.
+- **Selftest 7s** prints `⏵⏵ auto mode on`, `◯general-purpose`, `a → b`, `≥ ≤` and checks the `⏵⏵` row: each
+  `⏵` ≥ 85% of its unscaled ink height, the first one inside its own cell, the second up to `a`'s cell.
+  Cascadia Code: `⏵` at 3.8..8.2 of 0.0..8.2 and 13.5..17.8 of 8.2..24.6 (it overhangs the blank by 1.4 px), both
+  100% high. `◯x` still keeps `x`'s cell clear (Consolas `◯` fitted 14 → 7.81 px). `PaintedGlyph` gains
+  `ink_height`.
+- **Before and after** shots (`FOREMAN_SHOTS`): `C:\fmbuild\m5-49\shots\before\m5-49-term-fallback-glyphs.png`
+  shows `››` half as tall as the text. `...\after\...` shows two full-height triangles, as WT draws them.
+  `◯`, `→`, `≥`, `≤` are unchanged because Cascadia Code has them.
+- Red: the new 7s check against m5/47's `paint_fitted` → FAIL "`⏵` in cell 0 inks 5.126953px high, under 85%
+  of its unscaled 8.75px (fitted at 8.203125px)".
+- Test: `term_element::tests::a_fitted_character_may_overhang_a_blank_neighbour_that_no_other_fitted_one_claims`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-49\target`): build ok, no warnings; `cargo test --release --workspace
+  --no-fail-fast` 587 passed, 1 failed: `fm` `work_errors_are_one_line_without_the_token`. It flakes on its own
+  (7 of 10 runs of the test binary fail, "refused the refresh (invalid_grant)" instead of "HTTP 403:
+  insufficient_scope"). `fm` depends on neither foreman-ui nor foreman-app, so this unit's change cannot cause
+  it. `--selftest` 5 of 5 PASS (125–137 s). `--selftest-supervise` FAIL once at step s ("the tree does not
+  overflow a 480 px window"), then PASS (298 s). `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest` rows.
