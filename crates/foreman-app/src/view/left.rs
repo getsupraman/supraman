@@ -13,6 +13,7 @@ use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
 use super::notices;
+use super::menu::MenuAction;
 use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
@@ -1521,12 +1522,15 @@ impl FleetView {
                                 this.answer_confirm(true, window, cx);
                             },
                         )))
-                        .child(button(&self.hits, "confirm-cancel".into(), "Cancel", cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                this.answer_confirm(false, window, cx);
-                            },
-                        ))),
+                        // a report (m5/38's bulk delete) has only its OK
+                        .when(confirm.action != MenuAction::Dismiss, |d| {
+                            d.child(button(&self.hits, "confirm-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                                |this, _: &ClickEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    this.answer_confirm(false, window, cx);
+                                },
+                            )))
+                        }),
                 )
                 .into_any_element(),
         )

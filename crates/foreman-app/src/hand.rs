@@ -170,7 +170,14 @@ impl Hands {
     /// Mints the token of a `+` session in `cwd` and writes its config file. `own` is the session's
     /// own name when it has one (a resume); else, or when another launcher holds that name, it is
     /// `hand-<folder>-<n>`.
+    #[cfg(test)]
     pub fn launch(&mut self, cwd: &Path, own: Option<&str>) -> Launch {
+        self.launch_for(cwd, own, None)
+    }
+
+    /// [`Self::launch`] for a resume of `claude_session` (its uuid), kept with the token so Delete can
+    /// revoke it ([`Self::release_session`]).
+    pub fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
         let Some((role, bearer)) = self.bearer(None) else {
             return Launch::Plain;
         };
@@ -211,7 +218,7 @@ impl Hands {
             MintedSession {
                 session_id: minted.session_id.clone(),
                 role,
-                claude_session_id: None,
+                claude_session_id: claude_session.map(str::to_string),
                 last_active: None,
             },
         );
@@ -247,6 +254,17 @@ impl Hands {
         result
             .err()
             .map(|e| format!("Cannot revoke the WorkState token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id))
+    }
+
+    /// Every token minted for claude session `claude_session_id` (m5/38: its Delete), as [`Self::release`].
+    pub fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
+        let names: Vec<String> = self
+            .minted
+            .names()
+            .filter(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id.as_deref() == Some(claude_session_id)))
+            .cloned()
+            .collect();
+        names.iter().filter_map(|n| self.release(n)).collect()
     }
 
     /// Every hand token: on quit, and on start for those an earlier run left.
@@ -465,6 +483,29 @@ mod tests {
         assert!(!c5.exists());
         let (third, _) = Hands::with(&home, HttpMinter::default(), a_repo);
         assert!(third.names().is_empty(), "the revoke was saved");
+    }
+
+    #[test]
+    fn deleting_a_resumed_session_revokes_only_its_own_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen) = fake_workstate(vec![]);
+        let home = home_with(dir.path(), Some(&url), ENV);
+        let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
+        let alpha = Path::new(r"C:\demo\alpha");
+        let sid = "5e1f7e57-0000-4000-8000-00000000c105";
+        let Launch::Minted { name, config, .. } = hands.launch_for(alpha, Some("resumed"), Some(sid)) else { panic!() };
+        let Launch::Minted { name: other, .. } = hands.launch(alpha, None) else { panic!() };
+        seen.recv_timeout(WAIT).unwrap();
+        seen.recv_timeout(WAIT).unwrap();
+        assert!(hands.release_session("ffffffff-0000-4000-8000-000000000001").is_empty());
+        assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "another session's delete revokes nothing");
+        assert!(hands.release_session(sid).is_empty());
+        assert_eq!(seen.recv_timeout(WAIT).unwrap().0, "DELETE /api/agent-sessions/h1 HTTP/1.1");
+        assert!(!config.exists());
+        assert_eq!(hands.names(), [other.clone()]);
+        assert_ne!(name, other);
+        assert!(hands.release_session(sid).is_empty(), "once");
+        assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err());
     }
 
     #[test]

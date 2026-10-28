@@ -27,6 +27,7 @@ usage:
   fm probe launch
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
+  fm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
   fm plugin install <plugin-dir>  (copies this fm.exe to <plugin-dir>/bin, where the hooks run it)
   fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
 
@@ -34,6 +35,7 @@ mod hook;
 mod probe;
 mod probe_hooks;
 mod probe_isolation;
+mod probe_rm;
 mod relay;
 mod repos;
 mod work;
@@ -159,6 +161,14 @@ fn run(args: &[String]) -> Result<(), Failure> {
                 Ok(())
             } else {
                 Err(Failure::Probe("an isolation session did not finish its turn"))
+            }
+        }
+        ["probe", "rm-transcript"] => {
+            check_claude()?;
+            if probe_rm::run() {
+                Ok(())
+            } else {
+                Err(Failure::Probe("the rm-transcript probe did not finish"))
             }
         }
         ["plugin", "install", dir] => {

@@ -208,6 +208,79 @@ fn feed_from(path: &Path, offset: u64, t: &mut Transcript) -> std::io::Result<u6
     }
 }
 
+/// The first prompt of a transcript, read only as far as it (at most [`FIRST_PROMPT_WITHIN`] bytes).
+pub fn first_prompt(path: &Path) -> std::io::Result<Option<String>> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    let mut t = Transcript::default();
+    let (mut line, mut read) = (Vec::new(), 0u64);
+    while t.first_prompt.is_none() && read < FIRST_PROMPT_WITHIN {
+        line.clear();
+        let n = reader.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        t.feed(&line);
+    }
+    Ok(t.first_prompt)
+}
+
+const FIRST_PROMPT_WITHIN: u64 = 8 * 1024 * 1024;
+
+/// How rlarch's nested-claude opens every brief (`header.mjs` `protocolHeader`).
+pub const CONTROLLER_HEADER: &str = "Your controller is the Claude Code session '";
+
+/// Who started a session, read from its first prompt (m5/38): the controller header, or a pointer to a
+/// brief under `.claude/briefs/` (whose own text holds the header).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launcher {
+    /// As the header names it, `name [ref]`.
+    pub controller: Option<String>,
+    pub brief: Option<PathBuf>,
+}
+
+impl Launcher {
+    /// `None` when the prompt shows neither.
+    pub fn of(prompt: &str) -> Option<Self> {
+        let controller = controller_in(prompt);
+        let brief = prompt.split_whitespace().find_map(|word| {
+            let word = word.trim_matches(|c: char| matches!(c, '`' | '"' | '\'' | '“' | '”' | '(' | ')' | ',' | ';' | ':' | '.') );
+            let lower = word.to_ascii_lowercase().replace('\\', "/");
+            (lower.contains(".claude/briefs/") && lower.ends_with(".txt")).then(|| PathBuf::from(word))
+        });
+        (controller.is_some() || brief.is_some()).then_some(Self { controller, brief })
+    }
+
+    /// The controller from the brief's header when the prompt only pointed at the brief.
+    pub fn resolve(mut self) -> Self {
+        if self.controller.is_none()
+            && let Some(brief) = &self.brief
+            && let Ok(file) = File::open(brief)
+        {
+            let mut head = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut std::io::Read::take(file, 4096), &mut head);
+            self.controller = controller_in(&String::from_utf8_lossy(&head));
+        }
+        self
+    }
+
+    /// The controller's session name, without its ` [ref]`.
+    pub fn controller_name(&self) -> Option<&str> {
+        let c = self.controller.as_deref()?;
+        Some(match c.rsplit_once(" [") {
+            Some((name, r)) if r.ends_with(']') => name,
+            _ => c,
+        })
+    }
+}
+
+fn controller_in(text: &str) -> Option<String> {
+    let rest = text.split_once(CONTROLLER_HEADER)?.1;
+    let name = rest.split_once('\'')?.0.trim();
+    (!name.is_empty() && !name.contains('\n')).then(|| name.to_string())
+}
+
 fn session_id_of(path: &Path) -> Option<String> {
     (path.extension()? == "jsonl").then_some(())?;
     Some(path.file_stem()?.to_string_lossy().into_owned())
@@ -396,6 +469,42 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, body).unwrap();
         path
+    }
+
+    #[test]
+    fn a_launcher_is_read_from_the_header_or_the_brief_the_prompt_points_at() {
+        let header = format!("{CONTROLLER_HEADER}autowork-b0 [408d24]'. It started you, it is watching you, and it\nis who you report to");
+        let l = Launcher::of(&header).unwrap();
+        assert_eq!(l.controller.as_deref(), Some("autowork-b0 [408d24]"));
+        assert_eq!(l.controller_name(), Some("autowork-b0"));
+        assert_eq!(l.brief, None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let briefs = dir.path().join(".claude").join("briefs");
+        std::fs::create_dir_all(&briefs).unwrap();
+        let brief = write(&briefs, "brief-aw-x.txt", &format!("{header}\n# Unit x\n"));
+        let prompt = format!("Read the file {} and follow it exactly. It is your brief. Start now.", brief.display());
+        let l = Launcher::of(&prompt).unwrap();
+        assert_eq!(l.brief.as_deref(), Some(brief.as_path()), "the trailing dot is not part of the path");
+        assert_eq!(l.controller, None);
+        assert_eq!(l.clone().resolve().controller.as_deref(), Some("autowork-b0 [408d24]"));
+        let gone = Launcher::of(r"Read the file `P:\x\.claude\briefs\brief-gone.txt`.").unwrap();
+        assert_eq!(gone.resolve().controller, None, "a brief that is gone names no controller, it still marks the launch");
+
+        assert_eq!(Launcher::of("fix the tree, then run the tests"), None);
+        assert_eq!(Launcher::of("look at .claude/briefs/ for ideas"), None);
+    }
+
+    #[test]
+    fn the_first_prompt_is_read_without_reading_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = String::from("{\"type\":\"mode\",\"mode\":\"normal\"}\n");
+        body.push_str(&format!("{}\n", serde_json::json!({"type":"user","message":{"role":"user","content":"first one"},"cwd":"C:\\x"})));
+        body.push_str(&format!("{}\n", serde_json::json!({"type":"user","message":{"role":"user","content":"second"},"cwd":"C:\\x"})));
+        let path = write(dir.path(), &format!("{ID}.jsonl"), &body);
+        assert_eq!(first_prompt(&path).unwrap().as_deref(), Some("first one"));
+        let none = write(dir.path(), "empty.jsonl", "{\"type\":\"mode\"}\n");
+        assert_eq!(first_prompt(&none).unwrap(), None);
     }
 
     #[test]

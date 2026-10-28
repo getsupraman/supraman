@@ -135,6 +135,7 @@ pub fn prepare() -> anyhow::Result<()> {
         session_name: None,
         name_prefix: Some(format!("fm-selftest-{hex}")),
         kill: Vec::new(),
+        transcripts: Vec::new(),
     });
     install_guards(Mode::SelftestSupervise);
     // Still single-threaded apart from the watchdog, which never reads the environment.
@@ -202,17 +203,19 @@ pub fn prepare() -> anyhow::Result<()> {
 
 /// Stops and removes every row whose name starts with `prefix` (this run's own), after turning the
 /// app's supervisor off so it cannot resume them meanwhile. A `--discard-unpushed` refusal is
-/// answered for these rows only (m2/2). True when none is left.
-pub fn remove_own_rows(prefix: &str) -> bool {
+/// answered for these rows only (m2/2). True when none is left; with `(sessionId, cwd)` of each, for
+/// their transcripts.
+pub fn remove_own_rows(prefix: &str) -> (bool, Vec<(String, std::path::PathBuf)>) {
     supervise::disable_and_wait();
     let rows = match list_sessions() {
         Ok(rows) => rows,
         Err(e) => {
             println!("cleanup: cannot list sessions: {e}");
-            return false;
+            return (false, Vec::new());
         }
     };
     let own: Vec<Session> = rows.into_iter().filter(|s| s.name.starts_with(prefix)).collect();
+    let transcripts = own.iter().map(|s| (s.session_id.clone(), s.cwd.clone())).collect();
     for row in &own {
         if row.pid.is_some() {
             match claude(&["stop", &row.id], None) {
@@ -246,11 +249,11 @@ pub fn remove_own_rows(prefix: &str) -> bool {
         Ok(rows) => {
             let left: Vec<String> = rows.iter().filter(|s| s.name.starts_with(prefix)).map(|s| s.name.clone()).collect();
             println!("cleanup: {} {prefix}* row(s) removed, {} left {left:?}", own.len(), left.len());
-            left.is_empty()
+            (left.is_empty(), transcripts)
         }
         Err(e) => {
             println!("cleanup: cannot verify removal: {e}");
-            false
+            (false, transcripts)
         }
     }
 }
