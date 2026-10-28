@@ -43,6 +43,8 @@ pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// An access token with less left than this is refreshed before use.
 const REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+/// A revoke is a courtesy: a server that does not answer within this is left to lapse the grant.
+const REVOKE_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AuthError {
@@ -122,6 +124,7 @@ pub struct Auth {
     home: PathBuf,
     store: Arc<dyn SecretStore>,
     agent: ureq::Agent,
+    revoke_agent: ureq::Agent,
     inner: Mutex<Inner>,
     cancel: AtomicBool,
     timeout: Duration,
@@ -151,6 +154,7 @@ impl Auth {
             home: home.to_path_buf(),
             store,
             agent: crate::http::agent(HTTP_TIMEOUT),
+            revoke_agent: crate::http::agent(REVOKE_TIMEOUT),
             inner: Mutex::default(),
             cancel: AtomicBool::new(false),
             timeout: SIGN_IN_TIMEOUT,
@@ -372,22 +376,28 @@ impl Auth {
     }
 
     /// Revokes `origin`'s grant (the refresh token: the whole authorization and every `wss_` minted
-    /// under it), then deletes the credential and drops held tokens. `Err` is a notice: a revoke that
-    /// failed; everything local is gone anyway.
+    /// under it), after deleting the credential and dropping held tokens, so no other call waits on the
+    /// revoke. `Err` is a notice: a revoke that failed; everything local is gone anyway.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
         let origin = api_base(origin);
         let known = self.load_known();
-        let mut inner = self.lock();
-        if inner.held.as_ref().is_some_and(|h| h.origin == origin) {
-            inner.held = None;
-        }
-        let Some(meta) = known.servers.get(&origin) else {
-            return Ok(());
+        let refresh = {
+            let mut inner = self.lock();
+            if inner.held.as_ref().is_some_and(|h| h.origin == origin) {
+                inner.held = None;
+            }
+            let Some(meta) = known.servers.get(&origin) else {
+                return Ok(());
+            };
+            inner.broken.remove(&meta.issuer);
+            drop(inner);
+            let _lock = self.refresh_lock().map_err(|e| e.to_string())?;
+            let refresh = self.store.get(&meta.issuer)?;
+            self.store.delete(&meta.issuer)?;
+            refresh
         };
-        inner.broken.remove(&meta.issuer);
-        let _lock = self.refresh_lock().map_err(|e| e.to_string())?;
-        let refresh = self.store.get(&meta.issuer)?;
-        let revoked = match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
+        let meta = &known.servers[&origin];
+        match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
             (None, _, _) => Ok(()),
             (Some(_), None, _) => Err(format!("WorkState at {origin} names no revocation endpoint; the grant lapses after 30 days")),
             (Some(rt), Some(endpoint), client) => {
@@ -395,15 +405,19 @@ impl Auth {
                 if let Some(client) = client {
                     form.push(("client_id", client.as_str()));
                 }
-                match self.post_form(&origin, endpoint, &form) {
+                let res = self
+                    .revoke_agent
+                    .post(endpoint)
+                    .header("Accept", "application/json")
+                    .content_type("application/x-www-form-urlencoded")
+                    .send(form_encode(&form).as_str());
+                match read(&origin, res) {
                     Ok((status, _)) if (200..300).contains(&status) => Ok(()),
                     Ok((status, body)) => Err(format!("WorkState at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
                     Err(e) => Err(format!("{e}; the grant lapses after 30 days")),
                 }
             }
-        };
-        self.store.delete(&meta.issuer)?;
-        revoked
+        }
     }
 
     fn discover(&self, origin: &str) -> Result<ServerMeta, AuthError> {

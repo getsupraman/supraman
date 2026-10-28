@@ -9,7 +9,6 @@ use std::time::Duration;
 use foreman_core::Settings;
 use foreman_workstate::{Auth, AuthError, AuthStatus};
 
-pub const SETUP_SKILL: &str = "rlarch:workstate-setup";
 /// How often the status is checked again while the app runs.
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
@@ -72,7 +71,7 @@ impl WsStatus {
                 Some("Sign in: your browser opens WorkState's sign-in page, and Foreman keeps the grant in Windows Credential Manager.".into())
             }
             WsStatus::Unreachable { .. } => Some(format!(
-                "Check the server URL in Settings → WorkState, or start the local server with the {SETUP_SKILL} skill. Checked again every {} s.",
+                "Check the server URL in Settings → WorkState. Checked again every {} s.",
                 RECHECK_EVERY.as_secs()
             )),
         }

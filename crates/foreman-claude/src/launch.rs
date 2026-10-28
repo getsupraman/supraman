@@ -187,6 +187,13 @@ pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers
     Ok(path)
 }
 
+/// The WorkState URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
+pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(format!("workstate-{agent}.json"))).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v["mcpServers"]["workstate"]["url"].as_str().map(str::to_string)
+}
+
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
@@ -534,6 +541,8 @@ mod tests {
         let ws = &v["mcpServers"]["workstate"];
         assert_eq!(ws["type"], "http");
         assert_eq!(ws["url"], "http://127.0.0.1:5290/mcp");
+        assert_eq!(mcp_config_url(&dir.path().join("mcp"), "fm-demo-alpha").as_deref(), Some("http://127.0.0.1:5290/mcp"));
+        assert_eq!(mcp_config_url(&dir.path().join("mcp"), "fm-demo-beta"), None);
         assert_eq!(
             ws["headers"],
             serde_json::json!({

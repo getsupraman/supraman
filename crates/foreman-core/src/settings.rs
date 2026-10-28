@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 20;
-/// `workstate_url` when unset: the local server, until the move to its hosted origin (m5/43).
-pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290";
+/// `workstate_url` when unset.
+pub const DEFAULT_WORKSTATE_URL: &str = "https://workstate.dikaia.ai";
 /// `terminal_font_size` when unset or invalid, and Ctrl+0's size (m5/41).
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `terminal_font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
@@ -286,8 +286,8 @@ mod tests {
     #[test]
     fn workstate_url_is_an_origin_and_an_old_env_line_is_ignored() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::default().workstate_origin(), "http://127.0.0.1:5290");
-        assert_eq!(Settings::default().workstate_mcp_url(), "http://127.0.0.1:5290/mcp");
+        assert_eq!(Settings::default().workstate_origin(), "https://workstate.dikaia.ai");
+        assert_eq!(Settings::default().workstate_mcp_url(), "https://workstate.dikaia.ai/mcp");
         fs::write(Settings::path(home.path()), "workstate_env = 'C:/x/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n").unwrap();
         let s = Settings::load(home.path()).unwrap();
         assert_eq!(s.workstate_origin(), "http://127.0.0.1:5290", "an older file's /mcp URL");

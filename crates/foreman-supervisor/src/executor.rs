@@ -114,6 +114,10 @@ pub struct Supervisor<L, T> {
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
     /// follows mints a fresh token.
     remint_due: Vec<String>,
+    /// The server Foreman is signed in to, as [`Self::server_changed`] last saw it.
+    origin: Option<String>,
+    /// The server [`Self::server_changed`] last scheduled re-mints for.
+    checked: Option<String>,
     /// While set, no launch or resume goes: they would only fail after 45 s. Why, and since when.
     held: Option<(String, Millis)>,
     /// Why a `--bg` that could not reach the background service will keep failing, if it will:
@@ -127,11 +131,14 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     pub fn new(desired: DesiredState, config: LaunchConfig, launcher: L, tokens: T) -> Self {
         let path = config.foreman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
         let mut notices = Vec::new();
-        let minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
+        let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
             let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
             notices.push(format!("Cannot read {shown} ({e}): the WorkState sessions minted before are forgotten"));
             MintedSessions::empty(path)
         });
+        if let Err(e) = minted.adopt_origins(&config.mcp_dir) {
+            notices.push(format!("Cannot save the minted WorkState sessions of {}: {e}", desired.workspace));
+        }
         Self {
             desired,
             memory: SupervisorMemory::default(),
@@ -145,6 +152,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
+            origin: None,
+            checked: None,
             held: None,
             daemon_check: foreman_claude::daemon_mismatch,
         }
@@ -202,24 +211,39 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
         self.held = None;
-        if self.needs.iter().any(|n| n.kind == NeedsKind::TokenExpired && n.name == name) {
+        if self.needs.iter().any(|n| matches!(n.kind, NeedsKind::TokenExpired | NeedsKind::OtherServer) && n.name == name) {
             self.remint_due.push(name.to_string());
         }
     }
 
-    /// The WorkState server changed (m5/43): every minted session that is still wanted is stopped at the
-    /// next tick and resumed (by its full uuid) with a token minted on the new server, `replace: true`,
-    /// in the same config file; a stopped one gets it at its next resume anyway. Returns their names.
-    pub fn server_changed(&mut self) -> Vec<String> {
-        let names: Vec<String> = self
+    /// The server Foreman is signed in to (`None`: not signed in), on every tick. The first time it is
+    /// `origin`, every wanted session minted elsewhere (or on an unknown server) is stopped at the next
+    /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
+    /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
+    pub fn server_changed(&mut self, origin: Option<&str>) -> Vec<(String, Option<String>)> {
+        self.origin = origin.map(api_base);
+        let Some(origin) = self.origin.clone() else {
+            return Vec::new();
+        };
+        if self.checked.as_deref() == Some(origin.as_str()) {
+            return Vec::new();
+        }
+        self.checked = Some(origin.clone());
+        let stale: Vec<(String, Option<String>)> = self
             .minted
-            .names()
-            .filter(|n| self.desired.sessions.iter().any(|w| &w.name == *n))
-            .filter(|n| !self.remint_due.contains(n))
-            .cloned()
+            .elsewhere(&origin)
+            .into_iter()
+            .filter(|(n, _)| self.desired.sessions.iter().any(|w| &w.name == n))
+            .filter(|(n, _)| !self.remint_due.contains(n))
             .collect();
-        self.remint_due.extend(names.iter().cloned());
-        names
+        self.remint_due.extend(stale.iter().map(|(n, _)| n.clone()));
+        stale
+    }
+
+    /// Whether `m`'s token is from another server than `url`'s: its PATCH and DELETE would name another
+    /// server's session, so they are left to that server's grant revoke.
+    fn elsewhere(m: &MintedSession, url: &str) -> bool {
+        m.origin.as_deref().is_some_and(|o| o != api_base(url))
     }
 
     #[cfg(test)]
@@ -315,6 +339,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             })
             .collect();
         needs.extend(self.expired_tokens(observed, &reminting, now));
+        needs.extend(self.other_server_tokens(observed, &reminting, now));
         if let Some(need) = self.held_need(observed, now) {
             needs.retain(|n| !matches!(n.kind, NeedsKind::LaunchFailed | NeedsKind::GaveUp));
             needs.push(need);
@@ -420,6 +445,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 role: w.role.clone(),
                 claude_session_id: claude_session_id.map(str::to_string),
                 last_active: Some(now),
+                origin: Some(api_base(&t.url)),
             },
         );
         self.save_minted();
@@ -456,8 +482,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 continue;
             };
             m.claude_session_id = Some(claude_session_id.clone());
-            let (role, session_id) = (m.role.clone(), m.session_id.clone());
+            let (role, session_id, m) = (m.role.clone(), m.session_id.clone(), m.clone());
             let result = match self.tokens.token(&role) {
+                Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
                 Ok(Some(t)) => self.minter.bind(&api_base(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
                 Ok(None) => Err(format!("role {role} has no WorkState token any more")),
                 Err(e) => Err(e),
@@ -484,6 +511,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 continue;
             };
             let result = match self.tokens.token(&m.role) {
+                Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
                 Ok(Some(t)) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
                 Ok(None) => Err(format!("role {} has no WorkState token any more", m.role)),
                 Err(e) => Err(e),
@@ -578,6 +606,36 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                      Re-mint stops it and resumes it with a fresh token",
                     (now - last) / (3_600 * SECOND),
                     window / (3_600 * SECOND)
+                ),
+                action: Some(Remedy::Remint { id: row.id.clone() }),
+            });
+        }
+        out
+    }
+
+    /// [`NeedsKind::OtherServer`] for each wanted, minted session whose single live row holds a token
+    /// from another server than the signed-in one, except those stopped for a Re-mint this tick.
+    fn other_server_tokens(&self, observed: &[Session], reminting: &[String], now: Millis) -> Vec<NeedsYou> {
+        let Some(origin) = self.origin.as_deref().filter(|_| self.desired.started) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (name, from) in self.minted.elsewhere(origin) {
+            if reminting.contains(&name) || !self.desired.sessions.iter().any(|w| w.name == name) {
+                continue;
+            }
+            let mut rows = observed.iter().filter(|s| s.name == name && is_live(s, now));
+            let (Some(row), None) = (rows.next(), rows.next()) else {
+                continue;
+            };
+            let from = from.unwrap_or_else(|| "an unknown server".into());
+            out.push(NeedsYou {
+                kind: NeedsKind::OtherServer,
+                workspace: self.desired.workspace.clone(),
+                name,
+                since: now,
+                detail: format!(
+                    "its WorkState token is from {from}, and Foreman uses {origin}; Re-mint stops it and resumes it with a token from {origin}"
                 ),
                 action: Some(Remedy::Remint { id: row.id.clone() }),
             });
@@ -977,9 +1035,14 @@ mod tests {
         sup.launcher().take();
         minter.take();
 
+        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "minted there");
         sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
-        assert_eq!(sup.server_changed(), ["fm-demo-workspace"]);
-        assert!(sup.server_changed().is_empty(), "once");
+        assert!(sup.server_changed(None).is_empty(), "not signed in: nothing to mint with");
+        assert_eq!(
+            sup.server_changed(Some("https://workstate.example")),
+            [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:5290".to_string()))]
+        );
+        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "the live row is stopped");
         let stopped = row(SessionState::Stopped, None, None);
@@ -996,6 +1059,82 @@ mod tests {
         }
         let text = config_text(&mcp, "fm-demo-workspace");
         assert!(text.contains("https://workstate.example/mcp") && text.contains("wss_fake2"), "{text}");
+    }
+
+    /// A supervisor of `home` whose sessions file holds `json`, with the static role token.
+    fn minting_from(home: &Path, json: &str) -> (Supervisor<FakeLauncher, FakeTokens>, FakeMinter) {
+        let path = MintedSessions::path(home, "demo");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, json).unwrap();
+        let mut desired = DesiredState::workspace_controller("demo", r"C:\demo\cwd", "be the controller");
+        desired.started = true;
+        let config = LaunchConfig { mcp_dir: home.join("mcp"), foreman_home: Some(home.into()), ..LaunchConfig::default() };
+        let minter = FakeMinter::default();
+        let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None))
+            .with_minter(minter.clone())
+            .with_repo_of(fake_repo_of)
+            .with_daemon_check(|| None);
+        (sup, minter)
+    }
+
+    #[test]
+    fn mint_of_unknown_origin_is_reminted_once_unless_its_config_names_the_server() {
+        const OLD: &str = r#"{"fm-demo-workspace":{"sessionId":"ws-0","role":"workspace","lastActive":1800000000000}}"#;
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting_from(dir.path(), OLD);
+        assert_eq!(sup.server_changed(Some("http://127.0.0.1:5290")), [("fm-demo-workspace".to_string(), None)], "no config file: unknown");
+        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "once");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]));
+        minter.take();
+        let stopped = row(SessionState::Stopped, None, None);
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 70 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        let calls = minter.take();
+        assert!(matches!(calls.as_slice(), [MintCall::Mint { .. }]), "{calls:?}");
+        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:5290"), "recorded now");
+
+        let dir = tempfile::tempdir().unwrap();
+        foreman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        let (mut sup, _) = minting_from(dir.path(), OLD);
+        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "its config file already names the server");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
+        assert_eq!(sup.launcher().take(), []);
+        let saved = std::fs::read_to_string(MintedSessions::path(dir.path(), "demo")).unwrap();
+        assert!(saved.contains(r#""origin": "http://127.0.0.1:5290""#), "{saved}");
+    }
+
+    #[test]
+    fn mint_on_another_server_offers_re_mint_and_is_never_revoked_or_patched_on_this_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
+        let (mut sup, minter) = minting(true, &mcp);
+        sup.tick(&[], &mut free(), NOW);
+        sup.launcher().take();
+        minter.take();
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        // checked while its row was not live: nothing to stop, and then it shows live with the old token
+        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        sup.tick(&[], &mut free(), NOW + SECOND);
+        sup.launcher().take();
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
+        let other: Vec<_> = needs.iter().filter(|n| n.kind == NeedsKind::OtherServer).collect();
+        let [need] = other.as_slice() else { panic!("{needs:?}") };
+        assert_eq!(need.action, Some(Remedy::Remint { id: live.id.clone() }));
+        assert!(need.detail.contains("http://127.0.0.1:5290") && need.detail.contains("https://workstate.example"), "{}", need.detail);
+        assert!(minter.take().is_empty(), "no PATCH of the old server's session on the new one");
+
+        sup.retry("fm-demo-workspace");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 62 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "Re-mint stops it");
+
+        sup.desired.started = false;
+        sup.tick(&[], &mut free(), NOW + 63 * SECOND);
+        assert!(minter.take().is_empty(), "its server's grant revoke covers it, not a DELETE here");
+        assert!(sup.minted().get("fm-demo-workspace").is_none());
+        assert!(!mcp.join("workstate-fm-demo-workspace.json").exists());
     }
 
     #[test]
