@@ -20,11 +20,9 @@ use crate::{
 };
 
 pub(crate) async fn run(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let saved = cx.update(|_, cx| cx.read_from_clipboard())?;
+    let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = steps(view, tab, terminal, cx).await;
-    if let Some(item) = saved {
-        cx.update(|_, cx| cx.write_to_clipboard(item))?;
-    }
+    saved.restore()?;
     result
 }
 

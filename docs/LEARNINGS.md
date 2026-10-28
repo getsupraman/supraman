@@ -2846,3 +2846,39 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   (116–123 s) on a second series — the first series had 4 of 5, run 4 failing step 7j's 1500 ms Refresh bound while a
   selftest of the main checkout ran alongside; `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this
   worktree left.
+
+## 2026-10-28 — m5/46 Alt+V image paste: selftests turned the user's screenshot into PNG-only
+
+- **Alt+V reaches claude.** "No image found in clipboard. Use alt+v to paste images." is the text of claude 2.1.312's
+  `chat:imagePaste` handler (bound to alt+v on win32; Ink reads Foreman's `ESC v` as meta+v). It shows when
+  `checkImage` (`powershell -NoProfile -NonInteractive -Sta -Command "…ContainsImage()…"`) exits non-zero *and*
+  the text fallback (`Get-Clipboard -Raw`) returns nothing. So the clipboard held neither a WinForms-visible
+  image nor text.
+- **The terminal is innocent.** With a CF_DIB image on the clipboard the exact check exits 0 as a plain process, in a
+  raw ConPTY (`examples/pty_dump.rs`) through pwsh → cmd → powershell with pwsh 7's PSModulePath, with Foreman's
+  `TERM`/`TERM_PROGRAM=zed`/`ZED_TERM`/`COLORTERM`/`LANG` added, and in a real Foreman tab. René's Foreman is High
+  IL like his WT. Its tabs differ from a WT pwsh only by `__COMPAT_LAYER=DetectorsAdminProtection` (inherited from
+  Total Commander and from elevated shells; this session has it too and the check passes), `COMMANDER_*`, the Zed
+  vars, and system conhost instead of WT's OpenConsole.
+- **Cause: gpui's clipboard round trip.** `read_from_clipboard` turns CF_DIB into `Image { format: Bmp }`. Writing it
+  back puts only the registered `PNG` format on the clipboard (`gpui_windows/src/clipboard.rs` `write_image`).
+  WinForms `ContainsImage` asks for Bitmap, so it says no. Measured: DIB → check 0; gpui read + write → check 1.
+  Selftest steps 6b, 6c and 7l "restored" the user's clipboard that way, so every gate on this machine (5
+  `--selftest` runs per unit, several units a day, often in parallel) turned René's screenshot into a PNG-only
+  entry that claude cannot paste anywhere. They also skipped the restore when gpui read nothing, which left
+  `fm-paste-…` on the clipboard. No product path writes an image: OSC 52, copy and the text input write text.
+  That René's own failure happened this way is inferred, not seen: it matches the symptom exactly (no image, no
+  text), and nothing else in the tab reproduced it.
+- **Fix:** `selftest_clipboard.rs` (`Snapshot::take`/`restore`: every HGLOBAL format byte for byte; GDI-handle
+  formats are skipped and Windows synthesizes CF_BITMAP from CF_DIB again). 6b, 6c and 7l use it and always
+  restore. A selftest step that borrows the clipboard uses this, never gpui's read/write.
+- **Step 7r** (`selftest_paste.rs`): it saves the clipboard, puts a 2×2 CF_DIB on it, borrows and restores it as the
+  other steps do, then types claude's exact check (through `cmd`, so pwsh's own `powershell.exe` env fix-up does
+  not apply) into a Foreman shell tab and asserts exit 0. Then it puts the user's clipboard back (held ~0.9 s,
+  9.6 s once under load). Red: the borrow restored through gpui → `FAIL claude's image check in a Foreman tab
+  exited 1 …`. Unit test: `selftest_clipboard::tests::the_test_image_is_a_2x2_32_bit_dib`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-46\target`): build ok, no warnings; `cargo test --release --workspace` 581
+  passed, 0 failed; `--selftest` 5 of 5 PASS (122–127 s) on a second series. The first series had 3 of 5: run 1
+  FAILed 7k (typed `5e1f` read `%E!F`, Shift held during the typing) and run 3 quit at 27 s before a verdict;
+  neither touches the clipboard code. `--selftest-supervise` PASS (316 s); `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` rows of this worktree left (the listed ones were m5-47's live run).
