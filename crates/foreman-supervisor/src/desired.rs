@@ -76,6 +76,12 @@ pub fn relay_session_name(workspace: &str) -> String {
     format!("fm-{workspace}-{RELAY_ROLE}")
 }
 
+/// An `fm-` session this home neither wants (`wanted`: the names in its desired states) nor names
+/// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's (m5/10).
+pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>, mut wanted: impl Iterator<Item = &'a str>) -> bool {
+    name.starts_with("fm-") && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("fm-{w}-")))
+}
+
 /// `fm-<workspace>-relay`: cwd = the workspace root (trusted: the workspace session runs there),
 /// `--add-dir` its relay dir (`<FOREMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
 /// on resume told to re-arm.

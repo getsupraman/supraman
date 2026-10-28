@@ -57,7 +57,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Claude, Health, LaunchSpec, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
-    EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
+    DEFAULT_MAX_WORKING, EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
 };
 use foreman_supervisor::{
@@ -652,7 +652,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         );
     }
     println!(
-        "step f: limit 3 → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {} ({}): max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
+        "step f: limit {DEFAULT_MAX_WORKING} → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {} ({}): max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
         tb.c1.0,
         tb.c2.0,
         if folds.is_empty() { "both in view".to_string() } else { folds.join("; ") },
