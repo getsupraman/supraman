@@ -14,6 +14,7 @@
 
 mod clipped;
 mod compose;
+mod dismissed_messages;
 mod elevate;
 mod fleet;
 mod hand;
@@ -25,6 +26,7 @@ mod selftest_first_run;
 mod selftest_left;
 mod selftest_manage;
 mod selftest_mark;
+mod selftest_messages;
 mod selftest_refresh;
 mod selftest_search;
 mod selftest_shell;

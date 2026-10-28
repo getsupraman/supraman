@@ -35,6 +35,7 @@ use crate::compose::{self, Compose, KeyOutcome};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::hand::{Hands, Launch};
 use crate::settings_window::{self, SettingsView};
+use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
@@ -255,6 +256,8 @@ pub struct FleetView {
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
     /// `<workspace>/<file>` of the messages shown in full.
     pub expanded: HashSet<String>,
+    /// Messages hidden with their × (m5/36), kept in `<FOREMAN_HOME>`.
+    pub dismissed_messages: DismissedMessages,
     /// While the pointer moves over the left panel, the Inbox and Messages rows it came in on (m5/18).
     left_hold: Option<left::Hold>,
     left_hold_timer: Option<gpui::Task<()>>,
@@ -558,6 +561,7 @@ impl FleetView {
         cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let (stars, stars_notice) = Stars::load(home.as_deref());
+        let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
         let transcripts_nudge = Arc::new(AtomicBool::new(true));
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
         Self::watch_transcripts(claude_dir, transcripts_nudge.clone(), cx);
@@ -608,6 +612,7 @@ impl FleetView {
             relays: BTreeMap::new(),
             messages: BTreeMap::new(),
             expanded: HashSet::new(),
+            dismissed_messages,
             left_hold: None,
             left_hold_timer: None,
             answered: BTreeMap::new(),
@@ -632,7 +637,7 @@ impl FleetView {
             transcripts_nudge,
             poll_nudge,
             refresh_asks: 0,
-            action_error: stars_notice,
+            action_error: stars_notice.or(dismissed_notice),
             stars,
             closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
@@ -725,6 +730,15 @@ impl FleetView {
             Ok(_) => self.transcripts_nudge.store(true, Ordering::SeqCst),
             Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
         }
+        cx.notify();
+    }
+
+    /// Hides a message here (m5/36); its outbox file stays.
+    pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
+        if let Err(e) = self.dismissed_messages.dismiss(workspace, file) {
+            self.action_error = Some(format!("Cannot save the dismissed message: {e}"));
+        }
+        self.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
     }
 
@@ -882,6 +896,9 @@ impl FleetView {
             self.last_attempt = report.last_attempt.into_iter().collect();
             self.relays = report.relays;
             self.messages = report.messages;
+            if let Err(e) = self.dismissed_messages.prune(&self.messages) {
+                self.action_error = Some(format!("Cannot save the dismissed messages: {e}"));
+            }
             for (workspace, on_disk) in report.answered {
                 let answered = self.answered.entry(workspace).or_default();
                 for (file, line) in on_disk {

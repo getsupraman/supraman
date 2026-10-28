@@ -51,6 +51,7 @@ const SEAM_GAP: f32 = 6.;
 
 /// The tree's text blends and their contrast floors live with the themes (m5/26, m5/31).
 pub(crate) use foreman_ui::themes::{DIMMED, QUIET, SECONDARY};
+use foreman_ui::themes::{MESSAGE_TINT, MESSAGE_TINT_HOVER};
 
 /// A name that is a step back: a repo without sessions.
 pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
@@ -1006,16 +1007,27 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// What the workspaces' relays received, newest first, across workspaces; nothing when empty. A body
-    /// shows its first lines until clicked; Attach opens the sender's session when it is attachable.
-    fn render_messages(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let total: usize = self.messages.values().map(Vec::len).sum();
-        let mut all: Vec<(&String, &OutboxMessage)> = self
-            .messages
+    /// Every message not dismissed, by workspace, oldest first.
+    fn listed_messages(&self) -> Vec<(&String, &OutboxMessage)> {
+        self.messages
             .iter()
             .flat_map(|(w, msgs)| msgs.iter().map(move |m| (w, m)))
-            .filter(|(w, m)| self.shown_now(&message_key(w, m)))
-            .collect();
+            .filter(|(w, m)| !self.dismissed_messages.hides(w, &m.file))
+            .collect()
+    }
+
+    /// The count the MESSAGES header shows.
+    pub fn messages_count(&self) -> usize {
+        self.listed_messages().len()
+    }
+
+    /// What the workspaces' relays received, newest first, across workspaces, less the dismissed ones;
+    /// nothing when empty. A body shows its first lines until clicked; Attach opens the sender's session
+    /// when it is attachable; × hides it here.
+    fn render_messages(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let listed = self.listed_messages();
+        let total = listed.len();
+        let mut all: Vec<(&String, &OutboxMessage)> = listed.into_iter().filter(|(w, m)| self.shown_now(&message_key(w, m))).collect();
         if all.is_empty() {
             return None;
         }
@@ -1139,6 +1151,15 @@ impl FleetView {
                     }
                 }
             });
+            let dismiss = {
+                let (w, file) = (workspace.clone(), m.file.clone());
+                glyph_button(&self.hits, format!("msg-dismiss-{key}"), Icon::Close, "Dismiss here", cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.dismiss_message(&w, &file, cx);
+                    },
+                ))
+            };
             let replying = self
                 .compose
                 .as_ref()
@@ -1153,9 +1174,9 @@ impl FleetView {
                     .rounded_md()
                     .border_l_2()
                     .border_color(color)
-                    .bg(color.opacity(0.10))
+                    .bg(color.opacity(MESSAGE_TINT))
                     .cursor_pointer()
-                    .hover(|s| s.bg(color.opacity(0.16)))
+                    .hover(|s| s.bg(color.opacity(MESSAGE_TINT_HOVER)))
                     .active(|s| s.bg(color.opacity(0.22)))
                     .child(
                         div()
@@ -1169,12 +1190,13 @@ impl FleetView {
                                     .flex()
                                     .gap_2()
                                     .text_sm()
-                                    .child(div().font_weight(FontWeight::BOLD).text_color(color).child(SharedString::from(sender)))
-                                    .child(div().text_color(colors.text_muted).child(SharedString::from(workspace.clone())))
+                                    // the tint and the edge carry the kind; the name reads as a name (m5/36)
+                                    .child(div().font_weight(FontWeight::BOLD).text_color(colors.text).child(SharedString::from(sender)))
+                                    .child(div().text_color(quiet(cx)).child(SharedString::from(workspace.clone())))
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(colors.text_muted)
+                                            .text_color(quiet(cx))
                                             .child(SharedString::from(fleet::ago(now - m.at))),
                                     ),
                             )
@@ -1182,6 +1204,7 @@ impl FleetView {
                             .children(answer),
                     )
                     .children(attach)
+                    .child(dismiss)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if !this.expanded.remove(&key) {
                             this.expanded.insert(key.clone());
@@ -1211,7 +1234,7 @@ impl FleetView {
         let (before, after) = c.text.split_at(c.cursor());
         let text = if c.text.is_empty() {
             div()
-                .text_color(colors.text_muted)
+                .text_color(colors.text_placeholder)
                 .child(SharedString::from(format!("{caret}Type here; Enter adds a line.")))
         } else {
             div().text_color(colors.text).child(SharedString::from(format!("{before}{caret}{after}")))
