@@ -271,6 +271,23 @@ impl Claude {
         self.simple(&["rm", id])
     }
 
+    /// `claude rm <id>`, with `--discard-unpushed <value>` when `discard` is given (the value rm's own
+    /// refusal printed). A refusal to lose a worktree's commits is [`Removal::Kept`], not an error.
+    pub fn remove(&self, id: &str, discard: Option<&str>) -> Result<Removal> {
+        let mut args = vec!["rm", id];
+        if let Some(value) = discard {
+            args.extend(["--discard-unpushed", value]);
+        }
+        match self.simple(&args) {
+            Ok(out) => Ok(Removal::Removed(out.trim().to_string())),
+            Err(ClaudeError::CliFailed { code, stderr }) => match RmRefusal::parse(&stderr) {
+                Some(refusal) => Ok(Removal::Kept(refusal)),
+                None => Err(ClaudeError::CliFailed { code, stderr }),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         parse(&self.simple(&["agents", "--json", "--all"])?)
     }
@@ -338,6 +355,46 @@ impl Claude {
             stdout: stdout.join().unwrap_or_default(),
             stderr: stderr.join().unwrap_or_default(),
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Removal {
+    /// rm's stdout, e.g. `removed <id>`.
+    Removed(String),
+    Kept(RmRefusal),
+}
+
+/// rm's "kept <id> — its worktree is still at “<path>” / N unpushed commits on “<branch>” … claude rm
+/// <id> --discard-unpushed <sha>@<token>" (m2/2, CLI 2.1.309).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RmRefusal {
+    /// The whole text, trimmed.
+    pub text: String,
+    pub unpushed: Option<u32>,
+    /// What `--discard-unpushed` takes, as printed.
+    pub discard: Option<String>,
+    pub worktree: Option<PathBuf>,
+}
+
+impl RmRefusal {
+    /// `None` unless the text is rm keeping a session.
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if !text.split_whitespace().any(|w| w == "kept") {
+            return None;
+        }
+        let unpushed = text.split_once(" unpushed commit").and_then(|(before, _)| before.split_whitespace().last()?.parse().ok());
+        let discard = text
+            .split_once("--discard-unpushed ")
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .filter(|t| t.contains('@'))
+            .map(str::to_string);
+        let worktree = text.split_once("worktree is still at ").and_then(|(_, rest)| {
+            let rest = rest.trim_start_matches(['“', '"']);
+            rest.find(['”', '"']).map(|end| PathBuf::from(&rest[..end]))
+        });
+        Some(Self { text: text.to_string(), unpushed, discard, worktree })
     }
 }
 
@@ -549,6 +606,22 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
+    }
+
+    /// `claude rm` on a session whose worktree has commits (m2/2, CLI 2.1.309), verbatim.
+    const KEPT: &str = "kept 202c9998 — its worktree is still at “P:\\Projects\\LarchSys\\AutoWork\\.claude\\worktrees\\iso-probe”\n  39 unpushed commits on “worktree-iso-probe”: 3ccd48a “probe: add iso.txt” and 38 more. They exist on no remote, so deleting the worktree would lose them.\n  push them and run 'claude rm 202c9998' again, or discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1bb9d660d38c0fabd2f5e63bd64be737a@d71f54d85da4468315a1efd780272116\n";
+
+    #[test]
+    fn rm_keeping_a_session_is_read_with_its_count_worktree_and_discard_value() {
+        let r = RmRefusal::parse(KEPT).unwrap();
+        assert_eq!(r.unpushed, Some(39));
+        assert_eq!(r.discard.as_deref(), Some("3ccd48a1bb9d660d38c0fabd2f5e63bd64be737a@d71f54d85da4468315a1efd780272116"));
+        assert_eq!(r.worktree, Some(PathBuf::from(r"P:\Projects\LarchSys\AutoWork\.claude\worktrees\iso-probe")));
+        assert!(r.text.starts_with("kept 202c9998") && !r.text.ends_with('\n'));
+        let one = RmRefusal::parse("kept abcd1234 — its worktree is still at “C:\\w”\n  1 unpushed commit on “b”: …").unwrap();
+        assert_eq!((one.unpushed, one.discard), (Some(1), None));
+        assert_eq!(RmRefusal::parse("removed 202c9998"), None);
+        assert_eq!(RmRefusal::parse("error: no session 202c9998"), None);
     }
 
     #[test]

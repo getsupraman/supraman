@@ -291,7 +291,7 @@ impl FleetView {
         let menu = match &target {
             MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| {
                 let can_task = node.started == Some(true) && self.relay_refusal(w).is_none();
-                (w.clone(), workspace_items(node, can_task))
+                (w.clone(), workspace_items(node, can_task, self.has_closed_background(w)))
             }),
             MenuTarget::Repo { workspace, repo } => tree
                 .workspaces
@@ -307,7 +307,7 @@ impl FleetView {
                     let name = if row.session.name.is_empty() { fleet::short_id(&row.session).to_string() } else { row.session.name.clone() };
                     // a live registry entry is the proof it runs: a just-started row's health is still unknown
                     let send_name = send_name_of(&row.session.session_id);
-                    (name, session_items(workspace, repo, row, self.resumable(row), claimed, send_name))
+                    (name, session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row)))
                 })
             }
         };
@@ -390,6 +390,11 @@ impl FleetView {
             MenuAction::ShowInWork { workspace, item_id } => {
                 self.open_work_item(&workspace, &item_id, cx);
             }
+            MenuAction::Delete(session) => self.ask_delete(session),
+            MenuAction::DeleteNow { session, discard } => self.delete_now(session, discard, cx),
+            MenuAction::DeleteClosed(workspace) => self.ask_delete_closed(workspace, cx),
+            MenuAction::DeleteClosedNow { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
+            MenuAction::Dismiss => {}
         }
         cx.notify();
     }

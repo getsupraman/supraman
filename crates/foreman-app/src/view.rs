@@ -44,6 +44,7 @@ use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
 pub(crate) mod icon;
+mod delete;
 mod left;
 mod manage;
 mod menu;
@@ -322,6 +323,12 @@ pub struct FleetView {
     pub tab_resolves: u64,
     /// The last quiet feedback (m5/34): it overlays the tree instead of pushing it down.
     pub toast: Option<Toast>,
+    /// Where the transcripts are read, and the confirmed ones deleted (m5/38): `FOREMAN_CLAUDE_DIR`, else claude's.
+    pub claude_dir: Option<PathBuf>,
+    /// Session ids deleted from here → when, kept out of the tree until polls catch up ([`delete::HIDE_DELETED_MS`]).
+    pub deleted: StdHashMap<String, i64>,
+    /// Session ids whose delete runs.
+    pub deleting: HashSet<String>,
 }
 
 /// A short note over the bottom of the left panel, gone after [`TOAST_FOR`].
@@ -564,7 +571,7 @@ impl FleetView {
         let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
         let transcripts_nudge = Arc::new(AtomicBool::new(true));
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
-        Self::watch_transcripts(claude_dir, transcripts_nudge.clone(), cx);
+        Self::watch_transcripts(claude_dir.clone(), transcripts_nudge.clone(), cx);
         // an input that held the focus went away (the Add review closed): the window's keys come back here
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
@@ -647,6 +654,9 @@ impl FleetView {
             tabs_again: false,
             tab_resolves: 0,
             toast: None,
+            claude_dir,
+            deleted: StdHashMap::new(),
+            deleting: HashSet::new(),
         }
     }
 
@@ -703,6 +713,7 @@ impl FleetView {
                         this.main_repos.extend(known.clone());
                         this.closed_repos = known;
                         this.closed = closed;
+                        this.drop_deleted();
                         this.transcript_scans += 1;
                         cx.notify();
                     })
@@ -873,6 +884,7 @@ impl FleetView {
                     .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
                     .collect();
                 self.sessions = sessions;
+                self.drop_deleted();
                 self.main_repos = refresh.main_repos;
                 self.main_repos.extend(self.closed_repos.iter().map(|(k, v)| (k.clone(), v.clone())));
                 self.sessions_error = None;
@@ -1205,7 +1217,7 @@ impl FleetView {
             // through the `+` launch (m5/27): its own WorkState token, and the shell stays when claude exits
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
             let own = (!session.name.is_empty()).then(|| session.name.clone());
-            let id = self.hand_claude(session.cwd.clone(), title, resume, own, cx);
+            let id = self.hand_claude(session.cwd.clone(), title, resume, own, Some(sid.clone()), cx);
             if let Some(tab) = self.tab_mut(id) {
                 tab.session = Some(tab_card::session_label(&session.name, sid));
             }
@@ -1218,12 +1230,12 @@ impl FleetView {
     /// exits or the tab closes. The tab shows at once; its pwsh starts once the token is minted.
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let claude = self.claude_command.clone();
-        self.hand_claude(cwd, title, claude, None, cx)
+        self.hand_claude(cwd, title, claude, None, None, cx)
     }
 
     /// [`Self::new_claude`] running `claude` (pwsh's program and arguments); `own` is the session's
-    /// name in the tree, for its WorkState session (m5/35).
-    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, cx: &mut Context<Self>) -> u64 {
+    /// name in the tree, for its WorkState session (m5/35); `resumes` the uuid of the session it resumes.
+    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, resumes: Option<String>, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
@@ -1234,7 +1246,7 @@ impl FleetView {
         };
         let at = cwd.clone();
         let mint = hands.clone();
-        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch(&at, own.as_deref()) });
+        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch_for(&at, own.as_deref(), resumes.as_deref()) });
         cx.spawn(async move |this, cx| {
             let launch = launch.await;
             this.update(cx, |this, cx| {

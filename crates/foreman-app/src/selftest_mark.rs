@@ -108,6 +108,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     }
     let registered = entered.elapsed();
     let sid = entry.session_id.clone().unwrap_or_default();
+    crate::selftest::forget_own_transcript(&sid, &cwd);
     until(view, cx, STARTED_WITHIN, &format!("{name}'s row marked"), |v| marked(v).contains(&sid).then_some(())).await?;
     let to_mark = entered.elapsed();
     println!("step 7l: claude+Enter → registered {} ms, row marked {} ms", registered.as_millis(), to_mark.as_millis());

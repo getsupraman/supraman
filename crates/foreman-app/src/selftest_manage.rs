@@ -322,7 +322,7 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
 }
 
 /// The menu's item keys, once it is open with `title`.
-async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<&'static str>> {
+pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<&'static str>> {
     let keys = until(view, cx, &format!("the menu of {title}"), |v| {
         v.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key).collect::<Vec<_>>())
     })
@@ -339,7 +339,7 @@ async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowCo
 }
 
 /// [`press`] once `key` is painted (a row can be missing from the frame being drawn).
-async fn press_painted(view: &Entity<FleetView>, key: &str, button: MouseButton, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn press_painted(view: &Entity<FleetView>, key: &str, button: MouseButton, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     until(view, cx, &format!("{key} painted"), |v| painted(v, key).then_some(())).await.map_err(|e| {
         let (keys, rows) = view.read_with(cx, |v, _| {
             let mut keys: Vec<String> = v.hits.borrow().keys().filter(|k| k.starts_with("ws-row-")).cloned().collect();

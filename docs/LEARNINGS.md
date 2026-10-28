@@ -2518,3 +2518,63 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-36\target`): build ok; `cargo test --release --workspace` 534 passed, 0
   failed; `--selftest` 5 of 5 PASS (138/102/104/98/102 s); `--selftest-supervise` PASS (295 s);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
+
+## 2026-10-28 — m5/38 Delete sessions, bulk delete closed background sessions
+
+- **Probe** (`fm probe rm-transcript`, claude 2.1.312; one `aw-m2-probe-ee27e8-rm` `--bg` session, cwd
+  `<worktree>/target/aw-m2-probe-ee27e8/rm`, started hidden with the parent session's variables removed,
+  `--strict-mcp-config`, `bgIsolation:"none"`): after its turn the transcript was 429 KB and there was no
+  `<sessionId>/` dir (no subagents or tool results). `claude stop` → `stopped`; `claude rm` → `removed 294d5420`, and
+  the row left `claude agents --json --all` at once. **rm leaves the transcript** (430 KB, untouched) and the project
+  dir. **`claude --resume <uuid> -p …` still works after rm**: exit 0 in 5.0 s, it answered `ready` (its earlier
+  reply, from the transcript), appended to the same `<uuid>.jsonl` (443 KB, no new file) and created no row. So
+  rm alone does not make a session's text go away; deleting the transcript is what does. claude also leaves an empty
+  `~/.claude/session-env/<uuid>/` dir; it is not deleted (nothing but the transcript and its sibling dir may be).
+  The probe's own transcript went through the app's confined delete.
+- **The one write under the claude dir** (`foreman_claude::forget`, René 2026-10-28): `forget_transcript(claude
+  dir, sessionId, cwd)` deletes `projects/<dir>/<sessionId>.jsonl` and `projects/<dir>/<sessionId>/` in every project
+  dir that holds them (the cwd's slug first), nothing else. The id must be a UUID (so no `..` or separator); a project
+  dir, file or sibling dir that is a symlink or junction (reparse point) is refused; each path is canonicalised and
+  must be `<canonical projects>/<dir>/<item>`; every path is checked before anything is deleted, so one refusal
+  deletes nothing. `remove_dir_all` removes a junction inside the sibling dir without following it. Tests with a
+  fake home: only the session's two items go (the rest of the tree is compared file by file), non-UUID ids incl.
+  `..`, a claude dir given with `..`, junctioned sibling dir and project dir (refused, target kept), a junction inside
+  the sibling dir (target kept), a symlinked transcript. Red: link check off → 2 of 9 fail (the junctioned project
+  dir is still refused by the canonical check).
+- **Menu.** `Delete…` (last item) on a session with no pid whose health is stopped or process gone, with a UUID:
+  a background row (`claude rm`, then the transcript) or a closed interactive row from its transcript (transcript
+  only). Not for a live process, a session open in a tab (`tab_runs`), or one this home's supervisor wants (Start
+  resumes it). Another Foreman's `fm-` row is offered, and the question says so. Every delete asks, naming the
+  session. rm's refusal (`kept … N unpushed commits … --discard-unpushed <sha>@<token>`, `RmRefusal`) becomes a
+  second question with the count and the worktree ("Discard N unpushed commits and delete"); without a discard value
+  it is an error line. A deleted row leaves the tree at once (`FleetView::deleted`, filtered from the poll and the
+  scan for 60 s, then forgotten, so a session resumed by its uuid shows again) and the poll and scan are nudged
+  (m5/28). A hand token minted for a resume carries its claude session id (`Hands::launch_for`) and is revoked on
+  its Delete (`release_session`); a `+` session's token is already revoked when its claude exits.
+- **Bulk.** The workspace menu offers `Delete closed background sessions…` when it has one. It skips ★ sessions,
+  another Foreman's, this workspace's own wanted ones, ones open in a tab, and ones another controller launched.
+  **What Foreman can tell about a launcher**: claude records no parent (no field in `claude agents`, none in the
+  transcript lines; checked on this session's own transcript). rlarch's nested-claude writes its protocol header
+  (`Your controller is the Claude Code session '<name [ref]>'`) into every brief; the first prompt either is that
+  brief or points at `<repo>/.claude/briefs/brief-<name>.txt`. Foreman reads the first prompt (only as far as it),
+  finds the header there or in the brief, and checks the controller's name against the live peer registry
+  ("launched by controller X, still running" / "launched by controller X" / "launched from the brief …"). A session
+  whose transcript is not found is skipped too (who launched it is unknown). A session another tool launched
+  without such a brief is not recognised. The question gives the count and every skip with its reason. The run
+  never discards: a session rm keeps joins the skipped list with its commit count. Afterwards an OK-only box lists
+  what was deleted, skipped and why, and what failed.
+- **Selftest step 7o** (`selftest_delete.rs`): a fixture closed session `de1e7e00-…` with its `<id>/subagents/` dir in
+  the fake claude dir: its menu ends with Delete…, the question names it, Delete → out of the tree in ~126 ms, file
+  and dir gone, the 7h fixtures kept, still gone after a scan. Then the gate's own `fm-selftest-<hex>`: its live
+  menu has no Delete; Stop from its menu; a fixture transcript with its id planted in the fake dir; Delete →
+  `claude rm` and out of the tree in 0.8–1.0 s, not in `claude agents`, fixture gone. No bulk delete in the
+  selftest: the gate's workspace is the user's real tree.
+- **Selftests now delete their own transcripts**: cleanup collects `(sessionId, cwd)` of every own `fm-selftest`
+  session (the gate's step-2 session, 7l's interactive claude, the supervise run's rows) and deletes them in claude's
+  real dir with the same confined code. Empty project dirs stay. A 7l claude given no prompt wrote no transcript
+  (`0 transcript(s)`).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-38\target`): `cargo build --release --workspace` ok; `cargo test --release
+  --workspace` 556 passed, 0 failed; `--selftest` 4 of the first 5 (run 5 FAIL step 7b: "the menu of
+  selftest-added · ./beta: not within 5 s", m5/26's repo menu, not touched here; m5-37's gate ran beside it), then
+  5 of 5 PASS (115/121/127/121/120 s); `--selftest-supervise` PASS (308 s); `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` rows or transcripts of this worktree left.

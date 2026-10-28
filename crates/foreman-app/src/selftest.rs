@@ -52,6 +52,45 @@ pub(crate) struct Scratch {
     pub(crate) name_prefix: Option<String>,
     /// Processes this run started (pid, creation time), killed if still the same process (step 7l).
     pub(crate) kill: Vec<(u32, u64)>,
+    /// `(sessionId, cwd)` of this run's own `fm-selftest` sessions: cleanup deletes their transcripts in the
+    /// real claude dir (m5/38), the only write a selftest makes there.
+    pub(crate) transcripts: Vec<(String, PathBuf)>,
+}
+
+/// Cleanup deletes this run's own session's transcript ([`Scratch::transcripts`]).
+pub(crate) fn forget_own_transcript(session_id: &str, cwd: &Path) {
+    if let Some(scratch) = lock().as_mut()
+        && !scratch.transcripts.iter().any(|(s, _)| s == session_id)
+    {
+        scratch.transcripts.push((session_id.to_string(), cwd.to_path_buf()));
+    }
+}
+
+/// Blocking: the recorded transcripts, from the claude dir `claude` itself writes to (not the fake one).
+fn forget_transcripts(transcripts: &[(String, PathBuf)]) -> bool {
+    let Some(dir) = foreman_claude::claude_dir() else {
+        return transcripts.is_empty();
+    };
+    let mut ok = true;
+    for (sid, cwd) in transcripts {
+        // claude may still be writing the last lines of a session it just stopped
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match foreman_claude::forget_transcript(&dir, sid, Some(cwd)) {
+                Ok(gone) => {
+                    println!("cleanup: deleted {} transcript(s), {} dir(s) of {sid}", gone.transcripts.len(), gone.dirs.len());
+                    break;
+                }
+                Err(e) if Instant::now() > deadline => {
+                    println!("cleanup: cannot delete the transcript of {sid}: {e}");
+                    ok = false;
+                    break;
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(250)),
+            }
+        }
+    }
+    ok
 }
 
 static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
@@ -152,6 +191,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         session_name: None,
         name_prefix: None,
         kill: Vec::new(),
+        transcripts: Vec::new(),
     });
     install_guards(mode);
 
@@ -186,6 +226,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
         crate::selftest_closed::prepare(&home, &main)?;
+        crate::selftest_delete::prepare(&home, &main)?;
     }
 
     if mode.launches_session() {
@@ -276,8 +317,11 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
     for &(pid, start) in &scratch.kill {
         crate::selftest_mark::kill_own(pid, start);
     }
+    let mut transcripts = scratch.transcripts.clone();
     if let Some(prefix) = &scratch.name_prefix {
-        ok &= crate::selftest_supervise::remove_own_rows(prefix);
+        let (removed, own) = crate::selftest_supervise::remove_own_rows(prefix);
+        ok &= removed;
+        transcripts.extend(own);
     }
     if let Some(name) = &scratch.session_name {
         // The row can trail `--bg` by a moment, so a missing row is retried before giving up.
@@ -287,6 +331,7 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
                 Ok(rows) => {
                     let ids: Vec<String> =
                         rows.iter().filter(|s| &s.name == name).map(|s| s.id.clone()).collect();
+                    transcripts.extend(rows.iter().filter(|s| &s.name == name).map(|s| (s.session_id.clone(), s.cwd.clone())));
                     if !ids.is_empty() || Instant::now() > deadline {
                         break ids;
                     }
@@ -326,6 +371,9 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
             }
         }
     }
+    transcripts.sort();
+    transcripts.dedup();
+    ok &= forget_transcripts(&transcripts);
     for dir in &scratch.dirs {
         match remove_dir_retrying(dir) {
             Ok(()) => println!("cleanup: removed {}", dir.display()),
@@ -787,6 +835,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7n: {dismissed}");
     let hint = crate::selftest_messages::placeholder(view, cx).await.context("step 7n")?;
     println!("step 7n: {hint}");
+
+    let deleted = crate::selftest_delete::run(view, &home(), &session_name()?, cx).await.context("step 7o")?;
+    println!("step 7o: {deleted}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
