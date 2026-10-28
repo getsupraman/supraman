@@ -32,6 +32,11 @@ pub struct MintRequest {
     /// (m5/8). `None` for the workspace session and the relay (the workspace root is not a repo).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<MintRepo>,
+    /// The claude session uuid the token is for, when it is known before claude starts (m5/40): a
+    /// resume's, or the `--session-id` of a foreground `claude`. Never a guess: a `--bg` launch's id
+    /// is known only from its row (the PATCH of [`Minter::bind`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_session_id: Option<String>,
 }
 
 /// `repo:{root, remote?}` of a mint, as git prints them; WorkState normalises both (Skills
@@ -233,7 +238,7 @@ pub struct MintedSession {
     pub session_id: String,
     /// Foreman's role, whose static token is the bearer of the PATCH and the DELETE.
     pub role: String,
-    /// The claude session uuid PATCHed since the last mint; `None` until then.
+    /// The claude session uuid sent with the mint or PATCHed since; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
     /// Epoch ms of the mint or of the last turn seen within the token's window: what slid its expiry
@@ -384,6 +389,7 @@ mod tests {
             external_role: "workspace".into(),
             replace: true,
             repo: None,
+            claude_session_id: None,
         }
     }
 
@@ -428,6 +434,16 @@ mod tests {
         HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
         let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
         assert_eq!(body["repo"], serde_json::json!({ "root": "C:/demo/Beta" }), "no origin, no remote");
+    }
+
+    #[test]
+    fn mint_http_client_sends_the_claude_session_id_when_known() {
+        let (base, seen) = fake_server(vec![(201, r#"{"sessionId":"8","token":"wss_fake"}"#)]);
+        let mut req = request();
+        req.claude_session_id = Some("aaaa0001-0000-4000-8000-000000000001".into());
+        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        assert_eq!(body["claudeSessionId"], "aaaa0001-0000-4000-8000-000000000001");
     }
 
     #[test]

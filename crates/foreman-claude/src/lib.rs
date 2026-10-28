@@ -69,7 +69,7 @@ pub use error::{ClaudeError, Result};
 pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_session_id};
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
-    Claude, LaunchSpec, Output, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, resume_argv, workstate_mcp_config,
+    Claude, LaunchSpec, Output, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workstate_mcp_config,
     write_mcp_config, write_session_mcp_config,
 };
 pub use session::{
