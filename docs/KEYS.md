@@ -46,8 +46,8 @@ back to the window (the terminal, the task box).
 | Ctrl+Shift+C, Ctrl+Insert | copy the selection and clear it |
 | Ctrl+V, Ctrl+Shift+V, Shift+Insert | paste (bracketed when the program asked for it; CRLF → CR). Ctrl+V with no text on the clipboard goes to the program as ^V |
 | Ctrl+Shift+F | find bar: type to search (case-insensitive unless the text has a capital), Enter next match up (older output), Shift+Enter down, Esc closes |
-| Ctrl+= (Ctrl++), Ctrl+-, Ctrl+0 | font size up, down, reset — per tab |
-| Ctrl+wheel | font size up / down |
+| Ctrl+= (Ctrl++), Ctrl+-, Ctrl+0 | font size up, down, reset — every terminal, kept in settings.toml (m5/41) |
+| Ctrl+wheel | font size up / down, every terminal |
 | Ctrl+Shift+Up / Down | scroll one line |
 | Ctrl+Shift+PgUp / PgDn | scroll one page |
 | Ctrl+Shift+Home / End | scroll to the top / bottom |

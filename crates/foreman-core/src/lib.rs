@@ -27,5 +27,8 @@ pub use relay::{
     outbox_dir, read_outbox, relay_demand, relay_dir, relay_ready, send, tell,
 };
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
-pub use settings::{DEFAULT_MAX_WORKING, DEFAULT_WORKSTATE_URL, Settings};
+pub use settings::{
+    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings,
+    clamp_terminal_font_size,
+};
 pub use slug::{slugify, validate_name};

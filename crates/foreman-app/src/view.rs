@@ -162,8 +162,6 @@ pub struct Tab {
     pub detach: Detach,
     /// The folder it opened in (a Work tab: its workspace's), for [`fleet::shell_cwd`].
     pub cwd: Option<PathBuf>,
-    /// Ctrl+=/Ctrl+-/Ctrl+0 and Ctrl+wheel, per tab as in Windows Terminal.
-    pub font_size: Pixels,
     pub find: Option<term::Find>,
     /// What its program named it with OSC 0/2 ([`tab_card::sanitize`]d); the label while there is one.
     pub program_title: Option<String>,
@@ -251,6 +249,11 @@ pub struct FleetView {
     registry_writes: Arc<AtomicU64>,
     pub poll_hold: Arc<PollHold>,
     pub left_width: Pixels,
+    /// Every terminal tab's font size (m5/41): `settings.toml` `terminal_font_size`, changed by
+    /// Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel in any terminal and by Settings → Appearance.
+    pub term_font_size: Pixels,
+    /// The pending debounced write of `term_font_size` ([`term::FONT_SAVE_AFTER`]).
+    font_save: Option<gpui::Task<()>>,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
@@ -476,11 +479,12 @@ impl FleetView {
             false
         });
         let home = Registry::from_env().ok().map(|r| r.home().to_path_buf());
-        let left_width = home
-            .as_deref()
-            .and_then(|h| Settings::load(h).ok())
+        let loaded = home.as_deref().and_then(|h| Settings::load(h).ok());
+        let left_width = loaded
+            .as_ref()
             .and_then(|s| s.left_width)
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
+        let term_font_size = px(loaded.unwrap_or_default().terminal_font_size() as f32);
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
@@ -618,6 +622,8 @@ impl FleetView {
             registry_writes,
             poll_hold,
             left_width,
+            term_font_size,
+            font_save: None,
             settings_window: None,
             last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
@@ -1502,7 +1508,6 @@ impl FleetView {
             exited: false,
             detach: Detach::None,
             cwd,
-            font_size: term_element::FONT_SIZE,
             find: None,
             program_title: None,
             session: None,
@@ -1612,7 +1617,6 @@ impl FleetView {
             exited: false,
             detach: Detach::None,
             cwd,
-            font_size: term_element::FONT_SIZE,
             find: None,
             program_title: None,
             session: None,
@@ -2125,7 +2129,7 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let content: AnyElement = match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
-            Some(Tab { id: tab_id, terminal: Some(terminal), detach, font_size, find, .. }) => div()
+            Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()
                 .flex_col()
@@ -2170,14 +2174,13 @@ impl FleetView {
                         .on_scroll({
                             // as Zed's TerminalView::scroll_wheel: the Terminal decides between
                             // scrollback, a mouse report and alternate-scroll arrow keys; Ctrl+wheel
-                            // zooms (Windows Terminal)
+                            // zooms every terminal (m5/41)
                             let terminal = terminal.clone();
-                            let tab_id = *tab_id;
                             cx.listener(move |this, e: &ScrollEvent, window, cx| {
                                 if e.modifiers.control {
                                     let lines = e.delta.pixel_delta(window.line_height()).y;
                                     if lines != px(0.) {
-                                        this.wheel_font_size(tab_id, lines > px(0.), cx);
+                                        this.wheel_font_size(lines > px(0.), cx);
                                     }
                                     return;
                                 }
@@ -2188,7 +2191,7 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone(), *font_size)),
+                        .child(term_element::terminal_grid(terminal.clone(), self.term_font_size)),
                 )
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
@@ -2405,7 +2408,6 @@ mod tests {
             exited: false,
             detach: Detach::None,
             cwd: None,
-            font_size: term_element::FONT_SIZE,
             find: None,
             program_title: None,
             session: None,

@@ -9,6 +9,11 @@ use crate::{CoreError, Result};
 pub const DEFAULT_MAX_WORKING: usize = 3;
 /// `workstate_url` when unset.
 pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
+/// `terminal_font_size` when unset or invalid, and Ctrl+0's size (m5/41).
+pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
+/// The bounds `terminal_font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
+pub const MIN_TERMINAL_FONT_SIZE: u32 = 6;
+pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
 
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +48,24 @@ pub struct Settings {
     /// "campbell" paints ANSI 0-15 in Windows Terminal's Campbell. Unset: the theme's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_colors: Option<String>,
+    /// Every terminal tab's font size in px (m5/41), as Ctrl+= / Ctrl+- / Ctrl+wheel and Settings →
+    /// Appearance leave it. Unset or not a number: 14; read through [`Settings::terminal_font_size`].
+    #[serde(default, deserialize_with = "lenient_size", skip_serializing_if = "Option::is_none")]
+    pub terminal_font_size: Option<u32>,
+}
+
+/// A number (integer or float, rounded) or nothing: a bad value must not make the whole file unreadable.
+fn lenient_size<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<u32>, D::Error> {
+    Ok(match toml::Value::deserialize(d)? {
+        toml::Value::Integer(n) => u32::try_from(n.max(0)).ok(),
+        toml::Value::Float(f) if f.is_finite() => Some(f.round().clamp(0., u32::MAX as f64) as u32),
+        _ => None,
+    })
+}
+
+/// `size` within [`MIN_TERMINAL_FONT_SIZE`]..=[`MAX_TERMINAL_FONT_SIZE`].
+pub fn clamp_terminal_font_size(size: u32) -> u32 {
+    size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
 }
 
 fn default_max_working() -> usize {
@@ -61,6 +84,7 @@ impl Default for Settings {
             relay_idle_secs: None,
             theme: None,
             terminal_colors: None,
+            terminal_font_size: None,
         }
     }
 }
@@ -68,6 +92,16 @@ impl Default for Settings {
 impl Settings {
     pub fn relay_idle_ms(&self) -> i64 {
         self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
+    }
+
+    pub fn terminal_font_size(&self) -> u32 {
+        self.terminal_font_size.map_or(DEFAULT_TERMINAL_FONT_SIZE, clamp_terminal_font_size)
+    }
+
+    /// Stores `size` clamped; the default is stored as unset.
+    pub fn set_terminal_font_size(&mut self, size: u32) {
+        let size = clamp_terminal_font_size(size);
+        self.terminal_font_size = (size != DEFAULT_TERMINAL_FONT_SIZE).then_some(size);
     }
 
     pub fn path(home: &Path) -> PathBuf {
@@ -117,6 +151,7 @@ mod tests {
             relay_idle_secs: Some(20),
             theme: Some("Foreman Dark".into()),
             terminal_colors: Some("campbell".into()),
+            terminal_font_size: Some(20),
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
@@ -135,5 +170,52 @@ mod tests {
         assert_eq!(Settings::load(home.path()).unwrap().relay_idle_ms(), 20_000);
         fs::write(Settings::path(home.path()), "max_working = \"many\"").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })));
+    }
+
+    #[test]
+    fn terminal_font_size_is_14_unless_set_and_clamped() {
+        let home = tempfile::tempdir().unwrap();
+        let load = |text: &str| {
+            fs::write(Settings::path(home.path()), text).unwrap();
+            Settings::load(home.path()).unwrap()
+        };
+        assert_eq!(Settings::default().terminal_font_size(), DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!(load("max_working = 2
+").terminal_font_size(), 14, "missing");
+        assert_eq!(load("terminal_font_size = 18
+").terminal_font_size(), 18);
+        assert_eq!(load("terminal_font_size = 17.6
+").terminal_font_size(), 18, "a float is rounded");
+        assert_eq!(load("terminal_font_size = 1
+").terminal_font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("terminal_font_size = -3
+").terminal_font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("terminal_font_size = 500
+").terminal_font_size(), MAX_TERMINAL_FONT_SIZE);
+        for bad in ["\"big\"", "true", "[14]", "nan"] {
+            let s = load(&format!("max_working = 2
+terminal_font_size = {bad}
+"));
+            assert_eq!(s.terminal_font_size(), 14, "{bad} is invalid");
+            assert_eq!(s.max_working, 2, "{bad} does not cost the rest of the file");
+        }
+    }
+
+    #[test]
+    fn terminal_font_size_saves_clamped_and_the_default_as_unset() {
+        let home = tempfile::tempdir().unwrap();
+        let mut s = Settings::default();
+        s.set_terminal_font_size(19);
+        s.save(home.path()).unwrap();
+        assert!(fs::read_to_string(Settings::path(home.path())).unwrap().contains("terminal_font_size = 19"));
+        assert_eq!(Settings::load(home.path()).unwrap().terminal_font_size(), 19);
+        s.set_terminal_font_size(999);
+        assert_eq!(s.terminal_font_size, Some(MAX_TERMINAL_FONT_SIZE));
+        s.set_terminal_font_size(0);
+        assert_eq!(s.terminal_font_size, Some(MIN_TERMINAL_FONT_SIZE));
+        s.set_terminal_font_size(DEFAULT_TERMINAL_FONT_SIZE);
+        s.save(home.path()).unwrap();
+        assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("terminal_font_size"));
+        assert_eq!(Settings::load(home.path()).unwrap().terminal_font_size(), 14);
     }
 }
