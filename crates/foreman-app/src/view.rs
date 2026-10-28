@@ -47,6 +47,7 @@ pub(crate) mod icon;
 mod left;
 mod manage;
 mod menu;
+pub(crate) mod notices;
 mod results;
 mod term;
 
@@ -228,6 +229,8 @@ pub struct FleetView {
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
     pub supervise_errors: Vec<String>,
+    /// Supervise errors hidden with their × while the poll keeps reporting them (m5/37).
+    supervise_dismissed: Vec<String>,
     /// Why a `claude --bg` from here cannot reach the background service (m5/25): a tab that would
     /// run one prints it instead of failing after 45 s.
     pub daemon_hold: Option<String>,
@@ -597,6 +600,7 @@ impl FleetView {
             desired: BTreeMap::new(),
             max_working: DEFAULT_MAX_WORKING,
             supervise_errors: Vec::new(),
+            supervise_dismissed: Vec::new(),
             daemon_hold: None,
             last_attempt: StdHashMap::new(),
             hooks: StdHashMap::new(),
@@ -892,6 +896,7 @@ impl FleetView {
             self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
+            notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
             self.daemon_hold = report.daemon_hold;
             self.last_attempt = report.last_attempt.into_iter().collect();
             self.relays = report.relays;

@@ -27,6 +27,7 @@ mod selftest_left;
 mod selftest_manage;
 mod selftest_mark;
 mod selftest_messages;
+mod selftest_notices;
 mod selftest_refresh;
 mod selftest_search;
 mod selftest_shell;

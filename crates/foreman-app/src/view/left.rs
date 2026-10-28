@@ -12,6 +12,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
+use super::notices;
 use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
@@ -453,8 +454,34 @@ impl FleetView {
                 status.warning.opacity(0.12),
             ));
         }
-        for text in self.setup_notices.iter().chain(&self.supervise_errors).chain(&self.hand_notices).chain(&self.action_error) {
-            notices.push(notice(text.clone(), status.warning, status.warning.opacity(0.12)));
+        let mut shown: BTreeMap<notices::Notice, usize> = BTreeMap::new();
+        for (kind, text) in self.plain_notices() {
+            let index = shown.entry(kind).or_default();
+            let key = notices::dismiss_key(kind, *index);
+            *index += 1;
+            let label = SharedString::from(text.clone());
+            let dismiss = glyph_button(&self.hits, key, Icon::Close, "Dismiss", cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.dismiss_notice(kind, &text, cx);
+                },
+            ));
+            notices.push(
+                div()
+                    .mx_3()
+                    .my_2()
+                    .p_2()
+                    .rounded_md()
+                    .bg(status.warning.opacity(0.12))
+                    .text_sm()
+                    .text_color(status.warning)
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(label))
+                    .child(dismiss)
+                    .into_any_element(),
+            );
         }
         if let Some(problem) = self.workstate_notice() {
             notices.push(self.render_workstate_notice(problem, cx));

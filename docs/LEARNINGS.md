@@ -2518,3 +2518,26 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-36\target`): build ok; `cargo test --release --workspace` 534 passed, 0
   failed; `--selftest` 5 of 5 PASS (138/102/104/98/102 s); `--selftest-supervise` PASS (295 s);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
+
+## 2026-10-28 — m5/37 × on the notices above the tree
+
+- **The box.** `render_left` drew `setup_notices`, `supervise_errors`, `hand_notices` and `action_error` with no ×, and
+  `hand_notices` was only ever appended to, so a hand-token notice stayed until restart. Each now has its own ×
+  (`glyph_button(Icon::Close)`, tooltip "Dismiss", key `notice-dismiss-<setup|supervise|hand|action>-<n>`, n = its
+  place among the shown notices of that kind). `view/notices.rs`: `plain_notices` lists them in the drawn order,
+  `dismiss_notice(kind, text)` removes that one (one entry of the setup/hand list; the action error only if it
+  still reads the same).
+- **Re-raised shows again.** Setup, hand and action notices are removed from their list, so the next push shows.
+  Supervise errors are replaced on every poll, so a dismissed one is kept by text in `supervise_dismissed`, and
+  `keep_dismissed` forgets it the first poll that no longer reports it; the same error coming back then shows.
+  The `ws-setup-notice` × (`dismiss_workstate_notice`) is untouched.
+- **Selftest trap.** `hits` holds the last *painted* frame's targets. Right after a state change, a key like
+  `notice-dismiss-hand-1` can still be the previous frame's (another notice's ×), and a click there dismisses the
+  wrong one (run 1 failed so). Step 7o's `hand_x` waits until the frame paints exactly one × per hand notice.
+- Step 7o (`selftest_notices.rs`): two hand notices and an action error; × on the first leaves the other two; the
+  same notice pushed again shows and its × removes it; the rest are dismissed. Shots `m5-37-notices-before/after`.
+  Unit: `notices::tests::a_dismissed_supervise_error_shows_again_once_it_has_cleared`, `…each_kind_has_its_own_dismiss_key`.
+  Red: hand × clears every hand notice → 7o FAIL; `keep_dismissed` a no-op → the unit test fails.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-37\target`): build ok; `cargo test --release --workspace` 539 passed, 0
+  failed; `--selftest` 5 of 5 PASS (106/102/98/111/105 s); `--selftest-supervise` exit 0 (292 s);
+  `--selftest-detach-shutdown` PASS (14 s); no `fm-selftest` rows left (`claude agents --json`).
