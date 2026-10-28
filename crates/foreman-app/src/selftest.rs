@@ -860,6 +860,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let pasted = crate::selftest_paste::run(view, cx).await.context("step 7r")?;
     println!("step 7r: {pasted}");
 
+    let font = crate::selftest_font::run(view, &home(), cx).await.context("step 7s")?;
+    println!("step 7s: {font}");
+
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);

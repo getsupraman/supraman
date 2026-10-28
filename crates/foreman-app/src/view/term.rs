@@ -11,7 +11,7 @@ use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
 use crate::text_input::{InputEvent, TextInput};
-use foreman_ui::term_element::{FONT_SIZE, step_font_size};
+use foreman_ui::term_element::{FONT_SIZE, TermFont, step_font_size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chord {
@@ -163,6 +163,28 @@ impl FleetView {
     /// The debounced write is still waiting.
     pub fn font_save_pending(&self) -> bool {
         self.font_save.is_some()
+    }
+
+    pub fn term_font(&self) -> TermFont {
+        TermFont { family: self.term_font_family.clone(), size: self.term_font_size, ligatures: self.term_ligatures }
+    }
+
+    /// Every terminal tab's font family (`None`: the default) and ligatures, saved and painted at once; the
+    /// next paint lays each grid out with the new cell metrics and resizes its pty.
+    pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) -> Result<(), String> {
+        let mut settings = match &self.home {
+            Some(home) => Settings::load(home).map_err(|e| e.to_string())?,
+            None => Settings::default(),
+        };
+        settings.set_terminal_font_family(family);
+        settings.set_terminal_ligatures(ligatures);
+        if let Some(home) = &self.home {
+            settings.save(home).map_err(|e| format!("Cannot save the terminal font: {e}"))?;
+        }
+        self.term_font_family = settings.terminal_font_family(&self.installed_fonts).into();
+        self.term_ligatures = ligatures;
+        cx.notify();
+        Ok(())
     }
 
     /// The tab's find bar, opened or brought back, focused with its query selected.

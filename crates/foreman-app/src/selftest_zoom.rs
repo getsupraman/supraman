@@ -158,8 +158,14 @@ async fn settings_page(
 
 /// Waits until `tab`'s grid is painted with the cell metrics of `size`.
 async fn laid_out_at(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, size: Pixels, cx: &mut AsyncWindowContext) -> anyhow::Result<u128> {
+    let font = view.read_with(cx, |v, _| term_element::TermFont { size, ..v.term_font() });
+    laid_out_with(view, tab, terminal, &font, cx).await
+}
+
+/// Waits until `tab`'s grid is painted with the cell metrics of `font`.
+pub(crate) async fn laid_out_with(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, font: &term_element::TermFont, cx: &mut AsyncWindowContext) -> anyhow::Result<u128> {
     let started = Instant::now();
-    let want = cx.update(|_, cx| term_element::cell_metrics(size, cx))?;
+    let want = cx.update(|_, cx| term_element::cell_metrics(font, cx))?;
     loop {
         let bounds = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds);
         if (bounds.line_height, bounds.cell_width) == want {
@@ -168,7 +174,7 @@ async fn laid_out_at(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Termi
         if started.elapsed() > Duration::from_secs(3) {
             let active = view.read_with(cx, |v, _| v.active);
             bail!(
-                "tab {tab} (active {active:?}) is laid out at line height {:?} / cell {:?}, expected {want:?} for {size:?}",
+                "tab {tab} (active {active:?}) is laid out at line height {:?} / cell {:?}, expected {want:?} for {font:?}",
                 bounds.line_height,
                 bounds.cell_width
             );
