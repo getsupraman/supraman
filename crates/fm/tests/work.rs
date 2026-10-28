@@ -4,9 +4,9 @@
 
 use std::path::Path;
 use std::process::{Command, Output};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use foreman_workstate::auth::http_browser;
+use foreman_workstate::auth::{form_decode, http_browser};
 use foreman_workstate::fake::{Answer, FakeAuth, FakeWorkState};
 use foreman_workstate::secret::{CredentialStore, PREFIX_VAR};
 use foreman_workstate::{Auth, SecretStore};
@@ -23,7 +23,11 @@ struct Home {
     dir: tempfile::TempDir,
     prefix: String,
     issuer: Option<String>,
+    _one_writer: Option<MutexGuard<'static, ()>>,
 }
+
+/// One signed-in home at a time: Credential Manager loses concurrent writes from several processes (F-05, LEARNINGS m5/44.3).
+static CREDENTIAL_WRITERS: Mutex<()> = Mutex::new(());
 
 impl Home {
     fn path(&self) -> &Path {
@@ -47,6 +51,7 @@ fn prefix() -> String {
 
 /// Settings naming `url`; signed in when `oauth` is given.
 fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> Home {
+    let one_writer = oauth.map(|_| CREDENTIAL_WRITERS.lock().unwrap_or_else(|e| e.into_inner()));
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("settings.toml"), format!("workstate_url = '{url}'\n")).unwrap();
     let prefix = prefix();
@@ -55,7 +60,7 @@ fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> Home {
         auth.sign_in(url, &http_browser()).unwrap();
         o.issuer()
     });
-    Home { dir, prefix, issuer }
+    Home { dir, prefix, issuer, _one_writer: one_writer }
 }
 
 fn fm(home: &Home, args: &[&str]) -> Output {
@@ -76,6 +81,38 @@ fn oauth_bearer(fake: &FakeWorkState, oauth: &FakeAuth) {
         let token = s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or_default();
         assert!(token.starts_with("eyJ") && issued.iter().any(|t| t == token), "{s:?}");
     }
+}
+
+/// The refresh tokens sent to the fake, in order.
+fn refreshes_sent(fake: &FakeWorkState) -> Vec<String> {
+    fake.seen()
+        .into_iter()
+        .filter(|s| s.target == "/connect/token")
+        .map(|s| form_decode(&s.body))
+        .filter(|f| f.get("grant_type").map(String::as_str) == Some("refresh_token"))
+        .map(|f| f.get("refresh_token").cloned().unwrap_or_default())
+        .collect()
+}
+
+/// F-05's evidence without a token: each refresh token as `rt<n>`, its place among those the fake
+/// issued; which one the store held before and after one `fm`; what fm sent; why the fake refused.
+fn rt_report(fake: &FakeWorkState, oauth: &FakeAuth, before: Option<&str>, sent_before: usize, after: Option<&str>) -> String {
+    let issued: Vec<String> = oauth.issued().into_iter().filter(|t| t.starts_with("fake-rt-")).collect();
+    let name = |t: Option<&str>| match t {
+        None => "none".to_string(),
+        Some(t) => issued.iter().position(|i| i == t).map_or("not issued".into(), |n| format!("rt{n}")),
+    };
+    let sent = refreshes_sent(fake);
+    let all: Vec<String> = sent.iter().map(|t| name(Some(t))).collect();
+    format!(
+        "F-05: issued rt0..rt{}; store before {}, after {}; this fm sent {:?}; all sent {:?}; refusals {:?}",
+        issued.len().saturating_sub(1),
+        name(before),
+        name(after),
+        &all[sent_before.min(all.len())..],
+        all,
+        oauth.refusals()
+    )
 }
 
 fn text(out: &[u8]) -> String {
@@ -163,11 +200,17 @@ fn work_errors_are_one_line_without_the_token() {
     let fake = fake();
     let oauth = fake.enable_oauth();
     let home = home(fake.base(), Some(&oauth));
+    let store = CredentialStore::new(&home.prefix);
     let one_line = |args: &[&str], want: &str| {
+        let before = store.get(&oauth.issuer()).unwrap();
+        let sent_before = refreshes_sent(&fake).len();
         let out = fm(&home, args);
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stored = store.get(&oauth.issuer()).unwrap();
+        let refreshes = rt_report(&fake, &oauth, before.as_deref(), sent_before, stored.as_deref());
+        assert_eq!(out.status.code(), Some(1), "{out:?}\n{refreshes}");
         let stderr = text(&out.stderr);
-        assert_eq!(stderr.trim_end(), want);
+        assert_eq!(stderr.trim_end(), want, "{refreshes}");
+        assert_eq!(stored.as_ref(), oauth.issued().last(), "fm stored the rotated refresh token\n{refreshes}");
         assert_eq!(stderr.lines().count(), 1, "{stderr}");
         for t in oauth.issued() {
             assert!(!stderr.contains(&t) && !text(&out.stdout).contains(&t));

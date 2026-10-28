@@ -214,7 +214,11 @@ impl Worker {
                     return End::Quit;
                 }
             }
-            for data in sse.feed(&body) {
+            let frames = match sse.feed(&body) {
+                Ok(frames) => frames,
+                Err(reason) => return End::Lost(reason),
+            };
+            for data in frames {
                 // A frame that is not an event (a hello, a future shape) is not ours to report.
                 if let Ok(event) = serde_json::from_str::<StreamEvent>(&data)
                     && self.tx.send(StreamSignal::Event(event)).is_err()
@@ -306,7 +310,7 @@ impl HttpReader {
         if self.body.is_none() {
             self.head.extend_from_slice(bytes);
             let Some(end) = self.head.windows(4).position(|w| w == b"\r\n\r\n") else {
-                if self.head.len() > 64 * 1024 {
+                if self.head.len() > MAX_LINE {
                     return Err("the response head is too long".into());
                 }
                 return Ok((out, false));
@@ -399,6 +403,9 @@ impl HttpReader {
     }
 }
 
+/// The longest response head, and the longest event a stream may send.
+const MAX_LINE: usize = 64 * 1024;
+
 /// Lines in, the data of each dispatched event out.
 #[derive(Default)]
 struct SseParser {
@@ -410,7 +417,7 @@ struct SseParser {
 }
 
 impl SseParser {
-    fn feed(&mut self, bytes: &[u8]) -> Vec<String> {
+    fn feed(&mut self, bytes: &[u8]) -> Result<Vec<String>, String> {
         let mut out = Vec::new();
         for &b in bytes {
             if b == b'\n' && self.after_cr {
@@ -426,8 +433,11 @@ impl SseParser {
             } else {
                 self.line.push(b);
             }
+            if self.line.len() + self.data.as_ref().map_or(0, String::len) > MAX_LINE {
+                return Err(format!("an event over {} KiB", MAX_LINE / 1024));
+            }
         }
-        out
+        Ok(out)
     }
 
     fn line_done(&mut self, line: &str) -> Option<String> {
@@ -461,7 +471,7 @@ mod tests {
         let mut p = SseParser::default();
         let mut out = Vec::new();
         for c in chunks {
-            out.extend(p.feed(c));
+            out.extend(p.feed(c).unwrap());
         }
         (out, p.last_id)
     }
@@ -500,5 +510,19 @@ mod tests {
     fn http_reader_refuses_a_non_200() {
         let mut r = HttpReader::default();
         assert_eq!(r.feed(b"HTTP/1.1 401 Unauthorized\r\n\r\n").unwrap_err(), "WorkState answered HTTP 401");
+    }
+
+    #[test]
+    fn an_endless_line_or_event_is_refused() {
+        let mut p = SseParser::default();
+        let chunk = vec![b'x'; 8 * 1024];
+        let refused = (0..9).map(|_| p.feed(&chunk)).find_map(Result::err);
+        assert_eq!(refused.as_deref(), Some("an event over 64 KiB"));
+        let mut p = SseParser::default();
+        let line = format!("data: {}\n", "y".repeat(1024));
+        let refused = (0..70).map(|_| p.feed(line.as_bytes())).find_map(Result::err);
+        assert!(refused.is_some(), "data lines that never end an event");
+        let mut p = SseParser::default();
+        assert_eq!(p.feed(format!("data: {}\n\n", "z".repeat(60 * 1024)).as_bytes()).unwrap().len(), 1);
     }
 }
