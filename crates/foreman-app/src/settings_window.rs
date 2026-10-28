@@ -431,6 +431,9 @@ impl SettingsView {
         let url = self.settings.workstate_origin();
         let (text, color) = match (&self.workstate, &self.auth) {
             (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
+            (WsStatus::Ready { url, .. }, AuthStatus::SignedIn { unsaved: Some(why), .. }) => {
+                (format!("Signed in on {url}, but {why}."), status.warning)
+            }
             (WsStatus::Ready { url, who }, _) => (
                 match who {
                     Some(who) => format!("Signed in on {url} as {who}."),

@@ -80,8 +80,9 @@ fn suffix(error: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStatus {
     NotSignedIn,
-    /// `who`: the token's `name` or subject, when the access token is readable.
-    SignedIn { who: Option<String> },
+    /// `who`: the token's `name` or subject, when the access token is readable. `unsaved`: why the
+    /// refresh token is held in memory only, so the sign-in ends with this process.
+    SignedIn { who: Option<String>, unsaved: Option<String> },
     SignInAgain(String),
 }
 
@@ -108,6 +109,7 @@ struct Known {
 
 struct Held {
     origin: String,
+    issuer: String,
     access: String,
     expires: Instant,
     who: Option<String>,
@@ -118,6 +120,14 @@ struct Inner {
     held: Option<Held>,
     /// Issuer → why its grant no longer works; cleared by a sign-in.
     broken: BTreeMap<String, String>,
+    /// Issuer → (refresh token, why) when the store refused it: the server has spent the previous one.
+    unsaved: BTreeMap<String, (String, String)>,
+}
+
+impl Inner {
+    fn unsaved_why(&self, issuer: &str) -> Option<String> {
+        self.unsaved.get(issuer).map(|(_, why)| why.clone())
+    }
 }
 
 pub struct Auth {
@@ -175,8 +185,16 @@ impl Auth {
         self.home.join("oauth").join("servers.json")
     }
 
-    fn load_known(&self) -> Known {
-        std::fs::read_to_string(self.known_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    /// Empty only without a file; an unreadable one holds other origins' clients and is never saved over.
+    fn load_known(&self) -> Result<Known, AuthError> {
+        let path = self.known_path();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Known::default()),
+            Err(e) => return Err(AuthError::Store(format!("cannot read {}: {e}", path.display()))),
+        };
+        serde_json::from_str(&text)
+            .map_err(|e| AuthError::Store(format!("{} is damaged ({e}); repair or delete it, then sign in again", path.display())))
     }
 
     fn save_known(&self, known: &Known) -> Result<(), AuthError> {
@@ -192,6 +210,20 @@ impl Auth {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The held access token for `origin`, while it has more than [`REFRESH_MARGIN`] left.
+    fn fresh(&self, origin: &str) -> Option<String> {
+        let inner = self.lock();
+        let h = inner.held.as_ref().filter(|h| h.origin == origin)?;
+        (h.expires.saturating_duration_since(Instant::now()) > REFRESH_MARGIN).then(|| h.access.clone())
+    }
+
+    fn not_broken(&self, origin: &str, issuer: &str) -> Result<(), AuthError> {
+        match self.lock().broken.get(issuer) {
+            Some(why) => Err(AuthError::SignInAgain { origin: origin.to_string(), why: why.clone() }),
+            None => Ok(()),
+        }
     }
 
     /// One refresh at a time across processes (the app and `fm`): a rotated token is read back fresh.
@@ -212,55 +244,74 @@ impl Auth {
     /// Without a network call: held, broken, or a refresh token stored for the origin's issuer.
     pub fn status(&self, origin: &str) -> AuthStatus {
         let origin = api_base(origin);
-        let inner = self.lock();
-        if let Some(h) = inner.held.as_ref().filter(|h| h.origin == origin) {
-            return AuthStatus::SignedIn { who: h.who.clone() };
+        {
+            let inner = self.lock();
+            if let Some(h) = inner.held.as_ref().filter(|h| h.origin == origin) {
+                return AuthStatus::SignedIn { who: h.who.clone(), unsaved: inner.unsaved_why(&h.issuer) };
+            }
         }
-        let Some(meta) = self.load_known().servers.remove(&origin) else {
+        let mut known = match self.load_known() {
+            Ok(known) => known,
+            Err(e) => return AuthStatus::SignInAgain(e.to_string()),
+        };
+        let Some(meta) = known.servers.remove(&origin) else {
             return AuthStatus::NotSignedIn;
         };
-        if let Some(why) = inner.broken.get(&meta.issuer) {
-            return AuthStatus::SignInAgain(why.clone());
+        {
+            let inner = self.lock();
+            if let Some(why) = inner.broken.get(&meta.issuer) {
+                return AuthStatus::SignInAgain(why.clone());
+            }
+            if let Some(why) = inner.unsaved_why(&meta.issuer) {
+                return AuthStatus::SignedIn { who: None, unsaved: Some(why) };
+            }
         }
         match self.store.get(&meta.issuer) {
-            Ok(Some(_)) => AuthStatus::SignedIn { who: None },
+            Ok(Some(_)) => AuthStatus::SignedIn { who: None, unsaved: None },
             Ok(None) => AuthStatus::NotSignedIn,
             Err(e) => AuthStatus::SignInAgain(e),
         }
     }
 
     /// An access token for `origin`'s `/api`, refreshed when it has less than 5 minutes left.
+    /// `inner` is never held across the refresh: [`Self::status`] answers the UI meanwhile.
     pub fn access_token(&self, origin: &str) -> Result<String, AuthError> {
         let origin = api_base(origin);
-        let mut inner = self.lock();
-        if let Some(h) = inner.held.as_ref().filter(|h| h.origin == origin)
-            && h.expires.saturating_duration_since(Instant::now()) > REFRESH_MARGIN
-        {
-            return Ok(h.access.clone());
+        if let Some(access) = self.fresh(&origin) {
+            return Ok(access);
         }
-        let known = self.load_known();
+        let known = self.load_known()?;
         let Some(meta) = known.servers.get(&origin).cloned() else {
             return Err(AuthError::NotSignedIn { origin });
         };
-        if let Some(why) = inner.broken.get(&meta.issuer) {
-            return Err(AuthError::SignInAgain { origin, why: why.clone() });
-        }
+        self.not_broken(&origin, &meta.issuer)?;
         let Some(client_id) = known.clients.get(&meta.issuer).cloned() else {
             return Err(AuthError::NotSignedIn { origin });
         };
         let _lock = self.refresh_lock()?;
-        let Some(refresh) = self.store.get(&meta.issuer).map_err(AuthError::Store)? else {
-            return Err(AuthError::NotSignedIn { origin });
+        // another thread may have refreshed, or been refused, while this one waited for the lock
+        if let Some(access) = self.fresh(&origin) {
+            return Ok(access);
+        }
+        self.not_broken(&origin, &meta.issuer)?;
+        let unsaved = self.lock().unsaved.get(&meta.issuer).map(|(rt, _)| rt.clone());
+        let refresh = match unsaved {
+            Some(rt) => rt,
+            None => match self.store.get(&meta.issuer).map_err(AuthError::Store)? {
+                Some(rt) => rt,
+                None => return Err(AuthError::NotSignedIn { origin }),
+            },
         };
         let form = [("grant_type", "refresh_token"), ("refresh_token", refresh.as_str()), ("client_id", client_id.as_str())];
         match self.token_request(&meta, &form) {
             Ok(tokens) => {
                 if let Some(rt) = &tokens.refresh {
-                    self.store.set(&meta.issuer, rt).map_err(AuthError::Store)?;
+                    self.keep_refresh(&meta.issuer, rt);
                 }
                 let who = who_of(&tokens.access);
                 let access = tokens.access.clone();
-                inner.held = Some(Held { origin, access: tokens.access, expires: expiry(tokens.expires_in), who });
+                let issuer = meta.issuer.clone();
+                self.lock().held = Some(Held { origin, issuer, access: tokens.access, expires: expiry(tokens.expires_in), who });
                 Ok(access)
             }
             Err(e @ AuthError::Unreachable { .. }) => Err(e),
@@ -275,10 +326,12 @@ impl Auth {
                     && matches!(error.as_str(), "invalid_client" | "invalid_grant")
                 {
                     self.store.delete(&meta.issuer).map_err(AuthError::Store)?;
-                    let mut known = self.load_known();
+                    let mut known = self.load_known()?;
                     known.clients.remove(&meta.issuer);
                     self.save_known(&known)?;
                 }
+                let mut inner = self.lock();
+                inner.unsaved.remove(&meta.issuer);
                 inner.broken.insert(meta.issuer.clone(), why.clone());
                 if inner.held.as_ref().is_some_and(|h| h.origin == origin) {
                     inner.held = None;
@@ -286,6 +339,19 @@ impl Auth {
                 Err(AuthError::SignInAgain { origin, why })
             }
         }
+    }
+
+    /// One the store refuses stays in memory and [`Self::status`] says why: the server spent the old one.
+    fn keep_refresh(&self, issuer: &str, refresh: &str) {
+        let refused = self.store.set(issuer, refresh).err();
+        let mut inner = self.lock();
+        match refused {
+            None => inner.unsaved.remove(issuer),
+            Some(e) => {
+                let why = format!("the renewed sign-in could not be stored ({e}) and lasts only until this process ends");
+                inner.unsaved.insert(issuer.to_string(), (refresh.to_string(), why))
+            }
+        };
     }
 
     /// [`Self::access_token`] for the configured server: (origin, token).
@@ -321,7 +387,7 @@ impl Auth {
         self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);
         let meta = self.discover(&origin)?;
-        let mut known = self.load_known();
+        let mut known = self.load_known()?;
         known.servers.insert(origin.clone(), meta.clone());
         self.save_known(&known)?;
         let client_id = self.register(&meta)?;
@@ -362,8 +428,8 @@ impl Auth {
             .ok_or_else(|| AuthError::BadResponse("the server gave no refresh token (offline_access)".into()))?;
         {
             let _lock = self.refresh_lock()?;
-            self.store.set(&meta.issuer, &refresh).map_err(AuthError::Store)?;
-            let mut known = self.load_known();
+            self.keep_refresh(&meta.issuer, &refresh);
+            let mut known = self.load_known()?;
             known.servers.insert(origin.clone(), meta.clone());
             known.clients.insert(meta.issuer.clone(), client_id);
             self.save_known(&known)?;
@@ -371,8 +437,9 @@ impl Auth {
         let who = who_of(&tokens.access);
         let mut inner = self.lock();
         inner.broken.remove(&meta.issuer);
-        inner.held = Some(Held { origin, access: tokens.access, expires: expiry(tokens.expires_in), who: who.clone() });
-        Ok(AuthStatus::SignedIn { who })
+        let unsaved = inner.unsaved_why(&meta.issuer);
+        inner.held = Some(Held { origin, issuer: meta.issuer.clone(), access: tokens.access, expires: expiry(tokens.expires_in), who: who.clone() });
+        Ok(AuthStatus::SignedIn { who, unsaved })
     }
 
     /// Revokes `origin`'s grant (the refresh token: the whole authorization and every `wss_` minted
@@ -380,7 +447,7 @@ impl Auth {
     /// revoke. `Err` is a notice: a revoke that failed; everything local is gone anyway.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
         let origin = api_base(origin);
-        let known = self.load_known();
+        let known = self.load_known().map_err(|e| e.to_string())?;
         let refresh = {
             let mut inner = self.lock();
             if inner.held.as_ref().is_some_and(|h| h.origin == origin) {
@@ -390,11 +457,12 @@ impl Auth {
                 return Ok(());
             };
             inner.broken.remove(&meta.issuer);
+            let unsaved = inner.unsaved.remove(&meta.issuer).map(|(rt, _)| rt);
             drop(inner);
             let _lock = self.refresh_lock().map_err(|e| e.to_string())?;
-            let refresh = self.store.get(&meta.issuer)?;
+            let stored = self.store.get(&meta.issuer)?;
             self.store.delete(&meta.issuer)?;
-            refresh
+            unsaved.or(stored)
         };
         let meta = &known.servers[&origin];
         match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {

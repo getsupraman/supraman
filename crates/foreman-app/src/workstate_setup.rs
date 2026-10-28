@@ -38,7 +38,7 @@ pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
     match auth.access_token(&url) {
         Ok(_) => {
             let who = match auth.status(&url) {
-                AuthStatus::SignedIn { who } => who,
+                AuthStatus::SignedIn { who, .. } => who,
                 _ => None,
             };
             WsStatus::Ready { url, who }

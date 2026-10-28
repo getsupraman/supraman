@@ -15,14 +15,11 @@ pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
 }
 
 fn transport(e: &ureq::Error) -> String {
-    let text = e.to_string();
-    let lower = text.to_ascii_lowercase();
-    if lower.contains("refused") || lower.contains("10061") {
-        "connection refused".into()
-    } else if matches!(e, ureq::Error::Timeout(_)) || lower.contains("timed out") || lower.contains("10060") {
-        "timed out".into()
-    } else {
-        text
+    match e {
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => "connection refused".into(),
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::TimedOut => "timed out".into(),
+        ureq::Error::Timeout(_) => "timed out".into(),
+        other => other.to_string(),
     }
 }
 
@@ -47,5 +44,12 @@ mod tests {
     fn a_closed_port_is_connection_refused() {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         assert_eq!(health(&format!("http://127.0.0.1:{port}/mcp"), QUICK), Err("connection refused".into()));
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_timed_out() {
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mcp", silent.local_addr().unwrap());
+        assert_eq!(health(&url, Duration::from_millis(300)), Err("timed out".into()));
     }
 }
