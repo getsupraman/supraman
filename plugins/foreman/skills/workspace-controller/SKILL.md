@@ -83,7 +83,7 @@ Foreman's; to start or retire a repo session use `want`/`unwant`, to have anythi
   Then tell the human **once**, with `fm tell`:
   `fm-<w>-workspace ready — <nothing in flight | in flight: <run refs>, next: <its NEXT line>>`.
   No `work_*` tools: `fm tell` `fm-<w>-workspace ready, but WorkState is not visible here — I can talk, not
-  plan. Foreman's settings need workstate_env.` instead. Then end your turn with `done: ready sent`.
+  plan. Foreman is not signed in to WorkState (Settings → WorkState → Sign in).` instead. Then end your turn with `done: ready sent`.
 - **After a compaction or a resume** (your role text arrives again in a session that has a history):
   invoke this skill again, `work_brief(scope: "<w>")`, continue from its NEXT line. Do not announce ready
   again: once per session is the rule, and the summary says whether you did.

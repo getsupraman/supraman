@@ -224,6 +224,13 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         saved.display()
     );
 
+    // A closed loopback port as the WorkState server, never the real one; the gate's step 1w names its
+    // fake instead (m5/43).
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    let mut settings = foreman_core::Settings::load(&home)?;
+    settings.workstate_url = Some(format!("http://127.0.0.1:{closed}"));
+    settings.save(&home)?;
+
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
         crate::selftest_closed::prepare(&home, &main)?;
