@@ -3,7 +3,7 @@
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap as StdHashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc, Mutex,
@@ -19,7 +19,7 @@ use foreman_core::{
 };
 use foreman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
 use foreman_term::{
-    Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
+    Event as TerminalEvent, MaybeNavigationTarget, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use foreman_ui::{FrameProbe, term_element};
@@ -1890,6 +1890,9 @@ impl FleetView {
                                 }
                                 cx.notify();
                             }
+                            TerminalEvent::Open(target) => {
+                                open_link(target, |url| cx.open_url(url), |path| cx.open_with_system(path))
+                            }
                             _ => {}
                         })
                         .detach();
@@ -2200,6 +2203,19 @@ pub(crate) fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
     .top_0()
     .left_0()
     .size_full()
+}
+
+fn open_link(target: &MaybeNavigationTarget, open_url: impl FnOnce(&str), open_path: impl FnOnce(&Path)) {
+    match target {
+        MaybeNavigationTarget::Url(url) => open_url(url),
+        MaybeNavigationTarget::PathLike(link) => {
+            let path = Path::new(&link.maybe_path);
+            match &link.working_directory {
+                Some(cwd) if path.is_relative() => open_path(&cwd.join(path)),
+                _ => open_path(path),
+            }
+        }
+    }
 }
 
 /// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
@@ -2542,9 +2558,27 @@ pub fn process_alive(_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use foreman_term::PathLikeTarget;
     use gpui::{point, size};
 
     use super::*;
+
+    fn opened(target: &MaybeNavigationTarget) -> (Option<String>, Option<PathBuf>) {
+        let (mut url, mut path) = (None, None);
+        open_link(target, |u| url = Some(u.to_owned()), |p| path = Some(p.to_owned()));
+        (url, path)
+    }
+
+    #[test]
+    fn an_open_event_opens_any_scheme_and_resolves_relative_paths() {
+        for uri in ["https://example.com/", "ftp://host/x", "vscode://file/c:/x", "mailto:a@b.c"] {
+            assert_eq!(opened(&MaybeNavigationTarget::Url(uri.into())), (Some(uri.into()), None));
+        }
+        let relative = PathLikeTarget { maybe_path: "src/x.rs".into(), working_directory: Some(PathBuf::from("C:/repo")) };
+        assert_eq!(opened(&MaybeNavigationTarget::PathLike(relative)), (None, Some(PathBuf::from("C:/repo").join("src/x.rs"))));
+        let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
+        assert_eq!(opened(&MaybeNavigationTarget::PathLike(absolute)), (None, Some(PathBuf::from("C:/tmp/a.txt"))));
+    }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), size(px(w), px(h)))

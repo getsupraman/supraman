@@ -45,7 +45,7 @@ use util::{ResultExt as _, paths::PathStyle, truncate_and_trailoff};
 use std::os::unix::process::ExitStatusExt;
 use std::{
     borrow::Cow,
-    cmp::{self, min},
+    cmp,
     fmt::{self, Display, Formatter},
     ops::{BitOr, BitOrAssign, Deref, Range as StdRange},
     path::{Path, PathBuf},
@@ -2851,21 +2851,10 @@ impl Terminal {
                 self.copy(Some(true));
             }
 
-            //Hyperlinks
-            if self.selection_phase == SelectionPhase::Ended {
-                let mouse_cell_index =
-                    content_index_for_mouse(position, &self.last_content.terminal_bounds);
-                if let Some(link) = self
-                    .last_content
-                    .cells
-                    .get(mouse_cell_index)
-                    .and_then(|cell| cell.hyperlink())
-                {
-                    cx.open_url(link.uri());
-                } else if e.modifiers.secondary() {
-                    self.events
-                        .push_back(InternalEvent::FindHyperlink(position, true));
-                }
+            // Links open only on Ctrl+click, for any scheme (m5/44 decision 5).
+            if self.selection_phase == SelectionPhase::Ended && e.modifiers.secondary() {
+                self.events
+                    .push_back(InternalEvent::FindHyperlink(position, true));
             }
         }
 
@@ -3410,11 +3399,12 @@ fn normalize_script_command_name(argument: &str) -> Option<String> {
         .and_then(normalize_path_command_name)
 }
 
+#[cfg(test)]
 fn content_index_for_mouse(pos: GpuiPoint<Pixels>, terminal_bounds: &TerminalBounds) -> usize {
     let col = (pos.x / terminal_bounds.cell_width()).round() as usize;
-    let clamped_col = min(col, terminal_bounds.num_columns().saturating_sub(1));
+    let clamped_col = cmp::min(col, terminal_bounds.num_columns().saturating_sub(1));
     let row = (pos.y / terminal_bounds.line_height()).round() as usize;
-    let clamped_row = min(row, terminal_bounds.num_lines().saturating_sub(1));
+    let clamped_row = cmp::min(row, terminal_bounds.num_lines().saturating_sub(1));
     clamped_row * terminal_bounds.num_columns() + clamped_col
 }
 
@@ -5301,6 +5291,86 @@ mod tests {
             ($terminal:ident, $event:pat) => {
                 $terminal.events.iter().any(|event| matches!(event, $event))
             };
+        }
+
+        fn opens_after_click(
+            output: &[u8],
+            modifiers: Modifiers,
+            cx: &mut TestAppContext,
+        ) -> (Vec<MaybeNavigationTarget>, Option<String>) {
+            let (terminal, cx) = init_terminal_test_with_window(cx, output);
+            cx.run_until_parked();
+            let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let sink = opened.clone();
+            cx.update(|_, cx| {
+                cx.subscribe(&terminal, move |_, event: &Event, _| {
+                    if let Event::Open(target) = event {
+                        sink.borrow_mut().push(target.clone());
+                    }
+                })
+                .detach()
+            });
+            cx.update_window_entity(&terminal, |terminal, window, cx| {
+                terminal.sync(window, cx);
+                terminal.last_content.terminal_bounds = TerminalBounds::new(
+                    px(20.0),
+                    px(10.0),
+                    gpui::bounds(point(px(0.0), px(0.0)), gpui::size(px(400.0), px(400.0))),
+                );
+                let position = point(px(85.0), px(5.0));
+                terminal.mouse_down(
+                    &MouseDownEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                        first_mouse: false,
+                    },
+                    MouseInputMode::ReportToTerminal,
+                    cx,
+                );
+                terminal.mouse_up(
+                    &MouseUpEvent {
+                        button: MouseButton::Left,
+                        position,
+                        modifiers,
+                        click_count: 1,
+                    },
+                    MouseInputMode::ReportToTerminal,
+                    cx,
+                );
+                terminal.sync(window, cx);
+            });
+            cx.run_until_parked();
+            let opened = opened.borrow().clone();
+            (opened, cx.opened_url())
+        }
+
+        const OSC8_LINK: &[u8] = b"Visit \x1b]8;;vscode://file/c:/x.exe\x07the link\x1b]8;;\x07 now\r\n";
+        const PLAIN_URL: &[u8] = b"Visit https://zed.dev/ for more\r\n";
+
+        #[gpui::test]
+        async fn test_plain_click_opens_no_link(cx: &mut TestAppContext) {
+            for output in [OSC8_LINK, PLAIN_URL] {
+                let (opened, platform) = opens_after_click(output, Modifiers::none(), cx);
+                assert!(opened.is_empty(), "a plain click must not open {opened:?}");
+                assert_eq!(platform, None, "a plain click reached the platform opener");
+            }
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_click_opens_osc8_link_of_any_scheme(cx: &mut TestAppContext) {
+            let (opened, _) = opens_after_click(OSC8_LINK, Modifiers::secondary_key(), cx);
+            assert_eq!(
+                opened,
+                [MaybeNavigationTarget::Url("vscode://file/c:/x.exe".into())]
+            );
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_click_opens_plain_url(cx: &mut TestAppContext) {
+            let (opened, _) = opens_after_click(PLAIN_URL, Modifiers::secondary_key(), cx);
+            assert_eq!(opened, [MaybeNavigationTarget::Url("https://zed.dev/".into())]);
         }
 
         #[gpui::test]
