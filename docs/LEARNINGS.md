@@ -3031,3 +3031,71 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   insufficient_scope"). `fm` depends on neither foreman-ui nor foreman-app, so this unit's change cannot cause
   it. `--selftest` 5 of 5 PASS (125–137 s). `--selftest-supervise` FAIL once at step s ("the tree does not
   overflow a 480 px window"), then PASS (298 s). `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.3 OAuth and WorkState client robustness; Credential Manager limits (U2)
+
+- **c5, secrets of any length** (`secret.rs`): `CredWriteW` takes at most 2560 bytes (`PART_BYTES`,
+  CRED_MAX_CREDENTIAL_BLOB_SIZE). A longer secret goes to `<target>`, `<target>#1`, …, and the first
+  credential has the comment `parts=<n>`. A secret of 2560 bytes or less is one credential with no comment,
+  exactly as before. `set` writes the parts first and the first credential last, then deletes leftover
+  parts; `delete` removes every part. WorkState 1.0.0's refresh tokens were longer than 2560 bytes
+  ("Credential Manager: The stub received bad data."), and 1.0.1 returns to short ones.
+- **A refresh token the store refuses** stays in memory (`Inner::unsaved`). The server has already spent the
+  old one, so dropping the new one would end the grant. `AuthStatus::SignedIn { unsaved: Some(why) }` reports
+  it; the settings window shows it as a warning and `fm work` prints `warning: …`. Another process cannot
+  see that token: its refresh is refused, and that drops the pair.
+- **F-08 / A-27**: `access_token` takes `inner` only to read or set `held`, `broken` and `unsaved`; it never
+  holds it across `refresh.lock` or the token request. After it gets the file lock it checks the held token
+  and `broken` again, so two threads still produce one refresh and one rotation. Red: `inner` held across
+  `token_request` → `status_answers_while_a_refresh_is_in_flight` fails (`status() waited on the refresh:
+  Err(Timeout)`).
+- **F-09 / A-28**: `load_known` falls back to the default only on NotFound. Any other read or parse error is
+  `AuthError::Store` ("… is damaged (…); repair or delete it, then sign in again"), `status` returns
+  `SignInAgain` with it, and sign-in, refresh and sign-out never save over the file. Red: the old `.ok()`
+  chain → `a_damaged_servers_json_is_reported_and_never_written_over` sees `NotSignedIn`.
+- **A-61 fake**: ids are `fake-<kind>-<16 random hex>` (client, code, rt, at, jti). Refusals carry
+  `error_description` (`redeemed`, `unknown`, `revoked`, `refused on request`, …) and are listed by
+  `FakeAuth::refusals()`. `stall_tokens`/`stalled` hold `/connect/token` open; `set_refresh_len` pads refresh
+  tokens. `auth.rs` still reads only `error`.
+- **A-45**: an SSE line or event over 64 KiB (`MAX_LINE`) ends the stream as `Lost`. **Skipped: the
+  `X-WorkState-Api` check on the stream.** The real server sets that header only under `/api/v1`
+  (Skills `mcp/WorkState.Api/App/V1/ApiV1.cs:35-37`), although doc 10 rule 4 says every response carries
+  it. A check would cut Foreman off the real `/api/stream`. That mismatch is the server's to fix.
+- **A-48 `health.rs`**: `connection refused` is `ureq::Error::Io` with `ErrorKind::ConnectionRefused` (ureq
+  3.5's `try_connect` also synthesises it); `timed out` is `Error::Timeout` or `ErrorKind::TimedOut`.
+  Nothing is matched on text or on Winsock numbers any more.
+- **F-05 / A-77, the evidence.** `fm/tests/work.rs` now names each refresh token by its place in the fake's
+  issue order (`rt0`, `rt1`, …; never the token) and reports, for each `fm`, what the store held before and
+  after, what `fm` sent, and the fake's refusals.
+  - 20 runs of the single test passed 20. 20 runs of the whole binary (its 4 tests in parallel) failed 2:
+    - "store before rt2, after none; this fm sent [rt1]; all sent [rt0, rt1, rt1]; refusals [invalid_grant:
+      redeemed]". The test process read rt2, then the next `fm` read rt1, which was already redeemed.
+    - `work_overview…`: right after `fm` stored the rotated token, the test read back an older one.
+  - A probe of 4 processes × 4 threads, each writing and reading back its own random-prefix target, showed
+    that Credential Manager **loses writes made concurrently from several processes**:
+    "wrote v-2-82, read v-2-4, still v-2-79 after 300 ms"; "wrote v-0-90, read None, still None after
+    300 ms". A re-read never healed one. HEAD's `secret.rs` (no part deletes) does the same. 4 threads in one
+    process: 0 of 1200.
+  - So this is a **lost update across processes, not a stale read**. Decision 3's one re-read would read
+    the same stale value, so it is **not applied**, and token handling is unchanged.
+  - Narrowed in the test: a signed-in `Home` holds `CREDENTIAL_WRITERS`, so only one home and its `fm`
+    children write at a time. After that, 20 of 20 whole-binary runs passed.
+  - **Open (production):** any processes writing generic credentials at once, such as the app and `fm`, two
+    gates, or another program, can revert Foreman's rotated refresh token. The next refresh then fails with
+    `invalid_grant` and needs "Sign in again". Proposed: keep the refresh token in a DPAPI-encrypted file
+    under `<home>/oauth`, written under `refresh.lock`, which no other process writes. That changes the
+    credential targets, so it is the controller's and René's call.
+- Tests: `secret::tests::a_secret_over_the_blob_limit_is_split_and_a_short_one_stays_one_credential`;
+  `tests/oauth.rs` `a_6_kb_refresh_token_rotates_through_credential_manager`,
+  `a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported`,
+  `status_answers_while_a_refresh_is_in_flight`, `concurrent_callers_share_one_refresh`,
+  `a_damaged_servers_json_is_reported_and_never_written_over`,
+  `the_fake_names_why_it_refuses_a_refresh_and_its_ids_are_not_guessable`;
+  `stream::tests::an_endless_line_or_event_is_refused`; `health::tests::a_server_that_never_answers_is_timed_out`.
+  Red for c5: HEAD's `secret.rs` → the 6 KB test finds nothing stored.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-3\target`, a02ee77): build ok, no warnings; `cargo test --release
+  --workspace --no-fail-fast` 604 passed, 0 failed. `--selftest` 6 runs: 1–4 PASS (123–129 s), run 5 FAIL
+  at step 7r ("claude's image check in a Foreman tab exited 1 with the test image borrowed and put back on
+  the clipboard"; the clipboard and claude paste path, untouched here, and not a known flake), run 6 PASS
+  (124 s). `--selftest-supervise` PASS (299 s), `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest`
+  rows from this worktree; 4 rows of another checkout's run, left alone.
