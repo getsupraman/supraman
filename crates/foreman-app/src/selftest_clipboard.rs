@@ -1,0 +1,152 @@
+//! The user's clipboard, saved in every format a selftest step can copy byte for byte and put back
+//! afterwards. gpui's own read and write turn a screenshot's CF_DIB into a PNG-only entry, which claude's
+//! Alt+V check does not see as an image (m5/46), so steps that borrow the clipboard use this instead.
+
+pub(crate) use win::{Snapshot, put_test_image};
+
+/// A BITMAPINFOHEADER and 2×2 32-bit pixels.
+fn test_dib() -> Vec<u8> {
+    let mut dib = Vec::new();
+    for field in [40u32, 2, 2] {
+        dib.extend_from_slice(&field.to_le_bytes());
+    }
+    dib.extend_from_slice(&1u16.to_le_bytes());
+    dib.extend_from_slice(&32u16.to_le_bytes());
+    dib.extend_from_slice(&[0; 24]);
+    dib.extend_from_slice(&[0x40, 0x80, 0xC0, 0xFF].repeat(4));
+    dib
+}
+
+#[cfg(windows)]
+mod win {
+    use std::time::{Duration, Instant};
+
+    use windows::Win32::{
+        Foundation::{GlobalFree, HANDLE, HGLOBAL},
+        System::{
+            DataExchange::{CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard, SetClipboardData},
+            Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
+            Ole::CF_DIB,
+        },
+    };
+
+    /// GDI-handle and owner-display formats, which are no HGLOBAL; Windows synthesizes CF_BITMAP again from CF_DIB.
+    const NOT_GLOBAL: [u32; 8] = [2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E];
+
+    struct Open;
+
+    impl Open {
+        fn new() -> windows::core::Result<Self> {
+            let started = Instant::now();
+            loop {
+                match unsafe { OpenClipboard(None) } {
+                    Ok(()) => return Ok(Open),
+                    Err(e) if started.elapsed() > Duration::from_secs(1) => return Err(e),
+                    Err(_) => std::thread::sleep(Duration::from_millis(20)),
+                }
+            }
+        }
+    }
+
+    impl Drop for Open {
+        fn drop(&mut self) {
+            unsafe { CloseClipboard() }.ok();
+        }
+    }
+
+    pub(crate) struct Snapshot(Vec<(u32, Vec<u8>)>);
+
+    impl Snapshot {
+        pub(crate) fn take() -> windows::core::Result<Self> {
+            let _open = Open::new()?;
+            let mut formats = Vec::new();
+            let mut format = 0;
+            loop {
+                format = unsafe { EnumClipboardFormats(format) };
+                if format == 0 {
+                    break;
+                }
+                if NOT_GLOBAL.contains(&format) {
+                    continue;
+                }
+                let Ok(handle) = (unsafe { GetClipboardData(format) }) else { continue };
+                let global = HGLOBAL(handle.0);
+                let size = unsafe { GlobalSize(global) };
+                let ptr = unsafe { GlobalLock(global) };
+                if ptr.is_null() {
+                    continue;
+                }
+                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) }.to_vec();
+                unsafe { GlobalUnlock(global) }.ok();
+                formats.push((format, bytes));
+            }
+            Ok(Snapshot(formats))
+        }
+
+        pub(crate) fn formats(&self) -> usize {
+            self.0.len()
+        }
+
+        pub(crate) fn restore(&self) -> windows::core::Result<()> {
+            set(self.0.iter().map(|(f, b)| (*f, b.as_slice())))
+        }
+    }
+
+    /// A 2×2 32-bit DIB; Windows offers it as CF_BITMAP too, which `Clipboard.ContainsImage` asks for.
+    pub(crate) fn put_test_image() -> windows::core::Result<()> {
+        set([(CF_DIB.0 as u32, super::test_dib().as_slice())].into_iter())
+    }
+
+    fn set<'a>(formats: impl Iterator<Item = (u32, &'a [u8])>) -> windows::core::Result<()> {
+        let _open = Open::new()?;
+        unsafe { EmptyClipboard() }?;
+        for (format, bytes) in formats {
+            let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1)) }?;
+            let ptr = unsafe { GlobalLock(global) };
+            if ptr.is_null() {
+                unsafe { GlobalFree(Some(global)) }.ok();
+                continue;
+            }
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len()) };
+            unsafe { GlobalUnlock(global) }.ok();
+            // the clipboard owns the memory once this succeeds
+            if unsafe { SetClipboardData(format, Some(HANDLE(global.0))) }.is_err() {
+                unsafe { GlobalFree(Some(global)) }.ok();
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+mod win {
+    pub(crate) struct Snapshot;
+
+    impl Snapshot {
+        pub(crate) fn take() -> anyhow::Result<Self> {
+            anyhow::bail!("windows only")
+        }
+        pub(crate) fn formats(&self) -> usize {
+            0
+        }
+        pub(crate) fn restore(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn put_test_image() -> anyhow::Result<()> {
+        anyhow::bail!("windows only")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_test_image_is_a_2x2_32_bit_dib() {
+        let dib = super::test_dib();
+        let u32_at = |at: usize| u32::from_le_bytes(dib[at..at + 4].try_into().unwrap());
+        let u16_at = |at: usize| u16::from_le_bytes(dib[at..at + 2].try_into().unwrap());
+        assert_eq!((u32_at(0), u32_at(4), u32_at(8), u16_at(12), u16_at(14)), (40, 2, 2, 1, 32));
+        assert_eq!(dib.len(), 40 + 2 * 2 * 4);
+    }
+}

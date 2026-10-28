@@ -857,6 +857,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let zoomed = crate::selftest_zoom::run(view, &home(), cx).await.context("step 7q")?;
     println!("step 7q: {zoomed}");
 
+    let pasted = crate::selftest_paste::run(view, cx).await.context("step 7r")?;
+    println!("step 7r: {pasted}");
+
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
@@ -962,9 +965,9 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
 
 /// Step 6b (m5/9), on step 6's shell tab: a left drag dispatched over a known output line selects exactly
 /// that line's text, Ctrl+Shift+C puts it on the clipboard, and Ctrl+V types the clipboard into the shell
-/// (PSReadLine echoes it at the prompt). The clipboard is put back as it was.
+/// (PSReadLine echoes it at the prompt). The clipboard is put back as it was ([`crate::selftest_clipboard`]).
 async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let saved = cx.update(|_, cx| cx.read_from_clipboard())?;
+    let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = async {
         let (row, text) = select_wheel_line(terminal, cx).await?;
 
@@ -1011,9 +1014,7 @@ async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowCont
         ))
     }
     .await;
-    if let Some(item) = saved {
-        cx.update(|_, cx| cx.write_to_clipboard(item))?;
-    }
+    saved.restore()?;
     result
 }
 

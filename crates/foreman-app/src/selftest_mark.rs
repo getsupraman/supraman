@@ -57,14 +57,12 @@ pub(crate) fn kill_own(pid: u32, start: u64) {
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| earlier.into_iter().for_each(|id| v.close_tab(id, cx)));
-    let saved = cx.update(|_, cx| cx.read_from_clipboard())?;
+    let saved = crate::selftest_clipboard::Snapshot::take()?;
     let name = format!("fm-selftest-{}-mark", hex6());
     let shell = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
     let result = check(view, &name, cx).await;
     view.update(cx, |v, _| v.shell_args = shell);
-    if let Some(saved) = saved {
-        cx.update(|_, cx| cx.write_to_clipboard(saved)).ok();
-    }
+    saved.restore().ok();
     let killed = lock().as_mut().map(|s| std::mem::take(&mut s.kill)).unwrap_or_default();
     for (pid, start) in killed {
         kill_own(pid, start);
