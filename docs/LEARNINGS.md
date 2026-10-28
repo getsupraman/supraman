@@ -662,7 +662,7 @@ Design decisions only; this unit launched no session and measured nothing live. 
   Backoff after failure 1–4: 5 s, 30 s, 2 min, 10 min; the 5th gives up (`GaveUp`, Retry clears). 60 s alive
   clears the count. `TrustNeeded` is not counted and never retried: Inbox row with `RunInTerminal{cwd, "claude"}`
   until Retry. Memory is in-process: an app restart forgets failures (and retries once).
-- **Cap**: live `fm-` rows with `state=working` take slots of `Policy::max_working` (default 3); Resumes before
+- **Cap**: live `fm-` rows with `state=working` take slots of `Policy::max_working` (default 3 then; 20 and per home since m5/45); Resumes before
   Launches; the rest `Wait(Cap)`. Counted from one platform's tick: two platforms ticking in the same snapshot can
   overshoot by their own launches — the app should tick platforms one after another on fresh snapshots, or share a
   budget (M2/4's call).
@@ -798,9 +798,9 @@ worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolati
   saw it. Match a resumed row by `id`, or wait 5 s before reading its `sessionId`.
 - `--bg --resume` with no prompt fires no hook until a prompt arrives (no SessionStart(resume) within 30 s).
 - **Shared busy budget** (René, 2026-10-22: "a setting in the app, shared across platforms"):
-  `settings.toml` `max_working` (default 3), the `busy ≤ − N +` stepper in the left header, re-read every tick.
-  `foreman_supervisor::tick_all(supervisors, snapshot, max_working, now)` ticks every platform on one snapshot
-  in turn with one `Budget`: `max` − live `fm-` rows with `state=working` − wanted sessions still settling after
+  `settings.toml` `max_working` (default 20), the `busy ≤ − N +` stepper in the left header, re-read every tick.
+  `foreman_supervisor::tick_all(supervisors, workspaces, snapshot, max_working, now)` ticks every platform on one snapshot
+  in turn with one `Budget`: `max` − this home's live `fm-` rows that are mid-turn (m5/45) − wanted sessions still settling after
   a start (`Supervisor::starting`); each launch/resume that succeeds takes a slot. `reconcile` gets the free
   slots as a parameter (`Policy::max_working` is gone). Step f, 3 runs: limit 1, two platforms started → max 1
   working; the second went live 1.9–2.7 s after the first one's turn ended (first idle 9.6–13.1 s).
@@ -1999,9 +1999,7 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   `fm-selftest-<hex>…` and only the selftest's own home registers `selftest-<hex>` (its park stays Blocked there, step
   e). A home that registered a workspace literally named `selftest-<hex>…` would claim them — not worth a reserved
   prefix.
-- Not changed: the busy budget (`foreman_supervisor::budget::mid_turn`) still counts every mid-turn `fm-` row on the
-  machine, another home's included. Arguably right (it is machine load), but a running selftest lowers the user's
-  budget.
+- The busy budget counts only this home's rows (m5/45): another home's mid-turn `fm-` rows take no slot.
 - Tests: `fleet::tests::another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked`,
   `reconcile::tests::another_homes_parked_session_raises_nothing` (a guard: reconcile already only looks at wanted
   names). Red: `is_foreign` → `false` fails the fleet test. `--selftest-supervise` step e2 injects a fake
@@ -2709,8 +2707,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   (line 2), Ctrl+End, Ctrl+Shift+Left selects `WRONG.`, types `nothing.` over it, and Ctrl+Enter sends the
   result to the testbed workspace session (checked in its transcript); before the Esc check it clicks back into the
   box, because the Approve click gave the keys to the window.
-- **Step f depends on René's live sessions.** Its busy limit of 1 is machine-wide (`budget::working` counts every
-  live `fm-` row with `status=busy`). While `fm-nomos-workspace` and `fm-nomos-nomos` were mid-turn, neither of the
+- **Step f depended on René's live sessions** (fixed in m5/45: the budget counts only this home's rows). While `fm-nomos-workspace` and `fm-nomos-nomos` were mid-turn, neither of the
   testbed's two workspaces ever launched (`not both launched within 180 s (first live [None, None])`), with this
   unit's build and with main's (6b3df5a) alike. The selftest should not count sessions outside its testbed.
 - Tests: `text_input::tests::up_and_down_keep_the_column_across_shorter_lines`,
@@ -2721,3 +2718,30 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-42\target`): `cargo build --release --workspace` ok, no warnings; `cargo test
   --release --workspace` 565 passed, 0 failed; `--selftest` 5 of 5 PASS (119–121 s); `--selftest-detach-shutdown`
   PASS; no `fm-selftest` rows of this worktree left. `--selftest-supervise`: FAIL at step f, twice on this build (434 s, 440 s) and once on main 6b3df5a (437 s), all `not both launched within 180 s (first live [None, None])` while fm-nomos-workspace and fm-nomos-nomos were busy (see above); its step t (the task box) passed in both runs on this build.
+
+## 2026-10-28 — m5/45 the busy budget counts only this home's sessions; default limit 20
+
+- **Per home.** `tick_all(supervisors, workspaces, snapshot, max_working, now)` builds its `Budget` from the rows
+  `foreman_supervisor::is_foreign` does not reject: named `fm-<workspace>-…` after a registered workspace (or one a
+  supervisor ticks), or wanted by a supervisor's desired state. Another `FOREMAN_HOME`'s mid-turn rows take no slot.
+  Two Foremans never coordinated their launches anyway, so a shared count only made each one block the other: a
+  running selftest lowered René's budget, and René's busy `fm-nomos-*` sessions kept `--selftest-supervise` step f
+  (limit 1) from launching at all.
+- **One ownership test.** `is_foreign` moved from `fleet.rs` into `foreman-supervisor` (desired.rs); `fleet::is_foreign`
+  adapts the app's `workspaces` + desired map to it. The fleet's dimming and the budget cannot disagree on whose a row is.
+- **Default 20** (René, via the controller): `DEFAULT_MAX_WORKING` 3 → 20, equal to `MAX_WORKING_LIMIT`. The left
+  header's selftest step now presses − then + (a + at the bound does nothing). `--selftest-supervise` sets its own
+  limit of 1 for step f and nothing else there depends on the default; its step f line now prints `limit 20 → 1`.
+- Text: the header's busy tooltip and Settings → "Busy sessions at most" say the limit is this Foreman's sessions
+  and that another Foreman's are not counted.
+- Tests: `executor::tests::another_homes_busy_sessions_take_no_slot` (two foreign busy rows; limit 1: alpha goes,
+  its own busy row holds the slot, beta goes once alpha is idle — step f on fixtures; a row this home wants under a
+  foreign-looking name still counts); `two_started_workspaces_never_exceed_the_shared_budget_together` now counts a
+  registered-but-unsupervised workspace's busy row. Red: `tick_all` without the ownership filter → 1 of 84
+  foreman-supervisor tests fails.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-45\target`): build ok, no warnings; `cargo test --release --workspace` 566
+  passed, 0 failed; `--selftest-supervise` PASS (328 s) with fm-nomos-workspace, fm-nomos-nomos and
+  fm-nomos-nomos-letterhead-nomos-3 busy at its start, step f max 1 working over 31 polls; `--selftest` 5 of 5 PASS
+  (116–123 s) on a second series — the first series had 4 of 5, run 4 failing step 7j's 1500 ms Refresh bound while a
+  selftest of the main checkout ran alongside; `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this
+  worktree left.

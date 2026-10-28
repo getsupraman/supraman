@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CoreError, Result};
 
-pub const DEFAULT_MAX_WORKING: usize = 3;
+pub const DEFAULT_MAX_WORKING: usize = 20;
 /// `workstate_url` when unset.
 pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
 /// `terminal_font_size` when unset or invalid, and Ctrl+0's size (m5/41).
@@ -18,7 +18,7 @@ pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
-    /// Most `fm-` sessions with `state=working` at once, across all workspaces.
+    /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
     #[serde(default = "default_max_working")]
     pub max_working: usize,
     /// A `.env` holding `WORKSTATE_<ROLE>_TOKEN=…` lines, read at launch time. Unset: sessions

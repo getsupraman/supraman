@@ -37,11 +37,12 @@
 //!
 //! # The shared budget
 //!
-//! One `max_working` for all workspaces (the human's setting). [`tick_all`] ticks every workspace's
+//! One `max_working` for all workspaces of this home (the human's setting). [`tick_all`] ticks every workspace's
 //! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
-//! minus the live `fm-` rows that are mid-turn ([`mid_turn`]: `status=busy`, not `state=working`), minus
-//! every wanted session still settling after a start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot. Test
-//! `two_started_workspaces_never_exceed_the_shared_budget_together`.
+//! minus this home's live `fm-` rows that are mid-turn ([`mid_turn`]: `status=busy`, not `state=working`), minus
+//! every wanted session still settling after a start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot.
+//! Another home's rows ([`is_foreign`]) take no slot: two Foremans do not share a budget. Tests
+//! `two_started_workspaces_never_exceed_the_shared_budget_together`, `another_homes_busy_sessions_take_no_slot`.
 //!
 //! # Failures
 //!
@@ -72,7 +73,7 @@ mod reconcile;
 pub use budget::{Budget, mid_turn, tick_all, working};
 pub use desired::{
     DEFAULT_PERMISSION_MODE, DesiredState, RELAY_RESUME_PROMPT, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, WantedSession, Wanted,
-    fill_paths, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
+    fill_paths, is_foreign, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
     workspace_session_name,
 };
 pub use error::{Result, SupervisorError};

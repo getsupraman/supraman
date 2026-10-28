@@ -356,7 +356,8 @@ impl Supervision {
         {
             let _tick = TICK.lock().unwrap_or_else(|e| e.into_inner());
             if ENABLED.load(Ordering::SeqCst) {
-                report.needs = tick_all(self.supervisors.values_mut(), observed, settings.max_working, now);
+                let names: Vec<&str> = workspaces.iter().map(|p| p.name.as_str()).collect();
+                report.needs = tick_all(self.supervisors.values_mut(), &names, observed, settings.max_working, now);
             }
         }
         if let Some(why) = self.supervisors.values().find_map(|s| s.held()) {

@@ -1228,52 +1228,84 @@ mod tests {
         };
         let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
         // budget 1, both need a launch: only alpha goes
-        tick_all(sups.iter_mut(), &[], 1, NOW);
+        tick_all(sups.iter_mut(), &[], &[], 1, NOW);
         assert_eq!(launched(&sups), [1, 0]);
         // alpha's row has not shown yet: it still holds the slot, beta waits
-        tick_all(sups.iter_mut(), &[], 1, NOW + 2 * SECOND);
+        tick_all(sups.iter_mut(), &[], &[], 1, NOW + 2 * SECOND);
         assert_eq!(launched(&sups), [0, 0]);
         // alpha is working: beta waits
         let alpha_busy = live("fm-alpha-workspace", 1, SessionState::Working, Status::Busy);
-        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_busy), 1, NOW + 4 * SECOND);
+        tick_all(sups.iter_mut(), &[], std::slice::from_ref(&alpha_busy), 1, NOW + 4 * SECOND);
         assert_eq!(launched(&sups), [0, 0]);
         // alpha's turn ended (done + live pid = idle): the slot frees, beta goes
         let alpha_idle = live("fm-alpha-workspace", 1, SessionState::Done, Status::Idle);
-        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_idle), 1, NOW + 30 * SECOND);
+        tick_all(sups.iter_mut(), &[], std::slice::from_ref(&alpha_idle), 1, NOW + 30 * SECOND);
         assert_eq!(launched(&sups), [0, 1]);
         // the same snapshot again: beta, settling, holds the slot
-        tick_all(sups.iter_mut(), std::slice::from_ref(&alpha_idle), 1, NOW + 32 * SECOND);
+        tick_all(sups.iter_mut(), &[], std::slice::from_ref(&alpha_idle), 1, NOW + 32 * SECOND);
         assert_eq!(launched(&sups), [0, 0]);
 
         // budget 2: both in one tick
         let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
-        tick_all(sups.iter_mut(), &[], 2, NOW);
+        tick_all(sups.iter_mut(), &[], &[], 2, NOW);
         assert_eq!(launched(&sups), [1, 1]);
 
-        // budget 0 pauses every launch; a working fm- session nobody here supervises counts too
+        // budget 0 pauses every launch; a working session of a registered workspace nobody here supervises counts too
         let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
-        tick_all(sups.iter_mut(), &[], 0, NOW);
+        tick_all(sups.iter_mut(), &["alpha", "beta", "gamma"], &[], 0, NOW);
         assert_eq!(launched(&sups), [0, 0]);
         let other = live("fm-gamma-workspace", 3, SessionState::Working, Status::Busy);
-        tick_all(sups.iter_mut(), std::slice::from_ref(&other), 1, NOW + SECOND);
+        tick_all(sups.iter_mut(), &["alpha", "beta", "gamma"], std::slice::from_ref(&other), 1, NOW + SECOND);
         assert_eq!(launched(&sups), [0, 0]);
-        let needs = tick_all(sups.iter_mut(), std::slice::from_ref(&other), 2, NOW + 2 * SECOND);
+        let needs = tick_all(sups.iter_mut(), &["alpha", "beta", "gamma"], std::slice::from_ref(&other), 2, NOW + 2 * SECOND);
         assert_eq!(launched(&sups), [1, 0]);
         assert!(needs.is_empty(), "a cap wait is not an Inbox row: {needs:?}");
+    }
+
+    #[test]
+    fn another_homes_busy_sessions_take_no_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let launched = |sups: &[Supervisor<FakeLauncher, FakeTokens>]| -> Vec<usize> {
+            sups.iter().map(|s| s.launcher().take().len()).collect()
+        };
+        let foreign = [
+            live("fm-nomos-workspace", 7, SessionState::Working, Status::Busy),
+            live("fm-nomos-nomos", 8, SessionState::Working, Status::Busy),
+        ];
+        assert_eq!(Budget::new(1, &foreign, NOW).free, 0, "unfiltered, they would fill the budget");
+
+        // --selftest-supervise step f with the limit at 1 while another home is mid-turn: alpha goes, then beta
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
+        tick_all(sups.iter_mut(), &["alpha", "beta"], &foreign, 1, NOW);
+        assert_eq!(launched(&sups), [1, 0]);
+        let mut rows = foreign.to_vec();
+        rows.push(live("fm-alpha-workspace", 1, SessionState::Working, Status::Busy));
+        tick_all(sups.iter_mut(), &["alpha", "beta"], &rows, 1, NOW + 30 * SECOND);
+        assert_eq!(launched(&sups), [0, 0], "alpha's own busy row holds the slot");
+        rows.pop();
+        rows.push(live("fm-alpha-workspace", 1, SessionState::Done, Status::Idle));
+        tick_all(sups.iter_mut(), &["alpha", "beta"], &rows, 1, NOW + 60 * SECOND);
+        assert_eq!(launched(&sups), [0, 1]);
+
+        // a session this home wants under another workspace's name is its own
+        let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
+        sups[1].desired.sessions[0].name = "fm-nomos-workspace".into();
+        tick_all(sups.iter_mut(), &["alpha", "beta"], &foreign[..1], 1, NOW);
+        assert_eq!(launched(&sups), [0, 0]);
     }
 
     #[test]
     fn a_workspace_session_idling_on_the_relay_frees_its_slot() {
         let dir = tempfile::tempdir().unwrap();
         let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
-        tick_all(sups.iter_mut(), &[], 1, NOW);
+        tick_all(sups.iter_mut(), &[], &[], 1, NOW);
         assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [1, 0]);
         // just started, no prompt taken yet: `status=idle` on a live pid still holds the slot while settling
         let fresh = live("fm-alpha-workspace", 1, SessionState::Working, Status::Idle);
-        tick_all(sups.iter_mut(), std::slice::from_ref(&fresh), 1, NOW + 2 * SECOND);
+        tick_all(sups.iter_mut(), &[], std::slice::from_ref(&fresh), 1, NOW + 2 * SECOND);
         assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [0, 0]);
         // its turn ended, `state` stayed `working`: the slot is free once it settled
-        tick_all(sups.iter_mut(), std::slice::from_ref(&fresh), 1, NOW + 30 * SECOND);
+        tick_all(sups.iter_mut(), &[], std::slice::from_ref(&fresh), 1, NOW + 30 * SECOND);
         assert_eq!(sups.iter().map(|s| s.launcher().take().len()).collect::<Vec<_>>(), [0, 1]);
     }
 
@@ -1334,7 +1366,7 @@ mod tests {
             let relay = crate::relay_session(name, r"C:\demo\cwd", r"C:\fm\relay", "be the relay");
             s.desired.sessions.insert(0, relay);
         }
-        tick_all(sups.iter_mut(), &[], 1, NOW);
+        tick_all(sups.iter_mut(), &[], &[], 1, NOW);
         let first: Vec<Vec<Call>> = sups.iter().map(|s| s.launcher().take()).collect();
         assert_eq!(first[0].len(), 2, "alpha: relay and workspace {first:?}");
         assert_eq!(first[1].len(), 1, "beta: relay only {first:?}");
@@ -1343,7 +1375,7 @@ mod tests {
             live("fm-beta-relay", 2, SessionState::Working, Status::Busy),
             live("fm-alpha-workspace", 3, SessionState::Done, Status::Idle),
         ];
-        tick_all(sups.iter_mut(), &rows, 1, NOW + 30 * SECOND);
+        tick_all(sups.iter_mut(), &[], &rows, 1, NOW + 30 * SECOND);
         let second: Vec<usize> = sups.iter().map(|s| s.launcher().take().len()).collect();
         assert_eq!(second, [0, 1], "beta's workspace session goes once alpha's is idle");
     }

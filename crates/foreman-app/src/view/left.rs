@@ -265,7 +265,7 @@ impl FleetView {
         };
         let n = self.max_working;
         let busy_tip: SharedString = format!(
-            "At most {n} Foreman session(s) working at once, across all workspaces; launches wait while it is reached. 0 pauses them all."
+            "At most {n} session(s) of this Foreman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Foreman's sessions are not counted."
         )
         .into();
         let warning = match &self.cli {

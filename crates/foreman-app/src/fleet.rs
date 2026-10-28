@@ -178,12 +178,10 @@ pub fn is_alive(health: &Health) -> bool {
     matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
 }
 
-/// An `fm-` session this home neither wants (its desired state) nor names (`fm-<workspace>-…` of a registered
-/// workspace): another `FOREMAN_HOME`'s, e.g. a selftest's (m5/10). Its prompts are not this user's to answer.
+/// [`foreman_supervisor::is_foreign`]. Its prompts are not this user's to answer.
 pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) -> bool {
-    name.starts_with("fm-")
-        && !desired.is_some_and(|d| d.values().any(|(_, wanted)| wanted.iter().any(|w| w == name)))
-        && !workspaces.iter().any(|w| name.starts_with(&format!("fm-{}-", w.name)))
+    let wanted = desired.into_iter().flat_map(|d| d.values()).flat_map(|(_, wanted)| wanted.iter().map(String::as_str));
+    foreman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()), wanted)
 }
 
 /// Blocked first (it needs a human), then running, idle, unknown, orphaned, stopped; another Foreman's

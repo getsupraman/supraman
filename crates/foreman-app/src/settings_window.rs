@@ -279,9 +279,9 @@ impl SettingsView {
         vec![
             row(
                 "Busy sessions at most",
-                "How many Foreman sessions may be working (mid-turn) at the same time, counted across all \
-                 workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
-                 Your own sessions are not counted.",
+                "How many sessions of this Foreman may be working (mid-turn) at the same time, counted across \
+                 its workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
+                 Your own sessions and another Foreman's are not counted.",
                 stepper.into_any_element(),
                 None,
                 cx,

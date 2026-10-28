@@ -73,10 +73,11 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     until(view, cx, "the stopped toggle flips back", |v| (v.show_stopped == shown).then_some(())).await?;
 
     let busy = view.read_with(cx, |v, _| v.max_working);
-    click(view, "busy-inc", cx).await?;
-    until(view, cx, "busy + raises the limit", |v| (v.max_working == busy + 1).then_some(())).await?;
+    // the default is the upper bound (MAX_WORKING_LIMIT): lower first
     click(view, "busy-dec", cx).await?;
-    until(view, cx, "busy − lowers it back", |v| (v.max_working == busy).then_some(())).await?;
+    until(view, cx, "busy − lowers the limit", |v| (v.max_working + 1 == busy).then_some(())).await?;
+    click(view, "busy-inc", cx).await?;
+    until(view, cx, "busy + raises it back", |v| (v.max_working == busy).then_some(())).await?;
 
     // hover: the tooltip, and the icon's hover fill, in the picture
     let position = view
