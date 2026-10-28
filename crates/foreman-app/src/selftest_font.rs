@@ -3,6 +3,8 @@
 //! (fitted when the font has no glyph for it), `x` and `b` are at their cells' x, and with Cascadia Code
 //! `->` is drawn with other glyphs than without ligatures. Settings → Appearance → Consolas changes the
 //! open tab's cell metrics and is saved; ligatures off draws `->` plain; Default puts both back as unset.
+//! m5/49: in `⏵⏵ auto mode on` both `⏵` keep at least 85% of their ink height, the first stays out of
+//! the second's cell and the second may overhang the blank after it but not `a`.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -23,7 +25,14 @@ use crate::{
 
 const WITHIN: Duration = Duration::from_secs(15);
 const PRINTED: &str = "◯x a->b";
+const TRIANGLES: &str = "⏵⏵ auto mode on";
 const CASCADIA: &str = "Cascadia Code";
+const PROBED: [char; 5] = ['⏵', '◯', '≥', '≤', '→'];
+/// The families DirectWrite falls back to for symbols; [`probe`] names the one that draws each.
+const FALLBACKS: [&str; 12] = [
+    "Segoe UI Symbol", "Segoe UI", "Segoe UI Emoji", "Cambria Math", "Cambria", "Segoe Fluent Icons", "Arial",
+    "Lucida Sans Unicode", "Malgun Gothic", "Yu Gothic UI", "MS Gothic", "Microsoft YaHei",
+];
 
 pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let saved = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
@@ -48,10 +57,16 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let terminal = wait_for_tab_terminal(view, tab, WITHIN, cx).await?;
     laid_out_with(view, tab, &terminal, &start, cx).await?;
     terminal.update(cx, |t, _| t.input(b"Write-Host ([char]0x25EF + 'x a-' + '>b')\r".to_vec()));
+    let samples = "Write-Host ([char]0x23F5 + [char]0x23F5 + ' auto mode on'); Write-Host ([char]0x25EF + 'general-purpose'); \
+                   Write-Host ('a ' + [char]0x2192 + ' b'); Write-Host ([char]0x2265 + ' ' + [char]0x2264)\r";
+    terminal.update(cx, |t, _| t.input(samples.as_bytes().to_vec()));
     term_element::record_painted_glyphs(true);
 
     let ligated = (start.family == CASCADIA).then_some(true);
     let first = painted_fits(view, &terminal, &start, ligated, cx).await.context(start.family.to_string())?;
+    let probed = probe(&start, &installed, cx)?;
+    shot("m5-49-term-fallback-glyphs", cx).await;
+    let triangles = triangles_fit(view, &terminal, &start, cx).await.with_context(|| format!("{}; {probed}", start.family))?;
     shot("m5-47-term-default-font", cx).await;
 
     let handle = open_appearance(view, cx).await?;
@@ -77,6 +92,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("settings.toml does not hold terminal_font_family = \"Consolas\"");
     }
     let second = painted_fits(view, &terminal, &consolas, None, cx).await.context("Consolas")?;
+    let probed_consolas = probe(&consolas, &installed, cx)?;
     shot("m5-47-term-consolas", cx).await;
 
     handle.update(cx, |s, _, cx| s.set_term_font(Some(&start.family), false, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -92,7 +108,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("Default did not put the terminals back in {start:?}");
     }
     Ok(format!(
-        "{first}; Appearance → Consolas: cells {:?} → {:?}, {} → {} columns, laid out in {ms} ms, saved; {second}; ligatures off: {third}; Default: unset again",
+        "{first}; {triangles}; {probed}; Appearance → Consolas: cells {:?} → {:?}, {} → {} columns, laid out in {ms} ms, saved; {second}; {probed_consolas}; ligatures off: {third}; Default: unset again",
         before.cell_width,
         after.cell_width,
         before.num_columns(),
@@ -107,7 +123,7 @@ async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fon
     let (line, glyphs, cell) = loop {
         view.update(cx, |_, cx| cx.notify());
         sleep(cx, Duration::from_millis(50)).await;
-        let (line, cell) = terminal.read_with(cx, |t, _| (printed_line(t), t.last_content().terminal_bounds.cell_width));
+        let (line, cell) = terminal.read_with(cx, |t, _| (printed_line(t, PRINTED), t.last_content().terminal_bounds.cell_width));
         let glyphs = term_element::painted_glyphs();
         if let Some(line) = line {
             let row: Vec<PaintedGlyph> = glyphs.into_iter().filter(|g| g.line == line).collect();
@@ -173,8 +189,90 @@ async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fon
     ))
 }
 
-/// The display line `PRINTED` starts, as the painter numbers it.
-fn printed_line(terminal: &Terminal) -> Option<i32> {
+/// Which font draws each of `PROBED` at `font`'s size, its advance and its ink width × height.
+fn probe(font: &TermFont, installed: &[String], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    cx.update(|window, cx| {
+        let ts = cx.text_system();
+        let own = ts.resolve_font(&font.font());
+        let candidates: Vec<(&str, gpui::FontId)> = FALLBACKS
+            .into_iter()
+            .filter(|f| installed.iter().any(|i| i == f))
+            .map(|f| (f, ts.resolve_font(&gpui::font(f.to_string()))))
+            .collect();
+        PROBED
+            .map(|ch| {
+                let style = TextRun { len: ch.len_utf8(), font: font.font(), ..Default::default() };
+                let shaped = window.text_system().shape_line(ch.to_string().into(), font.size, &[style], None);
+                let Some(id) = shaped.runs.first().map(|r| r.font_id) else {
+                    return format!("`{ch}` not shaped");
+                };
+                let family = if !term_element::drawn_by_fallback(ts, own, ch) {
+                    font.family.to_string()
+                } else {
+                    candidates.iter().find(|(_, c)| *c == id).map_or(format!("font #{}", id.0), |(f, _)| f.to_string())
+                };
+                let ink = ts.typographic_bounds(id, font.size, ch).map_or("no ink".into(), |b| {
+                    format!("ink {:.1}×{:.1}", f32::from(b.size.width), f32::from(b.size.height))
+                });
+                format!("`{ch}` {family} advance {:.1} {ink}", f32::from(shaped.width))
+            })
+            .join(", ")
+    })
+    .map(|s| format!("at {:?}: {s}", font.size))
+}
+
+/// Waits for a paint of the `TRIANGLES` row and checks each `⏵` against the next non-blank cell.
+async fn triangles_fit(view: &Entity<FleetView>, terminal: &Entity<Terminal>, font: &TermFont, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let started = Instant::now();
+    let (row, cell) = loop {
+        view.update(cx, |_, cx| cx.notify());
+        sleep(cx, Duration::from_millis(50)).await;
+        let (line, cell) = terminal.read_with(cx, |t, _| (printed_line(t, TRIANGLES), t.last_content().terminal_bounds.cell_width));
+        if let Some(line) = line {
+            let mut row: Vec<PaintedGlyph> = term_element::painted_glyphs().into_iter().filter(|g| g.line == line).collect();
+            row.sort_by_key(|g| g.column);
+            if row.iter().filter(|g| g.ch == '⏵').count() == 2 && row.iter().any(|g| g.ch == 'a') {
+                break (row, cell);
+            }
+        }
+        if started.elapsed() > Duration::from_secs(10) {
+            bail!("no paint of the `{TRIANGLES}` row (on screen: {})", line.is_some());
+        }
+    };
+    let natural = cx.update(|window, cx| {
+        let style = TextRun { len: '⏵'.len_utf8(), font: font.font(), ..Default::default() };
+        let shaped = window.text_system().shape_line("⏵".into(), font.size, &[style], None);
+        let id = shaped.runs.first().map(|r| r.font_id)?;
+        cx.text_system().typographic_bounds(id, font.size, '⏵').ok().map(|b| b.size.height)
+    })?;
+    let natural = natural.ok_or_else(|| anyhow!("no ink bounds for an unscaled `⏵`"))?;
+    let triangles: Vec<&PaintedGlyph> = row.iter().filter(|g| g.ch == '⏵').collect();
+    let a = row.iter().find(|g| g.ch == 'a').ok_or_else(|| anyhow!("no `a` on the row"))?;
+    let mut shown = Vec::new();
+    for (t, stop) in [(triangles[0], triangles[1].column), (triangles[1], a.column)] {
+        let (left, right) = t.ink.ok_or_else(|| anyhow!("no ink bounds for `⏵` in cell {}", t.column))?;
+        let height = t.ink_height.unwrap_or_default();
+        if height < natural * 0.85 {
+            bail!("`⏵` in cell {} inks {height:?} high, under 85% of its unscaled {natural:?} (fitted at {:?})", t.column, t.font_size);
+        }
+        let (from, to) = (cell * t.column as f32, cell * stop as f32);
+        if left < from - px(0.5) || right > to + px(0.5) {
+            bail!("`⏵` in cell {} inks {left:?}..{right:?}, outside {from:?}..{to:?} (fitted at {:?})", t.column, t.font_size);
+        }
+        shown.push(format!(
+            "{:.1}..{:.1} of {:.1}..{:.1}, {:.0}% high",
+            f32::from(left),
+            f32::from(right),
+            f32::from(from),
+            f32::from(to),
+            height / natural * 100.
+        ));
+    }
+    Ok(format!("`⏵⏵ a` inks {}", shown.join(" and ")))
+}
+
+/// The display line `prefix` starts, as the painter numbers it.
+fn printed_line(terminal: &Terminal, prefix: &str) -> Option<i32> {
     let content = terminal.last_content();
     let mut lines: Vec<(i32, String)> = Vec::new();
     for cell in &content.cells {
@@ -184,7 +282,7 @@ fn printed_line(terminal: &Terminal) -> Option<i32> {
             _ => lines.push((line, cell.character().to_string())),
         }
     }
-    lines.into_iter().find(|(_, text)| text.starts_with(PRINTED)).map(|(line, _)| line)
+    lines.into_iter().find(|(_, text)| text.starts_with(prefix)).map(|(line, _)| line)
 }
 
 async fn open_appearance(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::WindowHandle<SettingsView>> {
