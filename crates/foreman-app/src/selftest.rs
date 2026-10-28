@@ -783,6 +783,11 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let themed = crate::selftest_theme::run(view, &home(), cx).await.context("step 7m")?;
     println!("step 7m: {themed}");
 
+    let dismissed = crate::selftest_messages::run(view, &home(), cx).await.context("step 7n")?;
+    println!("step 7n: {dismissed}");
+    let hint = crate::selftest_messages::placeholder(view, cx).await.context("step 7n")?;
+    println!("step 7n: {hint}");
+
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);

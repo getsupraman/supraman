@@ -36,6 +36,10 @@ pub const DIMMED: f32 = 0.8;
 pub const NAME_FLOOR: f32 = 7.;
 pub const SECONDARY_FLOOR: f32 = 4.5;
 
+/// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer (m5/36).
+pub const MESSAGE_TINT: f32 = 0.10;
+pub const MESSAGE_TINT_HOVER: f32 = 0.16;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TerminalColors {
     /// ANSI 0-15 from the theme.
@@ -201,7 +205,8 @@ pub fn foreman_dark() -> Loaded {
     theme.name = FOREMAN_DARK.into();
     theme.id = fresh_id(FOREMAN_DARK);
     set_ansi(&mut theme.styles.colors, campbell());
-    let adjusted = fit_backgrounds(&mut theme);
+    let mut adjusted = fit_backgrounds(&mut theme);
+    adjusted.extend(fit_placeholder(&mut theme));
     Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
 
@@ -428,7 +433,46 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
         adjusted.push(Adjustment { key, old: hex(old), new: hex(color), was, now: worst_contrast(theme, color, alpha, on) });
     }
     adjusted.extend(fit_backgrounds(theme));
+    adjusted.extend(fit_placeholder(theme));
     adjusted
+}
+
+/// Placeholder and hint text (m5/36): legible, yet clearly below the [`SECONDARY_FLOOR`] that content
+/// holds, so it reads as a hint. `text.placeholder` keeps [`PLACEHOLDER_FLOOR`] <= ratio <
+/// [`PLACEHOLDER_CEILING`] on the panel and the editor background (the inputs').
+pub const PLACEHOLDER_FLOOR: f32 = 2.5;
+pub const PLACEHOLDER_CEILING: f32 = 4.0;
+/// Where [`fit_placeholder`] moves a placeholder that is out of range.
+const PLACEHOLDER_TARGET: f32 = 3.0;
+
+/// The lowest and highest contrast of `color` on the panel and the editor background.
+pub fn placeholder_contrast(theme: &Theme, color: Hsla) -> (f32, f32) {
+    let c = theme.colors();
+    let ratios = [contrast(color, c.panel_background), contrast(color, c.editor_background)];
+    (ratios[0].min(ratios[1]), ratios[0].max(ratios[1]))
+}
+
+/// Makes `text.placeholder` opaque (blended over the editor background; text drawn with an alpha
+/// colour is not relied on), then, when it is out of range, moves its lightness toward
+/// [`PLACEHOLDER_TARGET`]. Returns what changed.
+pub fn fit_placeholder(theme: &mut Theme) -> Option<Adjustment> {
+    let old = theme.colors().text_placeholder;
+    let was = placeholder_contrast(theme, old).0;
+    let mut color: Hsla = over(old, theme.colors().editor_background).into();
+    let lighter = if theme.appearance.is_light() { -0.005 } else { 0.005 };
+    let in_range = |theme: &Theme, color: Hsla| {
+        let (low, high) = placeholder_contrast(theme, color);
+        low >= PLACEHOLDER_FLOOR && high < PLACEHOLDER_CEILING
+    };
+    if !in_range(theme, color) {
+        let low = |color: Hsla| placeholder_contrast(theme, color).0;
+        let (step, short) = if low(color) < PLACEHOLDER_TARGET { (lighter, true) } else { (-lighter, false) };
+        while (low(color) < PLACEHOLDER_TARGET) == short && (0. ..=1.).contains(&(color.l + step)) {
+            color.l += step;
+        }
+    }
+    theme.styles.colors.text_placeholder = color;
+    (hex(old) != hex(color)).then(|| Adjustment { key: "text.placeholder", old: hex(old), new: hex(color), was, now: placeholder_contrast(theme, color).0 })
 }
 
 /// Backgrounds text is painted on, over the panel: (key, the alpha of the theme's text on it, floor).
@@ -716,20 +760,30 @@ mod tests {
     }
 
     /// The elements m5/30 and m5/33+34 added, on their own backgrounds, under each bundled theme: the search
-    /// box's text, a matched name, the marked row's name, secondary and warning text, the toast's text.
+    /// box's text, a matched name, the marked row's name, secondary and warning text, the toast's text;
+    /// m5/36's Messages row: its sender (text) and its workspace and age (quiet) on the row's info or
+    /// warning tint, resting and under the pointer.
     #[test]
     fn the_newer_elements_read_under_each_bundled_theme() {
         for mut theme in [dark_modern().theme, foreman_dark().theme] {
             let (c, s) = (theme.colors().clone(), theme.status().clone());
             let marked: Hsla = over(c.ghost_element_selected, c.panel_background).into();
-            let checks = [
-                ("search box text", contrast(c.text, c.editor_background), NAME_FLOOR),
-                ("matched name", on_background(&mut theme, "search.match_background", 1.), NAME_FLOOR),
-                ("marked row name", contrast(c.text, marked), NAME_FLOOR),
-                ("marked row secondary", on_background(&mut theme, "ghost_element.selected", SECONDARY), SECONDARY_FLOOR),
-                ("marked row warning", contrast(s.warning, marked), SECONDARY_FLOOR),
-                ("toast text", contrast(c.text, c.elevated_surface_background), NAME_FLOOR),
+            let mut checks = vec![
+                ("search box text".to_string(), contrast(c.text, c.editor_background), NAME_FLOOR),
+                ("matched name".into(), on_background(&mut theme, "search.match_background", 1.), NAME_FLOOR),
+                ("marked row name".into(), contrast(c.text, marked), NAME_FLOOR),
+                ("marked row secondary".into(), on_background(&mut theme, "ghost_element.selected", SECONDARY), SECONDARY_FLOOR),
+                ("marked row warning".into(), contrast(s.warning, marked), SECONDARY_FLOOR),
+                ("toast text".into(), contrast(c.text, c.elevated_surface_background), NAME_FLOOR),
             ];
+            for (tint, color) in [("info", s.info), ("warning", s.warning)] {
+                for alpha in [MESSAGE_TINT, MESSAGE_TINT_HOVER] {
+                    let row: Hsla = over(color.opacity(alpha), c.panel_background).into();
+                    checks.push((format!("message sender on {tint} {alpha}"), contrast(c.text, row), NAME_FLOOR));
+                    // its workspace and age are quiet, not secondary: secondary falls to 4.42 on the hover tint
+                    checks.push((format!("message workspace and age on {tint} {alpha}"), contrast(c.text.opacity(QUIET), row), SECONDARY_FLOOR));
+                }
+            }
             for (what, got, floor) in checks {
                 println!("{}: {what} {got:.2} (floor {floor})", theme.name);
                 assert!(got >= floor, "{}: {what} {got} < {floor}", theme.name);
@@ -740,13 +794,39 @@ mod tests {
         }
     }
 
+    /// m5/36: placeholder text reads as a hint under each bundled theme, below what content holds, and is
+    /// opaque; a theme whose placeholder is as bright as its text, or too dim, is moved into the range.
+    #[test]
+    fn the_placeholder_reads_as_a_hint_under_each_bundled_theme() {
+        for theme in [dark_modern().theme, foreman_dark().theme] {
+            let c = theme.colors();
+            let (low, high) = placeholder_contrast(&theme, c.text_placeholder);
+            println!("{}: placeholder {} {low:.2}..{high:.2}", theme.name, hex(c.text_placeholder));
+            assert!(low >= PLACEHOLDER_FLOOR && high < PLACEHOLDER_CEILING, "{}: placeholder {low}..{high}", theme.name);
+            assert_eq!(c.text_placeholder.a, 1., "{}: an opaque placeholder", theme.name);
+            assert!(high < worst_contrast(&theme, c.text, SECONDARY, On::Panel), "{}: below secondary text", theme.name);
+        }
+        for (placeholder, why) in [("#CCCCCC", "as bright as the text"), ("#2A2A2A", "nearly the background")] {
+            let json = format!(
+                r##"{{ "themes": [{{ "name": "P", "style": {{ "panel.background": "#181818", "editor.background": "#1F1F1F",
+                "text": "#CCCCCC", "text.placeholder": "{placeholder}" }} }}] }}"##
+            );
+            let loaded = from_zed(&one_dark(), &parse_family(&json).unwrap().themes[0]);
+            let (low, high) = placeholder_contrast(&loaded.theme, loaded.theme.colors().text_placeholder);
+            assert!(low >= PLACEHOLDER_FLOOR && high < PLACEHOLDER_CEILING, "{why}: {low}..{high}");
+            assert!(loaded.adjusted.iter().any(|a| a.key == "text.placeholder"), "{why}: reported");
+        }
+    }
+
     /// What VS Code Dark Modern needed (reported in LEARNINGS m5/31).
     /// `info` is a 40% grey there (`#BFBFBF66`, 2.58:1 on #1F1F1F); the tree paints Idle in it.
     /// The marked row's `#04395E` left the ids on it at 3.82:1; a match's `#C6510666` a name at 6.94:1.
-    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 3] = [
+    /// m5/36: its translucent placeholder `#FFFFFF56` is made opaque (3.07:1 on the editor background).
+    const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 4] = [
         ("info", "#BFBFBF66", "#868686"),
         ("ghost_element.selected", "#04395E", "#04395E80"),
         ("search.match_background", "#C6510666", "#C6510661"),
+        ("text.placeholder", "#FFFFFF56", "#6B6B6B"),
     ];
     /// One Dark's marked-row background left the ids on it at 3.97:1.
     const EXPECTED_FOREMAN_DARK: [(&str, &str, &str); 1] = [("ghost_element.selected", "#3B3F4A", "#3B3F4A8A")];

@@ -2447,3 +2447,33 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-31\target`, after merging master c3f564e): build ok; `cargo test --release
   --workspace` 529 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (293 s);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
+
+## 2026-10-28 — m5/36 × on Messages rows, sender contrast, placeholder token
+
+- **Dismiss.** Every Messages row has a × (`msg-dismiss-<workspace>/<file>`, tooltip "Dismiss here"), the
+  Inbox's `glyph_button(Icon::Close)`. `dismissed_messages.rs` keeps them in `<FOREMAN_HOME>/messages-dismissed.json`,
+  `{"workspaces": {"<w>": ["<outbox file>", …]}}`, written at once (tmp + rename, like `starred.json`). The key is the
+  outbox file name, so a newer note from the same sender (another file) shows. The outbox is never touched.
+  `FleetView::listed_messages` drops dismissed ones before the count, so the header count and the hidden section
+  follow. After each poll, `prune` forgets dismissals whose file is no longer among the workspace's listed
+  (`MESSAGES_SHOWN`) messages; a workspace the poll did not list (empty outbox or read error) keeps its own.
+- **Sender contrast.** The sender was painted in the row's status colour (Dark Modern `info` = #868686 after m5/31's
+  fit, 4.5:1), which read as greyed out. It is now `text` in bold (9.0–9.8:1 on the info/warning tint), and the
+  kind stays in the tint and the left edge. The workspace and age were `text_muted` (3.2:1 under Foreman Dark). They
+  are now `quiet`: `secondary` falls to 4.42 on the hover tint. `MESSAGE_TINT` 0.10 / `MESSAGE_TINT_HOVER` 0.16 live in
+  `themes.rs` and are checked in `the_newer_elements_read_under_each_bundled_theme`.
+- **Placeholder (René, c5).** `text.placeholder` is the token. `fit_placeholder` makes it opaque (blended over the
+  editor background) and moves it to about 3:1 when it falls outside [2.5, 4.0) on the panel or the editor background. Dark
+  Modern `#FFFFFF56` → `#6B6B6B` (3.07–3.31), Foreman Dark `#6A6F79` as is (2.77–3.03). Test:
+  `the_placeholder_reads_as_a_hint_under_each_bundled_theme`, which also fits a placeholder as bright as the text, and one nearly the background.
+  **Measured:** the search box already painted `#6B6B6B` on `#1F1F1F` (pixel-sampled, shots
+  `m5-36-search-placeholder-before/after` are identical), so gpui honours a text colour's alpha. The hint that read as
+  content was the compose box's "Type here; Enter adds a line.", painted in `text_muted`, which Dark Modern sets to
+  `#CCCCCC` = `text`. It now uses the placeholder.
+- Step 7n (`selftest_messages.rs`): two notes from `fm-selftest-dismiss` dropped in the scratch outbox, with the pointer
+  off the panel (m5/18 hold). × on the older: count 2 → 1, newer still shown, the file holds it after a
+  `DismissedMessages::load` and a poll, outbox file kept. The rest dismissed → section gone. A newer note shows it
+  again (count 1), and × hides it again. Shots `m5-36-messages-before`, `m5-36-messages-newer`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-36\target`): build ok; `cargo test --release --workspace` 534 passed, 0
+  failed; `--selftest` 5 of 5 PASS (138/102/104/98/102 s); `--selftest-supervise` PASS (295 s);
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
