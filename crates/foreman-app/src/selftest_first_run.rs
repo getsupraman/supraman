@@ -1,14 +1,17 @@
-//! `--selftest` step 7d (m5/3): first run without WorkState. With no `workstate_env` and nothing
-//! installed the notice above the tree names the setup skill and offers no `.env`; a fake install's
-//! `.env` (under the scratch home through [`INSTALL_DIR_VAR`], never the real `~/.workstate`) is offered,
-//! and one click writes it into `settings.toml`, after which the fake WorkState answers and the notice
-//! goes. A closed port names the URL and the error with a Retry. The gate's settings are put back.
+//! `--selftest` step 7d (m5/3, m5/43): signing in to WorkState. The gate starts signed in to the fake
+//! WorkState's own fake OAuth server (step 1w). Here: Settings → WorkState shows "Signed in on <url> as
+//! <name>"; Sign out revokes the grant and the notice above the tree says "Not signed in" with Sign in;
+//! its Sign in signs in again (the browser is an HTTP GET, never a real one) and the tree's WorkState
+//! rows come back. A new server URL is used only after a sign-in there, and the old grant is revoked;
+//! one that cannot be signed in to leaves the URL as it was. A closed port names the URL and the error
+//! with a Retry. The gate's settings and sign-in are put back.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use foreman_core::Settings;
+use foreman_workstate::AuthStatus;
+use foreman_workstate::fake::{Answer, FakeWorkState};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
@@ -16,11 +19,11 @@ use crate::{
     selftest_manage::{shot, shot_window},
     settings_window::Page,
     view::FleetView,
-    workstate_setup::{INSTALL_DIR_VAR, SETUP_SKILL, WsStatus},
+    workstate_setup::WsStatus,
 };
 
-/// A recheck is picked up within 250 ms; `/health` gives up after 3 s.
-const WITHIN: Duration = Duration::from_secs(10);
+/// A recheck is picked up within 250 ms; `/health` gives up after 3 s; a sign-in is a few requests.
+const WITHIN: Duration = Duration::from_secs(15);
 
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
     let started = Instant::now();
@@ -29,7 +32,7 @@ async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &
             return Ok(t);
         }
         if started.elapsed() > WITHIN {
-            let now = view.read_with(cx, |v, _| format!("{:?}", v.workstate));
+            let now = view.read_with(cx, |v, _| format!("{:?}, sign-in error {:?}", v.workstate, v.sign_in_error));
             bail!("{what}: not within {} s (status {now})", WITHIN.as_secs());
         }
         sleep(cx, Duration::from_millis(50)).await;
@@ -40,47 +43,22 @@ fn painted(v: &FleetView, key: &str) -> bool {
     v.hits.borrow().contains_key(key)
 }
 
-fn save(home: &std::path::Path, edit: impl FnOnce(&mut Settings)) -> anyhow::Result<()> {
-    let mut settings = Settings::load(home)?;
-    edit(&mut settings);
-    settings.save(home)?;
-    Ok(())
-}
-
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let home = crate::selftest::home();
     let saved = Settings::load(&home)?;
-    let install = PathBuf::from(std::env::var_os(INSTALL_DIR_VAR).ok_or_else(|| anyhow!("{INSTALL_DIR_VAR} is not set"))?);
-    if !install.starts_with(&home) {
-        bail!("{} is not under the scratch home {}", install.display(), home.display());
-    }
+    let (fake, oauth) = crate::selftest_work::fake().ok_or_else(|| anyhow!("step 1w started no fake WorkState"))?;
+    let base = fake.base().to_string();
+    let auth = crate::signin::auth(&home);
     let mut lines = Vec::new();
 
-    // a. no workstate_env, nothing installed: the notice and the skill, no offer
-    save(&home, |s| s.workstate_env = None)?;
-    view.update(cx, |v, _| v.recheck_workstate());
-    let problem = until(view, cx, "the not-set-up notice", |v| {
-        (v.workstate == WsStatus::NoEnv { offer: None } && painted(v, "ws-setup-notice") && !painted(v, "ws-setup-use"))
-            .then(|| v.workstate_notice())
-            .flatten()
+    // a. signed in since step 1w: Settings says so, by name
+    let who = until(view, cx, "Ready as the fake operator", |v| match &v.workstate {
+        WsStatus::Ready { url, who } if *url == base => who.clone(),
+        _ => None,
     })
     .await?;
-    let fix = view.read_with(cx, |v, _| v.workstate.fix()).unwrap_or_default();
-    if !fix.contains(SETUP_SKILL) {
-        bail!("the fix does not name {SETUP_SKILL}: {fix:?}");
-    }
-    lines.push(format!("no workstate_env: notice \"{problem}\" with \"{fix}\", no offer"));
-
-    // b. a fake install's .env: offered, and one click writes settings.toml
-    let env = install.join(".env");
-    std::fs::create_dir_all(&install)?;
-    std::fs::write(&env, "# fake, selftest only\nWORKSTATE_CONTROLLER_TOKEN=fake-first-run-controller\nWORKSTATE_ORCHESTRATOR_TOKEN=fake-first-run-orchestrator\n")?;
-    view.update(cx, |v, _| v.recheck_workstate());
-    until(view, cx, "the offer of the installed .env", |v| (v.workstate.offer() == Some(env.as_path()) && painted(v, "ws-setup-use")).then_some(())).await?;
-    shot("m5-3-first-run-offer", cx).await;
-    // Settings → WorkState shows the same status, with the same offer
-    click(view, "ws-setup-settings", cx).await?;
-    let handle = until(view, cx, "Settings… opens the settings window", |v| v.settings_window).await?;
+    view.update(cx, |v, cx| v.open_settings_at(Some(Page::WorkState), cx));
+    let handle = until(view, cx, "Settings opens on WorkState", |v| v.settings_window).await?;
     let started = Instant::now();
     loop {
         let (page, shown) = handle.read_with(cx, |s, _| (s.page(), s.workstate().clone())).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -89,28 +67,106 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             break;
         }
         if started.elapsed() > WITHIN {
-            bail!("Settings shows {page:?} with {shown:?}, the notice {fleet:?}");
+            bail!("Settings shows {page:?} with {shown:?}, the fleet {fleet:?}");
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    shot_window("m5-3-settings-workstate", Some("Foreman Settings"), cx).await;
-    view.update(cx, |v, cx| v.close_settings(cx));
-    click(view, "ws-setup-use", cx).await?;
-    let written = Settings::load(&home)?.workstate_env;
-    if written.as_deref() != Some(env.as_path()) {
-        bail!("Use wrote workstate_env = {written:?}, expected {}", env.display());
-    }
-    let url = until(view, cx, "Ready after Use, the notice gone", |v| match &v.workstate {
-        WsStatus::Ready { url } if !painted(v, "ws-setup-notice") => Some(url.clone()),
-        _ => None,
+    shot_window("m5-43-settings-signed-in", Some("Foreman Settings"), cx).await;
+    lines.push(format!("Settings → WorkState: signed in on {base} as {who}"));
+
+    // b. Sign out: the grant revoked, the credential gone, the notice offers Sign in
+    let revoked = oauth.revoked();
+    view.update(cx, |v, cx| v.sign_out(cx));
+    let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
+        (matches!(v.workstate, WsStatus::NotSignedIn { .. }) && painted(v, "ws-setup-notice") && painted(v, "ws-setup-signin"))
+            .then(|| v.workstate_notice())
+            .flatten()
     })
     .await?;
-    lines.push(format!("Settings → WorkState showed the same status; one click on Use wrote workstate_env = {}; {url} answers /health, notice gone", env.display()));
+    if oauth.revoked() != revoked + 1 {
+        bail!("Sign out revoked {} grants, expected 1", oauth.revoked() - revoked);
+    }
+    if auth.status(&base) != AuthStatus::NotSignedIn {
+        bail!("after Sign out the sign-in still says {:?}", auth.status(&base));
+    }
+    shot("m5-43-not-signed-in", cx).await;
+    lines.push(format!("Sign out revoked the grant; notice \"{problem}\" with Sign in"));
 
-    // c. the server down: the URL, the error and Retry
+    // c. the notice's Sign in: the HTTP browser, the loopback, Ready, and the tree's WorkState rows
+    let issued = oauth.issued().len();
+    click(view, "ws-setup-signin", cx).await?;
+    until(view, cx, "Ready after Sign in, the notice gone", |v| {
+        (matches!(&v.workstate, WsStatus::Ready { url, .. } if *url == base) && !painted(v, "ws-setup-notice")).then_some(())
+    })
+    .await?;
+    let fresh: Vec<String> = oauth.issued().into_iter().skip(issued).collect();
+    if fresh.is_empty() {
+        bail!("Sign in issued no token");
+    }
+    let rows = crate::selftest_work::inbox_keys();
+    until(view, cx, "the tree's WorkState rows", |v| rows.iter().all(|k| painted(v, k)).then_some(())).await?;
+    let read = || {
+        fake.seen().iter().any(|s| {
+            s.target.starts_with("/api/v1/") && s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| fresh.iter().any(|f| f == t))
+        })
+    };
+    let started = Instant::now();
+    while !read() {
+        if started.elapsed() > WITHIN {
+            bail!("no read with the new sign-in's token");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} WorkState rows read with them", fresh.len(), rows.len()));
+
+    // d. another server while signed in: used only after a sign-in there; the old grant is revoked
+    let other = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
+    let other_oauth = other.enable_oauth();
+    let revoked = oauth.revoked();
+    handle.update(cx, |s, _, cx| s.set_url_text(other.base(), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    until(view, cx, "Ready on the other server", |v| {
+        matches!(&v.workstate, WsStatus::Ready { url, .. } if url == other.base()).then_some(())
+    })
+    .await?;
+    if Settings::load(&home)?.workstate_origin() != other.base() {
+        bail!("the new URL was not saved after the sign-in there");
+    }
+    let started = Instant::now();
+    while oauth.revoked() != revoked + 1 {
+        if started.elapsed() > WITHIN {
+            bail!("the old server's grant was not revoked");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    if other_oauth.issued().is_empty() {
+        bail!("the other server issued nothing");
+    }
+    lines.push(format!("URL → {}: signed in there, saved, the old grant revoked", other.base()));
+
+    // e. a server that cannot be signed in to: the URL stays, the error says why
     let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    let closed = format!("http://127.0.0.1:{port}/mcp");
-    save(&home, |s| s.workstate_url = Some(closed.clone()))?;
+    let closed = format!("http://127.0.0.1:{port}");
+    handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
+    if !error.contains(&closed) || Settings::load(&home)?.workstate_origin() != other.base() {
+        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workstate_origin());
+    }
+    shot_window("m5-43-settings-switch-failed", Some("Foreman Settings"), cx).await;
+    lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
+    let bad = handle.update(cx, |s, _, cx| {
+        s.set_url_text("http://workstate.example", cx);
+        s.apply_url(cx);
+        s.url_error()
+    });
+    if !bad.as_ref().is_ok_and(|e| e.as_deref().is_some_and(|e| e.contains("https"))) {
+        bail!("plain http to another machine was taken: {bad:?}");
+    }
+    view.update(cx, |v, cx| v.close_settings(cx));
+
+    // f. the server down: the URL, the error and Retry
+    Settings { workstate_url: Some(closed.clone()), ..saved.clone() }.save(&home)?;
     view.update(cx, |v, _| v.recheck_workstate());
     let down = until(view, cx, "the unreachable notice", |v| {
         (v.workstate.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workstate_notice()).flatten()
@@ -128,8 +184,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workstate.unreachable()).then_some(())).await?;
     lines.push(format!("closed port: \"{down}\", Retry shown, × hid it"));
 
+    // the gate's server and a sign-in there again; the other server's grant goes
+    auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
     saved.save(&home)?;
-    view.update(cx, |v, _| v.recheck_workstate());
+    crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
+    view.update(cx, |v, cx| {
+        v.recheck_workstate();
+        crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
+    });
     until(view, cx, "the gate's fake WorkState Ready again", |v| matches!(v.workstate, WsStatus::Ready { .. }).then_some(())).await?;
     Ok(lines.join("; "))
 }

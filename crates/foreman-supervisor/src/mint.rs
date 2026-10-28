@@ -121,20 +121,14 @@ pub trait Minter {
 /// The server's origin, from its MCP URL; shared with the read API client.
 pub use foreman_workstate::api_base;
 
-/// Blocking HTTP/1.1 without TLS (WorkState is on localhost), no proxy, 15 s per call.
+/// Blocking HTTP/1.1 (TLS for an `https://` server), no proxy, 15 s per call.
 pub struct HttpMinter {
     agent: ureq::Agent,
 }
 
 impl Default for HttpMinter {
     fn default() -> Self {
-        let config = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .proxy(None)
-            .max_redirects(0)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build();
-        Self { agent: config.into() }
+        Self { agent: foreman_workstate::http_agent(Duration::from_secs(15)) }
     }
 }
 

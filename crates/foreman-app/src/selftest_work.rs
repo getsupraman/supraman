@@ -35,7 +35,6 @@ use crate::{
 };
 
 pub const WORKSPACE: &str = "selftest-work";
-const TOKEN: &str = "fake-selftest-reader";
 const PROJECT: &str = "5e1f0000-0000-4000-8000-000000000001";
 const LIVE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a2";
 const DONE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a1";
@@ -46,6 +45,17 @@ const LOADED_WITHIN: Duration = Duration::from_secs(5);
 const LIVE_WITHIN: Duration = Duration::from_secs(2);
 
 static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
+static OAUTH: OnceLock<std::sync::Arc<foreman_workstate::fake::FakeAuth>> = OnceLock::new();
+
+/// The keys of the WorkState rows step 7 sees in the Inbox.
+pub fn inbox_keys() -> [String; 2] {
+    [format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}")]
+}
+
+/// The fake WorkState and its OAuth server, once step 1w started them.
+pub fn fake() -> Option<(&'static FakeWorkState, &'static foreman_workstate::fake::FakeAuth)> {
+    Some((FAKE.get()?, OAUTH.get()?.as_ref()))
+}
 
 fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     let ref_ = qref.rsplit('/').next().unwrap_or(qref);
@@ -298,17 +308,19 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
             )),
         ),
     ]);
-    let env = home.join("workstate-fake.env");
-    // the role keys too, so the WorkState notice (m5/3) has nothing to say during the gate
-    std::fs::write(
-        &env,
-        format!("WORKSTATE_READER_TOKEN={TOKEN}\nWORKSTATE_CONTROLLER_TOKEN=fake-selftest-controller\nWORKSTATE_ORCHESTRATOR_TOKEN=fake-selftest-orchestrator\n"),
-    )?;
+    // signed in to the fake's own OAuth server (the browser an HTTP GET), so the WorkState notice
+    // (m5/3) has nothing to say during the gate; step 7d signs out and in again through the UI
+    let oauth = fake.enable_oauth();
     let mut settings = Settings::load(home)?;
-    settings.workstate_env = Some(env);
-    settings.workstate_url = Some(fake.mcp_url());
+    settings.workstate_url = Some(fake.base().to_string());
     settings.save(home)?;
-    println!("step 1w: workspace {WORKSPACE} = {}; fake WorkState at {} (project {WORKSPACE}, runs sw2 live, sw1 done)", root.display(), fake.base());
+    crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake WorkState: {e}"))?;
+    println!(
+        "step 1w: workspace {WORKSPACE} = {}; fake WorkState at {} (project {WORKSPACE}, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        root.display(),
+        fake.base()
+    );
+    OAUTH.set(oauth).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
     FAKE.set(fake).map_err(|_| anyhow!("the fake WorkState was started twice"))
 }
 
@@ -441,20 +453,23 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     lines.push(item_page(view, &work, fake, launched, cx).await.context("item page")?);
     lines.push(inbox_and_journal(view, tab, &work, fake, cx).await.context("inbox and journal")?);
 
-    // Read only, with the fake token, and nothing but the read API; `/health` (m5/3) is a GET with no token.
-    let seen = fake.seen();
-    let bearer = format!("Bearer {TOKEN}");
+    // Read only, with an access token of the sign-in, and nothing but the read API; `/health` (m5/3) is a
+    // GET with no token, and the sign-in's own requests go to the OAuth endpoints only.
+    let oauth = OAUTH.get().ok_or_else(|| anyhow!("no fake OAuth server"))?;
+    let issued = oauth.issued();
+    let is_oauth = |t: &str| t.starts_with("/.well-known/") || t.starts_with("/connect/");
+    let seen: Vec<_> = fake.seen().into_iter().filter(|s| !is_oauth(&s.target)).collect();
     let token_ok = |s: &foreman_workstate::fake::Seen| match s.target.as_str() {
         "/health" => s.authorization.is_none(),
-        _ => s.authorization.as_deref() == Some(bearer.as_str()),
+        _ => s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| issued.iter().any(|i| i == t)),
     };
     if let Some(bad) = seen.iter().find(|s| s.method != "GET" || !token_ok(s)) {
-        bail!("a request that is not a GET with the fake reader token (none for /health): {} {}", bad.method, bad.target);
+        bail!("a request that is not a GET with an access token of the sign-in (none for /health): {} {}", bad.method, bad.target);
     }
     if let Some(bad) = seen.iter().find(|s| !(s.target.starts_with("/api/v1/") || s.target == "/api/stream" || s.target == "/health")) {
         bail!("a request outside the read API: {}", bad.target);
     }
-    lines.push(format!("the fake saw {} requests, every one a GET with the fake reader token (none for /health)", seen.len()));
+    lines.push(format!("the fake saw {} reads, every one a GET with an access token of the sign-in (none for /health)", seen.len()));
 
     // Middle-click closes it like any tab.
     let position = scrolled_into_view(view, &format!("tab-{tab}"), cx).await?.center();

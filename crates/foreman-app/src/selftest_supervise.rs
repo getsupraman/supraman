@@ -181,7 +181,11 @@ pub fn prepare() -> anyhow::Result<()> {
     let relay_dir = foreman_core::ensure_relay_dirs(&home, &tb.a.0)?;
     desired.sessions.insert(0, relay_session(&tb.a.0, &tb.a.1, relay_dir, "relay"));
     desired.save(&home)?;
-    Settings { relay_idle_secs: Some(RELAY_IDLE_SECS), ..Settings::default() }.save(&home)?;
+    // no sign-in, and a closed loopback port as the server: the status check never reaches a real
+    // WorkState (m5/43)
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    Settings { relay_idle_secs: Some(RELAY_IDLE_SECS), workstate_url: Some(format!("http://127.0.0.1:{closed}")), ..Settings::default() }
+        .save(&home)?;
     println!(
         "step a: claude {} | FOREMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
         version.raw,

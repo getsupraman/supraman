@@ -17,10 +17,9 @@ use std::{
     time::Duration,
 };
 
-use foreman_core::Settings;
 use foreman_workstate::{
-    Board, BoardRow, Client, ItemRef, ItemStatus, OverviewProject, OverviewRun, Resolved, Rollup, Stream, StreamEvent,
-    StreamSignal, client_from_settings,
+    AuthStatus, Board, BoardRow, Client, ItemRef, ItemStatus, OverviewProject, OverviewRun, Resolved, Rollup, Stream,
+    StreamEvent, StreamSignal,
 };
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FontWeight, Global, Hsla, Render,
@@ -30,6 +29,7 @@ use theme::ActiveTheme as _;
 
 use crate::clipped::clipped;
 use crate::view::{HitTargets, hit_target};
+use crate::workstate_setup::WsStatus;
 
 pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
 pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
@@ -79,7 +79,7 @@ impl Global for GlobalHub {}
 
 impl WorkHub {
     /// The app's hub, created (and its stream started) on first use. An unconfigured hub reads the
-    /// settings again, so a `.env` chosen meanwhile takes effect when the next Work tab opens.
+    /// settings again, so a sign-in meanwhile takes effect when the next Work tab opens.
     pub fn shared(home: Option<PathBuf>, cx: &mut App) -> Entity<WorkHub> {
         if let Some(GlobalHub(hub)) = cx.try_global::<GlobalHub>() {
             let hub = hub.clone();
@@ -97,6 +97,20 @@ impl WorkHub {
         });
         cx.set_global(GlobalHub(hub.clone()));
         hub
+    }
+
+    /// After a sign-in, a sign-out or a new server: the client and the stream are made again.
+    pub fn reconfigure(home: Option<PathBuf>, cx: &mut App) {
+        if let Some(GlobalHub(hub)) = cx.try_global::<GlobalHub>() {
+            hub.clone().update(cx, |hub, cx| {
+                hub._stream = None;
+                hub.connected = false;
+                hub.lost = None;
+                hub.configure(cx);
+            });
+        } else {
+            Self::shared(home, cx);
+        }
     }
 
     pub fn access(&self) -> Access<'_> {
@@ -185,23 +199,24 @@ impl WorkHub {
     }
 }
 
+/// A client for the configured server when signed in there; no network call (the bearer is asked for
+/// at each read). Not signed in, or the sign-in broken: the notice's words.
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let home = home.ok_or_else(|| "No Foreman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
-    let settings = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?;
-    client_from_settings(&settings).map(|(client, _)| client).map_err(|e| {
-        // the main window's notice says it in the same words
-        crate::workstate_setup::detect_local(&settings, crate::workstate_setup::installed_env().as_deref())
-            .message()
-            .unwrap_or_else(|| format!("WorkState is not configured: {e}. Choose its .env in Settings (Ctrl+,)."))
-    })
+    let auth = crate::signin::auth(&home);
+    let url = auth.configured_origin();
+    match auth.status(&url) {
+        AuthStatus::SignedIn { .. } => Ok(Client::with_source(url.as_str(), auth.bearer_for(&url))),
+        AuthStatus::NotSignedIn => Err(WsStatus::NotSignedIn { url }.message().unwrap_or_default()),
+        AuthStatus::SignInAgain(why) => Err(WsStatus::SignInAgain { url, why }.message().unwrap_or_default()),
+    }
 }
 
 /// A read's failure as the Work tab says it: an unreachable server in the notice's words.
 fn read_failed(e: foreman_workstate::Error) -> String {
     match e {
-        foreman_workstate::Error::Transport { base, reason } => {
-            crate::workstate_setup::WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default()
-        }
+        foreman_workstate::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
+        foreman_workstate::Error::Auth(why) => format!("{why}. Sign in again in Settings → WorkState."),
         e => format!("Cannot read WorkState: {e}"),
     }
 }

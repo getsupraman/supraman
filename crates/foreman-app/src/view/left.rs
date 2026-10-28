@@ -19,7 +19,6 @@ use crate::clipped::clipped;
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
-use crate::workstate_setup::tilde;
 
 /// The tree keeps at least this share of the panel's height, however many notices there are.
 const TREE_MIN_SHARE: f32 = 0.3;
@@ -912,25 +911,28 @@ impl FleetView {
         Some(inbox.into_any_element())
     }
 
-    /// What WorkState lacks and how to fix it (m5/3): the one-click `.env` when the setup skill's exists,
-    /// Retry when the server is down, the Settings page, × for this session.
+    /// What WorkState lacks and how to fix it (m5/3, m5/43): Sign in when not signed in (Cancel while the
+    /// browser page waits), Retry when the server is down, the Settings page, × for this session.
     fn render_workstate_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let color = if self.workstate.unreachable() { status.error } else { status.warning };
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
-        if let Some(path) = self.workstate.offer() {
-            let path = path.to_path_buf();
-            // a path longer than the panel is cut in the middle, never wider than it
-            let label = format!("Use {}", tilde(&path));
-            let label = clipped("ws-setup-use-label", label, true);
-            let use_env = button(&self.hits, "ws-setup-use".into(), "", cx).flex_shrink_1().min_w_0().child(label);
-            actions = actions.child(use_env.on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.use_workstate_env(path.clone(), cx);
-                },
-            )));
+        if self.workstate.signed_out() {
+            actions = match self.signing_in {
+                Some(_) => actions.child(button(&self.hits, "ws-setup-cancel".into(), "Cancel sign-in", cx).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.cancel_sign_in();
+                    },
+                ))),
+                None => actions.child(button(&self.hits, "ws-setup-signin".into(), "Sign in", cx).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.sign_in(cx);
+                    },
+                ))),
+            };
         }
         if self.workstate.unreachable() {
             actions = actions.child(button(&self.hits, "ws-setup-retry".into(), "Retry", cx).on_click(cx.listener(
@@ -963,6 +965,10 @@ impl FleetView {
             .text_color(color)
             .child(div().flex().items_start().gap_2().child(div().flex_1().min_w_0().child(SharedString::from(problem))).child(dismiss))
             .children(self.workstate.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
+            .children(self.signing_in.as_ref().map(|url| {
+                div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
+            }))
+            .children(self.sign_in_error.clone().map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
             .child(actions)
             .child(hit_target(&self.hits, "ws-setup-notice".into()))
             .into_any_element()

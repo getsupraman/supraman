@@ -297,6 +297,10 @@ pub struct FleetView {
     workstate_recheck: Arc<AtomicBool>,
     /// The last Start's warning that its sessions run without WorkState.
     pub start_warning: Option<String>,
+    /// The server a sign-in is waiting on (m5/43): its browser page is open.
+    pub signing_in: Option<String>,
+    /// Why the last sign-in did not work.
+    pub sign_in_error: Option<String>,
     /// The `+` sessions' own WorkState tokens (m5/20); `None` without a Foreman home.
     hands: Option<Arc<Mutex<Hands>>>,
     /// What went wrong minting or revoking them.
@@ -646,6 +650,8 @@ impl FleetView {
             workstate_dismissed: None,
             workstate_recheck,
             start_warning: None,
+            signing_in: None,
+            sign_in_error: None,
             hands,
             hand_notices: Vec::new(),
             closed: Vec::new(),
@@ -802,7 +808,10 @@ impl FleetView {
                     checked = Some(Instant::now());
                     let home = home.clone();
                     let status = executor
-                        .spawn(async move { workstate_setup::detect(home.as_deref(), workstate_setup::installed_env().as_deref()) })
+                        .spawn(async move {
+                            let auth = home.as_deref().map(crate::signin::auth);
+                            workstate_setup::detect(home.as_deref(), auth.as_deref())
+                        })
                         .await;
                     let alive = this.update(cx, |this, cx| {
                         if this.workstate != status {
@@ -830,26 +839,140 @@ impl FleetView {
         self.workstate_recheck.store(true, Ordering::SeqCst);
     }
 
-    /// The notice's one click: `workstate_env = path` in settings.toml, then a recheck; the Work tabs
-    /// and the Inbox read WorkState with it from now on.
-    pub fn use_workstate_env(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    /// Sign in to the server `settings.toml` names (the notice's and Settings' Sign in).
+    pub fn sign_in(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let saved = Settings::load(&home).and_then(|mut settings| {
-            settings.workstate_env = Some(path);
-            settings.save(&home)
-        });
-        match saved {
-            Ok(_) => {
-                self.workstate = WsStatus::Checking;
-                self.action_error = None;
-            }
-            Err(e) => self.action_error = Some(format!("Cannot save settings.toml: {e}")),
+        let origin = Settings::load(&home).unwrap_or_default().workstate_origin();
+        self.sign_in_to(origin, None, cx);
+    }
+
+    /// Signs in to `origin` off the UI thread: the browser opens WorkState's sign-in page and the
+    /// loopback waits up to 5 minutes. With `from` (Settings changed the server URL) the URL is saved
+    /// only once that worked, and [`Self::server_changed`] follows.
+    pub fn sign_in_to(&mut self, origin: String, from: Option<String>, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        if self.signing_in.is_some() {
+            return;
         }
+        self.signing_in = Some(origin.clone());
+        self.sign_in_error = None;
+        let task = {
+            let (home, origin) = (home.clone(), origin.clone());
+            cx.background_executor().spawn(async move { crate::signin::sign_in(&home, &origin) })
+        };
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.signing_in = None;
+                match result {
+                    Ok(_) => {
+                        if let Some(from) = from {
+                            this.server_changed(&home, from, origin, cx);
+                        }
+                    }
+                    Err(e) => this.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
+                }
+                this.workstate = WsStatus::Checking;
+                this.recheck_workstate();
+                WorkHub::reconfigure(Some(home), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Stops a sign-in that is waiting on the browser.
+    pub fn cancel_sign_in(&self) {
+        if let Some(home) = &self.home {
+            crate::signin::auth(home).cancel_sign_in();
+        }
+    }
+
+    /// Revokes the grant (every `wss_` token minted under it ends with it), deletes the credential and
+    /// drops the held tokens; a revoke that failed is a notice.
+    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        let origin = Settings::load(&home).unwrap_or_default().workstate_origin();
+        let auth = crate::signin::auth(&home);
+        let task = cx.background_executor().spawn(async move { auth.sign_out(&origin) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if let Err(e) = result {
+                    this.hand_notices.push(e);
+                }
+                this.workstate = WsStatus::Checking;
+                this.recheck_workstate();
+                WorkHub::reconfigure(Some(home), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Settings' server URL. While signed in, the new server is used only after a sign-in there
+    /// ([`Self::sign_in_to`]); otherwise the URL is saved at once.
+    pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let home = self.home.clone().ok_or("No Foreman home: settings cannot be saved.")?;
+        let origin = foreman_core::validate_workstate_url(text)?;
+        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workstate_origin();
+        if origin == current {
+            return Ok(());
+        }
+        if matches!(crate::signin::auth(&home).status(&current), foreman_workstate::AuthStatus::SignedIn { .. }) {
+            self.sign_in_to(origin, Some(current), cx);
+            return Ok(());
+        }
+        save_workstate_url(&home, &origin)?;
+        self.workstate = WsStatus::Checking;
         self.recheck_workstate();
-        WorkHub::shared(Some(home), cx);
+        WorkHub::reconfigure(Some(home), cx);
         cx.notify();
+        Ok(())
+    }
+
+    /// Signed in on the new server `to` (m5/43): `settings.toml` names it, so each supervisor stops and
+    /// resumes its minted sessions with tokens minted there at its next tick ([`Supervision::tick`]);
+    /// every open hand tab is told to restart; the old server's grant is revoked if it can be reached.
+    fn server_changed(&mut self, home: &std::path::Path, from: String, to: String, cx: &mut Context<Self>) {
+        if let Err(e) = save_workstate_url(home, &to) {
+            self.action_error = Some(e);
+            return;
+        }
+        let mut restart = 0;
+        for tab in self.tabs.iter_mut().filter(|t| t.hand && !t.exited) {
+            if let Some(ws) = &mut tab.workstate {
+                ws.push_str(&format!(" · restart to use {to}"));
+                restart += 1;
+            }
+        }
+        if restart > 0 {
+            self.hand_notices.push(format!(
+                "{restart} open claude tab{} still use WorkState at {from}: restart {} to use {to}.",
+                if restart == 1 { "" } else { "s" },
+                if restart == 1 { "it" } else { "them" }
+            ));
+        }
+        let auth = crate::signin::auth(home);
+        let revoke = cx.background_executor().spawn(async move { auth.sign_out(&from) });
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = revoke.await {
+                this.update(cx, |this, cx| {
+                    this.hand_notices.push(format!("The old server's grant was not revoked: {e}"));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn dismiss_workstate_notice(&mut self, cx: &mut Context<Self>) {
@@ -2448,4 +2571,10 @@ mod tests {
         assert!(offers_resume(&bg, &gone, None, now), "never seen alive here");
         assert!(!offers_resume(&session(foreman_claude::Kind::Interactive, "fm-alpha-workspace"), &gone, None, now), "the supervisor's");
     }
+}
+
+fn save_workstate_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
+    let mut settings = Settings::load(home).map_err(|e| format!("Cannot read settings.toml: {e}"))?;
+    settings.workstate_url = Some(origin.to_string());
+    settings.save(home).map(drop).map_err(|e| format!("Cannot save settings.toml: {e}"))
 }

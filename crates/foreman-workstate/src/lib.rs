@@ -1,17 +1,22 @@
 //! Foreman's every WorkState read: the read API v1 shapes ([`model`]), a blocking [`Client`] and the
-//! `/api/stream` subscriber ([`Stream`]). Read only (C21): the MCP tools stay the agents' write path.
+//! `/api/stream` subscriber ([`Stream`]), and the OAuth sign-in whose access token they and every mint
+//! carry ([`Auth`], m5/43). Read only (C21): the MCP tools stay the agents' write path.
 //! Contract: Skills `docs/workstate/10-read-api.md`, frozen at v1, additive only.
 
+pub mod auth;
 mod client;
-mod credentials;
-mod health;
 #[cfg(feature = "fake")]
 pub mod fake;
+mod health;
+mod http;
 pub mod model;
+pub mod secret;
 mod stream;
 
-pub use client::{API_HEADER, API_VERSION, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
-pub use credentials::{CONTROLLER_TOKEN_KEY, CredentialsError, READER_TOKEN_KEY, client_from_settings};
+pub use auth::{Auth, AuthError, AuthStatus};
+pub use client::{API_HEADER, API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
 pub use health::health;
+pub use http::agent as http_agent;
 pub use model::*;
+pub use secret::{MemoryStore, SecretStore};
 pub use stream::{Stream, StreamConfig, StreamSignal};

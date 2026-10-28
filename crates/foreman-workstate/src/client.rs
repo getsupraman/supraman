@@ -1,6 +1,7 @@
 //! The blocking read API v1 client. `GET` only: Foreman never writes to WorkState (C21).
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -16,6 +17,9 @@ pub const API_VERSION: &str = "1";
 pub enum Error {
     #[error("WorkState answered HTTP {status}{}", reason_suffix(.reason))]
     Http { status: u16, reason: String },
+    /// No bearer: not signed in, or the sign-in must be done again.
+    #[error("{0}")]
+    Auth(String),
     #[error("WorkState at {base} is unreachable ({reason})")]
     Transport { base: String, reason: String },
     /// A 2xx without `X-WorkState-Api: 1`: not a v1 server (or not WorkState).
@@ -67,12 +71,29 @@ pub struct SessionsQuery<'a> {
     pub claude_session_id: Option<&'a str>,
 }
 
-/// Blocking HTTP/1.1 without TLS (WorkState is on localhost), no proxy, no redirects, 15 s per call.
+/// Where a [`Client`]'s bearer comes from at each call: the OAuth sign-in ([`crate::Auth`]) in the app
+/// and `fm`, a fixed token in tests.
+pub trait BearerSource: Send + Sync {
+    /// The access token to send now; `Err` says why there is none, without any token in it.
+    fn bearer(&self) -> std::result::Result<String, String>;
+    /// The server refused `token` with a 401: the next [`Self::bearer`] must not return it again.
+    fn rejected(&self, _token: &str) {}
+}
+
+struct Fixed(String);
+
+impl BearerSource for Fixed {
+    fn bearer(&self) -> std::result::Result<String, String> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Blocking HTTP/1.1 (TLS for an `https://` server), no proxy, no redirects, 15 s per call.
 /// `Debug` never prints the token.
 #[derive(Clone)]
 pub struct Client {
     base: String,
-    token: String,
+    source: Arc<dyn BearerSource>,
     agent: ureq::Agent,
 }
 
@@ -83,18 +104,17 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
-    /// `base_url` is the server's origin (see [`api_base`]), `token` a reader (or agent) token.
+    /// `base_url` is the server's origin (see [`api_base`]), `token` a fixed bearer (tests).
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
-        let config = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .proxy(None)
-            .max_redirects(0)
-            .timeout_global(Some(Duration::from_secs(15)))
-            .build();
+        Self::with_source(base_url, Arc::new(Fixed(token.into())))
+    }
+
+    /// The bearer is asked of `source` at each call, so a refreshed access token is used at once.
+    pub fn with_source(base_url: impl Into<String>, source: Arc<dyn BearerSource>) -> Self {
         Self {
             base: base_url.into().trim_end_matches('/').to_string(),
-            token: token.into(),
-            agent: config.into(),
+            source,
+            agent: crate::http::agent(Duration::from_secs(15)),
         }
     }
 
@@ -102,8 +122,13 @@ impl Client {
         &self.base
     }
 
-    pub(crate) fn token(&self) -> &str {
-        &self.token
+    /// The bearer for a call now.
+    pub(crate) fn bearer(&self) -> Result<String> {
+        self.source.bearer().map_err(Error::Auth)
+    }
+
+    pub(crate) fn rejected(&self, token: &str) {
+        self.source.rejected(token);
     }
 
     pub fn overview(&self) -> Result<Overview> {
@@ -166,39 +191,52 @@ impl Client {
         self.get(path)
     }
 
+    /// One retry after a 401: an access token revoked or expired early is replaced by a fresh one.
     fn get(&self, path: &str) -> Result<String> {
+        let token = self.bearer()?;
+        match self.get_with(path, &token) {
+            Err(Error::Http { status: 401, .. }) => {
+                self.rejected(&token);
+                let fresh = self.bearer()?;
+                if fresh == token { self.get_with(path, &token) } else { self.get_with(path, &fresh) }
+            }
+            other => other,
+        }
+    }
+
+    fn get_with(&self, path: &str, token: &str) -> Result<String> {
         let mut res = self
             .agent
             .get(format!("{}{path}", self.base))
-            .header("Authorization", format!("Bearer {}", self.token))
+            .header("Authorization", format!("Bearer {token}"))
             .call()
             .map_err(|e| Error::Transport {
                 base: self.base.clone(),
-                reason: self.scrub(&e.to_string()),
+                reason: scrub(token, &e.to_string()),
             })?;
         let status = res.status().as_u16();
         let api = res.headers().get(API_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string);
         let body = res.body_mut().read_to_string().map_err(|e| Error::Transport {
             base: self.base.clone(),
-            reason: self.scrub(&e.to_string()),
+            reason: scrub(token, &e.to_string()),
         })?;
         if !(200..300).contains(&status) {
             return Err(Error::Http {
                 status,
-                reason: self.scrub(&server_reason(&body)),
+                reason: scrub(token, &server_reason(&body)),
             });
         }
         match api.as_deref().map(str::trim) {
             Some(API_VERSION) => Ok(body),
-            Some(v) => Err(Error::Api(format!("{} speaks read API {}, Foreman reads v{API_VERSION}", self.base, self.scrub(v)))),
+            Some(v) => Err(Error::Api(format!("{} speaks read API {}, Foreman reads v{API_VERSION}", self.base, scrub(token, v)))),
             None => Err(Error::Api(format!("{} answered without {API_HEADER}: not a WorkState read API v{API_VERSION}", self.base))),
         }
     }
+}
 
-    /// Whatever a server or transport says, the token never leaves in it.
-    fn scrub(&self, text: &str) -> String {
-        if self.token.is_empty() { text.to_string() } else { text.replace(&self.token, "<redacted>") }
-    }
+/// Whatever a server or transport says, the token never leaves in it.
+pub(crate) fn scrub(token: &str, text: &str) -> String {
+    if token.is_empty() { text.to_string() } else { text.replace(token, "<redacted>") }
 }
 
 /// What a refusal says: `error`/`title`/`message`/`detail` of a JSON body, else its start.

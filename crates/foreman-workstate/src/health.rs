@@ -8,13 +8,7 @@ use crate::client::api_base;
 /// `GET <origin of mcp_url>/health` answered 2xx within `timeout`; else what went wrong, in one
 /// short line (`HTTP 503`, `connection refused`, `timed out`).
 pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .proxy(None)
-        .max_redirects(0)
-        .timeout_global(Some(timeout))
-        .build()
-        .into();
+    let agent = crate::http::agent(timeout);
     let res = agent.get(format!("{}/health", api_base(mcp_url))).call().map_err(|e| transport(&e))?;
     let status = res.status().as_u16();
     if (200..300).contains(&status) { Ok(()) } else { Err(format!("HTTP {status}")) }

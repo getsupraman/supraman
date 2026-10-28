@@ -1,5 +1,4 @@
 mod discover;
-mod dotenv;
 mod error;
 mod events;
 mod migrate;
@@ -12,7 +11,6 @@ mod settings;
 mod slug;
 
 pub use discover::{discover, rescan, same_root};
-pub use dotenv::{has_env_key, read_env_value};
 pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
@@ -28,7 +26,7 @@ pub use relay::{
 };
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{
-    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings,
+    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, url_origin, validate_workstate_url,
     clamp_terminal_font_size,
 };
 pub use slug::{slugify, validate_name};

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 3;
-/// `workstate_url` when unset.
-pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290/mcp";
+/// `workstate_url` when unset: the local server, until the move to its hosted origin (m5/43).
+pub const DEFAULT_WORKSTATE_URL: &str = "http://127.0.0.1:5290";
 /// `terminal_font_size` when unset or invalid, and Ctrl+0's size (m5/41).
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `terminal_font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
@@ -21,10 +21,9 @@ pub struct Settings {
     /// Most `fm-` sessions with `state=working` at once, across all workspaces.
     #[serde(default = "default_max_working")]
     pub max_working: usize,
-    /// A `.env` holding `WORKSTATE_<ROLE>_TOKEN=…` lines, read at launch time. Unset: sessions
-    /// launch without a WorkState server.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workstate_env: Option<PathBuf>,
+    /// The WorkState server Foreman signs in to (m5/43), an origin like `https://workstate.example`;
+    /// an older file's `…/mcp` URL means its origin. Unset: [`DEFAULT_WORKSTATE_URL`]. No token is
+    /// ever kept here: the sign-in's refresh token is in Credential Manager.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate_url: Option<String>,
     /// The fleet panel's width in logical pixels, as the divider was last dragged.
@@ -76,7 +75,6 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             max_working: DEFAULT_MAX_WORKING,
-            workstate_env: None,
             workstate_url: None,
             left_width: None,
             extra_plugin_dirs: Vec::new(),
@@ -89,7 +87,65 @@ impl Default for Settings {
     }
 }
 
+/// `http://127.0.0.1:5290/mcp` → `http://127.0.0.1:5290`.
+pub fn url_origin(url: &str) -> String {
+    let url = url.trim();
+    let start = url.find("://").map_or(0, |i| i + 3);
+    match url[start..].find(['/', '?', '#']) {
+        Some(i) => url[..start + i].to_string(),
+        None => url.trim_end_matches('/').to_string(),
+    }
+}
+
+/// A server URL typed into Settings as the origin to keep: `http(s)://host[:port]`, any path dropped.
+/// Plain `http` only for this machine (a token must not cross a network in the clear).
+pub fn validate_workstate_url(text: &str) -> std::result::Result<String, String> {
+    let text = text.trim();
+    let (scheme, rest) = text.split_once("://").ok_or("a URL starts with https:// (or http:// for this machine)")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("{scheme}:// is not http or https"));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') || authority.chars().any(char::is_whitespace) {
+        return Err("the URL names no host".into());
+    }
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        let (h, port) = v6.split_once(']').ok_or("an IPv6 host is closed with ]")?;
+        if !port.is_empty() && port.strip_prefix(':').is_none_or(|p| p.parse::<u16>().is_err()) {
+            return Err(format!("{port} is not a port"));
+        }
+        h.to_string()
+    } else {
+        let (h, port) = authority.rsplit_once(':').map_or((authority, None), |(h, p)| (h, Some(p)));
+        if let Some(p) = port
+            && p.parse::<u16>().is_err()
+        {
+            return Err(format!("{p} is not a port"));
+        }
+        if h.is_empty() || !h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+            return Err(format!("{h} is not a host name"));
+        }
+        h.to_ascii_lowercase()
+    };
+    let local = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
+    if scheme == "http" && !local {
+        return Err("use https:// for a server that is not on this machine".into());
+    }
+    Ok(format!("{scheme}://{}", authority.to_ascii_lowercase()))
+}
+
 impl Settings {
+    /// The server's origin: `workstate_url` without any path, else [`DEFAULT_WORKSTATE_URL`].
+    pub fn workstate_origin(&self) -> String {
+        url_origin(self.workstate_url.as_deref().unwrap_or(DEFAULT_WORKSTATE_URL))
+    }
+
+    /// The MCP endpoint a minted session's config names.
+    pub fn workstate_mcp_url(&self) -> String {
+        format!("{}/mcp", self.workstate_origin())
+    }
+
     pub fn relay_idle_ms(&self) -> i64 {
         self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
     }
@@ -143,8 +199,7 @@ mod tests {
         assert_eq!(Settings::load(home.path()).unwrap(), Settings::default());
         let s = Settings {
             max_working: 1,
-            workstate_env: Some(r"C:\x\.env".into()),
-            workstate_url: Some("http://127.0.0.1:5290/mcp".into()),
+            workstate_url: Some("https://workstate.example".into()),
             left_width: Some(512),
             extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
             run_as_admin: true,
@@ -170,6 +225,30 @@ mod tests {
         assert_eq!(Settings::load(home.path()).unwrap().relay_idle_ms(), 20_000);
         fs::write(Settings::path(home.path()), "max_working = \"many\"").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })));
+    }
+
+    #[test]
+    fn workstate_url_is_an_origin_and_an_old_env_line_is_ignored() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(Settings::default().workstate_origin(), "http://127.0.0.1:5290");
+        assert_eq!(Settings::default().workstate_mcp_url(), "http://127.0.0.1:5290/mcp");
+        fs::write(Settings::path(home.path()), "workstate_env = 'C:/x/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n").unwrap();
+        let s = Settings::load(home.path()).unwrap();
+        assert_eq!(s.workstate_origin(), "http://127.0.0.1:5290", "an older file's /mcp URL");
+        s.save(home.path()).unwrap();
+        assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("workstate_env"), "the .env line is gone");
+    }
+
+    #[test]
+    fn validate_workstate_url_keeps_an_origin_and_https_off_this_machine() {
+        assert_eq!(validate_workstate_url(" https://WorkState.dikaia.ai/ ").as_deref(), Ok("https://workstate.dikaia.ai"));
+        assert_eq!(validate_workstate_url("https://workstate.dikaia.ai/mcp").as_deref(), Ok("https://workstate.dikaia.ai"));
+        assert_eq!(validate_workstate_url("http://127.0.0.1:5290").as_deref(), Ok("http://127.0.0.1:5290"));
+        assert_eq!(validate_workstate_url("http://localhost:9/api").as_deref(), Ok("http://localhost:9"));
+        assert_eq!(validate_workstate_url("http://[::1]:9").as_deref(), Ok("http://[::1]:9"));
+        for bad in ["workstate.dikaia.ai", "ftp://x", "http://workstate.dikaia.ai", "https://", "https://a b", "https://x:port", "https://u@x"] {
+            assert!(validate_workstate_url(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -1,12 +1,15 @@
-//! `fm work overview|board` against a fake WorkState, with a fake `.env` named by a scratch
-//! `FOREMAN_HOME`'s settings.toml. Never the real server or a real token (C21).
+//! `fm work overview|board` against a fake WorkState that is also its fake OAuth server (m5/43): the
+//! test signs in, its refresh token in Credential Manager under a random prefix of its own (deleted
+//! after), and `fm` refreshes it. Never the real server or a real token (C21).
 
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
 
-use foreman_workstate::fake::{Answer, FakeWorkState};
-
-const TOKEN: &str = "fake-reader-token";
+use foreman_workstate::auth::http_browser;
+use foreman_workstate::fake::{Answer, FakeAuth, FakeWorkState};
+use foreman_workstate::secret::{CredentialStore, PREFIX_VAR};
+use foreman_workstate::{Auth, SecretStore};
 const RUN: &str = "22222222-0000-4000-8000-000000000004";
 const OTHER_RUN: &str = "22222222-0000-4000-8000-00000000dead";
 const BACKLOG_RUN: &str = "22222222-0000-4000-8000-0000000000bb";
@@ -15,13 +18,64 @@ fn fixture(name: &str) -> String {
     std::fs::read_to_string(format!("{}/../foreman-workstate/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 
-fn fm(home: &Path, args: &[&str]) -> Output {
+/// A scratch home signed in to the fake; the credential is deleted on drop.
+struct Home {
+    dir: tempfile::TempDir,
+    prefix: String,
+    issuer: Option<String>,
+}
+
+impl Home {
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        if let Some(issuer) = &self.issuer {
+            let _ = CredentialStore::new(&self.prefix).delete(issuer);
+        }
+    }
+}
+
+fn prefix() -> String {
+    let mut r = [0u8; 8];
+    getrandom::fill(&mut r).unwrap();
+    format!("fm-test-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>())
+}
+
+/// Settings naming `url`; signed in when `oauth` is given.
+fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> Home {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.toml"), format!("workstate_url = '{url}'\n")).unwrap();
+    let prefix = prefix();
+    let issuer = oauth.map(|o| {
+        let auth = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
+        auth.sign_in(url, &http_browser()).unwrap();
+        o.issuer()
+    });
+    Home { dir, prefix, issuer }
+}
+
+fn fm(home: &Home, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(args)
-        .env("FOREMAN_HOME", home)
+        .env("FOREMAN_HOME", home.path())
+        .env(PREFIX_VAR, &home.prefix)
         .env_remove("APPDATA")
         .output()
         .unwrap()
+}
+
+/// Every read carried an access token of the fake's sign-in.
+fn oauth_bearer(fake: &FakeWorkState, oauth: &FakeAuth) {
+    let issued = oauth.issued();
+    for s in fake.seen().iter().filter(|s| s.target.starts_with("/api/")) {
+        assert_eq!(s.method, "GET");
+        let token = s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).unwrap_or_default();
+        assert!(token.starts_with("eyJ") && issued.iter().any(|t| t == token), "{s:?}");
+    }
 }
 
 fn text(out: &[u8]) -> String {
@@ -39,25 +93,16 @@ fn fake() -> FakeWorkState {
         json(&format!("/api/v1/runs/{OTHER_RUN}/board"), "board-other.json"),
         // another project's backlog run, for "no such run here"
         json(&format!("/api/v1/runs/{BACKLOG_RUN}/board"), "board-other.json"),
-        ("/api/v1/resolve?ref=locked".into(), Answer::status(401, r#"{"error":"token fake-reader-token is not a reader"}"#)),
+        ("/api/v1/resolve?ref=locked".into(), Answer::status(403, r#"{"error":"insufficient_scope"}"#)),
     ])
-}
-
-/// A scratch home whose settings name a fake `.env` and the fake server.
-fn home(env: &str, url: &str) -> tempfile::TempDir {
-    let home = tempfile::tempdir().unwrap();
-    let env_path = home.path().join("workstate.env");
-    std::fs::write(&env_path, env).unwrap();
-    let settings = format!("workstate_env = '{}'\nworkstate_url = '{url}'\n", env_path.display());
-    std::fs::write(home.path().join("settings.toml"), settings).unwrap();
-    home
 }
 
 #[test]
 fn work_overview_resolves_the_workspace_and_prints_its_runs() {
     let fake = fake();
-    let home = home(&format!("WORKSTATE_CONTROLLER_TOKEN=fake-controller\nWORKSTATE_READER_TOKEN={TOKEN}\n"), &fake.mcp_url());
-    let out = fm(home.path(), &["work", "overview", "autowork"]);
+    let oauth = fake.enable_oauth();
+    let home = home(fake.base(), Some(&oauth));
+    let out = fm(&home, &["work", "overview", "autowork"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -72,16 +117,21 @@ fn work_overview_resolves_the_workspace_and_prints_its_runs() {
     assert_eq!(lines[5], "inbox 3  done-unverified 0  forced 1  ungated 0  follow-ups open 4");
     assert_eq!(lines.len(), 6, "{stdout}");
     let seen = fake.seen();
-    assert_eq!(seen.iter().map(|s| s.target.as_str()).collect::<Vec<_>>(), ["/api/v1/resolve?ref=autowork", "/api/v1/overview"]);
-    assert!(seen.iter().all(|s| s.method == "GET" && s.authorization.as_deref() == Some("Bearer fake-reader-token")), "{seen:?}");
+    let reads: Vec<&str> = seen.iter().map(|s| s.target.as_str()).filter(|t| t.starts_with("/api/")).collect();
+    assert_eq!(reads, ["/api/v1/resolve?ref=autowork", "/api/v1/overview"]);
+    oauth_bearer(&fake, &oauth);
+    let refreshes = seen.iter().filter(|s| s.target == "/connect/token" && s.body.contains("grant_type=refresh_token")).count();
+    assert_eq!(refreshes, 1, "fm refreshed the stored grant once");
+    let stored = CredentialStore::new(&home.prefix).get(&oauth.issuer()).unwrap().unwrap();
+    assert_eq!(oauth.issued().last(), Some(&stored), "and stored the rotated refresh token");
 }
 
 #[test]
 fn work_board_picks_the_workspaces_run_among_same_named_ones() {
     let fake = fake();
-    // No reader token: the controller token reads.
-    let home = home("WORKSTATE_CONTROLLER_TOKEN=fake-controller\n", &fake.mcp_url());
-    let out = fm(home.path(), &["work", "board", "autowork", "m4"]);
+    let oauth = fake.enable_oauth();
+    let home = home(fake.base(), Some(&oauth));
+    let out = fm(&home, &["work", "board", "autowork", "m4"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -94,7 +144,7 @@ fn work_board_picks_the_workspaces_run_among_same_named_ones() {
     assert_eq!(lines[3], "    1.1    done        2/2   -                pass  SSE parser");
     assert_eq!(lines[4], "  2        blocked     0/3   -                FAIL  The board view  blocked by m4/1  [done_unverified a_future_flag]");
     assert_eq!(lines.len(), 5, "{stdout}");
-    let targets: Vec<String> = fake.seen().into_iter().map(|s| s.target).collect();
+    let targets: Vec<String> = fake.seen().into_iter().map(|s| s.target).filter(|t| t.starts_with("/api/")).collect();
     assert_eq!(
         targets,
         [
@@ -105,43 +155,47 @@ fn work_board_picks_the_workspaces_run_among_same_named_ones() {
         ],
         "ids in the URLs, another project's m4 skipped"
     );
-    assert!(fake.seen().iter().all(|s| s.authorization.as_deref() == Some("Bearer fake-controller")));
+    oauth_bearer(&fake, &oauth);
 }
 
 #[test]
 fn work_errors_are_one_line_without_the_token() {
     let fake = fake();
-    let home = home(&format!("WORKSTATE_READER_TOKEN={TOKEN}\n"), &fake.mcp_url());
+    let oauth = fake.enable_oauth();
+    let home = home(fake.base(), Some(&oauth));
     let one_line = |args: &[&str], want: &str| {
-        let out = fm(home.path(), args);
+        let out = fm(&home, args);
         assert_eq!(out.status.code(), Some(1), "{out:?}");
         let stderr = text(&out.stderr);
         assert_eq!(stderr.trim_end(), want);
         assert_eq!(stderr.lines().count(), 1, "{stderr}");
-        assert!(!stderr.contains(TOKEN) && !text(&out.stdout).contains(TOKEN));
+        for t in oauth.issued() {
+            assert!(!stderr.contains(&t) && !text(&out.stdout).contains(&t));
+        }
     };
     one_line(&["work", "overview", "nope"], "error: WorkState answered HTTP 404: no route /api/v1/resolve?ref=nope");
-    one_line(&["work", "overview", "locked"], "error: WorkState answered HTTP 401: token <redacted> is not a reader");
+    one_line(&["work", "overview", "locked"], "error: WorkState answered HTTP 403: insufficient_scope");
     one_line(&["work", "board", "autowork", "backlog"], "error: WorkState project 'autowork' has no run 'backlog'");
 
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let dead = self::home(&format!("WORKSTATE_READER_TOKEN={TOKEN}\n"), &format!("http://{free}/mcp"));
-    let out = fm(dead.path(), &["work", "overview", "autowork"]);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let stderr = text(&out.stderr);
-    assert!(stderr.starts_with(&format!("error: WorkState at http://{free} is unreachable")), "{stderr}");
-    assert_eq!(stderr.lines().count(), 1, "{stderr}");
-    assert!(!stderr.contains(TOKEN));
+    let out = fm(&self::home(&format!("http://{free}"), None), &["work", "overview", "autowork"]);
+    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to WorkState at http://{free}"));
 
     let none = tempfile::tempdir().unwrap();
-    let out = fm(none.path(), &["work", "overview", "autowork"]);
-    assert_eq!(text(&out.stderr).trim_end(), "error: no WorkState .env in settings.toml (workstate_env)");
+    let out = Command::new(env!("CARGO_BIN_EXE_fm"))
+        .args(["work", "overview", "autowork"])
+        .env("FOREMAN_HOME", none.path())
+        .env(PREFIX_VAR, prefix())
+        .env_remove("APPDATA")
+        .output()
+        .unwrap();
+    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to WorkState at http://127.0.0.1:5290");
 }
 
 #[test]
 fn work_is_in_the_help() {
-    let home = tempfile::tempdir().unwrap();
-    let help = text(&fm(home.path(), &["--help"]).stdout);
+    let home = home("http://127.0.0.1:9", None);
+    let help = text(&fm(&home, &["--help"]).stdout);
     assert!(help.contains("fm work overview <workspace>"), "{help}");
     assert!(help.contains("fm work board <workspace> <run-ref>"), "{help}");
 }

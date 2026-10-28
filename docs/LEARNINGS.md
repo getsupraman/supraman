@@ -2721,3 +2721,104 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-42\target`): `cargo build --release --workspace` ok, no warnings; `cargo test
   --release --workspace` 565 passed, 0 failed; `--selftest` 5 of 5 PASS (119–121 s); `--selftest-detach-shutdown`
   PASS; no `fm-selftest` rows of this worktree left. `--selftest-supervise`: FAIL at step f, twice on this build (434 s, 440 s) and once on main 6b3df5a (437 s), all `not both launched within 180 s (first live [None, None])` while fm-nomos-workspace and fm-nomos-nomos were busy (see above); its step t (the task box) passed in both runs on this build.
+
+## 2026-10-28 — m5/43 Foreman signs in to WorkState with OAuth; no .env
+
+- **Why**: WorkState moves to `https://workstate.dikaia.ai` (skills-9a runs the move); no static token moves with it,
+  and René decided there is no `.env` fallback. Every WorkState call Foreman makes — the read API v1, `/api/stream`,
+  and every `POST/PATCH/DELETE /api/agent-sessions` (hand `+` and resume, the supervisor's workspace and repo
+  controllers) — now carries the access token of one OAuth sign-in. Mint bodies are unchanged (`claudeSessionId`
+  etc.). Contract: Skills `docs/workstate/10-read-api.md` rule 5, `14-agent-launch.md` "Minting with OAuth".
+- **Gone**: `settings.toml` `workstate_env`, `foreman-core` `dotenv.rs` (`read_env_value`, `has_env_key`),
+  `foreman-workstate` `credentials.rs` (`client_from_settings`), `tokens::token_from`/`token_key`, the first-run
+  "Use ~/.workstate/.env" offer and `FOREMAN_WORKSTATE_INSTALL`. An old file's `workstate_env` line is ignored and
+  dropped at the next save; an old `…/mcp` `workstate_url` means its origin.
+- **Server URL**: `workstate_url` is an origin (`Settings::workstate_origin`, default `http://127.0.0.1:5290` until
+  the cut-over; `workstate_mcp_url` = origin + `/mcp` for minted configs). `validate_workstate_url`: http(s) only,
+  a host, an optional port, any path dropped, plain `http` only for 127.0.0.1/localhost/::1.
+- **The client** (`foreman-workstate/src/auth.rs`, `Auth`), written on the ureq stack the crate already had:
+  discovery `<origin>/.well-known/oauth-protected-resource/api` → `authorization_servers[0]` → its
+  `/.well-known/oauth-authorization-server` (RFC 8414 path insertion; the issuer compared without its trailing
+  slash; S256 required when the server lists methods). **DCR afresh at every interactive sign-in** (the controller's
+  point from skills-9a: the server's DB is restored with `--clean` at the cut-over, and an unknown `client_id` fails
+  on the server's own page in the browser, where Foreman never sees `invalid_client`). Public client,
+  `token_endpoint_auth_method: none`, grants `authorization_code` + `refresh_token`, redirect
+  `http://127.0.0.1/callback`. Authorize: PKCE S256 (32-byte verifier), a 16-byte `state` checked on return,
+  `resource=<origin>/api` exactly once, `scope=workstate.read workstate.sessions offline_access`, loopback listener on
+  `127.0.0.1:<ephemeral>/callback`, 5 min, the browser answered with "You can close this tab". The token requests
+  send no `resource` (the grant carries it).
+- **Tokens**: the refresh token only in Windows Credential Manager (`secret.rs`, `CredWriteW`/`CredReadW`/`CredDeleteW`,
+  generic credential `Foreman/WorkState:<issuer>`, persist local machine), its `client_id` beside it in
+  `<home>/oauth/servers.json` (with the discovered endpoints; nothing secret). The access token lives in memory and
+  is refreshed when less than 5 min is left. **Refresh tokens rotate**: every refresh stores the new one, under
+  `<home>/oauth/refresh.lock` (`File::lock`), and reads the stored one fresh, so the app and `fm` (a separate process
+  that refreshes on each `fm work`) never redeem the same one twice. A refresh refused with `invalid_client` or
+  `invalid_grant` drops the pair (credential + client_id) and leaves "Sign in again" in memory, with no retry until
+  the next sign-in; an unreachable server is just "unreachable" and the next call tries again. A 401 on a read drops
+  the held access token and retries once with a fresh one; `/api/stream` asks for the bearer at each (re)connect.
+- **Sign out**: the refresh token to `revocation_endpoint` (`token_type_hint=refresh_token`): the whole authorization
+  goes, and every `wss_` minted under it with it. Then the credential and the held tokens. A failed revoke is a notice.
+- **TLS**: ureq had no TLS at all (`default-features = false`). `ureq` feature `native-tls-no-default` with
+  `TlsProvider::NativeTls` + `RootCerts::PlatformVerifier` (schannel, Windows' own root store; no ring/C build, no
+  bundled roots), one agent for every call (`foreman_workstate::http_agent`); the stream's raw socket gets
+  `native_tls::TlsConnector` for `https://`. New crates: `native-tls`, `schannel` (+ `der`, `rustls-pki-types` via
+  ureq); `getrandom 0.3`, `base64`, `sha2`, `windows` were already in the tree. Nothing else was worth a dependency:
+  an OAuth crate would bring its own HTTP stack.
+- **Roles**: the OAuth principal is the operator as controller ("a role is never raised"), so `AppTokens` mints
+  workspace → controller, repo → orchestrator, hand → orchestrator. The relay still has no WorkState role and
+  launches without WorkState, as before (it only carries messages; it was never minted with the `.env` either).
+  `TokenProvider::token` is now `Result<Option<RoleToken>, String>`: `Ok(None)` not signed in (launch without
+  WorkState), `Err` signed in but no token now (unreachable, sign in again) → the launch fails with the reason
+  instead of silently starting without WorkState.
+- **Settings → WorkState**: Status ("Signed in on <url> as <name>" — the token's `name`/`sub` when it is a readable
+  JWT, else just the URL; "Not signed in."; "Sign in again: <why>."), Sign in / Cancel sign-in / Sign out / Check now;
+  Server URL in the shared `TextInput` + Apply (Enter applies). The notice above the tree says "Not signed in to
+  WorkState at <url>…" with **Sign in** (`ws-setup-signin`; Cancel while the browser waits). `workstate_setup::detect`
+  is `/health`, then `Auth::access_token` (a due refresh happens there, every 30 s).
+- **Changing the URL** (`FleetView::set_workstate_url`): not signed in → saved at once. Signed in → sign in on the new
+  server first; only then the URL is saved. `Supervision::tick` sees the origin change and calls
+  `Supervisor::server_changed` on every supervisor: each minted, still-wanted session goes on `remint_due`, so the
+  next tick stops its live row and the resume (full uuid) mints on the new server with `replace: true` into the same
+  config file. Open hand tabs get " · restart to use <url>" on their card and one notice. The old server's grant is
+  revoked in the background (a failure is a notice). A server that cannot be signed in to leaves the URL as it was.
+- **How René signs in the first time**: start Foreman → the notice "Not signed in to WorkState at
+  http://127.0.0.1:5290" → **Sign in** (or Settings → WorkState → Sign in). The browser opens WorkState's sign-in
+  page; log in as `operator` and approve; the tab says "You can close this tab" and the notice goes. For the hosted
+  server: Settings → WorkState → Server URL `https://workstate.dikaia.ai` → Apply; if signed in on the local one,
+  the browser opens the hosted server's sign-in first, then Foreman switches, restarts its supervised sessions with
+  hosted tokens, asks to restart open claude tabs and signs out of the local server. Check without printing a token:
+  Credential Manager (Windows Credentials → Generic) shows `Foreman/WorkState:https://workstate.dikaia.ai/`.
+- **Tests** (never the real servers): `FakeWorkState::enable_oauth` makes the fake its own authorization server
+  (`FakeAuth`: PRM, AS metadata, DCR, authorize as an immediate 302 the test follows, token with PKCE check and
+  rotating refresh that refuses a redeemed token, revoke of the grant, 401 + `WWW-Authenticate` on `/api/*`
+  without a live token; `forget_clients`, `fail_refresh`, `deny`, `set_access_ttl`). `tests/oauth.rs` (10): sign-in
+  shape (one resource, scope, S256, loopback, state, no token in any file of the home, no token in `Debug`), refresh
+  rotation, a fresh process refreshing from the store, state mismatch (no exchange, nothing stored), denied /
+  timed out / no browser, fresh DCR per sign-in, wiped server → sign in again → new registration, refused refresh
+  without retries, sign-out revoke, 401 then refresh-and-retry. `secret.rs`: Credential Manager round trip under a
+  random `fm-test-<hex>` prefix, deleted after. `fm` `tests/work.rs`: the test signs in into Credential Manager
+  under a random prefix (`FOREMAN_CREDENTIAL_PREFIX`), `fm work` refreshes and stores the rotated token, the entry is
+  deleted on drop. App: `tokens::tests` (provider, mint + revoke over HTTP with the fake AS's bearer),
+  `workstate_setup::tests`, hand tests ported to the fake AS (+ a broken sign-in opens plain), supervisor
+  `mint_on_a_new_server_stops_and_resumes_every_minted_session_with_its_new_url`,
+  `mint_without_a_bearer_now_fails_the_launch_with_why`. Red: not storing the rotated refresh token and reusing a
+  cached client_id → 2 of 10 OAuth tests fail.
+- **Selftest**: every selftest home's `workstate_url` is a closed loopback port, so no status check reaches a real
+  WorkState; the sign-in never opens a browser (`signin::use_http_browser`), and its credentials sit under
+  `fm-selftest-<hex>` and are deleted at cleanup. Step 1w signs in to the fake's AS. Step 7d: Settings shows "signed
+  in … as Fake Operator"; Sign out revokes the grant and the notice offers Sign in; the notice's Sign in signs in
+  again and the Inbox paints the fake's WorkState rows read with the new tokens; Apply of another fake server's URL
+  signs in there, saves it and revokes the old grant; a closed port's URL is refused with the reason and the URL
+  stays; plain `http` to another machine is refused; closed port → unreachable notice with Retry. Step 7's
+  read-only check accepts only access tokens the fake issued.
+- **Not covered**: the real end-to-end sign-in on 127.0.0.1:5290 and on the hosted server (the controller's and
+  René's: the `operator` password is René's). The hand tab restart notice is unit-free (UI only). A selftest that
+  crashes mid-run leaves one `fm-selftest-<hex>:http://127.0.0.1:<port>/` credential (worthless: its fake server is
+  gone). The URL field has no "revert" button: Esc does nothing.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-43\target`, `plugins` junction beside it): `cargo build --release
+  --workspace` ok, no warnings; `cargo test --release --workspace` 576 passed, 0 failed; `--selftest` 5 of 5 PASS
+  (124/127/128/124/122 s; idle frames p50 ~41-46 ms with own work p50 ~6 ms while three of René's sessions ran);
+  `--selftest-detach-shutdown` PASS (23 s); no `fm-selftest` rows left. `--selftest-supervise` FAIL twice at step f
+  ("not both launched within 180 s"), every step before it PASS: the busy budget counts every live `fm-` row on the
+  machine, and René's `fm-nomos-workspace`, `fm-nomos-nomos`, `fm-nomos-nomos-letterhead-nomos-3` were mid-turn
+  throughout, so step f's limit of 1 never had a free slot. Not touched (not ours); to be rerun when they are idle.

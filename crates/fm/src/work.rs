@@ -1,12 +1,12 @@
 //! `fm work overview|board`: the workspace's WorkState project (ref `<workspace>`) read through the
-//! read API v1, printed compact. Read only (C21); the token is the `.env`'s reader token (else its
-//! controller token) and never printed — every error is one line without it.
+//! read API v1, printed compact. Read only (C21); the bearer is an access token of the app's sign-in
+//! (m5/43: the refresh token from Credential Manager, refreshed and rotated here under the shared lock)
+//! and never printed — every error is one line without it.
 
 use std::fmt::Write as _;
 use std::path::Path;
 
-use foreman_core::Settings;
-use foreman_workstate::{Board, BoardRow, Client, ItemRef, Overview, Rollup, client_from_settings};
+use foreman_workstate::{Auth, Board, BoardRow, Client, ItemRef, Overview, Rollup};
 
 use crate::Failure;
 
@@ -35,8 +35,10 @@ fn refused(e: impl std::fmt::Display) -> Failure {
 }
 
 fn client(home: &Path) -> Result<Client, Failure> {
-    let settings = Settings::load(home)?;
-    client_from_settings(&settings).map(|(c, _)| c).map_err(refused)
+    let auth = Auth::open(home);
+    let origin = auth.configured_origin();
+    auth.access_token(&origin).map_err(refused)?;
+    Ok(Client::with_source(origin.as_str(), auth.bearer_for(&origin)))
 }
 
 /// The one project whose ref is the workspace's name.
