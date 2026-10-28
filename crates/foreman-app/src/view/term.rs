@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use foreman_core::Settings;
 use foreman_term::{Search, Terminal};
-use gpui::{AnyElement, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
+use crate::text_input::{InputEvent, TextInput};
 use foreman_ui::term_element::{FONT_SIZE, step_font_size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,81 +70,37 @@ pub fn chord(k: &Keystroke, has_selection: bool) -> Option<Chord> {
     }
 }
 
-/// A terminal tab's find bar (Ctrl+Shift+F). Enter goes to the next match up, towards older output,
-/// Shift+Enter back down, as Windows Terminal's default direction; Esc closes it.
-#[derive(Debug, Default)]
+/// A terminal tab's find bar (Ctrl+Shift+F): a one-line [`TextInput`] that searches as it is edited.
+/// Enter goes to the next match up, towards older output, Shift+Enter back down, as Windows Terminal's
+/// default direction; Esc closes it.
 pub struct Find {
-    pub query: String,
-    /// Keys go to the bar, not the program; a click in the terminal takes them back.
-    pub focused: bool,
+    pub input: Entity<TextInput>,
     /// Index into the terminal's `matches` (top to bottom) of the selected one.
     pub at: Option<usize>,
     pub count: usize,
-}
-
-pub enum FindKey {
-    Edited,
-    Next,
-    Previous,
-    Close,
-    Ignored,
+    _events: Subscription,
 }
 
 impl Find {
-    pub fn key(&mut self, k: &Keystroke, paste: impl FnOnce() -> Option<String>) -> FindKey {
-        let m = &k.modifiers;
-        let ctrl = m.control && !m.alt;
-        match k.key.as_str() {
-            "escape" => FindKey::Close,
-            "enter" if m.shift => FindKey::Previous,
-            "enter" => FindKey::Next,
-            "backspace" => match self.query.pop() {
-                Some(_) => FindKey::Edited,
-                None => FindKey::Ignored,
-            },
-            "v" if ctrl => match paste() {
-                Some(text) => {
-                    self.query.push_str(text.lines().next().unwrap_or_default());
-                    FindKey::Edited
-                }
-                None => FindKey::Ignored,
-            },
-            _ => match &k.key_char {
-                Some(c) if !ctrl && !m.platform => {
-                    self.query.push_str(c);
-                    FindKey::Edited
-                }
-                _ => FindKey::Ignored,
-            },
-        }
+    pub fn query(&self, cx: &App) -> String {
+        self.input.read(cx).text().to_string()
     }
+}
 
-    /// The match `step` away from the selected one (+1: up, older), wrapping; with none selected, the
-    /// bottom one.
-    pub fn step(&self, step: isize) -> Option<usize> {
-        if self.count == 0 {
-            return None;
-        }
-        let at = self.at.map_or(self.count as isize, |at| at as isize);
-        Some((at - step).rem_euclid(self.count as isize) as usize)
+/// The match `step` away from `at` (+1: up, older) among `count`, wrapping; with none selected, the
+/// bottom one.
+pub fn find_step(at: Option<usize>, count: usize, step: isize) -> Option<usize> {
+    if count == 0 {
+        return None;
     }
+    let at = at.map_or(count as isize, |at| at as isize);
+    Some((at - step).rem_euclid(count as isize) as usize)
 }
 
 impl FleetView {
     /// A key for the active terminal tab; true when it was one of [`chord`]'s (or went to the find bar)
     /// and must not reach the program.
-    pub(super) fn terminal_key(&mut self, tab_id: u64, terminal: &Entity<Terminal>, k: &Keystroke, cx: &mut Context<Self>) -> bool {
-        if let Some(find) = self.tab_mut(tab_id).and_then(|t| t.find.as_mut()).filter(|f| f.focused) {
-            match find.key(k, || cx.read_from_clipboard().and_then(|c| c.text())) {
-                FindKey::Edited => self.run_find(tab_id, terminal, cx),
-                FindKey::Next => self.step_find(tab_id, terminal, 1, cx),
-                FindKey::Previous => self.step_find(tab_id, terminal, -1, cx),
-                FindKey::Close => self.close_find(tab_id, terminal, cx),
-                FindKey::Ignored => {}
-            }
-            cx.notify();
-            return true;
-        }
+    pub(super) fn terminal_key(&mut self, tab_id: u64, terminal: &Entity<Terminal>, k: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let has_selection = terminal.read(cx).last_content().selection.is_some();
         let Some(chord) = chord(k, has_selection) else {
             return false;
@@ -155,11 +112,7 @@ impl FleetView {
                 // an image on the clipboard: Ctrl+V goes to the program as ^V
                 None => return false,
             },
-            Chord::Find => {
-                if let Some(tab) = self.tab_mut(tab_id) {
-                    tab.find.get_or_insert_with(Find::default).focused = true;
-                }
-            }
+            Chord::Find => self.open_find(tab_id, window, cx),
             Chord::FontSize(delta) => self.set_term_font_size(step_font_size(self.term_font_size, delta), cx),
             Chord::FontReset => self.set_term_font_size(FONT_SIZE, cx),
             Chord::ScrollLines(n) if n > 0 => terminal.update(cx, |t, _| t.scroll_up_by(n as usize)),
@@ -212,8 +165,39 @@ impl FleetView {
         self.font_save.is_some()
     }
 
+    /// The tab's find bar, opened or brought back, focused with its query selected.
+    fn open_find(&mut self, tab_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tab(tab_id).is_some_and(|t| t.find.is_none()) {
+            let input = cx.new(|cx| TextInput::new("", None, window, cx));
+            let events = cx.subscribe_in(&input, window, move |this: &mut Self, _, event: &InputEvent, window, cx| this.on_find_event(tab_id, event, window, cx));
+            if let Some(tab) = self.tab_mut(tab_id) {
+                tab.find = Some(Find { input, at: None, count: 0, _events: events });
+            }
+        }
+        if let Some(find) = self.tab(tab_id).and_then(|t| t.find.as_ref()) {
+            find.input.update(cx, |input, cx| input.focus_all(window, cx));
+        }
+    }
+
+    fn on_find_event(&mut self, tab_id: u64, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(terminal) = self.tab(tab_id).and_then(|t| t.terminal.clone()) else {
+            return;
+        };
+        match event {
+            InputEvent::Edited => self.run_find(tab_id, &terminal, cx),
+            InputEvent::Confirm => self.step_find(tab_id, &terminal, 1, cx),
+            InputEvent::ConfirmBack => self.step_find(tab_id, &terminal, -1, cx),
+            InputEvent::Cancel => {
+                self.close_find(tab_id, &terminal, cx);
+                self.focus.focus(window, cx);
+            }
+            InputEvent::Refused(_) => {}
+        }
+        cx.notify();
+    }
+
     fn run_find(&mut self, tab_id: u64, terminal: &Entity<Terminal>, cx: &mut Context<Self>) {
-        let Some(query) = self.tab(tab_id).and_then(|t| t.find.as_ref()).map(|f| f.query.clone()) else {
+        let Some(query) = self.tab(tab_id).and_then(|t| t.find.as_ref()).map(|f| f.query(cx)) else {
             return;
         };
         let search = (!query.is_empty()).then(|| Search::literal(&query)).flatten();
@@ -230,7 +214,10 @@ impl FleetView {
             let matches = task.await;
             this.update(cx, |this, cx| {
                 // a later keystroke searched again; its result wins
-                let Some(find) = this.tab_mut(tab_id).and_then(|t| t.find.as_mut()).filter(|f| f.query == query) else {
+                if this.tab(tab_id).and_then(|t| t.find.as_ref()).map(|f| f.query(cx)) != Some(query) {
+                    return;
+                }
+                let Some(find) = this.tab_mut(tab_id).and_then(|t| t.find.as_mut()) else {
                     return;
                 };
                 (find.at, find.count) = (None, matches.len());
@@ -246,7 +233,7 @@ impl FleetView {
         let Some(find) = self.tab_mut(tab_id).and_then(|t| t.find.as_mut()) else {
             return;
         };
-        find.at = find.step(step);
+        find.at = find_step(find.at, find.count, step);
         if let Some(at) = find.at {
             terminal.update(cx, |t, _| t.activate_match(at));
         }
@@ -264,12 +251,11 @@ impl FleetView {
     pub(super) fn find_bar(&self, tab_id: u64, find: &Find, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let status = match (find.at, find.count) {
-            (_, 0) if find.query.is_empty() => String::new(),
+            (_, 0) if find.input.read(cx).text().is_empty() => String::new(),
             (_, 0) => "no matches".into(),
             (Some(at), count) => format!("{} of {count}", count - at),
             (None, count) => format!("{count}"),
         };
-        let caret = if find.focused { "▏" } else { "" };
         div()
             .id("find-bar")
             .relative()
@@ -284,27 +270,17 @@ impl FleetView {
             .border_color(colors.border)
             .text_sm()
             .child(div().text_color(colors.text_muted).child("Find"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .px_1()
-                    .border_1()
-                    .rounded_sm()
-                    .border_color(if find.focused { colors.border_focused } else { colors.border })
-                    .bg(colors.editor_background)
-                    .text_color(colors.text)
-                    .child(SharedString::from(format!("{}{caret}", find.query))),
-            )
+            .child(div().flex_1().min_w_0().child(find.input.clone()))
             .child(div().text_color(colors.text_muted).child(SharedString::from(status)))
             .child(div().text_color(colors.text_muted).child("Enter ↑  Shift+Enter ↓  Esc"))
             .child(hit_target(&self.hits, "find-bar".into()))
+            // a click on the bar beside the input gives it the keys, not the window
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    if let Some(find) = this.tab_mut(tab_id).and_then(|t| t.find.as_mut()) {
-                        find.focused = true;
-                        cx.notify();
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(find) = this.tab(tab_id).and_then(|t| t.find.as_ref()) {
+                        find.input.update(cx, |input, cx| input.focus(window, cx));
                     }
                 }),
             )
@@ -378,12 +354,9 @@ mod tests {
 
     #[test]
     fn find_steps_up_from_the_bottom_and_wraps() {
-        let mut find = Find { count: 3, ..Default::default() };
-        assert_eq!(find.step(1), Some(2));
-        find.at = Some(0);
-        assert_eq!(find.step(1), Some(2));
-        assert_eq!(find.step(-1), Some(1));
-        find.count = 0;
-        assert_eq!(find.step(1), None);
+        assert_eq!(find_step(None, 3, 1), Some(2));
+        assert_eq!(find_step(Some(0), 3, 1), Some(2));
+        assert_eq!(find_step(Some(0), 3, -1), Some(1));
+        assert_eq!(find_step(Some(0), 0, 1), None);
     }
 }

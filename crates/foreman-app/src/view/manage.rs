@@ -74,7 +74,7 @@ pub enum NameKey {
 /// the hint, a character a name cannot hold says so under the field.
 pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Option<String>) -> NameKey {
     match event {
-        InputEvent::Confirm => NameKey::Save,
+        InputEvent::Confirm | InputEvent::ConfirmBack => NameKey::Save,
         InputEvent::Cancel => NameKey::Cancel,
         InputEvent::Refused(c) => {
             *hint = Some(format!("'{c}' is not taken: a name is lowercase letters, digits and '-'."));
@@ -143,9 +143,6 @@ impl FleetView {
 
     /// The review of `root`: discovery runs off the UI thread (it walks the folder).
     pub fn begin_add(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(c) = &mut self.compose {
-            c.focused = false;
-        }
         self.adding = Some(AddDraft::new(root.clone(), window, cx));
         cx.notify();
         let scan = cx.background_executor().spawn(async move {
@@ -341,7 +338,7 @@ impl FleetView {
             MenuAction::Work(w) => {
                 self.open_work(&w, cx);
             }
-            MenuAction::Task(w) => self.open_compose(&w, None, cx),
+            MenuAction::Task(w) => self.open_compose(&w, None, window, cx),
             MenuAction::Rescan(w) => self.rescan_workspace(&w, cx),
             MenuAction::Remove(w) => {
                 let started = self.desired.get(&w).is_some_and(|d| d.0);

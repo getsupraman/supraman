@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::bail;
 use foreman_term::{Color, CursorShape, NamedColor, Terminal, terminal_settings::TerminalConfig};
 use gpui::{
-    AsyncWindowContext, ClipboardItem, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    AsyncWindowContext, ClipboardItem, Entity, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseUpEvent, PlatformInput, rgb,
 };
 
@@ -50,13 +50,13 @@ fn right_click(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyh
     })
 }
 
+/// `text` typed into the focused find bar: keystrokes no binding takes, which gpui hands to the input's
+/// handler as a real key's WM_CHAR is (m5/42).
 fn typed(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     for c in text.chars() {
         let name = if c == ' ' { "space".to_string() } else { c.to_string() };
         let keystroke = Keystroke { modifiers: Modifiers::default(), key: name, key_char: Some(c.to_string()) };
-        cx.update(|window, cx| {
-            window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx);
-        })?;
+        cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx))?;
     }
     Ok(())
 }
@@ -218,6 +218,17 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
 
     // Ctrl+Shift+F finds; Enter steps; Esc closes and clears the highlights
     key(cx, "f", Modifiers { control: true, shift: true, ..Default::default() })?;
+    // the bar's input takes typed characters once a frame painted it focused
+    until("the find bar's input painted focused", Duration::from_secs(3), cx, |cx| {
+        cx.update(|window, cx| {
+            view.read(cx).tab(tab).and_then(|t| t.find.as_ref()).is_some_and(|f| {
+                let input = f.input.read(cx);
+                input.is_focused(window) && input.caret_painted.get()
+            })
+        })
+        .unwrap_or(false)
+    })
+    .await?;
     typed("wheel line 1", cx)?;
     until("find counted matches", Duration::from_secs(3), cx, |cx| {
         view.read_with(cx, |v, _| v.tab(tab).and_then(|t| t.find.as_ref()).is_some_and(|f| f.count > 0 && f.at.is_some()))
@@ -234,6 +245,15 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     if !selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("wheel line 1")) {
         bail!("find: the selected match is {selected:?}");
     }
+    // Shift+Enter steps back down to where Enter came from
+    key(cx, "enter", Modifiers { shift: true, ..Default::default() })?;
+    sleep(cx, Duration::from_millis(100)).await;
+    let back = view.read_with(cx, |v, _| v.tab(tab).and_then(|t| t.find.as_ref()).and_then(|f| f.at));
+    if back != first {
+        bail!("find: Shift+Enter went to match {back:?}, not back to {first:?}");
+    }
+    key(cx, "enter", Modifiers::default())?;
+    sleep(cx, Duration::from_millis(100)).await;
     // m5/26: the selection as Windows Terminal paints it: white, its text in the terminal's background
     let background = cx.update(|_, cx| theme::ActiveTheme::theme(cx).colors().terminal_background)?;
     until("the selection painted", Duration::from_secs(2), cx, |cx| terminal.read_with(cx, |t, _| t.selection_painted.is_some())).await?;
@@ -253,7 +273,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     if open || highlights > 0 {
         bail!("find: Esc left the bar open ({open}) with {highlights} highlights");
     }
-    report.push(format!("Ctrl+Shift+F \"wheel line 1\": {count} matches, Enter {first:?} → {second:?}, Esc closed"));
+    report.push(format!("Ctrl+Shift+F \"wheel line 1\" typed into its input: {count} matches, Enter {first:?} → {second:?}, Shift+Enter back, Esc closed"));
 
     // Ctrl+= / Ctrl+- / Ctrl+0 zoom every terminal (m5/41; step 7q checks a second tab and the file)
     let size = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.term_font_size);

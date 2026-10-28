@@ -31,7 +31,7 @@ use gpui::{
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
 
-use crate::compose::{self, Compose, KeyOutcome};
+use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
 use crate::hand::{Hands, Launch};
 use crate::settings_window::{self, SettingsView};
@@ -997,10 +997,34 @@ impl FleetView {
 
     /// Opens the task box (`reply_to: None`) or the reply to an outbox message, focused; an open one
     /// for something else is replaced.
-    pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, cx: &mut Context<Self>) {
-        match &mut self.compose {
-            Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.focused = true,
-            compose => *compose = Some(Compose::new(workspace, reply_to)),
+    pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let input = match &self.compose {
+            Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
+            _ => {
+                let input = cx.new(|cx| TextInput::new("Type here; Enter adds a line.", None, window, cx).multi_line());
+                let events = cx.subscribe_in(&input, window, |this: &mut Self, _, event: &InputEvent, window, cx| this.on_compose_event(event, window, cx));
+                self.compose = Some(Compose::new(workspace, reply_to, input.clone(), events));
+                input
+            }
+        };
+        input.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    /// The task box's keys: Ctrl+Enter sends, Esc closes it and gives the keys back to the window.
+    fn on_compose_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            InputEvent::Confirm => self.send_compose(cx),
+            InputEvent::Cancel => {
+                self.compose = None;
+                self.focus.focus(window, cx);
+            }
+            InputEvent::Edited => {
+                if let Some(c) = &mut self.compose {
+                    c.error = None;
+                }
+            }
+            InputEvent::ConfirmBack | InputEvent::Refused(_) => {}
         }
         cx.notify();
     }
@@ -1012,7 +1036,7 @@ impl FleetView {
         let Some(c) = &self.compose else {
             return;
         };
-        let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text.trim().to_string());
+        let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
         let result = if text.is_empty() {
             Err("Nothing to send.".to_string())
         } else {
@@ -1024,7 +1048,7 @@ impl FleetView {
         match (result, &mut self.compose) {
             (Ok(_), _) if reply_to.is_some() => self.compose = None,
             (Ok(sent), Some(c)) => {
-                c.clear();
+                c.input.update(cx, |input, cx| input.set_text("", cx));
                 c.sent = Some(compose::first_line(&text));
                 c.route = Some(sent.label());
                 c.error = None;
@@ -1446,7 +1470,7 @@ impl FleetView {
 
     /// The window's keys are this view's: no task box or text input holds them.
     pub fn has_keys(&self, window: &Window) -> bool {
-        self.focus.is_focused(window) && !self.compose.as_ref().is_some_and(|c| c.focused)
+        self.focus.is_focused(window)
     }
 
     pub fn attach(
@@ -1869,7 +1893,10 @@ impl FleetView {
 
     /// Whether one of the text inputs (the search box, the Add review's name) has the keys.
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
-        self.search.read(cx).is_focused(window) || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
+        self.search.read(cx).is_focused(window)
+            || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
+            || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
+            || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 
     /// Ctrl+Shift+E: the search box, its text selected.
@@ -1894,7 +1921,7 @@ impl FleetView {
             }
             InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
             InputEvent::Cancel => self.focus.focus(window, cx),
-            InputEvent::Confirm | InputEvent::Refused(_) => {}
+            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Refused(_) => {}
         }
     }
 
@@ -1933,17 +1960,6 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        if let Some(compose) = self.compose.as_mut().filter(|c| c.focused) {
-            match compose.key(k, || cx.read_from_clipboard().and_then(|c| c.text())) {
-                KeyOutcome::Send => self.send_compose(cx),
-                KeyOutcome::Cancel => self.compose = None,
-                KeyOutcome::Edited => compose.error = None,
-                KeyOutcome::Ignored => {}
-            }
-            cx.notify();
-            cx.stop_propagation();
-            return;
-        }
         if k.key == "escape"
             && let Some(Tab { kind: TabKind::Work(work), .. }) = self.active.and_then(|id| self.tab(id))
             && work.update(cx, |work, cx| work.escape(cx))
@@ -1961,7 +1977,7 @@ impl FleetView {
             return;
         };
         if let Some(id) = self.active
-            && self.terminal_key(id, &terminal, k, cx)
+            && self.terminal_key(id, &terminal, k, window, cx)
         {
             cx.stop_propagation();
             return;
@@ -2152,25 +2168,6 @@ impl FleetView {
                     div()
                         .flex_1()
                         .min_h_0()
-                        // a click in the terminal gives it the keys back from the task box and the
-                        // find bar
-                        .on_mouse_down(MouseButton::Left, {
-                            let tab_id = *tab_id;
-                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                if let Some(c) = &mut this.compose
-                                    && c.focused
-                                {
-                                    c.focused = false;
-                                    cx.notify();
-                                }
-                                if let Some(find) = this.tab_mut(tab_id).and_then(|t| t.find.as_mut())
-                                    && find.focused
-                                {
-                                    find.focused = false;
-                                    cx.notify();
-                                }
-                            })
-                        })
                         .on_scroll({
                             // as Zed's TerminalView::scroll_wheel: the Terminal decides between
                             // scrollback, a mouse report and alternate-scroll arrow keys; Ctrl+wheel
