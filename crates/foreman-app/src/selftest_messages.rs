@@ -46,7 +46,7 @@ fn dismiss_key(file: &str) -> String {
 }
 
 /// Off the panel, and until the m5/18 hold is over, so a row that arrives is drawn at once.
-async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
     crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
     until(view, cx, "the left panel's hold to end", |v| (!v.left_held()).then_some(())).await
