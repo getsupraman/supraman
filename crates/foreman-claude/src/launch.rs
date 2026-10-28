@@ -91,6 +91,12 @@ impl LaunchSpec {
     }
 }
 
+/// A fresh v4 uuid for `--session-id`. A foreground `claude` takes it; `claude --bg` accepts the flag
+/// and ignores it (m5/40 probe), so a background session's id is known only from its row.
+pub fn new_session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// `--bg --resume <sessionId> [-- <prompt>]` and nothing else: with any other flag the CLI starts a
 /// copy under a new id; without, it wakes the same session "with its saved options" (m2/1).
 pub fn resume_argv(session_id: &str, prompt: Option<&str>) -> Vec<OsString> {

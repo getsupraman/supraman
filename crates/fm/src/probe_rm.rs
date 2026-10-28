@@ -21,7 +21,7 @@ const TURN_WITHIN: Duration = Duration::from_secs(180);
 const RESUME_WITHIN: Duration = Duration::from_secs(180);
 
 /// What a Claude Code tool shell exports (LEARNINGS tf/8, m5/28): a child claude must not run as its session.
-const PARENT_VARS: [&str; 12] = [
+pub(crate) const PARENT_VARS: [&str; 12] = [
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
     "CLAUDE_CODE_SESSION_ID",
@@ -150,7 +150,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, home: &Path, root: &Path, hex: &str
 }
 
 /// Deletes every session transcript in the probe's own project dir through the app's confined delete.
-fn cleanup(home: &Path, dir: &Path) {
+pub(crate) fn cleanup(home: &Path, dir: &Path) {
     for file in listing(dir) {
         let Some(sid) = file.strip_suffix(".jsonl").filter(|s| is_session_id(s)) else { continue };
         match forget_transcript(home, sid, None) {

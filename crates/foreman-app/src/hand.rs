@@ -16,6 +16,10 @@
 //! refuses `work_session` for it (Skills `docs/workstate/11-sessions.md`, resolution order (a)). The
 //! generated name stays the key of the config file and of `hands.json` either way.
 //!
+//! **Its claude session id** goes with the mint (`claudeSessionId`, m5/40): a resume's uuid, or for a
+//! fresh `+` a new one that claude is started with (`--session-id`). WorkState lets a launcher take over
+//! a name registered without one only when the ids match.
+//!
 //! The token is revoked when that claude exits (the launch deletes its file, [`Hands::ended`]),
 //! when its tab closes, on quit, and on the next start for what an earlier run left
 //! ([`Hands::release_all`]). The mint's bearer is the repo role's static token, else the workspace's:
@@ -45,8 +49,9 @@ pub enum Launch {
     /// No WorkState: plain `claude`, as before m5/20.
     Plain,
     /// Its own token in `config`. `name` keys the file and `hands.json`; `session` is the WorkState
-    /// session's name; `notice` says why it is not the one asked for.
-    Minted { name: String, session: String, config: PathBuf, notice: Option<String> },
+    /// session's name; `notice` says why it is not the one asked for. `new_session` is the
+    /// `--session-id` a fresh `+` starts claude with, the one its mint carries; `None` for a resume.
+    Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
     /// WorkState is set up but the mint failed: plain `claude`, and this notice.
     Unminted(String),
 }
@@ -60,13 +65,14 @@ impl Launch {
     /// What the tab's pwsh runs before its first prompt: `claude` (its program and arguments, e.g.
     /// `claude --resume '<id>'`, m5/27). It deletes the config file once claude exits, however it exits,
     /// which is how [`Hands::ended`] sees it. Should the file be gone already (the tab closed while it
-    /// started), it starts plain `claude`, saying why (m5/18).
+    /// started), it starts plain `claude`, saying why (m5/18), without the `--session-id` its mint carried.
     pub fn script_with(&self, claude: &str) -> String {
         match self {
-            Launch::Minted { config, .. } => {
+            Launch::Minted { config, new_session, .. } => {
                 let path = config.to_string_lossy().replace('\'', "''");
+                let id = new_session.as_ref().map(|id| format!(" --session-id '{}'", id.replace('\'', "''"))).unwrap_or_default();
                 format!(
-                    "if (Test-Path -LiteralPath '{path}') {{ try {{ {claude} --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude} }}"
+                    "if (Test-Path -LiteralPath '{path}') {{ try {{ {claude}{id} --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude} }}"
                 )
             }
             Launch::Plain | Launch::Unminted(_) => claude.into(),
@@ -175,12 +181,18 @@ impl Hands {
         self.launch_for(cwd, own, None)
     }
 
-    /// [`Self::launch`] for a resume of `claude_session` (its uuid), kept with the token so Delete can
+    /// [`Self::launch`] for a resume of `claude_session` (its full uuid; anything else is not sent).
+    /// That uuid, or a fresh `+`'s new one, goes with the mint and is kept with the token so Delete can
     /// revoke it ([`Self::release_session`]).
     pub fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
         let Some((role, bearer)) = self.bearer(None) else {
             return Launch::Plain;
         };
+        let new_session = claude_session.is_none().then(foreman_claude::new_session_id);
+        let claude_session = claude_session
+            .filter(|s| foreman_claude::is_session_id(s))
+            .map(str::to_string)
+            .or_else(|| new_session.clone());
         let name = self.next_name(cwd);
         let folder = cwd.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
         let base = api_base(&bearer.url);
@@ -193,6 +205,7 @@ impl Hands {
             external_role: EXTERNAL_ROLE.into(),
             replace: true,
             repo: (self.repo_of)(cwd),
+            claude_session_id: claude_session.clone(),
         };
         let mut notice = None;
         // `replace` would take the token of another tab's session of that name
@@ -218,14 +231,14 @@ impl Hands {
             MintedSession {
                 session_id: minted.session_id.clone(),
                 role,
-                claude_session_id: claude_session.map(str::to_string),
+                claude_session_id: claude_session,
                 last_active: None,
             },
         );
         let _ = self.minted.save();
         self.sessions.insert(name.clone(), request.name.clone());
         match foreman_claude::write_mcp_config(&self.mcp_dir(), &name, &bearer.url, &minted.token, &[]) {
-            Ok(config) => Launch::Minted { name, session: request.name, config, notice },
+            Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
             Err(e) => {
                 let revoked = self.release(&name);
                 Launch::Unminted(format!(
@@ -361,8 +374,10 @@ mod tests {
         let (mut hands, notice) = Hands::with(&home, HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
 
-        let Launch::Minted { name, config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        let Launch::Minted { name, config, new_session: Some(sid), .. } = launch.clone() else { panic!("{launch:?}") };
         assert_eq!(name, "hand-alpha-1");
+        assert!(foreman_claude::is_session_id(&sid), "{sid}");
         let (line, auth, body) = seen.recv_timeout(WAIT).unwrap();
         assert_eq!(line, "POST /api/agent-sessions HTTP/1.1");
         assert_eq!(auth, "Bearer fake-static-orch", "the repo role's static token is the bearer");
@@ -372,17 +387,23 @@ mod tests {
             serde_json::json!({
                 "name": "hand-alpha-1", "role": "orchestrator", "launchedBy": "foreman/hand", "origin": "foreman/hand/alpha",
                 "cwd": r"C:\demo\alpha", "externalRole": "hand", "replace": true,
-                "repo": { "root": "C:/demo/alpha", "remote": "https://example.invalid/demo/alpha.git" }
+                "repo": { "root": "C:/demo/alpha", "remote": "https://example.invalid/demo/alpha.git" },
+                "claudeSessionId": sid
             })
         );
+        // m5/40: claude starts with the uuid its mint carried, and the token keeps it
+        assert!(launch.script().contains(&format!("try {{ claude --session-id '{sid}' --mcp-config '")), "{}", launch.script());
+        assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid.as_str()));
         let text = std::fs::read_to_string(&config).unwrap();
         assert!(text.contains("Bearer wss_fake1") && text.contains(&url), "the minted token, not the static one");
         assert!(!text.contains("fake-static"));
 
-        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };
+        let Launch::Minted { name, new_session, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };
         assert_eq!(name, "hand-demo-1");
+        assert_ne!(new_session.as_deref(), Some(sid.as_str()), "each + gets its own uuid");
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body.get("repo"), None, "not in a repo: no repo");
+        assert_eq!(body["claudeSessionId"].as_str(), new_session.as_deref());
         let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         assert_eq!(name, "hand-alpha-2", "a second + in the same repo");
     }
@@ -390,7 +411,7 @@ mod tests {
     #[test]
     fn hand_script_passes_only_the_path_and_no_strict_flag() {
         let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
-        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None };
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
         let script = launch.script();
         let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
@@ -407,6 +428,20 @@ mod tests {
         assert!(resume.contains("try { claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' --mcp-config '"), "{resume}");
         assert!(resume.ends_with("; claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' }"), "the stale branch resumes too: {resume}");
         assert_eq!(Launch::Plain.script_with("claude --resume 'x'"), "claude --resume 'x'");
+        // m5/40: a fresh + starts with its uuid; the stale branch starts a session of its own
+        let fresh = Launch::Minted {
+            name: "hand-alpha-1".into(),
+            session: "hand-alpha-1".into(),
+            config: PathBuf::from(r"C:\fm\mcp\workstate-hand-alpha-1.json"),
+            notice: None,
+            new_session: Some("aaaa0001-0000-4000-8000-000000000001".into()),
+        };
+        assert_eq!(
+            fresh.script(),
+            format!(
+                "if (Test-Path -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json') {{ try {{ claude --session-id 'aaaa0001-0000-4000-8000-000000000001' --mcp-config 'C:\\fm\\mcp\\workstate-hand-alpha-1.json' }} finally {{ Remove-Item -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
+            )
+        );
         assert_eq!(Launch::Unminted("x".into()).script(), "claude");
         // pwsh's own documented example
         assert_eq!(encoded_command("dir \"c:\\program files\" "), "ZABpAHIAIAAiAGMAOgBcAHAAcgBvAGcAcgBhAG0AIABmAGkAbABlAHMAIgAgAA==");
@@ -496,7 +531,9 @@ mod tests {
         let Launch::Minted { name, config, .. } = hands.launch_for(alpha, Some("resumed"), Some(sid)) else { panic!() };
         let Launch::Minted { name: other, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
-        seen.recv_timeout(WAIT).unwrap();
+        let other_sid = hands.minted.get(&other).unwrap().claude_session_id.clone().unwrap();
+        assert_ne!(other_sid, sid);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["claudeSessionId"], other_sid);
         assert!(hands.release_session("ffffffff-0000-4000-8000-000000000001").is_empty());
         assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "another session's delete revokes nothing");
         assert!(hands.release_session(sid).is_empty());
@@ -552,14 +589,26 @@ mod tests {
         let (mut hands, _) = Hands::with(&home, HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
 
-        let Launch::Minted { name, session, config, notice } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
+        let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+        let Launch::Minted { name, session, config, notice, new_session } = hands.launch_for(alpha, Some("mw-workflow"), Some(sid)) else { panic!() };
         assert_eq!((name.as_str(), session.as_str(), notice), ("hand-alpha-1", "mw-workflow", None));
+        assert_eq!(new_session, None, "a resume starts no new session");
+        assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid));
         assert!(config.ends_with("workstate-hand-alpha-1.json"), "the file keeps Foreman's key: {config:?}");
         let (_, auth, body) = seen.recv_timeout(WAIT).unwrap();
         assert_eq!(auth, "Bearer fake-static-orch");
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!((body["name"].as_str(), body["role"].as_str()), (Some("mw-workflow"), Some("orchestrator")));
         assert_eq!((body["launchedBy"].as_str(), body["externalRole"].as_str()), (Some("foreman/hand"), Some("hand")));
+        assert_eq!(body["claudeSessionId"].as_str(), Some(sid), "the resumed uuid (m5/40)");
+
+        // never a short id: claude --resume <8 hex> starts a new session
+        let Launch::Minted { name: short, new_session, .. } = hands.launch_for(alpha, Some("other"), Some("fc7b0272")) else { panic!() };
+        assert_eq!(new_session, None);
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!(body.get("claudeSessionId"), None, "{body}");
+        assert_eq!(hands.release(&short), None);
+        seen.recv_timeout(WAIT).unwrap();
 
         // the same session in a second tab would take the first one's token: it gets the generated name
         let Launch::Minted { session, notice, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
@@ -628,7 +677,7 @@ mod tests {
         let fake = format!("@echo %*> \"{}\"\r\n@echo fake claude ran\r\n@exit /b 3\r\n", seen.display());
         std::fs::write(dir.path().join("claude.cmd"), fake).unwrap();
         let path = format!("{};{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
-        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None };
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None };
         // -NoExit's prompt reads stdin; a closed one ends it like a human typing `exit`.
         let out = std::process::Command::new("pwsh")
             .args(["-NoLogo", "-NoProfile"])
@@ -656,7 +705,7 @@ mod tests {
         let config = dir.path().join("workstate-hand-alpha-1.json");
         std::fs::write(&config, "{}").unwrap();
         let seen = dir.path().join("argv.txt");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None }.script();
+        let line = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None }.script();
         let script = format!(
             "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
             seen.display(),

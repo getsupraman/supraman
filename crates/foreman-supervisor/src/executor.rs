@@ -263,7 +263,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     let exempt = wanted.as_ref().is_some_and(|w| w.exempt_from_budget());
                     // the resume keeps its `--mcp-config` path: a fresh token goes into the same file
                     let result = match &wanted {
-                        Some(w) => self.remint(w, now),
+                        Some(w) => self.remint(w, &session_id, now),
                         None => Ok(()),
                     }
                     .and_then(|()| self.launcher.resume(&session_id, &cwd, prompt.as_deref()).map_err(|e| Failure::from(&e)))
@@ -353,7 +353,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.extra_args.push("--allowedTools".into());
             spec.extra_args.extend(self.config.allowed_tools.iter().cloned());
         }
-        if let Some((url, token)) = self.mint(w, now)? {
+        if let Some((url, token)) = self.mint(w, None, now)? {
             spec = spec
                 .with_minted_token(&self.config.mcp_dir, &w.name, &url, &token)
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
@@ -365,7 +365,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// or resume gets a fresh token on the same WorkState row), and remembers its `sessionId`. Returns
     /// the MCP URL and the minted token; `None` when the role has no token (no WorkState for it).
     /// A failed mint fails the launch: there is no fallback to the static token.
-    fn mint(&mut self, w: &WantedSession, now: Millis) -> Result<Option<(String, String)>, Failure> {
+    ///
+    /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
+    /// ignores `--session-id` (m5/40 probe), so a launch sends none and its row's id is PATCHed later
+    /// ([`Self::bind_claude_sessions`]).
+    fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, String)>, Failure> {
         let Some(t) = self.tokens.token(&w.role) else {
             return Ok(None);
         };
@@ -379,6 +383,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             external_role: w.role.clone(),
             replace: true,
             repo: w.repo.as_ref().and_then(|_| (self.repo_of)(&w.cwd)),
+            claude_session_id: claude_session_id.map(str::to_string),
         };
         let minted = self
             .minter
@@ -389,7 +394,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             MintedSession {
                 session_id: minted.session_id,
                 role: w.role.clone(),
-                claude_session_id: None,
+                claude_session_id: claude_session_id.map(str::to_string),
                 last_active: Some(now),
             },
         );
@@ -397,9 +402,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         Ok(Some((t.url, minted.token)))
     }
 
-    /// Before a resume: a fresh token into the session's config file.
-    fn remint(&mut self, w: &WantedSession, now: Millis) -> Result<(), Failure> {
-        if let Some((url, token)) = self.mint(w, now)? {
+    /// Before the resume of `claude_session_id`: a fresh token into the session's config file.
+    fn remint(&mut self, w: &WantedSession, claude_session_id: &str, now: Millis) -> Result<(), Failure> {
+        if let Some((url, token)) = self.mint(w, Some(claude_session_id), now)? {
             foreman_claude::write_mcp_config(&self.config.mcp_dir, &w.name, &url, &token, &[])
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
         }
@@ -836,6 +841,7 @@ mod tests {
                     external_role: "workspace".into(),
                     replace: true,
                     repo: None,
+                    claude_session_id: None,
                 },
             }]
         );
@@ -920,6 +926,7 @@ mod tests {
             [MintCall::Mint { request, bearer, .. }] => {
                 assert!(request.replace);
                 assert_eq!(bearer, STATIC);
+                assert_eq!(request.claude_session_id, Some(stopped.session_id.clone()), "the uuid --bg --resume keeps");
             }
             other => panic!("{other:?}"),
         }
@@ -951,11 +958,14 @@ mod tests {
             sup.minted().get("fm-demo-workspace").unwrap().claude_session_id.as_deref(),
             Some("aaaa0001-0000-4000-8000-000000000001")
         );
-        // a resume mints again, so the uuid is PATCHed again
+        // a resume mints again with the uuid in its body (m5/40), so there is nothing left to PATCH
         sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + 200 * SECOND);
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 205 * SECOND);
         let calls = minter.take();
-        assert!(matches!(calls.as_slice(), [MintCall::Mint { .. }, MintCall::Bind { .. }]), "{calls:?}");
+        match calls.as_slice() {
+            [MintCall::Mint { request, .. }] => assert_eq!(request.claude_session_id.as_deref(), Some("aaaa0001-0000-4000-8000-000000000001")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

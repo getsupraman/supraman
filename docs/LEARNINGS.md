@@ -2601,3 +2601,48 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   selftest-added · ./beta: not within 5 s", m5/26's repo menu, not touched here; m5-37's gate ran beside it), then
   5 of 5 PASS (115/121/127/121/120 s); `--selftest-supervise` PASS (308 s); `--selftest-detach-shutdown` PASS; no
   `fm-selftest` rows or transcripts of this worktree left.
+
+## 2026-10-28 — m5/40 every WorkState mint sends claudeSessionId
+
+- **Why**: skills-9a's rule (René approved): a launcher may take over a name registered with no launcher only when
+  that row's `claude_session_id` equals the mint's `claudeSessionId`. WorkState already reads it from the mint body
+  (`AgentSessionEndpoints.cs:18`) and stores it with coalesce. `MintRequest::claude_session_id` sends it as
+  `claudeSessionId`, left out when `None`, and never as a guess.
+- **Probe** (`fm probe session-id`, claude 2.1.312; one hidden `aw-m2-probe-<hex>-sid` session, cwd
+  `<CARGO_TARGET_DIR>/aw-m2-probe-<hex>/sid`, the parent's variables removed, `--strict-mcp-config`,
+  `bgIsolation:"none"`), run twice with the same result:
+  - `claude --bg --session-id <uuid>` is **accepted and ignored**: no error, `backgrounded · d6fc8fba`, and the row's
+    `sessionId` was the daemon's own (`d6fc8fba-…`, not the `bc4948a5-…` asked for). No transcript under the asked id.
+  - `claude --bg --resume <full uuid>` **keeps it**: the same `id`/`sessionId`, one row, and the same `<uuid>.jsonl`
+    grew (422 KB → 429 KB).
+  - A foreground `claude -p --session-id <uuid>` **takes it**: exit 0 in 4.9 s, `<uuid>.jsonl` written. That is the
+    shape of the `+` tab (a foreground claude), so the `+` path relies on it.
+  - Cleanup: `claude stop` + `claude rm` through `Claude::remove`, transcripts through `forget_transcript`
+    (`probe_rm::cleanup`). claude leaves an empty `memory/` dir in the probe's project dir; it is not deleted (only
+    the transcript and its sibling dir may be, m5/38).
+- **So**:
+  - Hand resume (`hand.rs` `launch_for`, from `view.rs` `resume` → `hand_claude`): the resumed `session_id`, only if
+    it is a full UUID (`is_session_id`; an 8-hex short id is not sent).
+  - Hand `+`: a new v4 (`foreman_claude::new_session_id`), `Launch::Minted::new_session`, and the launch script runs
+    `claude --session-id '<uuid>' --mcp-config '<file>'`. The stale branch (file gone) starts plain `claude` without
+    it. `MintedSession.claude_session_id` holds the id for both, so Delete's `release_session` finds a `+` token too.
+  - Supervisor resume (`executor.rs` `remint`): the row's `sessionId` it resumes, also stored in `MintedSession`, so
+    `bind_claude_sessions` no longer PATCHes it again after a resume. A resume that started a copy (`woke_in_place`)
+    differs from the stored id and gets PATCHed with the copy's.
+  - Supervisor launch (workspace, repo controllers, relay; all `--bg`): **no id in the mint**, since `--bg` ignores
+    `--session-id`. The row's id reaches WorkState by the existing PATCH once the row shows it. Foreman cannot send
+    anything better at mint time for a fresh `--bg` launch.
+- Tests: `mint::tests::mint_http_client_sends_the_claude_session_id_when_known` (fake server body);
+  `hand::tests::hand_mint_carries_the_repo_and_none_outside_a_repo` (`+`: body `claudeSessionId` = `new_session`,
+  script `claude --session-id '<it>' --mcp-config`, `MintedSession` filled, each `+` its own uuid),
+  `hand_script_passes_only_the_path_and_no_strict_flag` (exact `+` script, stale branch without it),
+  `hand_resume_mints_an_orchestrator_under_the_sessions_own_name` (resume body = resumed uuid, a short id sends
+  none), `deleting_a_resumed_session_revokes_only_its_own_token`; `executor::tests::mint_launch_writes_only_…`
+  (launch: `claude_session_id: None`), `mint_relaunch_and_resume_replace_the_token_on_the_same_session` (resume:
+  the row's uuid), `mint_patches_the_claude_session_once_per_mint` (after a resume: one mint with the uuid, no PATCH).
+  Red: hand mint `claude_session_id: None` and `remint` minting with `None` → 3 of 12 hand tests and 2 of 19
+  supervisor mint tests fail.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-40\target`, `plugins` junction beside it): `cargo build --release
+  --workspace` ok, no warnings; `cargo test --release --workspace` 559 passed, 0 failed; `--selftest` 5 of 5 PASS
+  (124/121/120/120/125 s); `--selftest-supervise` PASS (310 s); `--selftest-detach-shutdown` PASS (16 s); no
+  `fm-selftest` or `aw-m2-probe` rows left (`claude agents --json --all`).
