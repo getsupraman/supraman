@@ -2675,3 +2675,49 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   --release --workspace` 561 passed, 0 failed; `--selftest` 5 of 5 PASS (~123 s each; plus 6 earlier PASS while
   building the step); `--selftest-supervise` PASS (317 s); `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of
   this worktree left (one `fm-selftest-e430b8` with cwd in the main checkout is another run's, not touched).
+
+## 2026-10-28 — m5/42 one text input everywhere: the task box and the Find bar
+
+- **Before**: the task box (`compose.rs`) and a terminal's Find bar (`view/term.rs` `Find::key`) each took the
+  window's KeyDowns by hand (key_char appended, Backspace popped, no selection, no IME, a "▏" glued into the text).
+  Both are now `text_input::TextInput`, the m5/30 input; `compose.rs` keeps only the box's state (workspace,
+  reply-to, error / sent / route) and `first_line`. No other hand-made text entry is left: `settings_window`'s
+  `key_down` only closes on Esc, and `FleetView::key_down` forwards key_char to the terminal's program, which is
+  terminal input, not a text box.
+- **Multi-line** (`TextInput::multi_line`): one element for both kinds. It shapes with `text_system().shape_text`
+  (one `WrappedLine` per text line, wrapped at the box width minus 2 px for the caret; one line: no wrap, scrolled
+  left). The painted rows go to the gpui-free `LineText` as the `Rows` trait (byte range per visual row, x within the
+  row, offset at an x), so Up/Down (keeping the column of the first vertical move), Home/End per visual row and
+  row_of's wrap rule (an offset at a wrap is the next row's start; End stops before the wrap's last character so
+  the caret stays on its row) are unit-tested on a monospace `LineRows`. While the last paint is older than the text
+  (keys dispatched with no frame between), `LineRows` of the text lines stands in. The box's height is a
+  `request_measured_layout` that shapes at the width it is given: 3 to 8 rows, then it scrolls (the wheel too,
+  only when the text is taller than 8 rows); the caret is scrolled into view after each edit or move.
+- **Keys**: `enter` is `Confirm` (a new line in the task box, the event on one line), `shift-enter` `ConfirmBack`
+  (the Find bar's previous match, a new line in the task box), `ctrl-enter` `Submit` (Confirm on both), `up`/`down`
+  (+ shift) propagate on one line, `ctrl-home`/`ctrl-end` (+ shift) go to the text's ends. Paste keeps line breaks
+  (CRLF/CR → LF) in the task box and turns them into spaces on one line (`pasted`). KEYS.md updated.
+- **Focus**: the box's and the bar's inputs are in `FleetView::input_focused`, so `key_down` leaves their keys to
+  them and to WM_CHAR. The old `focused` flags and the terminal's mouse-down that cleared them are gone: a click
+  outside an input focuses the window (m5/30's root listener), Esc closes and focuses the window, Send refocuses the
+  box after its press took the keys, and a click on the Find bar beside its input focuses the input.
+- **Selftest typing**: a dispatched `KeyDownEvent` with a key_char never reaches a TextInput (on Windows characters
+  come through WM_CHAR). `window.dispatch_keystroke` does: when nothing took the key it hands key_char to the
+  input handler of the last paint, which exists only once a frame painted the input focused. So the steps wait
+  for `is_focused && caret_painted` first. Step 6c types the Find query that way and now also checks that
+  Shift+Enter goes back to the match Enter left. Supervise step t types two lines, Up (caret on line 1), Down
+  (line 2), Ctrl+End, Ctrl+Shift+Left selects `WRONG.`, types `nothing.` over it, and Ctrl+Enter sends the
+  result to the testbed workspace session (checked in its transcript); before the Esc check it clicks back into the
+  box, because the Approve click gave the keys to the window.
+- **Step f depends on René's live sessions.** Its busy limit of 1 is machine-wide (`budget::working` counts every
+  live `fm-` row with `status=busy`). While `fm-nomos-workspace` and `fm-nomos-nomos` were mid-turn, neither of the
+  testbed's two workspaces ever launched (`not both launched within 180 s (first live [None, None])`), with this
+  unit's build and with main's (6b3df5a) alike. The selftest should not count sessions outside its testbed.
+- Tests: `text_input::tests::up_and_down_keep_the_column_across_shorter_lines`,
+  `home_end_and_vertical_moves_follow_wrapped_rows`, `shift_up_and_down_select_across_lines`,
+  `a_paste_keeps_its_lines_on_several_and_joins_them_on_one`, `word_moves_cross_line_breaks`;
+  `view::term::tests::find_steps_up_from_the_bottom_and_wraps` on `find_step`. compose.rs's key tests went with its
+  key handler. Red: `move_vertically` without the goal column → 1 of 14 `text_input` tests fail.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-42\target`): `cargo build --release --workspace` ok, no warnings; `cargo test
+  --release --workspace` 565 passed, 0 failed; `--selftest` 5 of 5 PASS (119–121 s); `--selftest-detach-shutdown`
+  PASS; no `fm-selftest` rows of this worktree left. `--selftest-supervise`: FAIL at step f, twice on this build (434 s, 440 s) and once on main 6b3df5a (437 s), all `not both launched within 180 s (first live [None, None])` while fm-nomos-workspace and fm-nomos-nomos were busy (see above); its step t (the task box) passed in both runs on this build.

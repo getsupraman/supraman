@@ -1297,16 +1297,48 @@ fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, mod
     Ok(())
 }
 
+/// `text` typed into the focused text input: Enter as its key, each character as a keystroke that no
+/// binding takes, which gpui then hands to the input's handler as a real key's WM_CHAR is.
 fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
     for ch in text.chars() {
         let c = ch.to_string();
-        match ch {
-            '\n' => keystroke(cx, "enter", None, Modifiers::default())?,
-            ' ' => keystroke(cx, "space", Some(" "), Modifiers::default())?,
-            _ => keystroke(cx, &c.to_lowercase(), Some(&c), Modifiers { shift: ch.is_uppercase(), ..Default::default() })?,
-        }
+        let keystroke = match ch {
+            '\n' => {
+                keystroke(cx, "enter", None, Modifiers::default())?;
+                continue;
+            }
+            ' ' => Keystroke { modifiers: Modifiers::default(), key: "space".into(), key_char: Some(c) },
+            _ => Keystroke { modifiers: Modifiers { shift: ch.is_uppercase(), ..Default::default() }, key: c.to_lowercase(), key_char: Some(c) },
+        };
+        cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx))?;
     }
     Ok(())
+}
+
+/// The task box's (text, selection) as its input holds them.
+fn compose_state(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Option<(String, std::ops::Range<usize>)> {
+    view.read_with(cx, |v, cx| v.compose.as_ref().map(|c| (c.text(cx), c.input.read(cx).line.selection())))
+}
+
+/// Waits until the task box's input has the keys and a frame painted it so: only then is its input
+/// handler the window's, which typed characters go to.
+async fn until_compose_focused(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let started = Instant::now();
+    loop {
+        let ready = cx.update(|window, cx| {
+            view.read(cx).compose.as_ref().is_some_and(|c| {
+                let input = c.input.read(cx);
+                input.is_focused(window) && input.caret_painted.get()
+            })
+        })?;
+        if ready {
+            return Ok(());
+        }
+        if started.elapsed() > Duration::from_secs(5) {
+            bail!("the task box's input was not painted focused within 5 s");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
 }
 
 /// The drops in the inbox and in its `sent/` (where the relay's watcher moves each one it sent).
@@ -1409,21 +1441,47 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     wait_painted(view, &task_key, Duration::from_secs(10), cx).await?;
     click(view, &task_key, cx).await?;
     wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
-    let open = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.focused)));
+    let open = cx.update(|window, cx| {
+        view.read(cx).compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
+    })?;
     if open != Some((w.to_string(), None, true)) {
         bail!("Task… opened {open:?}, not a focused task box for {w}");
     }
+    until_compose_focused(view, cx).await?;
     own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
     let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
     // the workspace session reads this as the human's: it must not start work
-    let task = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.\nDo nothing and send nothing.");
-    type_text(cx, &task)?;
-    let typed = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| c.text.clone()));
-    if typed.as_deref() != Some(task.as_str()) {
-        bail!("the box holds {typed:?} after typing {task:?}");
+    let first = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.");
+    let task = format!("{first}\nDo nothing and send nothing.");
+    // m5/42: two lines typed, the caret moved up and back down, the last word selected and typed over
+    let typed = format!("{first}\nDo nothing and send WRONG.");
+    type_text(cx, &typed)?;
+    let state = compose_state(view, cx);
+    if state.as_ref().map(|(t, s)| (t.as_str(), s.clone())) != Some((typed.as_str(), typed.len()..typed.len())) {
+        bail!("the box holds {state:?} after typing {typed:?}");
     }
+    sleep(cx, Duration::from_millis(100)).await;
+    keystroke(cx, "up", None, Modifiers::default())?;
+    let up = compose_state(view, cx).map(|(_, s)| s.end);
+    keystroke(cx, "down", None, Modifiers::default())?;
+    let down = compose_state(view, cx).map(|(_, s)| s.end);
+    if !up.is_some_and(|c| c <= first.len()) || !down.is_some_and(|c| c > first.len()) {
+        bail!("Up put the caret at {up:?} (line 1 ends at {}), Down at {down:?}", first.len());
+    }
+    keystroke(cx, "end", None, Modifiers { control: true, ..Default::default() })?;
+    keystroke(cx, "left", None, Modifiers { control: true, shift: true, ..Default::default() })?;
+    let selected = compose_state(view, cx).map(|(t, s)| t[s].to_string());
+    if selected.as_deref() != Some("WRONG.") {
+        bail!("Ctrl+End, Ctrl+Shift+Left selected {selected:?}, not \"WRONG.\"");
+    }
+    type_text(cx, "nothing.")?;
+    let replaced = compose_state(view, cx).map(|(t, _)| t);
+    if replaced.as_deref() != Some(task.as_str()) {
+        bail!("typing over the selection left {replaced:?}, expected {task:?}");
+    }
+    println!("step t: two lines typed; Up → {up:?}, Down → {down:?}; Ctrl+Shift+Left selected \"WRONG.\", typed over");
     keystroke(cx, "enter", None, Modifiers::control())?;
-    let after = view.read_with(cx, |v, _| v.compose.as_ref().map(|c| (c.text.clone(), c.sent.clone(), c.route.clone(), c.error.clone())));
+    let after = view.read_with(cx, |v, cx| v.compose.as_ref().map(|c| (c.text(cx), c.sent.clone(), c.route.clone(), c.error.clone())));
     let Some((left, Some(sent), Some(route), None)) = after else {
         bail!("after Ctrl+Enter the box is {after:?}, expected open, cleared, `sent` set and no error");
     };
@@ -1464,8 +1522,15 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         bail!("answered.json has {saved:?}, not {file} → approve");
     }
 
-    // text typed and Escape: closed, nothing sent
+    // text typed and Escape: closed, nothing sent. The Approve click gave the keys to the window: a click
+    // in the box takes them back.
+    click(view, "compose-text", cx).await?;
+    until_compose_focused(view, cx).await?;
     type_text(cx, "typed, not sent")?;
+    let held = compose_state(view, cx).map(|(t, _)| t);
+    if held.as_deref() != Some("typed, not sent") {
+        bail!("the box holds {held:?} after a click in it and typing \"typed, not sent\"");
+    }
     let hold = std::env::var("FOREMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse::<u64>().ok());
     if let Some(secs) = hold {
         std::fs::write(tb.home.join("hold"), "")?;

@@ -549,9 +549,9 @@ impl FleetView {
             let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
                 let w = workspace.name.clone();
                 button(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
+                    move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
-                        this.open_compose(&w, None, cx);
+                        this.open_compose(&w, None, window, cx);
                     },
                 ))
             });
@@ -1146,9 +1146,9 @@ impl FleetView {
                 let reply = |cx: &mut Context<Self>| {
                     let (w, file) = (workspace.clone(), m.file.clone());
                     button(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
+                        move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
-                            this.open_compose(&w, Some(file.clone()), cx);
+                            this.open_compose(&w, Some(file.clone()), window, cx);
                         },
                     ))
                 };
@@ -1247,8 +1247,8 @@ impl FleetView {
         Some(section.into_any_element())
     }
 
-    /// The open [`Compose`]: its text with a caret while focused, what Ctrl+Enter does, why the relay
-    /// cannot take it now, the last error or the last task sent; Send and Cancel.
+    /// The open [`Compose`]: its text input, what Ctrl+Enter does, why the relay cannot take it now, the
+    /// last error or the last task sent; Send and Cancel.
     fn render_compose(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let c = self.compose.as_ref()?;
         let colors = cx.theme().colors().clone();
@@ -1257,15 +1257,6 @@ impl FleetView {
         let title = match &c.reply_to {
             Some(_) => format!("Reply to {ctrl}"),
             None => format!("Task for {ctrl}"),
-        };
-        let caret = if c.focused { "▏" } else { "" };
-        let (before, after) = c.text.split_at(c.cursor());
-        let text = if c.text.is_empty() {
-            div()
-                .text_color(colors.text_placeholder)
-                .child(SharedString::from(format!("{caret}Type here; Enter adds a line.")))
-        } else {
-            div().text_color(colors.text).child(SharedString::from(format!("{before}{caret}{after}")))
         };
         let refusal = self.relay_refusal(&c.workspace);
         let line = |text: String, color: Hsla| div().text_xs().text_color(color).child(SharedString::from(text));
@@ -1282,9 +1273,8 @@ impl FleetView {
                 .p_2()
                 .rounded_md()
                 .border_1()
-                .border_color(if c.focused { colors.border_focused } else { colors.border })
+                .border_color(colors.border)
                 .bg(colors.editor_background)
-                .cursor_text()
                 .child(hit_target(&self.hits, "compose-box".into()))
                 .child(
                     div()
@@ -1295,7 +1285,7 @@ impl FleetView {
                         .child(SharedString::from(title))
                         .child("Ctrl+Enter sends · Esc cancels"),
                 )
-                .child(div().min_h(px(48.)).text_sm().child(text))
+                .child(div().relative().child(c.input.clone()).child(hit_target(&self.hits, "compose-text".into())))
                 .children(refusal.map(|why| line(format!("Cannot send now: {why}."), status.warning)))
                 .children(c.error.clone().map(|e| line(e, status.error)))
                 .children(c.sent.clone().map(|s| line(format!("{}: {s}", c.route.as_deref().unwrap_or("sent")), status.success)))
@@ -1305,9 +1295,13 @@ impl FleetView {
                         .gap_2()
                         .justify_end()
                         .child(button(&self.hits, "compose-send".into(), "Send", cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
+                            |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 this.send_compose(cx);
+                                // the press gave the keys to the window: an open box takes them back
+                                if let Some(c) = &this.compose {
+                                    c.input.update(cx, |input, cx| input.focus(window, cx));
+                                }
                             },
                         )))
                         .child(button(&self.hits, "compose-cancel".into(), "Cancel", cx).on_click(cx.listener(
@@ -1318,12 +1312,11 @@ impl FleetView {
                             },
                         ))),
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if let Some(c) = &mut this.compose {
-                        c.focused = true;
+                    if let Some(c) = &this.compose {
+                        c.input.update(cx, |input, cx| input.focus(window, cx));
                     }
-                    cx.notify();
                 }))
                 .into_any_element(),
         )
