@@ -6,20 +6,20 @@
 // glyph rects, minimum-contrast adjustment, the context menu.
 
 use gpui::{
-    App, Bounds, DispatchPhase, Entity, Font, FontFeatures, FontStyle, FontWeight, Hitbox,
-    HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point as GpuiPoint, StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window,
-    canvas, fill, point, px, size,
+    App, Bounds, ContentMask, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
+    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
+    StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
+    point, px, size,
 };
 use itertools::Itertools as _;
-use std::mem;
+use std::{cell::RefCell, collections::HashMap, mem, sync::Arc};
 use foreman_term::{
     Cell, Color, CursorShape, IndexedCell, Modes, MouseInputMode, NamedColor, Terminal,
     TerminalBounds, is_default_background_color,
 };
 use theme::{ActiveTheme, Theme};
 
-pub const FONT_FAMILY: &str = "Consolas";
 pub const FONT_SIZE: Pixels = px(14.);
 pub const MIN_FONT_SIZE: Pixels = px(6.);
 pub const MAX_FONT_SIZE: Pixels = px(72.);
@@ -30,11 +30,37 @@ pub fn step_font_size(size: Pixels, delta: i32) -> Pixels {
 }
 const LINE_HEIGHT_FACTOR: f32 = 1.3;
 
+/// The font every terminal grid paints with: `settings.toml` `terminal_font_family`,
+/// `terminal_font_size` and `terminal_ligatures` (m5/41, m5/47).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TermFont {
+    pub family: SharedString,
+    pub size: Pixels,
+    pub ligatures: bool,
+}
+
+impl TermFont {
+    pub fn font(&self) -> Font {
+        Font {
+            features: if self.ligatures { FontFeatures::default() } else { no_ligatures() },
+            ..gpui::font(self.family.clone())
+        }
+    }
+}
+
+pub fn no_ligatures() -> FontFeatures {
+    FontFeatures(Arc::new(["calt", "liga", "clig"].map(|tag| (tag.to_string(), 0)).to_vec()))
+}
+
 struct BatchedTextRun {
     line: i32,
     column: i32,
     text: String,
     cell_count: usize,
+    /// The byte offset in `text` where each cell starts.
+    cell_starts: Vec<usize>,
+    /// One character fitted into its cells ([`BatchedTextRun::paint_fitted`]).
+    fit: bool,
     style: TextRun,
 }
 
@@ -47,6 +73,8 @@ impl BatchedTextRun {
             column,
             text,
             cell_count: 1,
+            cell_starts: vec![0],
+            fit: false,
             style,
         }
     }
@@ -60,10 +88,11 @@ impl BatchedTextRun {
     }
 
     fn append_char(&mut self, c: char, counts_cell: bool) {
-        self.text.push(c);
         if counts_cell {
+            self.cell_starts.push(self.text.len());
             self.cell_count += 1;
         }
+        self.text.push(c);
         self.style.len += c.len_utf8();
     }
 
@@ -79,14 +108,126 @@ impl BatchedTextRun {
             origin.x + self.column as f32 * dims.cell_width,
             origin.y + self.line as f32 * dims.line_height,
         );
-        let shaped = window.text_system().shape_line(
-            self.text.clone().into(),
-            font_size,
-            std::slice::from_ref(&self.style),
-            Some(dims.cell_width),
-        );
+        if self.fit {
+            return self.paint_fitted(origin, pos, dims, font_size, window, cx);
+        }
+        let shape = |style: &TextRun, window: &mut Window| {
+            window.text_system().shape_line(self.text.clone().into(), font_size, std::slice::from_ref(style), Some(dims.cell_width))
+        };
+        let mut shaped = shape(&self.style, window);
+        if !self.on_cells(&shaped, dims.cell_width) && self.style.font.features != no_ligatures() {
+            let mut style = self.style.clone();
+            style.font.features = no_ligatures();
+            shaped = shape(&style, window);
+        }
+        record(self, &shaped, pos - origin, false, window);
         let _ = shaped.paint(pos, dims.line_height, gpui::TextAlign::Left, None, window, cx);
     }
+
+    /// Every glyph that starts a cell is at that cell's x: a ligature glyph standing for several
+    /// cells' characters would move the glyphs after it off their cells.
+    fn on_cells(&self, shaped: &ShapedLine, cell_width: Pixels) -> bool {
+        shaped.runs.iter().flat_map(|run| &run.glyphs).all(|glyph| match self.cell_starts.binary_search(&glyph.index) {
+            Ok(cell) => (glyph.position.x - cell_width * cell as f32).abs() <= px(1.),
+            Err(_) => true,
+        })
+    }
+
+    /// As Windows Terminal: a glyph wider than its cells is scaled down and centred in them, and
+    /// nothing is painted outside them.
+    fn paint_fitted(&self, origin: GpuiPoint<Pixels>, pos: GpuiPoint<Pixels>, dims: &TerminalBounds, font_size: Pixels, window: &mut Window, cx: &mut App) {
+        let cells = dims.cell_width * self.cell_count as f32;
+        let runs = std::slice::from_ref(&self.style);
+        let mut shaped = window.text_system().shape_line(self.text.clone().into(), font_size, runs, None);
+        let (left, right) = ink(&self.text, &shaped, window.text_system()).unwrap_or((px(0.), shaped.width));
+        let (left, right) = (left.min(px(0.)), right.max(shaped.width));
+        let mut at = pos;
+        if right - left > cells + px(0.5) {
+            let scale = cells / (right - left);
+            shaped = window.text_system().shape_line(self.text.clone().into(), font_size * scale, runs, None);
+            at.x -= left * scale;
+        }
+        record(self, &shaped, at - origin, true, window);
+        let mask = ContentMask { bounds: Bounds::new(pos, size(cells, dims.line_height)) };
+        window.with_content_mask(Some(mask), |window| {
+            let _ = shaped.paint(at, dims.line_height, gpui::TextAlign::Left, None, window, cx);
+        });
+    }
+}
+
+/// The leftmost and rightmost inked x of `shaped`, relative to its origin.
+fn ink(text: &str, shaped: &ShapedLine, text_system: &WindowTextSystem) -> Option<(Pixels, Pixels)> {
+    shaped
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(move |g| (run.font_id, g)))
+        .filter_map(|(font_id, glyph)| {
+            let ch = text[glyph.index..].chars().next()?;
+            let bounds = text_system.typographic_bounds(font_id, shaped.font_size, ch).ok()?;
+            let left = glyph.position.x + bounds.origin.x;
+            Some((left, left + bounds.size.width))
+        })
+        .reduce(|(l1, r1), (l2, r2)| (l1.min(l2), r1.max(r2)))
+}
+
+/// A glyph as the grid last painted it, for the selftest ([`record_painted_glyphs`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaintedGlyph {
+    pub line: i32,
+    /// The cell its character is in.
+    pub column: i32,
+    pub ch: char,
+    pub glyph: u32,
+    /// Relative to the grid's origin, as is `ink`.
+    pub x: Pixels,
+    pub ink: Option<(Pixels, Pixels)>,
+    pub fitted: bool,
+    pub font_size: Pixels,
+}
+
+thread_local! {
+    static PAINTED: RefCell<Option<Vec<PaintedGlyph>>> = const { RefCell::new(None) };
+}
+
+/// While on, each grid paint replaces [`painted_glyphs`].
+pub fn record_painted_glyphs(on: bool) {
+    PAINTED.with_borrow_mut(|p| *p = on.then(Vec::new));
+}
+
+pub fn painted_glyphs() -> Vec<PaintedGlyph> {
+    PAINTED.with_borrow(|p| p.clone().unwrap_or_default())
+}
+
+fn record(run: &BatchedTextRun, shaped: &ShapedLine, at: GpuiPoint<Pixels>, fitted: bool, window: &Window) {
+    if PAINTED.with_borrow(Option::is_none) {
+        return;
+    }
+    let text_system = window.text_system();
+    let glyphs: Vec<PaintedGlyph> = shaped
+        .runs
+        .iter()
+        .flat_map(|r| r.glyphs.iter().map(move |g| (r.font_id, g)))
+        .filter_map(|(font_id, glyph)| {
+            let ch = run.text[glyph.index..].chars().next()?;
+            let cell = run.cell_starts.partition_point(|&start| start <= glyph.index).saturating_sub(1);
+            let x = at.x + glyph.position.x;
+            let ink = text_system
+                .typographic_bounds(font_id, shaped.font_size, ch)
+                .ok()
+                .map(|b| (x + b.origin.x, x + b.origin.x + b.size.width));
+            Some(PaintedGlyph {
+                line: run.line,
+                column: run.column + cell as i32,
+                ch,
+                glyph: glyph.id.0,
+                x,
+                ink,
+                fitted,
+                font_size: shaped.font_size,
+            })
+        })
+        .collect();
+    PAINTED.with_borrow_mut(|p| p.iter_mut().for_each(|p| p.extend(glyphs.iter().cloned())));
 }
 
 struct LayoutRect {
@@ -343,29 +484,59 @@ pub struct LayoutState {
     hitbox: Hitbox,
 }
 
-fn base_font() -> Font {
-    Font {
-        features: FontFeatures::disable_ligatures(),
-        ..gpui::font(FONT_FAMILY)
-    }
-}
-
-/// Cell metrics for the terminal font at `font_size`; used for the grid and for the PTY size.
-pub fn cell_metrics(font_size: Pixels, cx: &App) -> (Pixels, Pixels) {
+/// Cell metrics for `font`; used for the grid and for the PTY size.
+pub fn cell_metrics(font: &TermFont, cx: &App) -> (Pixels, Pixels) {
     let text_system = cx.text_system();
-    let font_id = text_system.resolve_font(&base_font());
+    let font_id = text_system.resolve_font(&font.font());
     let cell_width = text_system
-        .advance(font_id, font_size, 'm')
+        .advance(font_id, font.size, 'm')
         .map(|s| s.width)
-        .unwrap_or(font_size * 0.55);
-    let line_height = px((f32::from(font_size) * LINE_HEIGHT_FACTOR).round());
+        .unwrap_or(font.size * 0.55);
+    let line_height = px((f32::from(font.size) * LINE_HEIGHT_FACTOR).round());
     (line_height, cell_width)
 }
 
-pub fn terminal_grid(terminal: Entity<Terminal>, font_size: Pixels) -> impl IntoElement {
+/// Whether `family` loads and its `i`, `M`, `W` and `.` advance alike.
+pub fn is_monospace(text_system: &gpui::TextSystem, family: &str) -> bool {
+    if family.starts_with('@') {
+        return false;
+    }
+    let font_id = text_system.resolve_font(&gpui::font(family.to_string()));
+    let advance = |ch| text_system.advance(font_id, px(100.), ch).ok().map(|a| a.width);
+    match ['i', 'M', 'W', '.'].map(advance) {
+        [Some(i), rest @ ..] => rest.iter().all(|w| w.is_some_and(|w| (w - i).abs() < px(0.5))),
+        _ => false,
+    }
+}
+
+/// Whether `ch` in `cells` cells is painted alone and fitted: the font has no glyph for it (a
+/// fallback font draws it), or its glyph is wider than the cells. ASCII and box drawing never are.
+fn needs_fit(ch: char, cells: usize, font_id: FontId, font_size: Pixels, cell_width: Pixels, cx: &App) -> bool {
+    if ch.is_ascii() || ('\u{2500}'..='\u{257F}').contains(&ch) {
+        return false;
+    }
+    thread_local! {
+        static WIDTH_PER_PX: RefCell<HashMap<(FontId, char), Option<f32>>> = RefCell::new(HashMap::new());
+    }
+    let per_px = WIDTH_PER_PX.with_borrow_mut(|cache| {
+        *cache.entry((font_id, ch)).or_insert_with(|| {
+            (!drawn_by_fallback(cx.text_system(), font_id, ch)).then(|| f32::from(cx.text_system().layout_width(font_id, px(100.), ch)) / 100.)
+        })
+    });
+    per_px.is_none_or(|per_px| font_size * per_px > cell_width * cells as f32 + px(0.5))
+}
+
+/// A missing glyph is the font's .notdef, so the font's own advance differs from the shaped width,
+/// which is the fallback font's.
+pub fn drawn_by_fallback(text_system: &gpui::TextSystem, font_id: FontId, ch: char) -> bool {
+    let shaped = text_system.layout_width(font_id, px(100.), ch);
+    text_system.advance(font_id, px(100.), ch).ok().is_none_or(|own| (own.width - shaped).abs() > px(0.01))
+}
+
+pub fn terminal_grid(terminal: Entity<Terminal>, font: TermFont) -> impl IntoElement {
     let terminal_for_paint = terminal.clone();
     canvas(
-        move |bounds, window, cx| prepaint(&terminal, font_size, bounds, window, cx),
+        move |bounds, window, cx| prepaint(&terminal, &font, bounds, window, cx),
         move |_bounds, state, window, cx| {
             register_mouse_listeners(&terminal_for_paint, &state.hitbox, window);
             paint(state, window, cx)
@@ -376,12 +547,12 @@ pub fn terminal_grid(terminal: Entity<Terminal>, font_size: Pixels) -> impl Into
 
 fn prepaint(
     terminal: &Entity<Terminal>,
-    font_size: Pixels,
+    font: &TermFont,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &mut App,
 ) -> LayoutState {
-    let (line_height, cell_width) = cell_metrics(font_size, cx);
+    let (line_height, cell_width) = cell_metrics(font, cx);
     let gutter = cell_width;
     let mut grid_bounds = bounds;
     grid_bounds.origin.x += gutter;
@@ -411,7 +582,10 @@ fn prepaint(
             fg: theme.colors().terminal_background,
         }
     });
-    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme, selected.as_ref());
+    let base = font.font();
+    let font_id = cx.text_system().resolve_font(&base);
+    let fit = |ch: char, cells: usize| needs_fit(ch, cells, font_id, font.size, cell_width, cx);
+    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme, selected.as_ref(), &base, &fit);
     let selected_text = selected.as_ref().filter(|s| runs.iter().any(|r| r.style.color == s.fg && s.contains(r.line, r.column as usize)));
 
     let cursor = if content.cursor.shape == CursorShape::Hidden || !lit {
@@ -471,7 +645,7 @@ fn prepaint(
 
     LayoutState {
         dims,
-        font_size,
+        font_size: font.size,
         background: theme.colors().terminal_background,
         rects,
         block_rects,
@@ -585,6 +759,7 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     for rect in state.matches.iter().chain(&state.selection) {
         rect.paint(origin, &dims, window);
     }
+    PAINTED.with_borrow_mut(|p| p.iter_mut().for_each(Vec::clear));
     for run in &state.runs {
         run.paint(origin, &dims, state.font_size, window, cx);
     }
@@ -623,12 +798,13 @@ fn layout_grid<'a>(
     grid: impl Iterator<Item = &'a IndexedCell>,
     theme: &Theme,
     selected: Option<&Selected>,
+    font: &Font,
+    fit: &dyn Fn(char, usize) -> bool,
 ) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
     let mut runs = Vec::new();
     let mut block_regions = Vec::new();
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut current: Option<BatchedTextRun> = None;
-    let font = base_font();
 
     for (line_index, (_, line)) in grid.chunk_by(|c| c.point.line).into_iter().enumerate() {
         let display_line = line_index as i32;
@@ -677,7 +853,7 @@ fn layout_grid<'a>(
             if is_blank(cell) {
                 continue;
             }
-            let mut style = cell_style(cell, fg, theme, &font);
+            let mut style = cell_style(cell, fg, theme, font);
             if let Some(selected) = selected.filter(|s| s.contains(display_line, col as usize)) {
                 style.color = selected.fg;
                 for color in [style.underline.as_mut().map(|u| &mut u.color), style.strikethrough.as_mut().map(|s| &mut s.color)]
@@ -700,6 +876,18 @@ fn layout_grid<'a>(
                 continue;
             }
             let zero_width = cell.zerowidth();
+            let cells = if cell.is_wide_char() { 2 } else { 1 };
+            if fit(cell.character(), cells) {
+                runs.extend(current.take());
+                let mut batch = BatchedTextRun::new_from_char(display_line, col, cell.character(), style);
+                batch.cell_count = cells;
+                batch.fit = true;
+                for &c in zero_width.unwrap_or_default() {
+                    batch.append_char(c, false);
+                }
+                runs.push(batch);
+                continue;
+            }
             match current.as_mut() {
                 Some(batch)
                     if batch.can_append(&style)
@@ -857,6 +1045,40 @@ mod tests {
             .collect()
     }
 
+    fn grid(cells: &[IndexedCell], theme: &Theme, selected: Option<&Selected>) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
+        layout_grid(cells.iter(), theme, selected, &gpui::font("Consolas"), &|_, _| false)
+    }
+
+    #[test]
+    fn a_fitted_character_is_a_run_of_its_own_and_the_rest_keep_one_run_per_style() {
+        let theme = theme();
+        let cells = row(0, "a->◯x->y", Color::Named(NamedColor::Foreground));
+        let (_, _, runs) = layout_grid(cells.iter(), &theme, None, &gpui::font("Consolas"), &|c, _| c == '◯');
+        let shown: Vec<(&str, i32, usize, bool)> = runs.iter().map(|r| (r.text.as_str(), r.column, r.cell_count, r.fit)).collect();
+        assert_eq!(shown, [("a->", 0, 3, false), ("◯", 3, 1, true), ("x->y", 4, 4, false)]);
+        assert_eq!(runs[2].cell_starts, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn cell_starts_skip_zero_width_characters() {
+        let mut run = BatchedTextRun::new_from_char(0, 0, 'e', TextRun { len: 1, ..Default::default() });
+        run.append_char('\u{301}', false);
+        run.append_char('é', true);
+        run.append_char('x', true);
+        assert_eq!(run.cell_starts, [0, 3, 5]);
+        assert_eq!(run.cell_count, 3);
+        assert_eq!(run.style.len, run.text.len());
+    }
+
+    #[test]
+    fn ligatures_off_disables_every_ligature_feature() {
+        let off = TermFont { family: "Cascadia Code".into(), size: FONT_SIZE, ligatures: false }.font();
+        let on = TermFont { ligatures: true, ..TermFont { family: "Cascadia Code".into(), size: FONT_SIZE, ligatures: false } }.font();
+        assert_eq!(off.features.tag_value_list(), [("calt".to_string(), 0), ("liga".to_string(), 0), ("clig".to_string(), 0)]);
+        assert!(on.features.tag_value_list().is_empty(), "the shaper's defaults: calt and liga on");
+        assert_eq!(on.family, "Cascadia Code");
+    }
+
     fn single(ch: char) -> Vec<BlockElementLayoutRect> {
         let mut regions = Vec::new();
         assert!(collect_block_element_regions(0, 0, ch, Hsla::default(), &mut regions));
@@ -878,7 +1100,7 @@ mod tests {
         let background = theme.colors().terminal_background;
         let selected = Selected { start: (0, 2), end: (1, 1), is_block: false, fg: background };
         let cells: Vec<_> = row(0, "abcdef", fg).into_iter().chain(row(1, "ghijkl", fg)).collect();
-        let (_, _, runs) = layout_grid(cells.iter(), &theme, Some(&selected));
+        let (_, _, runs) = grid(&cells, &theme, Some(&selected));
         let drawn: Vec<(i32, &str, bool)> = runs.iter().map(|r| (r.line, r.text.as_str(), r.style.color == background)).collect();
         assert_eq!(drawn, [(0, "ab", false), (0, "cdef", true), (1, "gh", true), (1, "ijkl", false)]);
         assert_eq!(SELECTION_BACKGROUND, gpui::rgb(0xFFFFFF).into());
@@ -891,7 +1113,7 @@ mod tests {
         let theme = theme();
         let fg = Color::Spec(Rgb { r: 215, g: 119, b: 87 });
         let cells = row(0, "████", fg);
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
+        let (_, block_rects, runs) = grid(&cells, &theme, None);
         assert!(runs.is_empty(), "block elements must not become text runs");
         assert_eq!(block_rects.len(), 1, "adjacent full blocks merge");
         assert_eq!(shape(&block_rects[0]), rect(0, 0, 32, 24));
@@ -904,7 +1126,7 @@ mod tests {
         let fg = Color::Named(NamedColor::Foreground);
         let mut cells = row(0, "██", fg);
         cells.extend(row(1, "██", fg));
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
+        let (_, block_rects, runs) = grid(&cells, &theme, None);
         assert!(runs.is_empty());
         assert_eq!(block_rects.len(), 1);
         assert_eq!(shape(&block_rects[0]), rect(0, 0, 16, 48));
@@ -955,7 +1177,7 @@ mod tests {
     fn block_element_letters_stay_text_runs_beside_blocks() {
         let theme = theme();
         let cells = row(0, "ab█c", Color::Named(NamedColor::Foreground));
-        let (_, block_rects, runs) = layout_grid(cells.iter(), &theme, None);
+        let (_, block_rects, runs) = grid(&cells, &theme, None);
         assert_eq!(runs.iter().map(|r| r.text.as_str()).collect_vec(), ["ab", "c"]);
         assert_eq!(runs[1].column, 3);
         assert_eq!(block_rects.iter().map(shape).collect_vec(), [rect(0, 16, 8, 24)]);

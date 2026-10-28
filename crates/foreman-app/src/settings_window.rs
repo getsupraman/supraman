@@ -3,6 +3,7 @@
 //! supervisor re-reads it on its next tick.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use foreman_core::{DEFAULT_WORKSTATE_URL, Settings};
 use foreman_ui::term_element;
@@ -24,7 +25,7 @@ pub enum Page {
     Sessions,
     WorkState,
     Plugins,
-    /// The theme and the terminal colours (m5/31).
+    /// The theme, the terminal colours and the terminal font.
     Appearance,
     /// Foreman's and the claude CLI's versions, the refresh (m5/13: no longer in the left panel).
     About,
@@ -59,6 +60,9 @@ pub struct SettingsView {
     theme_problem: Option<String>,
     /// The terminal font size Appearance last painted, for the selftest (step 7q).
     shown_font_size: std::cell::Cell<Option<Pixels>>,
+    /// The installed monospace families; `None` while they are being found.
+    mono_fonts: Option<Arc<Vec<String>>>,
+    font_error: Option<String>,
     /// The WorkState server URL as typed (m5/43); Enter or Apply uses it.
     url_input: Entity<TextInput>,
     url_error: Option<String>,
@@ -66,6 +70,8 @@ pub struct SettingsView {
     auth: AuthStatus,
     _url_events: Subscription,
 }
+
+static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 
 /// Paints the app with the theme and terminal colours `settings.toml` names (at start, and after
 /// every change on the Appearance page).
@@ -139,11 +145,29 @@ impl SettingsView {
             catalog: Catalog::default(),
             theme_problem: None,
             shown_font_size: Default::default(),
+            mono_fonts: MONO_FONTS.get().cloned(),
+            font_error: None,
             url_input,
             url_error: None,
             auth: AuthStatus::NotSignedIn,
             _url_events: url_events,
         };
+        if this.mono_fonts.is_none() {
+            let text_system = cx.text_system().clone();
+            let installed = this.fleet.upgrade().map(|f| f.read(cx).installed_fonts.clone()).unwrap_or_default();
+            cx.spawn(async move |this, cx| {
+                let found = cx
+                    .background_spawn(async move { installed.iter().filter(|f| term_element::is_monospace(&text_system, f)).cloned().collect::<Vec<_>>() })
+                    .await;
+                let found = MONO_FONTS.get_or_init(|| Arc::new(found)).clone();
+                this.update(cx, |this, cx| {
+                    this.mono_fonts = Some(found);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
         this.reload();
         let url = this.settings.workstate_origin();
         this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
@@ -218,6 +242,22 @@ impl SettingsView {
 
     pub fn shown_font_size(&self) -> Option<Pixels> {
         self.shown_font_size.get()
+    }
+
+    /// The terminal font family (`None`: the default) and ligatures, applied by the fleet window.
+    pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) {
+        let result = self.fleet.update(cx, |fleet, cx| fleet.set_term_font(family, ligatures, cx));
+        self.font_error = match result {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(e),
+            Err(_) => Some("the main window is closed".into()),
+        };
+        self.reload();
+        cx.notify();
+    }
+
+    pub fn mono_fonts(&self) -> Option<Arc<Vec<String>>> {
+        self.mono_fonts.clone()
     }
 
     fn open_themes_folder(&mut self, cx: &mut Context<Self>) {
@@ -604,6 +644,48 @@ impl SettingsView {
                 .into_any_element(),
             None => div().text_sm().text_color(colors.text_muted).child("the main window is closed").into_any_element(),
         };
+
+        let (family, ligatures, installed) = self
+            .fleet
+            .upgrade()
+            .map(|f| {
+                let f = f.read(cx);
+                (f.term_font_family.clone(), f.term_ligatures, f.installed_fonts.clone())
+            })
+            .unwrap_or_else(|| (SharedString::default(), self.settings.terminal_ligatures(), Arc::default()));
+        let mut fonts = div().flex().flex_wrap().gap_1().pt_2();
+        match &self.mono_fonts {
+            Some(mono) => {
+                for (ix, name) in mono.iter().enumerate() {
+                    let pick = name.clone();
+                    fonts = fonts.child(
+                        choice(("term-font", ix), SharedString::from(name.clone()), *name == family, cx)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(Some(&pick), ligatures, cx))),
+                    );
+                }
+            }
+            None => fonts = fonts.child(div().text_xs().text_color(colors.text_muted).child("finding the monospace fonts…")),
+        }
+        let font_notes = self
+            .settings
+            .missing_terminal_font(&installed)
+            .map(|missing| format!("{missing} (settings.toml) is not installed: {family} is shown."))
+            .into_iter()
+            .chain(self.font_error.clone())
+            .map(|e| div().w_full().text_xs().text_color(status.warning).child(SharedString::from(e)).into_any_element())
+            .collect::<Vec<_>>();
+        fonts = fonts.children(font_notes);
+        let default = foreman_core::default_terminal_font_family(&installed);
+        let font_reset = small_button("term-font-default", "Default", cx)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
+        let mut ligature_choices = div().flex().gap_1();
+        for (ix, (label, on)) in [("On", true), ("Off", false)].into_iter().enumerate() {
+            let family = self.settings.terminal_font_family.clone();
+            ligature_choices = ligature_choices.child(
+                choice(("ligatures", ix), label.into(), ligatures == on, cx)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
+            );
+        }
         vec![
             row(
                 "Theme",
@@ -625,6 +707,26 @@ impl SettingsView {
                 "Terminal font size",
                 "The text size in every terminal tab, in pixels (6 to 72, default 14). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml (terminal_font_size).",
                 font_size,
+                None,
+                cx,
+            ),
+            row_owned(
+                "Terminal font",
+                format!(
+                    "The font of every terminal tab, from the monospace fonts installed. Default: Cascadia Code, else \
+                     Cascadia Mono, else Consolas (here {default}). A character the font lacks is drawn from a fallback \
+                     font, shrunk to fit its cell. Applied to open terminals at once and kept in settings.toml \
+                     (terminal_font_family)."
+                ),
+                font_reset.into_any_element(),
+                Some(fonts.into_any_element()),
+                cx,
+            ),
+            row(
+                "Ligatures",
+                "Character pairs such as -> and != drawn as one symbol, when the font has them (Cascadia Code does), \
+                 each character still in its own cell. Kept in settings.toml (terminal_ligatures).",
+                ligature_choices.into_any_element(),
                 None,
                 cx,
             ),
@@ -666,6 +768,16 @@ fn row(
     below: Option<AnyElement>,
     cx: &App,
 ) -> AnyElement {
+    row_owned(title, description.into(), control, below, cx)
+}
+
+fn row_owned(
+    title: &'static str,
+    description: String,
+    control: AnyElement,
+    below: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
     let colors = cx.theme().colors();
     div()
         .flex()
@@ -683,7 +795,7 @@ fn row(
                 .min_w_0()
                 .gap_1()
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
-                .child(div().text_xs().text_color(colors.text_muted).child(description))
+                .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(description)))
                 .children(below),
         )
         .child(div().flex_none().child(control))

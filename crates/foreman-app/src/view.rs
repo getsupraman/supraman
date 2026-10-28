@@ -252,6 +252,11 @@ pub struct FleetView {
     /// Every terminal tab's font size (m5/41): `settings.toml` `terminal_font_size`, changed by
     /// Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel in any terminal and by Settings → Appearance.
     pub term_font_size: Pixels,
+    /// Every terminal tab's font family and ligatures (m5/47), from `settings.toml` and Settings → Appearance.
+    pub term_font_family: SharedString,
+    pub term_ligatures: bool,
+    /// The font families the system has, read at start.
+    pub installed_fonts: Arc<Vec<String>>,
     /// The pending debounced write of `term_font_size` ([`term::FONT_SAVE_AFTER`]).
     font_save: Option<gpui::Task<()>>,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
@@ -488,7 +493,11 @@ impl FleetView {
             .as_ref()
             .and_then(|s| s.left_width)
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
-        let term_font_size = px(loaded.unwrap_or_default().terminal_font_size() as f32);
+        let loaded = loaded.unwrap_or_default();
+        let term_font_size = px(loaded.terminal_font_size() as f32);
+        let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
+        let term_font_family = SharedString::from(loaded.terminal_font_family(&installed_fonts));
+        let term_ligatures = loaded.terminal_ligatures();
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
@@ -627,6 +636,9 @@ impl FleetView {
             poll_hold,
             left_width,
             term_font_size,
+            term_font_family,
+            term_ligatures,
+            installed_fonts,
             font_save: None,
             settings_window: None,
             last_alive: StdHashMap::new(),
@@ -2311,7 +2323,7 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone(), self.term_font_size)),
+                        .child(term_element::terminal_grid(terminal.clone(), self.term_font())),
                 )
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),

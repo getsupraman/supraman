@@ -14,6 +14,8 @@ pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `terminal_font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
 pub const MIN_TERMINAL_FONT_SIZE: u32 = 6;
 pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
+/// The terminal font when `terminal_font_family` is unset or not installed: the first one installed (m5/47).
+pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono", "Consolas"];
 
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +53,26 @@ pub struct Settings {
     /// Appearance leave it. Unset or not a number: 14; read through [`Settings::terminal_font_size`].
     #[serde(default, deserialize_with = "lenient_size", skip_serializing_if = "Option::is_none")]
     pub terminal_font_size: Option<u32>,
+    /// The terminal font family (m5/47). Unset or not installed: [`default_terminal_font_family`]; read
+    /// through [`Settings::terminal_font_family`].
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub terminal_font_family: Option<String>,
+    /// Ligatures in terminal tabs (m5/47). Unset or not a bool: on.
+    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub terminal_ligatures: Option<bool>,
+}
+
+/// The value, or nothing when it has the wrong type: a bad value must not make the whole file unreadable.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> std::result::Result<Option<T>, D::Error> {
+    Ok(toml::Value::deserialize(d)?.try_into().ok())
+}
+
+/// The first of [`TERMINAL_FONT_PREFERENCE`] in `installed` (family names, any case), else the last.
+pub fn default_terminal_font_family(installed: &[String]) -> &'static str {
+    TERMINAL_FONT_PREFERENCE
+        .into_iter()
+        .find(|want| installed.iter().any(|name| name.eq_ignore_ascii_case(want)))
+        .unwrap_or(TERMINAL_FONT_PREFERENCE[TERMINAL_FONT_PREFERENCE.len() - 1])
 }
 
 /// A number (integer or float, rounded) or nothing: a bad value must not make the whole file unreadable.
@@ -83,6 +105,8 @@ impl Default for Settings {
             theme: None,
             terminal_colors: None,
             terminal_font_size: None,
+            terminal_font_family: None,
+            terminal_ligatures: None,
         }
     }
 }
@@ -160,6 +184,36 @@ impl Settings {
         self.terminal_font_size = (size != DEFAULT_TERMINAL_FONT_SIZE).then_some(size);
     }
 
+    /// The family to paint with, as `installed` spells it: the one set when it is installed, else the default.
+    pub fn terminal_font_family(&self, installed: &[String]) -> String {
+        self.terminal_font_family
+            .as_deref()
+            .and_then(|want| installed.iter().find(|name| name.eq_ignore_ascii_case(want.trim())))
+            .cloned()
+            .unwrap_or_else(|| default_terminal_font_family(installed).to_string())
+    }
+
+    /// The family set, when it is not installed.
+    pub fn missing_terminal_font(&self, installed: &[String]) -> Option<&str> {
+        self.terminal_font_family
+            .as_deref()
+            .filter(|want| !installed.iter().any(|name| name.eq_ignore_ascii_case(want.trim())))
+    }
+
+    /// Stores `family`; `None` or a blank name is stored as unset.
+    pub fn set_terminal_font_family(&mut self, family: Option<&str>) {
+        self.terminal_font_family = family.map(str::trim).filter(|f| !f.is_empty()).map(str::to_string);
+    }
+
+    pub fn terminal_ligatures(&self) -> bool {
+        self.terminal_ligatures.unwrap_or(true)
+    }
+
+    /// On, the default, is stored as unset.
+    pub fn set_terminal_ligatures(&mut self, on: bool) {
+        self.terminal_ligatures = (!on).then_some(false);
+    }
+
     pub fn path(home: &Path) -> PathBuf {
         home.join("settings.toml")
     }
@@ -207,6 +261,8 @@ mod tests {
             theme: Some("Foreman Dark".into()),
             terminal_colors: Some("campbell".into()),
             terminal_font_size: Some(20),
+            terminal_font_family: Some("Lucida Console".into()),
+            terminal_ligatures: Some(false),
         };
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
@@ -296,5 +352,65 @@ terminal_font_size = {bad}
         s.save(home.path()).unwrap();
         assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("terminal_font_size"));
         assert_eq!(Settings::load(home.path()).unwrap().terminal_font_size(), 14);
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_default_terminal_font_is_the_first_installed_of_cascadia_code_cascadia_mono_consolas() {
+        assert_eq!(default_terminal_font_family(&names(&["Arial", "Cascadia Mono", "Cascadia Code", "Consolas"])), "Cascadia Code");
+        assert_eq!(default_terminal_font_family(&names(&["Arial", "cascadia mono", "Consolas"])), "Cascadia Mono");
+        assert_eq!(default_terminal_font_family(&names(&["Arial", "Consolas"])), "Consolas");
+        assert_eq!(default_terminal_font_family(&names(&["Arial"])), "Consolas", "nothing installed: Consolas");
+        assert_eq!(default_terminal_font_family(&[]), "Consolas");
+    }
+
+    #[test]
+    fn terminal_font_family_is_the_one_set_when_installed_else_the_default() {
+        let installed = names(&["Cascadia Code", "Consolas", "Lucida Console"]);
+        let mut s = Settings::default();
+        assert_eq!(s.terminal_font_family(&installed), "Cascadia Code");
+        assert_eq!(s.missing_terminal_font(&installed), None);
+        s.set_terminal_font_family(Some(" lucida console "));
+        assert_eq!(s.terminal_font_family(&installed), "Lucida Console", "matched in any case, spelt as installed");
+        s.set_terminal_font_family(Some("Fira Code"));
+        assert_eq!(s.terminal_font_family(&installed), "Cascadia Code");
+        assert_eq!(s.missing_terminal_font(&installed), Some("Fira Code"));
+        assert_eq!(s.terminal_font_family(&names(&["Consolas"])), "Consolas");
+        s.set_terminal_font_family(Some("  "));
+        assert_eq!(s.terminal_font_family, None);
+    }
+
+    #[test]
+    fn terminal_font_family_and_ligatures_load_save_and_survive_bad_values() {
+        let home = tempfile::tempdir().unwrap();
+        let load = |text: &str| {
+            fs::write(Settings::path(home.path()), text).unwrap();
+            Settings::load(home.path()).unwrap()
+        };
+        assert!(Settings::default().terminal_ligatures(), "on unless set");
+        let s = load("terminal_font_family = \"Consolas\"\nterminal_ligatures = false\n");
+        assert_eq!(s.terminal_font_family.as_deref(), Some("Consolas"));
+        assert!(!s.terminal_ligatures());
+        for bad in ["terminal_font_family = 12\nterminal_ligatures = \"yes\"", "terminal_font_family = [\"x\"]\nterminal_ligatures = 0"] {
+            let s = load(&format!("max_working = 3\n{bad}\n"));
+            assert_eq!((s.terminal_font_family.as_deref(), s.terminal_ligatures()), (None, true), "{bad}");
+            assert_eq!(s.max_working, 3, "{bad} does not cost the rest of the file");
+        }
+
+        let mut s = Settings::default();
+        s.set_terminal_font_family(Some("Cascadia Mono"));
+        s.set_terminal_ligatures(false);
+        s.save(home.path()).unwrap();
+        let text = fs::read_to_string(Settings::path(home.path())).unwrap();
+        assert!(text.contains("terminal_font_family = \"Cascadia Mono\"") && text.contains("terminal_ligatures = false"), "{text}");
+        assert_eq!(Settings::load(home.path()).unwrap(), s);
+        s.set_terminal_font_family(None);
+        s.set_terminal_ligatures(true);
+        s.save(home.path()).unwrap();
+        let text = fs::read_to_string(Settings::path(home.path())).unwrap();
+        assert!(!text.contains("terminal_font_family") && !text.contains("terminal_ligatures"), "the defaults are saved as unset: {text}");
     }
 }

@@ -2846,3 +2846,44 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   (116–123 s) on a second series — the first series had 4 of 5, run 4 failing step 7j's 1500 ms Refresh bound while a
   selftest of the main checkout ran alongside; `--selftest-detach-shutdown` PASS; no `fm-selftest` rows of this
   worktree left.
+
+## 2026-10-28 — m5/47 terminal font: Cascadia Code with ligatures, a font setting, fallback glyphs fitted
+
+- **Setting.** `settings.toml` `terminal_font_family` (unset or not installed: `default_terminal_font_family`, the
+  first installed of `TERMINAL_FONT_PREFERENCE` = Cascadia Code, Cascadia Mono, Consolas; matched in any case,
+  spelt as installed) and `terminal_ligatures` (unset: on; on is saved as unset). A value of the wrong type reads
+  as unset through `lenient` and costs nothing else in the file. `FleetView` holds `term_font_family`,
+  `term_ligatures` and `installed_fonts` (`all_font_names()`, read once at start); `term_font()` builds the
+  `term_element::TermFont { family, size, ligatures }` every grid paints with, and `set_term_font` saves at once
+  and repaints. The next prepaint lays the grid out with `cell_metrics(&TermFont)` and resizes the pty, as a
+  size change does (m5/41).
+- **Settings → Appearance**: "Terminal font" lists the installed monospace families (`is_monospace`: `i`, `M`,
+  `W`, `.` advance alike; found on a background thread once per process, `MONO_FONTS`), with Default; a family
+  in the file that is not installed shows a note. "Ligatures" On/Off.
+- **Ligatures keep the grid.** Runs are shaped with `force_width` as Zed's terminal does; Cascadia Code's `->`
+  is `calt` glyph substitution with one glyph per cell, so `b` stays on its cell. `BatchedTextRun::cell_starts`
+  maps glyph byte indices to cells, and `on_cells` checks every cell-starting glyph is at its cell's x (±1 px); a
+  font whose ligature glyph spans several cells fails that and the run is shaped again with `no_ligatures()`
+  (calt, liga, clig off; gpui's `disable_ligatures` turns off calt only). Runs still split on any style change.
+- **Fallback glyphs fit.** DirectWrite gives a missing character glyph 0 (.notdef), not an error, so
+  `advance()` alone cannot tell; `drawn_by_fallback` compares the font's own advance with the shaped width
+  (`layout_width`, which uses the fallback). A non-ASCII character outside U+2500–257F that is drawn by a
+  fallback font or is wider than its cells (1, 2 for a wide char, `Cell::is_wide_char`) is its own `fit` run:
+  `paint_fitted` measures its ink (`typographic_bounds`), scales the font size down so ink and advance fit the
+  cells, and paints under a content mask of those cells. Box drawing stays in the font; block elements stay
+  rects. The per-(font, char) answer is cached.
+- **Selftest step 7r** (`selftest_font.rs`): `record_painted_glyphs` keeps what the last grid paint drew (char,
+  glyph id, x, ink, fitted). A `+` tab prints `◯x a->b`. Cascadia Code: `◯` inks 0.0..8.2 of 0.0..8.2 (Cascadia
+  has it), `x` at 8.2, `b` at 49.2, `->` glyph ids differ from a `no_ligatures` shape. Appearance → Consolas:
+  cells 8.20 → 7.70 px, 113 → 121 columns, laid out in ~33 ms, saved; `◯` fitted (14 → 6.86 px), inks 0.5..7.2 of
+  0.0..7.7. Ligatures off: `->` plain, `b` still at 49.2. Default: both keys gone from the file. Shots
+  `m5-47-term-default-font`, `m5-47-settings-terminal-font`, `m5-47-term-consolas`.
+- Red: fitting disabled in `layout_grid` → 7r FAIL "`◯` inks 0.96..14.75, outside its cell 0..7.70".
+- Tests: `settings::tests::the_default_terminal_font_is_the_first_installed_of_…`,
+  `terminal_font_family_is_the_one_set_when_installed_else_the_default`,
+  `terminal_font_family_and_ligatures_load_save_and_survive_bad_values`, round trip extended;
+  `term_element::tests::a_fitted_character_is_a_run_of_its_own_…`, `cell_starts_skip_zero_width_characters`,
+  `ligatures_off_disables_every_ligature_feature`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-47\target`): `cargo build --release --workspace` ok, no warnings; `cargo
+  test --release --workspace` 586 passed, 0 failed; `--selftest` 5 of 5 PASS (120–131 s); `--selftest-supervise`
+  PASS (303 s); `--selftest-detach-shutdown` PASS (14 s); `claude agents --json --all`: 0 `fm-selftest` rows.

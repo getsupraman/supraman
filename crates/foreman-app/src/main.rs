@@ -24,6 +24,7 @@ mod selftest;
 mod selftest_closed;
 mod selftest_delete;
 mod selftest_first_run;
+mod selftest_font;
 mod selftest_left;
 mod selftest_manage;
 mod selftest_mark;

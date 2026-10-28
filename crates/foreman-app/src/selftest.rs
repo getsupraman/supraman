@@ -857,6 +857,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let zoomed = crate::selftest_zoom::run(view, &home(), cx).await.context("step 7q")?;
     println!("step 7q: {zoomed}");
 
+    let font = crate::selftest_font::run(view, &home(), cx).await.context("step 7r")?;
+    println!("step 7r: {font}");
+
     // 8. Idle memory and frame times while the panel keeps refreshing.
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
