@@ -216,7 +216,8 @@ impl FleetView {
                 })),
             )
             .child(
-                icon_button(hits, "refresh", Icon::Refresh, "Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)", false, cx)
+                button::toolbar_turning(hits, "refresh", Icon::Refresh.svg(16., colors.text_muted), false, self.refreshing(), colors.text_muted, cx)
+                    .tooltip(Tooltip::text("Refresh: read the running sessions and the closed ones' transcripts now (F5 outside a terminal)"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.refresh_now(cx))),
             )
             .child(div().flex_1())
@@ -393,6 +394,18 @@ impl FleetView {
             .overflow_y_scroll()
             .pb_4();
         self.search_marks.clear();
+        if !self.sessions_read && !matches!(self.cli, Cli::Failed(_)) {
+            body = body.child(
+                div()
+                    .relative()
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .text_color(secondary(cx))
+                    .child(hit_target(&self.hits, "loading-sessions".into()))
+                    .child("Loading sessions…"),
+            );
+        }
         for workspace in tree.workspaces.iter().filter(|_| query.is_empty()) {
             let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);

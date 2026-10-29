@@ -97,13 +97,14 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
     }
 
     let button = refreshed(view, home, &main, FRESH, cx, |view, cx| Box::pin(click(view, "refresh", cx))).await?;
+    let turned = turns_until_applied(view, cx).await?;
     let work = view.update(cx, |v, cx| v.open_work(crate::selftest_work::WORKSPACE, cx));
     click(view, &format!("tab-{work}"), cx).await?;
     let key = refreshed(view, home, &main, FRESH_KEY, cx, |_, cx| Box::pin(async move { crate::selftest_tabs::press(cx, "f5", Modifiers::default()) })).await?;
     let in_terminal = f5_in_a_terminal(view, cx).await?;
     Ok(format!(
         "{ENDING} ended (out of the snapshot after {} ms): closed row at {} ms, resume at {} ms; \
-         Refresh button polled and scanned in {} ms, F5 on a Work tab in {} ms (every {} s / {} s otherwise); {in_terminal}",
+         Refresh button polled and scanned in {} ms, {turned}; F5 on a Work tab in {} ms (every {} s / {} s otherwise); {in_terminal}",
         left.as_millis(),
         closed.as_millis(),
         resume.as_millis(),
@@ -135,6 +136,32 @@ async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str,
         bail!("{e:#}: {polled} poll(s) (the last took {took:?}), {scanned} scan(s), row shown {shown}");
     }
     Ok(asked.elapsed())
+}
+
+fn turning(v: &FleetView) -> bool {
+    v.hits.borrow().contains_key("refresh-turning")
+}
+
+async fn turns_until_applied(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    until(view, cx, WITHIN, "the Refresh icon still", |v| (!v.refreshing() && !turning(v)).then_some(())).await?;
+    let polls = view.read_with(cx, |v, _| v.refreshes);
+    click(view, "refresh", cx).await?;
+    let asks = view.read_with(cx, |v, _| v.refresh_asks);
+    until(view, cx, REFRESHED, "the Refresh icon turning after the click", |v| (turning(v) || v.refreshes > polls).then_some(())).await?;
+    if view.read_with(cx, |v, _| !turning(v) && v.refreshes > polls) {
+        bail!("the poll was applied before a frame showed the icon turning");
+    }
+    click(view, "refresh", cx).await?;
+    let again = view.read_with(cx, |v, _| v.refresh_asks);
+    if again != asks {
+        bail!("a second click while refreshing asked again ({asks} → {again})");
+    }
+    let clicked = Instant::now();
+    until(view, cx, WITHIN, "the Refresh icon still once its poll is applied", |v| {
+        (v.refreshes > polls && !v.refreshing() && !turning(v)).then_some(())
+    })
+    .await?;
+    Ok(format!("the icon turned until its poll was applied ({} ms after the second click, which asked nothing)", clicked.elapsed().as_millis()))
 }
 
 async fn f5_in_a_terminal(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

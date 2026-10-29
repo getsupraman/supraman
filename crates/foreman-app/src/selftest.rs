@@ -791,9 +791,62 @@ pub(crate) async fn close_attach(
     ))
 }
 
+fn painted(v: &FleetView, key: &str) -> bool {
+    v.hits.borrow().contains_key(key)
+}
+
+async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    if view.read_with(cx, |v, _| v.sessions_read) {
+        bail!("the first session list was applied before the selftest could see the loading state");
+    }
+    until(view, cx, LISTED_WITHIN, "the loading row and the turning Refresh icon before the first list", |v| {
+        (!v.sessions_read && painted(v, "loading-sessions") && painted(v, "refresh-turning")).then_some(())
+    })
+    .await?;
+    let shown = view.read_with(cx, |v, _| (v.sessions.len(), v.tree().workspaces.len()));
+    if shown != (0, 0) {
+        bail!("rows shown while loading: {} sessions, {} workspaces", shown.0, shown.1);
+    }
+    let started = Instant::now();
+    until(view, cx, LISTED_WITHIN, "the loading row gone once the first list is applied", |v| {
+        (v.sessions_read && !painted(v, "loading-sessions")).then_some(())
+    })
+    .await?;
+    let listed = started.elapsed();
+    until(view, cx, LISTED_WITHIN, "the Refresh icon still once the first poll is applied", |v| {
+        (v.refreshes > 0 && !v.refreshing() && !painted(v, "refresh-turning")).then_some(())
+    })
+    .await?;
+    Ok(format!(
+        "loading row and turning Refresh icon painted before the first list; rows {} ms later, icon still {} ms later",
+        listed.as_millis(),
+        started.elapsed().as_millis()
+    ))
+}
+
+/// The first list is painted within this of `claude agents` returning: its apply and one frame, never the supervisor tick.
+const PAINTED_AFTER_LIST: f64 = 150.0;
+
+fn startup_timeline() -> anyhow::Result<String> {
+    let log = String::from_utf8_lossy(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default()).into_owned();
+    let phases: Vec<&str> = log.lines().filter_map(|l| l.split_once("] startup ").map(|(_, phase)| phase)).collect();
+    let at = |phase: &str| {
+        phases.iter().find(|p| p.starts_with(phase)).and_then(|p| p.rsplit_once("(at +")?.1.strip_suffix(" ms)")?.parse::<f64>().ok())
+    };
+    let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
+        bail!("no list_sessions and first paint lines in foreman.log: {phases:?}");
+    };
+    if painted - listed > PAINTED_AFTER_LIST {
+        bail!("the first list painted {:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {}", painted - listed, phases.join("; "));
+    }
+    Ok(format!("{}; painted {:.0} ms after the list", phases.join("; "), painted - listed))
+}
+
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    let loading = step("3a", loading_until_listed(view, cx)).await?;
+    println!("step 3a: {loading}");
     let (row, listed_after) = step("3", wait_attachable(view, &name, cx)).await?;
     let id = row.session.id.clone();
     println!(
@@ -802,6 +855,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         row.health,
         listed_after.as_millis()
     );
+    println!("step 3s: {}", step("3s", async { startup_timeline() }).await?);
 
     let attached = step("4", open_attach(view, &format!("attach-{id}"), &id, cx)).await?;
     println!(

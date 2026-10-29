@@ -56,7 +56,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 - `text_input` (`TextInput`, `LineText`, `bind_keys`) — the one text input, single- or multi-line, on gpui's `EntityInputHandler`: selection, IME, dead keys, clipboard. Every text field uses it.
 - `hit::{HitTargets, hit_target}` — every clickable element records its painted bounds under its key; the selftests click through these.
-- `button::{bordered, outline, pill, icon, toolbar, ghost, small, choice}` — every clickable button; the key is its element id, hover group and hit key.
+- `button::{bordered, outline, pill, icon, toolbar, toolbar_turning, ghost, small, choice}` — every clickable button; the key is its element id, hover group and hit key; `toolbar_turning` turns its icon while work it started runs.
 - `banner::{tinted, plain, dismissable, tint}` — every notice box: a status colour on its 0.12 tint.
 - `fonts::{UI, MONO, icons}` — the UI's font families; never spell a family name in a view. The terminal's font is the user's (`Settings`).
 - `menu::{ContextMenu, MenuItem, item}` — every right-click menu, generic over the owner's action type; items paint under `menu-<key>`.
@@ -126,7 +126,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --bg --resume <id>` then attach for a background session, or `claude --resume` through `hand_claude` for an interactive one. Supervised sessions get no tab: `crates/foreman-claude/src/launch.rs` `LaunchSpec::argv` and `resume_argv` build their `--bg` lines.
 
 ### The supervisor tick
-1. `crates/foreman-app/src/view.rs` `Poller` loops every `REFRESH_EVERY` or when nudged; `load` reads the registry and one `list_sessions()` snapshot.
+1. `crates/foreman-app/src/view.rs` `Poller` loops every `REFRESH_EVERY` or when nudged; `read` reads the registry and one `list_sessions()` snapshot, which the app applies (and paints) before `Poller::tick` hands that same snapshot to the supervisor. At start the version check runs beside setup and the first read.
 2. `crates/foreman-app/src/supervise.rs` `Supervision::tick` loads `Settings` and each `DesiredState`, syncs the relay, applies server changes and the daemon hold, then under `TICK` (and only while `ENABLED`) calls `tick_all`.
 3. `crates/foreman-supervisor/src/budget.rs` `tick_all` builds one `Budget` and ticks each workspace's `Supervisor`.
 4. `crates/foreman-supervisor/src/executor.rs` `Supervisor::tick`: re-mint stops, resume confirmation, memory, `reconcile` (`crates/foreman-supervisor/src/reconcile.rs`, pure), then launch / resume / stop, revocation, and the `NeedsYou` rows.
