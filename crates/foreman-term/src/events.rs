@@ -30,7 +30,6 @@ use vte::ansi::Rgb;
 pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
-    OutputReplaced,
     CloseTerminal,
     Bell,
     Wakeup,

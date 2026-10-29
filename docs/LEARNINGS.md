@@ -3591,3 +3591,37 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   see the worktree's edited crates as fresh (workspace members hash by relative path; fingerprints by mtime). Touch
   the sources afterwards, or build master by detaching the worktree. A master copy outside the worktree also fails
   the selftest's trust check, and a `foreman.exe` copied alone shows the "fm.exe is missing" notice (7f fails).
+
+## 2026-10-29 — m5/44.10 terminal dead code and split (audit U8: A-53, A-57, A-80)
+
+- **Reachability, not grep:** every `pub` item in foreman-term was narrowed to `pub(crate)`, then widened back only
+  where foreman-app or foreman-ui failed to compile (`cargo check --workspace --all-targets --exclude foreman-term`).
+  The lib's own dead-code warnings then listed what no product path reaches. The narrowed visibility stays, so a
+  future dead item warns again. Methods named alike elsewhere (`.clear()`, `.select_all()`) fooled the grep count;
+  the compiler did not.
+- **Deleted (A-53, decision 1):** headless/no-PTY subprocess terminals, display-only output replacement and the
+  output generation counter, ANSI text parsing, the `actions!` block, the init-command marker handshake, vi mode,
+  foreground-command naming, `Terminal::title` and `title_override`, `focus_in/out`, `clone_builder` and its
+  `CopyTemplate`, `try_modifiers_change`, `select_word_at_event_position`, `with_renderable_cells`, the
+  interactive-with-completion mode, `pid_getter`, `Hyperlink::{new,id,uri}` and the owned hyperlink variant, the
+  `Clear` event and `clear_saved_screen`, `Event::OutputReplaced`, plus the alacritty helpers only these used. 24 test functions go: 16 that ran on Windows (they tested deleted code) and 8
+  `cfg(not(windows))`/`cfg(unix)` ones that never ran (A-57). foreman-term 138 → 114 test functions.
+- **Kept on purpose:** `TerminalBuilder::new`'s signature (the call site is `view.rs`, which this unit may not
+  edit), so `is_remote_terminal`, `activation_script` and the path-hyperlink regex parameters still work as before;
+  `TerminalMode` is now a one-value type. The events nobody reads (`Bell`, `BlinkChanged`, `SelectionsChanged`,
+  `NewNavigationTarget`) stay too: without them `view.rs`'s `_ => return` arm is unreachable and warns. Both are a
+  small follow-up in `view.rs`.
+- **Not wired, so deleted:** focus reporting (`CSI I`/`CSI O` under DECSET 1004) was never called by the app;
+  Ctrl-hover link underlining on a bare modifier change likewise. Wiring either is a new feature, not a restore.
+- **A-57:** `urlencoding` and `percent-encoding` are gone; `url` is the one URL crate. The `file://` decode in
+  `process_hyperlink` was unreachable (hyperlinks.rs already turns every `file://` match into a path), and the
+  OSC 8 percent-decode ran only for `PathStyle::Posix`, which no caller passes on Windows.
+- **Display-only terminal is a test fixture:** `TerminalBuilder::new_display_only`, `write_output`/`write_raw_output`
+  and the parse buffer are `#[cfg(test)]`; `TerminalType::DisplayOnly` stays as a variant (allowed dead outside tests).
+- **Split (A-80):** `terminal.rs` 6,651 → 104 lines (struct, re-exports); `bounds`, `builder`, `content`, `cwd`,
+  `events`, `input`, `links`, `mouse` (selection), `process`, `scroll`, `search`, `test_support`; colours in
+  `mappings/colors.rs`. A line-multiset diff before/after shows only imports, visibility and rustfmt re-wraps.
+  foreman-term src 11,119 → 9,087 lines (8,702 after the deletion, before per-file imports).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-10\target`, merged with master 1049b90): build ok, no warnings;
+  `cargo test --release --workspace` 651 passed, 0 failed; `--selftest` 5 of 5 PASS (125–141 s; 4 of 4 before the
+  merge); `--selftest-supervise` PASS (311 s); `--selftest-detach-shutdown` PASS (13 s); 0 `fm-selftest` rows.
