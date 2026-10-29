@@ -20,6 +20,8 @@ use crate::fleet::{self, SessionRow};
 use crate::work_view;
 
 const TREE_MIN_SHARE: f32 = 0.3;
+/// Inbox and Messages shrink only once the notices are squeezed to nothing.
+const NOTICES_SHRINK: f32 = 1000.;
 pub const HOLD_STILL: Duration = Duration::from_secs(2);
 
 /// Only these rows are drawn while the pointer moves, so a row arriving above never shifts what it aims at.
@@ -641,6 +643,7 @@ impl FleetView {
                         .child(hit_target(&self.hits, "notices-area".into()))
                         .flex()
                         .flex_col()
+                        .flex_shrink(NOTICES_SHRINK)
                         .min_h_0()
                         .mb(px(SEAM_GAP))
                         .border_b_1()
@@ -674,7 +677,7 @@ impl FleetView {
             .child(hit_target(&self.hits, "inbox-area".into()))
             .flex()
             .flex_col()
-            .flex_shrink_0()
+            .min_h_0()
             .max_h(relative(INBOX_MAX_SHARE))
             .overflow_y_scroll()
             .gap_1()
@@ -921,7 +924,7 @@ impl FleetView {
             .child(hit_target(&self.hits, "messages-area".into()))
             .flex()
             .flex_col()
-            .flex_shrink_0()
+            .min_h_0()
             .max_h(relative(MESSAGES_MAX_SHARE))
             .overflow_y_scroll()
             .gap_1()

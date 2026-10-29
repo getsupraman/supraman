@@ -3945,3 +3945,22 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   it the deactivation after gpui dropped it, and gpui's `window.rs` callback logs "window not found". `tray::close`
   now hands activation to another visible window of the thread (`SetActiveWindow`, no foreground right needed)
   before the drain. 7c here: 7 of 7 failed before, 3 of 3 and then 10 of 10 passed after.
+
+## 2026-10-29 — m5/60 supervise step s: the left column overcommitted its height
+
+- **Symptom** (150 %, master 2d15564): step s scrolled `ws-row-…-u` from 624.7..654.7 to 451.3..481.3 in a tree
+  visible 363.3..480 and no further, every run.
+- **Cause**: not the scroll arithmetic. The tree had reached its max scroll offset, and its own box ended at 497.3,
+  17.3 px below the 480 px window. A dump of the areas at 1400×480: Inbox 66–176.7 (its 25 % cap), Messages
+  183.3–316.7 (30 %), notices squeezed to 0, search box 329.3–363.3, tree 134 px = `TREE_MIN_SHARE` of the
+  446.7 px panel. Inbox and Messages were `flex_shrink_0` (m3-era, from before the tree had a minimum), so 25 + 30
+  + 30 % plus header, search box and seams overflowed any panel where those fixed parts exceed 15 %, about
+  565 px. m5/51's 4 px taller search box pushed the 480 px step over the edge. The clip at the window hid the
+  overflow, so the last row could never be revealed by the harness, nor by a user.
+- **Fix** (`view/left.rs`): Inbox and Messages keep their caps but shrink (`min_h_0`, default shrink); the notices
+  get `flex_shrink(NOTICES_SHRINK = 1000)`, so they still give way first and Inbox/Messages shrink only once the
+  notices are at 0. In tall windows nothing changes. After: tree 346..480 (30 %), the row scrolls to y 446.
+- **Other reveals**: a search result's reveal only uncollapses and clears the search; the results render in the
+  same tree container, so the fix covers them. The Inbox scrolls inside itself, and its box was always inside the
+  panel; it is now smaller in short windows.
+- **Red check**: `--selftest-supervise` on master fails step s as above. With the fix it passes 3 of 3.
