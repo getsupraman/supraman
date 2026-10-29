@@ -105,7 +105,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let saved = view.update(cx, |v, _| {
         let saved = (v.show_stopped, std::mem::replace(&mut v.claude_command, format!("& '{}'", fake_claude(home).display())));
         v.show_stopped = false;
-        v.transcripts_nudge.store(true, std::sync::atomic::Ordering::SeqCst);
+        v.transcripts_nudge.wake();
         saved
     });
     let result = check(view, home, cx).await;

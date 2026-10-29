@@ -13,7 +13,6 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 
 use foreman_claude::{
     Claude, Forgotten, Health, Kind, Launcher, Removal, RmRefusal, Session, find_transcript, first_prompt, forget_transcript, is_session_id,
@@ -351,8 +350,8 @@ impl FleetView {
             })
             .detach();
         }
-        self.poll_nudge.store(true, Ordering::SeqCst);
-        self.transcripts_nudge.store(true, Ordering::SeqCst);
+        self.poll_nudge.wake();
+        self.transcripts_nudge.wake();
     }
 
     /// Keeps recently deleted sessions out of the last poll and scan; forgets them after [`HIDE_DELETED_MS`].

@@ -14,7 +14,7 @@ use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::{FleetView, TOAST_FOR, Toast};
-use super::menu::{Confirm, ContextMenu, MenuAction, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
+use super::menu::{Confirm, ContextMenu, MenuAction, MenuItem, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
 use crate::text_input::{InputEvent, TextInput};
 use crate::work_view;
@@ -195,11 +195,7 @@ impl FleetView {
         match name_event(event, &mut draft.error, &mut draft.hint) {
             NameKey::Save => self.save_add(cx),
             // Esc closes an open menu or question first
-            NameKey::Cancel if self.menu.is_some() || self.confirm.is_some() => {
-                if self.menu.take().is_none() {
-                    self.confirm = None;
-                }
-            }
+            NameKey::Cancel if self.dismiss_popup() => {}
             NameKey::Cancel => self.adding = None,
             NameKey::Edited => {}
         }
@@ -253,9 +249,13 @@ impl FleetView {
     /// The registry as it is now, without waiting for the next poll.
     pub(crate) fn reload_workspaces(&mut self) {
         self.registry_writes.fetch_add(1, Ordering::SeqCst);
-        match registry(self.home.as_deref()).and_then(|r| r.list().map_err(|e| e.to_string())) {
-            Ok(workspaces) => {
+        match super::load_registry(registry(self.home.as_deref())) {
+            Ok((workspaces, skipped)) => {
+                if self.workspaces != workspaces {
+                    self.transcripts_nudge.wake();
+                }
                 self.workspaces = workspaces;
+                self.registry_skipped = skipped;
                 self.registry_error = None;
             }
             Err(e) => self.registry_error = Some(e),
@@ -282,10 +282,39 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Opens the menu of the row under the pointer; nothing when the row is gone.
+    /// Opens the menu of the row under the pointer; nothing when the row is gone. A session's SendMessage
+    /// name is looked up off the UI thread and joins the menu if it is still open.
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
+        cx.notify();
+        let (Some(menu), MenuTarget::Session { session_id, .. }) = (&self.menu, &target) else {
+            return;
+        };
+        let (title, session_id) = (menu.title.clone(), session_id.clone());
+        let lookup = cx.background_executor().spawn(async move { send_name_of(&session_id) });
+        cx.spawn(async move |this, cx| {
+            let Some(send_name) = lookup.await else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if !this.menu.as_ref().is_some_and(|m| m.title == title && m.position == position) {
+                    return;
+                }
+                if let Some((_, items)) = this.menu_for(&target, Some(send_name), cx)
+                    && let Some(menu) = &mut this.menu
+                {
+                    menu.items = items;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn menu_for(&self, target: &MenuTarget, send_name: Option<String>, cx: &Context<Self>) -> Option<(String, Vec<MenuItem>)> {
         let tree = self.tree();
-        let menu = match &target {
+        match target {
             MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| {
                 let can_task = node.started == Some(true) && self.relay_refusal(w).is_none();
                 (w.clone(), workspace_items(node, can_task, self.has_closed_background(w)))
@@ -301,15 +330,11 @@ impl FleetView {
                 let rows = node.into_iter().flat_map(|n| n.supervised.iter().chain(n.repos.iter().flat_map(|r| &r.sessions)));
                 rows.into_iter().find(|r| &r.session.session_id == session_id).map(|row| {
                     let claimed = self.claimed_item(workspace, &row.session.name, cx);
-                    let name = if row.session.name.is_empty() { fleet::short_id(&row.session).to_string() } else { row.session.name.clone() };
-                    // a live registry entry is the proof it runs: a just-started row's health is still unknown
-                    let send_name = send_name_of(&row.session.session_id);
+                    let name = fleet::display_name(&row.session).to_string();
                     (name, session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row)))
                 })
             }
-        };
-        self.menu = menu.map(|(title, items)| ContextMenu { title, position, items });
-        cx.notify();
+        }
     }
 
     /// The item `name` holds a claim on, as the workspace's open Work tab has read it (none without one).

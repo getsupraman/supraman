@@ -228,7 +228,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         .closed
         .iter()
         .filter(|s| !listed.contains(s.session_id.as_str()))
-        .filter(|s| starred(&s.session_id) || (!s.name.starts_with("fm-") && s.started_at.is_some_and(|t| now_ms - t <= CLOSED_WINDOW_MS)))
+        .filter(|s| starred(&s.session_id) || (!s.name.starts_with(foreman_core::FM_PREFIX) && s.started_at.is_some_and(|t| now_ms - t <= CLOSED_WINDOW_MS)))
         .cloned()
         .collect();
     let main_of = |cwd: &Path| match sup.main_repos {
@@ -330,6 +330,11 @@ pub fn health_label(health: &Health) -> String {
 
 pub fn short_id(session: &Session) -> &str {
     session.id.get(..8).unwrap_or(&session.id)
+}
+
+/// Its name, else its short id.
+pub fn display_name(session: &Session) -> &str {
+    if session.name.is_empty() { short_id(session) } else { &session.name }
 }
 
 /// Where a new shell starts (m5/22): the folder of the workspace holding `active` (the active tab's

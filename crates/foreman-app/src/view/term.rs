@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use foreman_core::Settings;
 use foreman_term::{Search, Terminal};
-use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, ScrollDelta, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
@@ -97,6 +97,26 @@ pub fn find_step(at: Option<usize>, count: usize, step: isize) -> Option<usize> 
     Some((at - step).rem_euclid(count as isize) as usize)
 }
 
+/// A touchpad's pixels per font step.
+const ZOOM_PIXELS: f32 = 48.;
+
+/// The font steps of one Ctrl+wheel event: a wheel notch is one, a touchpad's pixels add up across events
+/// in `carried`.
+pub fn zoom_steps(delta: ScrollDelta, carried: &mut f32) -> i32 {
+    match delta {
+        ScrollDelta::Lines(lines) => {
+            *carried = 0.;
+            if lines.y > 0. { 1 } else if lines.y < 0. { -1 } else { 0 }
+        }
+        ScrollDelta::Pixels(pixels) => {
+            *carried += f32::from(pixels.y);
+            let steps = (*carried / ZOOM_PIXELS).trunc();
+            *carried -= steps * ZOOM_PIXELS;
+            steps as i32
+        }
+    }
+}
+
 impl FleetView {
     /// A key for the active terminal tab; true when it was one of [`chord`]'s (or went to the find bar)
     /// and must not reach the program.
@@ -126,9 +146,12 @@ impl FleetView {
         true
     }
 
-    /// Ctrl+wheel over a terminal: one font step per notch.
-    pub(super) fn wheel_font_size(&mut self, up: bool, cx: &mut Context<Self>) {
-        self.set_term_font_size(step_font_size(self.term_font_size, if up { 1 } else { -1 }), cx);
+    /// Ctrl+wheel over a terminal: [`zoom_steps`] font steps.
+    pub(super) fn wheel_font_size(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
+        let steps = zoom_steps(delta, &mut self.zoom_carried);
+        if steps != 0 {
+            self.set_term_font_size(step_font_size(self.term_font_size, steps), cx);
+        }
     }
 
     /// Every terminal tab's font size, clamped, painted at once and saved [`FONT_SAVE_AFTER`] later.
@@ -145,10 +168,7 @@ impl FleetView {
         // replacing the task drops (cancels) the write still waiting
         self.font_save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FONT_SAVE_AFTER).await;
-            let saved = Settings::load(&home).and_then(|mut settings| {
-                settings.set_terminal_font_size(f32::from(size) as u32);
-                settings.save(&home)
-            });
+            let saved = Settings::update(&home, |settings| settings.set_terminal_font_size(f32::from(size) as u32));
             this.update(cx, |this, cx| {
                 this.font_save = None;
                 if let Err(e) = saved {
@@ -172,15 +192,18 @@ impl FleetView {
     /// Every terminal tab's font family (`None`: the default) and ligatures, saved and painted at once; the
     /// next paint lays each grid out with the new cell metrics and resizes its pty.
     pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) -> Result<(), String> {
-        let mut settings = match &self.home {
-            Some(home) => Settings::load(home).map_err(|e| e.to_string())?,
-            None => Settings::default(),
+        let edit = |settings: &mut Settings| {
+            settings.set_terminal_font_family(family);
+            settings.set_terminal_ligatures(ligatures);
         };
-        settings.set_terminal_font_family(family);
-        settings.set_terminal_ligatures(ligatures);
-        if let Some(home) = &self.home {
-            settings.save(home).map_err(|e| format!("Cannot save the terminal font: {e}"))?;
-        }
+        let settings = match &self.home {
+            Some(home) => Settings::update(home, edit).map_err(|e| format!("Cannot save the terminal font: {e}"))?.0,
+            None => {
+                let mut settings = Settings::default();
+                edit(&mut settings);
+                settings
+            }
+        };
         self.term_font_family = settings.terminal_font_family(&self.installed_fonts).into();
         self.term_ligatures = ligatures;
         cx.notify();
@@ -317,6 +340,22 @@ mod tests {
 
     fn k(key: &str, control: bool, shift: bool) -> Keystroke {
         Keystroke { modifiers: Modifiers { control, shift, ..Default::default() }, key: key.into(), key_char: None }
+    }
+
+    #[test]
+    fn ctrl_wheel_steps_once_per_notch_and_a_touchpad_by_its_distance() {
+        use gpui::point;
+        let mut carried = 0.;
+        assert_eq!(zoom_steps(ScrollDelta::Lines(point(0., 3.)), &mut carried), 1);
+        assert_eq!(zoom_steps(ScrollDelta::Lines(point(0., -1.)), &mut carried), -1);
+        let pixels = |y: f32| ScrollDelta::Pixels(point(px(0.), px(y)));
+        let steps: Vec<i32> = (0..10).map(|_| zoom_steps(pixels(12.), &mut carried)).collect();
+        assert_eq!(steps.iter().sum::<i32>(), 2, "120 px is two steps, not ten: {steps:?}");
+        assert_eq!(zoom_steps(pixels(-30.), &mut carried), 0, "24 px carried, 6 px down: no step");
+        assert_eq!(zoom_steps(pixels(-100.), &mut carried), -2);
+        assert_eq!(zoom_steps(pixels(202.), &mut carried), 4, "one large swipe, with the 10 px carried down");
+        assert_eq!(zoom_steps(ScrollDelta::Lines(point(0., 0.)), &mut carried), 0);
+        assert_eq!(carried, 0., "a notch drops what a touchpad left");
     }
 
     #[test]
