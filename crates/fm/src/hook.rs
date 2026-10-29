@@ -22,11 +22,9 @@ pub fn run(event: &str) {
     if let Some(e) = Event::from_payload(event, &payload, foreman_core::time::now_ms()) {
         let _ = append_event(&home, &e, ROTATE_AT);
     }
-    // A session launched before m2x/2 keeps its launch env on resume: FOREMAN_PLATFORM, FOREMAN_ROLE=platform.
-    let workspace = std::env::var("FOREMAN_WORKSPACE").or_else(|_| std::env::var("FOREMAN_PLATFORM")).ok();
+    let workspace = std::env::var("FOREMAN_WORKSPACE").ok();
     if event == "SessionStart"
         && let Some(role) = std::env::var("FOREMAN_ROLE").ok()
-        && let role = if role == "platform" { "workspace".to_string() } else { role }
         && let Some(text) = role_injection_for(&home, &role, workspace.as_deref(), std::env::var("FOREMAN_REPO").ok().as_deref())
     {
         let mut out = std::io::stdout().lock();

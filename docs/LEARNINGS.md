@@ -549,12 +549,12 @@ Measured with `target/release/foreman.exe --selftest` / `--selftest-perf` (CLI 2
 
 ## 2026-10-22 — m1/7 closing an Attach tab: the "stop" was a misread `done`; safe detach
 
-Measured with `crates/foreman-app/diag/states.ps1` and `target/release/foreman.exe --selftest-detach <n>` /
+Measured with `crates/foreman-app/diag/states.ps1` (retired in m5/44.15; see git history before 014d286) and `target/release/foreman.exe --selftest-detach <n>` /
 `--selftest-detach-shutdown` / `--selftest` (CLI 2.1.308, Windows 11, worktree m1-7).
 
 - **The defect.** The M1 gate's `--selftest` failed 2 of 4 from the main checkout with `fm-selftest-… is listed but
   stopped — the close stopped it instead of detaching`. **Nothing stopped it.** A control session that is never
-  attached (`diag/states.ps1`, raw `claude agents --json --all` row every 0.5 s) goes `state=done` on its own with
+  attached (`diag/states.ps1` (retired in m5/44.15; see git history before 014d286), raw `claude agents --json --all` row every 0.5 s) goes `state=done` on its own with
   its process alive, as soon as its turn ("Reply with the word ready…") ends:
 
   | Run | no-pid row | pid up | `status=busy` | **`state=done status=idle`, same pid** |
@@ -592,7 +592,7 @@ Measured with `crates/foreman-app/diag/states.ps1` and `target/release/foreman.e
 ## 2026-10-22 — m2/1 launcher probes
 
 Measured with `cargo run -p fm -- probe launch` (runs 1–4; runs 3–4 are the final code, identical answers) and
-`crates/fm/probe/resume.ps1 -Variant bare|prompt|name` (CLI 2.1.308, Windows 11). Sessions `aw-m2-probe-<hex>-*`,
+`crates/fm/probe/resume.ps1 -Variant bare|prompt|name` (retired in m5/44.15; see git history before 014d286) (CLI 2.1.308, Windows 11). Sessions `aw-m2-probe-<hex>-*`,
 cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Every row was stopped + removed.
 
 - **(a) Env on the `claude --bg` process does NOT reach the session.** With `FM_PROBE=<nonce>` set on `--bg`, the
@@ -773,7 +773,7 @@ start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309
 
 ## 2026-10-23 — m2/4 supervisor in the app
 
-Measured with `crates/foreman-app/diag/kill.ps1`, `diag/resume.ps1` and `target/release/foreman.exe
+Measured with `crates/foreman-app/diag/kill.ps1`, `diag/resume.ps1` (retired in m5/44.15; see git history before 014d286) and `target/release/foreman.exe
 --selftest-supervise` (CLI 2.1.309, Windows 11, worktree m2-4). Sessions `fm-selftest-…`, cwd under the
 worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolation":"none"}}`; every row removed.
 
@@ -879,9 +879,9 @@ keep the old word because they record what was measured under it.
 
 ## 2026-10-23 — m3/1 the relay
 
-Measured with `crates/foreman-app/diag/relay.ps1` (the relay exactly as Foreman launches it: rendered
+Measured with `crates/foreman-app/diag/relay.ps1` (retired in m5/44.15; see git history before 014d286) (the relay exactly as Foreman launches it: rendered
 `roles/relay.md`, `--plugin-dir`, `--add-dir <home>/relay/<w>`, `--strict-mcp-config`, auto, `bgIsolation:"none"`;
-messages dropped with `fm send`, answers read from the outbox), `diag/timeline.py` on the transcripts, and
+messages dropped with `fm send`, answers read from the outbox), `diag/timeline.py` on the transcripts (retired in m5/44.15; see git history before 014d286), and
 `foreman.exe --selftest-supervise` step r (CLI 2.1.309, Windows 11, worktree m3-1). Sessions `fm-selftest-<hex>-*`,
 cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and removed.
 
@@ -937,9 +937,9 @@ cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and rem
 
 ## 2026-10-23 — m3/2 repo sessions on demand, named WorkState sessions, fm inside sessions, busy = busy
 
-Measured with `crates/foreman-app/diag/insession.ps1` (sessions exactly as Foreman launches them: `--plugin-dir
+Measured with `crates/foreman-app/diag/insession.ps1` (retired in m5/44.15; see git history before 014d286) (sessions exactly as Foreman launches them: `--plugin-dir
 plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `--settings` env + `bgIsolation:"none"`),
-`diag/busy.ps1` and `foreman.exe --selftest-supervise` step w (CLI 2.1.309, Windows 11, worktree m3-2). Sessions
+`diag/busy.ps1` (retired in m5/44.15; see git history before 014d286) and `foreman.exe --selftest-supervise` step w (CLI 2.1.309, Windows 11, worktree m3-2). Sessions
 `fm-selftest-<hex>-*`, cwd and `FOREMAN_HOME` under the worktree's `target/`; every row stopped and removed.
 
 - **The plugin's `bin/` is on the session's PATH.** An auto session asked to run `where.exe fm` and `fm --version`
@@ -957,7 +957,7 @@ plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `-
   (use --resume <id> to continue an existing session)`, and the row got a uuid of its own. → `X-WorkState-Session`
   is left out of the launch config; WorkState keys a session by (workspace, name) anyway (doc 11), and
   `fm roster --json` has the `sessionId` for whoever needs it.
-- **Busy signal: `status`, not `state`.** `diag/busy.ps1` (the relay selftest's target prompt: answer messages, then
+- **Busy signal: `status`, not `state`.** `diag/busy.ps1` (retired in m5/44.15; see git history before 014d286) (the relay selftest's target prompt: answer messages, then
   wait): launch → `state=working status=idle` with a pid (+2.4 s, before its first prompt) → UserPromptSubmit and
   `status=busy` in the same 500 ms poll → Stop and **`state=working status=idle`** (the m3/1 case: idle, waiting for
   messages, `state` still `working`) → a SendMessage from another session: UserPromptSubmit + `status=busy` in the
@@ -1004,11 +1004,11 @@ plugins/foreman` with this build's `fm.exe` installed, `--strict-mcp-config`, `-
 
 ## 2026-10-23 — m3/3 the two skills: workspace-controller, repo-controller
 
-Measured with `crates/foreman-app/diag/skills.ps1` (a relay, a workspace session and a repo session exactly as
+Measured with `crates/foreman-app/diag/skills.ps1` (retired in m5/44.15; see git history before 014d286) (a relay, a workspace session and a repo session exactly as
 Foreman launches them: rendered `roles/*.md` as the prompt, `--plugin-dir plugins/foreman` with this build's
 `fm.exe`, `--settings` env FOREMAN_HOME/ROLE/WORKSPACE(/REPO) + `bgIsolation:"none"`, `--allowedTools "Bash(fm:*)"
 "Bash(<abs fm>:*)"`, auto, `--strict-mcp-config` and **no WorkState config**; FOREMAN_HOME and cwd under the
-worktree's `target/`), `diag/endstate.ps1`, and `foreman.exe --selftest-supervise` (CLI 2.1.309, Windows 11, worktree
+worktree's `target/`), `diag/endstate.ps1` (retired in m5/44.15; see git history before 014d286), and `foreman.exe --selftest-supervise` (CLI 2.1.309, Windows 11, worktree
 m3-3). Sessions `fm-selftest-<hex>-*`; every row stopped and removed. No session had a `work_*` tool, so nothing
 touched the real store.
 
@@ -1029,7 +1029,7 @@ touched the real store.
   version, not the `feat/workstate` branch. → `/rlarch:controller` needs `settings.toml` `extra_plugin_dirs` =
   `P:/Projects/LarchSys/Skills/plugins/rlarch` (m3/2); the repo-controller skill sends `BLOCKED` naming exactly that
   when the skill is missing. Which of two same-named plugins wins when both are loaded was not measured.
-- **Claude Code reads the end of a turn into `state`, and the daemon acts on it.** `diag/endstate.ps1`, one turn
+- **Claude Code reads the end of a turn into `state`, and the daemon acts on it.** `diag/endstate.ps1` (retired in m5/44.15; see git history before 014d286), one turn
   each, bare sessions: a last text "Should I continue?" → `blocked/idle` for 85 s (m1/7's unexplained state: "needs
   input"); "ready", "waiting", "I'm now waiting for the next message …", SendMessage + "ready", ToolSearch + "ready",
   Skill + "ready" → `done/idle`. But the **workspace session** (role + skill telling it to wait for messages) ended
@@ -1054,8 +1054,8 @@ touched the real store.
 - **The relay's send was refused by the auto-mode classifier twice** (selftest runs 11 and 13 of 14, step r):
   `SendMessage to fm-selftest-…-target failed: Permission for this action was denied by the Claude Code auto mode
   classifier. Reason: [External System Writes].`, relay row `state=blocked status=busy`. New in this unit: before the
-  drop the relay has already received the workspace session's `ready`. Not reproduced on purpose: `diag/relay.ps1`
-  (no workspace session) 3/3 rounds delivered, `diag/skills.ps1 -Drop` (a drop right after the workspace's
+  drop the relay has already received the workspace session's `ready`. Not reproduced on purpose: `diag/relay.ps1` (retired in m5/44.15; see git history before 014d286)
+  (no workspace session) 3/3 rounds delivered, `diag/skills.ps1 -Drop` (retired in m5/44.15; see git history before 014d286) (a drop right after the workspace's
   `ready`) 3/3 delivered. So: intermittent, cause unknown, not routed around. If it happens to a real relay the
   human's message is not delivered and a `relay-notice` lands in Messages; m3/4 should watch for it.
 - Gate from this worktree (final code, run 14): `cargo test --workspace` 291 passed (288 + 3: roles/skills, skill
@@ -3421,3 +3421,31 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-7\target`, merged with master 25fa8ab): build ok, no warnings;
   `cargo test --release --workspace` 656 passed, 0 failed; `--selftest` 5 of 5 PASS (121–134 s);
   `--selftest-supervise` PASS (302 s); `--selftest-detach-shutdown` PASS (14 s); 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.15 fm and plugin cleanup (audit U13)
+
+- **A-56:** `fm hook` reads only `FOREMAN_WORKSPACE` and the role as given (no `FOREMAN_PLATFORM`, no
+  `platform` → `workspace`); `fm tell` signs only with `FOREMAN_SESSION` and is refused without it. Every
+  supervised launch passes it (`LaunchConfig::session_settings`). A session from before m2x/2 or m5/4 that is
+  resumed gets no role text and cannot `fm tell` until Foreman relaunches it.
+- **A-54:** `Transcripts::projects`, `assign::repo_of` (its test helper calls `repo_of_with(…, main_repo)`) and
+  the `API_HEADER` re-export are gone. Audit wrong on `Registry::update`: `view/manage.rs` `set_repo_enabled`
+  calls it, and `load_all` does not replace a read-modify-write; it stays.
+- **A-55 / decision 4:** `crates/foreman-app/diag/` (8 `.ps1` and `timeline.py`, which exists, contrary to the
+  audit) and `crates/fm/probe/resume.ps1` are retired in 014d286; the LEARNINGS lines citing them say so.
+  `crates/fm/probe/hook-timing.ps1` is cited nowhere and stays (not in the brief).
+- **A-63 / A-64:** the plugin README lists `FOREMAN_SESSION`, says rlarch loads user-installed with no
+  `extra_plugin_dirs`, and states the WorkState rule (https://workstate.dikaia.ai, Foreman's OAuth sign-in, a
+  minted token per session, no static token or local stack, `fm work` on the same sign-in). The repo-controller
+  launches units with `agent_launch` (`workstate: {role: "worker", url: "https://workstate.dikaia.ai"}`; the
+  url always, its default is local), escalates an `agent_signin` refusal, and keeps `Start-NestedAgent.ps1` as the
+  fallback when the tool is absent. Still not measured: whether `--strict-mcp-config` hides rlarch's `agents`
+  server in a Foreman session (LEARNINGS 2026-10-26).
+- **Red checks:** master's `hook.rs` → `the_workspace_role_text_names_foreman_workspace_and_nothing_else` fails
+  (prints the role for `FOREMAN_ROLE=platform`); master's `relay.rs` →
+  `tell_writes_the_outbox_as_the_session_and_is_refused_outside_one` fails (tell without `FOREMAN_SESSION` exits 0).
+- **Concurrent selftests break 7r:** with m5/44.14's `--selftest` running at the same time, step 7r failed 2
+  of 5 (both borrow the one clipboard); 5 of 5 PASS once alone.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-15\target`, on master 199241c): build ok; `cargo test --release
+  --workspace` 656 passed, 0 failed; `--selftest` 5 of 5 PASS (alone); `--selftest-supervise` PASS;
+  `--selftest-detach-shutdown` PASS; 0 `fm-selftest` rows.

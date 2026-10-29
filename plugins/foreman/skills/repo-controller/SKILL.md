@@ -38,22 +38,26 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
    **Call the Skill tool for `rlarch:controller` and `rlarch:nested-claude` even when the skill listing
    does not show them**: a skill can be missing from the listing (a plugin skill whose header failed to
    parse was, m3/4). Only a failed Skill call is a blocker →
-   `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (Foreman's settings.toml
-   extra_plugin_dirs needs the rlarch plugin)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the
-   same, naming WorkState.
+   `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (the rlarch plugin is not
+   installed for this user)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the same, naming
+   WorkState (Foreman is not signed in to it).
 2. **The run and its units already exist**: the workspace controller made them, and the human approved
    them. Skip the controller skill's §1 creation and its "one approval" step — **your first task is the
    authorization**; do not ask again. You may split a unit, add a `followup`, add a unit's own binding
    rules, and order units inside your run with `blocks`; a cross-run link, a new unit outside the approved
    scope, or a changed criterion is the workspace controller's (§3).
-3. **Nested agents, one at a time**, launched with the nested-claude skill's `Start-NestedAgent.ps1`
-   (the path is under the base directory the skill prints when it loads; run it with the PowerShell
-   tool):
-   - `-Name fm-<w>-<slug>-<unit>` (unit = the unit ref made a slug: `2.3` → `2-3`), so Foreman shows it
+3. **Nested agents, one at a time**, launched with the nested-claude skill's `agent_launch` tool:
+   - `name: "fm-<w>-<slug>-<unit>"` (unit = the unit ref made a slug: `2.3` → `2-3`), so Foreman shows it
      under your workspace;
-   - `-RepoRoot ../<repo>.worktrees/<unit>` — a worktree **you** create next to the repo
-     (`git worktree add ../<repo>.worktrees/<unit> -b <branch>`), never inside it;
-   - `-Controller "<your name [ref]>"` from the first line of `ListAgents`, ref included.
+   - `repo_root` = the absolute path of `../<repo>.worktrees/<unit>`, a worktree **you** create next to
+     the repo (`git worktree add ../<repo>.worktrees/<unit> -b <branch>`), never inside it;
+   - `controller: "<your name [ref]>"` from the first line of `ListAgents`, ref included;
+   - `workstate: {role: "worker", url: "https://workstate.dikaia.ai"}` — the url always, its default is
+     a local server that does not exist.
+
+   A launch refused for want of a grant names `agent_signin`: that sign-in is the human's, so escalate
+   it (§3) and wait. No `agent_launch` tool in this session → the skill's `Start-NestedAgent.ps1`
+   fallback (`-Name`, `-RepoRoot`, `-Controller` as above; PowerShell tool), and the gap below applies.
 4. **Verify, land, close** as the controller skill says: your own `work_verify`, merge into **the branch
    this checkout is on** (your cwd is the repo's main checkout; you merge here), stop the agent, remove its
    worktree and branch, tick criteria, `work_status(ref, "done", commit: "<merge sha>")`. Before the first
@@ -61,13 +65,12 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
    escalation (the base moved), not something to clean up.
 5. **Never `git push`**, never deploy. Landing means merged into the local checkout.
 
-**Known gap — why a nested agent never closes its own unit.** `Start-NestedAgent.ps1` does not yet give a
-nested agent a per-session WorkState config (skills-5d follow-up): it reaches WorkState with the user's
-own registration, which may carry a controller token. Its `work_status`, `work_verify` or `work_report` on
-your unit would be recorded as yours. So every brief says, as the controller skill's §3 already requires:
-*the unit item is the repo controller's; do not call `work_status`, `work_verify` or `work_report` on
-`<unit ref>`*. Read its `DONE` as a claim; record it yourself with `work_report`, and only your own runs
-go into `work_verify`.
+**Why a nested agent never closes its own unit.** `agent_launch` mints it a worker of its own, whose
+evidence never satisfies your unit's guard; `Start-NestedAgent.ps1` gives it none, so it reaches WorkState
+with the user's own registration and its writes would be recorded as yours. Either way every brief says,
+as the controller skill's §3 requires: *the unit item is the repo controller's; do not call `work_status`,
+`work_verify` or `work_report` on `<unit ref>`*. Read its `DONE` as a claim; record it yourself with
+`work_report`, and only your own runs go into `work_verify`.
 
 ## 3. Escalate to the workspace controller, not to the relay
 
@@ -123,5 +126,5 @@ bringing you back: continue the run if it is open, else wait.
 | message `fm-<w>-relay`, run `fm tell` (it reaches the human) or `fm send` (it speaks as the human) | `SendMessage` to `fm-<w>-workspace` |
 | `fm want`/`fm unwant`; `claude stop`/`rm`/`respawn` of a session you did not launch | ask `fm-<w>-workspace`; stop only your own nested agents (nested-claude §6) |
 | decide a migration, deploy, prod data, dependency or public contract | §3 |
-| let a nested agent close, verify or report its own unit | §2 known gap |
+| let a nested agent close, verify or report its own unit | §2, after step 5 |
 | `git push`, or edit outside the repo and `../<repo>.worktrees/` | escalate |

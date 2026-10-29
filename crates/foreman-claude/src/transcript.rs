@@ -337,10 +337,6 @@ impl Transcripts {
         Self::new(claude_dir.join("projects"))
     }
 
-    pub fn projects(&self) -> &Path {
-        &self.projects
-    }
-
     /// The [`Transcript::listable`] transcripts of the project dirs whose name starts with the [`slug`]
     /// of one of `roots` (case-insensitive), modified since `since_ms` or with an id in `keep`. `live`
     /// (ids `claude agents` lists running) keeps their dirs re-listed: an old file resumed grows
