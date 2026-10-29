@@ -3533,3 +3533,32 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   - Not verified: whether `claude --bg` forwards `CLAUDE_CODE_FORCE_STRIKETHROUGH` to its worker. Its forward list has
     `TERM_PROGRAM*`, `WT_SESSION` and `ZED_TERM`. Sync output in daemon mode comes from the attaching client's
     `syncOutput`, which reads the tab env.
+
+## 2026-10-29 — m5/44.11 foreman-ui foundations: text_input, button, banner, hit, fonts (audit U9)
+
+- **Moved into foreman-ui:** `text_input.rs` (git mv, with its docs and tests), `hit.rs` (`Hit`, `HitTargets`,
+  `hit_target`, and the `fully_visible` test), and the new `button.rs`, `banner.rs` and `fonts.rs`. foreman-ui depends
+  on no app crate: the button and banner builders take `&HitTargets`, a key and colours; the app's `Icon` and `Tooltip`
+  stay in `view/icon.rs`, and the call sites pass `icon.svg(..)` and chain `.tooltip(..)`. foreman-ui gained
+  `unicode-segmentation` and the `Wdk_System_SystemServices` feature, and foreman-app lost both.
+- **Buttons (A-20):** `bordered` (the old `view::button`), `outline` (item back, journal toggle and "load older",
+  Attach), `pill` (attach/resume/tab), `icon` (row ×/+, tab close), `toolbar` (the action bar), `ghost` (the base,
+  for the star and the new-shell +), and `small`/`choice` (the settings window, which has no hit map). The left
+  panel's `icon_button`/`glyph_button`/`star_button` are kept as one-line app bindings of Icon + Tooltip.
+  `titlebar::icon_button` stays: it is the only caption-style button (no pressed fill) and has one caller.
+  gpui's `hover()` debug-asserts when it is set twice, so each variant sets its own hover rather than overriding a base.
+- **Banners (A-21):** `banner::tinted(color)` (status text on its `TINT` = 0.12), `plain` (text on
+  `element_background`), `dismissable(body, ×)`, `tint`. Callers add margins and override the shape (item.rs's
+  warning box: `px_2 py_1 rounded_sm` with a border); `text_xs`, `rounded_sm` and `px/py` overrides replace exactly the
+  fields they set, so the result is pixel-identical. The confirm box keeps its own layout and uses `banner::tint`.
+- **A-15:** the caret blink uses foreman-term's `CURSOR_BLINK_INTERVAL` and `blink_phase` (same 530 ms).
+- **Fonts:** `fonts::UI` ("Segoe UI"), `fonts::MONO` ("Cascadia Mono") and `fonts::icons()` (Fluent vs MDL2) replace
+  the literals in view.rs, left.rs, icon.rs, tab_card.rs, item.rs, settings_window.rs and titlebar.rs.
+- **Hit keys:** every key is unchanged. `button::*` registers its key, so the journal toggle also records a plain
+  `work-journal` hit beside its `work-journal=open|closed` one.
+- **view/term.rs** (m5/44.9's file during this unit) still names `crate::text_input` and `super::hit_target`; `main.rs`
+  `use foreman_ui::text_input;` and view.rs's `use foreman_ui::hit::{.., hit_target}` keep both paths valid.
+- **Pixel check:** `FOREMAN_SHOTS` selftest runs on master 7b1f58e and on this branch, compared per pixel: the
+  appearance/theme/font shots are identical; the WorkState settings shots differ only in the fake server's port; the
+  notice band of `m5-37-notices-before` (rows 395–680) is identical; the other differences are live session rows,
+  counts and timings.

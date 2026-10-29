@@ -10,7 +10,11 @@ Before you build something generic yourself (a text input, a list, a dialog, an 
 
 Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`, written by m5/44):
 
-- `foreman-app/src/text_input.rs`: the one text input (EntityInputHandler: selection, IME, clipboard); every text field uses it.
+- `foreman_ui::text_input`: the one text input (EntityInputHandler: selection, IME, clipboard); every text field uses it.
+- `foreman_ui::button::{bordered, outline, pill, icon, toolbar, ghost, small, choice}`: every clickable button; the key is its id, hover group and hit key.
+- `foreman_ui::banner::{tinted, plain, dismissable, tint}`: every notice box; a status colour on its 0.12 tint (m5/26 contrast).
+- `foreman_ui::hit::{HitTargets, hit_target}`: every clickable element records its painted bounds under its key; the selftests click through these.
+- `foreman_ui::fonts::{UI, MONO, icons}`: the UI's font families; never a family name spelt out in a view.
 - `foreman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `foreman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop.
 - `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).

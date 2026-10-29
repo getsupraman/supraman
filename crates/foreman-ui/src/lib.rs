@@ -1,8 +1,14 @@
 //! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
-//! global init, and the frame / memory probes the selftests print.
+//! the text input, buttons, banners and fonts, the selftests' hit targets, global init, and the frame / memory
+//! probes the selftests print.
 
+pub mod banner;
+pub mod button;
+pub mod fonts;
+pub mod hit;
 pub mod nudge;
 pub mod term_element;
+pub mod text_input;
 pub mod themes;
 
 use std::{

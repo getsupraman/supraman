@@ -100,7 +100,7 @@ impl Render for Tooltip {
                 .border_color(colors.border)
                 .bg(colors.elevated_surface_background)
                 .text_xs()
-                .font_family("Segoe UI")
+                .font_family(foreman_ui::fonts::UI)
                 .text_color(colors.text)
                 .shadow_md()
                 .child(self.0.clone()),

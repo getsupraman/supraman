@@ -6,17 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use foreman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
-use foreman_ui::term_element;
+use foreman_ui::{banner, button, term_element};
 use foreman_workstate::AuthStatus;
 use foreman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, ElementId, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,
     Pixels, SharedString, Subscription, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div,
     prelude::*, px, size,
 };
 use theme::ActiveTheme as _;
 
-use crate::text_input::{InputEvent, TextInput};
+use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
 use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
 
@@ -343,7 +343,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_1()
-            .child(small_button("max-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .child(button::small("max-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n.saturating_sub(1), cx);
             })))
             .child(
@@ -354,11 +354,11 @@ impl SettingsView {
                     .font_weight(FontWeight::BOLD)
                     .child(SharedString::from(n.to_string())),
             )
-            .child(small_button("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .child(button::small("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n + 1, cx);
             })));
         let admin = self.settings.run_as_admin;
-        let toggle = small_button("run-as-admin", if admin { "On" } else { "Off" }, cx)
+        let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.run_as_admin = !admin, cx)));
         let now: SharedString = if foreman_claude::is_elevated() {
             "Foreman runs as administrator now.".into()
@@ -408,7 +408,7 @@ impl SettingsView {
                     .text_sm()
                     .child(self.url_input.clone()),
             )
-            .child(small_button("ws-url-apply", "Apply", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
+            .child(button::small("ws-url-apply", "Apply", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
         let below = div()
             .flex()
             .flex_col()
@@ -470,11 +470,11 @@ impl SettingsView {
         let held = self.auth.as_ref().is_some_and(|a| !matches!(a, AuthStatus::NotSignedIn));
         let mut controls = div().flex().flex_col().items_end().gap_1();
         controls = match &signing_in {
-            Some(_) => controls.child(small_button("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            Some(_) => controls.child(button::small("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
             }))),
             None if self.auth.is_some() && (!held || matches!(self.workstate, WsStatus::SignInAgain { .. })) => {
-                controls.child(small_button("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                controls.child(button::small("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
                     cx.notify();
                 })))
@@ -482,12 +482,12 @@ impl SettingsView {
             None => controls,
         };
         if held && signing_in.is_none() {
-            controls = controls.child(small_button("ws-signout", "Sign out", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            controls = controls.child(button::small("ws-signout", "Sign out", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, cx| fleet.sign_out(cx)).ok();
                 cx.notify();
             })));
         }
-        controls = controls.child(small_button("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        controls = controls.child(button::small("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
         })));
         row_owned(
@@ -567,14 +567,10 @@ impl SettingsView {
                 "The Claude Code CLI Foreman lists, launches and attaches sessions with (`claude --version`).",
                 value("about-cli", cli),
                 warning.map(|(text, color)| {
-                    div()
+                    banner::tinted(color)
                         .id("about-cli-warning")
                         .mt_2()
-                        .p_2()
-                        .rounded_md()
-                        .bg(color.opacity(0.12))
                         .text_xs()
-                        .text_color(color)
                         .child(SharedString::from(text))
                         .into_any_element()
                 }),
@@ -612,7 +608,7 @@ impl SettingsView {
                 Some(file) => file.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()).into(),
             };
             list = list.child(
-                choice(("theme", ix), SharedString::from(entry.name.clone()), selected, cx)
+                button::choice(("theme", ix), SharedString::from(entry.name.clone()), selected, cx)
                     .child(div().text_xs().text_color(colors.text_muted).child(from))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), terminal, cx))),
             );
@@ -630,14 +626,14 @@ impl SettingsView {
                 .text_color(colors.text_muted)
                 .child("VS Code Dark Modern: kevcamel/vscode_dark_modern.zed, © 2024 Kevin Camellini, MIT licence (THIRD_PARTY.md)."),
         );
-        let folder = small_button("themes-folder", "Open themes folder", cx)
+        let folder = button::small("themes-folder", "Open themes folder", cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_themes_folder(cx)));
 
         let mut terminal_choices = div().flex().gap_1();
         for (ix, (label, value)) in [("Theme", TerminalColors::Theme), ("Campbell", TerminalColors::Campbell)].into_iter().enumerate() {
             let name = current.clone();
             terminal_choices = terminal_choices.child(
-                choice(("terminal-colors", ix), label.into(), terminal == value, cx)
+                button::choice(("terminal-colors", ix), label, terminal == value, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_theme(name.clone(), value, cx))),
             );
         }
@@ -648,7 +644,7 @@ impl SettingsView {
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(small_button("term-font-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::small("term-font-dec", "−", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(size - px(1.), cx);
                 })))
                 .child(
@@ -660,10 +656,10 @@ impl SettingsView {
                         .font_weight(FontWeight::BOLD)
                         .child(SharedString::from(format!("{}", f32::from(size)))),
                 )
-                .child(small_button("term-font-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .child(button::small("term-font-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(size + px(1.), cx);
                 })))
-                .child(small_button("term-font-reset", "Reset", cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .child(button::small("term-font-reset", "Reset", cx).ml_1().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.set_term_font_size(term_element::FONT_SIZE, cx);
                 })))
                 .into_any_element(),
@@ -684,7 +680,7 @@ impl SettingsView {
                 for (ix, name) in mono.iter().enumerate() {
                     let pick = name.clone();
                     fonts = fonts.child(
-                        choice(("term-font", ix), SharedString::from(name.clone()), *name == family, cx)
+                        button::choice(("term-font", ix), SharedString::from(name.clone()), *name == family, cx)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(Some(&pick), ligatures, cx))),
                     );
                 }
@@ -701,13 +697,13 @@ impl SettingsView {
             .collect::<Vec<_>>();
         fonts = fonts.children(font_notes);
         let default = foreman_core::default_terminal_font_family(&installed);
-        let font_reset = small_button("term-font-default", "Default", cx)
+        let font_reset = button::small("term-font-default", "Default", cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
         let mut ligature_choices = div().flex().gap_1();
         for (ix, (label, on)) in [("On", true), ("Off", false)].into_iter().enumerate() {
             let family = self.settings.terminal_font_family.clone();
             ligature_choices = ligature_choices.child(
-                choice(("ligatures", ix), label.into(), ligatures == on, cx)
+                button::choice(("ligatures", ix), label, ligatures == on, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
             );
         }
@@ -834,42 +830,6 @@ fn row_owned(
         .into_any_element()
 }
 
-fn small_button(id: &'static str, label: &'static str, cx: &App) -> gpui::Stateful<gpui::Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(id)
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.element_background)
-        .text_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.element_hover))
-        .active(|s| s.bg(colors.element_active))
-        .child(label)
-}
-
-/// One option of a choice; the selected one is drawn as a selected list row.
-fn choice(id: impl Into<ElementId>, label: SharedString, selected: bool, cx: &App) -> gpui::Stateful<gpui::Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_2()
-        .px_2()
-        .py_0p5()
-        .rounded_sm()
-        .border_1()
-        .border_color(if selected { colors.border_focused } else { colors.border })
-        .when(selected, |d| d.bg(colors.element_selected))
-        .when(!selected, |d| d.bg(colors.element_background).hover(|s| s.bg(colors.element_hover)))
-        .text_sm()
-        .cursor_pointer()
-        .child(div().flex_1().child(label))
-}
-
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
@@ -941,13 +901,8 @@ impl Render for SettingsView {
             .child(div().text_lg().font_weight(FontWeight::BOLD).pb_2().child(self.page.title()))
             .when_some(self.error.clone(), |d, e| {
                 d.child(
-                    div()
+                    banner::tinted(status.error)
                         .my_2()
-                        .p_2()
-                        .rounded_md()
-                        .bg(status.error.opacity(0.12))
-                        .text_sm()
-                        .text_color(status.error)
                         .child(SharedString::from(e)),
                 )
             })
@@ -957,7 +912,7 @@ impl Render for SettingsView {
             .size_full()
             .flex()
             .flex_col()
-            .font_family("Segoe UI")
+            .font_family(foreman_ui::fonts::UI)
             .bg(colors.background)
             .text_color(colors.text)
             .track_focus(&self.focus)

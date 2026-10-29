@@ -4,7 +4,7 @@
 //! `EntityInputHandler` as `.repos/zed/crates/gpui/examples/input.rs` is, so characters, dead keys and IME
 //! compositions come from the OS text input (WM_CHAR / WM_IME_COMPOSITION), not from `key_char`. Keys that
 //! edit or move are actions bound in the `TextInput` context ([`bind_keys`]); every other key must be left
-//! to propagate, or Windows never translates it into a character ([`crate::view::FleetView`]'s `key_down`).
+//! to propagate, or Windows never translates it into a character (the owning view's `key_down`).
 //! The editing itself is [`LineText`], which knows nothing of gpui; the painted rows reach it as [`Rows`].
 
 use std::{
@@ -20,11 +20,10 @@ use gpui::{
     LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Task, TextRun, UTF16Selection, UnderlineStyle,
     Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
+use foreman_term::{blink_phase, terminal_settings::CURSOR_BLINK_INTERVAL};
 use theme::ActiveTheme as _;
 use unicode_segmentation::UnicodeSegmentation as _;
 
-/// Windows Terminal's blink interval, the terminal tab's too.
-pub const BLINK: Duration = Duration::from_millis(530);
 const CONTEXT: &str = "TextInput";
 /// A multi-line input shows at least this many rows, and grows with its text up to [`MAX_ROWS`].
 pub const MIN_ROWS: usize = 3;
@@ -585,7 +584,7 @@ pub struct TextInput {
     /// The caret moved since the last paint: scroll it into view.
     autoscroll: bool,
     is_selecting: bool,
-    /// The last edit, move or focus: the caret is lit for one [`BLINK`] after it.
+    /// The last edit, move or focus: the caret is lit for one [`CURSOR_BLINK_INTERVAL`] after it.
     moved_at: Instant,
     /// Whether the last frame painted the caret lit; the selftest reads it.
     pub caret_painted: Cell<bool>,
@@ -610,7 +609,7 @@ impl TextInput {
             loop {
                 let wait = this.update_in(cx, |this, window, cx| {
                     if !this.focus_handle.is_focused(window) {
-                        return BLINK;
+                        return CURSOR_BLINK_INTERVAL;
                     }
                     cx.notify();
                     this.next_blink(Instant::now())
@@ -673,13 +672,11 @@ impl TextInput {
 
     /// Whether the caret is painted at `now`: lit for one interval after an edit or move, then blinking.
     pub fn caret_lit(&self, now: Instant) -> bool {
-        (now.saturating_duration_since(self.moved_at).as_millis() / BLINK.as_millis()) % 2 == 0
+        blink_phase(now.saturating_duration_since(self.moved_at)).0
     }
 
     fn next_blink(&self, now: Instant) -> Duration {
-        let ms = BLINK.as_millis() as u64;
-        let elapsed = now.saturating_duration_since(self.moved_at).as_millis() as u64;
-        Duration::from_millis(ms - elapsed % ms)
+        blink_phase(now.saturating_duration_since(self.moved_at)).1
     }
 
     fn lit(&mut self, cx: &mut Context<Self>) {

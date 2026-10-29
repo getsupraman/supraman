@@ -46,7 +46,6 @@ mod settings_window;
 mod stars;
 mod supervise;
 mod tab_card;
-mod text_input;
 mod titlebar;
 mod signin;
 mod tokens;
@@ -59,6 +58,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use foreman_core::Registry;
+use foreman_ui::text_input;
 use futures::StreamExt as _;
 use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
