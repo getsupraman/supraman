@@ -86,6 +86,16 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
 }
 
 #[test]
+fn issuer_of_names_the_signed_in_origins_issuer_only() {
+    let (_dir, fake, oauth, _store, auth) = setup();
+    assert_eq!(auth.issuer_of(fake.base()), None);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert_eq!(auth.issuer_of(fake.base()), Some(oauth.issuer()));
+    assert_eq!(auth.issuer_of(&format!("{}/mcp", fake.base())), Some(oauth.issuer()), "by the URL's origin");
+    assert_eq!(auth.issuer_of("http://127.0.0.1:1"), None);
+}
+
+#[test]
 fn refresh_rotates_and_stores_the_new_refresh_token() {
     let (_dir, fake, oauth, store, auth) = setup();
     oauth.set_access_ttl(60); // less than the 5 min margin: every use refreshes

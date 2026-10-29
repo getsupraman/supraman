@@ -29,6 +29,8 @@ const CONTEXT: &str = "TextInput";
 /// A multi-line input shows at least this many rows, and grows with its text up to [`MAX_ROWS`].
 pub const MIN_ROWS: usize = 3;
 pub const MAX_ROWS: usize = 8;
+/// Undo steps kept; the oldest go first.
+const UNDO_STEPS: usize = 100;
 
 actions!(
     text_input,
@@ -329,7 +331,7 @@ impl LineText {
         let joins = self.marked.is_some()
             || (kind == EditKind::Typing && range.is_empty() && self.typing_at == Some(range.start) && !new.contains(char::is_whitespace));
         if !joins {
-            self.undo.push(self.snapshot());
+            self.push_undo();
         }
         self.redo.clear();
         self.text.replace_range(range.clone(), new);
@@ -346,7 +348,7 @@ impl LineText {
     pub fn replace_marked(&mut self, range: Range<usize>, new: &str, selected: Option<Range<usize>>) {
         let range = self.clamp(range.start)..self.clamp(range.end);
         if self.marked.is_none() {
-            self.undo.push(self.snapshot());
+            self.push_undo();
             self.redo.clear();
         }
         self.text.replace_range(range.clone(), new);
@@ -360,6 +362,13 @@ impl LineText {
 
     pub fn unmark(&mut self) {
         self.marked = None;
+    }
+
+    fn push_undo(&mut self) {
+        if self.undo.len() == UNDO_STEPS {
+            self.undo.remove(0);
+        }
+        self.undo.push(self.snapshot());
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -387,7 +396,7 @@ impl LineText {
         let Some(s) = self.redo.pop() else {
             return false;
         };
-        self.undo.push(self.snapshot());
+        self.push_undo();
         self.restore(s);
         true
     }
@@ -1433,6 +1442,20 @@ mod tests {
         assert!(!l.redo(), "an edit drops the redo history");
         l.undo();
         assert_eq!(l.text(), "abc de", "moving the caret ends the typed run");
+    }
+
+    #[test]
+    fn undo_keeps_the_newest_steps_only() {
+        let mut l = LineText::new("");
+        for _ in 0..UNDO_STEPS + 20 {
+            typed(&mut l, " x");
+        }
+        let mut steps = 0;
+        while l.undo() {
+            steps += 1;
+        }
+        assert_eq!(steps, UNDO_STEPS);
+        assert_eq!(l.text().len(), 2 * 20, "the oldest steps went first");
     }
 
     #[test]

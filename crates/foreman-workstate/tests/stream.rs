@@ -3,9 +3,10 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use async_channel::Receiver;
 use foreman_workstate::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 const TOKEN: &str = "fake-reader-token";
@@ -43,7 +44,14 @@ fn config() -> StreamConfig {
 }
 
 fn next(rx: &Receiver<StreamSignal>) -> StreamSignal {
-    rx.recv_timeout(Duration::from_secs(10)).expect("a stream signal")
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        match rx.try_recv() {
+            Ok(signal) => return signal,
+            Err(e) if e.is_closed() || Instant::now() > until => panic!("no stream signal: {e}"),
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
 }
 
 fn event(seq: i64, kind: &str) -> StreamSignal {

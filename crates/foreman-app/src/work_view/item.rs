@@ -160,15 +160,10 @@ impl WorkView {
     pub(super) fn schedule_item(&mut self, cx: &mut Context<Self>) {
         if !self.item_pending {
             self.item_pending = true;
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(DEBOUNCE).await;
-                this.update(cx, |this, cx| {
-                    this.item_pending = false;
-                    this.read_item(cx);
-                })
-                .ok();
-            })
-            .detach();
+            after_debounce(cx, |this, cx| {
+                this.item_pending = false;
+                this.read_item(cx);
+            });
         }
     }
 

@@ -13,7 +13,6 @@ mod journal;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::mpsc::RecvTimeoutError,
     time::Duration,
 };
 
@@ -37,8 +36,14 @@ pub use journal::JournalView;
 
 /// Events arriving closer together than this cost one re-read.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
-/// How long the hub's receiver blocks a background thread before it checks the hub is still there.
-const RECV_SLICE: Duration = Duration::from_secs(1);
+
+fn after_debounce<T: 'static>(cx: &mut Context<T>, then: impl FnOnce(&mut T, &mut Context<T>) + 'static) {
+    cx.spawn(async move |this, cx| {
+        cx.background_executor().timer(DEBOUNCE).await;
+        this.update(cx, then).ok();
+    })
+    .detach();
+}
 
 pub enum Access<'a> {
     Starting,
@@ -156,22 +161,9 @@ impl WorkHub {
                 })
                 .ok()
                 .flatten();
-            let Some(mut rx) = rx else { return };
-            loop {
-                let (back, signal) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let signal = rx.recv_timeout(RECV_SLICE);
-                        (rx, signal)
-                    })
-                    .await;
-                rx = back;
-                let alive = match signal {
-                    Ok(signal) => this.update(cx, |this, cx| this.on_signal(signal, cx)).is_ok(),
-                    Err(RecvTimeoutError::Timeout) => this.upgrade().is_some(),
-                    Err(RecvTimeoutError::Disconnected) => false,
-                };
-                if !alive {
+            let Some(rx) = rx else { return };
+            while let Ok(signal) = rx.recv().await {
+                if this.update(cx, |this, cx| this.on_signal(signal, cx)).is_err() {
                     return;
                 }
             }
@@ -367,29 +359,19 @@ impl WorkView {
     fn schedule_overview(&mut self, cx: &mut Context<Self>) {
         if !self.overview_pending {
             self.overview_pending = true;
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(DEBOUNCE).await;
-                this.update(cx, |this, cx| {
-                    this.overview_pending = false;
-                    this.read_overview(cx);
-                })
-                .ok();
-            })
-            .detach();
+            after_debounce(cx, |this, cx| {
+                this.overview_pending = false;
+                this.read_overview(cx);
+            });
         }
     }
 
     fn schedule_board(&mut self, run: String, cx: &mut Context<Self>) {
         if self.boards_pending.insert(run.clone()) {
-            cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(DEBOUNCE).await;
-                this.update(cx, |this, cx| {
-                    this.boards_pending.remove(&run);
-                    this.read_board(run, cx);
-                })
-                .ok();
-            })
-            .detach();
+            after_debounce(cx, move |this, cx| {
+                this.boards_pending.remove(&run);
+                this.read_board(run, cx);
+            });
         }
     }
 

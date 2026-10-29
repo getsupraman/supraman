@@ -11,10 +11,11 @@
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+use async_channel::{Receiver, Sender};
 
 use crate::client::Client;
 use crate::model::StreamEvent;
@@ -61,7 +62,7 @@ impl Stream {
     }
 
     pub fn subscribe_with(client: &Client, config: StreamConfig) -> (Self, Receiver<StreamSignal>) {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = async_channel::unbounded();
         let stop = Arc::new(AtomicBool::new(false));
         let worker = Worker {
             client: client.clone(),
@@ -123,7 +124,7 @@ impl Worker {
                 End::Quit => return,
                 End::Lost(reason) => reason,
             };
-            if self.stopped() || self.tx.send(StreamSignal::Lost(reason)).is_err() {
+            if self.stopped() || self.tx.send_blocking(StreamSignal::Lost(reason)).is_err() {
                 return;
             }
             let until = Instant::now() + backoff;
@@ -210,7 +211,7 @@ impl Worker {
             };
             if head {
                 *backoff = self.config.initial_backoff;
-                if self.tx.send(StreamSignal::Connected).is_err() {
+                if self.tx.send_blocking(StreamSignal::Connected).is_err() {
                     return End::Quit;
                 }
             }
@@ -221,7 +222,7 @@ impl Worker {
             for data in frames {
                 // A frame that is not an event (a hello, a future shape) is not ours to report.
                 if let Ok(event) = serde_json::from_str::<StreamEvent>(&data)
-                    && self.tx.send(StreamSignal::Event(event)).is_err()
+                    && self.tx.send_blocking(StreamSignal::Event(event)).is_err()
                 {
                     return End::Quit;
                 }

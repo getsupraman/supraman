@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use foreman_core::{DEFAULT_WORKSTATE_URL, Settings};
+use foreman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
 use foreman_ui::term_element;
 use foreman_workstate::AuthStatus;
 use foreman_ui::themes::{self, Catalog, TerminalColors};
@@ -18,7 +18,7 @@ use theme::ActiveTheme as _;
 
 use crate::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
-use crate::workstate_setup::WsStatus;
+use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -66,8 +66,10 @@ pub struct SettingsView {
     /// The WorkState server URL as typed (m5/43); Enter or Apply uses it.
     url_input: Entity<TextInput>,
     url_error: Option<String>,
-    /// Whether a grant is held for the configured server, read with settings.toml.
-    auth: AuthStatus,
+    /// Whether a grant is held for the configured server, read off the UI thread after settings.toml;
+    /// `None` until the first read answers.
+    auth: Option<AuthStatus>,
+    auth_reads: u64,
     _url_events: Subscription,
 }
 
@@ -116,7 +118,7 @@ impl SettingsView {
                 let workstate = fleet.read(cx).workstate.clone();
                 if this.workstate != workstate {
                     this.workstate = workstate;
-                    this.reload();
+                    this.reload(cx);
                     cx.notify();
                 } else if matches!(this.page, Page::About | Page::Appearance) {
                     cx.notify();
@@ -149,7 +151,8 @@ impl SettingsView {
             font_error: None,
             url_input,
             url_error: None,
-            auth: AuthStatus::NotSignedIn,
+            auth: None,
+            auth_reads: 0,
             _url_events: url_events,
         };
         if this.mono_fonts.is_none() {
@@ -168,7 +171,7 @@ impl SettingsView {
             })
             .detach();
         }
-        this.reload();
+        this.reload(cx);
         let url = this.settings.workstate_origin();
         this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
         this
@@ -183,17 +186,39 @@ impl SettingsView {
         cx.notify();
     }
 
-    fn reload(&mut self) {
-        let Some(home) = &self.home else {
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
             self.error = Some("No Foreman home (set FOREMAN_HOME or APPDATA): settings cannot be saved.".into());
             return;
         };
-        match Settings::load(home) {
-            Ok(settings) => self.settings = settings,
+        match Settings::load_with_notices(&home) {
+            Ok((settings, notices)) => {
+                self.settings = settings;
+                if !notices.is_empty() {
+                    self.error = Some(notices.join("; "));
+                }
+            }
             Err(e) => self.error = Some(format!("Cannot read settings.toml: {e}")),
         }
-        self.catalog = themes::catalog(Some(home));
-        self.auth = crate::signin::auth(home).status(&self.settings.workstate_origin());
+        self.catalog = themes::catalog(Some(&home));
+        self.read_auth(home, cx);
+    }
+
+    /// `Auth::status` reads the servers file and decrypts the store: never on the UI thread.
+    fn read_auth(&mut self, home: PathBuf, cx: &mut Context<Self>) {
+        self.auth_reads += 1;
+        let (read, origin) = (self.auth_reads, self.settings.workstate_origin());
+        cx.spawn(async move |this, cx| {
+            let auth = cx.background_spawn(async move { crate::signin::auth(&home).status(&origin) }).await;
+            this.update(cx, |this, cx| {
+                if this.auth_reads == read {
+                    this.auth = Some(auth);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The selftest types into the URL field.
@@ -213,7 +238,7 @@ impl SettingsView {
         match result {
             Ok(()) => {
                 self.url_error = None;
-                self.reload();
+                self.reload(cx);
                 if let Ok(origin) = foreman_core::validate_workstate_url(&text) {
                     self.url_input.update(cx, |input, cx| input.set_text(&origin, cx));
                 }
@@ -226,7 +251,7 @@ impl SettingsView {
     pub fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
         self.change(
             |s| {
-                s.theme = Some(name);
+                s.theme = Some(name.clone());
                 s.terminal_colors = terminal.setting();
             },
             cx,
@@ -252,7 +277,7 @@ impl SettingsView {
             Ok(Err(e)) => Some(e),
             Err(_) => Some("the main window is closed".into()),
         };
-        self.reload();
+        self.reload(cx);
         cx.notify();
     }
 
@@ -273,18 +298,12 @@ impl SettingsView {
         cx.open_with_system(&dir);
     }
 
-    /// Load, change, save: the file may have been edited by hand or by the fleet window meanwhile.
-    fn change(&mut self, edit: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {
+    fn change(&mut self, edit: impl FnMut(&mut Settings), cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let result = Settings::load(&home).and_then(|mut settings| {
-            edit(&mut settings);
-            settings.save(&home)?;
-            Ok(settings)
-        });
-        match result {
-            Ok(settings) => {
+        match Settings::update(&home, edit) {
+            Ok((settings, ())) => {
                 self.settings = settings;
                 self.error = None;
             }
@@ -297,7 +316,7 @@ impl SettingsView {
     fn set_max_working(&mut self, n: usize, cx: &mut Context<Self>) {
         // The fleet window saves it (one path for the app and its selftest) and shows any error.
         self.fleet.update(cx, |fleet, cx| fleet.set_max_working(n, cx)).ok();
-        self.reload();
+        self.reload(cx);
         cx.notify();
     }
 
@@ -431,7 +450,7 @@ impl SettingsView {
         let url = self.settings.workstate_origin();
         let (text, color) = match (&self.workstate, &self.auth) {
             (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
-            (WsStatus::Ready { url, .. }, AuthStatus::SignedIn { unsaved: Some(why), .. }) => {
+            (WsStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
                 (format!("Signed in on {url}, but {why}."), status.warning)
             }
             (WsStatus::Ready { url, who }, _) => (
@@ -443,18 +462,18 @@ impl SettingsView {
             ),
             (WsStatus::NotSignedIn { .. }, _) => ("Not signed in.".to_string(), status.warning),
             (WsStatus::SignInAgain { why, .. }, _) => (format!("Sign in again: {why}."), status.warning),
-            (WsStatus::Unreachable { url, error }, AuthStatus::SignedIn { .. }) => {
+            (WsStatus::Unreachable { url, error }, Some(AuthStatus::SignedIn { .. })) => {
                 (format!("Signed in on {url}, but it is unreachable ({error})."), status.error)
             }
             (ws, _) => (ws.problem().unwrap_or_default(), status.error),
         };
-        let held = !matches!(self.auth, AuthStatus::NotSignedIn);
+        let held = self.auth.as_ref().is_some_and(|a| !matches!(a, AuthStatus::NotSignedIn));
         let mut controls = div().flex().flex_col().items_end().gap_1();
         controls = match &signing_in {
             Some(_) => controls.child(small_button("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
             }))),
-            None if !held || matches!(self.workstate, WsStatus::SignInAgain { .. }) => {
+            None if self.auth.is_some() && (!held || matches!(self.workstate, WsStatus::SignInAgain { .. })) => {
                 controls.child(small_button("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
                     cx.notify();
@@ -471,12 +490,15 @@ impl SettingsView {
         controls = controls.child(small_button("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
         })));
-        row(
+        row_owned(
             "Status",
-            "Foreman signs in to WorkState in your browser (OAuth). The grant is kept in Windows Credential \
-             Manager, never in a file; Foreman uses it to read WorkState and to give each session it starts a \
-             token of its own. Sign out revokes the grant, and with it every session token minted under it. \
-             Checked every 30 s and after every change here.",
+            format!(
+                "Foreman signs in to WorkState in your browser (OAuth). The grant is kept in the Foreman home, \
+                 encrypted for your Windows account; Foreman uses it to read WorkState and to give each session it \
+                 starts a token of its own. Sign out revokes the grant, and with it every session token minted \
+                 under it. Checked every {} s and after every change here.",
+                RECHECK_EVERY.as_secs()
+            ),
             controls.into_any_element(),
             Some(
                 div()
@@ -706,9 +728,14 @@ impl SettingsView {
                 None,
                 cx,
             ),
-            row(
+            row_owned(
                 "Terminal font size",
-                "The text size in every terminal tab, in pixels (6 to 72, default 14). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml (terminal_font_size).",
+                format!(
+                    "The text size in every terminal tab, in pixels ({MIN_TERMINAL_FONT_SIZE} to {MAX_TERMINAL_FONT_SIZE}, \
+                     default {DEFAULT_TERMINAL_FONT_SIZE}). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it \
+                     too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml \
+                     (terminal_font_size)."
+                ),
                 font_size,
                 None,
                 cx,
@@ -756,7 +783,9 @@ impl SettingsView {
         };
         vec![row(
             "Extra plugin dirs",
-            "Passed as --plugin-dir to every session Foreman launches, after Foreman's own plugin, e.g.              the rlarch plugin whose /rlarch:controller a repo session runs. Change them in settings.toml              (extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
+            "Passed as --plugin-dir to every session Foreman launches, after Foreman's own plugin. A plugin \
+             installed for your user, such as rlarch, loads without being listed here. Change them in \
+             settings.toml (extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
             div().into_any_element(),
             Some(div().flex().flex_col().gap_1().pt_2().children(lines).into_any_element()),
             cx,

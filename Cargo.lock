@@ -1813,6 +1813,7 @@ dependencies = [
 name = "foreman-workstate"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "base64 0.22.1",
  "foreman-core",
  "foreman-workstate",

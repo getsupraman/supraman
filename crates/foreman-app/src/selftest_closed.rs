@@ -176,7 +176,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the starred {RECENT} dropped out with stopped sessions hidden");
     }
     let (on_disk, _) = Stars::load(Some(home));
-    if !on_disk.contains(RECENT) || !on_disk.contains(OLD) {
+    if !on_disk.ids().contains(RECENT) || !on_disk.ids().contains(OLD) {
         bail!("starred.json holds {:?}", on_disk.ids());
     }
     // a restart reads starred.json as start-up does
@@ -191,7 +191,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     click(view, &format!("star-{RECENT}"), cx).await?;
     until(view, cx, "unstar hides it with stopped hidden", |v| row(v, RECENT).is_none().then_some(())).await?;
     let (on_disk, _) = Stars::load(Some(home));
-    if on_disk.contains(RECENT) {
+    if on_disk.ids().contains(RECENT) {
         bail!("unstar left {RECENT} in starred.json");
     }
     Ok(format!(

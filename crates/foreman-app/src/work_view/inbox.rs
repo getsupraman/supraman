@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use foreman_core::fs::{load_json_or_notice, write_atomic};
 use foreman_workstate::{Inbox, InboxRow, Overview};
 
 use super::*;
@@ -25,10 +26,11 @@ pub const DISMISSED_FILE: &str = "workstate-dismissed.json";
 pub struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
 
 impl Dismissed {
-    /// A missing or unreadable file is no dismissals.
-    pub fn load(home: Option<&Path>) -> Self {
-        let read = home.and_then(|h| std::fs::read_to_string(h.join(DISMISSED_FILE)).ok());
-        Dismissed(read.and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default())
+    /// An unreadable file is no dismissals, with the reason.
+    pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
+        let Some(home) = home else { return (Self::default(), None) };
+        let (dismissed, notice) = load_json_or_notice(&home.join(DISMISSED_FILE), "every WorkState inbox row shows");
+        (Dismissed(dismissed), notice)
     }
 
     pub fn to_json(&self) -> String {
@@ -148,6 +150,8 @@ pub struct WorkInbox {
     pending: Option<Plan>,
     /// Workspace → why its last read failed (the rows of the read before stay on screen).
     pub failures: HashMap<String, String>,
+    /// Why the dismissals could not be read or the last save failed.
+    pub notice: Option<String>,
     pub reads: u64,
 }
 
@@ -164,7 +168,7 @@ impl WorkInbox {
         let hub = WorkHub::shared(home.clone(), cx);
         let inbox = cx.new(|cx| {
             cx.subscribe(&hub, Self::on_hub).detach();
-            let dismissed = Dismissed::load(home.as_deref());
+            let (dismissed, notice) = Dismissed::load(home.as_deref());
             WorkInbox {
                 hub,
                 home,
@@ -176,6 +180,7 @@ impl WorkInbox {
                 unsaved: Arc::default(),
                 pending: None,
                 failures: HashMap::new(),
+                notice,
                 reads: 0,
             }
         });
@@ -221,15 +226,24 @@ impl WorkInbox {
         let Some(path) = self.home.as_ref().map(|h| h.join(DISMISSED_FILE)) else { return };
         *self.unsaved.lock().unwrap_or_else(|e| e.into_inner()) = Some(self.dismissed.to_json());
         let unsaved = self.unsaved.clone();
-        cx.background_executor()
-            .spawn(async move {
-                // Held while writing, so the last state written is the newest one.
-                let mut latest = unsaved.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(json) = latest.take() {
-                    let _ = std::fs::write(&path, json);
-                }
+        cx.spawn(async move |this, cx| {
+            let saved = cx
+                .background_executor()
+                .spawn(async move {
+                    // Held while writing, so the last state written is the newest one.
+                    let mut latest = unsaved.lock().unwrap_or_else(|e| e.into_inner());
+                    let json = latest.take()?;
+                    Some(write_atomic(&path, json).map_err(|e| format!("Cannot save {} ({e}): a dismissed row shows again after a restart", path.display())))
+                })
+                .await;
+            let Some(saved) = saved else { return };
+            this.update(cx, |this, cx| {
+                this.notice = saved.err();
+                cx.notify();
             })
-            .detach();
+            .ok();
+        })
+        .detach();
     }
 
     fn on_hub(&mut self, _: Entity<WorkHub>, event: &HubEvent, cx: &mut Context<Self>) {
@@ -259,11 +273,7 @@ impl WorkInbox {
                     }
                 }
                 if first {
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(DEBOUNCE).await;
-                        this.update(cx, |this, cx| this.flush(cx)).ok();
-                    })
-                    .detach();
+                    after_debounce(cx, Self::flush);
                 }
             }
             HubEvent::Connection => {}
@@ -400,10 +410,12 @@ mod tests {
         d.dismiss("w", &row("blocked:t1", "s1"));
         d.dismiss("v", &row("question:t2", "s2"));
         std::fs::write(home.path().join(DISMISSED_FILE), d.to_json()).unwrap();
-        assert_eq!(Dismissed::load(Some(home.path())), d);
+        assert_eq!(Dismissed::load(Some(home.path())), (d.clone(), None));
         std::fs::write(home.path().join(DISMISSED_FILE), "not json").unwrap();
-        assert_eq!(Dismissed::load(Some(home.path())), Dismissed::default());
-        assert_eq!(Dismissed::load(None), Dismissed::default());
+        let (none, notice) = Dismissed::load(Some(home.path()));
+        assert_eq!(none, Dismissed::default());
+        assert!(notice.is_some_and(|n| n.contains(DISMISSED_FILE)), "an unreadable file says so");
+        assert_eq!(Dismissed::load(None), (Dismissed::default(), None));
         assert!(d.retain_workspaces(&["w".to_string()]));
         assert!(!d.hides("v", &row("question:t2", "s2")));
     }
