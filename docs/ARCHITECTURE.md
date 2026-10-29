@@ -63,7 +63,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `confirm::Confirm` — a question before an action that cannot be taken back (`ask`), or a report with only its OK (`report`); the owner places it.
 - `toast::ToastSlot` — short feedback floating over a panel that goes by itself (`TOAST_FOR`).
 - `notices::{NoticeKind, render, keep_dismissed, remove_one}` — a list of plain notices with a × each; the owner keeps the kinds and sources.
-- `tabs::{tab_strip, TabHeader, cycled, sanitize}` — the tab strip, tab cycling, and a program's OSC title as a tab label; tab state stays with the owner.
+- `tabs::{tab_strip, TabHeader, DraggedTab, reorder, cycled, sanitize}` — the tab strip with drag-to-reorder (`on_move(from, to)`; `DraggedTab { id }` is the payload any other drop target takes), tab cycling, and a program's OSC title as a tab label; tab state and order stay with the owner.
 - `hover_card::{HoverCard, tooltip}` — a hover card of a title and `label  value` rows.
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.

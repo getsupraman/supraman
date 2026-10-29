@@ -3997,3 +3997,31 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate:** `--selftest` 5 of 6 PASS, one 7r failure (another process wrote the clipboard during claude's image
   check), passed on rerun; `--selftest-supervise` failed step s (the reveal) before m5/60 was merged and passed
   on the merged build; `--selftest-detach-shutdown` PASS.
+
+## 2026-10-29 — m5/53 tabs reorder by drag and drop
+
+- **Shared part** (`foreman_ui::tabs`): every tab header has `.on_drag(DraggedTab { id, title })`; the preview is
+  a chip with the title. `tab_strip` takes `on_move(from, to)` (indices into the headers it was given); the drop
+  on a tab resolves `from` from the dragged id against the ids of that render, so a stale payload index cannot
+  move the wrong tab, and a payload from another strip or an id no longer there is ignored. `reorder(vec, from,
+  to)` is remove-then-insert, so the dropped tab takes the target's place. m5/54 reuses `DraggedTab` (its `id`) as
+  the payload a terminal accepts.
+- **Drop marker:** `drag_over::<DraggedTab>` on the target tab clears its borders and draws a 2 px
+  `drop_target_border` bar on the side the tab lands (left when it comes from the right, right otherwise),
+  Zed's `pane.rs` rule. Setting only the colour also recolours the tab's own 1 px right border, so both sides lit
+  up; `border_0()` first fixes that.
+- **No side effects:** only the tabs have a `DraggedTab` drop listener; a drop anywhere else (below the strip,
+  the empty strip after the tabs, the `+`) is taken by nothing, and gpui clears the drag on mouse up. A drag
+  never fires the tab's click, so the active tab stays active (it is kept by id) and nothing is closed or
+  detached.
+- **Persistence:** open tabs are not persisted across a restart (`FleetView::tabs` starts empty, no settings key
+  holds them), so the order lives for the session, in `FleetView::tabs`; Ctrl+Tab (`cycled` over that Vec)
+  follows it.
+- **Selftest 7u** (`selftest_tabs::reorder`): three tabs [A, B, Work], A clicked; B dragged 200 px below the strip
+  (unchanged, A active); B dragged onto A (`[B, A, Work]`, A active, screenshot `m5-53-tab-drag` mid-drag); six
+  Ctrl+Tab/Ctrl+Shift+Tab presses follow the new order; B dragged onto the last tab (`[A, Work, B]`) and Ctrl+Tab
+  from A goes to Work. The drag is dispatched mouse move/down, eight moves with the left button held, a 100 ms
+  wait so a frame paints the marker, then up.
+- **Red checks** (reverted with `git checkout`, never committed): the drop's `on_move` call removed → 7u "tab 23
+  dropped on tab 22: (order, active) ([22, 23, 24], Some(22)), expected ([23, 22, 24], 22)"; the marker side
+  swapped → `the_marker_is_on_the_side_the_tab_lands` fails.
