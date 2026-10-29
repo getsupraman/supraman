@@ -26,8 +26,8 @@ use alacritty_terminal::{
     },
     tty,
     vte::ansi::{
-        CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
-        NamedPrivateMode, PrivateMode,
+        CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle, NamedPrivateMode,
+        PrivateMode,
     },
 };
 use anyhow::{Context as _, Result};
@@ -39,9 +39,11 @@ use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use crate::{
     Cell, Color, Content, Cursor, CursorShape, GridLinesChange, HoveredWord, Hyperlink,
-    IndexedCell, Modes, Point, Range, Scroll, Search,
-    Selection, SelectionRange, SelectionSide, SelectionType, TerminalBackendEvent, TerminalBounds,
+    IndexedCell, Modes, Point, Range, Search, SelectionRange, TerminalBounds,
+    events::TerminalBackendEvent,
+    mouse::{Selection, SelectionSide, SelectionType},
     pty_info::ProcessIdGetter,
+    scroll::Scroll,
     terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, WORD_DELIMITERS},
 };
 
@@ -365,7 +367,6 @@ impl Selection {
         selection
     }
 }
-
 
 fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
     Cell { cell: cell.clone() }

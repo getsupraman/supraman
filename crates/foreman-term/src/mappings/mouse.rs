@@ -8,7 +8,7 @@ use std::iter::repeat;
 /// with modifications for our circumstances
 use gpui::{Modifiers, MouseButton, Pixels, Point as GpuiPoint, ScrollEvent, px};
 
-use crate::{Modes, Point, SelectionSide, TerminalBounds};
+use crate::{Modes, Point, TerminalBounds, mouse::SelectionSide};
 
 enum MouseFormat {
     Sgr,

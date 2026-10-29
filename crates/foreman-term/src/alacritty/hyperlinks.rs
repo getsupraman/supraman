@@ -180,14 +180,14 @@ fn normalize_hyperlink_match(
         // Use Url::to_file_path() to properly handle Windows drive letters
         // (e.g., file:///C:/path -> C:\path)
         if maybe_url_or_path.starts_with("file://") {
-            if let Ok(url) = Url::parse(&maybe_url_or_path) {
-                if let Ok(path) = url.to_file_path_ext(path_style) {
-                    return HyperlinkMatch {
-                        text: path.to_string_lossy().into_owned(),
-                        is_url: false,
-                        range,
-                    };
-                }
+            if let Ok(url) = Url::parse(&maybe_url_or_path)
+                && let Ok(path) = url.to_file_path_ext(path_style)
+            {
+                return HyperlinkMatch {
+                    text: path.to_string_lossy().into_owned(),
+                    is_url: false,
+                    range,
+                };
             }
             // Fallback: strip file:// prefix if URL parsing fails
             let path = maybe_url_or_path

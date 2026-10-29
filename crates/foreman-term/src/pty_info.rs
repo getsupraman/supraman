@@ -191,10 +191,9 @@ impl PtyProcessInfo {
         if self.task.lock().is_some() {
             return;
         }
-        let wait = self
-            .refreshed_at
-            .lock()
-            .map_or(Duration::ZERO, |at| REFRESH_INTERVAL.saturating_sub(at.elapsed()));
+        let wait = self.refreshed_at.lock().map_or(Duration::ZERO, |at| {
+            REFRESH_INTERVAL.saturating_sub(at.elapsed())
+        });
         let this = self.clone();
         let executor = cx.background_executor().clone();
         let change_task = cx.background_executor().spawn(async move {
@@ -241,4 +240,3 @@ impl PtyProcessInfo {
         self.pid_getter.pid()
     }
 }
-
