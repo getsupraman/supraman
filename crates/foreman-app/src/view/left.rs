@@ -1237,7 +1237,7 @@ impl FleetView {
                     .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
             )
             .child(match marks {
-                Some(m) if !s.name.is_empty() => super::results::marked(format!("session-name-{}", s.id), name, &m.name, cx).flex_1(),
+                Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}", s.id), name, &m.name, cx).flex_1(),
                 _ => clipped(format!("session-name-{}", s.id), name, false).flex_1(),
             })
             .child(
@@ -1251,7 +1251,7 @@ impl FleetView {
                         Some(id) => {
                             let kind = format!("{} · ", s.kind.as_str());
                             let at = id.start + kind.len()..id.end + kind.len();
-                            super::results::marked(format!("session-id-{}", s.id), format!("{kind}{}", fleet::short_id(s)), &[at], cx).into_any_element()
+                            foreman_ui::matcher::highlighted(format!("session-id-{}", s.id), format!("{kind}{}", fleet::short_id(s)), &[at], cx).into_any_element()
                         }
                         None => SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s))).into_any_element(),
                     }),

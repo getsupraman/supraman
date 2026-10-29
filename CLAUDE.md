@@ -15,6 +15,14 @@ Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`
 - `foreman_ui::banner::{tinted, plain, dismissable, tint}`: every notice box; a status colour on its 0.12 tint (m5/26 contrast).
 - `foreman_ui::hit::{HitTargets, hit_target}`: every clickable element records its painted bounds under its key; the selftests click through these.
 - `foreman_ui::fonts::{UI, MONO, icons}`: the UI's font families; never a family name spelt out in a view.
+- `foreman_ui::menu::{ContextMenu, MenuItem, item}`: every right-click menu, generic over the owner's action type; items paint under `menu-<key>`.
+- `foreman_ui::confirm::Confirm`: every question before an action that cannot be taken back (`ask`), and every report with only its OK (`report`); the owner places it.
+- `foreman_ui::toast::ToastSlot`: every short feedback that floats over a panel and goes by itself.
+- `foreman_ui::notices::{NoticeKind, render, keep_dismissed, remove_one}`: every list of plain notices with a × each; the owner keeps the kinds and their sources.
+- `foreman_ui::tabs::{tab_strip, TabHeader, cycled, sanitize}`: the tab strip, tab cycling, and a program's OSC title as a tab label; tab state and detach stay with the owner.
+- `foreman_ui::hover_card::{HoverCard, tooltip}`: every hover card of a title and `label  value` rows.
+- `foreman_ui::split::SplitPane`: every resizable side-by-side split; the owner keeps and persists the width.
+- `foreman_ui::matcher::{find_all, prefix, highlighted, count}`: case-insensitive matching and a results list's highlighted label and count badge.
 - `foreman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `foreman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop.
 - `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
