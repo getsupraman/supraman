@@ -3229,3 +3229,49 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   --workspace --no-fail-fast` 613 passed, 0 failed; `--selftest` 5 of 5 PASS (130–147 s);
   `--selftest-supervise` PASS (321 s); `--selftest-detach-shutdown` PASS (14 s); 0 `fm-selftest` rows from
   this worktree (6 listed belong to m5-44-4's run, left alone).
+
+## 2026-10-29 — m5/44.6 supervisor correctness (audit U5)
+
+- **A-36, `DesiredState::update`:** read-edit-save runs under `<home>/supervisor/<workspace>.lock`
+  (`foreman_core::fs::lock_file`, the `refresh.lock` pattern, now shared; `auth.rs` uses it too). The
+  check-then-write retry loop is gone, and `edit` runs exactly once (`FnOnce`). Red check:
+  `concurrent_updates_lose_no_edit` (6 threads × 15 wants) kept 19 of 90 on master and keeps 90 of 90 now.
+  Plain `save` (selftests, `migrate_home`) does not take the lock. The UI thread still calls `update` for
+  Start/Stop: the lock is held for one small read and write, and moving it off the UI thread is in
+  `view.rs` (U6a's and U4's files).
+- **A-33, stops:** every `claude stop` result is kept per name. After `STOP_FAILURES_SHOWN` (3) failures
+  in a row, the name gets a `NeedsKind::StopFailed` Inbox row ("stop failed", Attach). A success, or a
+  tick with no stop due, clears it. It is still stop and never rm, retried every tick.
+- **A-34, Re-mint:** a name stays in `remint_due` until its stop succeeds. It is dropped when there is no
+  live row (the resume mints anyway) or the name is no longer wanted. With two or more live rows it waits
+  (R6). `retry` adds no duplicate entry.
+- **A-35, resume output:** `resumed()` returns `InPlace`, `Copy(id8)` (an 8-hex id that differs) or
+  `Unknown`. `Unknown` (empty, or new CLI text) is a notice. `confirm_resumes` settles it against the
+  next snapshots: its own id live confirms it; another live row of the name is a copy and a counted
+  failure; if neither shows up, it waits up to `settle`. `record_result` on a failure clears
+  `started_at`, so a copy is not counted a second time as "exited within".
+- **A-48:** `foreman_core::FM_PREFIX` replaces the `fm-` literals in `session.rs`, `budget.rs`,
+  `desired.rs` and `migrate.rs` (the app's own literals are left to U6). The budget recognises a relay by
+  `is_relay(name, workspaces)`, the exact `fm-<workspace>-relay` of a known workspace, instead of the
+  `-relay` suffix. `Budget::new` and `working` take the workspaces. Red case:
+  `a_repo_session_whose_slug_ends_in_relay_takes_a_slot` (`fm-a-b-relay` is repo `b-relay` of `a`).
+  This took no slot under the suffix rule.
+- **A-52 (note for ARCHITECTURE, m5/44.17):** `Supervisor::tick` runs on the poll thread. Each launch can
+  block for up to `WRITE_TIMEOUT` (60 s), plus a `claude agents` call before every `--bg`. During that
+  time the session list and event polling stall, and later launches act on an old snapshot (R6 and R13
+  cover duplicates). Not changed. A later unit can move the launches off the poll thread.
+- **A-58:** `forget.rs` gets `find_transcript_looks_in_the_cwds_project_dir_first_and_reads_only_files` and
+  `a_sibling_dir_that_cannot_go_fails_after_the_transcript_went_and_a_second_call_finishes`. The second
+  holds a file in the sibling dir with `share_mode(0)`. The transcript is already deleted when the
+  error is returned, and a second call removes the rest.
+- **A-60:** tests for `starting()` on a stopped workspace and around a hold, a trust refusal on resume,
+  and a row whose cwd is gone (a resume again after the backoff, never a launch beside it).
+  `sessions_dir` delegates to `paths::claude_dir`, whose `CLAUDE_CONFIG_DIR` handling foreman-core
+  already tests. The `human.rs` two-writer ledger is not in U5's files and is left open.
+- **New shared component:** `foreman_core::fs::lock_file` (listed in CLAUDE.md).
+- **Kind added:** `NeedsKind::StopFailed`. `view/left.rs` gets its colour (error) and label.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-6\target`): build ok, no warnings; `cargo test --release
+  --workspace --no-fail-fast` 645 passed, 0 failed; `--selftest` 8 runs: runs 2–6 PASS five in a row, run 7
+  FAIL at step 7c "window not found" (F-06b), run 1 FAIL at 98 s, step not captured, run 8 PASS;
+  `--selftest-supervise` PASS (327 s); `--selftest-detach-shutdown` PASS (16 s); 0 `fm-selftest` rows from
+  this worktree (4 listed belong to m5-44-5, left alone).

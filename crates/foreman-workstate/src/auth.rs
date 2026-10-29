@@ -229,11 +229,7 @@ impl Auth {
     /// One refresh at a time across processes (the app and `fm`): a rotated token is read back fresh.
     fn refresh_lock(&self) -> Result<File, AuthError> {
         let path = self.home.join("oauth").join("refresh.lock");
-        let file = std::fs::create_dir_all(path.parent().expect("oauth dir"))
-            .and_then(|()| File::options().create(true).truncate(false).write(true).open(&path))
-            .map_err(|e| AuthError::Store(format!("cannot open {}: {e}", path.display())))?;
-        file.lock().map_err(|e| AuthError::Store(format!("cannot lock {}: {e}", path.display())))?;
-        Ok(file)
+        foreman_core::fs::lock_file(&path).map_err(|e| AuthError::Store(format!("cannot lock {}: {e}", path.display())))
     }
 
     /// The server URL `settings.toml` names, as an origin.

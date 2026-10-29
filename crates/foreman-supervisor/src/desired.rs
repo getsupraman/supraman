@@ -2,6 +2,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use foreman_core::FM_PREFIX;
 use serde::{Deserialize, Serialize};
 
 use crate::{Result, SupervisorError};
@@ -68,17 +69,22 @@ fn default_permission_mode() -> String {
 }
 
 pub fn workspace_session_name(workspace: &str) -> String {
-    format!("fm-{workspace}-{WORKSPACE_ROLE}")
+    format!("{FM_PREFIX}{workspace}-{WORKSPACE_ROLE}")
 }
 
 pub fn relay_session_name(workspace: &str) -> String {
-    format!("fm-{workspace}-{RELAY_ROLE}")
+    format!("{FM_PREFIX}{workspace}-{RELAY_ROLE}")
 }
 
 /// An `fm-` session this home neither wants (`wanted`: the names in its desired states) nor names
 /// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's (m5/10).
 pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>, mut wanted: impl Iterator<Item = &'a str>) -> bool {
-    name.starts_with("fm-") && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("fm-{w}-")))
+    name.starts_with(FM_PREFIX) && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
+}
+
+/// `fm-<workspace>-relay` of one of `workspaces`: a relay row, by name alone (an unwanted one included).
+pub fn is_relay<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>) -> bool {
+    workspaces.any(|w| name == relay_session_name(w))
 }
 
 /// `fm-<workspace>-relay`: cwd = the workspace root (trusted: the workspace session runs there),
@@ -101,7 +107,7 @@ pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl I
 /// workspace's own sessions (`workspace`, `relay`).
 pub fn repo_session_name(workspace: &str, repo: &str) -> Option<String> {
     let slug = foreman_core::slugify(repo);
-    (!slug.is_empty() && slug != WORKSPACE_ROLE && slug != RELAY_ROLE).then(|| format!("fm-{workspace}-{slug}"))
+    (!slug.is_empty() && slug != WORKSPACE_ROLE && slug != RELAY_ROLE).then(|| format!("{FM_PREFIX}{workspace}-{slug}"))
 }
 
 /// A repo-controller for `repo`: cwd = the repo's checkout (it merges there like a controller does, so the
@@ -241,32 +247,21 @@ impl DesiredState {
         }
     }
 
-    /// Read-modify-write against other writers (the app's Start/Stop, other `fm` calls): loads the file
-    /// (or [`DesiredState::new`] when there is none), applies `edit`, and before saving re-reads it; if it
-    /// changed meanwhile, starts over on the new content (up to 10 times). What is left is the moment
-    /// between that re-read and the rename: a write landing there is lost. `edit` may run more than once.
-    pub fn update<T>(home: &Path, workspace: &str, mut edit: impl FnMut(&mut Self) -> T) -> Result<(Self, T)> {
-        let path = Self::path(home, workspace)?;
-        let read = || match fs::read_to_string(&path) {
-            Ok(text) => Ok(Some(text)),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(SupervisorError::Io { path: path.clone(), source }),
-        };
-        let mut attempt = 0;
-        loop {
-            let before = read()?;
-            let mut desired = match &before {
-                Some(text) => toml::from_str(text).map_err(|source| SupervisorError::Parse { path: path.clone(), source })?,
-                None => Self::new(workspace),
-            };
-            let out = edit(&mut desired);
-            attempt += 1;
-            if read()? != before && attempt < 10 {
-                continue;
-            }
-            desired.save(home)?;
-            return Ok((desired, out));
-        }
+    /// `<FOREMAN_HOME>/supervisor/<workspace>.lock`, held by [`DesiredState::update`].
+    pub fn lock_path(home: &Path, workspace: &str) -> Result<PathBuf> {
+        Ok(Self::path(home, workspace)?.with_extension("lock"))
+    }
+
+    /// Read-modify-write against other writers (the app's Start/Stop, the poll thread, `fm want`), one at
+    /// a time under [`DesiredState::lock_path`]: loads the file (or [`DesiredState::new`] when there is
+    /// none), applies `edit` and saves.
+    pub fn update<T>(home: &Path, workspace: &str, edit: impl FnOnce(&mut Self) -> T) -> Result<(Self, T)> {
+        let lock = Self::lock_path(home, workspace)?;
+        let _held = foreman_core::fs::lock_file(&lock).map_err(|source| SupervisorError::Io { path: lock, source })?;
+        let mut desired = Self::load(home, workspace)?.unwrap_or_else(|| Self::new(workspace));
+        let out = edit(&mut desired);
+        desired.save(home)?;
+        Ok((desired, out))
     }
 }
 
@@ -461,29 +456,36 @@ mod tests {
     }
 
     #[test]
-    fn update_starts_over_when_another_writer_saved_meanwhile() {
+    fn concurrent_updates_lose_no_edit() {
         let home = tempfile::tempdir().unwrap();
-        let (d, ()) = DesiredState::update(home.path(), "demo", |_| ()).unwrap();
-        assert_eq!(d, DesiredState::new("demo"), "no file: a new one");
-        let mut runs = 0;
-        let (d, _) = DesiredState::update(home.path(), "demo", |d| {
-            runs += 1;
-            if runs == 1 {
-                // the app's Start lands between our read and our save
-                let mut started = DesiredState::workspace_controller("demo", r"C:\demo", "p");
-                started.started = true;
-                started.save(home.path()).unwrap();
-            }
-            d.want(repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap())
-        })
-        .unwrap();
-        assert_eq!(runs, 2);
-        assert!(d.started, "the other write is kept");
-        let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
-        assert_eq!(names, ["fm-demo-workspace", "fm-demo-alpha"]);
+        let writers: Vec<_> = (0..6)
+            .map(|i| {
+                let home = home.path().to_path_buf();
+                std::thread::spawn(move || {
+                    for n in 0..15 {
+                        let repo = format!("r{i}x{n}");
+                        DesiredState::update(&home, "demo", |d| d.want(repo_session("demo", &repo, r"C:\demo", "p").unwrap())).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
+        assert_eq!(d.sessions.len(), 6 * 15, "every writer's want is kept");
+    }
+
+    #[test]
+    fn update_creates_a_missing_file_and_leaves_only_it_and_its_lock() {
+        let home = tempfile::tempdir().unwrap();
+        let (d, added) = DesiredState::update(home.path(), "demo", |d| d.want(repo_session("demo", "Alpha", r"C:\demo\Alpha", "p").unwrap())).unwrap();
+        assert_eq!(added, Wanted::Added);
         assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(d));
-        let leftovers = fs::read_dir(home.path().join("supervisor")).unwrap().count();
-        assert_eq!(leftovers, 1, "no temp file left");
+        let mut names: Vec<String> =
+            fs::read_dir(home.path().join("supervisor")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["demo.lock", "demo.toml"]);
     }
 
     #[test]

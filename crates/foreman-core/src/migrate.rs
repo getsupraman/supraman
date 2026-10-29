@@ -8,7 +8,7 @@ use std::path::Path;
 
 use toml::{Table, Value};
 
-use crate::{CoreError, Result};
+use crate::{CoreError, FM_PREFIX, Result};
 
 const OLD_REGISTRY: &str = "platforms";
 const NEW_REGISTRY: &str = "workspaces";
@@ -79,8 +79,8 @@ fn migrate_desired(table: &mut Table, stem: &str) -> Option<Option<String>> {
         changed = true;
     }
     let workspace = table.get(NEW_ROLE).and_then(Value::as_str).unwrap_or(stem).to_string();
-    let old_session = format!("fm-{workspace}-{OLD_ROLE}");
-    let new_session = format!("fm-{workspace}-{NEW_ROLE}");
+    let old_session = format!("{FM_PREFIX}{workspace}-{OLD_ROLE}");
+    let new_session = format!("{FM_PREFIX}{workspace}-{NEW_ROLE}");
     if let Some(Value::Array(sessions)) = table.get_mut("sessions") {
         for session in sessions.iter_mut().filter_map(Value::as_table_mut) {
             if session.get("role").and_then(Value::as_str) == Some(OLD_ROLE) {
