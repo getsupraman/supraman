@@ -3774,3 +3774,27 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `want_adds_a_repo_session_once_and_unwant_retires_it` and `a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root`.
   Master's own `crates`/`plugins` fail these two the same way in this target dir: an `fm.exe` under `C:\fmbuild` has no
   `plugins/foreman` next to it or above it ("No Foreman plugin for …"). Selftests not run (parallel passes, per brief).
+
+## 2026-10-29 — m5/51 one border on the Server URL field, shared TextInput padding
+
+- **One border:** Settings → WorkState → Server URL drew the field inside a second bordered box
+  (`settings_window.rs`). The box is gone; `ws-url` keeps only its id and 280 px width, and the field's own border
+  is the only one, like every other TextInput.
+- **Padding lives in `foreman_ui::text_input`:** `PAD_X` 8 px beside, `PAD_Y` 3 px above and below, inside the 1 px
+  border. A single-line field is 26 px high (was 22, with 4 px beside and 1 px above). `TEXT_LEFT` (border +
+  `PAD_X`) is exported for hit targets that click into the text, and `TextInput::text_bounds` returns where the
+  last frame painted the text.
+- **Callers checked:** left-panel search (`view/results.rs`), Settings Server URL, the task box (`open_compose`,
+  multi-line: now `PAD_Y`/`PAD_X` too), Find in terminal (`view/term.rs`; its 28 px bar holds the 26 px field), the
+  add-workspace name (`view/manage.rs`, painted in `view/left.rs`). Only Server URL had a wrapper border. The
+  add-name text hit target hard-coded the old 5 px inset; it uses `TEXT_LEFT` now (one line in `view/left.rs`).
+- **Result line:** the search summary under the box gets `pt_2` (was `py_1`); its left edge stays at the result
+  rows'.
+- **Hit keys unchanged.**
+- **Tests:** `text_input::tests::the_text_has_room_inside_the_border` (red: `PAD_X` back to 4 px → 1 failed).
+  `--selftest` 7k checks the painted search text starts at least 17 px in and 8 px down in `search-box` (master
+  paints 13 and 6, so it fails there). 7n opens the task box, types a line and writes the `m5-51-compose` shot.
+- **Gate:** `cargo build --release --workspace` clean; `cargo test --release --workspace` 663 passed, 0 failed.
+  Selftests run by the controller: in the agent environment 7c fails every run, also on master UI code and with no
+  other selftest running ("window not found" on `close_settings`), while the controller's own run of 2b0fb17
+  passes it. So the agent has no before/after shots past 7c.
