@@ -14,7 +14,7 @@ pub mod secret;
 mod stream;
 
 pub use auth::{Auth, AuthError, AuthStatus};
-pub use client::{API_HEADER, API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
+pub use client::{API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
 pub use health::health;
 pub use http::{agent as http_agent, pct_encode, server_reason};
 pub use model::*;

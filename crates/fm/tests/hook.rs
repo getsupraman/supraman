@@ -80,7 +80,7 @@ fn logs_each_event_and_injects_the_role_on_session_start() {
 }
 
 #[test]
-fn a_session_launched_before_the_rename_gets_the_workspace_role() {
+fn the_workspace_role_text_names_foreman_workspace_and_nothing_else() {
     let home = tempfile::tempdir().unwrap();
     fs::create_dir_all(home.path().join("roles")).unwrap();
     fs::write(home.path().join("roles").join("workspace.md"), "Controller for {workspace}.\n").unwrap();
@@ -92,10 +92,11 @@ fn a_session_launched_before_the_rename_gets_the_workspace_role() {
     let current = hook_env(h, Some("workspace"), &[("FOREMAN_WORKSPACE", "nomos")], &["SessionStart"], &start);
     assert_eq!(String::from_utf8_lossy(&current.stdout), expected, "{current:?}");
     let old = hook_env(h, Some("platform"), &[("FOREMAN_PLATFORM", "nomos")], &["SessionStart"], &start);
-    assert_eq!(String::from_utf8_lossy(&old.stdout), expected, "{old:?}");
+    silent_success(&old);
+    assert_eq!(String::from_utf8_lossy(&old.stdout), "", "{old:?}");
     let both = [("FOREMAN_WORKSPACE", "nomos"), ("FOREMAN_PLATFORM", "other")];
     let both = hook_env(h, Some("workspace"), &both, &["SessionStart"], &start);
-    assert_eq!(String::from_utf8_lossy(&both.stdout), expected, "FOREMAN_WORKSPACE wins");
+    assert_eq!(String::from_utf8_lossy(&both.stdout), expected, "FOREMAN_PLATFORM is not read");
 }
 
 #[test]

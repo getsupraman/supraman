@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::DateTime;
 use foreman_claude::{Route, Sender};
 use foreman_core::{InboxWatcher, Registry, read_outbox, relay_ready, tell};
-use foreman_supervisor::{DesiredState, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, relay_session_name, repo_session_name, workspace_session_name};
+use foreman_supervisor::DesiredState;
 
 use crate::Failure;
 
@@ -100,21 +100,6 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Who runs `fm tell`: `FOREMAN_SESSION`, else the name Foreman gives the session's role (a session
-/// launched before m5/4 has no `FOREMAN_SESSION`).
-fn session_name(workspace: &str) -> Option<String> {
-    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    if let Some(name) = var("FOREMAN_SESSION") {
-        return Some(name);
-    }
-    match var("FOREMAN_ROLE")?.as_str() {
-        WORKSPACE_ROLE => Some(workspace_session_name(workspace)),
-        RELAY_ROLE => Some(relay_session_name(workspace)),
-        REPO_ROLE => repo_session_name(workspace, &var("FOREMAN_REPO")?),
-        _ => None,
-    }
-}
-
 /// `fm tell <body>` or `fm tell --file <path>`, run by a Foreman session to reach the human: an outbox
 /// message from it in its workspace (`FOREMAN_HOME`, `FOREMAN_WORKSPACE` from the session's env).
 pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
@@ -125,7 +110,7 @@ pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
             "fm tell runs inside a Foreman session (FOREMAN_HOME and FOREMAN_WORKSPACE are not set); the human reads Foreman's Messages".into(),
         ));
     };
-    let from = session_name(&workspace)
+    let from = var("FOREMAN_SESSION")
         .ok_or_else(|| Failure::Refused("fm tell cannot tell which session this is: FOREMAN_SESSION is not set".into()))?;
     let path = tell(Path::new(&home), &workspace, &from, &body)?;
     println!("told the human ({workspace}): {}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());

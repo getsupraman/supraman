@@ -13,7 +13,7 @@ lives in WorkState, so a compaction costs you nothing but a `work_brief`.
 
 ## 1. Who is who — names are the address
 
-| Session | Is | WorkState token |
+| Session | Is | WorkState role (Foreman mints each session its own) |
 |---|---|---|
 | `fm-<w>-workspace` | you | **controller**: every project, cross-run `blocks` |
 | `fm-<w>-<repo-slug>` | the repo-controller of one repo (`/foreman:repo-controller`) | **orchestrator**: its own run |
@@ -232,7 +232,7 @@ open work.
 | Never | Instead |
 |---|---|
 | write or edit code, merge, commit in a repo | brief the repo-controller; the store holds the unit |
-| run nested agents or `Start-NestedAgent.ps1` | repo-controllers do, with `/rlarch:controller` |
+| run nested agents (`agent_launch`, `Start-NestedAgent.ps1`) | repo-controllers do, with `/rlarch:controller` |
 | start, restart, stop or remove a session (`claude …`) | `fm want`/`fm unwant` for repo sessions; Foreman does the rest; ask the human for anything else |
 | approve, decide or push on the human's behalf | `DECIDE:` with `fm tell`, then wait |
 | `fm send`, or `SendMessage` to `fm-<w>-relay` | `SendMessage` to sessions, `fm tell` to the human — `fm send` speaks as the human |

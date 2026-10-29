@@ -127,17 +127,19 @@ fn tell_writes_the_outbox_as_the_session_and_is_refused_outside_one() {
         cmd.output().unwrap()
     };
     let out = tell(&["tell", "DONE: x
-second"], &[("FOREMAN_ROLE", "workspace")]);
+second"], &[("FOREMAN_SESSION", "fm-demo-workspace"), ("FOREMAN_ROLE", "workspace")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("told the human (demo): "), "{out:?}");
     let body_file = home.path().join("body.txt");
     fs::write(&body_file, "from a file").unwrap();
     let out = tell(&["tell", "--file", body_file.to_str().unwrap()], &[("FOREMAN_SESSION", "fm-demo-api"), ("FOREMAN_ROLE", "workspace")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let out = tell(&["tell", "x"], &[("FOREMAN_ROLE", "repo"), ("FOREMAN_REPO", "Nomos.Extract")]);
+    let out = tell(&["tell", "x"], &[("FOREMAN_SESSION", "fm-demo-nomos-extract"), ("FOREMAN_ROLE", "repo")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(tell(&["tell", "x"], &[("FOREMAN_ROLE", "probe")]).status.code(), Some(1), "an unknown role names nobody");
-    assert_eq!(tell(&["tell"], &[("FOREMAN_ROLE", "workspace")]).status.code(), Some(1));
+    let out = tell(&["tell", "x"], &[("FOREMAN_ROLE", "workspace")]);
+    assert_eq!(out.status.code(), Some(1), "no FOREMAN_SESSION names nobody: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("FOREMAN_SESSION is not set"), "{out:?}");
+    assert_eq!(tell(&["tell"], &[("FOREMAN_SESSION", "fm-demo-workspace")]).status.code(), Some(1));
 
     let out = fm(home.path(), &["messages", "demo"]);
     let text = String::from_utf8_lossy(&out.stdout);
