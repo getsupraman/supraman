@@ -59,7 +59,7 @@ pub trait TokenProvider {
 /// session gets the role's WorkState server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
-    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_session_token`] writes each session's owner-only config.
+    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
     /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its

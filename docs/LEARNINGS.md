@@ -3306,8 +3306,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   probes and the selftest's `git`, `fm` and screenshot spawns flash no console. `fm probe launch`, the
   static-token route (`with_session_token`, `SessionIdentity::headers`, `write_session_mcp_config`) and
   the 127.0.0.1:5290 URL are deleted (A-54/A-55). `SessionIdentity` itself stays: the executor builds it.
-- **Left alone:** `executor.rs:61`'s doc still links `LaunchSpec::with_session_token` (m5/44.6's file at
-  the time); the PTY shells; test-module spawns.
+- **Left alone:** the PTY shells and spawns inside test modules. `executor.rs`'s doc link now names
+  `with_minted_token` (fixed after m5/44.6 merged).
 - Tests: `process::tests::{output_and_exit_code_come_back, a_missing_program_is_a_spawn_error_with_its_kind,
   a_timeout_kills_the_tree_or_only_the_child, git_runs_in_the_given_dir,
   this_process_is_alive_and_a_spent_pid_is_not}`; launch.rs
@@ -3315,4 +3315,5 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   check: with the job object disabled, `a_timeout_kills_the_tree_or_only_the_child` fails (1 of 5).
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-5\target`): build ok, no warnings; `cargo test --release
   --workspace` 634 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (329 s);
-  `--selftest-detach-shutdown` PASS (17 s); 0 `fm-selftest` rows from this worktree.
+  `--selftest-detach-shutdown` PASS (17 s); 0 `fm-selftest` rows from this worktree. After merging master
+  a6b50cd (m5/44.6): `cargo test --release --workspace` 646 passed, 0 failed.
