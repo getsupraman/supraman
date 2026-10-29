@@ -5,10 +5,10 @@
 use std::path::PathBuf;
 
 use foreman_claude::{Kind, Session};
-use gpui::{AnyElement, ClickEvent, Context, MouseDownEvent, Pixels, Point, SharedString, anchored, deferred, div, prelude::*, px};
-use theme::ActiveTheme as _;
+use foreman_ui::menu::item;
+use gpui::{AnyElement, Context};
 
-use super::{FleetView, hit_target};
+use super::FleetView;
 use crate::fleet::{self, RepoNode, SessionRow, WorkspaceNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,40 +18,39 @@ pub enum MenuAction {
     Work(String),
     Task(String),
     Rescan(String),
-    /// Asks first ([`Confirm`]); [`MenuAction::RemoveNow`] once confirmed.
+    /// Asks first ([`Confirmed::Remove`]).
     Remove(String),
-    RemoveNow(String),
     OpenFolder(PathBuf),
     OpenTerminal { cwd: PathBuf, title: String },
     NewClaude { cwd: PathBuf, title: String },
     SetRepoEnabled { workspace: String, repo: String, enabled: bool },
     Attach { workspace: String, repo: String, session: Session },
     Resume { workspace: String, repo: String, session: Session },
-    /// A session Foreman did not launch asks first; [`MenuAction::StopSessionNow`] stops it.
+    /// A session Foreman did not launch asks first ([`Confirmed::StopSession`]).
     StopSession(Session),
-    StopSessionNow(Session),
     Copy(String),
     ShowInWork { workspace: String, item_id: String },
     /// Stars or unstars a session by its `session_id` (m5/27).
     ToggleStar(String),
-    /// Asks first; [`MenuAction::DeleteNow`] deletes (m5/38, [`super::delete`]).
+    /// Asks first ([`Confirmed::Delete`], m5/38, [`super::delete`]).
     Delete(Session),
-    /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
-    DeleteNow { session: Session, discard: Option<String> },
     /// "Delete closed background sessions…" of a workspace: asks with the plan first.
     DeleteClosed(String),
-    DeleteClosedNow { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
-    /// The OK of a report shown in the confirm box: nothing to do.
-    Dismiss,
 }
 
+/// What a yes to a [`Confirm`] runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MenuItem {
-    /// Unique within the menu; painted under `menu-<key>`.
-    pub key: &'static str,
-    pub label: String,
-    pub action: MenuAction,
+pub enum Confirmed {
+    Remove(String),
+    StopSession(Session),
+    /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
+    Delete { session: Session, discard: Option<String> },
+    DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
 }
+
+pub type MenuItem = foreman_ui::menu::MenuItem<MenuAction>;
+pub type ContextMenu = foreman_ui::menu::ContextMenu<MenuAction>;
+pub type Confirm = foreman_ui::confirm::Confirm<Confirmed>;
 
 /// What the right-click was on, resolved against the tree when the menu opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,23 +59,6 @@ pub enum MenuTarget {
     Repo { workspace: String, repo: String },
     /// By `session_id`, which every row has (an interactive one has no 8-hex `id`).
     Session { workspace: String, repo: String, session_id: String },
-}
-
-pub struct ContextMenu {
-    pub title: String,
-    pub position: Point<Pixels>,
-    pub items: Vec<MenuItem>,
-}
-
-/// A question before an action that cannot be taken back: Remove…, Stop on a session that is not Foreman's.
-pub struct Confirm {
-    pub text: String,
-    pub yes: String,
-    pub action: MenuAction,
-}
-
-fn item(key: &'static str, label: impl Into<String>, action: MenuAction) -> MenuItem {
-    MenuItem { key, label: label.into(), action }
 }
 
 /// `closed_background`: the workspace has a background session with no process ([`super::delete::bulk_plan`]).
@@ -174,58 +156,20 @@ pub fn is_foremans(session: &Session) -> bool {
 }
 
 impl FleetView {
-    /// The open menu, over everything, kept inside the window.
     pub(super) fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let menu = self.menu.as_ref()?;
-        let colors = cx.theme().colors().clone();
-        let mut list = div()
-            .id("context-menu")
-            .flex()
-            .flex_col()
-            .min_w(px(180.))
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors.elevated_surface_background)
-            .shadow_md()
-            .text_sm()
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+        Some(menu.render(
+            &self.hits,
+            |this: &mut Self, action, window, cx| {
+                this.menu = None;
+                this.run_action(action, window, cx);
+            },
+            |this, cx| {
                 this.menu = None;
                 cx.notify();
-            }))
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .text_size(px(10.))
-                    .text_color(colors.text_placeholder)
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(SharedString::from(menu.title.clone())),
-            );
-        for entry in &menu.items {
-            let key = format!("menu-{}", entry.key);
-            let action = entry.action.clone();
-            list = list.child(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
-                    .px_3()
-                    .py(px(3.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(colors.element_hover))
-                    .child(SharedString::from(entry.label.clone()))
-                    .child(hit_target(&self.hits, key))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.menu = None;
-                        this.run_action(action.clone(), window, cx);
-                    })),
-            );
-        }
-        Some(deferred(anchored().position(menu.position).snap_to_window_with_margin(px(8.)).child(list)).with_priority(1).into_any_element())
+            },
+            cx,
+        ))
     }
 }
 

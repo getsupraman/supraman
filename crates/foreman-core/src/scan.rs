@@ -254,4 +254,17 @@ mod tests {
         out.sort();
         out
     }
+
+    #[test]
+    fn the_branch_comes_from_the_nearest_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = repo(tmp.path(), "ref: refs/heads/m5/29
+");
+        let inner = root.join("src").join("deep");
+        fs::create_dir_all(&inner).unwrap();
+        assert_eq!(branch_at(&inner).as_deref(), Some("m5/29"));
+        fs::write(root.join(".git").join("HEAD"), "0123456789abcdef
+").unwrap();
+        assert_eq!(branch_at(&inner), None, "detached");
+    }
 }

@@ -1,6 +1,7 @@
 //! The plain notices above the tree (m5/37): setup, supervise errors, hand tokens, the WorkState inbox's
 //! file and the last action's error, each with its own ×. Dismissing removes that one notice; raising it again shows it again.
 
+use foreman_ui::notices::{NoticeKind, remove_one};
 use gpui::{App, Context};
 
 use super::FleetView;
@@ -14,7 +15,7 @@ pub enum Notice {
     Action,
 }
 
-impl Notice {
+impl NoticeKind for Notice {
     fn tag(self) -> &'static str {
         match self {
             Notice::Setup => "setup",
@@ -24,17 +25,6 @@ impl Notice {
             Notice::Action => "action",
         }
     }
-}
-
-/// The × of the `index`th shown notice of `kind`.
-pub fn dismiss_key(kind: Notice, index: usize) -> String {
-    format!("notice-dismiss-{}-{index}", kind.tag())
-}
-
-/// A poll replaces the supervise errors, so a dismissed one is remembered by its text, and only while the
-/// poll keeps reporting it: once it is gone, the same error coming back shows again.
-pub fn keep_dismissed(dismissed: &mut Vec<String>, errors: &[String]) {
-    dismissed.retain(|d| errors.contains(d));
 }
 
 impl FleetView {
@@ -51,15 +41,10 @@ impl FleetView {
 
     /// Removes one notice of `kind` reading `text`.
     pub fn dismiss_notice(&mut self, kind: Notice, text: &str, cx: &mut Context<Self>) {
-        let remove_one = |list: &mut Vec<String>| {
-            if let Some(i) = list.iter().position(|t| t == text) {
-                list.remove(i);
-            }
-        };
         match kind {
-            Notice::Setup => remove_one(&mut self.setup_notices),
+            Notice::Setup => remove_one(&mut self.setup_notices, text),
             Notice::Supervise => self.supervise_dismissed.push(text.to_string()),
-            Notice::Hand => remove_one(&mut self.hand_notices),
+            Notice::Hand => remove_one(&mut self.hand_notices, text),
             Notice::Inbox => self.work_inbox.update(cx, |inbox, _| {
                 if inbox.notice.as_deref() == Some(text) {
                     inbox.notice = None;
@@ -77,18 +62,9 @@ impl FleetView {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use foreman_ui::notices::dismiss_key;
 
-    #[test]
-    fn a_dismissed_supervise_error_shows_again_once_it_has_cleared() {
-        let mut dismissed = vec!["a".to_string(), "b".to_string()];
-        keep_dismissed(&mut dismissed, &["a".into(), "c".into()]);
-        assert_eq!(dismissed, ["a"], "still reported: still hidden; gone: forgotten");
-        keep_dismissed(&mut dismissed, &[]);
-        assert!(dismissed.is_empty());
-        keep_dismissed(&mut dismissed, &["a".into()]);
-        assert!(dismissed.is_empty(), "the same error raised again is not hidden");
-    }
+    use super::*;
 
     #[test]
     fn each_kind_has_its_own_dismiss_key() {

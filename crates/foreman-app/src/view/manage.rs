@@ -5,7 +5,6 @@
 use std::{
     path::{Path, PathBuf},
     sync::atomic::Ordering,
-    time::Instant,
 };
 
 use foreman_claude::{Claude, Session, now_ms};
@@ -13,8 +12,8 @@ use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover
 use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
-use super::{FleetView, TOAST_FOR, Toast};
-use super::menu::{Confirm, ContextMenu, MenuAction, MenuItem, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
+use super::FleetView;
+use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
 use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
@@ -264,22 +263,9 @@ impl FleetView {
         self.removing.retain(|name, _| names.contains(name));
     }
 
-    /// Says what an action did over the bottom of the left panel for [`TOAST_FOR`], moving nothing (m5/34).
+    /// Says what an action did over the bottom of the left panel, moving nothing (m5/34).
     pub fn show_toast(&mut self, text: String, cx: &mut Context<Self>) {
-        let shown_at = Instant::now();
-        self.toast = Some(Toast { text, shown_at });
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(TOAST_FOR).await;
-            this.update(cx, |this, cx| {
-                if this.toast.as_ref().is_some_and(|t| t.shown_at == shown_at) {
-                    this.toast = None;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
+        self.toast.show(text, |this: &mut Self| &mut this.toast, cx);
     }
 
     /// Opens the menu of the row under the pointer; nothing when the row is gone. A session's SendMessage
@@ -368,15 +354,14 @@ impl FleetView {
             MenuAction::Remove(w) => {
                 let started = self.desired.get(&w).is_some_and(|d| d.0);
                 let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
-                self.confirm = Some(Confirm {
-                    text: format!(
+                self.confirm = Some(Confirm::ask(
+                    format!(
                         "Remove workspace {w} from Foreman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
                     ),
-                    yes: "Remove".into(),
-                    action: MenuAction::RemoveNow(w),
-                });
+                    "Remove",
+                    Confirmed::Remove(w),
+                ));
             }
-            MenuAction::RemoveNow(w) => self.remove_workspace(&w, cx),
             MenuAction::OpenFolder(path) => self.open_folder(&path),
             MenuAction::OpenTerminal { cwd, title } => {
                 self.open_shell_in(cwd, title, window, cx);
@@ -393,17 +378,16 @@ impl FleetView {
             }
             MenuAction::StopSession(session) if is_foremans(&session) => self.stop_session(session, cx),
             MenuAction::StopSession(session) => {
-                self.confirm = Some(Confirm {
-                    text: format!(
+                self.confirm = Some(Confirm::ask(
+                    format!(
                         "{} ({}) was not launched by Foreman. Stop it? Its transcript stays and it can be resumed.",
                         if session.name.is_empty() { "This session" } else { &session.name },
                         session.id
                     ),
-                    yes: "Stop".into(),
-                    action: MenuAction::StopSessionNow(session),
-                });
+                    "Stop",
+                    Confirmed::StopSession(session),
+                ));
             }
-            MenuAction::StopSessionNow(session) => self.stop_session(session, cx),
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -413,19 +397,21 @@ impl FleetView {
                 self.open_work_item(&workspace, &item_id, cx);
             }
             MenuAction::Delete(session) => self.ask_delete(session),
-            MenuAction::DeleteNow { session, discard } => self.delete_now(session, discard, cx),
             MenuAction::DeleteClosed(workspace) => self.ask_delete_closed(workspace, cx),
-            MenuAction::DeleteClosedNow { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
-            MenuAction::Dismiss => {}
         }
         cx.notify();
     }
 
-    pub fn answer_confirm(&mut self, yes: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(confirm) = self.confirm.take()
+    pub fn answer_confirm(&mut self, yes: bool, cx: &mut Context<Self>) {
+        if let Some(Confirm { action: Some(action), .. }) = self.confirm.take()
             && yes
         {
-            self.run_action(confirm.action, window, cx);
+            match action {
+                Confirmed::Remove(w) => self.remove_workspace(&w, cx),
+                Confirmed::StopSession(session) => self.stop_session(session, cx),
+                Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
+                Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
+            }
         }
         cx.notify();
     }
