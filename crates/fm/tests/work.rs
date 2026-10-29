@@ -1,15 +1,15 @@
 //! `fm work overview|board` against a fake WorkState that is also its fake OAuth server (m5/43): the
-//! test signs in, its refresh token in Credential Manager under a random prefix of its own (deleted
-//! after), and `fm` refreshes it. Never the real server or a real token (C21).
+//! test signs in, its refresh token in its scratch home, and `fm` refreshes it. Never the real server or
+//! a real token (C21).
 
 use std::path::Path;
 use std::process::{Command, Output};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use foreman_workstate::auth::{form_decode, http_browser};
 use foreman_workstate::fake::{Answer, FakeAuth, FakeWorkState};
-use foreman_workstate::secret::{CredentialStore, PREFIX_VAR};
-use foreman_workstate::{Auth, SecretStore};
+use foreman_workstate::secret::default_store;
+use foreman_workstate::Auth;
 const RUN: &str = "22222222-0000-4000-8000-000000000004";
 const OTHER_RUN: &str = "22222222-0000-4000-8000-00000000dead";
 const BACKLOG_RUN: &str = "22222222-0000-4000-8000-0000000000bb";
@@ -18,56 +18,21 @@ fn fixture(name: &str) -> String {
     std::fs::read_to_string(format!("{}/../foreman-workstate/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 
-/// A scratch home signed in to the fake; the credential is deleted on drop.
-struct Home {
-    dir: tempfile::TempDir,
-    prefix: String,
-    issuer: Option<String>,
-    _one_writer: Option<MutexGuard<'static, ()>>,
-}
-
-/// One signed-in home at a time: Credential Manager loses concurrent writes from several processes (F-05, LEARNINGS m5/44.3).
-static CREDENTIAL_WRITERS: Mutex<()> = Mutex::new(());
-
-impl Home {
-    fn path(&self) -> &Path {
-        self.dir.path()
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        if let Some(issuer) = &self.issuer {
-            let _ = CredentialStore::new(&self.prefix).delete(issuer);
-        }
-    }
-}
-
-fn prefix() -> String {
-    let mut r = [0u8; 8];
-    getrandom::fill(&mut r).unwrap();
-    format!("fm-test-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>())
-}
-
-/// Settings naming `url`; signed in when `oauth` is given.
-fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> Home {
-    let one_writer = oauth.map(|_| CREDENTIAL_WRITERS.lock().unwrap_or_else(|e| e.into_inner()));
+/// A scratch home with settings naming `url`; signed in when `oauth` is given.
+fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("settings.toml"), format!("workstate_url = '{url}'\n")).unwrap();
-    let prefix = prefix();
-    let issuer = oauth.map(|o| {
-        let auth = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
-        auth.sign_in(url, &http_browser()).unwrap();
-        o.issuer()
-    });
-    Home { dir, prefix, issuer, _one_writer: one_writer }
+    std::fs::write(dir.path().join("settings.toml"), format!("workstate_url = '{url}'
+")).unwrap();
+    if oauth.is_some() {
+        Auth::open(dir.path()).sign_in(url, &http_browser()).unwrap();
+    }
+    dir
 }
 
-fn fm(home: &Home, args: &[&str]) -> Output {
+fn fm(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(args)
-        .env("FOREMAN_HOME", home.path())
-        .env(PREFIX_VAR, &home.prefix)
+        .env("FOREMAN_HOME", home)
         .env_remove("APPDATA")
         .output()
         .unwrap()
@@ -139,7 +104,7 @@ fn work_overview_resolves_the_workspace_and_prints_its_runs() {
     let fake = fake();
     let oauth = fake.enable_oauth();
     let home = home(fake.base(), Some(&oauth));
-    let out = fm(&home, &["work", "overview", "autowork"]);
+    let out = fm(home.path(), &["work", "overview", "autowork"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -159,7 +124,7 @@ fn work_overview_resolves_the_workspace_and_prints_its_runs() {
     oauth_bearer(&fake, &oauth);
     let refreshes = seen.iter().filter(|s| s.target == "/connect/token" && s.body.contains("grant_type=refresh_token")).count();
     assert_eq!(refreshes, 1, "fm refreshed the stored grant once");
-    let stored = CredentialStore::new(&home.prefix).get(&oauth.issuer()).unwrap().unwrap();
+    let stored = default_store(home.path()).get(&oauth.issuer()).unwrap().unwrap();
     assert_eq!(oauth.issued().last(), Some(&stored), "and stored the rotated refresh token");
 }
 
@@ -168,7 +133,7 @@ fn work_board_picks_the_workspaces_run_among_same_named_ones() {
     let fake = fake();
     let oauth = fake.enable_oauth();
     let home = home(fake.base(), Some(&oauth));
-    let out = fm(&home, &["work", "board", "autowork", "m4"]);
+    let out = fm(home.path(), &["work", "board", "autowork", "m4"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -200,11 +165,11 @@ fn work_errors_are_one_line_without_the_token() {
     let fake = fake();
     let oauth = fake.enable_oauth();
     let home = home(fake.base(), Some(&oauth));
-    let store = CredentialStore::new(&home.prefix);
+    let store = default_store(home.path());
     let one_line = |args: &[&str], want: &str| {
         let before = store.get(&oauth.issuer()).unwrap();
         let sent_before = refreshes_sent(&fake).len();
-        let out = fm(&home, args);
+        let out = fm(home.path(), args);
         let stored = store.get(&oauth.issuer()).unwrap();
         let refreshes = rt_report(&fake, &oauth, before.as_deref(), sent_before, stored.as_deref());
         assert_eq!(out.status.code(), Some(1), "{out:?}\n{refreshes}");
@@ -221,14 +186,13 @@ fn work_errors_are_one_line_without_the_token() {
     one_line(&["work", "board", "autowork", "backlog"], "error: WorkState project 'autowork' has no run 'backlog'");
 
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let out = fm(&self::home(&format!("http://{free}"), None), &["work", "overview", "autowork"]);
+    let out = fm(self::home(&format!("http://{free}"), None).path(), &["work", "overview", "autowork"]);
     assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to WorkState at http://{free}"));
 
     let none = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(["work", "overview", "autowork"])
         .env("FOREMAN_HOME", none.path())
-        .env(PREFIX_VAR, prefix())
         .env_remove("APPDATA")
         .output()
         .unwrap();
@@ -238,7 +202,7 @@ fn work_errors_are_one_line_without_the_token() {
 #[test]
 fn work_is_in_the_help() {
     let home = home("http://127.0.0.1:9", None);
-    let help = text(&fm(&home, &["--help"]).stdout);
+    let help = text(&fm(home.path(), &["--help"]).stdout);
     assert!(help.contains("fm work overview <workspace>"), "{help}");
     assert!(help.contains("fm work board <workspace> <run-ref>"), "{help}");
 }

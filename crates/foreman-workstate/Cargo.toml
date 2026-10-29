@@ -20,7 +20,7 @@ thiserror = "2.0.12"
 ureq = { version = "3", default-features = false, features = ["native-tls-no-default"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 foreman-workstate = { path = ".", features = ["fake"] }

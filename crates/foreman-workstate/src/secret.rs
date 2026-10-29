@@ -1,13 +1,12 @@
-//! Where the refresh token lives: Windows Credential Manager, one generic credential per issuer
-//! (`<prefix>:<issuer>`), never a file of Foreman's. [`MemoryStore`] stands in for tests.
+//! Where the refresh token lives: one DPAPI-encrypted file per key under `<home>/oauth/secrets`
+//! ([`FileStore`]), written only under `refresh.lock`. [`MemoryStore`] stands in for tests.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-/// Test hook: the credential target prefix instead of [`DEFAULT_PREFIX`], so a test or the selftest
-/// writes only entries it made and deletes afterwards.
-pub const PREFIX_VAR: &str = "FOREMAN_CREDENTIAL_PREFIX";
-pub const DEFAULT_PREFIX: &str = "Foreman/WorkState";
+/// The Credential Manager target prefix of tokens stored before [`FileStore`]; read once to migrate them.
+pub const LEGACY_PREFIX: &str = "Foreman/WorkState";
 
 /// Errors never carry the secret.
 pub trait SecretStore: Send + Sync {
@@ -36,16 +35,160 @@ impl SecretStore for MemoryStore {
     }
 }
 
-/// Credential Manager under `FOREMAN_CREDENTIAL_PREFIX`, else [`DEFAULT_PREFIX`].
-pub fn default_store() -> Arc<dyn SecretStore> {
+/// `home`'s [`FileStore`], migrating from Credential Manager under [`LEGACY_PREFIX`].
+pub fn default_store(home: &Path) -> Arc<dyn SecretStore> {
     #[cfg(windows)]
     {
-        let prefix = std::env::var(PREFIX_VAR).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| DEFAULT_PREFIX.into());
-        Arc::new(CredentialStore::new(prefix))
+        Arc::new(FileStore::new(home, Arc::new(CredentialStore::new(LEGACY_PREFIX))))
     }
     #[cfg(not(windows))]
     {
+        let _ = home;
         Arc::new(MemoryStore::default())
+    }
+}
+
+/// DPAPI's optional entropy: another program of the same user cannot unprotect the files without it.
+#[cfg(windows)]
+const ENTROPY: &[u8] = b"Foreman/WorkState refresh token";
+/// Tries of a file operation that a scanner or a concurrent reader holds up.
+#[cfg(windows)]
+const TRIES: u32 = 8;
+
+/// `<home>/oauth/secrets/<sha256 of key>.bin`, each the key's secret sealed with DPAPI for the current
+/// user. `set` and `delete` rely on the caller holding `refresh.lock` (auth.rs); the migration in `get`
+/// never replaces a file, so it is safe without it.
+#[cfg(windows)]
+pub struct FileStore {
+    dir: std::path::PathBuf,
+    legacy: Arc<dyn SecretStore>,
+}
+
+#[cfg(windows)]
+impl FileStore {
+    pub fn new(home: &Path, legacy: Arc<dyn SecretStore>) -> Self {
+        Self { dir: home.join("oauth").join("secrets"), legacy }
+    }
+
+    pub fn path(&self, key: &str) -> std::path::PathBuf {
+        use sha2::{Digest, Sha256};
+        self.dir.join(format!("{:x}.bin", Sha256::digest(key.as_bytes())))
+    }
+
+    fn read(&self, key: &str) -> Result<Option<String>, String> {
+        let path = self.path(key);
+        let sealed = match retrying(|| std::fs::read(&path)) {
+            Ok(sealed) => sealed,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+        };
+        let plain = dpapi(&sealed, false).map_err(|e| format!("cannot decrypt {}: {}", path.display(), e.message()))?;
+        String::from_utf8(plain).map(Some).map_err(|_| format!("{} does not hold text", path.display()))
+    }
+
+    /// False when `replace` is off and a file was already there.
+    fn write(&self, key: &str, secret: &str, replace: bool) -> Result<bool, String> {
+        use std::io::Write;
+        let path = self.path(key);
+        let sealed = dpapi(secret.as_bytes(), true).map_err(|e| format!("cannot encrypt the secret: {}", e.message()))?;
+        let mut r = [0u8; 8];
+        getrandom::fill(&mut r).map_err(|e| e.to_string())?;
+        let tmp = path.with_extension(format!("{}.tmp", r.iter().map(|b| format!("{b:02x}")).collect::<String>()));
+        let staged = std::fs::create_dir_all(&self.dir).and_then(|()| {
+            let mut file = std::fs::File::create_new(&tmp)?;
+            file.write_all(&sealed)?;
+            file.sync_all()
+        });
+        let placed = staged.and_then(|()| retrying(|| if replace { std::fs::rename(&tmp, &path) } else { move_new(&tmp, &path) }));
+        match placed {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                if !replace && e.kind() == std::io::ErrorKind::AlreadyExists {
+                    Ok(false)
+                } else {
+                    Err(format!("cannot write {}: {e}", path.display()))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl SecretStore for FileStore {
+    /// Without a file, a credential under the legacy target moves into one and is deleted.
+    fn get(&self, key: &str) -> Result<Option<String>, String> {
+        if let Some(secret) = self.read(key)? {
+            return Ok(Some(secret));
+        }
+        let Some(secret) = self.legacy.get(key)? else { return Ok(None) };
+        let placed = self.write(key, &secret, false)?;
+        // the file wins over a leftover credential, and `delete` tries again
+        let _ = self.legacy.delete(key);
+        if placed { Ok(Some(secret)) } else { self.read(key) }
+    }
+
+    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+        self.write(key, secret, true).map(|_| ())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        let path = self.path(key);
+        match retrying(|| std::fs::remove_file(&path)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot delete {}: {e}", path.display())),
+        }
+        self.legacy.delete(key)
+    }
+}
+
+/// `op` again while it fails with PermissionDenied or a sharing violation, up to [`TRIES`] times.
+#[cfg(windows)]
+fn retrying<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    let mut tried = 1;
+    loop {
+        match op() {
+            Err(e) if tried < TRIES && (e.kind() == std::io::ErrorKind::PermissionDenied || e.raw_os_error() == Some(ERROR_SHARING_VIOLATION)) => {
+                std::thread::sleep(std::time::Duration::from_millis(10 << tried));
+                tried += 1;
+            }
+            done => return done,
+        }
+    }
+}
+
+/// A rename that fails with AlreadyExists instead of replacing `to`.
+#[cfg(windows)]
+fn move_new(from: &Path, to: &Path) -> std::io::Result<()> {
+    use windows::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+    use windows::core::HSTRING;
+    // SAFETY: both paths are HSTRINGs that outlive the call.
+    unsafe { MoveFileExW(&HSTRING::from(from), &HSTRING::from(to), MOVEFILE_WRITE_THROUGH) }
+        .map_err(|e| std::io::Error::from_raw_os_error(e.code().0 & 0xFFFF))
+}
+
+/// CryptProtectData (`seal`) or CryptUnprotectData, current-user scope, with [`ENTROPY`].
+#[cfg(windows)]
+fn dpapi(data: &[u8], seal: bool) -> windows::core::Result<Vec<u8>> {
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData};
+    use windows::core::PCWSTR;
+    let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr().cast_mut() };
+    let entropy = CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr().cast_mut() };
+    let mut out = CRYPT_INTEGER_BLOB::default();
+    // SAFETY: `input` and `entropy` point at buffers that outlive the call and are only read; on success
+    // `out` holds a LocalAlloc'd buffer of `cbData` bytes, freed once copied.
+    unsafe {
+        if seal {
+            CryptProtectData(&input, PCWSTR::null(), Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)?;
+        } else {
+            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)?;
+        }
+        let bytes = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+        LocalFree(Some(HLOCAL(out.pbData.cast())));
+        Ok(bytes)
     }
 }
 
@@ -234,5 +377,79 @@ mod tests {
         store.delete(key).unwrap();
         assert_eq!(store.get(key).unwrap(), None);
         assert_eq!((store.read(key, 1).unwrap(), store.read(key, 2).unwrap()), (None, None), "every part deleted");
+    }
+
+    const KEY: &str = "https://issuer.invalid/";
+
+    fn file_store(legacy: Arc<dyn SecretStore>) -> (tempfile::TempDir, FileStore) {
+        let home = tempfile::tempdir().unwrap();
+        let store = FileStore::new(home.path(), legacy);
+        (home, store)
+    }
+
+    #[test]
+    fn a_file_store_keeps_one_encrypted_file_per_key_under_the_home() {
+        let (home, store) = file_store(Arc::new(MemoryStore::default()));
+        assert_eq!(store.get(KEY).unwrap(), None);
+        store.set(KEY, "fake-rt-1").unwrap();
+        store.set(KEY, "fake-rt-2").unwrap();
+        assert_eq!(store.get(KEY).unwrap().as_deref(), Some("fake-rt-2"), "a rotation replaces the file");
+        let path = store.path(KEY);
+        assert!(path.starts_with(home.path().join("oauth").join("secrets")), "{}", path.display());
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, [path.file_name().unwrap()], "no temp file is left");
+        let sealed = std::fs::read(&path).unwrap();
+        assert!(!sealed.windows(9).any(|w| w == b"fake-rt-2"), "never plain text on disk");
+        let other = FileStore::new(home.path(), Arc::new(MemoryStore::default()));
+        assert_eq!(other.get(KEY).unwrap().as_deref(), Some("fake-rt-2"), "another process reads it");
+        store.delete(KEY).unwrap();
+        assert_eq!((store.get(KEY).unwrap(), path.exists()), (None, false));
+        store.delete(KEY).unwrap();
+    }
+
+    #[test]
+    fn a_file_another_program_sealed_is_refused() {
+        let (_home, store) = file_store(Arc::new(MemoryStore::default()));
+        std::fs::create_dir_all(store.path(KEY).parent().unwrap()).unwrap();
+        std::fs::write(store.path(KEY), b"fake-rt-plain").unwrap();
+        let err = store.get(KEY).unwrap_err();
+        assert!(err.starts_with("cannot decrypt") && !err.contains("fake-rt"), "{err}");
+    }
+
+    #[test]
+    fn a_legacy_credential_moves_into_the_file_once_and_is_deleted() {
+        let legacy = Arc::new(MemoryStore::default());
+        legacy.set(KEY, "fake-rt-legacy").unwrap();
+        let (_home, store) = file_store(legacy.clone());
+        assert_eq!(store.get(KEY).unwrap().as_deref(), Some("fake-rt-legacy"));
+        assert_eq!(legacy.get(KEY).unwrap(), None, "the credential is gone");
+        assert!(store.path(KEY).exists());
+        legacy.set(KEY, "fake-rt-stale").unwrap();
+        assert_eq!(store.get(KEY).unwrap().as_deref(), Some("fake-rt-legacy"), "the file wins");
+        store.delete(KEY).unwrap();
+        assert_eq!((store.get(KEY).unwrap(), legacy.get(KEY).unwrap()), (None, None), "delete removes a leftover credential too");
+    }
+
+    #[test]
+    fn a_migration_never_replaces_a_file_already_written() {
+        let (_home, store) = file_store(Arc::new(MemoryStore::default()));
+        store.set(KEY, "fake-rt-rotated").unwrap();
+        assert!(!store.write(KEY, "fake-rt-legacy", false).unwrap());
+        assert_eq!(store.get(KEY).unwrap().as_deref(), Some("fake-rt-rotated"));
+        assert_eq!(std::fs::read_dir(store.path(KEY).parent().unwrap()).unwrap().count(), 1, "no temp file is left");
+    }
+
+    /// The legacy store under a random prefix of the test's own, never [`LEGACY_PREFIX`].
+    #[test]
+    fn a_split_legacy_credential_migrates_and_every_part_is_deleted() {
+        let legacy = Arc::new(test_store());
+        let _cleanup = Cleanup(&legacy, KEY);
+        let long: String = (0..6 * 1024).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+        legacy.set(KEY, &long).unwrap();
+        let (home, store) = file_store(legacy.clone());
+        assert_eq!(store.get(KEY).unwrap().as_deref(), Some(long.as_str()));
+        assert_eq!((legacy.read(KEY, 0).unwrap(), legacy.read(KEY, 1).unwrap(), legacy.read(KEY, 2).unwrap()), (None, None, None));
+        let fresh = FileStore::new(home.path(), legacy.clone());
+        assert_eq!(fresh.get(KEY).unwrap().as_deref(), Some(long.as_str()));
     }
 }
