@@ -4,6 +4,7 @@
 //! selftests print.
 
 pub mod banner;
+mod builtin_glyphs;
 pub mod button;
 pub mod confirm;
 pub mod fonts;

@@ -7,6 +7,7 @@ mod hand;
 mod instance;
 mod search;
 mod selftest;
+mod selftest_box;
 mod selftest_clipboard;
 mod selftest_closed;
 mod selftest_delete;

@@ -880,6 +880,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let font = step("7s", crate::selftest_font::run(view, &home(), cx)).await?;
     println!("step 7s: {font}");
 
+    let boxed = step("7t", crate::selftest_box::run(view, &home(), cx)).await?;
+    println!("step 7t: {boxed}");
+
     set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
