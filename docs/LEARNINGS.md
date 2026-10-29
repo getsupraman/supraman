@@ -3964,3 +3964,36 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   same tree container, so the fix covers them. The Inbox scrolls inside itself, and its box was always inside the
   panel; it is now smaller in short windows.
 - **Red check**: `--selftest-supervise` on master fails step s as above. With the fix it passes 3 of 3.
+
+## 2026-10-29 — m5/50 sessions painted right after the first list; loading row; Refresh icon turns
+
+- **Startup timeline** (`view.rs` `timeline`, log lines `startup <phase>: N ms (at +M ms)` in `foreman.log`,
+  printed and checked by selftest step 3s). Measured in `--selftest` on this machine, 401 rows, in ms from the
+  FleetView being built:
+  - **Before** (2 runs): version check 69–89, then setup 4–6, then registry 0, `list_sessions` 560–563, main repos
+    and events 19, supervisor tick 334–355, all one after the other: the first paint with sessions at **+1038–1048**.
+  - **After** (6 runs): version check (~70) runs beside setup and the first read; registry 0, `list_sessions`
+    456–499, events 17–22; the snapshot is applied and painted **1–15 ms after the list returns**, at
+    **+498–548**; the tick (300–333) runs after that paint. The transcript scan is 0–8 ms with the selftest's fake
+    claude dir (a real one is bigger; it already runs beside the poll).
+  - The supervisor tick, not `claude agents`, was half the wait. The 1.3 s before the window in the selftest is
+    its own setup (step 2 launches a session), so the real app's pre-window time is not measured here.
+- **The read/tick split:** `Poller::read` reads the registry and `list_sessions` and keeps that snapshot;
+  the app applies it; `Poller::tick` then hands exactly that snapshot to `Supervision::tick` and drops it
+  (`snapshot.take()`), so a tick never runs on an older list or twice on one. `refreshes` counts a poll once both
+  halves are applied. The first read also loads each `DesiredState` so Start/Stop is right before the first tick.
+  When `claude --version` fails, the first read's sessions and snapshot are dropped, as the old `load(false)` did.
+- **Loading state:** until the first snapshot (or its failure) is applied (`sessions_read`), the tree shows a
+  "Loading sessions…" row (hit key `loading-sessions`), never an empty tree; not shown when the CLI failed (its
+  notice says why). Step 3a checks it is painted with no rows before the first list and gone after.
+- **Turning Refresh icon:** shared `foreman_ui::button::toolbar_turning` (gpui `with_animation` +
+  `Transformation::rotate`, one turn a second, paints `<key>-turning` while turning). `FleetView::refreshing` is true
+  until the first poll is applied and from a click until a poll that started after it is applied
+  (`refreshes_answered` = the `refresh_asks` read before that poll's read); a click while refreshing asks nothing.
+  Step 7j clicks, sees it turn, clicks again (asks unchanged), and waits for it to stop.
+- **Red checks** (each reverted, never committed): loading row's hit target removed → 3a "not within 15s";
+  the refreshing guard in `refresh_now` removed → 7j "a second click while refreshing asked again (2 → 3)"; tick
+  moved back before the apply → 3s "the first list painted 317 ms after claude agents returned, over 150 ms".
+- **Gate:** `--selftest` 5 of 6 PASS, one 7r failure (another process wrote the clipboard during claude's image
+  check), passed on rerun; `--selftest-supervise` failed step s (the reveal) before m5/60 was merged and passed
+  on the merged build; `--selftest-detach-shutdown` PASS.
