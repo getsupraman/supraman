@@ -374,17 +374,19 @@ impl FleetView {
         keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
         self.left_hold = Some(Hold { keys, moved: Instant::now() });
         self.left_hold_timer = Some(cx.spawn(async move |this, cx| {
+            let mut wait = HOLD_STILL;
             loop {
-                cx.background_executor().timer(Duration::from_millis(200)).await;
-                let ended = this.update(cx, |this, cx| {
-                    if this.left_hold.as_ref().is_some_and(|h| h.moved.elapsed() < HOLD_STILL) {
-                        return false;
+                cx.background_executor().timer(wait).await;
+                let still_for = this.update(cx, |this, cx| {
+                    let still = this.left_hold.as_ref().map(|h| h.moved.elapsed()).filter(|still| *still < HOLD_STILL);
+                    if still.is_none() {
+                        this.release_left(cx);
                     }
-                    this.release_left(cx);
-                    true
+                    still
                 });
-                if ended.unwrap_or(true) {
-                    break;
+                match still_for {
+                    Ok(Some(still)) => wait = HOLD_STILL - still,
+                    _ => break,
                 }
             }
         }));
@@ -451,6 +453,13 @@ impl FleetView {
                 status.error.opacity(0.12),
             ));
         }
+        for skipped in &self.registry_skipped {
+            notices.push(notice(
+                format!("A workspace is left out, the others run: {skipped}"),
+                status.error,
+                status.error.opacity(0.12),
+            ));
+        }
         if let Some(error) = &self.sessions_error {
             notices.push(notice(
                 format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
@@ -459,7 +468,7 @@ impl FleetView {
             ));
         }
         let mut shown: BTreeMap<notices::Notice, usize> = BTreeMap::new();
-        for (kind, text) in self.plain_notices() {
+        for (kind, text) in self.plain_notices(cx) {
             let index = shown.entry(kind).or_default();
             let key = notices::dismiss_key(kind, *index);
             *index += 1;
@@ -503,7 +512,7 @@ impl FleetView {
         }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.render_add(cx));
-        if self.registry_error.is_none() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
+        if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  fm workspace add <dir>".into(),
                 colors.text,
@@ -1359,7 +1368,7 @@ impl FleetView {
         let hook = row
             .hook
             .as_ref()
-            .filter(|_| s.name.starts_with("fm-"))
+            .filter(|_| s.name.starts_with(foreman_core::FM_PREFIX))
             .map(|h| format!("hook: {}", h.label(now_ms())));
 
         let line = div()

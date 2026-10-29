@@ -1,6 +1,7 @@
 //! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! global init, and the frame / memory probes the selftests print.
 
+pub mod nudge;
 pub mod term_element;
 pub mod themes;
 

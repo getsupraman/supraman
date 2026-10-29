@@ -28,7 +28,8 @@
 //! worker token.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use foreman_supervisor::{HttpMinter, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
 use foreman_workstate::Auth;
@@ -118,6 +119,14 @@ pub fn restart_notice(n: usize, to: &str) -> Option<String> {
     })
 }
 
+/// [`Hands::release_all`] on a thread of its own, waited on for at most `within`: its notices, or `None` when
+/// time ran out. It goes on revoking until the process ends; what it does not reach stays in `hands.json`.
+pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<Vec<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(hands.lock().unwrap_or_else(|e| e.into_inner()).release_all()));
+    rx.recv_timeout(within).ok()
+}
+
 /// `raw` (a session's name as the tree shows it) as a WorkState session name: one line, no control or
 /// bidi characters, at most [`MAX_NAME`] characters. `None` when nothing is left.
 pub fn session_name(raw: &str) -> Option<String> {
@@ -168,8 +177,15 @@ impl Hands {
         self.home.join("mcp")
     }
 
-    fn config_path(&self, name: &str) -> PathBuf {
-        self.mcp_dir().join(format!("workstate-{name}.json"))
+    fn config_path(&self, name: &str) -> std::io::Result<PathBuf> {
+        foreman_claude::mcp_config_path(&self.mcp_dir(), name)
+    }
+
+    /// `Some` notice when the record of the minted tokens could not be saved: a token it lost is not
+    /// revoked at the next start.
+    fn save(&self) -> Option<String> {
+        let path = Self::path(&self.home);
+        self.minted.save().err().map(|e| format!("Cannot save {} ({e}): a hand token minted here is not revoked if Foreman ends without Quit", path.display()))
     }
 
     /// The bearer of the mint and the revoke: (the MCP URL, the sign-in's access token); `None` when
@@ -253,7 +269,9 @@ impl Hands {
                 origin: Some(base),
             },
         );
-        let _ = self.minted.save();
+        if let Some(unsaved) = self.save() {
+            notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
+        }
         self.sessions.insert(name.clone(), request.name.clone());
         match foreman_claude::write_mcp_config(&self.mcp_dir(), &name, &url, &minted.token, &[]) {
             Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
@@ -269,14 +287,16 @@ impl Hands {
 
     /// The session's claude has exited: its config file is gone.
     pub fn ended(&self, name: &str) -> bool {
-        self.minted.get(name).is_some() && !self.config_path(name).exists()
+        self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
     /// Revokes `name`'s token and deletes its config file. `Some` notice when the revoke failed.
     pub fn release(&mut self, name: &str) -> Option<String> {
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
-        let _ = std::fs::remove_file(self.config_path(name));
+        if let Ok(config) = self.config_path(name) {
+            let _ = std::fs::remove_file(config);
+        }
         let bearer = self.bearer();
         let other = match (&bearer, &m.origin) {
             (Ok(Some((url, _))), Some(o)) if *o != api_base(url) => Some(o.clone()),
@@ -293,10 +313,13 @@ impl Hands {
             Ok(None) => Err("not signed in to WorkState any more".into()),
             Err(e) => Err(e),
         };
-        let _ = self.minted.save();
-        result
+        let revoke = result
             .err()
-            .map(|e| format!("Cannot revoke the WorkState token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id))
+            .map(|e| format!("Cannot revoke the WorkState token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id));
+        match (revoke, self.save()) {
+            (Some(r), Some(s)) => Some(format!("{r}; {s}")),
+            (r, s) => r.or(s),
+        }
     }
 
     /// Every token minted for claude session `claude_session_id` (m5/38: its Delete), as [`Self::release`].
@@ -606,6 +629,77 @@ mod tests {
         assert!(!c5.exists());
         let (third, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         assert!(third.names().is_empty(), "the revoke was saved");
+    }
+
+    /// Mints at once; each revoke takes `revoke_takes`, and is counted once it is done.
+    struct SlowRevokes {
+        revoke_takes: std::time::Duration,
+        revoked: Arc<std::sync::atomic::AtomicUsize>,
+        minted: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Minter for SlowRevokes {
+        fn mint(&self, _: &str, _: &str, _: &MintRequest) -> Result<foreman_supervisor::Minted, MintError> {
+            let n = self.minted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(foreman_supervisor::Minted { session_id: format!("s{n}"), token: format!("wss_slow{n}"), expires_at: None })
+        }
+
+        fn bind(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            Ok(())
+        }
+
+        fn revoke(&self, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            std::thread::sleep(self.revoke_takes);
+            self.revoked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn slow_hands(dir: &Path, revoke_takes: std::time::Duration) -> (PathBuf, Arc<Mutex<Hands>>, Arc<std::sync::atomic::AtomicUsize>, Arc<Auth>) {
+        let (url, _seen, _oauth) = fake_workstate(vec![]);
+        let (home, auth) = home_with(dir, Some(&url));
+        let revoked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let minter = SlowRevokes { revoke_takes, revoked: revoked.clone(), minted: Default::default() };
+        let (hands, _) = Hands::with(&home, auth.clone(), minter, a_repo);
+        (home, Arc::new(Mutex::new(hands)), revoked, auth)
+    }
+
+    /// A-29: quit waits for the revokes at most `within`; an unreachable server cannot hold it N × 15 s.
+    #[test]
+    fn quit_release_returns_by_its_deadline_and_still_revokes_a_server_that_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, hands, revoked, _) = slow_hands(dir.path(), std::time::Duration::from_millis(10));
+        for cwd in [r"C:\demo\alpha", r"C:\demo"] {
+            assert!(matches!(hands.lock().unwrap().launch(Path::new(cwd), None), Launch::Minted { .. }));
+        }
+        assert_eq!(release_all_within(hands.clone(), WAIT), Some(Vec::new()));
+        assert_eq!(revoked.load(std::sync::atomic::Ordering::SeqCst), 2, "a server that answers gets every revoke");
+
+        let dir = tempfile::tempdir().unwrap();
+        let (home, hands, revoked, auth) = slow_hands(dir.path(), std::time::Duration::from_secs(3));
+        for cwd in [r"C:\demo\alpha", r"C:\demo", r"C:\x\alpha"] {
+            assert!(matches!(hands.lock().unwrap().launch(Path::new(cwd), None), Launch::Minted { .. }));
+        }
+        let started = std::time::Instant::now();
+        assert_eq!(release_all_within(hands, std::time::Duration::from_millis(300)), None);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+        assert_eq!(revoked.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let (left, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        assert_eq!(left.names().len(), 3, "what quit did not reach stays for the next start");
+    }
+
+    /// A-30: a mint whose record cannot be saved says so, and so does a release.
+    #[test]
+    fn a_hands_json_that_cannot_be_saved_is_a_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, hands, _, _) = slow_hands(dir.path(), std::time::Duration::ZERO);
+        std::fs::create_dir_all(Hands::path(&home)).unwrap();
+        let mut hands = hands.lock().unwrap();
+        let Launch::Minted { name, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        let notice = notice.expect("the failed save is reported");
+        assert!(notice.starts_with("Cannot save ") && notice.contains("hands.json"), "{notice}");
+        let released = hands.release(&name).expect("the failed save is reported");
+        assert!(released.starts_with("Cannot save ") && !released.contains("Cannot revoke"), "{released}");
     }
 
     #[test]

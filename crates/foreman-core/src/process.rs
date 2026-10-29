@@ -207,6 +207,41 @@ pub fn alive(pid: u32) -> bool {
     started(pid).is_some()
 }
 
+/// Blocks until one of `pids` exits or `timeout` passes; `true` when one exited. A pid that cannot be
+/// opened is not waited on, and with none left it returns `false` at once.
+#[cfg(windows)]
+pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForMultipleObjects};
+    const MAXIMUM_WAIT_OBJECTS: usize = 64;
+    // SAFETY: plain Win32 calls on handles this function opens and closes.
+    unsafe {
+        let handles: Vec<_> = pids.iter().filter_map(|&pid| OpenProcess(PROCESS_SYNCHRONIZE, false, pid).ok()).take(MAXIMUM_WAIT_OBJECTS).collect();
+        if handles.is_empty() {
+            return false;
+        }
+        let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+        let woke = WaitForMultipleObjects(&handles, false, ms);
+        for handle in &handles {
+            let _ = CloseHandle(*handle);
+        }
+        (WAIT_OBJECT_0.0..WAIT_OBJECT_0.0 + handles.len() as u32).contains(&woke.0)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    let watched: Vec<u32> = pids.iter().copied().filter(|&pid| alive(pid)).collect();
+    while !watched.is_empty() && Instant::now() < deadline {
+        if watched.iter().any(|&pid| !alive(pid)) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -273,5 +308,20 @@ mod tests {
         let pid = child.id();
         child.wait().unwrap();
         assert!(!alive(pid));
+    }
+
+    #[test]
+    fn a_wait_returns_when_one_pid_exits_and_times_out_on_live_ones() {
+        let me = std::process::id();
+        let started = Instant::now();
+        assert!(!wait_any_exit(&[me], Duration::from_millis(150)));
+        assert!(started.elapsed() >= Duration::from_millis(140));
+        assert!(!wait_any_exit(&[], Duration::from_secs(10)), "nothing to wait on");
+
+        let mut child = powershell("Start-Sleep -Milliseconds 300").spawn().unwrap();
+        let started = Instant::now();
+        assert!(wait_any_exit(&[me, child.id()], Duration::from_secs(30)));
+        assert!(started.elapsed() < Duration::from_secs(20), "{:?}", started.elapsed());
+        child.wait().unwrap();
     }
 }

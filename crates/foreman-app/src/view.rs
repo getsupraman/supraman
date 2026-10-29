@@ -13,15 +13,17 @@ use std::{
 };
 
 use collections::HashMap;
+use futures::FutureExt as _;
 use foreman_claude::{ClaudeVersion, Sent, Session, Transcripts, check_supported, list_sessions, main_repo, now_ms, send_from_human};
 use foreman_core::{
-    DEFAULT_MAX_WORKING, Event, EventReader, OutboxMessage, Workspace, Registry, Settings, mark_answered,
+    DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
 };
 use foreman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
 use foreman_term::{
     Event as TerminalEvent, MaybeNavigationTarget, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
+use foreman_ui::nudge::{self, Nudge, Nudged};
 use foreman_ui::{FrameProbe, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
@@ -89,6 +91,13 @@ pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
 /// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
+/// A command for a new shell is typed once its output has been still this long, or at the limit.
+const SHELL_SETTLED: Duration = Duration::from_millis(500);
+const SHELL_SETTLE_LIMIT: Duration = Duration::from_secs(15);
+/// Claude draws a frame per wakeup; a hand tab looks at its token file at most this often.
+const HAND_CHECK_GAP: Duration = Duration::from_millis(250);
+/// A hand tab with no terminal event looks at its token file this often anyway.
+const HAND_EXIT_FALLBACK: Duration = Duration::from_secs(30);
 /// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
 const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
@@ -179,9 +188,38 @@ pub struct Tab {
     pub opened_at: i64,
     /// The claude session found under a shell tab's pwsh ([`FleetView::resolve_tabs`]): its `sessionId`.
     pub claude: Option<String>,
+    /// Woken on the terminal's output, title and end, and when the tab is removed.
+    watchers: Vec<Nudge>,
 }
 
 impl Tab {
+    pub fn new(id: u64, title: String, kind: TabKind, cwd: Option<PathBuf>) -> Self {
+        Self {
+            id,
+            title,
+            kind,
+            terminal: None,
+            error: None,
+            exited: false,
+            detach: Detach::None,
+            cwd,
+            find: None,
+            program_title: None,
+            session: None,
+            hand: false,
+            workstate: None,
+            hand_key: None,
+            restart_to: None,
+            opened_at: now_ms(),
+            claude: None,
+            watchers: Vec::new(),
+        }
+    }
+
+    fn wake_watchers(&self) {
+        self.watchers.iter().for_each(Nudge::wake);
+    }
+
     /// What its tab shows: the program's title, else its own, and how it ended.
     pub fn label(&self) -> String {
         let mut title = self.program_title.clone().unwrap_or_else(|| self.title.clone());
@@ -201,6 +239,8 @@ pub struct FleetView {
     pub cli: Cli,
     pub workspaces: Vec<Workspace>,
     pub registry_error: Option<String>,
+    /// The workspace files that do not load; the others are listed and supervised.
+    pub registry_skipped: Vec<String>,
     pub sessions: Vec<Session>,
     /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
@@ -263,6 +303,8 @@ pub struct FleetView {
     pub installed_fonts: Arc<Vec<String>>,
     /// The pending debounced write of `term_font_size` ([`term::FONT_SAVE_AFTER`]).
     font_save: Option<gpui::Task<()>>,
+    /// A touchpad's Ctrl+wheel pixels short of a font step ([`term::zoom_steps`]).
+    zoom_carried: f32,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
     /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
@@ -303,7 +345,7 @@ pub struct FleetView {
     pub workstate: WsStatus,
     /// The problem whose notice was dismissed; a different problem shows again.
     workstate_dismissed: Option<String>,
-    workstate_recheck: Arc<AtomicBool>,
+    workstate_recheck: Nudge,
     /// The last Start's warning that its sessions run without WorkState.
     pub start_warning: Option<String>,
     /// The server a sign-in is waiting on (m5/43): its browser page is open.
@@ -314,6 +356,11 @@ pub struct FleetView {
     hands: Option<Arc<Mutex<Hands>>>,
     /// What went wrong minting or revoking them.
     pub hand_notices: Vec<String>,
+    /// Quit's revoke of every hand token has ended, or ran out of [`QUIT_RELEASE_WITHIN`].
+    hands_released: bool,
+    quit_release: Option<gpui::Task<()>>,
+    /// Start and Stop, written one after another off the UI thread ([`Self::write_desired`]).
+    desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
     /// The server open hand tabs were last checked against ([`Self::sync_server`]).
     synced_server: Option<String>,
     /// Servers whose grant this run revoked or tried to ([`Self::leave_servers`]).
@@ -326,10 +373,10 @@ pub struct FleetView {
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     /// Transcript scans finished.
     pub transcript_scans: u64,
-    /// Set to scan the transcripts again now (a star, a closed interactive session, Refresh, the selftest).
-    pub transcripts_nudge: Arc<AtomicBool>,
-    /// Set to poll `claude agents` now instead of at the end of [`REFRESH_EVERY`] (Refresh).
-    poll_nudge: Arc<AtomicBool>,
+    /// Scans the transcripts again now (a star, a closed interactive session, Refresh, the selftest).
+    pub transcripts_nudge: Nudge,
+    /// Polls `claude agents` now instead of at the end of [`REFRESH_EVERY`] (Refresh).
+    poll_nudge: Nudge,
     /// [`Self::refresh_now`] calls.
     pub refresh_asks: u64,
     pub stars: Stars,
@@ -364,12 +411,26 @@ pub struct Toast {
 
 pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 
+/// How long Quit waits on the hand tokens' revokes before it closes anyway; the next start revokes the rest.
+const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
+
+enum DesiredWrite {
+    Start { home: PathBuf, plugin_dir: Option<PathBuf>, workspace: Workspace },
+    Stop { home: PathBuf, name: String },
+}
+
+/// Every workspace file that loads, and why each other one does not.
+fn load_registry(registry: Result<Registry, String>) -> Result<(Vec<Workspace>, Vec<String>), String> {
+    let (workspaces, failed) = registry?.load_all().map_err(|e| e.to_string())?;
+    Ok((workspaces, failed.iter().map(ToString::to_string).collect()))
+}
+
 /// A session with no process, not the supervisor's (`fm-`: Start resumes it); a background one only when
 /// this app has not seen it alive in the last [`RESUME_GRACE_MS`], an interactive one at once.
 pub fn offers_resume(s: &Session, health: &foreman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
     !fleet::is_alive(health)
         && !s.session_id.is_empty()
-        && !s.name.starts_with("fm-")
+        && !s.name.starts_with(FM_PREFIX)
         && (s.kind != foreman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
 }
 
@@ -409,7 +470,7 @@ impl PollHold {
 struct Refresh {
     /// [`FleetView::registry_writes`] as it was before `workspaces` was read.
     registry_writes: u64,
-    workspaces: Result<Vec<Workspace>, String>,
+    workspaces: Result<(Vec<Workspace>, Vec<String>), String>,
     sessions: Option<Result<Vec<Session>, String>>,
     /// [`fleet::main_repos`] of `sessions`.
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
@@ -449,9 +510,7 @@ impl Poller {
     fn load(&mut self, with_sessions: bool) -> Refresh {
         let started = Instant::now();
         let registry_writes = self.registry_writes.load(Ordering::SeqCst);
-        let workspaces = Registry::from_env()
-            .and_then(|r| r.list())
-            .map_err(|e| e.to_string());
+        let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
         self.hold.wait();
         let polled_at = now_ms();
         let sessions = with_sessions.then(|| {
@@ -467,7 +526,7 @@ impl Poller {
         let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
         let took = started.elapsed();
         let report = match (&workspaces, &sessions, self.supervision.as_mut()) {
-            (Ok(workspaces), Some(Ok(sessions)), Some(supervision)) => {
+            (Ok((workspaces, _)), Some(Ok(sessions)), Some(supervision)) => {
                 let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
                 Some(supervision.tick(workspaces, sessions, retries, now_ms()))
             }
@@ -512,8 +571,7 @@ impl FleetView {
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
         let poll_hold: Arc<PollHold> = Arc::default();
-        let poll_nudge = Arc::new(AtomicBool::new(false));
-        let woken = poll_nudge.clone();
+        let (poll_nudge, mut woken) = nudge::nudge();
         let mut poller = Poller {
             home: home.clone(),
             events: None,
@@ -580,30 +638,23 @@ impl FleetView {
                 };
                 // an interactive session closed outside Foreman: poll when its process ends (m5/28), not at the
                 // end of the wait; a pid this app cannot open is never watched
-                let watched: Vec<u32> = pids.into_iter().filter(|&pid| foreman_core::process::alive(pid)).collect();
-                let next = Instant::now() + REFRESH_EVERY;
-                let mut slices = 0u32;
-                while Instant::now() < next && !woken.swap(false, Ordering::SeqCst) {
-                    executor.timer(Duration::from_millis(50)).await;
-                    slices += 1;
-                    if slices % 5 == 0 && watched.iter().any(|&pid| !foreman_core::process::alive(pid)) {
-                        break;
-                    }
-                }
+                let exited = std::pin::pin!(any_exit(&executor, pids, REFRESH_EVERY));
+                futures::future::select(std::pin::pin!(woken.wait(&executor, REFRESH_EVERY)), exited).await;
             }
         })
         .detach();
         Self::blink_cursor(cx);
-        let workstate_recheck = Arc::new(AtomicBool::new(true));
-        Self::watch_workstate(home.clone(), workstate_recheck.clone(), cx);
+        let (workstate_recheck, recheck) = nudge::nudge();
+        Self::watch_workstate(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let (stars, stars_notice) = Stars::load(home.as_deref());
         let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
-        let transcripts_nudge = Arc::new(AtomicBool::new(true));
+        let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
-        Self::watch_transcripts(claude_dir.clone(), transcripts_nudge.clone(), cx);
+        Self::watch_transcripts(claude_dir.clone(), transcripts_nudged, cx);
+        let desired_writes = Self::desired_writer(cx);
         // an input that held the focus went away (the Add review closed): the window's keys come back here
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
@@ -612,6 +663,7 @@ impl FleetView {
             cli: Cli::Checking,
             workspaces: Vec::new(),
             registry_error: None,
+            registry_skipped: Vec::new(),
             sessions: Vec::new(),
             main_repos: StdHashMap::new(),
             sessions_error: None,
@@ -652,6 +704,7 @@ impl FleetView {
             term_ligatures,
             installed_fonts,
             font_save: None,
+            zoom_carried: 0.,
             settings_window: None,
             last_alive: StdHashMap::new(),
             relays: BTreeMap::new(),
@@ -678,6 +731,9 @@ impl FleetView {
             sign_in_error: None,
             hands,
             hand_notices: Vec::new(),
+            hands_released: false,
+            quit_release: None,
+            desired_writes,
             synced_server: None,
             left_servers: Default::default(),
             left_pending: Vec::new(),
@@ -704,8 +760,8 @@ impl FleetView {
     }
 
     /// Closed sessions from the transcripts of the registered repos (m5/27), read on the background
-    /// executor every [`TRANSCRIPTS_EVERY`], at once when the repos change or `nudge` is set.
-    fn watch_transcripts(claude_dir: Option<PathBuf>, nudge: Arc<AtomicBool>, cx: &mut Context<Self>) {
+    /// executor every [`TRANSCRIPTS_EVERY`], at once when nudged (the workspaces changed, a star, Refresh).
+    fn watch_transcripts(claude_dir: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
         let Some(claude_dir) = claude_dir else {
             return;
         };
@@ -713,7 +769,6 @@ impl FleetView {
             let executor = cx.background_executor().clone();
             let mut scanner = Transcripts::in_claude_dir(&claude_dir);
             let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
-            let mut last: Option<(Instant, Vec<PathBuf>)> = None;
             loop {
                 let Ok((roots, keep, live)) = this.read_with(cx, |this, _| {
                     let roots: Vec<PathBuf> = this
@@ -727,15 +782,6 @@ impl FleetView {
                 }) else {
                     return;
                 };
-                let due = match &last {
-                    None => true,
-                    Some((at, scanned)) => at.elapsed() >= TRANSCRIPTS_EVERY || *scanned != roots,
-                };
-                if !(nudge.swap(false, Ordering::SeqCst) || due) {
-                    executor.timer(Duration::from_millis(250)).await;
-                    continue;
-                }
-                last = Some((Instant::now(), roots.clone()));
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
                 let (back, known, closed) = executor
                     .spawn(async move {
@@ -764,6 +810,7 @@ impl FleetView {
                 {
                     return;
                 }
+                nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
             }
         })
         .detach();
@@ -773,15 +820,15 @@ impl FleetView {
     /// terminal tab is active (a terminal's program gets its F5).
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
         self.refresh_asks += 1;
-        self.poll_nudge.store(true, Ordering::SeqCst);
-        self.transcripts_nudge.store(true, Ordering::SeqCst);
+        self.poll_nudge.wake();
+        self.transcripts_nudge.wake();
         cx.notify();
     }
 
     /// Stars or unstars a session (m5/27); a starred one stays in the tree, stopped or closed.
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
         match self.stars.toggle(session_id) {
-            Ok(_) => self.transcripts_nudge.store(true, Ordering::SeqCst),
+            Ok(_) => self.transcripts_nudge.wake(),
             Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
         }
         cx.notify();
@@ -796,7 +843,9 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Revokes the hand tokens an earlier run left, off the UI thread, and the live ones on quit.
+    /// Revokes the hand tokens an earlier run left, off the UI thread. Quit revokes the live ones
+    /// ([`Self::quit_step`]); any other end of the app tries within gpui's shutdown wait, and the next start
+    /// revokes what is left.
     fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
         let (hands, notice) = Hands::open(home);
         let hands = Arc::new(Mutex::new(hands));
@@ -815,53 +864,49 @@ impl FleetView {
         })
         .detach();
         let live = hands.clone();
-        cx.on_app_quit(move |_, _| {
-            live.lock().unwrap_or_else(|e| e.into_inner()).release_all();
-            async {}
+        cx.on_app_quit(move |_, cx| {
+            let live = live.clone();
+            let release = cx.background_executor().spawn(async move { crate::hand::release_all_within(live, QUIT_RELEASE_WITHIN) });
+            async move {
+                release.await;
+            }
         })
         .detach();
         hands
     }
 
     /// [`workstate_setup::detect`] on the background executor at start, every
-    /// [`workstate_setup::RECHECK_EVERY`] and soon after `recheck` is set.
-    fn watch_workstate(home: Option<PathBuf>, recheck: Arc<AtomicBool>, cx: &mut Context<Self>) {
+    /// [`workstate_setup::RECHECK_EVERY`] and at once when nudged.
+    fn watch_workstate(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
-            let mut checked: Option<Instant> = None;
             loop {
-                let due = checked.is_none_or(|t| t.elapsed() >= workstate_setup::RECHECK_EVERY);
-                if recheck.swap(false, Ordering::SeqCst) || due {
-                    checked = Some(Instant::now());
-                    let home = home.clone();
-                    let status = executor
-                        .spawn(async move {
-                            let auth = home.as_deref().map(crate::signin::auth);
-                            workstate_setup::detect(home.as_deref(), auth.as_deref())
-                        })
-                        .await;
-                    let alive = this.update(cx, |this, cx| {
-                        if this.workstate != status {
-                            if matches!(status, WsStatus::Ready { .. }) {
-                                this.start_warning = None;
-                            }
-                            this.workstate = status;
-                            cx.notify();
+                let home = home.clone();
+                let status = executor
+                    .spawn(async move {
+                        let auth = home.as_deref().map(crate::signin::auth);
+                        workstate_setup::detect(home.as_deref(), auth.as_deref())
+                    })
+                    .await;
+                let alive = this.update(cx, |this, cx| {
+                    if this.workstate != status {
+                        if matches!(status, WsStatus::Ready { .. }) {
+                            this.start_warning = None;
                         }
-                        if let WsStatus::Ready { url, .. } = &this.workstate
-                            && this.synced_server.as_ref() != Some(url)
-                        {
-                            let url = url.clone();
-                            this.sync_server(url, cx);
-                        }
-                    });
-                    if alive.is_err() {
-                        return;
+                        this.workstate = status;
+                        cx.notify();
                     }
-                } else if this.upgrade().is_none() {
+                    if let WsStatus::Ready { url, .. } = &this.workstate
+                        && this.synced_server.as_ref() != Some(url)
+                    {
+                        let url = url.clone();
+                        this.sync_server(url, cx);
+                    }
+                });
+                if alive.is_err() {
                     return;
                 }
-                executor.timer(Duration::from_millis(250)).await;
+                recheck.wait(&executor, workstate_setup::RECHECK_EVERY).await;
             }
         })
         .detach();
@@ -869,7 +914,7 @@ impl FleetView {
 
     /// Check WorkState again now (Retry, a changed `.env`), off the UI thread.
     pub fn recheck_workstate(&self) {
-        self.workstate_recheck.store(true, Ordering::SeqCst);
+        self.workstate_recheck.wake();
     }
 
     /// Sign in to the server `settings.toml` names (the notice's and Settings' Sign in).
@@ -877,7 +922,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let origin = Settings::load(&home).unwrap_or_default().workstate_origin();
+        let origin = crate::signin::auth(&home).configured_origin();
         self.sign_in_to(origin, None, cx);
     }
 
@@ -937,9 +982,8 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let origin = Settings::load(&home).unwrap_or_default().workstate_origin();
         let auth = crate::signin::auth(&home);
-        let task = cx.background_executor().spawn(async move { auth.sign_out(&origin) });
+        let task = cx.background_executor().spawn(async move { auth.sign_out(&auth.configured_origin()) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -957,7 +1001,8 @@ impl FleetView {
     }
 
     /// Settings' server URL. While signed in, the new server is used only after a sign-in there
-    /// ([`Self::sign_in_to`]); otherwise the URL is saved at once.
+    /// ([`Self::sign_in_to`]); otherwise the URL is saved. The sign-in is looked up off the UI thread, so a
+    /// save that fails after that is an action error.
     pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Foreman home: settings cannot be saved.")?;
         let origin = foreman_core::validate_workstate_url(text)?;
@@ -965,15 +1010,28 @@ impl FleetView {
         if origin == current {
             return Ok(());
         }
-        if matches!(crate::signin::auth(&home).status(&current), foreman_workstate::AuthStatus::SignedIn { .. }) {
-            self.sign_in_to(origin, Some(current), cx);
-            return Ok(());
-        }
-        save_workstate_url(&home, &origin)?;
-        self.workstate = WsStatus::Checking;
-        self.recheck_workstate();
-        WorkHub::reconfigure(Some(home), cx);
-        cx.notify();
+        let status = {
+            let (auth, current) = (crate::signin::auth(&home), current.clone());
+            cx.background_executor().spawn(async move { auth.status(&current) })
+        };
+        cx.spawn(async move |this, cx| {
+            let signed_in = matches!(status.await, foreman_workstate::AuthStatus::SignedIn { .. });
+            this.update(cx, |this, cx| {
+                if signed_in {
+                    this.sign_in_to(origin, Some(current), cx);
+                    return;
+                }
+                if let Err(e) = save_workstate_url(&home, &origin) {
+                    this.action_error = Some(e);
+                }
+                this.workstate = WsStatus::Checking;
+                this.recheck_workstate();
+                WorkHub::reconfigure(Some(home), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         Ok(())
     }
 
@@ -993,13 +1051,11 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let (elsewhere, left) = task.await;
             this.update(cx, |this, cx| {
-                let mut restart = 0;
+                let stale = stale_tabs(&this.tabs, &elsewhere);
                 for tab in this.tabs.iter_mut().filter(|t| t.hand && !t.exited) {
-                    let stale = tab.hand_key.as_ref().is_some_and(|k| elsewhere.iter().any(|(n, _)| n == k));
-                    tab.restart_to = stale.then(|| origin.clone());
-                    restart += usize::from(stale);
+                    tab.restart_to = stale.contains(&tab.id).then(|| origin.clone());
                 }
-                this.hand_notices.extend(crate::hand::restart_notice(restart, &origin));
+                this.hand_notices.extend(crate::hand::restart_notice(stale.len(), &origin));
                 this.leave_servers(elsewhere.into_iter().filter_map(|(_, o)| o).chain(left).collect(), cx);
                 cx.notify();
             })
@@ -1014,12 +1070,12 @@ impl FleetView {
         let Some(home) = self.home.clone().filter(|_| !origins.is_empty()) else {
             return;
         };
-        let current = Settings::load(&home).unwrap_or_default().workstate_origin();
+        let auth = crate::signin::auth(&home);
+        let current = auth.configured_origin();
         let origins: Vec<String> = origins.into_iter().filter(|o| *o != current && self.left_servers.insert(o.clone())).collect();
         if origins.is_empty() {
             return;
         }
-        let auth = crate::signin::auth(&home);
         let revoke = cx.background_executor().spawn(async move { origins.iter().filter_map(|o| auth.sign_out(o).err()).collect::<Vec<_>>() });
         cx.spawn(async move |this, cx| {
             let failed = revoke.await;
@@ -1048,8 +1104,12 @@ impl FleetView {
         match refresh.workspaces {
             // read before a write from here, so older than the list `reload_workspaces` showed after it
             Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
-            Ok(workspaces) => {
+            Ok((workspaces, skipped)) => {
+                if self.workspaces != workspaces {
+                    self.transcripts_nudge.wake();
+                }
                 self.workspaces = workspaces;
+                self.registry_skipped = skipped;
                 self.registry_error = None;
             }
             Err(error) => self.registry_error = Some(error),
@@ -1063,7 +1123,7 @@ impl FleetView {
                     old.kind == foreman_claude::Kind::Interactive && !sessions.iter().any(|s| s.session_id == old.session_id)
                 });
                 if ended {
-                    self.transcripts_nudge.store(true, Ordering::SeqCst);
+                    self.transcripts_nudge.wake();
                 }
                 for s in &sessions {
                     if fleet::is_alive(&s.health(now)) {
@@ -1131,39 +1191,74 @@ impl FleetView {
     }
 
     pub fn start_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let result = match (&self.home, self.workspaces.iter().find(|p| p.name == name)) {
-            (Some(home), Some(workspace)) => supervise::start_workspace(home, self.plugin_dir.as_deref(), workspace),
-            (None, _) => Err(anyhow::anyhow!("no Foreman home")),
-            (_, None) => Err(anyhow::anyhow!("not registered")),
-        };
-        match result {
-            Ok(desired) => {
-                let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
-                self.desired.insert(name.to_string(), (true, names));
-                self.action_error = None;
-                self.start_warning = self.workstate.start_warning(name);
+        let write = match (&self.home, self.workspaces.iter().find(|p| p.name == name)) {
+            (Some(home), Some(workspace)) => {
+                DesiredWrite::Start { home: home.clone(), plugin_dir: self.plugin_dir.clone(), workspace: workspace.clone() }
             }
-            Err(e) => self.action_error = Some(format!("Cannot start {name}: {e:#}")),
-        }
-        cx.notify();
+            (None, _) => return self.desired_failed(format!("Cannot start {name}: no Foreman home"), cx),
+            (_, None) => return self.desired_failed(format!("Cannot start {name}: not registered"), cx),
+        };
+        self.desired_writes.unbounded_send(write).ok();
     }
 
     pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let result = match &self.home {
-            Some(home) => supervise::stop_workspace(home, name),
-            None => Err(anyhow::anyhow!("no Foreman home")),
+        let Some(home) = self.home.clone() else {
+            return self.desired_failed(format!("Cannot stop {name}: no Foreman home"), cx);
         };
-        match result {
-            Ok(()) => {
-                if let Some(entry) = self.desired.get_mut(name) {
-                    entry.0 = false;
-                }
-                self.action_error = None;
-                self.start_warning = None;
-            }
-            Err(e) => self.action_error = Some(format!("Cannot stop {name}: {e:#}")),
-        }
+        self.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
+    }
+
+    fn desired_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.action_error = Some(error);
         cx.notify();
+    }
+
+    /// Runs Start and Stop in the order they were asked for, each on the background executor:
+    /// [`foreman_supervisor::DesiredState::update`] waits on the workspace's lock file.
+    fn desired_writer(cx: &mut Context<Self>) -> futures::channel::mpsc::UnboundedSender<DesiredWrite> {
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<DesiredWrite>();
+        cx.spawn(async move |this, cx| {
+            use futures::StreamExt as _;
+            while let Some(write) = rx.next().await {
+                let done = cx.background_executor().spawn(async move {
+                    match write {
+                        DesiredWrite::Start { home, plugin_dir, workspace } => {
+                            let result = supervise::start_workspace(&home, plugin_dir.as_deref(), &workspace);
+                            (workspace.name, "start", result.map(Some))
+                        }
+                        DesiredWrite::Stop { home, name } => {
+                            let result = supervise::stop_workspace(&home, &name);
+                            (name, "stop", result.map(|()| None))
+                        }
+                    }
+                });
+                let (name, verb, result) = done.await;
+                let alive = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(Some(desired)) => {
+                            let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
+                            this.desired.insert(name.clone(), (true, names));
+                            this.action_error = None;
+                            this.start_warning = this.workstate.start_warning(&name);
+                        }
+                        Ok(None) => {
+                            if let Some(entry) = this.desired.get_mut(&name) {
+                                entry.0 = false;
+                            }
+                            this.action_error = None;
+                            this.start_warning = None;
+                        }
+                        Err(e) => this.action_error = Some(format!("Cannot {verb} {name}: {e:#}")),
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+        tx
     }
 
     /// Why nothing can be sent through `workspace`'s relay now, if so: it must be started. The relay
@@ -1320,36 +1415,43 @@ impl FleetView {
 
     /// [`Self::type_in_shell`], typed once `command` is known as well.
     fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let shell = util::shell::Shell::WithArguments {
-            program: "pwsh".into(),
-            args: self.shell_args.clone(),
-            title_override: None,
-        };
-        let id = self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx);
+        let id = self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx);
+        let (watch, mut output) = nudge::nudge();
+        if let Some(tab) = self.tab_mut(id) {
+            tab.watchers.push(watch);
+        }
         // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
-        // it look like), or after 15 s regardless.
+        // it look like), or after SHELL_SETTLE_LIMIT regardless.
         cx.spawn(async move |this, cx| {
             let command = command.await;
-            let started = Instant::now();
-            let mut last = String::new();
-            let mut since = Instant::now();
+            let executor = cx.background_executor().clone();
+            let deadline = Instant::now() + SHELL_SETTLE_LIMIT;
+            let mut spoke = false;
             loop {
-                let Ok(terminal) = this.read_with(cx, |this, _| this.tab(id).and_then(|t| t.terminal.clone())) else {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let woken = output.wait(&executor, if spoke { SHELL_SETTLED.min(left) } else { left }).await;
+                let Ok(Some((terminal, failed))) = this.read_with(cx, |this, _| this.tab(id).map(|t| (t.terminal.clone(), t.error.is_some()))) else {
                     return;
                 };
-                if let Some(terminal) = terminal {
-                    let content = terminal.read_with(cx, |t, _| t.get_content());
-                    if content != last {
-                        last = content;
-                        since = Instant::now();
-                    } else if (!last.trim().is_empty() && since.elapsed() > Duration::from_millis(500))
-                        || started.elapsed() > Duration::from_secs(15)
-                    {
-                        terminal.update(cx, |t, _| t.input(command.into_bytes()));
+                let Some(terminal) = terminal else {
+                    if failed {
                         return;
                     }
+                    output.wait(&executor, SHELL_SETTLE_LIMIT).await;
+                    continue;
+                };
+                if Instant::now() < deadline {
+                    if woken {
+                        spoke = true;
+                        continue;
+                    }
+                    if !spoke || terminal.read_with(cx, |t, _| t.get_content()).trim().is_empty() {
+                        spoke = false;
+                        continue;
+                    }
                 }
-                cx.background_executor().timer(Duration::from_millis(50)).await;
+                terminal.update(cx, |t, _| t.input(command.into_bytes()));
+                return;
             }
         })
         .detach();
@@ -1394,13 +1496,8 @@ impl FleetView {
             return;
         };
         let width = f32::from(self.left_width).round() as u32;
-        if let Ok(mut settings) = Settings::load(home)
-            && settings.left_width != Some(width)
-        {
-            settings.left_width = Some(width);
-            if let Err(e) = settings.save(home) {
-                self.action_error = Some(format!("Cannot save the panel width: {e}"));
-            }
+        if let Err(e) = Settings::update(home, |settings| settings.left_width = Some(width)) {
+            self.action_error = Some(format!("Cannot save the panel width: {e}"));
         }
     }
 
@@ -1413,8 +1510,7 @@ impl FleetView {
     /// same id) and the tab attaches to it, so closing the tab detaches and leaves it running. An
     /// interactive one resumes in the tab, as it ran before.
     pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let name = if session.name.is_empty() { fleet::short_id(session) } else { &session.name };
-        let title = format!("{workspace} · {repo} · {name}");
+        let title = format!("{workspace} · {repo} · {}", fleet::display_name(session));
         let sid = &session.session_id;
         if session.kind == foreman_claude::Kind::Background {
             let script = match &self.daemon_hold {
@@ -1424,11 +1520,7 @@ impl FleetView {
                     session.id, session.id
                 ),
             };
-            let shell = util::shell::Shell::WithArguments {
-                program: "pwsh".into(),
-                args: vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script],
-                title_override: None,
-            };
+            let shell = pwsh(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
             let kind = TabKind::Attach { session_id: session.id.clone() };
             self.open_tab(title, kind, shell, Some(session.cwd.clone()), window, cx)
         } else {
@@ -1455,8 +1547,10 @@ impl FleetView {
     /// name in the tree, for its WorkState session (m5/35); `resumes` the uuid of the session it resumes.
     fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, resumes: Option<String>, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
+        let (watch, mut changed) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
+            tab.watchers.push(watch);
         }
         let Some(hands) = self.hands.clone() else {
             self.start_terminal(id, self.claude_shell(&Launch::Plain, &claude), Some(cwd), cx);
@@ -1493,16 +1587,20 @@ impl FleetView {
                 }
                 Launch::Plain => return,
             };
+            let executor = cx.background_executor().clone();
+            // claude's exit deletes the token file, then the shell prints its prompt: a wakeup
             loop {
-                cx.background_executor().timer(Duration::from_millis(500)).await;
+                changed.wait(&executor, HAND_EXIT_FALLBACK).await;
                 let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
-                // try_lock: another tab's mint may hold it over HTTP, and this is the UI thread.
-                if open && !hands.try_lock().is_ok_and(|h| h.ended(&name)) {
-                    continue;
+                if open {
+                    let (hands, name) = (hands.clone(), name.clone());
+                    if !executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).ended(&name) }).await {
+                        executor.timer(HAND_CHECK_GAP).await;
+                        continue;
+                    }
                 }
                 let hands = hands.clone();
-                let notice = cx
-                    .background_executor()
+                let notice = executor
                     .spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) })
                     .await;
                 if let Some(notice) = notice {
@@ -1528,11 +1626,7 @@ impl FleetView {
             }
             None => launch.shell_args_with(claude),
         };
-        util::shell::Shell::WithArguments {
-            program: "pwsh".into(),
-            args: self.shell_args.iter().cloned().chain(launch_args).collect(),
-            title_override: None,
-        }
+        pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
     /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar);
@@ -1612,7 +1706,7 @@ impl FleetView {
                 }
                 // a claude just started in a tab: its row comes with the next `claude agents`, so poll now
                 if unlisted {
-                    this.poll_nudge.store(true, Ordering::SeqCst);
+                    this.poll_nudge.wake();
                 }
                 if changed {
                     cx.notify();
@@ -1665,18 +1759,13 @@ impl FleetView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> u64 {
-        let name = if session.name.is_empty() {
-            fleet::short_id(session)
-        } else {
-            &session.name
-        };
         let shell = util::shell::Shell::WithArguments {
             program: "claude".into(),
             args: vec!["attach".into(), session.id.clone()],
             title_override: None,
         };
         self.open_tab(
-            format!("{workspace} · {repo} · {name}"),
+            format!("{workspace} · {repo} · {}", fleet::display_name(session)),
             TabKind::Attach {
                 session_id: session.id.clone(),
             },
@@ -1707,25 +1796,7 @@ impl FleetView {
         };
         let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), link, cx);
         let cwd = self.workspaces.iter().find(|w| w.name == workspace).map(|w| w.root.clone());
-        self.tabs.push(Tab {
-            id,
-            title: format!("Work · {workspace}"),
-            kind: TabKind::Work(view),
-            terminal: None,
-            error: None,
-            exited: false,
-            detach: Detach::None,
-            cwd,
-            find: None,
-            program_title: None,
-            session: None,
-            hand: false,
-            workstate: None,
-            hand_key: None,
-            restart_to: None,
-            opened_at: now_ms(),
-            claude: None,
-        });
+        self.tabs.push(Tab::new(id, format!("Work · {workspace}"), TabKind::Work(view), cwd));
         self.active = Some(id);
         cx.notify();
         id
@@ -1777,30 +1848,19 @@ impl FleetView {
 
     /// A shell tab in `cwd`.
     pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let shell = util::shell::Shell::WithArguments {
-            program: "pwsh".into(),
-            args: self.shell_args.clone(),
-            title_override: None,
-        };
-        self.open_tab(title, TabKind::Shell, shell, Some(cwd), window, cx)
+        self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx)
     }
 
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let shell = util::shell::Shell::WithArguments {
-            program: "pwsh".into(),
-            args: self.shell_args.clone(),
-            title_override: None,
-        };
         let title = format!("pwsh {}", self.next_tab_id);
         let cwd = self.new_shell_cwd();
-        self.open_tab(title, TabKind::Shell, shell, cwd, window, cx)
+        self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), cwd, window, cx)
     }
 
     /// [`fleet::shell_cwd`] for the active tab, never the exe's folder.
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
         let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
-        let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
-        fleet::shell_cwd(active, &self.workspaces, home)
+        fleet::shell_cwd(active, &self.workspaces, foreman_core::paths::user_home())
     }
 
     fn open_tab(
@@ -1821,25 +1881,7 @@ impl FleetView {
     fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
-        self.tabs.push(Tab {
-            id,
-            title,
-            kind,
-            terminal: None,
-            error: None,
-            exited: false,
-            detach: Detach::None,
-            cwd,
-            find: None,
-            program_title: None,
-            session: None,
-            hand: false,
-            workstate: None,
-            hand_key: None,
-            restart_to: None,
-            opened_at: now_ms(),
-            claude: None,
-        });
+        self.tabs.push(Tab::new(id, title, kind, cwd));
         self.active = Some(id);
         cx.notify();
         id
@@ -1868,32 +1910,37 @@ impl FleetView {
                 match built {
                     Ok(builder) => {
                         let terminal = cx.new(|cx| builder.subscribe(cx));
-                        cx.subscribe(&terminal, move |this, emitter, event, cx| match event {
-                            TerminalEvent::Wakeup => cx.notify(),
-                            // claude names the console when it starts, idles, works and exits (m5/29)
-                            TerminalEvent::TitleChanged => {
-                                this.resolve_tabs(cx);
-                                cx.notify();
-                            }
-                            TerminalEvent::BreadcrumbsChanged => {
-                                let title = emitter.read(cx).breadcrumb_text.clone();
-                                if let Some(tab) = this.tab_mut(id) {
-                                    tab.program_title = tab_card::sanitize(&title);
+                        cx.subscribe(&terminal, move |this, emitter, event, cx| {
+                            match event {
+                                TerminalEvent::Wakeup => cx.notify(),
+                                // claude names the console when it starts, idles, works and exits (m5/29)
+                                TerminalEvent::TitleChanged => {
+                                    this.resolve_tabs(cx);
+                                    cx.notify();
                                 }
-                                this.resolve_tabs(cx);
-                                cx.notify();
-                            }
-                            TerminalEvent::CloseTerminal => {
-                                if let Some(tab) = this.tab_mut(id) {
-                                    tab.exited = true;
-                                    tab.claude = None;
+                                TerminalEvent::BreadcrumbsChanged => {
+                                    let title = emitter.read(cx).breadcrumb_text.clone();
+                                    if let Some(tab) = this.tab_mut(id) {
+                                        tab.program_title = tab_card::sanitize(&title);
+                                    }
+                                    this.resolve_tabs(cx);
+                                    cx.notify();
                                 }
-                                cx.notify();
+                                TerminalEvent::CloseTerminal => {
+                                    if let Some(tab) = this.tab_mut(id) {
+                                        tab.exited = true;
+                                        tab.claude = None;
+                                    }
+                                    cx.notify();
+                                }
+                                TerminalEvent::Open(target) => {
+                                    open_link(target, |url| cx.open_url(url), |path| cx.open_with_system(path))
+                                }
+                                _ => return,
                             }
-                            TerminalEvent::Open(target) => {
-                                open_link(target, |url| cx.open_url(url), |path| cx.open_with_system(path))
+                            if let Some(tab) = this.tab(id) {
+                                tab.wake_watchers();
                             }
-                            _ => {}
                         })
                         .detach();
                         match this.tab_mut(id) {
@@ -1954,13 +2001,17 @@ impl FleetView {
             return;
         };
         tab.detach = Detach::Detaching;
+        let (watch, mut changed) = nudge::nudge();
+        tab.watchers.push(watch);
         let pid = terminal.update(cx, |t, _| {
             t.input(DETACH_INPUT);
             t.pid().map(|p| p.as_u32())
         });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let started = Instant::now();
+            let executor = cx.background_executor().clone();
+            let deadline = Instant::now() + DETACH_WITHIN;
+            let mut ended = std::pin::pin!(any_exit(&executor, pid.into_iter().collect(), DETACH_WITHIN).fuse());
             loop {
                 let exited = this
                     .read_with(cx, |this, _| this.tab(id).is_none_or(|t| t.exited))
@@ -1969,7 +2020,8 @@ impl FleetView {
                     this.update(cx, |this, cx| this.remove_tab(id, cx)).ok();
                     return;
                 }
-                if started.elapsed() > DETACH_WITHIN {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
                     this.update(cx, |this, cx| {
                         if let Some(tab) = this.tab_mut(id) {
                             tab.detach = Detach::Failed;
@@ -1981,7 +2033,7 @@ impl FleetView {
                     .ok();
                     return;
                 }
-                cx.background_executor().timer(Duration::from_millis(20)).await;
+                futures::future::select(std::pin::pin!(changed.wait(&executor, left)), ended.as_mut()).await;
             }
         })
         .detach();
@@ -1992,6 +2044,7 @@ impl FleetView {
             return;
         };
         let tab = self.tabs.remove(index);
+        tab.wake_watchers();
         if let Some(terminal) = tab.terminal {
             terminal.update(cx, |t, _| t.release_pty_resources());
         }
@@ -2001,13 +2054,44 @@ impl FleetView {
                 .get(index.min(self.tabs.len().saturating_sub(1)))
                 .map(|t| t.id);
         }
-        if self.quitting && !self.has_attach_tabs() {
-            self.close_settings(cx);
-            self.window
-                .update(cx, |_, window, cx| crate::tray::close(window, cx))
-                .ok();
+        if self.quit_step(cx) {
+            self.close_for_quit(cx);
         }
         cx.notify();
+    }
+
+    /// While quitting: once no Attach tab is left, every hand token is revoked off the UI thread for at most
+    /// [`QUIT_RELEASE_WITHIN`]. `true` once both are done and the window may close.
+    fn quit_step(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.quitting || self.has_attach_tabs() {
+            return false;
+        }
+        let Some(hands) = self.hands.clone().filter(|_| !self.hands_released) else {
+            return true;
+        };
+        if self.quit_release.is_none() {
+            let release = cx.background_executor().spawn(async move { crate::hand::release_all_within(hands, QUIT_RELEASE_WITHIN) });
+            self.quit_release = Some(cx.spawn(async move |this, cx| {
+                for notice in release.await.unwrap_or_default() {
+                    log::warn!("{notice}");
+                }
+                this.update(cx, |this, cx| {
+                    this.hands_released = true;
+                    this.quit_release = None;
+                    if this.quit_step(cx) {
+                        this.close_for_quit(cx);
+                    }
+                })
+                .ok();
+            }));
+        }
+        false
+    }
+
+    fn close_for_quit(&mut self, cx: &mut Context<Self>) {
+        self.quitting = false;
+        self.close_settings(cx);
+        self.window.update(cx, |_, window, cx| crate::tray::close(window, cx)).ok();
     }
 
     fn has_attach_tabs(&self) -> bool {
@@ -2020,11 +2104,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let saved = Settings::load(&home).and_then(|mut settings| {
-            settings.run_as_admin = true;
-            settings.save(&home)
-        });
-        if let Err(e) = saved {
+        if let Err(e) = Settings::update(&home, |settings| settings.run_as_admin = true) {
             self.action_error = Some(format!("Cannot save Run Foreman as administrator: {e}"));
             cx.notify();
             return;
@@ -2047,17 +2127,13 @@ impl FleetView {
     }
 
     /// Closing the window hides it (with the settings window) unless Quit was asked for. Quitting with
-    /// Attach tabs open detaches them first; the window closes when the last one is gone, or stays open
-    /// if one fails.
+    /// Attach tabs open detaches them first, then the hand tokens are revoked ([`Self::quit_step`]); the
+    /// window closes after both, or stays open if a detach fails.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.quit_asked {
             self.close_settings(cx);
             crate::tray::hide(window, cx);
             return false;
-        }
-        if !self.has_attach_tabs() {
-            self.close_settings(cx);
-            return true;
         }
         self.quitting = true;
         let ids: Vec<u64> = self
@@ -2069,8 +2145,7 @@ impl FleetView {
         for id in ids {
             self.close_tab(id, cx);
         }
-        // Tabs whose process had already exited are gone by now.
-        let close = !self.has_attach_tabs();
+        let close = self.quitting && self.quit_step(cx);
         if close {
             self.quitting = false;
             self.close_settings(cx);
@@ -2107,16 +2182,16 @@ impl FleetView {
         match event {
             InputEvent::Edited => cx.notify(),
             // Esc closes an open menu first, then clears the box, then gives the keys back to the window
-            InputEvent::Cancel if self.menu.is_some() || self.confirm.is_some() => {
-                if self.menu.take().is_none() {
-                    self.confirm = None;
-                }
-                cx.notify();
-            }
+            InputEvent::Cancel if self.dismiss_popup() => cx.notify(),
             InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
             InputEvent::Cancel => self.focus.focus(window, cx),
             InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Refused(_) => {}
         }
+    }
+
+    /// Esc on an open menu closes it, else on the question closes that; `false` when neither is open.
+    fn dismiss_popup(&mut self) -> bool {
+        self.menu.take().is_some() || self.confirm.take().is_some()
     }
 
     pub fn clear_search(&mut self, cx: &mut Context<Self>) {
@@ -2135,10 +2210,7 @@ impl FleetView {
         if self.input_focused(window, cx) {
             return;
         }
-        if k.key == "escape" && (self.menu.is_some() || self.confirm.is_some()) {
-            if self.menu.take().is_none() {
-                self.confirm = None;
-            }
+        if k.key == "escape" && self.dismiss_popup() {
             cx.notify();
             cx.stop_propagation();
             return;
@@ -2218,13 +2290,40 @@ fn open_link(target: &MaybeNavigationTarget, open_url: impl FnOnce(&str), open_p
     }
 }
 
-/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
-/// height, the label centred, a lighter fill and border on hover, a deeper fill pressed.
+/// Done once one of `pids` exits within `timeout`; never done otherwise.
+fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
+    let exited = (!pids.is_empty()).then(|| executor.spawn(async move { foreman_core::process::wait_any_exit(&pids, timeout) }));
+    async move {
+        let exited = match exited {
+            Some(task) => task.await,
+            None => false,
+        };
+        if !exited {
+            futures::future::pending::<()>().await;
+        }
+    }
+}
+
+fn pwsh(args: Vec<String>) -> util::shell::Shell {
+    util::shell::Shell::WithArguments { program: "pwsh".into(), args, title_override: None }
+}
+
+/// The open hand tabs whose token is one of `elsewhere`'s (minted on another server).
+fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {
+    tabs.iter()
+        .filter(|t| t.hand && !t.exited)
+        .filter(|t| t.hand_key.as_ref().is_some_and(|k| elsewhere.iter().any(|(n, _)| n == k)))
+        .map(|t| t.id)
+        .collect()
+}
+
 /// The pwsh line a tab runs in place of a `claude --bg` that cannot reach the background service.
 fn held_line(why: &str) -> String {
     format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
 }
 
+/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
+/// height, the label centred, a lighter fill and border on hover, a deeper fill pressed.
 fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &gpui::App) -> gpui::Stateful<gpui::Div> {
     let colors = cx.theme().colors();
     div()
@@ -2380,12 +2479,9 @@ impl FleetView {
                             // scrollback, a mouse report and alternate-scroll arrow keys; Ctrl+wheel
                             // zooms every terminal (m5/41)
                             let terminal = terminal.clone();
-                            cx.listener(move |this, e: &ScrollEvent, window, cx| {
+                            cx.listener(move |this, e: &ScrollEvent, _, cx| {
                                 if e.modifiers.control {
-                                    let lines = e.delta.pixel_delta(window.line_height()).y;
-                                    if lines != px(0.) {
-                                        this.wheel_font_size(lines > px(0.), cx);
-                                    }
+                                    this.wheel_font_size(e.delta, cx);
                                     return;
                                 }
                                 terminal.update(cx, |terminal, _| {
@@ -2599,30 +2695,51 @@ mod tests {
             pid: Some(5),
             started_at: None,
         };
-        let tab = |kind, claude: Option<&str>| Tab {
-            id: 1,
-            title: "t".into(),
-            kind,
-            terminal: None,
-            error: None,
-            exited: false,
-            detach: Detach::None,
-            cwd: None,
-            find: None,
-            program_title: None,
-            session: None,
-            hand: false,
-            workstate: None,
-            hand_key: None,
-            restart_to: None,
-            opened_at: 0,
-            claude: claude.map(String::from),
-        };
+        let tab = |kind, claude: Option<&str>| Tab { claude: claude.map(String::from), ..Tab::new(1, "t".into(), kind, None) };
         assert!(FleetView::tab_runs(&tab(TabKind::Attach { session_id: "abcd0001".into() }, None), &session));
         assert!(!FleetView::tab_runs(&tab(TabKind::Attach { session_id: "ffff0001".into() }, None), &session));
         assert!(FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-0000")), &session));
         assert!(!FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-ffff")), &session), "/clear gave the tab a new session");
         assert!(!FleetView::tab_runs(&tab(TabKind::Shell, None), &session), "a shell without claude runs nothing");
+    }
+
+    /// A-46: one workspace file that does not parse leaves the others listed, and is named.
+    #[test]
+    fn a_corrupt_workspace_file_is_skipped_and_named() {
+        let home = tempfile::tempdir().unwrap();
+        let registry = Registry::at(home.path());
+        registry.save(&Workspace::new("alpha", r"C:\demo\alpha", Vec::new()), false).unwrap();
+        let broken = registry.save(&Workspace::new("beta", r"C:\demo\beta", Vec::new()), false).unwrap();
+        std::fs::write(&broken, "name = [").unwrap();
+        let (workspaces, skipped) = load_registry(Ok(registry)).unwrap();
+        assert_eq!(workspaces.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha"]);
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains("beta"), "{skipped:?}");
+        assert_eq!(load_registry(Err("no Foreman home".into())), Err("no Foreman home".to_string()));
+    }
+
+    #[test]
+    fn only_open_hand_tabs_holding_a_token_from_elsewhere_restart() {
+        let tab = |id, hand, key: Option<&str>, exited| Tab {
+            hand,
+            hand_key: key.map(String::from),
+            exited,
+            ..Tab::new(id, format!("t{id}"), TabKind::Shell, None)
+        };
+        let tabs = [
+            tab(1, true, Some("hand-a-1"), false),
+            tab(2, true, Some("hand-a-2"), false),
+            tab(3, true, Some("hand-a-3"), true),
+            tab(4, false, Some("hand-a-4"), false),
+            tab(5, true, None, false),
+        ];
+        let elsewhere = [
+            ("hand-a-1".to_string(), Some("https://old.example".to_string())),
+            ("hand-a-3".to_string(), None),
+            ("hand-a-4".to_string(), None),
+        ];
+        assert_eq!(stale_tabs(&tabs, &elsewhere), [1], "2 is current, 3 exited, 4 is no hand tab, 5 runs plain");
+        assert!(stale_tabs(&tabs, &[]).is_empty());
     }
 
     #[test]
@@ -2656,7 +2773,7 @@ mod tests {
 }
 
 fn save_workstate_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
-    let mut settings = Settings::load(home).map_err(|e| format!("Cannot read settings.toml: {e}"))?;
-    settings.workstate_url = Some(origin.to_string());
-    settings.save(home).map(drop).map_err(|e| format!("Cannot save settings.toml: {e}"))
+    Settings::update(home, |settings| settings.workstate_url = Some(origin.to_string()))
+        .map(drop)
+        .map_err(|e| format!("Cannot save settings.toml: {e}"))
 }

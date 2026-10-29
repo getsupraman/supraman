@@ -168,9 +168,7 @@ pub fn stop_workspace(home: &Path, workspace: &str) -> anyhow::Result<()> {
 }
 
 pub fn set_max_working(home: &Path, max_working: usize) -> anyhow::Result<()> {
-    let mut settings = Settings::load(home)?;
-    settings.max_working = max_working;
-    settings.save(home)?;
+    Settings::update(home, |settings| settings.max_working = max_working)?;
     Ok(())
 }
 
