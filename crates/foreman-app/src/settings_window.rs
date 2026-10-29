@@ -377,19 +377,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap_2()
-            .child(
-                div()
-                    .id("ws-url")
-                    .w(px(280.))
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(colors.border)
-                    .bg(colors.editor_background)
-                    .text_sm()
-                    .child(self.url_input.clone()),
-            )
+            .child(div().id("ws-url").w(px(280.)).child(self.url_input.clone()))
             .child(button::small("ws-url-apply", "Apply", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.apply_url(cx))));
         let below = div()
             .flex()
