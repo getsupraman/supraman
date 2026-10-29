@@ -3625,3 +3625,48 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-10\target`, merged with master 1049b90): build ok, no warnings;
   `cargo test --release --workspace` 651 passed, 0 failed; `--selftest` 5 of 5 PASS (125–141 s; 4 of 4 before the
   merge); `--selftest-supervise` PASS (311 s); `--selftest-detach-shutdown` PASS (13 s); 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.13 namespaced settings, settings page registration, SecretStore in foreman-core (audit U11)
+
+- **settings.toml tables:** `[sessions]` (max_working, extra_plugin_dirs, run_as_admin, relay_idle_secs),
+  `[workstate]` (url), `[appearance]` (theme, terminal_colors), `[terminal]` (font_size, font_family, ligatures),
+  `[window]` (left_width). Each is a `foreman_core::Section` with `KEY` and `FIELDS` (flat name → table name); the
+  field methods moved with them (`settings.workstate.origin()`, `settings.terminal.font_size()`,
+  `settings.sessions.relay_idle_ms()`).
+- **Migration:** in `parse`, not `migrate_home`: a flat key moves into its table on every load, and the next save
+  writes tables. No save at start, so a file stays flat until something changes. A key set both flat and in its
+  table takes the table's value, with a notice. A test pins every shape the repo has written (defaults, test homes,
+  LEARNINGS, `workstate_env`, the float font size), and a flat file with all 11 keys round-trips. To check it, put
+  each table's keys back at their flat names and compare with the original. `FOREMAN_SETTINGS_SAMPLE=<file> cargo
+  test -p foreman-core -- --ignored a_real_settings_file` runs the same check on a real file. René's copy passed:
+  same 4 values, nothing else.
+- **Kept, not dropped:** `Settings::other` holds every table and key Foreman does not own, as read: a plugin's
+  `[gitman]`, a newer build's key, a key inside an owned table that this build does not know, and `workstate_env`.
+  Before, `workstate_env` was dropped at the next save; now it is kept and unused. `section::<T>(key)` and
+  `set_section` are the plugin API, and they assert on an owned key.
+- **Leniency:** each owned key is checked alone (as m5/44.4 did for the flat file). A section that is not a table
+  (`terminal = 5`) keeps all its defaults, with a notice, and the rest of the file stands. Notices name
+  `section.key`.
+- **Downgrade:** an older build reads a table file as all defaults (serde ignores the tables) and drops the tables
+  at its next save. René's values match the defaults except `left_width`.
+- **Pages:** `foreman_ui::settings_page::{SettingsPages, SettingsPage, row}`. `register` panics on a duplicate id,
+  and `resolve` falls back to the first page for an unknown id. The nav shows a Segoe icon per page. The app's ids
+  are `settings_window::page::{SESSIONS, WORKSTATE, PLUGINS, APPEARANCE, ABOUT}`; `open_settings_at`, `show` and
+  `page()` take and return them.
+- **Not done from the audit's c8 sketch:** the `SettingsStore` entity with `Changed(section)` events, per-page
+  models instead of `WeakEntity<FleetView>`, and the auth model off the UI thread. The brief did not ask for them,
+  and they belong with the follow-up that gives GitMan its own pages.
+- **SecretStore:** `foreman_core::secret` (a `git mv`; the diff is `crate::fs`, visibility, one doc pointer).
+  `CredentialStore` is private: it is only the legacy reader `default_store` hands `FileStore`. `foreman_workstate::secret`
+  re-exports it, and foreman-workstate no longer depends on `windows`. A test pins the file name of a key, the
+  DPAPI entropy and the legacy prefix.
+- **Credential Manager tests flake under load** (as F-05). `credential_manager_round_trip` and `split` each failed
+  once in the full workspace run (set, then get → None), never in 8 runs of the crate alone. The three tests that
+  write Credential Manager now take one mutex. After that: 2 full runs green.
+- **Step 7j flake:** "a poll, a scan … after Refresh: not within 1.5s" failed 2 of 15 `--selftest` runs. Passing
+  runs measure 0.5–1.3 s; the wait is the `claude agents` poll, which no settings read is on.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-13\target`, merged with master 7a48baf): build ok;
+  `cargo test --release --workspace` 662 passed, 0 failed (678 before the merge removed foreman-term tests);
+  `--selftest` 5 of 6 PASS on the merged build (run 2 failed 7j), 5 of 5 consecutive before the merge after a 7j
+  failure in run 3; `--selftest-supervise` PASS (297 s); `--selftest-detach-shutdown` PASS; 0 `fm-selftest` rows of
+  this worktree.
