@@ -3808,3 +3808,12 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   same commit paints Inbox 66.0..262.7 and the tree from 302.7: 40 px, of which the search box is 34, so 6 px (master
   build: 36, 30 and 6). The tree shows this machine's live sessions, so what sits between them depends on the
   environment; 7f's failure message now lists every hit key painted in the gap with its height.
+- **7f, the cause:** the gap held the setup notice `setup-0`, "No Foreman plugin for <exe>: … sessions cannot be
+  started from this build." (`supervise::setup` → `foreman_core::find_plugin_dir`). An exe whose folder and every
+  folder above it lack `plugins\foreman` shows it. `C:\fmbuild\m5-51` has one, so my runs never painted the notice;
+  the controller's build dir has none. The `inbox-ws-*` keys in the gap are the Inbox's own second row, overflowing
+  its 25 % `max_h` and clipped: their bounds lie below `inbox-area`, but they take no space. 7f now subtracts the
+  Messages (`messages-area`), notices (new `notices-area` key on the notices section) and search box sections, the
+  way it subtracted the search box alone. Anything else in the gap still fails. Reproduced with `plugins`
+  renamed: tree at 454.7, `notices-area` 145 + `search-box` 34 of 192, 13 px left → 7f passes. Red: `notices-area`
+  left out of the list → the controller's exact failure.
