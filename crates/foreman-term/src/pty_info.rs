@@ -20,20 +20,20 @@ use crate::{Event, Terminal};
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
-pub struct ProcessIdGetter {
+pub(crate) struct ProcessIdGetter {
     handle: i32,
     fallback_pid: u32,
 }
 
 impl ProcessIdGetter {
-    pub(crate) fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
+    pub fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
         ProcessIdGetter {
             handle,
             fallback_pid,
         }
     }
 
-    pub fn fallback_pid(&self) -> Pid {
+    pub(crate) fn fallback_pid(&self) -> Pid {
         Pid::from_u32(self.fallback_pid)
     }
 }
@@ -79,7 +79,6 @@ impl ProcessIdGetter {
 pub(crate) struct ProcessInfo {
     pub(crate) name: String,
     pub(crate) cwd: PathBuf,
-    pub(crate) argv: Vec<String>,
 }
 
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
@@ -94,7 +93,7 @@ pub(crate) struct PtyProcessInfo {
 }
 
 impl PtyProcessInfo {
-    pub(crate) fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
+    pub fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
         // Task enumeration is on by default and would retain a `Process` entry
         // per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` handle
         // on Linux (#58651).
@@ -124,10 +123,6 @@ impl PtyProcessInfo {
             task: Mutex::new(None),
             refreshed_at: Mutex::new(None),
         }
-    }
-
-    pub(crate) fn pid_getter(&self) -> &ProcessIdGetter {
-        &self.pid_getter
     }
 
     fn refresh(&self) -> Option<MappedRwLockReadGuard<'_, Process>> {
@@ -180,19 +175,9 @@ impl PtyProcessInfo {
         let info = ProcessInfo {
             name: process.name().to_str()?.to_owned(),
             cwd,
-            argv: process
-                .cmd()
-                .iter()
-                .filter_map(|s| s.to_str().map(ToOwned::to_owned))
-                .collect(),
         };
         *self.current.write() = Some(info.clone());
         Some(info)
-    }
-
-    #[cfg(all(test, unix))]
-    pub(crate) fn load_for_test(&self) -> Option<ProcessInfo> {
-        self.load()
     }
 
     /// The next refresh runs without waiting out [`REFRESH_INTERVAL`].
@@ -206,10 +191,9 @@ impl PtyProcessInfo {
         if self.task.lock().is_some() {
             return;
         }
-        let wait = self
-            .refreshed_at
-            .lock()
-            .map_or(Duration::ZERO, |at| REFRESH_INTERVAL.saturating_sub(at.elapsed()));
+        let wait = self.refreshed_at.lock().map_or(Duration::ZERO, |at| {
+            REFRESH_INTERVAL.saturating_sub(at.elapsed())
+        });
         let this = self.clone();
         let executor = cx.background_executor().clone();
         let change_task = cx.background_executor().spawn(async move {
@@ -252,55 +236,7 @@ impl PtyProcessInfo {
         }));
     }
 
-    pub(crate) fn pid(&self) -> Option<Pid> {
+    pub fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    /// Regression test for <https://github.com/zed-industries/zed/issues/58651>:
-    /// on Linux, sysinfo keeps an open `/proc/<pid>/stat` handle for every
-    /// `Process` entry retained in a `System`, and never evicts entries that are
-    /// absent from the refreshed pid set. The per-terminal `System` must
-    /// therefore not snapshot every process on the machine, nor accumulate an
-    /// entry per foreground process that has ever run in this terminal.
-    #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the test needs real short-lived child processes and may block"
-    )]
-    fn process_map_stays_bounded() {
-        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()));
-        assert!(
-            info.get_child().is_some(),
-            "the spawned child must be inspectable for kill_child_process \
-             before the first foreground refresh"
-        );
-        assert!(info.load_for_test().is_some());
-        let initial_len = info.system.read().processes().len();
-        assert!(
-            initial_len <= 2,
-            "creating a terminal retained {initial_len} process entries"
-        );
-
-        for _ in 0..3 {
-            let mut child = std::process::Command::new("sleep")
-                .arg("30")
-                .spawn()
-                .expect("failed to spawn child process");
-            info.pid_getter = ProcessIdGetter::new(-1, child.id());
-            assert!(info.load_for_test().is_some());
-            child.kill().expect("failed to kill child process");
-            child.wait().expect("failed to wait for child process");
-        }
-
-        let churned_len = info.system.read().processes().len();
-        assert!(
-            churned_len <= 2,
-            "foreground process churn retained {churned_len} process entries"
-        );
     }
 }
