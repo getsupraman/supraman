@@ -4144,3 +4144,72 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-55\target`): build ok, no warnings; `cargo test --release --workspace` 678
   passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (the run before step v's fix failed at
   step v, above); `--selftest-detach-shutdown` PASS; no `fm-selftest` sessions left.
+
+## 2026-10-29 — m5/56 create and edit workspaces (UI and fm), disabled folders out of the tree
+
+- **One edit path** (`foreman_core::Registry::edit`, `edit.rs`): `Edit::{AddFolder { path, enable }, RemoveFolder,
+  SetEnabled, SetHome, AddScan, RemoveScan}` loads the workspace under `workspaces/<name>.toml.lock`, applies one
+  change, checks it and saves through `save` (`write_atomic`); `Edited` names the folders added, removed and claimed.
+  Both `fm workspace …` and the app's Edit folders… call it, so neither has a copy of the rules:
+  - a path must be a directory (made absolute); its kind (git or plain) is read from the disk (`Workspace::add_folder`);
+  - adding a folder that another workspace supervises adds it disabled (`claim_folders`, notice as in m5/55);
+    enabling it is refused (`CoreError::SupervisedElsewhere`, a user error, exit 1);
+  - **removing a scanned folder puts it on its scan's `exclude`** (`[[scans]] exclude = [...]`, `skips=` in `fm
+    workspace show`), else the next Rescan or `add-scan` would add it back; adding it again by hand takes it off;
+  - `AddScan` of a path already scanned takes the new depth and runs every scan again (`rescan`); `RemoveScan` takes
+    the folders only it found (not added by hand, under no other scan) with it;
+  - `SetHome(None)` goes back to the first folder.
+  `Workspace::find_folder` (name, ignoring case, slug, then path) is the lookup for every `<folder>` argument; `fm
+  want`'s `find_repo` uses it.
+- **Stopping a folder's session** (`DesiredState::release(home, ws, folders)`): the repo sessions of the folders
+  taken away (removed, a removed scan's, or disabled in the app) that the workspace *wants* are unwanted, i.e.
+  retired, so the supervisor stops a live one (stop, never rm); a workspace that wants none of them is not written,
+  so no desired state appears for a workspace that had none. The app asks first (`foreman_ui::confirm`,
+  `Confirmed::Edit`): "Remove folder X in workspace W? Its supervised session fm-W-x is stopped (stop, never rm) and
+  can be resumed; no files are deleted." (`folders::stops` decides when to ask). `fm workspace disable` releases too;
+  `fm` asks nothing, like `fm unwant`.
+- **fm** (`crates/fm/src/edit.rs`): `workspace new <name> [--home <dir>] [--folder <dir>]...` (checks every
+  directory before writing; folders enabled), `add-folder <ws> <dir> [--enable]` (disabled without it, per the
+  item), `remove-folder`, `enable`/`disable` (beyond the item: the CLI had no way to flip the flag), `set-home`,
+  `add-scan [--depth N]`, `remove-scan`. `workspace show`, `add` and every edit print `owner=<ws>|-` per folder
+  (`with_owners`: the registry with the workspace as it is now; `-` for a disabled folder nobody enables). The
+  workspace-controller skill's table names `owner=` and `skips=`.
+- **App**:
+  - the Add workspace button opens a menu (`menu-add-from-folder`: today's picker and review; `menu-add-empty`: the
+    review with only the name, saved with no home, folder or scan, and Edit folders… opens on it);
+  - Edit folders… (workspace menu `edit-folders`, `view/folders.rs`) is a panel in the notices area like the Add
+    review. It lists the folders with ☑ (`edit-enable-<f>`), kind, path, `home` or `Home` (`edit-home-<f>`) and
+    `Remove` (`edit-remove-<f>`). A folder another workspace supervises shows `supervised in <ws>` in place of the
+    box. The scans each have `Remove` (`edit-scan-remove-<i>`). Below sit a shared `TextInput` path field
+    (`edit-path`; Enter adds it) and `Add folder…`/`Add scan…` (an empty field opens the folder picker, or takes
+    `pick_folder` in a selftest), `Set as home`, `Reset` (home back to the first folder) and `Done`. A folder added
+    in the app is enabled.
+  - **Adopting a running session** (controller decision (b), 2026-10-29): there is no adopt action. A folder added
+    that holds a live session Foreman did not launch shows it under the folder by containment, and the toast says
+    "<session> in <folder> now shows here" (plus "; Enable to supervise a session of its own." when the folder is
+    disabled). Stopping it and resuming its UUID as `fm-<ws>-<folder>` (option (a)) is a backlog follow-up.
+- **René's rule (c5)** (`fleet::build`): a disabled folder is in the tree only while it holds a session (open or
+  closed-and-shown); a disabled folder's sessions were dropped from the tree before, and now show under it with its
+  `disabled` tag. `Supervised::disabled_folders` keeps the empty ones for search (`search_tree`); a result for one
+  carries a `disabled` tag (`result-disabled-<ws>/<f>`), and a click on it opens Edit folders… for that workspace.
+  A folder `supervised in <ws>` stays in the tree (design A, m5/55).
+- **Selftests:**
+  - 7b no longer finds the disabled `beta` in the tree; it enables beta through the workspace menu's Edit folders…
+    (`edit-enable-beta`) and closes it with `edit-done`. Its workspace menu list gains `edit-folders`.
+  - Every `add-workspace` click is followed by `menu-add-from-folder`.
+  - **A closed menu still painted in the next frame takes a press as a click outside it** (`on_mouse_down_out`), so a
+    right-click right after a click outside opened nothing; 7b waits for a frame without `menu-remove` first.
+  - **Step x** (`selftest_supervise::edit_step`, after v), all through the window: Add workspace → Empty →
+    `<testbed>-x` saved empty; Edit folders… adds the sibling testbed folders `XGit` (a fake `.git`: git kind, never
+    launched, see m5/55's trust finding) and `XPlain` (plain) by the picker hook; the testbed is set as home by the
+    path field; `fm-<testbed>-x-xplain`, wanted, runs and sits first under XPlain; XGit disabled leaves the tree and
+    search shows it `disabled`; Remove XPlain asks the question, then the file loses it, the desired state retires the
+    session, and it stops and stays listed.
+  - The tree check filters `listed` folders, since the testbed's own sessions in the home show as unlisted folder rows.
+- **Red checks** (reverted with `git checkout`, never committed):
+  - the tree keeping every disabled folder (master's behaviour) → `a_disabled_folder_without_sessions_leaves_the_tree_and_stays_for_search` fails;
+  - `RemoveFolder` not adding to `exclude` → `scans_add_their_repos_keep_a_removed_one_out_and_take_theirs_when_removed` fails;
+  - `release` not unwanting → `release_unwants_only_the_wanted_sessions_of_the_folders_and_writes_nothing_otherwise` fails.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-56\target`): build ok, no warnings; `cargo test --release --workspace` 686
+  passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (step x included); `--selftest-detach-shutdown`
+  PASS; no `fm-selftest` sessions left. No m5-44 audit section names m5/56, so no audit finding was in scope.

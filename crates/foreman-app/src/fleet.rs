@@ -162,7 +162,7 @@ pub struct Supervised<'a> {
     pub closed: &'a [Session],
     pub starred: Option<&'a BTreeSet<String>>,
     pub expanded: Option<&'a HashSet<String>>,
-    /// Keeps a disabled folder that holds no session (search); the tree leaves it out (m5/56).
+    /// Keeps a disabled folder that holds no session (search); the tree leaves it out.
     pub disabled_folders: bool,
 }
 

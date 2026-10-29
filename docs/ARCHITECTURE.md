@@ -49,6 +49,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `Registry` (`load_all`, `list`, `home_from`) — the workspaces at `<home>/workspaces/<name>.toml`; `load_all` where one corrupt file must not hide the rest (the supervisor), `list` where it should stop the caller.
 - `Workspace` (`model.rs`: `home`, `folders`, `scans`; `home()`, `contains`, `other_dirs`, `folder_at`, `add_folder`, `unique_folder_name`), `Folder` (`kind`: `git` or `plain`), `Scan`, `owners` — a workspace is a name, a home and a set of folders; a root-based file loads as one scan of its root. `owners` says which workspace a folder's supervised session belongs to (the first that has it enabled); `Registry::claim_folders` disables what another workspace owns.
 - `discover`, `rescan`, `scan`, `branch_at` — a folder to a workspace and its repos, and each scan run again; shared by `fm workspace add` and the app's Add workspace and Rescan.
+- `Registry::edit` (`edit.rs`: `Edit`, `Edited`; `Workspace::find_folder`) — one change to a registered workspace (add or remove a folder, enable, home, add or remove a scan; a removed scanned folder goes on its scan's `exclude`), read, checked against `owners` and saved under `<name>.toml.lock`; shared by `fm workspace new`/`add-folder`/… and the app's Edit folders… (`view/folders.rs`).
 - `relay` (`send`, `tell`, `inbox_dir`, `outbox_dir`, `InboxWatcher`, …) — the relay's `inbox`/`outbox` files per workspace.
 - `events` (`append_event`, `EventReader`, `role_injection`) — the hook events `fm hook` appends per session.
 - `install_hook_exe`, `find_plugin_dir` — placing `fm.exe` in the plugin.
@@ -100,7 +101,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 ### foreman-supervisor (`crates/foreman-supervisor/src/`)
 
-- `DesiredState` (`desired.rs`) — `<home>/supervisor/<workspace>.toml`; change it only through `update` (locked read-modify-write).
+- `DesiredState` (`desired.rs`) — `<home>/supervisor/<workspace>.toml`; change it only through `update` (locked read-modify-write); `release` unwants the repo sessions of folders taken away, so the supervisor stops them.
 - `Supervisor`, `tick_all`, `Budget` — one tick per snapshot; the rule table is the crate docs in `lib.rs`.
 - `HttpMinter`, `Minter`, `MintedSessions` (`mint.rs`) — per-session WorkState tokens.
 
