@@ -3910,3 +3910,38 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Step 7c ("close_settings logged 1 window-teardown line") failed in 10 of 11 runs in this agent session, with and
   without `FOREMAN_SHOTS` (F-93). This stopped the before/after screenshots, so the controller takes them:
   `FOREMAN_SHOTS=<dir>` writes `m5-58-box-drawing-14.png` and `-23.png` from step 7t.
+
+## 2026-10-29 — m5/44.19 refactor follow-ups F-88 … F-93 and the stream header check (A-45)
+- **Stream header (A-45):** `stream.rs` `HttpReader::feed` refuses a 200 without `X-WorkState-Api: 1` (or with
+  another version) as the v1 client does; the fake's 401 sends the header too, as WorkState 1.1.0 does.
+  Tests: `stream::tests::http_reader_wants_read_api_v1`, `tests/fake.rs` `a_stream_answer_without_the_v1_header_is_refused`
+  (red on master: Connected instead of Lost).
+- **F-92:** `auth.rs` `save_known` writes through `foreman_core::fs::write_atomic`. Test
+  `servers_json_is_written_past_another_writers_temp_name` (a directory at `servers.json.tmp`; red on master).
+- **F-91 closed, the finding was wrong:** WorkState's inbox kind is `blocker_finding` (Skills `ApiV1.Inbox.cs:73`),
+  so `kind_label` already reads "blocker finding"; there is no `blocked_finding`. Pinned in `keys_and_labels`.
+- **F-90 closed, the arm is live:** `TerminalEvent::TitleChanged` is the foreground process changing
+  (`pty_info.rs` `emit_title_changed_if_changed`), which is when a shell tab starts or leaves claude, so it drives
+  `resolve_tabs`. claude's OSC title is `BreadcrumbsChanged`. One line says so at the arm.
+- **F-88, 7j:** no nudge can be lost: `Nudged` is an unbounded channel drained only before a load starts. The bound
+  was tight: Refresh measured 0.45–0.79 s over 20 runs here (0.5–1.3 s in m5/44.13 beside other selftests). Without
+  the transcript nudge the next scan is ≥ 7.5 s away, so `REFRESHED` is 3 s; red (nudge removed) → "1 poll(s) …,
+  0 scan(s), row shown false". A failure now names the late part.
+- **F-88, 6b:** it holds `selftest_clipboard::borrow` across copy, read and paste. The loss is gpui's: Windows
+  `write_to_clipboard` (`gpui_windows/src/clipboard.rs:70`) gives up silently when `OpenClipboard` fails while another
+  process has the clipboard open, but `Chord::Copy` (`copy(Some(false))`) still clears the selection, so the
+  retries copied nothing. 6b now reselects before a retry when the selection is gone, as 6c always did.
+- **F-89:** the hold is right for synthetic input; it is released by `on_hover(false)` or a 2 s rest, and an OS
+  mouse message from the real cursor counts as the pointer leaving. The next 1 px nudge then arms a new hold that
+  already includes the message, so "held: true" with a moved row. `FleetView::left_holds` counts arms; step t0
+  retakes (up to 3) when the hold was armed again while waiting, and still fails when one hold let the row move.
+- **Machine-wide selftest mutex** (controller request): `selftest_clipboard::hold_machine` holds
+  `Local\Foreman-selftest` for `--selftest`, `--selftest-supervise`, `--selftest-detach-shutdown` from `main`, waits
+  up to 20 min ("setup: waiting for another selftest (pid N)" every 30 s, pid from `%TEMP%\Foreman-selftest.pid`).
+  Test `a_selftest_waits_for_the_machine_and_names_the_holder` (red: take always succeeds).
+- **F-93, 7c "window not found" from agent sessions:** a Foreman started from an agent session is not the
+  foreground process, so Settings never becomes the foreground window and stays the thread's *active* window after
+  `SW_HIDE` (measured: active = the closing HWND, foreground another process's window). `DestroyWindow` then sends
+  it the deactivation after gpui dropped it, and gpui's `window.rs` callback logs "window not found". `tray::close`
+  now hands activation to another visible window of the thread (`SetActiveWindow`, no foreground right needed)
+  before the drain. 7c here: 7 of 7 failed before, 3 of 3 and then 10 of 10 passed after.

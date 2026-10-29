@@ -16,7 +16,8 @@ pub const FRESH_KEY: &str = "f5f5ab0c-0000-4000-8000-00000000f5f5";
 const ENDING_TITLE: &str = "selftest ending session";
 /// The pid watch (250 ms), one `claude agents`, one scan (0.9–1.7 s); a poll takes [`REFRESH_EVERY`] plus `claude agents` (≥ 2.5 s).
 const CLOSE_TO_RESUME: Duration = Duration::from_millis(2300);
-const REFRESHED: Duration = Duration::from_millis(1500);
+/// Measured 0.45–1.3 s; without the nudge the next scan is ≥ 7.5 s away ([`TRANSCRIPTS_EVERY`] after the one awaited).
+const REFRESHED: Duration = Duration::from_millis(3000);
 const WITHIN: Duration = Duration::from_secs(45);
 
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
@@ -124,10 +125,15 @@ async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str,
     write_transcript(home, main, id, &format!("selftest refreshed {}", &id[..8]))?;
     let asked = Instant::now();
     trigger(view, cx).await?;
-    until(view, cx, REFRESHED, &format!("a poll, a scan and {id} after Refresh"), |v| {
+    let done = until(view, cx, REFRESHED, &format!("a poll, a scan and {id} after Refresh"), |v| {
         (v.refreshes > polls && v.transcript_scans > scans && row(v, id).is_some_and(|r| r.0)).then_some(())
     })
-    .await?;
+    .await;
+    if let Err(e) = done {
+        let (polled, scanned, shown, took) =
+            view.read_with(cx, |v, _| (v.refreshes - polls, v.transcript_scans - scans, row(v, id).is_some_and(|r| r.0), v.last_refresh_took));
+        bail!("{e:#}: {polled} poll(s) (the last took {took:?}), {scanned} scan(s), row shown {shown}");
+    }
     Ok(asked.elapsed())
 }
 

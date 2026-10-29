@@ -27,6 +27,30 @@ fn a_changed_route_answers_the_next_request() {
 }
 
 #[test]
+fn a_stream_answer_without_the_v1_header_is_refused() {
+    let fake = FakeWorkState::start(Vec::new());
+    let client = Client::new(fake.base(), "fake-token");
+    let config = StreamConfig {
+        initial_backoff: Duration::from_millis(50),
+        max_backoff: Duration::from_millis(200),
+        connect_timeout: Duration::from_secs(2),
+        poll: Duration::from_millis(50),
+    };
+    fake.set("/api/stream", Answer::text(": connected\n\n").api(None));
+    let (stream, rx) = Stream::subscribe_with(&client, config);
+    assert_eq!(
+        next(&rx),
+        StreamSignal::Lost("the stream answered without X-WorkState-Api: not a WorkState read API v1".into())
+    );
+    stream.stop();
+
+    fake.set("/api/stream", Answer::text(": connected\n\n").api(Some("2")));
+    let (stream, rx) = Stream::subscribe_with(&client, config);
+    assert_eq!(next(&rx), StreamSignal::Lost("the stream speaks read API 2, Foreman reads v1".into()));
+    stream.stop();
+}
+
+#[test]
 fn pushed_frames_reach_a_subscriber_and_a_dropped_stream_reconnects() {
     let fake = FakeWorkState::start(Vec::new());
     let client = Client::new(fake.base(), "fake-token");

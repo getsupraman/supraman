@@ -37,6 +37,15 @@ fn files(dir: &Path) -> Vec<(String, String)> {
 }
 
 #[test]
+fn servers_json_is_written_past_another_writers_temp_name() {
+    let (dir, fake, _oauth, _store, auth) = setup();
+    std::fs::create_dir_all(dir.path().join("oauth").join("servers.json.tmp")).unwrap();
+    let status = auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert!(matches!(status, AuthStatus::SignedIn { .. }), "{status:?}");
+    assert!(std::fs::read_to_string(dir.path().join("oauth").join("servers.json")).unwrap().contains(fake.base()));
+}
+
+#[test]
 fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     let (dir, fake, oauth, store, auth) = setup();
     let asked = Arc::new(Mutex::new(String::new()));

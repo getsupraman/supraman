@@ -178,13 +178,8 @@ impl Auth {
 
     fn save_known(&self, known: &Known) -> Result<(), AuthError> {
         let path = self.known_path();
-        let write = || -> std::io::Result<()> {
-            std::fs::create_dir_all(path.parent().expect("oauth dir"))?;
-            let tmp = path.with_extension("json.tmp");
-            std::fs::write(&tmp, serde_json::to_string_pretty(known).unwrap_or_default())?;
-            std::fs::rename(&tmp, &path)
-        };
-        write().map_err(|e| AuthError::Store(format!("cannot write {}: {e}", path.display())))
+        foreman_core::fs::write_atomic(&path, serde_json::to_string_pretty(known).unwrap_or_default())
+            .map_err(|e| AuthError::Store(format!("cannot write {}: {e}", path.display())))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {

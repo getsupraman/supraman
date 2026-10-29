@@ -982,11 +982,15 @@ async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowCont
     let _clipboard = crate::selftest_clipboard::borrow("6b", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = async {
-        let (row, text) = select_wheel_line(terminal, cx).await?;
+        let (mut row, mut text) = select_wheel_line(terminal, cx).await?;
 
         // Another selftest may write the system clipboard at any moment: each read waits for this run's own value, pressing again if a foreign one replaced it.
         let mut copied = None;
         for _ in 0..CLIPBOARD_TRIES {
+            // A copy whose OpenClipboard failed (gpui_windows clipboard.rs) still clears the selection.
+            if terminal.read_with(cx, |t, _| t.selection_text()).as_deref() != Some(text.as_str()) {
+                (row, text) = select_wheel_line(terminal, cx).await?;
+            }
             crate::selftest_clipboard::put_text("not copied", cx)?;
             key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
             copied = read_own(cx, |c| c == text).await?;
