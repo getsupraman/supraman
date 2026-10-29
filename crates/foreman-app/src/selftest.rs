@@ -824,10 +824,22 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
     ))
 }
 
-fn startup_timeline() -> String {
+/// The first list is painted within this of `claude agents` returning: its apply and one frame, never the supervisor tick.
+const PAINTED_AFTER_LIST: f64 = 150.0;
+
+fn startup_timeline() -> anyhow::Result<String> {
     let log = String::from_utf8_lossy(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default()).into_owned();
     let phases: Vec<&str> = log.lines().filter_map(|l| l.split_once("] startup ").map(|(_, phase)| phase)).collect();
-    if phases.is_empty() { "no startup lines in foreman.log".into() } else { phases.join("; ") }
+    let at = |phase: &str| {
+        phases.iter().find(|p| p.starts_with(phase)).and_then(|p| p.rsplit_once("(at +")?.1.strip_suffix(" ms)")?.parse::<f64>().ok())
+    };
+    let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
+        bail!("no list_sessions and first paint lines in foreman.log: {phases:?}");
+    };
+    if painted - listed > PAINTED_AFTER_LIST {
+        bail!("the first list painted {:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {}", painted - listed, phases.join("; "));
+    }
+    Ok(format!("{}; painted {:.0} ms after the list", phases.join("; "), painted - listed))
 }
 
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -843,7 +855,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         row.health,
         listed_after.as_millis()
     );
-    println!("step 3s: {}", startup_timeline());
+    println!("step 3s: {}", step("3s", async { startup_timeline() }).await?);
 
     let attached = step("4", open_attach(view, &format!("attach-{id}"), &id, cx)).await?;
     println!(
