@@ -23,7 +23,7 @@ use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, process, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
 use gpui::{
-    App, AsyncWindowContext, Bounds, ClipboardItem, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    App, AsyncWindowContext, Bounds, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, ScrollDelta, ScrollEvent, Window,
     point, px,
 };
@@ -249,7 +249,7 @@ pub(crate) fn install_guards(mode: Mode) {
     };
     std::thread::spawn(move || {
         std::thread::sleep(budget);
-        println!("FAIL watchdog: no result after {} s", budget.as_secs());
+        println!("FAIL watchdog in step {}: no result after {} s", current_step(), budget.as_secs());
         EXIT_CODE.store(1, Ordering::SeqCst);
         cleanup();
         std::process::exit(1);
@@ -257,6 +257,7 @@ pub(crate) fn install_guards(mode: Mode) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         previous(info);
+        println!("FAIL panic in step {}: {info}", current_step());
         EXIT_CODE.store(1, Ordering::SeqCst);
         // try_lock: a panic inside cleanup itself must not deadlock here.
         if let Ok(mut guard) = SCRATCH.try_lock() {
@@ -277,8 +278,23 @@ pub fn log_dir() -> PathBuf {
 
 /// What gpui logs for a window dropped under Windows' feet (m5/22, [`crate::tray::close`]): none may appear.
 pub(crate) fn teardown_errors() -> Vec<String> {
-    let text = std::fs::read_to_string(log_dir().join("foreman.log")).unwrap_or_default();
-    text.lines()
+    teardown_errors_since(0)
+}
+
+/// Where `foreman.log` ends now: [`teardown_errors_since`] then scans only what is written after.
+pub(crate) fn log_offset() -> u64 {
+    std::fs::metadata(log_dir().join("foreman.log")).map_or(0, |m| m.len())
+}
+
+/// [`teardown_errors`] in what `foreman.log` holds past `offset`; all of it once it rotated below that.
+pub(crate) fn teardown_errors_since(offset: u64) -> Vec<String> {
+    teardown_lines(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default(), offset)
+}
+
+fn teardown_lines(bytes: &[u8], offset: u64) -> Vec<String> {
+    let from = usize::try_from(offset).ok().filter(|&o| o <= bytes.len()).unwrap_or(0);
+    String::from_utf8_lossy(&bytes[from..])
+        .lines()
         .filter(|l| l.contains("window not found") || l.contains("Invalid window handle"))
         .map(str::to_string)
         .collect()
@@ -419,6 +435,67 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
 
 pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
     cx.background_executor().timer(duration).await;
+}
+
+static STEP: Mutex<&str> = Mutex::new("setup");
+
+/// The gate step running now; every FAIL line that is not a step's own error names it.
+pub(crate) fn current_step() -> &'static str {
+    *STEP.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn set_step(name: &'static str) -> &'static str {
+    std::mem::replace(&mut *STEP.lock().unwrap_or_else(|e| e.into_inner()), name)
+}
+
+async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    let outer = set_step(name);
+    let result = run.await.with_context(|| format!("step {name}"));
+    if result.is_ok() {
+        set_step(outer);
+    }
+    result
+}
+
+/// Polls `check` every 25 ms until it has an answer, or fails with `what` after `within`.
+pub(crate) async fn until_with<T>(
+    cx: &mut AsyncWindowContext,
+    within: Duration,
+    what: &str,
+    mut check: impl FnMut(&mut AsyncWindowContext) -> Option<T>,
+) -> anyhow::Result<T> {
+    let started = Instant::now();
+    loop {
+        if let Some(t) = check(cx) {
+            return Ok(t);
+        }
+        if started.elapsed() > within {
+            bail!("{what}: not within {within:?}");
+        }
+        sleep(cx, Duration::from_millis(25)).await;
+    }
+}
+
+/// [`until_with`] on the view's state.
+pub(crate) async fn until<T>(
+    view: &Entity<FleetView>,
+    cx: &mut AsyncWindowContext,
+    within: Duration,
+    what: &str,
+    f: impl Fn(&FleetView) -> Option<T>,
+) -> anyhow::Result<T> {
+    until_with(cx, within, what, |cx| view.read_with(cx, |v, _| f(v))).await
+}
+
+/// [`until`] with the app at hand, for state that lives in other entities (a text input's text).
+pub(crate) async fn until_app<T>(
+    view: &Entity<FleetView>,
+    cx: &mut AsyncWindowContext,
+    within: Duration,
+    what: &str,
+    f: impl Fn(&FleetView, &App) -> Option<T>,
+) -> anyhow::Result<T> {
+    until_with(cx, within, what, |cx| view.read_with(cx, |v, cx| f(v, cx))).await
 }
 
 /// A left click at the centre of the element painted under `key`, after scrolling it fully into view
@@ -760,7 +837,7 @@ pub(crate) async fn close_attach(
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
-    let (row, listed_after) = wait_attachable(view, &name, cx).await.context("step 3")?;
+    let (row, listed_after) = step("3", wait_attachable(view, &name, cx)).await?;
     let id = row.session.id.clone();
     println!(
         "step 3: {name} ({id}) listed under {WORKSPACE} / ./{} as {} after {} ms",
@@ -769,7 +846,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         listed_after.as_millis()
     );
 
-    let attached = open_attach(view, &format!("attach-{id}"), &id, cx).await.context("step 4")?;
+    let attached = step("4", open_attach(view, &format!("attach-{id}"), &id, cx)).await?;
     println!(
         "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the click; first line: {}",
         attached.title,
@@ -781,72 +858,73 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     );
     crate::selftest_manage::shot("m5-14-terminal-tab", cx).await;
 
-    let closed = close_attach(view, &attached, &name, cx).await.context("step 5")?;
+    let closed = step("5", close_attach(view, &attached, &name, cx)).await?;
     println!("step 5: tab closed, {closed}");
 
-    let scrolled = wheel_scroll(view, cx).await.context("step 6")?;
+    let scrolled = step("6", wheel_scroll(view, cx)).await?;
     println!("step 6: {scrolled}");
 
-    let work = crate::selftest_work::run(view, &row.session, cx).await.context("step 7")?;
+    let work = step("7", crate::selftest_work::run(view, &row.session, cx)).await?;
     println!("step 7: {work}");
 
-    let managed = crate::selftest_manage::run(view, &row.session, cx).await.context("step 7b")?;
+    let managed = step("7b", crate::selftest_manage::run(view, &row.session, cx)).await?;
     println!("step 7b: {managed}");
 
-    let bar = crate::selftest_left::action_bar(view, cx).await.context("step 7c")?;
+    let bar = step("7c", crate::selftest_left::action_bar(view, cx)).await?;
     println!("step 7c: {bar}");
 
-    let first_run = crate::selftest_first_run::run(view, cx).await.context("step 7d")?;
+    let first_run = step("7d", crate::selftest_first_run::run(view, cx)).await?;
     println!("step 7d: {first_run}");
 
-    let hotkeys = crate::selftest_tabs::run(view, cx).await.context("step 7e")?;
+    let hotkeys = step("7e", crate::selftest_tabs::run(view, cx)).await?;
     println!("step 7e: {hotkeys}");
 
-    let clipped = crate::selftest_left::tree_clip(view, cx).await.context("step 7f")?;
+    let clipped = step("7f", crate::selftest_left::tree_clip(view, cx)).await?;
     println!("step 7f: {clipped}");
 
-    let shell = crate::selftest_shell::run(view, cx).await.context("step 7g")?;
+    let shell = step("7g", crate::selftest_shell::run(view, cx)).await?;
     println!("step 7g: {shell}");
 
-    let closed = crate::selftest_closed::run(view, &home(), cx).await.context("step 7h")?;
+    let closed = step("7h", crate::selftest_closed::run(view, &home(), cx)).await?;
     println!("step 7h: {closed}");
 
-    let titled = crate::selftest_title::run(view, cx).await.context("step 7i")?;
+    let titled = step("7i", crate::selftest_title::run(view, cx)).await?;
     println!("step 7i: {titled}");
 
-    let refreshed = crate::selftest_refresh::run(view, &home(), cx).await.context("step 7j")?;
+    let refreshed = step("7j", crate::selftest_refresh::run(view, &home(), cx)).await?;
     println!("step 7j: {refreshed}");
 
-    let searched = crate::selftest_search::run(view, cx).await.context("step 7k")?;
+    let searched = step("7k", crate::selftest_search::run(view, cx)).await?;
     println!("step 7k: {searched}");
 
-    let mark = crate::selftest_mark::run(view, cx).await.context("step 7l")?;
+    let mark = step("7l", crate::selftest_mark::run(view, cx)).await?;
     println!("step 7l: {mark}");
 
-    let themed = crate::selftest_theme::run(view, &home(), cx).await.context("step 7m")?;
+    let themed = step("7m", crate::selftest_theme::run(view, &home(), cx)).await?;
     println!("step 7m: {themed}");
 
-    let dismissed = crate::selftest_messages::run(view, &home(), cx).await.context("step 7n")?;
+    let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
     println!("step 7n: {dismissed}");
-    let hint = crate::selftest_messages::placeholder(view, cx).await.context("step 7n")?;
+    let hint = step("7n", crate::selftest_messages::placeholder(view, cx)).await?;
     println!("step 7n: {hint}");
 
-    let notices = crate::selftest_notices::run(view, cx).await.context("step 7o")?;
+    let notices = step("7o", crate::selftest_notices::run(view, cx)).await?;
     println!("step 7o: {notices}");
 
-    let deleted = crate::selftest_delete::run(view, &home(), &session_name()?, cx).await.context("step 7p")?;
+    let deleted = step("7p", crate::selftest_delete::run(view, &home(), &session_name()?, cx)).await?;
     println!("step 7p: {deleted}");
 
-    let zoomed = crate::selftest_zoom::run(view, &home(), cx).await.context("step 7q")?;
+    let zoomed = step("7q", crate::selftest_zoom::run(view, &home(), cx)).await?;
     println!("step 7q: {zoomed}");
 
-    let pasted = crate::selftest_paste::run(view, cx).await.context("step 7r")?;
+    let pasted = step("7r", crate::selftest_paste::run(view, cx)).await?;
     println!("step 7r: {pasted}");
 
-    let font = crate::selftest_font::run(view, &home(), cx).await.context("step 7s")?;
+    let font = step("7s", crate::selftest_font::run(view, &home(), cx)).await?;
     println!("step 7s: {font}");
 
     // 8. Idle memory and frame times while the panel keeps refreshing.
+    set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
     let before = frames::baseline(view, cx).await;
@@ -874,14 +952,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 pub(crate) const CLIPBOARD_TRIES: usize = 5;
 
 /// The clipboard's text once `own` accepts it, or what it held after 1 s.
-pub(crate) async fn read_own(
-    cx: &mut AsyncWindowContext,
-    read: &impl Fn(&mut AsyncWindowContext) -> anyhow::Result<Option<String>>,
-    own: impl Fn(&str) -> bool,
-) -> anyhow::Result<Option<String>> {
+pub(crate) async fn read_own(cx: &mut AsyncWindowContext, own: impl Fn(&str) -> bool) -> anyhow::Result<Option<String>> {
     let started = Instant::now();
     loop {
-        let text = read(cx)?;
+        let text = crate::selftest_clipboard::text(cx)?;
         if text.as_deref().is_some_and(&own) || started.elapsed() > Duration::from_secs(1) {
             return Ok(text);
         }
@@ -953,6 +1027,7 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
 /// that line's text, Ctrl+Shift+C puts it on the clipboard, and Ctrl+V types the clipboard into the shell
 /// (PSReadLine echoes it at the prompt). The clipboard is put back as it was ([`crate::selftest_clipboard`]).
 async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let _clipboard = crate::selftest_clipboard::borrow("6b", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = async {
         let (row, text) = select_wheel_line(terminal, cx).await?;
@@ -960,12 +1035,11 @@ async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowCont
         // Another selftest may write the system clipboard at any moment (m5/15): the copied line carries
         // this run's tag, and each read waits for this run's own value, pressing again if a foreign one
         // replaced it.
-        let read = |cx: &mut AsyncWindowContext| cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
         let mut copied = None;
         for _ in 0..CLIPBOARD_TRIES {
-            cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("not copied".into())))?;
+            crate::selftest_clipboard::put_text("not copied", cx)?;
             key(cx, "c", Modifiers { control: true, shift: true, ..Default::default() })?;
-            copied = read_own(cx, &read, |c| c == text).await?;
+            copied = read_own(cx, |c| c == text).await?;
             if copied.as_deref() == Some(text.as_str()) {
                 break;
             }
@@ -981,7 +1055,7 @@ async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowCont
         };
         let pasted = Instant::now();
         'paste: for _ in 0..CLIPBOARD_TRIES {
-            cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(marker.clone())))?;
+            crate::selftest_clipboard::put_text(&marker, cx)?;
             key(cx, "v", Modifiers::control())?;
             let tried = Instant::now();
             while tried.elapsed() < Duration::from_secs(2) {
@@ -1090,9 +1164,9 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
             bail!("wheel down: display_offset {up} → {half} → {bottom}, expected {up} → 1..{up} → 0");
         }
         let wheel = format!("{count} lines in a {lines}-line grid; display_offset 0 → {up} (2 notches up) → {half} → {bottom} (2 down)");
-        let copied = select_copy_paste(&terminal, cx).await.context("step 6b")?;
+        let copied = step("6b", select_copy_paste(&terminal, cx)).await?;
         println!("step 6b: {copied}");
-        let keys = crate::selftest_term::run(view, tab, &terminal, cx).await.context("step 6c")?;
+        let keys = step("6c", crate::selftest_term::run(view, tab, &terminal, cx)).await?;
         println!("step 6c: {keys}");
         Ok(wheel)
     }
@@ -1231,13 +1305,19 @@ pub fn finish(mode: Mode) {
     // the main window closed by now, on Quit or with the selftest
     let errors = teardown_errors();
     if !errors.is_empty() {
-        println!("FAIL log: {} window-teardown line(s) in {}: {}", errors.len(), log_dir().display(), errors.join(" | "));
+        println!(
+            "FAIL log, last step {}: {} window-teardown line(s) in {}: {}",
+            current_step(),
+            errors.len(),
+            log_dir().display(),
+            errors.join(" | ")
+        );
         EXIT_CODE.store(1, Ordering::SeqCst);
     }
     if mode != Mode::SelftestDetachShutdown {
         // the window closed under the selftest, which ended with it (closing must only hide it)
         if !VERDICT.load(Ordering::SeqCst) && EXIT_CODE.load(Ordering::SeqCst) == 0 {
-            println!("FAIL the app quit before the selftest gave a verdict");
+            println!("FAIL the app quit in step {} before the selftest gave a verdict", current_step());
             EXIT_CODE.store(1, Ordering::SeqCst);
         }
         return;
@@ -1330,6 +1410,16 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn teardown_lines_are_those_past_the_offset_or_all_after_a_rotation() {
+        let log = b"a window not found\nb ok\nc Invalid window handle\n";
+        let second = log.iter().position(|&b| b == b'\n').unwrap() as u64 + 1;
+        assert_eq!(teardown_lines(log, 0), ["a window not found", "c Invalid window handle"]);
+        assert_eq!(teardown_lines(log, second), ["c Invalid window handle"]);
+        assert!(teardown_lines(log, log.len() as u64).is_empty());
+        assert_eq!(teardown_lines(log, log.len() as u64 + 1).len(), 2);
+    }
 
     /// <temp>/fm-selftest-discovery-<hex>/
     ///   Root/Repo/.git/                       main checkout

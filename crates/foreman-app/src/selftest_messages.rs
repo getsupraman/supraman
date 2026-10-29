@@ -6,7 +6,7 @@
 
 use std::{
     path::Path,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{anyhow, bail};
@@ -15,7 +15,7 @@ use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
     dismissed_messages::{DismissedMessages, FILE},
-    selftest::{WORKSPACE, click, sleep},
+    selftest::{WORKSPACE, click, sleep, until},
     selftest_manage::shot,
     view::FleetView,
 };
@@ -23,19 +23,6 @@ use crate::{
 const SENDER: &str = "fm-selftest-dismiss";
 /// A poll reads the outbox every `REFRESH_EVERY` plus `claude agents`.
 const WITHIN: Duration = Duration::from_secs(15);
-
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            bail!("{what}: not within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
-}
 
 fn painted(v: &FleetView, key: &str) -> bool {
     v.hits.borrow().contains_key(key)
@@ -49,7 +36,7 @@ fn dismiss_key(file: &str) -> String {
 pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
     crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
-    until(view, cx, "the left panel's hold to end", |v| (!v.left_held()).then_some(())).await
+    until(view, cx, WITHIN, "the left panel's hold to end", |v| (!v.left_held()).then_some(())).await
 }
 
 fn tell(outbox: &Path, tag: &str, body: &str) -> anyhow::Result<String> {
@@ -70,7 +57,7 @@ async fn dismiss_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> a
             bail!("30 × clicked and the Messages rows keep coming");
         }
         click(view, &key, cx).await?;
-        until(view, cx, &format!("{key} gone after its ×"), |v| (!painted(v, &key)).then_some(())).await?;
+        until(view, cx, WITHIN, &format!("{key} gone after its ×"), |v| (!painted(v, &key)).then_some(())).await?;
         clicked += 1;
     }
     Ok(clicked)
@@ -113,14 +100,14 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     sleep(cx, Duration::from_millis(20)).await;
     let newer = tell(&outbox, "b", "fm-selftest ready — still nothing in flight")?;
     let (older_x, newer_x) = (dismiss_key(&older), dismiss_key(&newer));
-    let before = until(view, cx, "both notes painted with a ×", |v| {
+    let before = until(view, cx, WITHIN, "both notes painted with a ×", |v| {
         (painted(v, &older_x) && painted(v, &newer_x)).then(|| v.messages_count())
     })
     .await?;
     shot("m5-36-messages-before", cx).await;
 
     click(view, &older_x, cx).await?;
-    let after = until(view, cx, "the older note hidden by its ×", |v| (!painted(v, &older_x)).then(|| v.messages_count())).await?;
+    let after = until(view, cx, WITHIN, "the older note hidden by its ×", |v| (!painted(v, &older_x)).then(|| v.messages_count())).await?;
     if after != before - 1 {
         bail!("× on {older}: the count went from {before} to {after}, not {}", before - 1);
     }
@@ -139,13 +126,13 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     // a poll later the dismissal holds
     let ticks = view.read_with(cx, |v, _| v.ticks);
-    until(view, cx, "a poll after the ×", |v| (v.ticks > ticks).then_some(())).await?;
+    until(view, cx, WITHIN, "a poll after the ×", |v| (v.ticks > ticks).then_some(())).await?;
     if view.read_with(cx, |v, _| painted(v, &older_x)) {
         bail!("{older} came back on the next poll");
     }
 
     let rest = dismiss_all(view, cx).await?;
-    until(view, cx, "the Messages section hidden once empty", |v| (!painted(v, "messages-area") && v.messages_count() == 0).then_some(())).await?;
+    until(view, cx, WITHIN, "the Messages section hidden once empty", |v| (!painted(v, "messages-area") && v.messages_count() == 0).then_some(())).await?;
     if !outbox.join(&older).is_file() || !outbox.join(&newer).is_file() {
         bail!("the dismissed notes' outbox files are gone");
     }
@@ -153,13 +140,13 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     pointer_off(view, cx).await?;
     let again = tell(&outbox, "c", "fm-selftest ready — a newer note")?;
     let again_x = dismiss_key(&again);
-    let shown = until(view, cx, "a newer note from the same sender", |v| (painted(v, &again_x) && painted(v, "messages-area")).then(|| v.messages_count())).await?;
+    let shown = until(view, cx, WITHIN, "a newer note from the same sender", |v| (painted(v, &again_x) && painted(v, "messages-area")).then(|| v.messages_count())).await?;
     if shown != 1 {
         bail!("after the newer note the count is {shown}, not 1");
     }
     shot("m5-36-messages-newer", cx).await;
     click(view, &again_x, cx).await?;
-    until(view, cx, "the section hidden again", |v| (!painted(v, "messages-area")).then_some(())).await?;
+    until(view, cx, WITHIN, "the section hidden again", |v| (!painted(v, "messages-area")).then_some(())).await?;
     let on_disk = std::fs::read_to_string(home.join(FILE)).map_err(|e| anyhow!("{FILE}: {e}"))?;
     if !on_disk.contains(&again) {
         bail!("{FILE} does not hold {again}: {on_disk:?}");

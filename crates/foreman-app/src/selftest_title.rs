@@ -128,15 +128,6 @@ fn label(view: &Entity<FleetView>, id: u64, cx: &mut AsyncWindowContext) -> Opti
     view.read_with(cx, |v, _| v.tab(id).map(|t| t.label()))
 }
 
-async fn until<T>(cx: &mut AsyncWindowContext, what: &str, mut check: impl FnMut(&mut AsyncWindowContext) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = check(cx) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            bail!("{what}: not within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
+async fn until<T>(cx: &mut AsyncWindowContext, what: &str, check: impl FnMut(&mut AsyncWindowContext) -> Option<T>) -> anyhow::Result<T> {
+    crate::selftest::until_with(cx, WITHIN, what, check).await
 }

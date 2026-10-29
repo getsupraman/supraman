@@ -26,17 +26,11 @@ use crate::{
 const WITHIN: Duration = Duration::from_secs(15);
 
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            let now = view.read_with(cx, |v, _| format!("{:?}, sign-in error {:?}", v.workstate, v.sign_in_error));
-            bail!("{what}: not within {} s (status {now})", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
+    let result = crate::selftest::until(view, cx, WITHIN, what, f).await;
+    result.map_err(|e| {
+        let now = view.read_with(cx, |v, _| format!("status {:?}, sign-in error {:?}", v.workstate, v.sign_in_error));
+        e.context(now)
+    })
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {

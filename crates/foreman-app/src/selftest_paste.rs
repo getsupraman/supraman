@@ -7,11 +7,11 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
-use gpui::{AsyncWindowContext, ClipboardItem, Entity};
+use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
     selftest::{hex6, sleep, wait_for_tab_terminal},
-    selftest_clipboard::{Snapshot, put_test_image},
+    selftest_clipboard::{Snapshot, put_test_image, sequence},
     view::FleetView,
 };
 
@@ -39,13 +39,15 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
             sleep(cx, Duration::from_millis(50)).await;
         }
         let mark = format!("fm-image-{}=", hex6());
+        let _clipboard = crate::selftest_clipboard::borrow("7r", cx).await?;
         let user = Snapshot::take().map_err(|e| anyhow!("saving the clipboard: {e}"))?;
         let held = Instant::now();
         let exit = async {
             put_test_image().map_err(|e| anyhow!("putting the test image on the clipboard: {e}"))?;
             let borrowed = Snapshot::take()?;
-            cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(mark.clone())))?;
+            crate::selftest_clipboard::put_text(&mark, cx)?;
             borrowed.restore()?;
+            let restored = sequence();
             terminal.update(cx, |t, _| {
                 t.input(format!("cmd /d /c powershell -NoProfile -NonInteractive -Sta -Command \"{CHECK}\"; '{mark}' + $LASTEXITCODE\r").into_bytes())
             });
@@ -53,7 +55,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
                 let content = terminal.read_with(cx, |t, _| t.get_content());
                 // the echoed command has `'` right after the mark; the printed line has the exit code
                 if let Some(code) = content.lines().filter_map(|l| l.trim().strip_prefix(mark.as_str())).find(|c| !c.starts_with('\'')) {
-                    return Ok(code.trim().to_string());
+                    return Ok((code.trim().to_string(), sequence() != restored));
                 }
                 if held.elapsed() > WITHIN {
                     bail!("tab {id} never printed the check's exit code: {content:?}");
@@ -64,10 +66,15 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
         .await;
         let restored = user.restore();
         let held = held.elapsed();
-        let exit = exit?;
+        let (exit, written) = exit?;
         restored.map_err(|e| anyhow!("restoring the clipboard: {e}"))?;
+        if exit != "0" && written {
+            bail!(
+                "claude's image check in a Foreman tab exited {exit}, but another process wrote the clipboard between the put-back and the check (the clipboard is system-wide: another selftest running at the same time takes it)"
+            );
+        }
         if exit != "0" {
-            bail!("claude's image check in a Foreman tab exited {exit} with the test image borrowed and put back on the clipboard");
+            bail!("claude's image check in a Foreman tab exited {exit} with the test image borrowed and put back on the clipboard, which nothing wrote since");
         }
         Ok(format!(
             "test image on the clipboard, borrowed and put back; claude's image check in tab {id} exited 0; the user's {} clipboard formats back after {} ms",

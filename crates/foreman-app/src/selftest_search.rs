@@ -11,11 +11,13 @@ use anyhow::bail;
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput};
 
 use crate::{
-    selftest::{WORKSPACE, sleep},
+    selftest::{WORKSPACE, sleep, until_app},
     selftest_closed::{OLD, RECENT},
-    selftest_manage::{post_keys, shot, until_app},
+    selftest_manage::{post_keys, shot},
     view::FleetView,
 };
+
+const WITHIN: Duration = Duration::from_secs(5);
 
 /// The result rows painted: workspaces, repos and sessions, by their hit keys, sorted.
 fn result_rows(v: &FleetView) -> Vec<String> {
@@ -38,7 +40,7 @@ fn query(v: &FleetView, cx: &gpui::App) -> String {
 async fn type_query(view: &Entity<FleetView>, text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let keys: Vec<String> = text.chars().map(String::from).collect();
     post_keys(&keys.iter().map(String::as_str).collect::<Vec<_>>(), cx).await?;
-    until_app(view, cx, &format!("the box reading {text:?}"), |v, cx| (query(v, cx) == text).then_some(()))
+    until_app(view, cx, WITHIN, &format!("the box reading {text:?}"), |v, cx| (query(v, cx) == text).then_some(()))
         .await
         .map_err(|e| e.context(format!("it reads {:?}", view.read_with(cx, |v, cx| query(v, cx)))))
 }
@@ -68,7 +70,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         v.clear_search(cx);
     });
     let tree_row = format!("ws-row-{WORKSPACE}");
-    until_app(view, cx, "the tree before the search", |v, _| v.hits.borrow().contains_key(&tree_row).then_some(())).await?;
+    until_app(view, cx, WITHIN, "the tree before the search", |v, _| v.hits.borrow().contains_key(&tree_row).then_some(())).await?;
 
     // Ctrl+Shift+E through the window's key dispatch, as the key binding takes it
     let keystroke = Keystroke { modifiers: Modifiers { control: true, shift: true, ..Default::default() }, key: "e".into(), key_char: None };
@@ -81,7 +83,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let started = Instant::now();
     type_query(view, prefix, cx).await?;
     let want = vec![format!("result-repo-{WORKSPACE}/"), format!("result-ws-{WORKSPACE}"), format!("session-row-{RECENT}")];
-    let rows = until_app(view, cx, &format!("the results of {prefix:?}"), |v, _| {
+    let rows = until_app(view, cx, WITHIN, &format!("the results of {prefix:?}"), |v, _| {
         let rows = result_rows(v);
         let shape: Vec<String> = rows.iter().map(|r| if r.starts_with("result-repo-") { format!("result-repo-{WORKSPACE}/") } else { r.clone() }).collect();
         (shape.len() == 3 && shape.iter().all(|r| want.contains(r))).then_some(rows)
@@ -99,7 +101,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     select_all(view, cx)?;
     type_query(view, "closed session", cx).await?;
     let recent = format!("session-row-{RECENT}");
-    until_app(view, cx, "the closed session found by its title", |v, _| {
+    until_app(view, cx, WITHIN, "the closed session found by its title", |v, _| {
         let rows = result_rows(v);
         (rows.contains(&recent) && rows.iter().filter(|r| r.starts_with("session-row-")).count() == 1).then_some(())
     })
@@ -111,7 +113,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     select_all(view, cx)?;
     type_query(view, WORKSPACE, cx).await?;
     let ws = format!("result-ws-{WORKSPACE}");
-    let marks = until_app(view, cx, "the workspace found by its name", |v, cx| {
+    let marks = until_app(view, cx, WITHIN, "the workspace found by its name", |v, cx| {
         let found = v.hits.borrow().contains_key(&ws);
         let r = v.search_results(cx);
         found.then(|| r.workspaces.iter().find(|w| w.name == WORKSPACE).map(|w| w.name_marks.clone())).flatten()
@@ -125,12 +127,12 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // nothing
     select_all(view, cx)?;
     type_query(view, "zzqx9", cx).await?;
-    until_app(view, cx, "No results", |v, _| (v.hits.borrow().contains_key("search-none") && result_rows(v).is_empty()).then_some(())).await?;
+    until_app(view, cx, WITHIN, "No results", |v, _| (v.hits.borrow().contains_key("search-none") && result_rows(v).is_empty()).then_some(())).await?;
     out.push("\"zzqx9\": No results".into());
 
     // Esc clears it and the tree is back
     post_keys(&["escape"], cx).await?;
-    until_app(view, cx, "the box cleared by Esc and the tree back", |v, cx| {
+    until_app(view, cx, WITHIN, "the box cleared by Esc and the tree back", |v, cx| {
         let hits = v.hits.borrow();
         let results = hits.keys().any(|k| k.starts_with("result-") || k == "search-summary" || k == "search-none");
         (query(v, cx).is_empty() && hits.contains_key(&tree_row) && !results).then_some(())

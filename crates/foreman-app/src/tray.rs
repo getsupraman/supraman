@@ -183,11 +183,36 @@ pub fn close(window: &Window, cx: &mut App) {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
+            let started = std::time::Instant::now();
+            loop {
+                cx.background_executor().timer(DRAIN_EVERY).await;
+                if drained(hwnd) || started.elapsed() > DRAIN_LIMIT {
+                    break;
+                }
+            }
         }
-        cx.background_executor().timer(std::time::Duration::from_millis(100)).await;
         handle.update(cx, |_, window, _| window.remove_window()).ok();
     })
     .detach();
+}
+
+#[cfg(windows)]
+const DRAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(10);
+#[cfg(windows)]
+const DRAIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Hidden, with nothing posted to `hwnd` still queued. Sent messages are left alone: peeking for them
+/// would dispatch them here, inside this task.
+#[cfg(windows)]
+fn drained(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsWindowVisible, MSG, PM_NOREMOVE, PM_QS_INPUT, PM_QS_PAINT, PM_QS_POSTMESSAGE, PeekMessageW,
+    };
+    let mut msg = MSG::default();
+    unsafe {
+        !IsWindowVisible(hwnd).as_bool()
+            && !PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_INPUT | PM_QS_PAINT).as_bool()
+    }
 }
 
 #[cfg(not(windows))]
