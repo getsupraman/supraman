@@ -1,5 +1,3 @@
-//! The controller skills and roles as text: what m3/4's end-to-end run showed they must say.
-
 use std::path::PathBuf;
 
 fn plugin(path: &str) -> String {
@@ -47,7 +45,7 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
     assert!(!skill.contains("Send the plan to the relay") && !skill.contains("Report to the relay"));
     assert!(role.contains("you reach the human with `fm tell` (never SendMessage to the relay"));
     assert!(role.contains("announce ready to the human with `fm tell` once"));
-    // both shapes of the human's message (m5/4): Foreman's own frame, and the relay as fallback
+    // both shapes of the human's message: Foreman's own frame, and the relay as fallback
     assert!(skill.contains("<cross-session-message from-name=\"foreman\">` whose first line is `From the human (via Foreman, workspace <w>) [m-<id>]:`"));
     assert!(skill.contains("from-name=\"fm-<w>-relay\">`: the relay carried it"));
     assert!(skill.contains("**both are the human's voice**"));

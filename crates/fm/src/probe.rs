@@ -1,5 +1,4 @@
-//! What the `fm probe` subcommands share: a [`Fleet`] of throwaway `aw-m2-probe-*` sessions run from
-//! `<cargo root>/target/aw-m2-probe-<hex>` (a plain subfolder of the trusted worktree), and its cleanup.
+//! Probe sessions run from `<cargo root>/target/aw-m2-probe-<hex>`, a plain subfolder of the trusted worktree.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,11 +33,8 @@ impl Fleet {
             .ok_or_else(|| format!("no row named {name}"))
     }
 
-    /// Stops and removes every row named `name`. A `--bg` session started in a main checkout moves into
-    /// `<repo>/.claude/worktrees/<w>` before its first write and commits there; `claude rm` then keeps the
-    /// row and the worktree and names the way out (`--discard-unpushed <sha>@<token>`), which is taken:
-    /// the row is ours, so is its worktree. A worktree rm keeps for another reason (dirty, locked) is
-    /// removed with git, its `worktree-*` branch deleted, and the row removed again (m2/2).
+    /// `claude rm` keeps a row whose `--bg` worktree has commits and names `--discard-unpushed`, which is taken: the
+    /// row and its worktree are ours. A worktree rm keeps for another reason (dirty, locked) goes with git.
     pub(crate) fn remove(&mut self, name: &str) {
         let rows = self.claude.find_by_name(name, Duration::ZERO).unwrap_or_default();
         for row in rows {

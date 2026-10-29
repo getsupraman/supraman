@@ -1,9 +1,5 @@
-//! `fm probe session-id` (m5/40): does `claude --bg --session-id <uuid>` start the session under that
-//! uuid, and does `claude --bg --resume <uuid>` wake it under the same one? One `aw-m2-probe-<hex>-sid`
-//! session, cwd `<target dir>/aw-m2-probe-<hex>/sid` (`CARGO_TARGET_DIR`, else `<cargo root>/target`),
-//! started hidden and without the parent session's variables. It answers one turn, is stopped, resumed
-//! with a second turn, stopped and `rm`-ed; cleanup deletes its transcripts through
-//! [`foreman_claude::forget_transcript`]. Answers are in `docs/LEARNINGS.md` (m5/40).
+//! `fm probe session-id`: does `claude --bg --session-id <uuid>` start the session under that uuid, and does
+//! `claude --bg --resume <uuid>` wake it under the same one? Answers: `docs/LEARNINGS.md` m5/40.
 
 use std::fs;
 use std::path::{Path, PathBuf};

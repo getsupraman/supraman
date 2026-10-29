@@ -12,7 +12,7 @@ use foreman_supervisor::DesiredState;
 
 use crate::Failure;
 
-/// Monitor turns each stdout line into an event; the brief allows at most 500 ms of latency here.
+/// Monitor turns each stdout line into an event; at most 500 ms of latency.
 const POLL: Duration = Duration::from_millis(400);
 
 /// Never returns: Monitor ends it (expiry, or the relay stopping). A pass that cannot read the dir
@@ -53,9 +53,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     }
 }
 
-/// `fm send` speaks as the human (direct, or through the relay as `fm-<w>-relay`), which the
-/// workspace-controller skill reads as the human's voice; every Foreman-launched session carries `FOREMAN_ROLE` (`foreman_supervisor` `session_settings`), the
-/// human's shell does not. Runs before the registry is opened.
+/// `fm send` speaks as the human; every Foreman-launched session carries `FOREMAN_ROLE` (`foreman_supervisor` `session_settings`).
 pub fn refuse_inside_foreman() -> Result<(), Failure> {
     match std::env::var_os("FOREMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
@@ -77,8 +75,7 @@ fn body_arg(args: &[&str]) -> Option<Result<String, Failure>> {
     }
 }
 
-/// `fm send <workspace> <to> <body>` or `fm send <workspace> <to> --file <path>`: into the session's pipe,
-/// else through the relay (`foreman_claude::human`); prints which.
+/// Into the session's pipe, else through the relay (`foreman_claude::human`); prints which.
 pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     let usage = || Failure::Usage("send needs <workspace> <to> <body> or <workspace> <to> --file <path>".into());
     let [workspace, to, rest @ ..] = args else { return Err(usage()) };
@@ -100,8 +97,7 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `fm tell <body>` or `fm tell --file <path>`, run by a Foreman session to reach the human: an outbox
-/// message from it in its workspace (`FOREMAN_HOME`, `FOREMAN_WORKSPACE` from the session's env).
+/// Run by a Foreman session to reach the human: an outbox message in its workspace (`FOREMAN_HOME`, `FOREMAN_WORKSPACE`).
 pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     let body = body_arg(args).ok_or_else(|| Failure::Usage("tell needs <body> or --file <path>".into()))??;
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
@@ -117,7 +113,7 @@ pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `fm messages <workspace>`: every outbox message, newest last.
+/// Newest last.
 pub fn messages(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let [workspace] = args else {
         return Err(Failure::Usage("messages needs <workspace>".into()));

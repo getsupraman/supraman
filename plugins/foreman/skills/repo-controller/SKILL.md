@@ -26,9 +26,9 @@ tool, bare) lists every session if you need another name; never guess one.
 **End every turn with a last line that says what the turn did and asks nothing** (`done: DONE <run ref>
 sent`; after the answer a launch-prompt request asked for, `done: answered`). A turn that waits on someone
 ends `done: waiting on <who> for <what>` (`done: waiting on fm-<w>-workspace for 2.3`) — never with the word
-BLOCKED in the `done:` line, which Claude Code reads as blocked (m3/4); the `BLOCKED` message itself goes by
+BLOCKED in the `done:` line, which Claude Code reads as blocked; the `BLOCKED` message itself goes by
 `SendMessage` as §3 says. Nobody reads your reply text otherwise, and Claude Code reads the turn's end: one that asks something
-leaves your row `state=blocked` ("needs input"), one that reads as waiting leaves `state=working` (m3/3) —
+leaves your row `state=blocked` ("needs input"), one that reads as waiting leaves `state=working` —
 Foreman cannot tell either from a parked or a busy session. Every question goes
 by `SendMessage` to `fm-<w>-workspace` (§3).
 
@@ -37,7 +37,7 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
 1. **Invoke `/rlarch:controller`** and do its §0 preflight with `work_brief(scope: "<run ref>")`.
    **Call the Skill tool for `rlarch:controller` and `rlarch:nested-claude` even when the skill listing
    does not show them**: a skill can be missing from the listing (a plugin skill whose header failed to
-   parse was, m3/4). Only a failed Skill call is a blocker →
+   parse was). Only a failed Skill call is a blocker →
    `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (the rlarch plugin is not
    installed for this user)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the same, naming
    WorkState (Foreman is not signed in to it).

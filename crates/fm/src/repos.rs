@@ -1,6 +1,5 @@
-//! `fm want|unwant <workspace> <repo>` and `fm roster <workspace>`: what a controller runs itself to start
-//! and stop a repo session and to see its workspace's sessions. The desired state and the session
-//! shape are `foreman_supervisor`'s; the supervisor in the app acts on the file at its next tick.
+//! The desired state and the session shape are `foreman_supervisor`'s; the supervisor in the app acts on the file
+//! at its next tick.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -14,7 +13,6 @@ use serde_json::json;
 
 use crate::Failure;
 
-/// `fm want <w> <repo> [--prompt-file <path>]`.
 pub fn want(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let (w, repo, prompt_file) = match args {
         [w, repo] => (*w, *repo, None),
@@ -45,7 +43,7 @@ pub fn want(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// `fm unwant <w> <repo>`: no longer wanted, and retired, so the supervisor stops a live one.
+/// Retired as well, so the supervisor stops a live one.
 pub fn unwant(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let [w, repo] = args else {
         return Err(Failure::Usage("unwant needs <workspace> <repo>".into()));
@@ -116,7 +114,6 @@ pub struct Entry {
     pub wanted: bool,
 }
 
-/// `fm roster <w> [--json]`.
 pub fn roster_cmd(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let (w, as_json) = match args {
         [w] => (*w, false),

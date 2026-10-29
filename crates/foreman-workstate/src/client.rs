@@ -9,7 +9,6 @@ use serde::de::DeserializeOwned;
 use crate::http::{pct_encode, server_reason};
 use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Resolved, Sessions};
 
-/// The response header every v1 answer carries.
 pub const API_HEADER: &str = "X-WorkState-Api";
 pub const API_VERSION: &str = "1";
 
@@ -36,22 +35,18 @@ fn reason_suffix(reason: &str) -> String {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// The server's origin, from its MCP URL: [`foreman_core::url::origin`].
 pub fn api_base(mcp_url: &str) -> String {
     foreman_core::url::origin(mcp_url)
 }
 
-/// `?for=` of [`Client::brief`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BriefFor {
     Resume,
     Worker,
 }
 
-/// `GET /api/v1/journal` filters; all optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct JournalQuery<'a> {
-    /// An item id.
     pub scope: Option<&'a str>,
     pub since: Option<i64>,
     pub limit: Option<u32>,
@@ -59,7 +54,6 @@ pub struct JournalQuery<'a> {
     pub kinds: &'a [&'a str],
 }
 
-/// `GET /api/v1/sessions` filters; all optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionsQuery<'a> {
     /// The last 30 minutes only.
@@ -68,8 +62,7 @@ pub struct SessionsQuery<'a> {
     pub claude_session_id: Option<&'a str>,
 }
 
-/// Where a [`Client`]'s bearer comes from at each call: the OAuth sign-in ([`crate::Auth`]) in the app
-/// and `fm`, a fixed token in tests.
+/// The OAuth sign-in ([`crate::Auth`]) in the app and `fm`; a fixed token in tests.
 pub trait BearerSource: Send + Sync {
     /// The access token to send now; `Err` says why there is none, without any token in it.
     fn bearer(&self) -> std::result::Result<String, String>;
@@ -85,8 +78,6 @@ impl BearerSource for Fixed {
     }
 }
 
-/// Blocking HTTP/1.1 (TLS for an `https://` server), no proxy, no redirects, 15 s per call.
-/// `Debug` never prints the token.
 #[derive(Clone)]
 pub struct Client {
     base: String,
@@ -119,7 +110,6 @@ impl Client {
         &self.base
     }
 
-    /// The bearer for a call now.
     pub(crate) fn bearer(&self) -> Result<String> {
         self.source.bearer().map_err(Error::Auth)
     }
@@ -231,7 +221,6 @@ impl Client {
     }
 }
 
-/// Whatever a server or transport says, the token never leaves in it.
 pub(crate) fn scrub(token: &str, text: &str) -> String {
     if token.is_empty() { text.to_string() } else { text.replace(token, "<redacted>") }
 }

@@ -1,7 +1,4 @@
-//! A fake WorkState read API on 127.0.0.1 for tests (feature `fake`): answers each request target
-//! from a table the test can change, holds `/api/stream` open as SSE so a test can push frames, and
-//! records what it was asked. [`FakeWorkState::enable_oauth`] adds a fake OAuth authorization server
-//! ([`FakeAuth`]) and guards `/api/*` with its access tokens. Never the real server (C21).
+//! A fake WorkState read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkState::enable_oauth`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -17,11 +14,9 @@ use crate::auth::form_decode;
 
 const STREAM_TARGET: &str = "/api/stream";
 
-/// One request as the fake read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seen {
     pub method: String,
-    /// Path and query, as sent.
     pub target: String,
     pub authorization: Option<String>,
     pub body: String,
@@ -162,7 +157,6 @@ impl FakeWorkState {
         auth
     }
 
-    /// Answers `target` with `answer` from now on.
     pub fn set(&self, target: impl Into<String>, answer: Answer) {
         let target = target.into();
         let mut routes = self.routes.lock().unwrap();
@@ -239,9 +233,7 @@ struct AuthState {
     refusals: Vec<String>,
 }
 
-/// A fake OAuth 2.1 authorization server for the resource `<base>/api`, shaped like WorkState's
-/// (Skills `docs/workstate/10-read-api.md` rule 5): PRM, AS metadata, DCR, authorize (an immediate
-/// redirect: the test is the browser), token (code + PKCE, rotating refresh), revoke (the grant).
+/// Shaped like WorkState's (Skills `docs/workstate/10-read-api.md` rule 5); authorize redirects at once: the test is the browser.
 pub struct FakeAuth {
     base: String,
     state: Mutex<AuthState>,
@@ -284,7 +276,6 @@ impl FakeAuth {
         self.st().refresh_len = bytes;
     }
 
-    /// Every refresh from now on is `invalid_grant`.
     pub fn fail_refresh(&self, fail: bool) {
         self.st().fail_refresh = fail;
     }
@@ -298,7 +289,6 @@ impl FakeAuth {
         self.st().registered.len()
     }
 
-    /// Every client_id registered so far, in order.
     pub fn registered(&self) -> Vec<String> {
         self.st().registered.clone()
     }
@@ -335,7 +325,6 @@ impl FakeAuth {
         self.st().issued.clone()
     }
 
-    /// Grants revoked by a sign-out.
     pub fn revoked(&self) -> usize {
         self.st().revoked.len()
     }
@@ -388,7 +377,6 @@ impl FakeAuth {
         Answer { status, api: None, ..Answer::text(text) }
     }
 
-    /// The answer to an OAuth request; `None` for anything else.
     pub fn handle(&self, method: &str, target: &str, body: &str) -> Option<Answer> {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let base = self.base.clone();

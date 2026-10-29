@@ -1,12 +1,5 @@
-//! `GET /api/stream`: a subscriber thread that delivers [`StreamSignal`]s over a channel and
-//! reconnects with backoff. HTTP/1.1 on a `TcpStream` (TLS through the OS for `https://`) with a
-//! short read timeout, so
-//! [`Stream::stop`] returns within one poll even when the server is silent. An event means "re-read";
-//! `Connected` after a `Lost` means "re-read everything", since frames sent in between are gone.
-//!
-//! SSE as the WHATWG spec reads it: `data:` lines (several join with `\n`), `:` comments, `event:`
-//! ignored, `id:` remembered and sent back as `Last-Event-ID` on reconnect, `retry:` ignored (the
-//! backoff is ours).
+//! `GET /api/stream`. An event means "re-read"; `Connected` after a `Lost` means "re-read everything", since
+//! frames sent in between are gone. SSE as the WHATWG spec reads it, except `retry:`: the backoff is ours.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -50,7 +43,7 @@ impl Default for StreamConfig {
     }
 }
 
-/// The subscriber thread. Dropping it stops it, as does dropping the receiver (at the next signal).
+/// Dropping it stops the thread, as does dropping the receiver (at the next signal).
 pub struct Stream {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,

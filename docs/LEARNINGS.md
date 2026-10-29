@@ -3733,3 +3733,26 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16d\target`): `cargo build --release --workspace` no warnings;
   `cargo test --release --workspace` 662 passed, 0 failed. Selftests not run (brief: parallel comment passes share
   the clipboard and keyboard); the controller runs them on master.
+
+## 2026-10-29 — m5/44.16c comment pass over foreman-workstate, fm and plugins/foreman (audit U14c: A-74, A-75, A-76)
+- **Comments only.** Every changed .rs file, with its `//` and `/* */` comments stripped outside string literals and
+  blank lines dropped, is identical to master (21 files, 0 code differences; the check flags a one-character code
+  edit, red-checked on `hook.rs`). The plugin's markdown lost only unit tags (m2/1, m2/2, m3/2, m3/3, m3/4, m3/6);
+  every string `crates/fm/tests/skills.rs` asserts is unchanged.
+- **Counts (full-line comments):** foreman-workstate 241 → 144, fm 149 → 96. The audit's estimate was 37 and 33.
+- **Kept on purpose:** pointers to Skills `docs/workstate/10-read-api.md` / `12-install-harness-identity.md` and to
+  `docs/LEARNINGS.md` m2/2, m5/38, m5/40 (the probes' answers); C21 (read only); the no-token invariants; OAuth and
+  SSE quirks (loopback port ignored, `retry:` ignored, `invalid_client`/`invalid_grant` drop the pair, the lock
+  around a refresh); the shared components' `///` docs (`pct_encode`, `server_reason`).
+- **Removed:** unit and finding tags (m5/19, m5/43, m3/4, m0/3, F-05, F-08, F-09, "c2:"), the 19-line `auth.rs`
+  essay, the stream and probe module essays, `// ---- GET …` banners in `model.rs`, test-module summaries that list
+  their tests, and doc comments that restate a signature or a usage string.
+- **Left in markdown (not narration, so out of U14c's scope):** `workspace-controller/SKILL.md` says "call the Skill
+  tool even when the listing does not show it" twice (A-76).
+- **Code-looks-wrong (not touched):** `foreman-workstate/src/auth.rs` `save_known` writes `servers.json` through a
+  fixed `json.tmp` and a hand-made rename, which CLAUDE.md reserves for `foreman_core::fs::write_atomic`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16c\target`): `cargo build --release --workspace` 0 warnings;
+  `cargo test --release --workspace --no-fail-fast` 660 passed, 2 failed: `fm` `tests/want.rs`
+  `want_adds_a_repo_session_once_and_unwant_retires_it` and `a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root`.
+  Master's own `crates`/`plugins` fail these two the same way in this target dir: an `fm.exe` under `C:\fmbuild` has no
+  `plugins/foreman` next to it or above it ("No Foreman plugin for …"). Selftests not run (parallel passes, per brief).

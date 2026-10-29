@@ -1,12 +1,10 @@
-//! Is a WorkState server listening: one unauthenticated `GET /health` (Skills
-//! `docs/workstate/12-install-harness-identity.md`), so no token is involved.
+//! `GET /health` is unauthenticated (Skills `docs/workstate/12-install-harness-identity.md`).
 
 use std::time::Duration;
 
 use crate::client::api_base;
 
-/// `GET <origin of mcp_url>/health` answered 2xx within `timeout`; else what went wrong, in one
-/// short line (`HTTP 503`, `connection refused`, `timed out`).
+/// `Err` is one short line: `HTTP 503`, `connection refused`, `timed out`.
 pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
     let agent = crate::http::agent(timeout);
     let res = agent.get(format!("{}/health", api_base(mcp_url))).call().map_err(|e| transport(&e))?;

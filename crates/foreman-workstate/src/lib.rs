@@ -1,6 +1,6 @@
 //! Foreman's every WorkState read: the read API v1 shapes ([`model`]), a blocking [`Client`] and the
 //! `/api/stream` subscriber ([`Stream`]), and the OAuth sign-in whose access token they and every mint
-//! carry ([`Auth`], m5/43). Read only (C21): the MCP tools stay the agents' write path.
+//! carry ([`Auth`]). Read only (C21): the MCP tools stay the agents' write path.
 //! Contract: Skills `docs/workstate/10-read-api.md`, frozen at v1, additive only.
 
 pub mod auth;

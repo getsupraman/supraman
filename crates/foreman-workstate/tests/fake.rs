@@ -1,5 +1,3 @@
-//! The fake itself: a route a test changes, and `/api/stream` frames pushed to a real [`Stream`].
-
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;

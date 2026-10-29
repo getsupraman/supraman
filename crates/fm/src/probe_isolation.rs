@@ -1,11 +1,5 @@
 //! `fm probe isolation`: where does a `--bg` session write, and what does `claude rm` leave behind?
-//! Three `aw-m2-probe-<hex>-iso-*` sessions each `Write` one file into their cwd under `target/`:
-//! - `main`: cwd in the main checkout (default settings);
-//! - `none`: the same, with `--settings {"worktree":{"bgIsolation":"none"}}`;
-//! - `linked`: cwd in this build's linked worktree (skipped when that is the main checkout).
-//!
-//! Then each is stopped and `claude rm`-ed once, and what is left (row, worktree dir, branch) is
-//! reported before [`Fleet`]'s cleanup removes it. Answers are in `docs/LEARNINGS.md` (m2/2).
+//! Answers: `docs/LEARNINGS.md` m2/2.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -172,7 +166,6 @@ fn probe(claude: &Claude, fleet: &mut Fleet, repo: Option<PathBuf>, hex: &str) -
     Ok(ok)
 }
 
-/// The main working tree of the repository `dir` belongs to: the parent of `git-common-dir`.
 fn main_checkout(dir: &Path) -> Result<PathBuf, String> {
     let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
     Path::new(&common)

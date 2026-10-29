@@ -1,22 +1,6 @@
-//! Foreman's sign-in to WorkState (m5/43): an OAuth 2.1 native client for the resource `<origin>/api`
-//! (Skills `docs/workstate/10-read-api.md` rule 5, `14-agent-launch.md` "Minting with OAuth").
-//!
-//! - **Discovery**: `<origin>/.well-known/oauth-protected-resource/api` names the authorization server;
-//!   its `/.well-known/oauth-authorization-server` the endpoints (RFC 9728, RFC 8414).
-//! - **Registration**: DCR as a public client (`token_endpoint_auth_method: none`), fresh at every
-//!   interactive sign-in; its `client_id` is kept per issuer in `<home>/oauth/servers.json` (not a
-//!   secret) beside the refresh token issued to it. A refresh refused with `invalid_client` or
-//!   `invalid_grant` (e.g. the server's database restored) drops that pair: "Sign in again".
-//! - **Authorize**: PKCE S256, a random `state` checked on return, exactly one `resource`, the loopback
-//!   redirect `http://127.0.0.1:<ephemeral>/callback` (RFC 8252), 5 minutes at most.
-//! - **Tokens**: the refresh token only in the [`SecretStore`] (a DPAPI-encrypted file), keyed by issuer;
-//!   it rotates, so every refresh stores the new one, under a lock file shared with `fm`. The access
-//!   token stays in memory and is refreshed 5 minutes before it expires. A refused refresh leaves
-//!   "Sign in again" and is not retried until the next sign-in.
-//! - **Sign out**: the refresh token to the revocation endpoint, which ends the whole authorization and
-//!   every `wss_` token minted under it; then the stored and the held tokens go.
-//!
-//! No token is ever in a message, a log line, a plain-text file or a `Debug` output.
+//! Foreman's OAuth 2.1 native client for WorkState's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
+//! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
+//! or a `Debug` output.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -41,7 +25,6 @@ pub const SCOPE: &str = "workstate.read workstate.sessions offline_access";
 /// What DCR registers; the server ignores the port of a loopback redirect.
 pub const REGISTERED_REDIRECT: &str = "http://127.0.0.1/callback";
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-/// An access token with less left than this is refreshed before use.
 const REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 /// A revoke is a courtesy: a server that does not answer within this is left to lapse the grant.
@@ -77,17 +60,14 @@ fn suffix(error: &str) -> String {
     if error.is_empty() { String::new() } else { format!(" ({error})") }
 }
 
-/// What Settings → WorkState shows, known without a network call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthStatus {
     NotSignedIn,
-    /// `who`: the token's `name` or subject, when the access token is readable. `unsaved`: why the
-    /// refresh token is held in memory only, so the sign-in ends with this process.
+    /// `unsaved`: why the refresh token is held in memory only, so the sign-in ends with this process.
     SignedIn { who: Option<String>, unsaved: Option<String> },
     SignInAgain(String),
 }
 
-/// The server's endpoints, as discovered for one origin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerMeta {
     pub origin: String,
@@ -147,7 +127,6 @@ impl std::fmt::Debug for Auth {
     }
 }
 
-/// The token endpoint's answer.
 struct Tokens {
     access: String,
     expires_in: u64,
@@ -155,7 +134,6 @@ struct Tokens {
 }
 
 impl Auth {
-    /// Refresh tokens in `home`'s [`default_store`].
     pub fn open(home: &Path) -> Arc<Self> {
         Arc::new(Self::with_store(home, default_store(home)))
     }
@@ -213,7 +191,6 @@ impl Auth {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The held access token for `origin`, while it has more than [`REFRESH_MARGIN`] left.
     fn fresh(&self, origin: &str) -> Option<String> {
         let inner = self.lock();
         let h = inner.held.as_ref().filter(|h| h.origin == origin)?;
@@ -233,12 +210,10 @@ impl Auth {
         foreman_core::fs::lock_file(&path).map_err(|e| AuthError::Store(format!("cannot lock {}: {e}", path.display())))
     }
 
-    /// The server URL `settings.toml` names, as an origin.
     pub fn configured_origin(&self) -> String {
         Settings::load(&self.home).unwrap_or_default().workstate.origin()
     }
 
-    /// The issuer `servers.json` names for `origin`; `None` when it names none or cannot be read.
     pub fn issuer_of(&self, origin: &str) -> Option<String> {
         self.load_known().ok()?.servers.remove(&api_base(origin)).map(|m| m.issuer)
     }
@@ -275,7 +250,6 @@ impl Auth {
         }
     }
 
-    /// An access token for `origin`'s `/api`, refreshed when it has less than 5 minutes left.
     /// `inner` is never held across the refresh: [`Self::status`] answers the UI meanwhile.
     pub fn access_token(&self, origin: &str) -> Result<String, AuthError> {
         let origin = api_base(origin);
@@ -322,8 +296,7 @@ impl Auth {
                     AuthError::Refused { error, .. } if !error.is_empty() => format!("the server refused the refresh ({error})"),
                     other => other.to_string(),
                 };
-                // the client or the grant is gone (a wiped server): the pair is useless, the next sign-in
-                // registers afresh
+                // the client or the grant is gone (a wiped server); the next sign-in registers afresh
                 if let AuthError::Refused { error, .. } = &e
                     && matches!(error.as_str(), "invalid_client" | "invalid_grant")
                 {
@@ -371,20 +344,16 @@ impl Auth {
         }
     }
 
-    /// A [`BearerSource`] for a read client of `origin`.
     pub fn bearer_for(self: &Arc<Self>, origin: &str) -> Arc<dyn BearerSource> {
         Arc::new(AuthBearer { auth: self.clone(), origin: api_base(origin) })
     }
 
-    /// Stops a running [`Self::sign_in`] at its next poll.
     pub fn cancel_sign_in(&self) {
         self.cancel.store(true, Ordering::SeqCst);
     }
 
-    /// Discovers `origin`'s server, registers a fresh client (an unknown cached one would fail on the
-    /// server's own page in the browser, where Foreman never sees `invalid_client`), opens `browser` on
-    /// the authorize URL and waits on the loopback for the code; then the tokens, whose refresh token is
-    /// kept with that client_id. Blocks up to 5 minutes: run it off the UI thread.
+    /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
+    /// where Foreman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
         self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);
@@ -444,9 +413,7 @@ impl Auth {
         Ok(AuthStatus::SignedIn { who, unsaved })
     }
 
-    /// Revokes `origin`'s grant (the refresh token: the whole authorization and every `wss_` minted
-    /// under it), after deleting the stored token and dropping held tokens, so no other call waits on the
-    /// revoke. `Err` is a notice: a revoke that failed; everything local is gone anyway.
+    /// Local tokens go before the revoke, so no other call waits on it. `Err` is a notice: the revoke failed.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
         let origin = api_base(origin);
         let known = self.load_known().map_err(|e| e.to_string())?;
@@ -704,7 +671,6 @@ pub fn form_decode(query: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The access token's `name`, else `preferred_username`, else `sub`, when it is a readable JWT.
 fn who_of(token: &str) -> Option<String> {
     let payload = token.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
@@ -716,7 +682,6 @@ fn html(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// The request's path and query parameters; `None` for anything unreadable.
 fn read_request(stream: &TcpStream) -> Option<(String, BTreeMap<String, String>)> {
     stream.set_nonblocking(false).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
@@ -746,8 +711,7 @@ fn answer(mut stream: TcpStream, status: &str, text: &str) {
     let _ = stream.flush();
 }
 
-/// A browser for tests and the selftest, never a real one: on a thread, `GET`s the authorize URL,
-/// passes its redirect through `rewrite` and `GET`s that (the loopback callback).
+/// Tests and the selftest only: `GET`s the authorize URL, then its redirect passed through `rewrite`.
 pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     move |url: &str| {
         let url = url.to_string();
@@ -763,7 +727,6 @@ pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Resu
     }
 }
 
-/// [`http_browser_with`] that changes nothing.
 pub fn http_browser() -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     http_browser_with(|l| l)
 }

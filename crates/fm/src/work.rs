@@ -1,6 +1,4 @@
-//! `fm work overview|board`: the workspace's WorkState project (ref `<workspace>`) read through the
-//! read API v1, printed compact. Read only (C21); the bearer is an access token of the app's sign-in
-//! (refreshed and rotated here under the shared lock) and never printed — every error is one line without it.
+//! Read only (C21); no error carries the bearer.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -43,7 +41,6 @@ fn client(home: &Path) -> Result<Client, Failure> {
     Ok(Client::with_source(origin.as_str(), auth.bearer_for(&origin)))
 }
 
-/// The one project whose ref is the workspace's name.
 fn project(client: &Client, workspace: &str) -> Result<ItemRef, Failure> {
     let mut found: Vec<ItemRef> = client.resolve(workspace).map_err(refused)?.matches.into_iter().filter(|m| m.kind == "project").collect();
     match found.len() {
@@ -53,8 +50,7 @@ fn project(client: &Client, workspace: &str) -> Result<ItemRef, Failure> {
     }
 }
 
-/// The run `run` of `project`: a ref can name runs of other projects too, so each candidate's board
-/// says whose it is.
+/// A ref can name runs of other projects too, so each candidate's board says whose it is.
 fn board(client: &Client, project: &ItemRef, workspace: &str, run: &str) -> Result<Board, Failure> {
     let runs = client.resolve(run).map_err(refused)?.matches.into_iter().filter(|m| m.kind == "run");
     for candidate in runs {

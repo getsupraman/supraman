@@ -1,7 +1,3 @@
-//! The read API v1 client against a fake WorkState: every endpoint's path (ids, not refs), the
-//! bearer, the `X-WorkState-Api` check, error mapping, and fixtures shaped like doc 10 with fields
-//! this build does not know.
-
 use foreman_workstate::fake::{Answer, FakeWorkState};
 use foreman_workstate::{
     BriefFor, Client, Error, ItemResolution, ItemStatus, JournalQuery, SessionsQuery,

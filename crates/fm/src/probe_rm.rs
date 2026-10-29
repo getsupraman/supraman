@@ -1,11 +1,5 @@
-//! `fm probe rm-transcript` (m5/38): what does `claude rm` leave of a stopped background session, and can
-//! `claude --resume <uuid>` still open it? One `aw-m2-probe-<hex>-rm` session, cwd
-//! `<cargo root>/target/aw-m2-probe-<hex>/rm` (its own project dir under the claude dir), started hidden
-//! and without the parent session's variables (LEARNINGS m5/28). It answers one turn, is stopped and
-//! `rm`-ed, then the transcript, its sibling dir and the row are looked at, and a headless
-//! `claude --resume <uuid> -p` is run. Cleanup deletes the probe's own transcripts through
-//! [`foreman_claude::forget_transcript`], the same confined code the app uses. Answers are in
-//! `docs/LEARNINGS.md` (m5/38).
+//! `fm probe rm-transcript`: what does `claude rm` leave of a stopped background session, and can
+//! `claude --resume <uuid>` still open it? Answers: `docs/LEARNINGS.md` m5/38.
 
 use std::fs;
 use std::path::{Path, PathBuf};
