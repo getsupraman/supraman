@@ -19,7 +19,7 @@ use crate::{
     selftest::{sleep, wait_for_tab_terminal},
     selftest_manage::{shot, shot_window},
     selftest_zoom::laid_out_with,
-    settings_window::{Page, SettingsView},
+    settings_window::{SettingsView, page},
     view::FleetView,
 };
 
@@ -88,8 +88,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if (after.cell_width, after.num_columns()) == (before.cell_width, before.num_columns()) {
         bail!("Consolas kept the cell width {:?} and {} columns of {}", after.cell_width, after.num_columns(), start.family);
     }
-    if Settings::load(home)?.terminal_font_family.as_deref() != Some("Consolas") {
-        bail!("settings.toml does not hold terminal_font_family = \"Consolas\"");
+    if Settings::load(home)?.terminal.font_family.as_deref() != Some("Consolas") {
+        bail!("settings.toml does not hold [terminal] font_family = \"Consolas\"");
     }
     let second = painted_fits(view, &terminal, &consolas, None, cx).await.context("Consolas")?;
     let probed_consolas = probe(&consolas, &installed, cx)?;
@@ -101,7 +101,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     handle.update(cx, |s, _, cx| s.set_term_font(None, true, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let text = std::fs::read_to_string(Settings::path(home)).unwrap_or_default();
-    if text.contains("terminal_font_family") || text.contains("terminal_ligatures") {
+    if text.contains("font_family") || text.contains("ligatures") {
         bail!("Default left the font in settings.toml:\n{text}");
     }
     if view.read_with(cx, |v, _| v.term_font()) != start {
@@ -286,7 +286,7 @@ fn printed_line(terminal: &Terminal, prefix: &str) -> Option<i32> {
 }
 
 async fn open_appearance(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<gpui::WindowHandle<SettingsView>> {
-    view.update(cx, |v, cx| v.open_settings_at(Some(Page::Appearance), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::APPEARANCE), cx));
     for _ in 0..100 {
         if let Some(handle) = view.read_with(cx, |v, _| v.settings_window).filter(|h| h.read_with(cx, |_, _| ()).is_ok()) {
             return Ok(handle);

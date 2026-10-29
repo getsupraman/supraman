@@ -312,7 +312,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     // (m5/3) has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
     let mut settings = Settings::load(home)?;
-    settings.workstate_url = Some(fake.base().to_string());
+    settings.workstate.url = Some(fake.base().to_string());
     settings.save(home)?;
     crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake WorkState: {e}"))?;
     println!(

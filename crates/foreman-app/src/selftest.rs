@@ -203,7 +203,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // fake instead (m5/43).
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let mut settings = foreman_core::Settings::load(&home)?;
-    settings.workstate_url = Some(format!("http://127.0.0.1:{closed}"));
+    settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
     settings.save(&home)?;
 
     if mode == Mode::Selftest {

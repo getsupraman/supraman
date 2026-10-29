@@ -28,7 +28,7 @@ pub enum WsStatus {
 /// `/health`, then an access token for the configured server. Blocks up to a few seconds.
 pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-    let url = settings.workstate_origin();
+    let url = settings.workstate.origin();
     if let Err(error) = foreman_workstate::health(&url, HEALTH_TIMEOUT) {
         return WsStatus::Unreachable { url, error };
     }
@@ -119,7 +119,7 @@ mod tests {
         let home = dir.path().join("home");
         let fake = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
         let oauth = fake.enable_oauth();
-        Settings { workstate_url: Some(fake.base().into()), ..Settings::default() }.save(&home).unwrap();
+        Settings { workstate: foreman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
         let url = fake.base().to_string();
 
         let fresh = Auth::with_store(&home, Arc::new(MemoryStore::default()));
@@ -148,7 +148,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let closed = format!("http://127.0.0.1:{port}");
-        Settings { workstate_url: Some(closed.clone()), ..Settings::default() }.save(dir.path()).unwrap();
+        Settings { workstate: foreman_core::WorkStateSettings { url: Some(closed.clone()) }, ..Settings::default() }.save(dir.path()).unwrap();
         let down = detect(Some(dir.path()), None);
         assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
         assert!(down.problem().unwrap().contains(&closed));

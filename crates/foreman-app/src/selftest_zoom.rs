@@ -15,7 +15,7 @@ use foreman_ui::term_element;
 
 use crate::{
     selftest::{key, sleep, wait_for_tab_terminal},
-    settings_window::Page,
+    settings_window::page,
     view::FleetView,
 };
 
@@ -72,7 +72,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if spun != zoomed + px(3.) {
         bail!("3 Ctrl+wheel notches up: {zoomed:?} → {spun:?}");
     }
-    let during = Settings::load(home)?.terminal_font_size();
+    let during = Settings::load(home)?.terminal.font_size();
     if during != f32::from(zoomed) as u32 {
         bail!("settings.toml held {during} right after the spin; the write is not debounced");
     }
@@ -89,7 +89,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     laid_out_at(view, first, &first_term, reset, cx).await?;
     saved_as(view, home, 14, cx).await?;
-    if std::fs::read_to_string(Settings::path(home))?.contains("terminal_font_size") {
+    if std::fs::read_to_string(Settings::path(home))?.contains("font_size") {
         bail!("14 is the default and is saved as unset, but settings.toml names it");
     }
     Ok(format!(
@@ -110,7 +110,7 @@ async fn settings_page(
     size: Pixels,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<String> {
-    view.update(cx, |v, cx| v.open_settings_at(Some(Page::Appearance), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::APPEARANCE), cx));
     let mut handle = None;
     for _ in 0..100 {
         handle = view.read_with(cx, |v, _| v.settings_window).filter(|h| h.read_with(cx, |_, _| ()).is_ok());
@@ -187,12 +187,12 @@ async fn saved_as(view: &Entity<FleetView>, home: &Path, size: u32, cx: &mut Asy
     let started = Instant::now();
     loop {
         let pending = view.read_with(cx, |v, _| v.font_save_pending());
-        let held = Settings::load(home)?.terminal_font_size();
+        let held = Settings::load(home)?.terminal.font_size();
         if !pending && held == size {
             return Ok(started.elapsed().as_millis());
         }
         if started.elapsed() > Duration::from_secs(3) {
-            bail!("settings.toml holds terminal_font_size {held}, expected {size} (write pending: {pending})");
+            bail!("settings.toml holds [terminal] font_size {held}, expected {size} (write pending: {pending})");
         }
         sleep(cx, Duration::from_millis(50)).await;
     }

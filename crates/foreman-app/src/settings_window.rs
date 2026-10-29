@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use foreman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
+use foreman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use foreman_ui::{banner, button, term_element};
 use foreman_workstate::AuthStatus;
 use foreman_ui::themes::{self, Catalog, TerminalColors};
@@ -20,29 +21,25 @@ use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
 use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Page {
-    Sessions,
-    WorkState,
-    Plugins,
+/// The ids the app's pages register under.
+pub mod page {
+    pub const SESSIONS: &str = "sessions";
+    pub const WORKSTATE: &str = "workstate";
+    pub const PLUGINS: &str = "plugins";
     /// The theme, the terminal colours and the terminal font.
-    Appearance,
-    /// Foreman's and the claude CLI's versions, the refresh (m5/13: no longer in the left panel).
-    About,
+    pub const APPEARANCE: &str = "appearance";
+    /// Foreman's and the claude CLI's versions, the refresh.
+    pub const ABOUT: &str = "about";
 }
 
-impl Page {
-    const ALL: [Page; 5] = [Page::Sessions, Page::WorkState, Page::Plugins, Page::Appearance, Page::About];
-
-    fn title(self) -> &'static str {
-        match self {
-            Page::Sessions => "Sessions",
-            Page::WorkState => "WorkState",
-            Page::Plugins => "Plugins",
-            Page::Appearance => "Appearance",
-            Page::About => "About",
-        }
-    }
+fn pages() -> SettingsPages<SettingsView> {
+    let page = |id, title, icon, render| SettingsPage { id, title, icon, render };
+    SettingsPages::default()
+        .register(page(page::SESSIONS, "Sessions", "\u{E7C4}", SettingsView::render_sessions))
+        .register(page(page::WORKSTATE, "WorkState", "\u{E753}", SettingsView::render_workstate))
+        .register(page(page::PLUGINS, "Plugins", "\u{EA86}", SettingsView::render_plugins))
+        .register(page(page::APPEARANCE, "Appearance", "\u{E790}", SettingsView::render_appearance))
+        .register(page(page::ABOUT, "About", "\u{E946}", SettingsView::render_about))
 }
 
 pub struct SettingsView {
@@ -50,7 +47,8 @@ pub struct SettingsView {
     settings: Settings,
     error: Option<String>,
     fleet: WeakEntity<FleetView>,
-    page: Page,
+    pages: SettingsPages<SettingsView>,
+    page: &'static str,
     focus: FocusHandle,
     /// The fleet's WorkState status as last shown: a change re-reads settings.toml.
     workstate: WsStatus,
@@ -79,11 +77,11 @@ static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 /// every change on the Appearance page).
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-    let terminal = TerminalColors::from_setting(settings.terminal_colors.as_deref());
-    themes::apply(cx, settings.theme.as_deref(), terminal, home).problem
+    let terminal = TerminalColors::from_setting(settings.appearance.terminal_colors.as_deref());
+    themes::apply(cx, settings.appearance.theme.as_deref(), terminal, home).problem
 }
 
-pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Page>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
+pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
     let bounds = Bounds::centered(None, size(px(760.), px(520.)), cx);
     cx.open_window(
         WindowOptions {
@@ -100,7 +98,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
                 crate::tray::close(window, cx);
                 false
             });
-            let view = cx.new(|cx| SettingsView::new(home, fleet, page.unwrap_or(Page::Sessions), window, cx));
+            let view = cx.new(|cx| SettingsView::new(home, fleet, page, window, cx));
             let focus = view.read(cx).focus.clone();
             window.focus(&focus, cx);
             view
@@ -110,7 +108,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<Pa
 }
 
 impl SettingsView {
-    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Page, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // About shows the fleet's CLI check and refresh as they change, WorkState its status, Appearance
         // the terminal font size a zoom in a terminal changed
         if let Some(fleet) = fleet.upgrade() {
@@ -120,7 +118,7 @@ impl SettingsView {
                     this.workstate = workstate;
                     this.reload(cx);
                     cx.notify();
-                } else if matches!(this.page, Page::About | Page::Appearance) {
+                } else if [page::ABOUT, page::APPEARANCE].contains(&this.page) {
                     cx.notify();
                 }
             })
@@ -136,11 +134,14 @@ impl SettingsView {
             }
             _ => {}
         });
+        let pages = pages();
+        let page = pages.resolve(page);
         let mut this = Self {
             home,
             settings: Settings::default(),
             error: None,
             fleet,
+            pages,
             page,
             focus: cx.focus_handle(),
             workstate,
@@ -172,17 +173,18 @@ impl SettingsView {
             .detach();
         }
         this.reload(cx);
-        let url = this.settings.workstate_origin();
+        let url = this.settings.workstate.origin();
         this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
         this
     }
 
-    pub fn page(&self) -> Page {
+    pub fn page(&self) -> &'static str {
         self.page
     }
 
-    pub fn show(&mut self, page: Page, cx: &mut Context<Self>) {
-        self.page = page;
+    /// `page` when registered, else the first.
+    pub fn show(&mut self, page: &str, cx: &mut Context<Self>) {
+        self.page = self.pages.resolve(Some(page));
         cx.notify();
     }
 
@@ -207,7 +209,7 @@ impl SettingsView {
     /// `Auth::status` reads the servers file and decrypts the store: never on the UI thread.
     fn read_auth(&mut self, home: PathBuf, cx: &mut Context<Self>) {
         self.auth_reads += 1;
-        let (read, origin) = (self.auth_reads, self.settings.workstate_origin());
+        let (read, origin) = (self.auth_reads, self.settings.workstate.origin());
         cx.spawn(async move |this, cx| {
             let auth = cx.background_spawn(async move { crate::signin::auth(&home).status(&origin) }).await;
             this.update(cx, |this, cx| {
@@ -251,8 +253,8 @@ impl SettingsView {
     pub fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
         self.change(
             |s| {
-                s.theme = Some(name.clone());
-                s.terminal_colors = terminal.setting();
+                s.appearance.theme = Some(name.clone());
+                s.appearance.terminal_colors = terminal.setting();
             },
             cx,
         );
@@ -338,7 +340,7 @@ impl SettingsView {
     }
 
     fn render_sessions(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let n = self.settings.max_working;
+        let n = self.settings.sessions.max_working;
         let stepper = div()
             .flex()
             .items_center()
@@ -357,9 +359,9 @@ impl SettingsView {
             .child(button::small("max-inc", "+", cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.set_max_working(n + 1, cx);
             })));
-        let admin = self.settings.run_as_admin;
+        let admin = self.settings.sessions.run_as_admin;
         let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.run_as_admin = !admin, cx)));
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.run_as_admin = !admin, cx)));
         let now: SharedString = if foreman_claude::is_elevated() {
             "Foreman runs as administrator now.".into()
         } else {
@@ -417,8 +419,8 @@ impl SettingsView {
             .children(self.url_error.clone().map(|e| div().id("ws-url-error").text_xs().text_color(status.error).child(SharedString::from(e))))
             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!(
                 "Now {}{}.",
-                self.settings.workstate_origin(),
-                if self.settings.workstate_url.is_none() { " (the default)" } else { "" }
+                self.settings.workstate.origin(),
+                if self.settings.workstate.url.is_none() { " (the default)" } else { "" }
             ))));
         vec![
             self.render_workstate_status(cx),
@@ -447,7 +449,7 @@ impl SettingsView {
                 (f.signing_in.clone(), f.sign_in_error.clone())
             })
             .unwrap_or_default();
-        let url = self.settings.workstate_origin();
+        let url = self.settings.workstate.origin();
         let (text, color) = match (&self.workstate, &self.auth) {
             (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
             (WsStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
@@ -490,7 +492,7 @@ impl SettingsView {
         controls = controls.child(button::small("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
         })));
-        row_owned(
+        row(
             "Status",
             format!(
                 "Foreman signs in to WorkState in your browser (OAuth). The grant is kept in the Foreman home, \
@@ -531,7 +533,7 @@ impl SettingsView {
             WsStatus::Ready { url, .. } | WsStatus::NotSignedIn { url } | WsStatus::SignInAgain { url, .. } | WsStatus::Unreachable { url, .. } => {
                 url.clone()
             }
-            WsStatus::Checking => self.settings.workstate_origin(),
+            WsStatus::Checking => self.settings.workstate.origin(),
         }
     }
 
@@ -596,8 +598,8 @@ impl SettingsView {
     fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let current = self.settings.theme.clone().unwrap_or_else(|| themes::DEFAULT_THEME.into());
-        let terminal = TerminalColors::from_setting(self.settings.terminal_colors.as_deref());
+        let current = self.settings.appearance.theme.clone().unwrap_or_else(|| themes::DEFAULT_THEME.into());
+        let terminal = TerminalColors::from_setting(self.settings.appearance.terminal_colors.as_deref());
         let mut list = div().flex().flex_col().gap_1().pt_2();
         for (ix, entry) in self.catalog.entries.iter().enumerate() {
             let selected = entry.name == current;
@@ -673,7 +675,7 @@ impl SettingsView {
                 let f = f.read(cx);
                 (f.term_font_family.clone(), f.term_ligatures, f.installed_fonts.clone())
             })
-            .unwrap_or_else(|| (SharedString::default(), self.settings.terminal_ligatures(), Arc::default()));
+            .unwrap_or_else(|| (SharedString::default(), self.settings.terminal.ligatures(), Arc::default()));
         let mut fonts = div().flex().flex_wrap().gap_1().pt_2();
         match &self.mono_fonts {
             Some(mono) => {
@@ -689,7 +691,7 @@ impl SettingsView {
         }
         let font_notes = self
             .settings
-            .missing_terminal_font(&installed)
+            .terminal.missing_font(&installed)
             .map(|missing| format!("{missing} (settings.toml) is not installed: {family} is shown."))
             .into_iter()
             .chain(self.font_error.clone())
@@ -701,7 +703,7 @@ impl SettingsView {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(None, ligatures, cx)));
         let mut ligature_choices = div().flex().gap_1();
         for (ix, (label, on)) in [("On", true), ("Off", false)].into_iter().enumerate() {
-            let family = self.settings.terminal_font_family.clone();
+            let family = self.settings.terminal.font_family.clone();
             ligature_choices = ligature_choices.child(
                 button::choice(("ligatures", ix), label, ligatures == on, cx)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
@@ -724,25 +726,25 @@ impl SettingsView {
                 None,
                 cx,
             ),
-            row_owned(
+            row(
                 "Terminal font size",
                 format!(
                     "The text size in every terminal tab, in pixels ({MIN_TERMINAL_FONT_SIZE} to {MAX_TERMINAL_FONT_SIZE}, \
                      default {DEFAULT_TERMINAL_FONT_SIZE}). Ctrl+= and Ctrl+- or Ctrl+wheel in any terminal change it \
                      too, Ctrl+0 resets it. Applied to open terminals at once and kept in settings.toml \
-                     (terminal_font_size)."
+                     ([terminal] font_size)."
                 ),
                 font_size,
                 None,
                 cx,
             ),
-            row_owned(
+            row(
                 "Terminal font",
                 format!(
                     "The font of every terminal tab, from the monospace fonts installed. Default: Cascadia Code, else \
                      Cascadia Mono, else Consolas (here {default}). A character the font lacks is drawn from a fallback \
                      font, shrunk to fit its cell. Applied to open terminals at once and kept in settings.toml \
-                     (terminal_font_family)."
+                     ([terminal] font_family)."
                 ),
                 font_reset.into_any_element(),
                 Some(fonts.into_any_element()),
@@ -751,7 +753,7 @@ impl SettingsView {
             row(
                 "Ligatures",
                 "Character pairs such as -> and != drawn as one symbol, when the font has them (Cascadia Code does), \
-                 each character still in its own cell. Kept in settings.toml (terminal_ligatures).",
+                 each character still in its own cell. Kept in settings.toml ([terminal] ligatures).",
                 ligature_choices.into_any_element(),
                 None,
                 cx,
@@ -761,7 +763,7 @@ impl SettingsView {
 
     fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
-        let dirs = &self.settings.extra_plugin_dirs;
+        let dirs = &self.settings.sessions.extra_plugin_dirs;
         let lines: Vec<AnyElement> = if dirs.is_empty() {
             vec![div().text_sm().text_color(colors.text_muted).child("none").into_any_element()]
         } else {
@@ -781,53 +783,12 @@ impl SettingsView {
             "Extra plugin dirs",
             "Passed as --plugin-dir to every session Foreman launches, after Foreman's own plugin. A plugin \
              installed for your user, such as rlarch, loads without being listed here. Change them in \
-             settings.toml (extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
+             settings.toml ([sessions] extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
             div().into_any_element(),
             Some(div().flex().flex_col().gap_1().pt_2().children(lines).into_any_element()),
             cx,
         )]
     }
-}
-
-fn row(
-    title: &'static str,
-    description: &'static str,
-    control: AnyElement,
-    below: Option<AnyElement>,
-    cx: &App,
-) -> AnyElement {
-    row_owned(title, description.into(), control, below, cx)
-}
-
-fn row_owned(
-    title: &'static str,
-    description: String,
-    control: AnyElement,
-    below: Option<AnyElement>,
-    cx: &App,
-) -> AnyElement {
-    let colors = cx.theme().colors();
-    div()
-        .flex()
-        .items_start()
-        .justify_between()
-        .gap_6()
-        .py_3()
-        .border_b_1()
-        .border_color(colors.border_variant)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .gap_1()
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
-                .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(description)))
-                .children(below),
-        )
-        .child(div().flex_none().child(control))
-        .into_any_element()
 }
 
 impl Render for SettingsView {
@@ -844,28 +805,7 @@ impl Render for SettingsView {
             .bg(colors.panel_background)
             .border_r_1()
             .border_color(colors.border);
-        for page in Page::ALL {
-            let active = self.page == page;
-            nav = nav.child(
-                div()
-                    .id(page.title())
-                    .mx_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |d| d.bg(colors.element_selected))
-                    .when(!active, |d| d.text_color(colors.text_muted))
-                    .hover(|s| s.bg(colors.ghost_element_hover))
-                    .active(|s| s.bg(colors.ghost_element_active))
-                    .child(page.title())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.page = page;
-                        cx.notify();
-                    })),
-            );
-        }
+        nav = nav.children(self.pages.nav(self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
             div()
                 .id("open-file")
@@ -882,12 +822,9 @@ impl Render for SettingsView {
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
 
-        let rows = match self.page {
-            Page::Sessions => self.render_sessions(cx),
-            Page::WorkState => self.render_workstate(cx),
-            Page::Plugins => self.render_plugins(cx),
-            Page::Appearance => self.render_appearance(cx),
-            Page::About => self.render_about(cx),
+        let (title, rows) = match self.pages.get(self.page) {
+            Some(page) => (page.title, (page.render)(self, cx)),
+            None => ("", Vec::new()),
         };
         let content = div()
             .id("settings-page")
@@ -898,7 +835,7 @@ impl Render for SettingsView {
             .overflow_y_scroll()
             .px_6()
             .py_4()
-            .child(div().text_lg().font_weight(FontWeight::BOLD).pb_2().child(self.page.title()))
+            .child(div().text_lg().font_weight(FontWeight::BOLD).pb_2().child(title))
             .when_some(self.error.clone(), |d, e| {
                 d.child(
                     banner::tinted(status.error)

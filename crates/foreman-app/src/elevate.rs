@@ -61,7 +61,7 @@ pub fn start(app: bool, toggle: bool, elevated: bool, relaunched: bool, relaunch
 }
 
 pub fn toggle(home: &Path) -> bool {
-    Settings::load(home).is_ok_and(|s| s.run_as_admin)
+    Settings::load(home).is_ok_and(|s| s.sessions.run_as_admin)
 }
 
 /// `ShellExecuteW` with the `runas` verb: the UAC prompt. `Ok` once the elevated copy started.
@@ -139,7 +139,7 @@ mod tests {
     fn the_toggle_is_off_by_default_and_kept_in_the_home() {
         let home = tempfile::tempdir().unwrap();
         assert!(!toggle(home.path()));
-        Settings { run_as_admin: true, ..Settings::default() }.save(home.path()).unwrap();
+        Settings::update(home.path(), |s| s.sessions.run_as_admin = true).unwrap();
         assert!(toggle(home.path()));
     }
 }

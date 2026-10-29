@@ -17,7 +17,7 @@ use gpui::{AsyncWindowContext, Entity};
 use crate::{
     selftest::{click, sleep},
     selftest_manage::{shot, shot_window},
-    settings_window::Page,
+    settings_window::page,
     view::FleetView,
     workstate_setup::WsStatus,
 };
@@ -51,13 +51,13 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         _ => None,
     })
     .await?;
-    view.update(cx, |v, cx| v.open_settings_at(Some(Page::WorkState), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::WORKSTATE), cx));
     let handle = until(view, cx, "Settings opens on WorkState", |v| v.settings_window).await?;
     let started = Instant::now();
     loop {
         let (page, shown) = handle.read_with(cx, |s, _| (s.page(), s.workstate().clone())).map_err(|e| anyhow!("settings window: {e}"))?;
         let fleet = view.read_with(cx, |v, _| v.workstate.clone());
-        if page == Page::WorkState && shown == fleet {
+        if page == page::WORKSTATE && shown == fleet {
             break;
         }
         if started.elapsed() > WITHIN {
@@ -123,7 +123,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         matches!(&v.workstate, WsStatus::Ready { url, .. } if url == other.base()).then_some(())
     })
     .await?;
-    if Settings::load(&home)?.workstate_origin() != other.base() {
+    if Settings::load(&home)?.workstate.origin() != other.base() {
         bail!("the new URL was not saved after the sign-in there");
     }
     let started = Instant::now();
@@ -144,8 +144,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
-    if !error.contains(&closed) || Settings::load(&home)?.workstate_origin() != other.base() {
-        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workstate_origin());
+    if !error.contains(&closed) || Settings::load(&home)?.workstate.origin() != other.base() {
+        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workstate.origin());
     }
     shot_window("m5-43-settings-switch-failed", Some("Foreman Settings"), cx).await;
     lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
@@ -160,7 +160,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     view.update(cx, |v, cx| v.close_settings(cx));
 
     // f. the server down: the URL, the error and Retry
-    Settings { workstate_url: Some(closed.clone()), ..saved.clone() }.save(&home)?;
+    Settings { workstate: foreman_core::WorkStateSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
     view.update(cx, |v, _| v.recheck_workstate());
     let down = until(view, cx, "the unreachable notice", |v| {
         (v.workstate.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workstate_notice()).flatten()

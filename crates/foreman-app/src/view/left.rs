@@ -17,7 +17,7 @@ use theme::ActiveTheme as _;
 use super::icon::{Icon, Tooltip};
 use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
-use crate::settings_window::Page;
+use crate::settings_window::page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
 
@@ -243,7 +243,7 @@ impl FleetView {
             .child(div().flex_1())
             .children(warning.map(|w| {
                 tinted_button(hits, "cli-warning", Icon::Warning, w, false, status.warning, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(Page::About), cx)))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings_at(Some(page::ABOUT), cx)))
             }))
             .child(
                 div()
@@ -814,7 +814,7 @@ impl FleetView {
         actions = actions.child(button::bordered(&self.hits, "ws-setup-settings", "Settings…", cx).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.open_settings_at(Some(Page::WorkState), cx);
+                this.open_settings_at(Some(page::WORKSTATE), cx);
             },
         )));
         let dismiss = glyph_button(&self.hits, "ws-setup-dismiss".into(), Icon::Close, "Hide until the problem changes", cx)

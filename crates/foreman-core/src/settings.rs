@@ -2,65 +2,209 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use toml::{Table, Value};
 
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 20;
-/// `workstate_url` when unset.
+/// `[workstate] url` when unset.
 pub const DEFAULT_WORKSTATE_URL: &str = "https://workstate.dikaia.ai";
-/// `terminal_font_size` when unset or invalid, and Ctrl+0's size (m5/41).
+/// `[terminal] font_size` when unset or invalid, and Ctrl+0's size (m5/41).
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
-/// The bounds `terminal_font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
+/// The bounds `[terminal] font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
 pub const MIN_TERMINAL_FONT_SIZE: u32 = 6;
 pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
-/// The terminal font when `terminal_font_family` is unset or not installed: the first one installed (m5/47).
+/// The terminal font when `[terminal] font_family` is unset or not installed: the first one installed (m5/47).
 pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono", "Consolas"];
 
-/// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick.
+/// A table of `settings.toml` Foreman owns.
+pub trait Section: Serialize + DeserializeOwned + Default {
+    const KEY: &'static str;
+    /// Each key's name in a flat file written before the tables, and its name in this table.
+    const FIELDS: &'static [(&'static str, &'static str)];
+}
+
+/// `[sessions]`: what the supervisor launches and how many may work at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Settings {
+#[serde(default)]
+pub struct SessionSettings {
     /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
-    #[serde(default = "default_max_working")]
     pub max_working: usize,
-    /// The WorkState server Foreman signs in to (m5/43), an origin like `https://workstate.example`;
-    /// an older file's `…/mcp` URL means its origin. Unset: [`DEFAULT_WORKSTATE_URL`]. No token is
-    /// ever kept here.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workstate_url: Option<String>,
-    /// The fleet panel's width in logical pixels, as the divider was last dragged.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub left_width: Option<u32>,
     /// More plugin dirs every launch gets, as `--plugin-dir` after Foreman's own (e.g. the rlarch plugin
     /// whose `/rlarch:controller` a repo-controller runs). Edited in the file; the app only shows them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
     /// Start elevated (one UAC prompt per start), so Foreman reaches a claude background service an
     /// elevated `claude --bg` started (m5/25).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
     /// How long a workspace's relay stays wanted after its last fallback send (m5/32). Unset: 10 min.
     /// Edited in the file; the selftest shortens it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
-    /// The theme's name: a bundled one or one in `<home>/themes/*.json` (m5/31). Unset: VS Code Dark Modern.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self { max_working: DEFAULT_MAX_WORKING, extra_plugin_dirs: Vec::new(), run_as_admin: false, relay_idle_secs: None }
+    }
+}
+
+impl Section for SessionSettings {
+    const KEY: &'static str = "sessions";
+    const FIELDS: &'static [(&'static str, &'static str)] = &[
+        ("max_working", "max_working"),
+        ("extra_plugin_dirs", "extra_plugin_dirs"),
+        ("run_as_admin", "run_as_admin"),
+        ("relay_idle_secs", "relay_idle_secs"),
+    ];
+}
+
+impl SessionSettings {
+    pub fn relay_idle_ms(&self) -> i64 {
+        self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
+    }
+}
+
+/// `[workstate]`: the server Foreman signs in to (m5/43). No token is ever kept here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkStateSettings {
+    /// An origin like `https://workstate.example`; an older file's `…/mcp` URL means its origin. Unset:
+    /// [`DEFAULT_WORKSTATE_URL`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl Section for WorkStateSettings {
+    const KEY: &'static str = "workstate";
+    const FIELDS: &'static [(&'static str, &'static str)] = &[("workstate_url", "url")];
+}
+
+impl WorkStateSettings {
+    /// The server's origin: `url` without any path, else [`DEFAULT_WORKSTATE_URL`].
+    pub fn origin(&self) -> String {
+        crate::url::origin(self.url.as_deref().unwrap_or(DEFAULT_WORKSTATE_URL))
+    }
+
+    /// The MCP endpoint a minted session's config names.
+    pub fn mcp_url(&self) -> String {
+        format!("{}/mcp", self.origin())
+    }
+}
+
+/// `[appearance]`: the theme (m5/31).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearanceSettings {
+    /// A bundled theme's name or one in `<home>/themes/*.json`. Unset: VS Code Dark Modern.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     /// "campbell" paints ANSI 0-15 in Windows Terminal's Campbell. Unset: the theme's.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_colors: Option<String>,
-    /// Every terminal tab's font size in px (m5/41), as Ctrl+= / Ctrl+- / Ctrl+wheel and Settings →
-    /// Appearance leave it. Unset or not a number: 14; read through [`Settings::terminal_font_size`].
-    #[serde(default, deserialize_with = "lenient_size", skip_serializing_if = "Option::is_none")]
-    pub terminal_font_size: Option<u32>,
-    /// The terminal font family (m5/47). Unset or not installed: [`default_terminal_font_family`]; read
-    /// through [`Settings::terminal_font_family`].
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
-    pub terminal_font_family: Option<String>,
-    /// Ligatures in terminal tabs (m5/47). Unset or not a bool: on.
-    #[serde(default, deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
-    pub terminal_ligatures: Option<bool>,
 }
+
+impl Section for AppearanceSettings {
+    const KEY: &'static str = "appearance";
+    const FIELDS: &'static [(&'static str, &'static str)] = &[("theme", "theme"), ("terminal_colors", "terminal_colors")];
+}
+
+/// `[terminal]`: every terminal tab's font (m5/41, m5/47).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalSettings {
+    /// In px, as Ctrl+= / Ctrl+- / Ctrl+wheel and Settings → Appearance leave it; read through
+    /// [`TerminalSettings::font_size`].
+    #[serde(deserialize_with = "lenient_size", skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u32>,
+    /// Read through [`TerminalSettings::font_family`].
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    /// Unset or not a bool: on.
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub ligatures: Option<bool>,
+}
+
+impl Section for TerminalSettings {
+    const KEY: &'static str = "terminal";
+    const FIELDS: &'static [(&'static str, &'static str)] =
+        &[("terminal_font_size", "font_size"), ("terminal_font_family", "font_family"), ("terminal_ligatures", "ligatures")];
+}
+
+impl TerminalSettings {
+    /// 14 when unset or not a number, else clamped.
+    pub fn font_size(&self) -> u32 {
+        self.font_size.map_or(DEFAULT_TERMINAL_FONT_SIZE, clamp_terminal_font_size)
+    }
+
+    /// Stores `size` clamped; the default is stored as unset.
+    pub fn set_font_size(&mut self, size: u32) {
+        let size = clamp_terminal_font_size(size);
+        self.font_size = (size != DEFAULT_TERMINAL_FONT_SIZE).then_some(size);
+    }
+
+    /// The family to paint with, as `installed` spells it: the one set when it is installed, else the default.
+    pub fn font_family(&self, installed: &[String]) -> String {
+        self.font_family
+            .as_deref()
+            .and_then(|want| installed.iter().find(|name| name.eq_ignore_ascii_case(want.trim())))
+            .cloned()
+            .unwrap_or_else(|| default_terminal_font_family(installed).to_string())
+    }
+
+    /// The family set, when it is not installed.
+    pub fn missing_font(&self, installed: &[String]) -> Option<&str> {
+        self.font_family.as_deref().filter(|want| !installed.iter().any(|name| name.eq_ignore_ascii_case(want.trim())))
+    }
+
+    /// Stores `family`; `None` or a blank name is stored as unset.
+    pub fn set_font_family(&mut self, family: Option<&str>) {
+        self.font_family = family.map(str::trim).filter(|f| !f.is_empty()).map(str::to_string);
+    }
+
+    pub fn ligatures(&self) -> bool {
+        self.ligatures.unwrap_or(true)
+    }
+
+    /// On, the default, is stored as unset.
+    pub fn set_ligatures(&mut self, on: bool) {
+        self.ligatures = (!on).then_some(false);
+    }
+}
+
+/// `[window]`: the main window's layout.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowSettings {
+    /// The fleet panel's width in logical pixels, as the divider was last dragged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left_width: Option<u32>,
+}
+
+impl Section for WindowSettings {
+    const KEY: &'static str = "window";
+    const FIELDS: &'static [(&'static str, &'static str)] = &[("left_width", "left_width")];
+}
+
+/// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
+/// [`Section`]; a file of flat keys loads into them and is written as tables at its next save.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settings {
+    pub sessions: SessionSettings,
+    pub workstate: WorkStateSettings,
+    pub appearance: AppearanceSettings,
+    pub terminal: TerminalSettings,
+    pub window: WindowSettings,
+    /// Every table and key Foreman does not own, as read and written back: a plugin's `[gitman]`, a newer
+    /// build's keys, a retired key such as `workstate_env`. Read and written through [`Settings::section`].
+    pub other: Table,
+}
+
+/// The tables [`Settings`] owns, which [`Settings::section`] refuses.
+const OWNED: [&str; 5] = [SessionSettings::KEY, WorkStateSettings::KEY, AppearanceSettings::KEY, TerminalSettings::KEY, WindowSettings::KEY];
 
 /// The value, or nothing when it has the wrong type: a bad value must not make the whole file unreadable.
 fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> std::result::Result<Option<T>, D::Error> {
@@ -87,28 +231,6 @@ fn lenient_size<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<O
 /// `size` within [`MIN_TERMINAL_FONT_SIZE`]..=[`MAX_TERMINAL_FONT_SIZE`].
 pub fn clamp_terminal_font_size(size: u32) -> u32 {
     size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
-}
-
-fn default_max_working() -> usize {
-    DEFAULT_MAX_WORKING
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            max_working: DEFAULT_MAX_WORKING,
-            workstate_url: None,
-            left_width: None,
-            extra_plugin_dirs: Vec::new(),
-            run_as_admin: false,
-            relay_idle_secs: None,
-            theme: None,
-            terminal_colors: None,
-            terminal_font_size: None,
-            terminal_font_family: None,
-            terminal_ligatures: None,
-        }
-    }
 }
 
 /// A server URL typed into Settings as the origin to keep: `http(s)://host[:port]`, any path dropped.
@@ -150,60 +272,6 @@ pub fn validate_workstate_url(text: &str) -> std::result::Result<String, String>
 }
 
 impl Settings {
-    /// The server's origin: `workstate_url` without any path, else [`DEFAULT_WORKSTATE_URL`].
-    pub fn workstate_origin(&self) -> String {
-        crate::url::origin(self.workstate_url.as_deref().unwrap_or(DEFAULT_WORKSTATE_URL))
-    }
-
-    /// The MCP endpoint a minted session's config names.
-    pub fn workstate_mcp_url(&self) -> String {
-        format!("{}/mcp", self.workstate_origin())
-    }
-
-    pub fn relay_idle_ms(&self) -> i64 {
-        self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
-    }
-
-    pub fn terminal_font_size(&self) -> u32 {
-        self.terminal_font_size.map_or(DEFAULT_TERMINAL_FONT_SIZE, clamp_terminal_font_size)
-    }
-
-    /// Stores `size` clamped; the default is stored as unset.
-    pub fn set_terminal_font_size(&mut self, size: u32) {
-        let size = clamp_terminal_font_size(size);
-        self.terminal_font_size = (size != DEFAULT_TERMINAL_FONT_SIZE).then_some(size);
-    }
-
-    /// The family to paint with, as `installed` spells it: the one set when it is installed, else the default.
-    pub fn terminal_font_family(&self, installed: &[String]) -> String {
-        self.terminal_font_family
-            .as_deref()
-            .and_then(|want| installed.iter().find(|name| name.eq_ignore_ascii_case(want.trim())))
-            .cloned()
-            .unwrap_or_else(|| default_terminal_font_family(installed).to_string())
-    }
-
-    /// The family set, when it is not installed.
-    pub fn missing_terminal_font(&self, installed: &[String]) -> Option<&str> {
-        self.terminal_font_family
-            .as_deref()
-            .filter(|want| !installed.iter().any(|name| name.eq_ignore_ascii_case(want.trim())))
-    }
-
-    /// Stores `family`; `None` or a blank name is stored as unset.
-    pub fn set_terminal_font_family(&mut self, family: Option<&str>) {
-        self.terminal_font_family = family.map(str::trim).filter(|f| !f.is_empty()).map(str::to_string);
-    }
-
-    pub fn terminal_ligatures(&self) -> bool {
-        self.terminal_ligatures.unwrap_or(true)
-    }
-
-    /// On, the default, is stored as unset.
-    pub fn set_terminal_ligatures(&mut self, on: bool) {
-        self.terminal_ligatures = (!on).then_some(false);
-    }
-
     pub fn path(home: &Path) -> PathBuf {
         home.join("settings.toml")
     }
@@ -214,7 +282,8 @@ impl Settings {
     }
 
     /// The defaults when the file does not exist. A key with a value of the wrong type keeps its
-    /// default and is named in a notice; only a file that is not TOML at all is an error.
+    /// default, and a section that is not a table all of its defaults, each named in a notice; only a file
+    /// that is not TOML at all is an error.
     pub fn load_with_notices(home: &Path) -> Result<(Self, Vec<String>)> {
         let path = Self::path(home);
         match read(&path)? {
@@ -225,10 +294,8 @@ impl Settings {
 
     pub fn save(&self, home: &Path) -> Result<PathBuf> {
         let path = Self::path(home);
-        let text = toml::to_string(self).map_err(|source| CoreError::Serialize {
-            name: "settings".into(),
-            source,
-        })?;
+        let serialize = |source| CoreError::Serialize { name: "settings".into(), source };
+        let text = toml::to_string(&self.to_table().map_err(serialize)?).map_err(serialize)?;
         crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
         Ok(path)
     }
@@ -253,6 +320,43 @@ impl Settings {
             return Ok((settings, out));
         }
     }
+
+    /// The table `key` of another owner, e.g. a plugin's `[gitman]`: `None` when it is absent or not `T`.
+    pub fn section<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        assert!(!OWNED.contains(&key), "[{key}] is a field of Settings");
+        self.other.get(key)?.clone().try_into().ok()
+    }
+
+    pub fn set_section<T: Serialize>(&mut self, key: &str, value: &T) -> std::result::Result<(), toml::ser::Error> {
+        assert!(!OWNED.contains(&key), "[{key}] is a field of Settings");
+        self.other.insert(key.into(), Value::try_from(value)?);
+        Ok(())
+    }
+
+    fn to_table(&self) -> std::result::Result<Table, toml::ser::Error> {
+        let mut out = self.other.clone();
+        put(&mut out, &self.sessions)?;
+        put(&mut out, &self.workstate)?;
+        put(&mut out, &self.appearance)?;
+        put(&mut out, &self.terminal)?;
+        put(&mut out, &self.window)?;
+        Ok(out)
+    }
+}
+
+/// `section`'s keys into its table in `out`, beside any keys of it Foreman does not know; no table when
+/// both are empty.
+fn put<S: Section>(out: &mut Table, section: &S) -> std::result::Result<(), toml::ser::Error> {
+    let Value::Table(fields) = Value::try_from(section)? else { unreachable!("a section serializes to a table") };
+    let mut table = match out.remove(S::KEY) {
+        Some(Value::Table(kept)) => kept,
+        _ => Table::new(),
+    };
+    table.extend(fields);
+    if !table.is_empty() {
+        out.insert(S::KEY.into(), Value::Table(table));
+    }
+    Ok(())
 }
 
 fn read(path: &Path) -> Result<Option<String>> {
@@ -264,72 +368,314 @@ fn read(path: &Path) -> Result<Option<String>> {
 }
 
 fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
-    let parse_error = |source| CoreError::Parse { path: path.to_path_buf(), source };
-    let mut table: toml::Table = text.parse().map_err(parse_error)?;
+    let mut table: Table = text.parse().map_err(|source| CoreError::Parse { path: path.to_path_buf(), source })?;
     let mut notices = Vec::new();
-    let keys: Vec<String> = table.keys().cloned().collect();
-    for key in keys {
-        let one = toml::Table::from_iter([(key.clone(), table[&key].clone())]);
-        if let Err(e) = toml::Value::Table(one).try_into::<Settings>() {
-            let why = e.message().lines().next().unwrap_or_default().to_string();
-            notices.push(format!("{}: {key} is not valid ({why}); its default is used", path.display()));
-            table.remove(&key);
+    let sessions = take(&mut table, path, &mut notices);
+    let workstate = take(&mut table, path, &mut notices);
+    let appearance = take(&mut table, path, &mut notices);
+    let terminal = take(&mut table, path, &mut notices);
+    let window = take(&mut table, path, &mut notices);
+    Ok((Settings { sessions, workstate, appearance, terminal, window, other: table }, notices))
+}
+
+/// `S` out of `table`: its own table, with the flat keys of an older file moved in, each key checked on its
+/// own. What `S` does not know stays in `table` for [`Settings::other`].
+fn take<S: Section>(table: &mut Table, path: &Path, notices: &mut Vec<String>) -> S {
+    let at = path.display();
+    let mut own = match table.remove(S::KEY) {
+        None => Table::new(),
+        Some(Value::Table(own)) => own,
+        Some(_) => {
+            notices.push(format!("{at}: [{}] is not a table; its defaults are used", S::KEY));
+            Table::new()
+        }
+    };
+    for (flat, key) in S::FIELDS {
+        if let Some(value) = table.remove(*flat) {
+            if own.contains_key(*key) {
+                notices.push(format!("{at}: {flat} is set in [{}] too, as {key}; the [{}] value is used", S::KEY, S::KEY));
+            } else {
+                own.insert(key.to_string(), value);
+            }
         }
     }
-    let settings = toml::Value::Table(table).try_into().map_err(parse_error)?;
-    Ok((settings, notices))
+    let mut known = Table::new();
+    for (_, key) in S::FIELDS {
+        let Some(value) = own.remove(*key) else { continue };
+        let one = Table::from_iter([(key.to_string(), value.clone())]);
+        match Value::Table(one).try_into::<S>() {
+            Ok(_) => {
+                known.insert(key.to_string(), value);
+            }
+            Err(e) => {
+                let why = e.message().lines().next().unwrap_or_default().to_string();
+                notices.push(format!("{at}: {}.{key} is not valid ({why}); its default is used", S::KEY));
+            }
+        }
+    }
+    if !own.is_empty() {
+        table.insert(S::KEY.into(), Value::Table(own));
+    }
+    Value::Table(known).try_into().unwrap_or_else(|e: toml::de::Error| {
+        notices.push(format!("{at}: [{}] is not valid ({}); its defaults are used", S::KEY, e.message().lines().next().unwrap_or_default()));
+        S::default()
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn every_key_set() -> Settings {
+        Settings {
+            sessions: SessionSettings { max_working: 1, extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()], run_as_admin: true, relay_idle_secs: Some(20) },
+            workstate: WorkStateSettings { url: Some("https://workstate.example".into()) },
+            appearance: AppearanceSettings { theme: Some("Foreman Dark".into()), terminal_colors: Some("campbell".into()) },
+            terminal: TerminalSettings { font_size: Some(20), font_family: Some("Lucida Console".into()), ligatures: Some(false) },
+            window: WindowSettings { left_width: Some(512) },
+            other: Table::new(),
+        }
+    }
+
+    fn load_text(home: &Path, text: &str) -> (Settings, Vec<String>) {
+        fs::write(Settings::path(home), text).unwrap();
+        Settings::load_with_notices(home).unwrap()
+    }
+
+    fn saved(home: &Path) -> Table {
+        fs::read_to_string(Settings::path(home)).unwrap().parse().unwrap()
+    }
+
+    /// A saved file read back with every owned key at its flat name, as a file before the tables had it.
+    fn flattened(mut file: Table) -> Table {
+        fn back<S: Section>(file: &mut Table) {
+            let Some(Value::Table(mut own)) = file.remove(S::KEY) else { return };
+            for (flat, key) in S::FIELDS {
+                if let Some(value) = own.remove(*key) {
+                    file.insert(flat.to_string(), value);
+                }
+            }
+            if !own.is_empty() {
+                file.insert(S::KEY.into(), Value::Table(own));
+            }
+        }
+        back::<SessionSettings>(&mut file);
+        back::<WorkStateSettings>(&mut file);
+        back::<AppearanceSettings>(&mut file);
+        back::<TerminalSettings>(&mut file);
+        back::<WindowSettings>(&mut file);
+        file
+    }
+
     #[test]
-    fn absent_is_default_and_round_trips() {
+    fn absent_is_default_and_round_trips_as_tables() {
         let home = tempfile::tempdir().unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), Settings::default());
-        let s = Settings {
-            max_working: 1,
-            workstate_url: Some("https://workstate.example".into()),
-            left_width: Some(512),
-            extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
-            run_as_admin: true,
-            relay_idle_secs: Some(20),
-            theme: Some("Foreman Dark".into()),
-            terminal_colors: Some("campbell".into()),
-            terminal_font_size: Some(20),
-            terminal_font_family: Some("Lucida Console".into()),
-            terminal_ligatures: Some(false),
-        };
+        let s = every_key_set();
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
+        let file = saved(home.path());
+        assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "window", "workstate"]);
+        assert_eq!(file["terminal"]["font_size"].as_integer(), Some(20));
+        assert_eq!(file["workstate"]["url"].as_str(), Some("https://workstate.example"));
+    }
+
+    #[test]
+    fn every_section_lists_every_field_it_writes() {
+        fn check<S: Section>(all: &S) {
+            let Value::Table(written) = Value::try_from(all).unwrap() else { panic!() };
+            let mut written: Vec<_> = written.keys().cloned().collect();
+            let mut listed: Vec<_> = S::FIELDS.iter().map(|(_, key)| key.to_string()).collect();
+            written.sort();
+            listed.sort();
+            assert_eq!(written, listed, "[{}]", S::KEY);
+        }
+        let s = every_key_set();
+        check(&s.sessions);
+        check(&s.workstate);
+        check(&s.appearance);
+        check(&s.terminal);
+        check(&s.window);
+        let flat: Vec<_> = [SessionSettings::FIELDS, WorkStateSettings::FIELDS, AppearanceSettings::FIELDS, TerminalSettings::FIELDS, WindowSettings::FIELDS]
+            .concat()
+            .into_iter()
+            .map(|(flat, _)| flat)
+            .collect();
+        assert_eq!(flat.len(), 11, "every key a flat file has held");
+        assert!(flat.iter().all(|key| !OWNED.contains(key)), "no flat key is a table's name");
+    }
+
+    /// A flat file with every key the app reads, a retired key and a plugin's table: the save writes tables
+    /// and loses nothing.
+    #[test]
+    fn a_flat_file_with_every_key_round_trips_with_nothing_lost() {
+        let home = tempfile::tempdir().unwrap();
+        let flat = r#"max_working = 1
+workstate_url = "https://workstate.example/mcp"
+left_width = 512
+extra_plugin_dirs = ['C:\x\plugins\rlarch']
+run_as_admin = true
+relay_idle_secs = 20
+theme = "Foreman Dark"
+terminal_colors = "campbell"
+terminal_font_size = 20
+terminal_font_family = "Lucida Console"
+terminal_ligatures = false
+workstate_env = 'C:/x/.env'
+
+[gitman]
+fetch_every_secs = 300
+"#;
+        let (s, notices) = load_text(home.path(), flat);
+        assert!(notices.is_empty(), "{notices:?}");
+        let want = Settings { workstate: WorkStateSettings { url: Some("https://workstate.example/mcp".into()) }, other: s.other.clone(), ..every_key_set() };
+        assert_eq!(s, want);
+        assert_eq!(s.workstate.origin(), "https://workstate.example", "an older file's /mcp URL");
+        assert_eq!(s.other.keys().collect::<Vec<_>>(), ["gitman", "workstate_env"]);
+
+        s.save(home.path()).unwrap();
+        let file = saved(home.path());
+        for key in ["max_working", "workstate_url", "left_width", "theme", "terminal_font_size"] {
+            assert!(!file.contains_key(key), "{key} is in its table now");
+        }
+        assert_eq!(flattened(file), flat.parse::<Table>().unwrap(), "every value is where a flat reader finds it");
+        assert_eq!(Settings::load(home.path()).unwrap(), s);
+    }
+
+    /// Every `settings.toml` this repo has written (the defaults, the tests' homes, the shapes LEARNINGS
+    /// shows) loads with its values and is written as tables with nothing lost.
+    #[test]
+    fn every_shape_this_repo_has_written_migrates() {
+        let shapes = [
+            "max_working = 20\n",
+            "max_working = 3\nextra_plugin_dirs = ['C:\\Projects\\Skills\\plugins\\rlarch']\n",
+            "max_working = 20\nworkstate_env = 'C:/Users/x/.workstate/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n",
+            "max_working = 20\nleft_width = 531\n",
+            "max_working = 20\nrelay_idle_secs = 60\nworkstate_url = \"http://127.0.0.1:1\"\n",
+            "max_working = 20\ntheme = \"Foreman Dark\"\nterminal_colors = \"campbell\"\n",
+            "max_working = 20\nterminal_font_size = 17.6\n",
+            "max_working = 20\nterminal_font_size = 16\nterminal_font_family = \"Consolas\"\nterminal_ligatures = false\n",
+            "max_working = 20\nrun_as_admin = true\n",
+            "max_working = 20\nworkstate_url = \"https://workstate.dikaia.ai\"\nleft_width = 531\ntheme = \"VS Code Dark Modern\"\n",
+        ];
+        for flat in shapes {
+            let home = tempfile::tempdir().unwrap();
+            let (s, notices) = load_text(home.path(), flat);
+            assert!(notices.is_empty(), "{flat}: {notices:?}");
+            let old: Table = flat.parse().unwrap();
+            assert_eq!(s.sessions.max_working as i64, old["max_working"].as_integer().unwrap(), "{flat}");
+            assert_eq!(s.workstate.url.as_deref(), old.get("workstate_url").and_then(Value::as_str), "{flat}");
+            assert_eq!(s.window.left_width.map(i64::from), old.get("left_width").and_then(Value::as_integer), "{flat}");
+            assert_eq!(s.appearance.theme.as_deref(), old.get("theme").and_then(Value::as_str), "{flat}");
+            assert_eq!(s.sessions.run_as_admin, old.get("run_as_admin").and_then(Value::as_bool).unwrap_or(false), "{flat}");
+
+            s.save(home.path()).unwrap();
+            let again = Settings::load(home.path()).unwrap();
+            assert_eq!(again, s, "{flat}");
+            let mut want = old.clone();
+            if let Some(size) = want.get("terminal_font_size").and_then(Value::as_float) {
+                want.insert("terminal_font_size".into(), Value::Integer(size.round() as i64));
+            }
+            assert_eq!(flattened(saved(home.path())), want, "{flat}");
+        }
+    }
+
+    /// The copy of a real file at `FOREMAN_SETTINGS_SAMPLE`, migrated in a test home:
+    /// `FOREMAN_SETTINGS_SAMPLE=<file> cargo test -p foreman-core -- --ignored a_real_settings_file`.
+    #[test]
+    #[ignore = "needs FOREMAN_SETTINGS_SAMPLE"]
+    fn a_real_settings_file_migrates_with_the_same_values() {
+        let sample = std::env::var_os("FOREMAN_SETTINGS_SAMPLE").expect("FOREMAN_SETTINGS_SAMPLE");
+        let flat = fs::read_to_string(sample).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let (s, notices) = load_text(home.path(), &flat);
+        assert!(notices.is_empty(), "{notices:?}");
+        s.save(home.path()).unwrap();
+        assert_eq!(Settings::load(home.path()).unwrap(), s);
+        assert_eq!(flattened(saved(home.path())), flat.parse::<Table>().unwrap());
+        println!("{s:#?}");
+    }
+
+    #[test]
+    fn tables_and_keys_of_other_owners_survive_a_save_and_an_update() {
+        let home = tempfile::tempdir().unwrap();
+        let text = "future = 1\n\n[gitman]\nfetch = true\n\n[gitman.remotes]\norigin = \"x\"\n\n[terminal]\nfont_size = 18\ncursor = \"bar\"\n";
+        let (s, notices) = load_text(home.path(), text);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(s.terminal.font_size(), 18);
+        Settings::update(home.path(), |s| s.terminal.set_font_size(19)).unwrap();
+        let file = saved(home.path());
+        assert_eq!(file["gitman"]["remotes"]["origin"].as_str(), Some("x"));
+        assert_eq!(file["future"].as_integer(), Some(1));
+        assert_eq!((file["terminal"]["cursor"].as_str(), file["terminal"]["font_size"].as_integer()), (Some("bar"), Some(19)));
+    }
+
+    #[test]
+    fn a_plugin_reads_and_writes_its_own_table() {
+        #[derive(Debug, PartialEq, Serialize, Deserialize)]
+        struct GitMan {
+            fetch_every_secs: u64,
+        }
+        let home = tempfile::tempdir().unwrap();
+        Settings::update(home.path(), |s| s.set_section("gitman", &GitMan { fetch_every_secs: 60 }).unwrap()).unwrap();
+        let s = Settings::load(home.path()).unwrap();
+        assert_eq!(s.section::<GitMan>("gitman"), Some(GitMan { fetch_every_secs: 60 }));
+        assert_eq!(s.section::<GitMan>("fileman"), None);
+        assert_eq!(s, Settings { other: s.other.clone(), ..Settings::default() });
+    }
+
+    #[test]
+    #[should_panic(expected = "[terminal] is a field of Settings")]
+    fn an_owned_table_is_not_a_plugins() {
+        Settings::default().section::<Table>("terminal");
+    }
+
+    #[test]
+    fn a_bad_section_falls_back_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let (s, notices) = load_text(home.path(), "terminal = 5\nwindow = \"wide\"\n\n[sessions]\nmax_working = 3\n\n[appearance]\ntheme = \"Foreman Dark\"\n");
+        assert_eq!((s.sessions.max_working, s.appearance.theme.as_deref()), (3, Some("Foreman Dark")));
+        assert_eq!((s.terminal.clone(), s.window.clone()), (TerminalSettings::default(), WindowSettings::default()));
+        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert!(notices.iter().any(|n| n.ends_with("[terminal] is not a table; its defaults are used")), "{notices:?}");
+        assert!(notices.iter().any(|n| n.contains("[window] is not a table")), "{notices:?}");
+        s.save(home.path()).unwrap();
+        let (again, quiet) = Settings::load_with_notices(home.path()).unwrap();
+        assert_eq!((again, quiet), (s, Vec::new()), "the save writes the defaults in their place");
+    }
+
+    #[test]
+    fn a_key_set_both_flat_and_in_its_table_takes_the_table() {
+        let home = tempfile::tempdir().unwrap();
+        let (s, notices) = load_text(home.path(), "max_working = 9\n\n[sessions]\nmax_working = 4\n");
+        assert_eq!(s.sessions.max_working, 4);
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("max_working is set in [sessions] too"), "{notices:?}");
     }
 
     #[test]
     fn partial_file_keeps_defaults() {
         let home = tempfile::tempdir().unwrap();
-        fs::write(Settings::path(home.path()), "workstate_url = \"http://x/mcp\"\n").unwrap();
-        let s = Settings::load(home.path()).unwrap();
-        assert_eq!(s.max_working, DEFAULT_MAX_WORKING);
-        assert_eq!(s.workstate_url.as_deref(), Some("http://x/mcp"));
-        assert!(s.extra_plugin_dirs.is_empty());
-        assert_eq!(s.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
-        fs::write(Settings::path(home.path()), "relay_idle_secs = 20\n").unwrap();
-        assert_eq!(Settings::load(home.path()).unwrap().relay_idle_ms(), 20_000);
+        let (s, _) = load_text(home.path(), "workstate_url = \"http://x/mcp\"\n");
+        assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
+        assert_eq!(s.workstate.url.as_deref(), Some("http://x/mcp"));
+        assert!(s.sessions.extra_plugin_dirs.is_empty());
+        assert_eq!(s.sessions.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
+        assert_eq!(load_text(home.path(), "relay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
+        assert_eq!(load_text(home.path(), "[sessions]\nrelay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
         fs::write(Settings::path(home.path()), "max_working = = 3").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })), "not TOML at all");
     }
 
     #[test]
-    fn workstate_url_is_an_origin_and_an_old_env_line_is_ignored() {
+    fn workstate_url_is_an_origin_and_an_old_env_line_is_kept() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::default().workstate_origin(), "https://workstate.dikaia.ai");
-        assert_eq!(Settings::default().workstate_mcp_url(), "https://workstate.dikaia.ai/mcp");
-        fs::write(Settings::path(home.path()), "workstate_env = 'C:/x/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n").unwrap();
-        let s = Settings::load(home.path()).unwrap();
-        assert_eq!(s.workstate_origin(), "http://127.0.0.1:5290", "an older file's /mcp URL");
+        assert_eq!(Settings::default().workstate.origin(), "https://workstate.dikaia.ai");
+        assert_eq!(Settings::default().workstate.mcp_url(), "https://workstate.dikaia.ai/mcp");
+        let (s, _) = load_text(home.path(), "workstate_env = 'C:/x/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n");
+        assert_eq!(s.workstate.origin(), "http://127.0.0.1:5290", "an older file's /mcp URL");
         s.save(home.path()).unwrap();
-        assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("workstate_env"), "the .env line is gone");
+        assert_eq!(saved(home.path())["workstate_env"].as_str(), Some("C:/x/.env"), "a key with no home is kept, and unused");
     }
 
     #[test]
@@ -347,29 +693,19 @@ mod tests {
     #[test]
     fn terminal_font_size_is_14_unless_set_and_clamped() {
         let home = tempfile::tempdir().unwrap();
-        let load = |text: &str| {
-            fs::write(Settings::path(home.path()), text).unwrap();
-            Settings::load(home.path()).unwrap()
-        };
-        assert_eq!(Settings::default().terminal_font_size(), DEFAULT_TERMINAL_FONT_SIZE);
-        assert_eq!(load("max_working = 2
-").terminal_font_size(), 14, "missing");
-        assert_eq!(load("terminal_font_size = 18
-").terminal_font_size(), 18);
-        assert_eq!(load("terminal_font_size = 17.6
-").terminal_font_size(), 18, "a float is rounded");
-        assert_eq!(load("terminal_font_size = 1
-").terminal_font_size(), MIN_TERMINAL_FONT_SIZE);
-        assert_eq!(load("terminal_font_size = -3
-").terminal_font_size(), MIN_TERMINAL_FONT_SIZE);
-        assert_eq!(load("terminal_font_size = 500
-").terminal_font_size(), MAX_TERMINAL_FONT_SIZE);
+        let load = |text: &str| load_text(home.path(), text).0;
+        assert_eq!(Settings::default().terminal.font_size(), DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!(load("max_working = 2\n").terminal.font_size(), 14, "missing");
+        assert_eq!(load("terminal_font_size = 18\n").terminal.font_size(), 18);
+        assert_eq!(load("[terminal]\nfont_size = 18\n").terminal.font_size(), 18);
+        assert_eq!(load("terminal_font_size = 17.6\n").terminal.font_size(), 18, "a float is rounded");
+        assert_eq!(load("terminal_font_size = 1\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("terminal_font_size = -3\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("terminal_font_size = 500\n").terminal.font_size(), MAX_TERMINAL_FONT_SIZE);
         for bad in ["\"big\"", "true", "[14]", "nan"] {
-            let s = load(&format!("max_working = 2
-terminal_font_size = {bad}
-"));
-            assert_eq!(s.terminal_font_size(), 14, "{bad} is invalid");
-            assert_eq!(s.max_working, 2, "{bad} does not cost the rest of the file");
+            let s = load(&format!("max_working = 2\nterminal_font_size = {bad}\n"));
+            assert_eq!(s.terminal.font_size(), 14, "{bad} is invalid");
+            assert_eq!(s.sessions.max_working, 2, "{bad} does not cost the rest of the file");
         }
     }
 
@@ -377,18 +713,18 @@ terminal_font_size = {bad}
     fn terminal_font_size_saves_clamped_and_the_default_as_unset() {
         let home = tempfile::tempdir().unwrap();
         let mut s = Settings::default();
-        s.set_terminal_font_size(19);
+        s.terminal.set_font_size(19);
         s.save(home.path()).unwrap();
-        assert!(fs::read_to_string(Settings::path(home.path())).unwrap().contains("terminal_font_size = 19"));
-        assert_eq!(Settings::load(home.path()).unwrap().terminal_font_size(), 19);
-        s.set_terminal_font_size(999);
-        assert_eq!(s.terminal_font_size, Some(MAX_TERMINAL_FONT_SIZE));
-        s.set_terminal_font_size(0);
-        assert_eq!(s.terminal_font_size, Some(MIN_TERMINAL_FONT_SIZE));
-        s.set_terminal_font_size(DEFAULT_TERMINAL_FONT_SIZE);
+        assert_eq!(saved(home.path())["terminal"]["font_size"].as_integer(), Some(19));
+        assert_eq!(Settings::load(home.path()).unwrap().terminal.font_size(), 19);
+        s.terminal.set_font_size(999);
+        assert_eq!(s.terminal.font_size, Some(MAX_TERMINAL_FONT_SIZE));
+        s.terminal.set_font_size(0);
+        assert_eq!(s.terminal.font_size, Some(MIN_TERMINAL_FONT_SIZE));
+        s.terminal.set_font_size(DEFAULT_TERMINAL_FONT_SIZE);
         s.save(home.path()).unwrap();
-        assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("terminal_font_size"));
-        assert_eq!(Settings::load(home.path()).unwrap().terminal_font_size(), 14);
+        assert!(!fs::read_to_string(Settings::path(home.path())).unwrap().contains("font_size"));
+        assert_eq!(Settings::load(home.path()).unwrap().terminal.font_size(), 14);
     }
 
     fn names(list: &[&str]) -> Vec<String> {
@@ -407,70 +743,57 @@ terminal_font_size = {bad}
     #[test]
     fn terminal_font_family_is_the_one_set_when_installed_else_the_default() {
         let installed = names(&["Cascadia Code", "Consolas", "Lucida Console"]);
-        let mut s = Settings::default();
-        assert_eq!(s.terminal_font_family(&installed), "Cascadia Code");
-        assert_eq!(s.missing_terminal_font(&installed), None);
-        s.set_terminal_font_family(Some(" lucida console "));
-        assert_eq!(s.terminal_font_family(&installed), "Lucida Console", "matched in any case, spelt as installed");
-        s.set_terminal_font_family(Some("Fira Code"));
-        assert_eq!(s.terminal_font_family(&installed), "Cascadia Code");
-        assert_eq!(s.missing_terminal_font(&installed), Some("Fira Code"));
-        assert_eq!(s.terminal_font_family(&names(&["Consolas"])), "Consolas");
-        s.set_terminal_font_family(Some("  "));
-        assert_eq!(s.terminal_font_family, None);
+        let mut t = TerminalSettings::default();
+        assert_eq!(t.font_family(&installed), "Cascadia Code");
+        assert_eq!(t.missing_font(&installed), None);
+        t.set_font_family(Some(" lucida console "));
+        assert_eq!(t.font_family(&installed), "Lucida Console", "matched in any case, spelt as installed");
+        t.set_font_family(Some("Fira Code"));
+        assert_eq!(t.font_family(&installed), "Cascadia Code");
+        assert_eq!(t.missing_font(&installed), Some("Fira Code"));
+        assert_eq!(t.font_family(&names(&["Consolas"])), "Consolas");
+        t.set_font_family(Some("  "));
+        assert_eq!(t.font_family, None);
     }
 
     #[test]
     fn terminal_font_family_and_ligatures_load_save_and_survive_bad_values() {
         let home = tempfile::tempdir().unwrap();
-        let load = |text: &str| {
-            fs::write(Settings::path(home.path()), text).unwrap();
-            Settings::load(home.path()).unwrap()
-        };
-        assert!(Settings::default().terminal_ligatures(), "on unless set");
+        let load = |text: &str| load_text(home.path(), text).0;
+        assert!(Settings::default().terminal.ligatures(), "on unless set");
         let s = load("terminal_font_family = \"Consolas\"\nterminal_ligatures = false\n");
-        assert_eq!(s.terminal_font_family.as_deref(), Some("Consolas"));
-        assert!(!s.terminal_ligatures());
+        assert_eq!(s.terminal.font_family.as_deref(), Some("Consolas"));
+        assert!(!s.terminal.ligatures());
         for bad in ["terminal_font_family = 12\nterminal_ligatures = \"yes\"", "terminal_font_family = [\"x\"]\nterminal_ligatures = 0"] {
             let s = load(&format!("max_working = 3\n{bad}\n"));
-            assert_eq!((s.terminal_font_family.as_deref(), s.terminal_ligatures()), (None, true), "{bad}");
-            assert_eq!(s.max_working, 3, "{bad} does not cost the rest of the file");
+            assert_eq!((s.terminal.font_family.as_deref(), s.terminal.ligatures()), (None, true), "{bad}");
+            assert_eq!(s.sessions.max_working, 3, "{bad} does not cost the rest of the file");
         }
 
         let mut s = Settings::default();
-        s.set_terminal_font_family(Some("Cascadia Mono"));
-        s.set_terminal_ligatures(false);
+        s.terminal.set_font_family(Some("Cascadia Mono"));
+        s.terminal.set_ligatures(false);
         s.save(home.path()).unwrap();
-        let text = fs::read_to_string(Settings::path(home.path())).unwrap();
-        assert!(text.contains("terminal_font_family = \"Cascadia Mono\"") && text.contains("terminal_ligatures = false"), "{text}");
+        let file = saved(home.path());
+        assert_eq!((file["terminal"]["font_family"].as_str(), file["terminal"]["ligatures"].as_bool()), (Some("Cascadia Mono"), Some(false)));
         assert_eq!(Settings::load(home.path()).unwrap(), s);
-        s.set_terminal_font_family(None);
-        s.set_terminal_ligatures(true);
+        s.terminal.set_font_family(None);
+        s.terminal.set_ligatures(true);
         s.save(home.path()).unwrap();
-        let text = fs::read_to_string(Settings::path(home.path())).unwrap();
-        assert!(!text.contains("terminal_font_family") && !text.contains("terminal_ligatures"), "the defaults are saved as unset: {text}");
+        assert!(!saved(home.path()).contains_key("terminal"), "the defaults are saved as unset");
     }
 
     #[test]
     fn a_bad_key_keeps_its_default_and_is_named_while_the_rest_of_the_file_stands() {
         let home = tempfile::tempdir().unwrap();
-        fs::write(
-            Settings::path(home.path()),
-            "max_working = \"many\"
-workstate_url = \"https://ws.example\"
-run_as_admin = \"yes\"
-left_width = 300
-",
-        )
-        .unwrap();
-        let (s, notices) = Settings::load_with_notices(home.path()).unwrap();
-        assert_eq!(s.max_working, DEFAULT_MAX_WORKING);
-        assert!(!s.run_as_admin);
-        assert_eq!((s.workstate_url.as_deref(), s.left_width), (Some("https://ws.example"), Some(300)));
+        let (s, notices) = load_text(home.path(), "max_working = \"many\"\nworkstate_url = \"https://ws.example\"\nrun_as_admin = \"yes\"\nleft_width = 300\n");
+        assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
+        assert!(!s.sessions.run_as_admin);
+        assert_eq!((s.workstate.url.as_deref(), s.window.left_width), (Some("https://ws.example"), Some(300)));
         assert_eq!(notices.len(), 2, "{notices:?}");
-        assert!(notices.iter().any(|n| n.contains("max_working is not valid")), "{notices:?}");
-        assert!(notices.iter().any(|n| n.contains("run_as_admin is not valid")), "{notices:?}");
-        assert!(notices.iter().all(|n| n.contains("settings.toml") && !n.contains('\n')),"{notices:?}");
+        assert!(notices.iter().any(|n| n.contains("sessions.max_working is not valid")), "{notices:?}");
+        assert!(notices.iter().any(|n| n.contains("sessions.run_as_admin is not valid")), "{notices:?}");
+        assert!(notices.iter().all(|n| n.contains("settings.toml") && !n.contains('\n')), "{notices:?}");
         assert_eq!(Settings::load(home.path()).unwrap(), s);
         let (_, quiet) = Settings::load_with_notices(tempfile::tempdir().unwrap().path()).unwrap();
         assert!(quiet.is_empty(), "no file, no notice");
@@ -480,16 +803,16 @@ left_width = 300
     fn update_edits_what_is_on_disk_and_keeps_the_rest() {
         let home = tempfile::tempdir().unwrap();
         let (s, out) = Settings::update(home.path(), |s| {
-            s.left_width = Some(400);
+            s.window.left_width = Some(400);
             7
         })
         .unwrap();
-        assert_eq!((s.left_width, out), (Some(400), 7));
-        Settings::update(home.path(), |s| s.theme = Some("Foreman Dark".into())).unwrap();
+        assert_eq!((s.window.left_width, out), (Some(400), 7));
+        Settings::update(home.path(), |s| s.appearance.theme = Some("Foreman Dark".into())).unwrap();
         let back = Settings::load(home.path()).unwrap();
-        assert_eq!((back.left_width, back.theme.as_deref()), (Some(400), Some("Foreman Dark")));
+        assert_eq!((back.window.left_width, back.appearance.theme.as_deref()), (Some(400), Some("Foreman Dark")));
         fs::write(Settings::path(home.path()), "left_width = = 1").unwrap();
-        assert!(Settings::update(home.path(), |s| s.left_width = Some(1)).is_err(), "a file that is not TOML is not overwritten");
+        assert!(Settings::update(home.path(), |s| s.window.left_width = Some(1)).is_err(), "a file that is not TOML is not overwritten");
         assert_eq!(fs::read_to_string(Settings::path(home.path())).unwrap(), "left_width = = 1");
     }
 
@@ -501,13 +824,14 @@ left_width = 300
         let (s, ()) = Settings::update(home.path(), |s| {
             calls += 1;
             if calls == 1 {
-                Settings { theme: Some("Other".into()), ..Settings::default() }.save(home.path()).unwrap();
+                let other = Settings { appearance: AppearanceSettings { theme: Some("Other".into()), ..Default::default() }, ..Settings::default() };
+                other.save(home.path()).unwrap();
             }
-            s.left_width = Some(333);
+            s.window.left_width = Some(333);
         })
         .unwrap();
         assert_eq!(calls, 2, "the edit ran again on the other writer's file");
-        assert_eq!((s.theme.as_deref(), s.left_width), (Some("Other"), Some(333)));
+        assert_eq!((s.appearance.theme.as_deref(), s.window.left_width), (Some("Other"), Some(333)));
         assert_eq!(Settings::load(home.path()).unwrap(), s);
     }
 }

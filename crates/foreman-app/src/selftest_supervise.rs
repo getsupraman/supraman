@@ -79,7 +79,7 @@ Do nothing else.";
 /// Step r's direct sends to the target, one a second: half the receiver's burst, none paced (m5/4).
 const DIRECT_SENDS: usize = 30;
 const REPO: &str = "Repo";
-/// `settings.toml` `relay_idle_secs` for this run: long enough for the relay to launch, arm and send.
+/// `settings.toml` `[sessions] relay_idle_secs` for this run: long enough for the relay to launch, arm and send.
 const RELAY_IDLE_SECS: u64 = 60;
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
@@ -178,8 +178,10 @@ pub fn prepare() -> anyhow::Result<()> {
     // no sign-in, and a closed loopback port as the server: the status check never reaches a real
     // WorkState (m5/43)
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    Settings { relay_idle_secs: Some(RELAY_IDLE_SECS), workstate_url: Some(format!("http://127.0.0.1:{closed}")), ..Settings::default() }
-        .save(&home)?;
+    let mut settings = Settings::default();
+    settings.sessions.relay_idle_secs = Some(RELAY_IDLE_SECS);
+    settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
+    settings.save(&home)?;
     println!(
         "step a: claude {} | FOREMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
         version.raw,
@@ -555,9 +557,9 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     // f. busy limit 1 (the settings window's stepper path), two more workspaces started: never
     // more than one working
     view.update(cx, |v, cx| v.set_max_working(1, cx));
-    let saved = Settings::load(&tb.home)?.max_working;
+    let saved = Settings::load(&tb.home)?.sessions.max_working;
     if saved != 1 {
-        bail!("step f: settings.toml has max_working {saved} after the stepper showed 1");
+        bail!("step f: settings.toml has [sessions] max_working {saved} after the stepper showed 1");
     }
     let prefix = format!("fm-selftest-{}", tb.hex);
     let (c1, c2) = (workspace_session_name(&tb.c1.0), workspace_session_name(&tb.c2.0));
@@ -641,7 +643,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         );
     }
     println!(
-        "step f: limit {DEFAULT_MAX_WORKING} → 1 via set_max_working (settings.toml max_working = 1) | Start {} and {} ({}): max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
+        "step f: limit {DEFAULT_MAX_WORKING} → 1 via set_max_working (settings.toml [sessions] max_working = 1) | Start {} and {} ({}): max {max_seen} working over {polls} polls | first live {} / {}, first idle {} / {}: the second went only after the first one's turn ended",
         tb.c1.0,
         tb.c2.0,
         if folds.is_empty() { "both in view".to_string() } else { folds.join("; ") },
