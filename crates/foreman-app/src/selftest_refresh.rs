@@ -16,7 +16,8 @@ pub const FRESH_KEY: &str = "f5f5ab0c-0000-4000-8000-00000000f5f5";
 const ENDING_TITLE: &str = "selftest ending session";
 /// The pid watch (250 ms), one `claude agents`, one scan (0.9–1.7 s); a poll takes [`REFRESH_EVERY`] plus `claude agents` (≥ 2.5 s).
 const CLOSE_TO_RESUME: Duration = Duration::from_millis(2300);
-const REFRESHED: Duration = Duration::from_millis(1500);
+/// Measured 0.45–1.3 s; without the nudge the next scan is ≥ 7.5 s away ([`TRANSCRIPTS_EVERY`] after the one awaited).
+const REFRESHED: Duration = Duration::from_millis(3000);
 const WITHIN: Duration = Duration::from_secs(45);
 
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
