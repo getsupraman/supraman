@@ -41,6 +41,12 @@ pub fn icon(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pi
         .child(icon.group_hover(key, |s| s.text_color(text)))
 }
 
+/// An [`icon`] button that is always laid out and painted, so its slot never shifts and its hit key exists, but
+/// shows only while the `group` (its row) is hovered or `shown` (the row is selected).
+pub fn revealed(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pixels, group: impl Into<SharedString>, shown: bool, cx: &App) -> Stateful<Div> {
+    self::icon(hits, key, icon, side, cx).when(!shown, |d| d.opacity(0.).group_hover(group, |s| s.opacity(1.)))
+}
+
 /// An action bar button: `icon` in `fg`, then any label; the selected fill while `on`.
 pub fn toolbar(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, on: bool, fg: Hsla, cx: &App) -> Stateful<Div> {
     toolbar_turning(hits, key, icon, on, false, fg, cx)

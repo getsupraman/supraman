@@ -11,11 +11,11 @@ Before you build something generic yourself (a text input, a list, a dialog, an 
 Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHITECTURE.md`):
 
 - `foreman_ui::text_input`: the one text input (EntityInputHandler: selection, IME, clipboard); every text field uses it.
-- `foreman_ui::button::{bordered, outline, pill, icon, toolbar, toolbar_turning, ghost, small, choice}`: every clickable button; the key is its id, hover group and hit key; `toolbar_turning` turns its icon while work it started runs.
+- `foreman_ui::button::{bordered, outline, pill, icon, revealed, toolbar, toolbar_turning, ghost, small, choice}`: every clickable button; the key is its id, hover group and hit key; `toolbar_turning` turns its icon while work it started runs; `revealed` is a row's hover icon, always laid out and painted (no shift, hit key kept), shown while its row's group is hovered or the row is selected.
 - `foreman_ui::banner::{tinted, plain, dismissable, tint}`: every notice box; a status colour on its 0.12 tint (m5/26 contrast).
 - `foreman_ui::hit::{HitTargets, hit_target}`: every clickable element records its painted bounds under its key; the selftests click through these.
 - `foreman_ui::fonts::{UI, MONO, icons}`: the UI's font families; never a family name spelt out in a view.
-- `foreman_ui::menu::{ContextMenu, MenuItem, item}`: every right-click menu, generic over the owner's action type; items paint under `menu-<key>`.
+- `foreman_ui::menu::{ContextMenu, MenuItem, item}`: every right-click menu, generic over the owner's action type; items paint under `menu-<key>`; `MenuItem::under(caption)` starts a section (a rule and a caption).
 - `foreman_ui::confirm::Confirm`: every question before an action that cannot be taken back (`ask`), and every report with only its OK (`report`); the owner places it.
 - `foreman_ui::toast::ToastSlot`: every short feedback that floats over a panel and goes by itself (`show` for done, `show_why` for why nothing was done).
 - `foreman_ui::notices::{NoticeKind, render, keep_dismissed, remove_one}`: every list of plain notices with a × each; the owner keeps the kinds and their sources.

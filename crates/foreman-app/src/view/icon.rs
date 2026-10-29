@@ -20,11 +20,23 @@ pub enum Icon {
     Star,
     StarFilled,
     Warning,
+    Attach,
+    Folder,
+    GitBranch,
+    Play,
+    RelayReady,
+    RelayStarting,
+    Resume,
+    Square,
+    Tab,
+    Task,
+    Terminal,
+    Work,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 15] = [
+    const ALL: [Icon; 27] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -40,6 +52,18 @@ impl Icon {
         Icon::Star,
         Icon::StarFilled,
         Icon::Warning,
+        Icon::Attach,
+        Icon::Folder,
+        Icon::GitBranch,
+        Icon::Play,
+        Icon::RelayReady,
+        Icon::RelayStarting,
+        Icon::Resume,
+        Icon::Square,
+        Icon::Tab,
+        Icon::Task,
+        Icon::Terminal,
+        Icon::Work,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -59,6 +83,18 @@ impl Icon {
             Icon::Star => include_bytes!("../../assets/icons/star.svg"),
             Icon::StarFilled => include_bytes!("../../assets/icons/star_filled.svg"),
             Icon::Warning => include_bytes!("../../assets/icons/warning.svg"),
+            Icon::Attach => include_bytes!("../../assets/icons/maximize.svg"),
+            Icon::Folder => include_bytes!("../../assets/icons/folder.svg"),
+            Icon::GitBranch => include_bytes!("../../assets/icons/git_branch.svg"),
+            Icon::Play => include_bytes!("../../assets/icons/play_outlined.svg"),
+            Icon::RelayReady => include_bytes!("../../assets/icons/signal_high.svg"),
+            Icon::RelayStarting => include_bytes!("../../assets/icons/load_circle.svg"),
+            Icon::Resume => include_bytes!("../../assets/icons/rotate_ccw.svg"),
+            Icon::Square => include_bytes!("../../assets/icons/stop.svg"),
+            Icon::Tab => include_bytes!("../../assets/icons/screen.svg"),
+            Icon::Task => include_bytes!("../../assets/icons/pencil.svg"),
+            Icon::Terminal => include_bytes!("../../assets/icons/terminal.svg"),
+            Icon::Work => include_bytes!("../../assets/icons/list_todo.svg"),
         }
     }
 

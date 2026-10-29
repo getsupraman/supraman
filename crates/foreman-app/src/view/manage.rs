@@ -10,7 +10,7 @@ use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subsc
 
 use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, session_items, workspace_items};
-use crate::fleet;
+use crate::fleet::{self, SessionRow};
 use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
@@ -297,10 +297,15 @@ impl FleetView {
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
         cx.notify();
-        let (Some(menu), MenuTarget::Session { session_id, .. }) = (&self.menu, &target) else {
+        let session_id = match &target {
+            MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
+            MenuTarget::Workspace(w) => self.tree().workspaces.into_iter().find(|n| &n.name == w).and_then(|n| n.own).map(|r| r.session.session_id),
+            MenuTarget::Repo { .. } => None,
+        };
+        let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
             return;
         };
-        let (title, session_id) = (menu.title.clone(), session_id.clone());
+        let title = menu.title.clone();
         let lookup = cx.background_executor().spawn(async move { send_name_of(&session_id) });
         cx.spawn(async move |this, cx| {
             let Some(send_name) = lookup.await else {
@@ -327,7 +332,12 @@ impl FleetView {
         match target {
             MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| {
                 let can_task = node.started == Some(true) && self.relay_refusal(w).is_none();
-                (w.clone(), workspace_items(node, can_task, self.has_closed_background(w)))
+                let items_of = |row: Option<&SessionRow>, repo: &str, send_name: Option<String>| {
+                    row.map(|r| self.session_menu(w, repo, r, send_name, cx)).unwrap_or_default()
+                };
+                let own = items_of(node.own.as_ref(), "workspace", send_name);
+                let relay = items_of(node.relay.as_ref(), "relay", None);
+                (w.clone(), workspace_items(node, can_task, self.has_closed_background(w), own, relay))
             }),
             MenuTarget::Repo { workspace, repo } => tree
                 .workspaces
@@ -337,17 +347,20 @@ impl FleetView {
                 .map(|r| (format!("{workspace} · ./{repo}"), repo_items(workspace, r))),
             MenuTarget::Session { workspace, repo, session_id } => {
                 let node = tree.workspaces.iter().find(|n| &n.name == workspace);
-                let rows = node.into_iter().flat_map(|n| n.supervised.iter().chain(n.repos.iter().flat_map(|r| &r.sessions)));
-                rows.into_iter().find(|r| &r.session.session_id == session_id).map(|row| {
-                    let claimed = self.claimed_item(workspace, &row.session.name, cx);
-                    let name = fleet::display_name(&row.session).to_string();
-                    (name, session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row)))
-                })
+                node.into_iter()
+                    .flat_map(|n| n.rows())
+                    .find(|r| &r.session.session_id == session_id)
+                    .map(|row| (fleet::display_name(&row.session).to_string(), self.session_menu(workspace, repo, row, send_name, cx)))
             }
         }
     }
 
-    fn claimed_item(&self, workspace: &str, name: &str, cx: &Context<Self>) -> Option<String> {
+    fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &Context<Self>) -> Vec<MenuItem> {
+        let claimed = self.claimed_item(workspace, &row.session.name, cx);
+        session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row))
+    }
+
+    pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &Context<Self>) -> Option<String> {
         if name.is_empty() {
             return None;
         }

@@ -111,7 +111,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })
                 .collect();
-            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.supervised), repos };
+            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.own.iter().chain(&w.relay).chain(&w.supervised).cloned().collect::<Vec<_>>()), repos };
             (!hit.name_marks.is_empty() || !hit.supervised.is_empty() || !hit.repos.is_empty()).then_some(hit)
         })
         .collect();
@@ -165,6 +165,8 @@ mod tests {
                     name: "gaia".into(),
                     home: Some(PathBuf::from("G:/gaia")),
                     started: Some(true),
+                    own: Some(row("fm-gaia-workspace", "cccc3333-0000", false)),
+                    relay: None,
                     supervised: vec![row("fm-gaia-root", "aaaa1111-0000", false)],
                     repos: vec![
                         repo("Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]),
@@ -176,6 +178,8 @@ mod tests {
                     name: "nomos".into(),
                     home: Some(PathBuf::from("N:/nomos")),
                     started: None,
+                    own: None,
+                    relay: None,
                     supervised: vec![],
                     repos: vec![repo("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])],
                 },
@@ -220,9 +224,9 @@ mod tests {
         assert_eq!(names(&r), ["gaia (1)", "  ./Web (1)", "    CI-CD-pipeline"], "01d05e1f has 5e1f inside, not at its start");
         assert!(r.workspaces[0].repos[0].sessions[0].row.closed);
         let r = search(&tree(), "GAIA");
-        assert_eq!(names(&r), ["gaia (1)", "  fm-gaia-root"]);
+        assert_eq!(names(&r), ["gaia (2)", "  fm-gaia-workspace", "  fm-gaia-root"], "the workspace session has no tree row, yet search finds it");
         assert_eq!(r.workspaces[0].name_marks, [0..4]);
-        assert_eq!(r.summary(), "1 session in 1 workspace, 1 workspace or repo by name");
+        assert_eq!(r.summary(), "2 sessions in 1 workspace, 1 workspace or repo by name");
     }
 
     #[test]

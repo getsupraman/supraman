@@ -137,9 +137,7 @@ impl FleetView {
     fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
         let tree = self.search_tree();
         let Some(node) = tree.workspaces.into_iter().find(|w| w.name == workspace) else { return Vec::new() };
-        node.supervised
-            .into_iter()
-            .chain(node.repos.into_iter().flat_map(|r| r.sessions))
+        node.into_rows()
             .filter(|r| r.session.kind == Kind::Background && is_closed(r))
             .collect()
     }

@@ -54,7 +54,9 @@ pub enum MenuTarget {
     Session { workspace: String, repo: String, session_id: String },
 }
 
-pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: bool) -> Vec<MenuItem> {
+/// `own` and `relay` are [`session_items`] of the workspace session and the relay, which have no row of their
+/// own: they follow under a caption each, so nothing on those sessions is out of reach.
+pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: bool, own: Vec<MenuItem>, relay: Vec<MenuItem>) -> Vec<MenuItem> {
     let w = &node.name;
     let mut items = vec![if node.started == Some(true) {
         item("stop", "Stop", MenuAction::Stop(w.clone()))
@@ -77,7 +79,52 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
         items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(w.clone())));
     }
     items.push(item("remove", "Remove…", MenuAction::Remove(w.clone())));
+    if let Some(row) = &node.own {
+        items.extend(section(own, Section::Own, format!("workspace session · {}", row.session.name)));
+    }
+    if let Some(row) = &node.relay {
+        items.extend(section(relay, Section::Relay, format!("relay · {}", row.session.name)));
+    }
     items
+}
+
+#[derive(Clone, Copy)]
+enum Section {
+    Own,
+    Relay,
+}
+
+fn section(items: Vec<MenuItem>, of: Section, caption: String) -> Vec<MenuItem> {
+    let mut items: Vec<MenuItem> = items.into_iter().map(|i| MenuItem { key: section_key(of, i.key), ..i }).collect();
+    if let Some(first) = items.first_mut() {
+        first.section = Some(caption);
+    }
+    items
+}
+
+/// A [`session_items`] key inside the workspace menu, where it must not clash with the workspace's own.
+fn section_key(of: Section, key: &'static str) -> &'static str {
+    match (of, key) {
+        (Section::Own, "attach") => "session-attach",
+        (Section::Own, "resume") => "session-resume",
+        (Section::Own, "stop-session") => "session-stop",
+        (Section::Own, "copy-send-name") => "session-copy-send-name",
+        (Section::Own, "copy-name") => "session-copy-name",
+        (Section::Own, "copy-id") => "session-copy-id",
+        (Section::Own, "show-in-work") => "session-show-in-work",
+        (Section::Own, "star") => "session-star",
+        (Section::Own, "delete") => "session-delete",
+        (Section::Relay, "attach") => "relay-attach",
+        (Section::Relay, "resume") => "relay-resume",
+        (Section::Relay, "stop-session") => "relay-stop",
+        (Section::Relay, "copy-send-name") => "relay-copy-send-name",
+        (Section::Relay, "copy-name") => "relay-copy-name",
+        (Section::Relay, "copy-id") => "relay-copy-id",
+        (Section::Relay, "show-in-work") => "relay-show-in-work",
+        (Section::Relay, "star") => "relay-star",
+        (Section::Relay, "delete") => "relay-delete",
+        (_, other) => other,
+    }
 }
 
 /// Add workspace: today's scan of a parent folder, or a workspace with no folder yet.
@@ -179,7 +226,7 @@ mod tests {
     use super::*;
 
     fn node(started: Option<bool>) -> WorkspaceNode {
-        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, supervised: vec![], repos: vec![] }
+        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, own: None, relay: None, supervised: vec![], repos: vec![] }
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
@@ -193,10 +240,38 @@ mod tests {
 
     #[test]
     fn workspace_menu_follows_its_state() {
-        assert_eq!(keys(&workspace_items(&node(None), false, false)), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
-        let started = workspace_items(&node(Some(true)), true, false);
+        assert_eq!(keys(&workspace_items(&node(None), false, false, vec![], vec![])), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
+        let started = workspace_items(&node(Some(true)), true, false, vec![], vec![]);
         assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
         assert_eq!(started.last().unwrap().action, MenuAction::Remove("demo".into()));
+    }
+
+    #[test]
+    fn the_workspace_menu_holds_every_item_of_its_workspace_session_and_relay_under_a_caption() {
+        let own = r#"{"id":"aaaa0010","sessionId":"aaaa0010-x","name":"fm-demo-workspace","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
+        let relay = own.replace("aaaa0010", "aaaa0011").replace("workspace\"", "relay\"");
+        let mut n = node(Some(true));
+        n.own = Some(row(own, Health::Running));
+        n.relay = Some(row(&relay, Health::Idle));
+        let own_items = session_items("demo", "workspace", n.own.as_ref().unwrap(), false, Some("item-1".into()), Some("ctrl [abc123]".into()), false);
+        let relay_items = session_items("demo", "relay", n.relay.as_ref().unwrap(), false, None, None, false);
+        let (own_n, relay_n) = (own_items.len(), relay_items.len());
+        let items = workspace_items(&n, true, false, own_items, relay_items);
+        assert_eq!(
+            keys(&items),
+            [
+                "stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "remove",
+                "session-attach", "session-stop", "session-copy-send-name", "session-copy-name", "session-copy-id", "session-show-in-work", "session-star",
+                "relay-attach", "relay-stop", "relay-copy-name", "relay-copy-id", "relay-star",
+            ]
+        );
+        assert_eq!(items.len(), 8 + own_n + relay_n, "nothing dropped");
+        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (i.key, c))).collect();
+        assert_eq!(captions, [("session-attach", "workspace session · fm-demo-workspace"), ("relay-attach", "relay · fm-demo-relay")]);
+        assert!(matches!(&items[8].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
+        assert_eq!(items[9].label, "Stop", "an fm- session stops without a question");
+        let keys = keys(&items);
+        assert_eq!(keys.iter().collect::<std::collections::HashSet<_>>().len(), keys.len(), "keys unique");
     }
 
     #[test]
@@ -270,7 +345,7 @@ mod tests {
         assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "delete"]);
         assert_eq!(items[4].label, "Delete…");
         assert!(matches!(&items[4].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
-        let ws = workspace_items(&node(Some(false)), false, true);
+        let ws = workspace_items(&node(Some(false)), false, true, vec![], vec![]);
         assert_eq!(keys(&ws), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "delete-closed", "remove"]);
         assert_eq!(ws[6].label, "Delete closed background sessions…");
         assert_eq!(ws[6].action, MenuAction::DeleteClosed("demo".into()));

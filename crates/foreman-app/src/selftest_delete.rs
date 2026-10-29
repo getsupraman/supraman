@@ -46,7 +46,7 @@ fn row(v: &FleetView, session_id: &str) -> Option<(String, Health)> {
     v.search_tree()
         .workspaces
         .into_iter()
-        .flat_map(|w| w.supervised.into_iter().chain(w.repos.into_iter().flat_map(|r| r.sessions)))
+        .flat_map(|w| w.into_rows())
         .find(|r| r.session.session_id == session_id)
         .map(|r| (r.session.name, r.health))
 }

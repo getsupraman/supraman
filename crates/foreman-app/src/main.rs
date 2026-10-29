@@ -5,6 +5,7 @@ mod elevate;
 mod fleet;
 mod hand;
 mod instance;
+mod row_card;
 mod search;
 mod selftest;
 mod selftest_box;

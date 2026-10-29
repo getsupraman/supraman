@@ -222,6 +222,44 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
     Ok(format!("{ADDED}'s root path painted cut ({:.0} px); hovered, its tooltip reads the whole path", f32::from(bounds.size.width)))
 }
 
+/// The workspace and session rows' hover cards, as [`foreman_ui::hover_card::HoverCard::text`].
+async fn hover_cards(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let ws = card_on(view, &format!("ws-row-{ADDED}"), cx).await?;
+    for want in [format!("{ADDED}\n"), "\nfolders  alpha, beta (disabled)\n".into(), "\nstate  never started\n".into(), "\nsession  not wanted\n".into()] {
+        if !ws.starts_with(ADDED) || !format!("{ws}\n").contains(&want) {
+            bail!("the card of {ADDED}'s row reads {ws:?}, without {want:?}");
+        }
+    }
+    shot("m5-59-workspace-card", cx).await;
+    let session = card_on(view, &format!("session-row-{}", own.session_id), cx).await?;
+    let cwd = format!("\ncwd  {}\n", own.cwd.display());
+    if session.lines().next() != Some(own.name.as_str()) || !session.contains("\nstate  ") || !format!("{session}\n").contains(&cwd) {
+        bail!("the card of {}'s row reads {session:?}, not its name, state and {cwd:?}", own.name);
+    }
+    shot("m5-59-session-card", cx).await;
+    Ok(format!("hover cards: {ADDED}'s row {:?}; {}'s row {:?}", ws.replace('\n', " | "), own.name, session.replace('\n', " | ")))
+}
+
+/// Rests the pointer near the row's left edge, off its icons and labels, until its card shows.
+async fn card_on(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let bounds = crate::selftest::scrolled_into_view(view, key, cx).await?;
+    let position = point(bounds.left() + px(4.), bounds.top() + px(6.));
+    crate::selftest_left::move_to(point(px(1.), px(1.)), cx)?;
+    sleep(cx, Duration::from_millis(100)).await;
+    foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
+    let started = Instant::now();
+    loop {
+        crate::selftest_left::move_to(position, cx)?;
+        sleep(cx, Duration::from_millis(50)).await;
+        if let Some(text) = foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow().clone()) {
+            return Ok(text);
+        }
+        if started.elapsed() > WITHIN {
+            bail!("resting on {key} at {position:?} showed no card");
+        }
+    }
+}
+
 fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     let git = root.join(name).join(".git");
     std::fs::create_dir_all(&git)?;
@@ -366,6 +404,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
     out.push(format!("the same folder again registers as {again} with alpha disabled, tagged supervised in {ADDED}; removed"));
     out.push(single_repo(view, &registry, cx).await?);
+    out.push(hover_cards(view, own, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);
     press_painted(view, &session_key, MouseButton::Right, cx).await?;
