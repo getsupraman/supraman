@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use foreman_core::fs::{load_json_or_notice, write_atomic};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,19 +28,8 @@ impl Stars {
         let Some(path) = home.map(Self::path) else {
             return (Self::default(), None);
         };
-        let (sessions, notice) = match std::fs::read_to_string(&path) {
-            Ok(text) => match serde_json::from_str::<File>(&text) {
-                Ok(f) => (f.sessions, None),
-                Err(e) => (BTreeSet::new(), Some(format!("Cannot read {} ({e}): no session is starred", path.display()))),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (BTreeSet::new(), None),
-            Err(e) => (BTreeSet::new(), Some(format!("Cannot read {} ({e}): no session is starred", path.display()))),
-        };
-        (Self { path: Some(path), sessions }, notice)
-    }
-
-    pub fn contains(&self, session_id: &str) -> bool {
-        self.sessions.contains(session_id)
+        let (file, notice) = load_json_or_notice::<File>(&path, "no session is starred");
+        (Self { path: Some(path), sessions: file.sessions }, notice)
     }
 
     pub fn ids(&self) -> &BTreeSet<String> {
@@ -62,12 +52,7 @@ impl Stars {
             return Ok(());
         };
         let text = serde_json::to_string_pretty(&File { sessions: self.sessions.clone() }).map_err(|e| e.to_string())?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        write_atomic(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 }
 
@@ -83,11 +68,11 @@ mod tests {
         assert_eq!(stars.toggle("aaaa-1"), Ok(true));
         assert_eq!(stars.toggle("bbbb-2"), Ok(true));
         let (again, _) = Stars::load(Some(home.path()));
-        assert!(again.contains("aaaa-1") && again.contains("bbbb-2"), "read back from starred.json");
+        assert!(again.ids().contains("aaaa-1") && again.ids().contains("bbbb-2"), "read back from starred.json");
         let mut again = again;
         assert_eq!(again.toggle("aaaa-1"), Ok(false));
         let (third, _) = Stars::load(Some(home.path()));
-        assert!(!third.contains("aaaa-1") && third.contains("bbbb-2"));
+        assert!(!third.ids().contains("aaaa-1") && third.ids().contains("bbbb-2"));
     }
 
     #[test]

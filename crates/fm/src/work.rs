@@ -1,7 +1,6 @@
 //! `fm work overview|board`: the workspace's WorkState project (ref `<workspace>`) read through the
 //! read API v1, printed compact. Read only (C21); the bearer is an access token of the app's sign-in
-//! (m5/43: the refresh token from Credential Manager, refreshed and rotated here under the shared lock)
-//! and never printed — every error is one line without it.
+//! (refreshed and rotated here under the shared lock) and never printed — every error is one line without it.
 
 use std::fmt::Write as _;
 use std::path::Path;

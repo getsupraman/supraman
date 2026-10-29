@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::client::{BearerSource, api_base};
+use crate::http::pct_encode;
 use crate::secret::{SecretStore, default_store};
 
 pub const SCOPE: &str = "workstate.read workstate.sessions offline_access";
@@ -235,6 +236,11 @@ impl Auth {
     /// The server URL `settings.toml` names, as an origin.
     pub fn configured_origin(&self) -> String {
         Settings::load(&self.home).unwrap_or_default().workstate_origin()
+    }
+
+    /// The issuer `servers.json` names for `origin`; `None` when it names none or cannot be read.
+    pub fn issuer_of(&self, origin: &str) -> Option<String> {
+        self.load_known().ok()?.servers.remove(&api_base(origin)).map(|m| m.issuer)
     }
 
     /// Without a network call: held, broken, or a refresh token stored for the origin's issuer.
@@ -653,12 +659,10 @@ fn oauth_error(body: &str) -> String {
 }
 
 /// `https://h:1/p` → (`https://h:1`, `/p`).
-fn split_origin(url: &str) -> (&str, &str) {
-    let start = url.find("://").map_or(0, |i| i + 3);
-    match url[start..].find('/') {
-        Some(i) => (&url[..start + i], &url[start + i..]),
-        None => (url, ""),
-    }
+fn split_origin(url: &str) -> (String, &str) {
+    let origin = foreman_core::url::origin(url);
+    let path = url.strip_prefix(origin.as_str()).unwrap_or_default();
+    (origin, path)
 }
 
 fn random_b64(n: usize) -> String {
@@ -667,14 +671,8 @@ fn random_b64(n: usize) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn pct(s: &str) -> String {
-    s.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
-        .collect()
-}
-
 pub fn form_encode(pairs: &[(&str, &str)]) -> String {
-    pairs.iter().map(|(k, v)| format!("{}={}", pct(k), pct(v))).collect::<Vec<_>>().join("&")
+    pairs.iter().map(|(k, v)| format!("{}={}", pct_encode(k), pct_encode(v))).collect::<Vec<_>>().join("&")
 }
 
 /// `a=1&b=x%20y` → map; `+` is a space.
@@ -783,8 +781,14 @@ mod tests {
         assert_eq!(d["scope"], "a b");
         assert_eq!(form_decode("a=x+y&b=%zz&c")["a"], "x y");
         assert_eq!(form_decode("b=%zz")["b"], "%zz");
-        assert_eq!(split_origin("https://ws.example/tenant"), ("https://ws.example", "/tenant"));
-        assert_eq!(split_origin("https://ws.example"), ("https://ws.example", ""));
+        for (issuer, origin, path) in [
+            ("https://ws.example/tenant", "https://ws.example", "/tenant"),
+            ("https://ws.example", "https://ws.example", ""),
+            ("http://127.0.0.1:5290/a/b", "http://127.0.0.1:5290", "/a/b"),
+            ("ws.example/x", "ws.example", "/x"),
+        ] {
+            assert_eq!(split_origin(issuer), (origin.to_string(), path), "{issuer}");
+        }
     }
 
     #[test]

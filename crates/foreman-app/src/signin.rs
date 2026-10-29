@@ -36,18 +36,12 @@ pub fn browser() -> Box<dyn Fn(&str) -> Result<(), String> + Send + Sync> {
 
 /// [`Auth::sign_in`] with [`browser`], blocking; remembers the issuer for [`forget_own_credentials`].
 pub fn sign_in(home: &Path, origin: &str) -> Result<foreman_workstate::AuthStatus, foreman_workstate::AuthError> {
-    let status = auth(home).sign_in(origin, &browser())?;
-    if let Some(issuer) = issuer_of(home, origin) {
+    let auth = auth(home);
+    let status = auth.sign_in(origin, &browser())?;
+    if let Some(issuer) = auth.issuer_of(origin) {
         ISSUERS.lock().unwrap_or_else(|e| e.into_inner()).push((home.to_path_buf(), issuer));
     }
     Ok(status)
-}
-
-/// The issuer `<home>/oauth/servers.json` knows for `origin`.
-fn issuer_of(home: &Path, origin: &str) -> Option<String> {
-    let text = std::fs::read_to_string(home.join("oauth").join("servers.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v["servers"][foreman_core::url_origin(origin)]["issuer"].as_str().map(str::to_string)
 }
 
 /// Selftest cleanup: deletes every refresh token this process signed in with.

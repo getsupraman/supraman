@@ -68,7 +68,7 @@ impl WsStatus {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
             WsStatus::NotSignedIn { .. } | WsStatus::SignInAgain { .. } => {
-                Some("Sign in: your browser opens WorkState's sign-in page, and Foreman keeps the grant in Windows Credential Manager.".into())
+                Some("Sign in: your browser opens WorkState's sign-in page, and Foreman keeps the grant in the Foreman home, encrypted for your Windows account.".into())
             }
             WsStatus::Unreachable { .. } => Some(format!(
                 "Check the server URL in Settings → WorkState. Checked again every {} s.",

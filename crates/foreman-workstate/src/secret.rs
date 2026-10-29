@@ -91,6 +91,10 @@ impl FileStore {
         use std::io::Write;
         let path = self.path(key);
         let sealed = dpapi(secret.as_bytes(), true).map_err(|e| format!("cannot encrypt the secret: {}", e.message()))?;
+        if replace {
+            return foreman_core::fs::write_atomic(&path, &sealed).map(|()| true).map_err(|e| format!("cannot write {}: {e}", path.display()));
+        }
+        // write_atomic always replaces; a migration must never overwrite a token rotated meanwhile.
         let mut r = [0u8; 8];
         getrandom::fill(&mut r).map_err(|e| e.to_string())?;
         let tmp = path.with_extension(format!("{}.tmp", r.iter().map(|b| format!("{b:02x}")).collect::<String>()));
@@ -99,12 +103,12 @@ impl FileStore {
             file.write_all(&sealed)?;
             file.sync_all()
         });
-        let placed = staged.and_then(|()| retrying(|| if replace { std::fs::rename(&tmp, &path) } else { move_new(&tmp, &path) }));
+        let placed = staged.and_then(|()| retrying(|| move_new(&tmp, &path)));
         match placed {
             Ok(()) => Ok(true),
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
-                if !replace && e.kind() == std::io::ErrorKind::AlreadyExists {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
                     Ok(false)
                 } else {
                     Err(format!("cannot write {}: {e}", path.display()))
