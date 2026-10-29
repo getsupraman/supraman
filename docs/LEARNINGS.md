@@ -4025,3 +4025,38 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Red checks** (reverted with `git checkout`, never committed): the drop's `on_move` call removed → 7u "tab 23
   dropped on tab 22: (order, active) ([22, 23, 24], Some(22)), expected ([23, 22, 24], 22)"; the marker side
   swapped → `the_marker_is_on_the_side_the_tab_lands` fails.
+
+## 2026-10-29 — m5/54 drop a tab or session row onto a terminal to paste its SendMessage name
+
+- **Shared parts:** `foreman_ui::tabs::DraggedSession { session_id, title }` is the session row's drag payload,
+  beside `DraggedTab`, with the same chip preview (`chip`). A row has no tab id, so it carries the `session_id`.
+  `ToastSlot::show_why` is the toast without the ✓ and the success border, for "nothing was done, because…".
+  `foreman_term::Terminal::paste` is public: the one paste path (bracketed when the program enabled it, line
+  breaks as returns otherwise) that `paste_clipboard` also takes; it never reads or writes the clipboard.
+- **Drop target** (`view/drop.rs`): an absolute overlay over the terminal grid, `invisible()` until a
+  `DraggedTab` or `DraggedSession` hovers it (`drag_over` → `visible()`), then `drop_target_background` with a
+  2 px `drop_target_border`: Zed's `pane.rs` pattern. The overlay is absolute, so the grid and the PTY size never
+  change during a drag; a hidden div paints no listeners, but the hovered frame before the mouse up is visible, so
+  the drop lands. `can_drop` keeps the look off the tab's own header and off a row whose session runs there.
+- **What a drop does** (`dropped`, unit-tested): onto its own tab, or a tab/row whose session is the one the
+  target runs → nothing; a tab that runs no claude (a pwsh tab, Work) → pane toast "X runs no claude session:
+  nothing pasted."; otherwise the name is looked up off the UI thread (`manage::send_name_of`, the menu's lookup)
+  and pasted into the target tab's terminal, or the pane toast "X has no SendMessage name yet: nothing pasted.".
+  A tab's session: `Attach` maps its 8-hex id through `sessions`, a shell tab uses `tab.claude`. The pane toast
+  is a second `ToastSlot` (`pane_toast`) over the right pane, so it shows where the drop happened.
+- **Strip unchanged:** the strip's tabs still take `DraggedTab` for reorder (7u passes); a session row dropped on
+  the strip is taken by nothing.
+- **Selftest** (`selftest_drop::run`, inside 7l, which has a live claude with a SendMessage name and a plain pwsh
+  tab): the claude tab dragged onto the plain terminal (screenshot `m5-54-tab-drop`) → its prompt line ends with
+  the name and no new prompt appears 500 ms later (no Enter); Esc; the session row dragged on → the same; Esc;
+  the plain tab onto its own terminal → nothing, no toast; a `bare` pwsh tab onto it → nothing pasted, toast
+  "bare runs no claude session: nothing pasted."; the clipboard keeps its sentinel and its sequence number.
+  The "no name yet" path is covered by the unit rule and the shared toast, not driven live: a session with no
+  peer name is not something the selftest can make without writing into `~/.claude/sessions`.
+- **Red checks** (reverted, never committed): the own-tab condition taken out of `dropped` →
+  `a_drop_pastes_another_sessions_name_and_never_its_own` fails ("a plain shell onto its own terminal", NoSession
+  vs Nothing); the overlay left out of the terminal pane → selftest FAIL 7l "the claude tab dropped on the plain
+  terminal: the prompt line reads \"PS …\selftest-cwd>\", expected it to end with \"fm-selftest-957064-mark\"".
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-54\target`): build ok, no warnings; `cargo test --release --workspace` 663
+  passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` sessions left.
