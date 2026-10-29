@@ -1,13 +1,6 @@
-//! Closed sessions from their transcripts (m5/27). `claude agents --json --all` lists background sessions,
-//! stopped ones too, but an interactive session only while it runs; a closed one leaves only
-//! `<claude dir>/projects/<slug>/<sessionId>.jsonl`. Read only.
-//!
-//! The slug is lossy (every non-alphanumeric character is `-`), so it only narrows which project dirs
-//! can belong to a repo ([`slug`] prefix); a session's cwd comes from its lines. A transcript is one
-//! JSON object per line. The ones read here: `custom-title` {customTitle}, `agent-name` {agentName},
-//! `ai-title` {aiTitle}, `summary` {summary} and `last-prompt` {lastPrompt}, each repeated, the last
-//! one winning; `cwd` on user/assistant/system lines; the first user line that is a prompt. Files run
-//! to many MB, so each is read once and then only from where the last read stopped ([`Transcripts`]).
+//! Closed sessions from `<claude dir>/projects/<slug>/<sessionId>.jsonl`, read only: `claude agents --json
+//! --all` lists an interactive session only while it runs. The slug is lossy, so it only narrows the project
+//! dirs ([`slug`] prefix); a session's cwd comes from its lines.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -180,7 +173,6 @@ fn leading_type(line: &[u8]) -> Option<&str> {
     std::str::from_utf8(&rest[..end]).ok()
 }
 
-/// A whole transcript, read in one go.
 pub fn read(path: &Path) -> std::io::Result<Transcript> {
     let mut t = Transcript {
         session_id: session_id_of(path).unwrap_or_default(),
@@ -233,7 +225,7 @@ const FIRST_PROMPT_WITHIN: u64 = 8 * 1024 * 1024;
 /// How rlarch's nested-claude opens every brief (`header.mjs` `protocolHeader`).
 pub const CONTROLLER_HEADER: &str = "Your controller is the Claude Code session '";
 
-/// Who started a session, read from its first prompt (m5/38): the controller header, or a pointer to a
+/// Who started a session, read from its first prompt: the controller header, or a pointer to a
 /// brief under `.claude/briefs/` (whose own text holds the header).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Launcher {

@@ -1,4 +1,4 @@
-//! m2x/2: a Foreman home written while a workspace was called a "platform" is brought to today's names.
+//! A Foreman home written while a workspace was called a "platform" is brought to today's names.
 //! Idempotent and never deletes data; run at app start and before every `fm` command that reads the
 //! registry.
 
@@ -110,7 +110,7 @@ fn migrate_desired(table: &mut Table, stem: &str) -> Option<Option<String>> {
 mod tests {
     use super::*;
 
-    /// The shape of a real home written before the rename (m2/4), with made-up content.
+    /// The shape of a real home written before the rename, with made-up content.
     fn old_home(started: &[(&str, bool)]) -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
         let reg = home.path().join("platforms");

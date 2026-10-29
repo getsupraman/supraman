@@ -1,6 +1,4 @@
-//! Hook event log: `<FOREMAN_HOME>/events/<session_id>.jsonl`, one [`Event`] per line, appended by
-//! `fm hook` from inside each session (hooks come from `plugins/foreman`) and polled by Foreman
-//! with an [`EventReader`]. Payload facts are in `docs/LEARNINGS.md` (m0/3, m2/2).
+//! `<FOREMAN_HOME>/events/<session_id>.jsonl`, appended by `fm hook`; payload facts in LEARNINGS m0/3, m2/2.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -12,8 +10,6 @@ use sha2::{Digest, Sha256};
 
 use crate::fs::rotated;
 
-/// A log reaching this size is renamed to `<session_id>.jsonl.1` (replacing an older one) before
-/// the next append.
 pub const ROTATE_AT: u64 = 256 * 1024;
 
 /// The fixed subset of a hook payload Foreman keeps. Never the prompt or the assistant's text.
@@ -72,7 +68,6 @@ pub fn log_path(home: &Path, session_id: &str) -> PathBuf {
     events_dir(home).join(format!("{session_id}.jsonl"))
 }
 
-/// Appends `event` as one line, rotating first when the log has reached `rotate_at`.
 pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<PathBuf> {
     let path = log_path(home, &event.session_id);
     fs::create_dir_all(events_dir(home))?;
@@ -156,7 +151,6 @@ impl EventReader {
         ids.into_iter().flat_map(|id| self.poll_session(&id)).collect()
     }
 
-    /// New events for one session.
     pub fn poll_session(&mut self, session_id: &str) -> Vec<Event> {
         let path = self.dir.join(format!("{session_id}.jsonl"));
         let mut cursor = self.cursors.remove(session_id).unwrap_or_default();

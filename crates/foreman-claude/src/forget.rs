@@ -1,9 +1,6 @@
-//! The one write Foreman makes under the claude dir (m5/38, René 2026-10-28): deleting the transcript of
-//! a session the user confirmed, because an interactive transcript can hold secrets. Exactly
-//! `<claude dir>/projects/<project dir>/<sessionId>.jsonl` and its sibling `<sessionId>/` (subagents,
-//! tool results), nothing else. Every path is checked before anything goes: the id is a UUID (so no
-//! `..` or separator), the project dir and the item are no symlink or junction, and the canonical path
-//! is `<canonical projects>/<project dir>/<item>`. One refused path deletes nothing.
+//! The one write Foreman makes under the claude dir: a confirmed session's `<sessionId>.jsonl` and its sibling
+//! `<sessionId>/` in `projects/<project dir>/`, nothing else. Every path is checked first (a UUID id, no symlink or
+//! junction, the canonical path where it belongs); one refused path deletes nothing.
 
 use std::fs;
 use std::io;

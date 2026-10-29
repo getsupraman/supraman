@@ -1,9 +1,5 @@
-//! Whether this process can reach claude's background service (m5/25). The service listens on named
-//! pipes (`\\.\pipe\cc-daemon-<key>-control`); one started by an elevated `claude --bg` refuses every
-//! unelevated client (`ECONNREFUSED`, measured with `runas /trustlevel:0x20000`). A
-//! Foreman started from Explorer is unelevated, and so is every `claude` it or its tabs run; each
-//! then starts a service of its own, which loses the lock race to the running one, and gives up after
-//! 45 s with "Couldn't reach the background service". Nothing a child's flags or console change fixes.
+//! Whether this process can reach claude's background service: one an elevated `claude --bg` started
+//! refuses every unelevated client, whose own `--bg` then gives up after 45 s. Facts: LEARNINGS m5/25.
 
 use std::time::Duration;
 
@@ -109,7 +105,7 @@ mod tests {
 
     /// 2.1.311 from an elevated shell, verbatim but for the paths.
     const REACHABLE: &str = "pid:     58604\nversion: 2.1.311\nuptime:  43723s\n\nbg sessions:\n  sock dir:     \\\\.\\pipe\\cc-daemon-*\n  control.sock: reachable\n  bg workers:   5 running (control.sock), 5 in roster.json\n";
-    /// The same service from a Medium-IL process (`runas /trustlevel:0x20000`), m5/25.
+    /// The same service from a Medium-IL process (`runas /trustlevel:0x20000`).
     const REFUSED: &str = "pid:     58604\nversion: 2.1.311\nuptime:  43784s\n\nbg sessions:\n  sock dir:     \\\\.\\pipe\\cc-daemon-*\n  control.sock: unreachable (connect ECONNREFUSED \\\\.\\pipe\\cc-daemon-*-control)\n  bg workers:   4 in roster.json (control unreachable)\n";
 
     #[test]
@@ -131,7 +127,7 @@ mod tests {
         }
     }
 
-    /// The real thing (m5/25): from an elevated test process that reaches a running service, the same
+    /// The real thing: from an elevated test process that reaches a running service, the same
     /// `claude daemon status` run at Medium IL (`runas /trustlevel:0x20000`, as Explorer would start
     /// Foreman) is refused, and [`elevation_mismatch`] names it. Skipped unless elevated with a
     /// reachable service that was itself started elevated; read-only, it starts and stops nothing.

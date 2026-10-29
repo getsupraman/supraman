@@ -11,12 +11,12 @@ use crate::{CoreError, Result};
 pub const DEFAULT_MAX_WORKING: usize = 20;
 /// `[workstate] url` when unset.
 pub const DEFAULT_WORKSTATE_URL: &str = "https://workstate.dikaia.ai";
-/// `[terminal] font_size` when unset or invalid, and Ctrl+0's size (m5/41).
+/// `[terminal] font_size` when unset or invalid, and Ctrl+0's size.
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `[terminal] font_size` is clamped to; `foreman_ui::term_element`'s MIN/MAX_FONT_SIZE.
 pub const MIN_TERMINAL_FONT_SIZE: u32 = 6;
 pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
-/// The terminal font when `[terminal] font_family` is unset or not installed: the first one installed (m5/47).
+/// The terminal font when `[terminal] font_family` is unset or not installed: the first one installed.
 pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono", "Consolas"];
 
 /// A table of `settings.toml` Foreman owns.
@@ -37,10 +37,10 @@ pub struct SessionSettings {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
     /// Start elevated (one UAC prompt per start), so Foreman reaches a claude background service an
-    /// elevated `claude --bg` started (m5/25).
+    /// elevated `claude --bg` started.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
-    /// How long a workspace's relay stays wanted after its last fallback send (m5/32). Unset: 10 min.
+    /// How long a workspace's relay stays wanted after its last fallback send. Unset: 10 min.
     /// Edited in the file; the selftest shortens it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
@@ -68,7 +68,7 @@ impl SessionSettings {
     }
 }
 
-/// `[workstate]`: the server Foreman signs in to (m5/43). No token is ever kept here.
+/// `[workstate]`: the server Foreman signs in to. No token is ever kept here.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkStateSettings {
@@ -95,7 +95,7 @@ impl WorkStateSettings {
     }
 }
 
-/// `[appearance]`: the theme (m5/31).
+/// `[appearance]`: the theme.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceSettings {
@@ -112,7 +112,7 @@ impl Section for AppearanceSettings {
     const FIELDS: &'static [(&'static str, &'static str)] = &[("theme", "theme"), ("terminal_colors", "terminal_colors")];
 }
 
-/// `[terminal]`: every terminal tab's font (m5/41, m5/47).
+/// `[terminal]`: every terminal tab's font.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalSettings {
@@ -276,7 +276,6 @@ impl Settings {
         home.join("settings.toml")
     }
 
-    /// [`Self::load_with_notices`] without the notices.
     pub fn load(home: &Path) -> Result<Self> {
         Self::load_with_notices(home).map(|(settings, _)| settings)
     }

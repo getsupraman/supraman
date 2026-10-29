@@ -3691,3 +3691,22 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   0 failed; `--selftest` first series 4 of 5, then 1 of 2 (runs 2 and 7 failed at 72 s, run 7 on step 7j's
   1.5 s Refresh bound while another gate's foreman ran, as in m5/45; run 2's log was not kept), second series 5 of 5 PASS
   (120–138 s); `--selftest-supervise` PASS (317 s); `--selftest-detach-shutdown` PASS (13 s); 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.16b comment pass over foreman-claude, foreman-supervisor and foreman-core (audit U14b: A-65, A-71–A-73)
+- **Comments only.** Every changed .rs file (27), with its `//` and `/* */` comments stripped outside string and char
+  literals and blank lines dropped, is identical to master: 0 code differences.
+- **Counts (full-line comments):** foreman-claude 331 → 303, foreman-supervisor 405 → 387, foreman-core 302 → 290.
+  Below the audit's estimate (57, 67, 25): most of what it counted are LEARNINGS evidence pointers (`m0/2` measured,
+  `m2/1` probe, `m2/4`), which stay as pointers, as in U14a; the crate docs' health and reconcile tables are spec.
+- **Removed:** unit tags as narration (m2x/2, m5/7, m5/8, m5/10, m5/25, m5/26, m5/32, m5/33, m5/38 with its name and
+  date, m5/40, m5/41, m5/43, m5/47, m5/48, mint/7, "M2's"), "a later tray daemon", "before m2x/2" / "before m5/7";
+  the essays in `transcript.rs`, `human.rs`, `daemon.rs`, `forget.rs`, `relay.rs` ("Since m5/4 … Since m5/32") and
+  `events.rs` cut to two or three lines; `budget.rs`' paraphrases of the crate docs' shared budget turned into
+  pointers; lib.rs' Held section no longer restates `daemon.rs`; restatements (`Load, edit, save over it`, `Every
+  process now running`, `A whole transcript, read in one go`, …).
+- **A-65:** `mint.rs`' "static role token" (module docs, `Minter`, `MintedSession::role`) deleted: the bearer is the
+  app's OAuth access token. `executor.rs`' `with_session_token` pointer was already gone. No code-looks-wrong findings.
+- **Gate trap:** with `CARGO_TARGET_DIR` outside the repo, `fm`'s `tests/want.rs` fails ("No Foreman plugin for …
+  fm.exe") until `plugins/foreman` sits in a folder above the target dir, as `C:\fmbuild\gate\plugins` does.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16b\target`, `C:\fmbuild\m5-44-16b\plugins\foreman` copied from the repo):
+  build ok, no warnings; `cargo test --release --workspace` 662 passed, 0 failed. Selftests not run (per brief).

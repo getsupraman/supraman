@@ -1,4 +1,4 @@
-//! Which claude session runs under a terminal tab's shell (m5/33): the shell's descendants from one
+//! Which claude session runs under a terminal tab's shell: the shell's descendants from one
 //! process snapshot, the nearest `claude.exe` that registered itself in `~/.claude/sessions` (read
 //! only, as [`crate::peer`] reads it: the pid must run with the start time it registered).
 
@@ -15,7 +15,6 @@ pub struct Proc {
     pub exe: String,
 }
 
-/// Every process now running.
 #[cfg(windows)]
 pub fn snapshot() -> Vec<Proc> {
     use windows::Win32::Foundation::CloseHandle;

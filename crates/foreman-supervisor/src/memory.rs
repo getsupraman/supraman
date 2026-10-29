@@ -55,7 +55,7 @@ pub enum Failure {
     /// Never retried automatically; only Retry clears it.
     TrustNeeded { cwd: PathBuf },
     /// `--bg` could not reach the background service; [`crate::Supervisor`] asks whether Foreman's
-    /// elevation is why (m5/25), else it counts like [`Failure::Other`].
+    /// elevation is why, else it counts like [`Failure::Other`].
     DaemonUnreachable(String),
     Other(String),
 }

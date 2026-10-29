@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 pub const HOOK_EXE: &str = "fm.exe";
 
-/// A plugin dir is one with the hooks and the role templates.
 fn is_plugin(dir: &Path) -> bool {
     dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir()
 }

@@ -1,5 +1,5 @@
 /// A URL's origin, `scheme://authority`: cut at the first `/`, `?` or `#` after the scheme, spelling
-/// kept. The key of `servers.json` and of every minted session's origin (m5/48).
+/// kept. The key of `servers.json` and of every minted session's origin.
 pub fn origin(url: &str) -> String {
     let url = url.trim();
     let start = url.find("://").map_or(0, |i| i + 3);

@@ -10,7 +10,7 @@ use crate::{Result, SupervisorError};
 /// What the human asked for on one workspace. Persisted at `<FOREMAN_HOME>/supervisor/<workspace>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesiredState {
-    /// `platform` in a file written before m2x/2 (`foreman_core::migrate_home` rewrites it).
+    /// `foreman_core::migrate_home` rewrites the alias.
     #[serde(alias = "platform")]
     pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
@@ -77,7 +77,7 @@ pub fn relay_session_name(workspace: &str) -> String {
 }
 
 /// An `fm-` session this home neither wants (`wanted`: the names in its desired states) nor names
-/// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's (m5/10).
+/// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's.
 pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>, mut wanted: impl Iterator<Item = &'a str>) -> bool {
     name.starts_with(FM_PREFIX) && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
 }
@@ -170,7 +170,7 @@ impl DesiredState {
         self.sessions.len() != before
     }
 
-    /// The relay on demand (m5/32): `Some` wants it (first, as the supervisor launches it before the
+    /// The relay on demand: `Some` wants it (first, as the supervisor launches it before the
     /// others) unless it is wanted already; `None` retires a wanted one ([`DesiredState::unwant`], so R14
     /// stops it). True when this changed the state.
     pub fn set_relay(&mut self, relay: Option<WantedSession>) -> bool {
@@ -193,7 +193,7 @@ impl DesiredState {
         self.sessions.iter().any(|w| w.name == name)
     }
 
-    /// M2's desired state: one `fm-<workspace>-workspace` session, not started.
+    /// One `fm-<workspace>-workspace` session, not started.
     pub fn workspace_controller(workspace: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>) -> Self {
         Self {
             sessions: vec![WantedSession {

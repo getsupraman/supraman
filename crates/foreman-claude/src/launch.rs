@@ -43,9 +43,7 @@ impl LaunchSpec {
         }
     }
 
-    /// A per-session `wss_` token (mint/7) in an owner-only `<dir>/workstate-<agent>.json`, loaded with
-    /// `--mcp-config <file> --strict-mcp-config`; the token's principal carries the name and role, and the
-    /// mint stored the rest on WorkState's session row.
+    /// A per-session `wss_` token in an owner-only `<dir>/workstate-<agent>.json`, under `--strict-mcp-config`.
     pub fn with_minted_token(mut self, dir: &Path, agent: &str, url: &str, token: &str) -> std::io::Result<Self> {
         self.mcp_config = Some(write_mcp_config(dir, agent, url, token, &[])?);
         self.strict_mcp_config = true;
