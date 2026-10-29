@@ -3317,3 +3317,54 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   --workspace` 634 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (329 s);
   `--selftest-detach-shutdown` PASS (17 s); 0 `fm-selftest` rows from this worktree. After merging master
   a6b50cd (m5/44.6): `cargo test --release --workspace` 646 passed, 0 failed.
+
+## 2026-10-29 — m5/44.8 Work tab, settings window, persistence (audit U6b)
+
+- **Persistence (A-02 app files):** `stars.rs`, `dismissed_messages.rs` and the WorkState inbox's
+  `workstate-dismissed.json` load through `fs::load_json_or_notice` and save through `fs::write_atomic`.
+  The notice texts of stars and messages are unchanged. The inbox's dismissals used to be read with
+  `.ok()` and written non-atomically with `let _ =`; now an unreadable file and a failed save land in
+  `WorkInbox::notice`. **Not shown yet:** the notice box is `view/notices.rs` + `view/left.rs` and the
+  `FleetView` fields, m5/44.7's files during this unit; wiring `WorkInbox::notice` into `plain_notices`
+  is a few lines once 44.7 has merged.
+- **`write_atomic` flushes the temp file before the rename** and retries a rename that fails with a
+  sharing violation (32) as well as PermissionDenied. Both come from `secret.rs`'s own write, which
+  `FileStore::set` now replaces with `write_atomic`, so the refresh token keeps its durability. Every
+  other caller (settings, registry, relay drops, mint records, desired state) gains it: a crash leaves the
+  old file or the new one, never an empty one.
+- **`secret.rs` keeps one private write: the migration's no-replace rename** (`MoveFileExW` without
+  `MOVEFILE_REPLACE_EXISTING`). `write_atomic` always replaces, and the migration must never overwrite a
+  token that `fm` rotated meanwhile (m5/44.18).
+- **A-38:** `Stream::subscribe` returns an `async_channel::Receiver` (unbounded, `send_blocking` on the
+  stream thread). The hub awaits `recv()`; no background executor thread sits in a 1 s `recv_timeout`
+  loop any more. Dropping the hub drops the `Stream`, which ends the thread and so the loop.
+- **A-27, the settings side:** `SettingsView::auth` is `Option<AuthStatus>`, read on the background
+  executor after each settings reload (`read_auth`, newest read wins). Until it answers, the Status row
+  shows neither Sign in nor Sign out. `work_view::load_client` already ran off the UI thread.
+- **Settings:** `change` goes through `Settings::update`; `reload` uses `load_with_notices` and shows bad
+  keys in the window's error line (44.4 left the app side open). The help text takes "every N s" from
+  `RECHECK_EVERY` and the font bounds from core's constants (A-19). The Status row and the sign-in hint
+  (`workstate_setup.rs`) said the grant is kept in Credential Manager; since m5/44.18 it is a file in the
+  Foreman home, encrypted for the Windows account. The plugins text had runs of 14 spaces (A-51) and said
+  rlarch belongs in `extra_plugin_dirs` (A-63); a user-installed plugin loads without it.
+- **A-17 debounce:** one `work_view::after_debounce(cx, f)`; the overview, board, item, journal and inbox
+  keep their own pending flags.
+- **A-44:** undo keeps 100 steps (`UNDO_STEPS`); `clipped`'s cut-label map keeps 512 labels and drops the
+  one painted longest ago (gpui has no frame id to clear it per frame, and a cached view repaints without
+  running the canvas); the journal's `prepend` stops at `KEPT` (2000) keeping the newest, and `older` stays
+  true. The journal still renders every event each frame (a list virtualisation is a later unit).
+- **A-24:** `Auth::issuer_of(origin)` replaces `signin.rs`'s own parse of `servers.json`.
+- **A-04/A-05 in `auth.rs`:** `split_origin` delegates to `url::origin` and `form_encode` to
+  `pct_encode`. Byte-identical for every issuer the server can send; only an issuer with `?`/`#` before
+  its first `/` or surrounding blanks would split differently, and RFC 8414 forbids both.
+- **A-54:** `Stars::contains` deleted; `selftest_closed.rs` and the tests read `ids()`.
+- Stale comments that named Credential Manager as the store (`settings.rs` `workstate_url`, `fm/src/work.rs`)
+  deleted.
+- Tests: `text_input::tests::undo_keeps_the_newest_steps_only`, `clipped::tests::labels_painted_longest_ago_go_first`,
+  `journal::tests::older_pages_stop_at_the_cap_and_keep_the_newest`, `tests/oauth.rs`
+  `issuer_of_names_the_signed_in_origins_issuer_only`, the inbox's round-trip test now checks the notice;
+  `split_origin` is pinned by a table. Red check: with each cap disabled, the three cap tests fail (3 of 3).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-8\target`, 6cdca8e): build ok, no warnings; `cargo test --release
+  --workspace --no-fail-fast` 650 passed, 0 failed. `--selftest` 5 of 5 exit 0 / PASS (128–155 s).
+  `--selftest-supervise` PASS (310 s), `--selftest-detach-shutdown` PASS (14 s). 0 `fm-selftest` rows from
+  this worktree (1 row of m5-44-7's run, left alone).
