@@ -162,6 +162,8 @@ pub struct Supervised<'a> {
     pub closed: &'a [Session],
     pub starred: Option<&'a BTreeSet<String>>,
     pub expanded: Option<&'a HashSet<String>>,
+    /// Keeps a disabled folder that holds no session (search); the tree leaves it out (m5/56).
+    pub disabled_folders: bool,
 }
 
 /// Filled once per poll, off the UI thread, because [`build`] runs on every frame.
@@ -333,16 +335,16 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                     sessions,
                     more,
                 };
+                let (sessions, more) = place(
+                    &folder.name,
+                    by_repo.remove(&folder.name).unwrap_or_default(),
+                    closed_by_repo.remove(&folder.name).unwrap_or_default(),
+                    first_in.remove(&folder.name).unwrap_or_default(),
+                );
                 if folder.enabled || supervised_in.is_some() {
-                    let (sessions, more) = place(
-                        &folder.name,
-                        by_repo.remove(&folder.name).unwrap_or_default(),
-                        closed_by_repo.remove(&folder.name).unwrap_or_default(),
-                        first_in.remove(&folder.name).unwrap_or_default(),
-                    );
                     repos.push(node(sessions, more));
-                } else {
-                    parked.push(node(Vec::new(), 0));
+                } else if !sessions.is_empty() || more > 0 || sup.disabled_folders {
+                    parked.push(node(sessions, more));
                 }
             }
             if let Some(home) = workspace.home() {
@@ -536,11 +538,22 @@ mod tests {
         let p = &tree.workspaces[0];
         let repos: Vec<_> = p.repos.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(repos, ["Alpha", "Beta", "Off"], "disabled repo Off comes last");
-        assert!(!p.repos[2].enabled && p.repos[2].sessions.is_empty(), "and lists no sessions");
+        assert!(!p.repos[2].enabled, "shown, as it holds a session");
+        assert_eq!(names(&p.repos[2]), ["off"]);
         assert_eq!(names(&p.repos[0]), ["parked", "busy"]);
         assert_eq!(names(&p.repos[1]), ["term", "gone"]);
         assert_eq!(tree.hidden_stopped, 1);
-        assert_eq!(p.session_count(), 4);
+        assert_eq!(p.session_count(), 5);
+    }
+
+    #[test]
+    fn a_disabled_folder_without_sessions_leaves_the_tree_and_stays_for_search() {
+        let quiet: Vec<Session> = sessions().into_iter().filter(|s| s.name != "off").collect();
+        let tree = build(&[workspace()], &quiet, NOW, false, &Supervised::default());
+        assert_eq!(tree.workspaces[0].repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["Alpha", "Beta"]);
+        let all = build(&[workspace()], &quiet, NOW, false, &Supervised { disabled_folders: true, ..Supervised::default() });
+        let off = all.workspaces[0].repos.last().unwrap();
+        assert_eq!((off.name.as_str(), off.enabled, off.sessions.len()), ("Off", false, 0));
     }
 
     #[test]
@@ -566,7 +579,8 @@ mod tests {
                 ("busy", true),
                 ("term", false),
                 ("gone", false),
-                ("done", false)
+                ("done", false),
+                ("off", true)
             ]
         );
     }

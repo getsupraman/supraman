@@ -190,7 +190,7 @@ impl FleetView {
             .border_color(colors.border)
             .child(
                 icon_button(hits, "add-workspace", Icon::FolderAdd, "Add workspace…", false, cx)
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.add_workspace(window, cx))),
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_add_menu(cx))),
             )
             .child(separator())
             .child(
@@ -376,6 +376,7 @@ impl FleetView {
         }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.render_add(cx));
+        notices.extend(self.render_edit_folders(cx));
         if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  fm workspace add <dir>".into(),
@@ -1429,7 +1430,11 @@ impl FleetView {
             );
         }
         let ticked = draft.repos.iter().filter(|(_, on)| *on).count();
-        let summary = format!("{ticked} of {} repos enabled; unticked ones are registered disabled", draft.repos.len());
+        let summary = if draft.empty {
+            "No folders yet: Save opens Edit folders… to add them.".to_string()
+        } else {
+            format!("{ticked} of {} repos enabled; unticked ones are registered disabled", draft.repos.len())
+        };
         Some(
             div()
                 .id("add-review")
@@ -1451,17 +1456,19 @@ impl FleetView {
                         .justify_between()
                         .text_xs()
                         .text_color(colors.text_muted)
-                        .child("ADD WORKSPACE")
+                        .child(if draft.empty { "ADD EMPTY WORKSPACE" } else { "ADD WORKSPACE" })
                         .child("Enter saves · Esc cancels"),
                 )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(colors.text_muted)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(SharedString::from(draft.root.display().to_string())),
-                )
+                .when(!draft.empty, |d| {
+                    d.child(
+                        div()
+                            .text_xs()
+                            .text_color(colors.text_muted)
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(SharedString::from(draft.root.display().to_string())),
+                    )
+                })
                 .child(
                     div()
                         .flex()
@@ -1482,7 +1489,7 @@ impl FleetView {
                 )
                 .children(draft.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(summary)))
-                .child(repos)
+                .when(!draft.empty, |d| d.child(repos))
                 .child(
                     div()
                         .flex()
@@ -1503,9 +1510,9 @@ impl FleetView {
                                 .child(hit_target(&self.hits, "add-error".into()))
                         }))
                         .child(button::bordered(&self.hits, "add-save", "Save", cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
+                            |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
-                                this.save_add(cx);
+                                this.save_add(window, cx);
                             },
                         )))
                         .child(button::bordered(&self.hits, "add-cancel", "Cancel", cx).on_click(cx.listener(
@@ -1538,7 +1545,7 @@ fn relay_word(label: &str) -> &str {
     }
 }
 
-fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
+pub(crate) fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
     div()
         .flex_none()
         .px_1()

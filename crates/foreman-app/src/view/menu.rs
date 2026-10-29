@@ -14,6 +14,9 @@ pub enum MenuAction {
     Work(String),
     Task(String),
     Rescan(String),
+    EditFolders(String),
+    AddFromFolder,
+    AddEmpty,
     Remove(String),
     OpenFolder(PathBuf),
     OpenTerminal { cwd: PathBuf, title: String },
@@ -36,6 +39,7 @@ pub enum Confirmed {
     /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
+    Edit { workspace: String, edit: foreman_core::Edit },
 }
 
 pub type MenuItem = foreman_ui::menu::MenuItem<MenuAction>;
@@ -62,6 +66,7 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
         items.push(item("task", "Task…", MenuAction::Task(w.clone())));
     }
     items.push(item("rescan", "Rescan repos", MenuAction::Rescan(w.clone())));
+    items.push(item("edit-folders", "Edit folders…", MenuAction::EditFolders(w.clone())));
     if let Some(home) = &node.home {
         items.extend([
             item("open-folder", "Open folder", MenuAction::OpenFolder(home.clone())),
@@ -73,6 +78,11 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
     }
     items.push(item("remove", "Remove…", MenuAction::Remove(w.clone())));
     items
+}
+
+/// Add workspace: today's scan of a parent folder, or a workspace with no folder yet.
+pub fn add_items() -> Vec<MenuItem> {
+    vec![item("add-from-folder", "From a parent folder…", MenuAction::AddFromFolder), item("add-empty", "Empty workspace", MenuAction::AddEmpty)]
 }
 
 pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
@@ -183,9 +193,9 @@ mod tests {
 
     #[test]
     fn workspace_menu_follows_its_state() {
-        assert_eq!(keys(&workspace_items(&node(None), false, false)), ["start", "work", "rescan", "open-folder", "open-terminal", "remove"]);
+        assert_eq!(keys(&workspace_items(&node(None), false, false)), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
         let started = workspace_items(&node(Some(true)), true, false);
-        assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "open-folder", "open-terminal", "remove"]);
+        assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
         assert_eq!(started.last().unwrap().action, MenuAction::Remove("demo".into()));
     }
 
@@ -261,8 +271,8 @@ mod tests {
         assert_eq!(items[4].label, "Delete…");
         assert!(matches!(&items[4].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
         let ws = workspace_items(&node(Some(false)), false, true);
-        assert_eq!(keys(&ws), ["start", "work", "rescan", "open-folder", "open-terminal", "delete-closed", "remove"]);
-        assert_eq!(ws[5].label, "Delete closed background sessions…");
-        assert_eq!(ws[5].action, MenuAction::DeleteClosed("demo".into()));
+        assert_eq!(keys(&ws), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "delete-closed", "remove"]);
+        assert_eq!(ws[6].label, "Delete closed background sessions…");
+        assert_eq!(ws[6].action, MenuAction::DeleteClosed("demo".into()));
     }
 }

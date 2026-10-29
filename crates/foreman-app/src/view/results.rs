@@ -21,6 +21,7 @@ impl FleetView {
             closed: &self.closed,
             starred: Some(self.stars.ids()),
             expanded: Some(&all),
+            disabled_folders: true,
         };
         crate::fleet::build(&self.workspaces, &self.sessions, now_ms(), true, &sup)
     }
@@ -116,14 +117,22 @@ impl FleetView {
                 let label = repo_label(&r.name, &r.path, w.home.as_deref());
                 let shift = label.find(r.name.as_str()).unwrap_or(0);
                 let marks: Vec<Range<usize>> = r.name_marks.iter().map(|m| m.start + shift..m.end + shift).collect();
-                let (wname, rname) = (w.name.clone(), r.name.clone());
+                let (wname, rname, disabled) = (w.name.clone(), r.name.clone(), r.disabled);
                 body = body.child(
                     row(format!("result-repo-{}/{}", w.name, r.name), 26., 24.)
                         .text_sm()
                         .when(r.sessions.is_empty(), |d| d.text_color(quiet(cx)))
                         .child(highlighted(format!("result-repo-name-{}/{}", w.name, r.name), label, &marks, cx).flex_1())
+                        .when(r.disabled, |d| d.child(super::left::tag("disabled", cx).relative().child(hit_target(&self.hits, format!("result-disabled-{}/{}", w.name, r.name)))))
                         .child(count(r.sessions.len(), cx))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&wname, Some(&rname), cx))),
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            if disabled {
+                                this.clear_search(cx);
+                                this.edit_folders(&wname, window, cx);
+                            } else {
+                                this.reveal(&wname, Some(&rname), cx);
+                            }
+                        })),
                 );
                 for hit in &r.sessions {
                     body = body.child(self.render_result_session(&w.name, &r.name, hit, 46., cx));
