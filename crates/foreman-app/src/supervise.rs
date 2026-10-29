@@ -7,7 +7,6 @@ use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
 use foreman_core::{
     HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
-    migrate_home,
     read_answered, read_outbox, relay_demand, relay_ready,
 };
 use foreman_supervisor::{
@@ -32,8 +31,7 @@ pub struct Setup {
 }
 
 pub fn setup(home: &Path) -> Setup {
-    let mut notices = migrate_home(home)
-        .unwrap_or_else(|e| vec![format!("Cannot migrate {} to workspace names: {e}", home.display())]);
+    let mut notices = Vec::new();
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {

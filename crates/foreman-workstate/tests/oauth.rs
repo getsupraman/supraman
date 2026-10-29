@@ -380,7 +380,7 @@ fn a_damaged_servers_json_is_reported_and_never_written_over() {
     assert_eq!(fresh.status(fake.base()), AuthStatus::NotSignedIn, "no file is an empty one");
 }
 
-/// A store that refuses what Credential Manager's single blob could not hold.
+/// A store that refuses a secret over 2560 bytes.
 #[derive(Default)]
 struct BlobLimited(MemoryStore);
 
@@ -390,7 +390,7 @@ impl SecretStore for BlobLimited {
     }
 
     fn set(&self, key: &str, secret: &str) -> Result<(), String> {
-        if secret.len() > 2560 { Err("Credential Manager: The stub received bad data.".into()) } else { self.0.set(key, secret) }
+        if secret.len() > 2560 { Err("The stub received bad data.".into()) } else { self.0.set(key, secret) }
     }
 
     fn delete(&self, key: &str) -> Result<(), String> {
@@ -424,13 +424,13 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
     assert_eq!(store.get(&oauth.issuer()).unwrap().as_ref(), oauth.issued().last());
 }
 
-/// WorkState 1.0.0's refresh tokens are longer than one Credential Manager blob.
+/// WorkState 1.0.0's refresh tokens are 6 KB.
 #[cfg(windows)]
 #[test]
 fn a_6_kb_refresh_token_rotates_through_the_file_store() {
     use foreman_workstate::secret::FileStore;
     let (dir, fake, oauth, _store, _auth) = setup();
-    let store = || Arc::new(FileStore::new(dir.path(), Arc::new(MemoryStore::default())));
+    let store = || Arc::new(FileStore::new(dir.path()));
     oauth.set_access_ttl(60);
     oauth.set_refresh_len(6 * 1024);
     let auth = Auth::with_store(dir.path(), store());
