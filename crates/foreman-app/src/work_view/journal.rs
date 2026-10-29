@@ -54,13 +54,15 @@ impl JournalFeed {
         self.events.len() - before
     }
 
-    /// Prepends what is older than the oldest shown.
+    /// Prepends what is older than the oldest shown, up to [`KEPT`] events in all: the newest stay.
     pub fn prepend(&mut self, events: Vec<JournalEvent>, more: bool) {
         let first = self.events.first().map_or(i64::MAX, |e| e.seq);
         let mut older: Vec<JournalEvent> = events.into_iter().filter(|e| e.seq < first).collect();
+        let cut = (older.len() + self.events.len()).saturating_sub(KEPT).min(older.len());
+        older.drain(..cut);
         older.append(&mut self.events);
         self.events = older;
-        self.older = more;
+        self.older = more || cut > 0;
     }
 }
 
@@ -146,15 +148,10 @@ impl WorkView {
             return;
         }
         self.journal.pending = true;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
-            this.update(cx, |this, cx| {
-                this.journal.pending = false;
-                this.read_journal(cx);
-            })
-            .ok();
-        })
-        .detach();
+        after_debounce(cx, |this, cx| {
+            this.journal.pending = false;
+            this.read_journal(cx);
+        });
     }
 
     /// The newest page when there is no feed yet, else what came after its cursor.
@@ -373,6 +370,17 @@ mod tests {
         assert!(!feed.older);
         let empty = JournalFeed::from_newest(Journal { seq: 77, ..Default::default() });
         assert_eq!(empty.cursor, 77, "an empty journal reads forward from the snapshot's seq");
+    }
+
+    #[test]
+    fn older_pages_stop_at_the_cap_and_keep_the_newest() {
+        let newest = KEPT as i64 * 2;
+        let mut feed = JournalFeed::from_newest(Journal { seq: newest, events: vec![event(newest)], ..Default::default() });
+        feed.prepend((1..newest).map(event).collect(), false);
+        assert_eq!(feed.events.len(), KEPT);
+        assert_eq!(feed.events.last().map(|e| e.seq), Some(newest));
+        assert_eq!(feed.events.first().map(|e| e.seq), Some(newest - KEPT as i64 + 1));
+        assert!(feed.older, "the events cut are older ones still to read");
     }
 
     #[test]

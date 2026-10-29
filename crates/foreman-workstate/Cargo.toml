@@ -9,6 +9,7 @@ publish = false
 fake = []
 
 [dependencies]
+async-channel = "2.5"
 base64 = "0.22"
 foreman-core = { path = "../foreman-core" }
 getrandom = "0.3"

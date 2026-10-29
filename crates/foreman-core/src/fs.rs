@@ -8,14 +8,20 @@ use serde::de::DeserializeOwned;
 
 static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
 
-/// Replaces `path` with `bytes`, creating its folder: a temp file unique to this process and call, renamed
-/// over `path` (retried while another process holds it open), so a reader never sees half a file.
+/// Replaces `path` with `bytes`, creating its folder: a temp file unique to this process and call, flushed
+/// to disk and renamed over `path` (retried while another process holds it open), so a reader never sees
+/// half a file and a crash leaves the old file or the new one.
 pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
+    const ERROR_SHARING_VIOLATION: i32 = 32;
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
     let tmp = tmp_path(path);
-    if let Err(e) = fs::write(&tmp, bytes) {
+    let staged = fs::File::create(&tmp).and_then(|mut file| {
+        file.write_all(bytes.as_ref())?;
+        file.sync_all()
+    });
+    if let Err(e) = staged {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
@@ -23,7 +29,7 @@ pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
     loop {
         match fs::rename(&tmp, path) {
             Ok(()) => return Ok(()),
-            Err(e) if tries < 20 && e.kind() == ErrorKind::PermissionDenied => {
+            Err(e) if tries < 20 && (e.kind() == ErrorKind::PermissionDenied || e.raw_os_error() == Some(ERROR_SHARING_VIOLATION)) => {
                 tries += 1;
                 std::thread::sleep(Duration::from_millis(25));
             }

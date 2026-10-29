@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use foreman_core::OutboxMessage;
+use foreman_core::fs::{load_json_or_notice, write_atomic};
 use serde::{Deserialize, Serialize};
 
 pub const FILE: &str = "messages-dismissed.json";
@@ -31,15 +32,8 @@ impl DismissedMessages {
         let Some(path) = home.map(Self::path) else {
             return (Self::default(), None);
         };
-        let (files, notice) = match std::fs::read_to_string(&path) {
-            Ok(text) => match serde_json::from_str::<File>(&text) {
-                Ok(f) => (f.workspaces, None),
-                Err(e) => (BTreeMap::new(), Some(format!("Cannot read {} ({e}): every message shows", path.display()))),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (BTreeMap::new(), None),
-            Err(e) => (BTreeMap::new(), Some(format!("Cannot read {} ({e}): every message shows", path.display()))),
-        };
-        (Self { path: Some(path), files }, notice)
+        let (file, notice) = load_json_or_notice::<File>(&path, "every message shows");
+        (Self { path: Some(path), files: file.workspaces }, notice)
     }
 
     pub fn hides(&self, workspace: &str, file: &str) -> bool {
@@ -79,12 +73,7 @@ impl DismissedMessages {
             return Ok(());
         };
         let text = serde_json::to_string_pretty(&File { workspaces: self.files.clone() }).map_err(|e| e.to_string())?;
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        write_atomic(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 }
 

@@ -25,7 +25,7 @@ pub struct Settings {
     pub max_working: usize,
     /// The WorkState server Foreman signs in to (m5/43), an origin like `https://workstate.example`;
     /// an older file's `…/mcp` URL means its origin. Unset: [`DEFAULT_WORKSTATE_URL`]. No token is
-    /// ever kept here: the sign-in's refresh token is in Credential Manager.
+    /// ever kept here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate_url: Option<String>,
     /// The fleet panel's width in logical pixels, as the divider was last dragged.
