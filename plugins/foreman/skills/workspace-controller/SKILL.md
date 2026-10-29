@@ -58,7 +58,7 @@ not match and the call parks). One command per call: no pipes, no `&&`, no `;`, 
 |---|---|
 | `fm roster <w>` | one line per session, tab-separated: `name  role  health  id  cwd` (`role` = `workspace`, `relay`, `repo`, `retired` after unwant, `-` for a row nothing wants; `health` = `running`, `idle`, `blocked (…)`, `stopped`, `orphaned (…)`, `not launched`) |
 | `fm roster <w> --json` | `{"workspace","started","sessions":[{"name","role","repo","health","id","sessionId","cwd","wanted"}]}` |
-| `fm workspace show <w>` | `name:`, `root:`, `created:`, `repos: N`, then one line per repo, tab-separated: `  <name>  branch=…  claude_md=…  agents_md=…  enabled=…` |
+| `fm workspace show <w>` | `name:`, `home:`, `created:`, `scans: N` (one `  <path>  depth=…` line each), `folders: N`, then one line per folder, tab-separated: `  <name>  kind=git|plain  branch=…  claude_md=…  agents_md=…  enabled=…  path=…` |
 | `fm want <w> <repo> --prompt-file <path>` | `fm-<w>-<slug>: added; repo <name>, cwd <path>` + `the supervisor launches it at its next tick while Foreman runs` |
 | `fm unwant <w> <repo>` | `fm-<w>-<slug>: no longer wanted; the supervisor stops it at its next tick (stop, never rm)` |
 | `fm tell "<text>"` | `told the human (<w>): <file>` — the text is in Foreman's Messages, from you |
@@ -90,10 +90,10 @@ Foreman's; to start or retire a repo session use `want`/`unwant`, to have anythi
 
 **Bind the repos.** WorkState knows a repo by its keys, and a repo bound to no project gets onboarding that
 suggests creating one — a second project for this workspace. So the project `<w>` holds the key of **every
-enabled repo** of the workspace. Do it whenever you create the project or first use it in a session, and
+enabled git folder** of the workspace (`kind=git`; a plain folder has no repo key). Do it whenever you create the project or first use it in a session, and
 again when `fm workspace show <w>` lists a repo the project does not hold yet:
 1. `work_get(refs: ["<w>"])` prints the repos the project already holds.
-2. For each enabled repo in `fm workspace show <w>` that is missing, in its folder (Bash, bare, read only):
+2. For each enabled `kind=git` folder in `fm workspace show <w>` that is missing, in its folder (Bash, bare, read only):
    `git -C <repo dir> rev-parse --path-format=absolute --git-common-dir` — the **root** is the parent of the
    path it prints (a worktree prints its main checkout's), and `git -C <repo dir> remote get-url origin` —
    the **remote**, if it prints one (no origin: no remote).
@@ -108,8 +108,8 @@ ref>")`, and Foreman mints each repo session with its repo, so a bare `work_brie
 
 A task is a message from the human (§1) that asks for work. A question gets an answer, not a plan.
 
-1. **Read the repos.** `fm workspace show <w>` names them; each is a folder under your cwd (the workspace
-   root; `Glob("**/<name>/*")` finds a deeper one). Read their `CLAUDE.md`/`AGENTS.md`, the code the task
+1. **Read the repos.** `fm workspace show <w>` names them with their `path=`; your cwd is the workspace's
+   home and every folder outside it was added to your session with `--add-dir`. Read their `CLAUDE.md`/`AGENTS.md`, the code the task
    touches, and how the repos depend on each other — with `Read`/`Glob`/`Grep`, never by shelling out.
    `fm roster <w>` shows which repo sessions exist.
 2. **The project.** One WorkState project per workspace, ref = `<w>`: `work_search(q: "<w>")`; if absent,

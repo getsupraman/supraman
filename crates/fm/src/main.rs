@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, discover};
+use foreman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, discover};
 
 const USAGE: &str = "\
 usage:
@@ -259,11 +259,14 @@ fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> Result<&'a s
 
 fn add(args: &[&str]) -> Result<(), Failure> {
     let args = parse_add(args)?;
-    let workspace = discover(&args.dir, args.name.as_deref(), args.depth)?;
+    let mut workspace = discover(&args.dir, args.name.as_deref(), args.depth)?;
 
     let registry = registry()?;
     if !args.force {
         registry.check_new(&workspace)?;
+    }
+    for (folder, owner) in registry.claim_folders(&mut workspace, |_| true)? {
+        println!("notice: {folder} is supervised in workspace {owner}; disabled here");
     }
     if args.dry_run {
         println!("dry run: would register workspace {} (nothing written)", workspace.name);
@@ -286,7 +289,7 @@ fn list() -> Result<(), Failure> {
         println!("no workspaces registered");
     }
     for p in workspaces {
-        println!("{}\trepos={}\troot={}", p.name, p.repos.len(), p.root.display());
+        println!("{}\tfolders={}\thome={}", p.name, p.folders.len(), home_text(&p));
     }
     Ok(())
 }
@@ -303,22 +306,35 @@ fn remove(name: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+fn home_text(p: &Workspace) -> String {
+    p.home().map(|h| h.display().to_string()).unwrap_or_else(|| "(none)".into())
+}
+
 fn print_workspace(p: &Workspace, with_created: bool) {
     println!("name: {}", p.name);
-    println!("root: {}", p.root.display());
+    println!("home: {}", home_text(p));
     if with_created {
         println!("created: {}", p.created_at.to_rfc3339());
     }
-    println!("repos: {}", p.repos.len());
+    println!("scans: {}", p.scans.len());
+    for s in &p.scans {
+        println!("  {}\tdepth={}", s.path.display(), s.depth);
+    }
+    println!("folders: {}", p.folders.len());
     let yes = |b: bool| if b { "yes" } else { "no" };
-    for r in &p.repos {
+    for f in &p.folders {
+        let branch = match (f.kind, f.branch.as_deref()) {
+            (FolderKind::Plain, _) => "-",
+            (FolderKind::Git, b) => b.unwrap_or("(detached)"),
+        };
         println!(
-            "  {}\tbranch={}\tclaude_md={}\tagents_md={}\tenabled={}",
-            r.name,
-            r.branch.as_deref().unwrap_or("(detached)"),
-            yes(r.has_claude_md),
-            yes(r.has_agents_md),
-            yes(r.enabled),
+            "  {}\tkind={}\tbranch={branch}\tclaude_md={}\tagents_md={}\tenabled={}\tpath={}",
+            f.name,
+            if f.is_git() { "git" } else { "plain" },
+            yes(f.has_claude_md),
+            yes(f.has_agents_md),
+            yes(f.enabled),
+            f.path.display(),
         );
     }
 }
@@ -363,14 +379,21 @@ fn render(workspaces: &[Workspace], sessions: &[Session], show_stopped: bool, sh
     }
     for p in workspaces {
         let assignment = assign(&visible, p);
-        let count: usize = assignment.by_repo.values().map(Vec::len).sum();
-        let _ = writeln!(out, "{}  {}  ({count} sessions)", p.name, p.root.display());
+        let count: usize = assignment.by_repo.values().map(Vec::len).sum::<usize>() + assignment.in_home.len();
+        let _ = writeln!(out, "{}  {}  ({count} sessions)", p.name, home_text(p));
         if count == 0 {
             let _ = writeln!(out, "  {none}");
         }
         for (repo, group) in &assignment.by_repo {
             let _ = writeln!(out, "  {repo}");
             for s in group {
+                placed.insert(s.session_id.clone());
+                write_session(&mut out, s, now);
+            }
+        }
+        if !assignment.in_home.is_empty() {
+            let _ = writeln!(out, "  (home)");
+            for s in &assignment.in_home {
                 placed.insert(s.session_id.clone());
                 write_session(&mut out, s, now);
             }
@@ -402,7 +425,7 @@ fn write_session(out: &mut String, s: &Session, now: i64) {
 #[cfg(test)]
 mod tests {
     use foreman_claude::parse;
-    use foreman_core::Repo;
+    use foreman_core::Folder;
 
     use super::*;
 
@@ -411,14 +434,7 @@ mod tests {
     fn workspace(name: &str, root: &str, repos: &[&str]) -> Workspace {
         let repos = repos
             .iter()
-            .map(|r| Repo {
-                name: (*r).into(),
-                path: PathBuf::from(root).join(r),
-                has_claude_md: false,
-                has_agents_md: false,
-                branch: None,
-                enabled: true,
-            })
+            .map(|r| Folder::new(*r, PathBuf::from(root).join(r)))
             .collect();
         Workspace::new(name, root, repos)
     }

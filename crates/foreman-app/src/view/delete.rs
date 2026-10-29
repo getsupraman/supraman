@@ -358,7 +358,7 @@ mod tests {
 
     fn row(s: Session, closed: bool) -> SessionRow {
         let health = s.health(now_ms());
-        SessionRow { attachable: fleet::attachable(&s, &health), session: s, health, hook: None, foreign: false, starred: false, closed }
+        SessionRow { closed, ..SessionRow::new(s, health) }
     }
 
     #[test]

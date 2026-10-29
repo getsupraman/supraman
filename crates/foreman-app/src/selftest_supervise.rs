@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::{Claude, Health, LaunchSpec, Removal, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
-    DEFAULT_MAX_WORKING, EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
+    DEFAULT_MAX_WORKING, EventReader, RelayDrop, Folder, FolderKind, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
 };
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session, relay_session_name, workspace_session_name,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session, repo_session, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
@@ -104,7 +104,7 @@ pub fn prepare() -> anyhow::Result<()> {
     std::fs::create_dir_all(&repo).with_context(|| format!("create {}", repo.display()))?;
     for (name, root) in [&tb.a, &tb.u, &tb.c1, &tb.c2] {
         let repos = if name == &tb.a.0 {
-            vec![Repo { name: REPO.into(), path: repo.clone(), has_claude_md: false, has_agents_md: false, branch: None, enabled: true }]
+            vec![Folder::new(REPO, repo.clone())]
         } else {
             Vec::new()
         };
@@ -585,6 +585,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     );
 
     scroll_step(tb, view, cx).await.context("step s")?;
+    virtual_step(tb, view, cx).await.context("step v")?;
 
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
@@ -819,6 +820,96 @@ async fn lowest_row_scrolled_into_view(tb: &Testbed, view: &Entity<FleetView>, c
         f32::from(before.bounds.top()),
         f32::from(after.top())
     ))
+}
+
+const PROMPT_OK: &str = "This is an automated Foreman selftest. Reply with the single word ok, use no tool, and stop.";
+
+/// A workspace of this checkout (a git folder: claude asks trust for any folder holding a `.git`, so a git
+/// folder made here could not launch) and a plain folder in the testbed's home: each folder's wanted session
+/// runs and sits first under its folder, the plain one's shows again under the testbed with keys scoped
+/// `@<testbed>`; then both stop.
+async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = format!("{}-v", tb.a.0);
+    let (git_dir, plain_dir) = (cargo_root(), tb.a.1.join("VPlain"));
+    std::fs::create_dir_all(&plain_dir)?;
+    let mut ws = Workspace::new(name.as_str(), &git_dir, Vec::new());
+    ws.home = None;
+    ws.add_folder(&git_dir);
+    ws.add_folder(&plain_dir);
+    let kinds: Vec<FolderKind> = ws.folders.iter().map(|f| f.kind).collect();
+    if kinds != [FolderKind::Git, FolderKind::Plain] || ws.folders[0].branch.is_none() || ws.folders[1].branch.is_some() {
+        bail!("the folders read as {:?}", ws.folders);
+    }
+    let folders: Vec<String> = ws.folders.iter().map(|f| f.name.clone()).collect();
+    Registry::at(&tb.home).save(&ws, true)?;
+    let wanted: Vec<WantedSession> =
+        ws.folders.iter().map(|f| repo_session(&name, &f.name, &f.path, PROMPT_OK).ok_or_else(|| anyhow!("no name for {}", f.name))).collect::<anyhow::Result<_>>()?;
+    let names: Vec<String> = wanted.iter().map(|w| w.name.clone()).collect();
+    let started = Instant::now();
+    DesiredState::update(&tb.home, &name, |d| {
+        for w in &wanted {
+            d.want(w.clone());
+        }
+        d.started = true;
+    })?;
+    let live = wait_for("both folders' sessions live", Duration::from_secs(180), cx, |rows| {
+        let ours: Vec<Session> = names.iter().filter_map(|n| rows.iter().find(|s| &s.name == n && s.pid.is_some()).cloned()).collect();
+        (ours.len() == names.len()).then_some(ours)
+    })
+    .await?;
+    let live_after = started.elapsed();
+    let placed = Instant::now();
+    loop {
+        let tree = view.read_with(cx, |v, _| {
+            let t = v.tree();
+            let node = |w: &str| t.workspaces.iter().find(|n| n.name == w).cloned();
+            (node(&name), node(&tb.a.0))
+        });
+        let ok = |t: &(Option<crate::fleet::WorkspaceNode>, Option<crate::fleet::WorkspaceNode>)| {
+            let (Some(v), Some(a)) = t else { return false };
+            let firsts: Vec<(&str, FolderKind, Option<&str>, Option<&str>)> = v
+                .repos
+                .iter()
+                .map(|r| (r.name.as_str(), r.kind, r.sessions.first().map(|s| s.session.name.as_str()), r.sessions.first().and_then(|s| s.also_in.as_deref())))
+                .collect();
+            let in_a = |n: &str| a.repos.iter().filter(|r| !r.listed).flat_map(|r| &r.sessions).any(|s| s.session.name == n && s.also_in.as_deref() == Some(&name));
+            firsts == [
+                (folders[0].as_str(), FolderKind::Git, Some(names[0].as_str()), None),
+                (folders[1].as_str(), FolderKind::Plain, Some(names[1].as_str()), None),
+            ] && in_a(&names[1])
+        };
+        if ok(&tree) {
+            break;
+        }
+        if placed.elapsed() > Duration::from_secs(15) {
+            bail!("the tree does not place them: {name} {:?} / {} {:?}", tree.0.map(|n| n.repos), tb.a.0, tree.1.map(|n| n.repos.iter().map(|r| r.name.clone()).collect::<Vec<_>>()));
+        }
+        sleep(cx, Duration::from_millis(250)).await;
+    }
+    for s in &live {
+        wait_painted(view, &format!("session-row-{}", s.session_id), Duration::from_secs(10), cx).await?;
+    }
+    wait_painted(view, &format!("session-row-{}@{}", live[1].session_id, tb.a.0), Duration::from_secs(10), cx).await?;
+    DesiredState::update(&tb.home, &name, |d| d.started = false)?;
+    let stop_at = Instant::now();
+    let stopped = wait_for("both stopped", Duration::from_secs(60), cx, |rows| {
+        let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
+        (ours.len() == names.len() && ours.iter().all(|s| s.pid.is_none())).then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
+    })
+    .await?;
+    println!(
+        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, the plain one's also under {} as a home folder with keys session-row-<id>@{} | not started → stopped (still listed) after {}: {}",
+        folders[0],
+        folders[1],
+        tb.a.0,
+        names.join(", "),
+        secs(live_after),
+        tb.a.0,
+        tb.a.0,
+        secs(stop_at.elapsed()),
+        stopped.join(", ")
+    );
+    Ok(())
 }
 
 const FM_WITHIN: Duration = Duration::from_secs(60);

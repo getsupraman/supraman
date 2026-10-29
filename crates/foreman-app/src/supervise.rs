@@ -100,11 +100,12 @@ pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Works
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
     let relay = relay_wanted(home, workspace)?;
     clear_ready(home, &workspace.name)?;
-    let controller = DesiredState::workspace_controller(&workspace.name, &workspace.root, &prompt)
+    let mut controller = DesiredState::workspace_controller(&workspace.name, home_of(workspace)?, &prompt)
         .sessions
         .into_iter()
         .next()
         .context("no controller session")?;
+    controller.add_dirs = workspace.other_dirs();
     let (desired, ()) = DesiredState::update(home, &workspace.name, |desired| {
         desired.sessions.retain(|w| w.name != controller.name);
         desired.retired.retain(|n| n != &controller.name);
@@ -121,7 +122,11 @@ pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Works
 /// Its dirs are created here: its `--add-dir` must exist before it launches.
 pub fn relay_wanted(home: &Path, workspace: &Workspace) -> anyhow::Result<foreman_supervisor::WantedSession> {
     let relay_dir = ensure_relay_dirs(home, &workspace.name)?;
-    Ok(relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?))
+    Ok(relay_session(&workspace.name, home_of(workspace)?, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?))
+}
+
+fn home_of(workspace: &Workspace) -> anyhow::Result<&Path> {
+    workspace.home().ok_or_else(|| anyhow!("workspace {} has no home and no folder to run its sessions in", workspace.name))
 }
 
 pub fn sync_relay(home: &Path, workspace: &Workspace, desired: &DesiredState, idle_ms: Millis, now: Millis) -> anyhow::Result<Option<DesiredState>> {
@@ -471,7 +476,7 @@ mod tests {
         let names: Vec<&str> = d.sessions.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["fm-demo-relay", "fm-demo-workspace", "fm-demo-park"], "a wanted relay stays first");
         assert_eq!(d.sessions[1].cwd, PathBuf::from(r"C:\moved"));
-        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\moved"), "the relay follows the root");
+        assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\moved"), "the relay follows the home");
 
         stop_workspace(home.path(), "demo").unwrap();
         let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
@@ -480,6 +485,32 @@ mod tests {
         stop_workspace(home.path(), "never-started").unwrap();
         assert!(DesiredState::load(home.path(), "never-started").unwrap().is_none());
         assert!(start_workspace(home.path(), None, &workspace).is_err());
+    }
+
+    #[test]
+    fn a_virtual_workspace_runs_in_its_home_and_adds_the_other_folders() {
+        let home = tempfile::tempdir().unwrap();
+        write_role_template(home.path(), &plugin_dir(), RELAY_ROLE).unwrap();
+        let folders = vec![
+            foreman_core::Folder::new("Gaia", r"P:\L\Gaia"),
+            foreman_core::Folder::new("NodeApi", r"P:\L\NodeApi"),
+            foreman_core::Folder::new("dotnet", r"Q:\node-api-dotnet"),
+        ];
+        let mut gaia = Workspace::new("gaia", r"P:\L\Gaia", folders);
+        gaia.home = None;
+        let d = start_workspace(home.path(), Some(&plugin_dir()), &gaia).unwrap();
+        let controller = &d.sessions[0];
+        assert_eq!(controller.cwd, PathBuf::from(r"P:\L\Gaia"), "home defaults to the first folder");
+        assert_eq!(controller.add_dirs, [PathBuf::from(r"P:\L\NodeApi"), PathBuf::from(r"Q:\node-api-dotnet")]);
+        assert_eq!(relay_wanted(home.path(), &gaia).unwrap().cwd, PathBuf::from(r"P:\L\Gaia"));
+
+        gaia.home = Some(r"P:\L".into());
+        let d = start_workspace(home.path(), Some(&plugin_dir()), &gaia).unwrap();
+        assert_eq!((d.sessions[0].cwd.as_path(), d.sessions[0].add_dirs.as_slice()), (std::path::Path::new(r"P:\L"), &[PathBuf::from(r"Q:\node-api-dotnet")][..]));
+
+        let empty = Workspace { home: None, folders: vec![], ..gaia };
+        let err = start_workspace(home.path(), Some(&plugin_dir()), &empty).unwrap_err().to_string();
+        assert!(err.contains("no home and no folder"), "{err}");
     }
 
     #[test]

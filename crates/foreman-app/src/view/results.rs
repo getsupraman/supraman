@@ -5,14 +5,14 @@ use foreman_ui::matcher::{count, highlighted};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use super::left::{quiet, repo_label, secondary};
+use super::left::{home_text, quiet, repo_label, secondary};
 use super::{FleetView, hit_target};
 use crate::fleet::{Supervised, Tree};
 use crate::search::{self, Results, SessionHit};
 
 impl FleetView {
     pub fn search_tree(&self) -> Tree {
-        let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.repos.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
+        let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.folders.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
         let sup = Supervised {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
@@ -41,7 +41,7 @@ impl FleetView {
             .into_any_element()
     }
 
-    fn reveal(&mut self, workspace: &str, repo: Option<&str>, cx: &mut Context<Self>) {
+    pub(super) fn reveal(&mut self, workspace: &str, repo: Option<&str>, cx: &mut Context<Self>) {
         self.collapsed.remove(&format!("workspace:{workspace}"));
         if let Some(repo) = repo {
             self.collapsed.remove(&format!("repo:{workspace}/{repo}"));
@@ -105,7 +105,7 @@ impl FleetView {
                 row(format!("result-ws-{}", w.name), 8., 28.)
                     .mt_1()
                     .child(highlighted(format!("result-ws-name-{}", w.name), w.name.clone(), &w.name_marks, cx).flex_none().font_weight(FontWeight::BOLD))
-                    .child(crate::clipped::clipped(format!("result-ws-root-{}", w.name), w.root.display().to_string(), true).flex_1().text_xs().text_color(secondary(cx)))
+                    .child(crate::clipped::clipped(format!("result-ws-root-{}", w.name), home_text(w.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
                     .child(count(w.count(), cx))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&name, None, cx))),
             );
@@ -113,7 +113,7 @@ impl FleetView {
                 body = body.child(self.render_result_session(&w.name, "supervised", hit, 26., cx));
             }
             for r in &w.repos {
-                let label = repo_label(&r.name, &r.path, &w.root);
+                let label = repo_label(&r.name, &r.path, w.home.as_deref());
                 let shift = label.find(r.name.as_str()).unwrap_or(0);
                 let marks: Vec<Range<usize>> = r.name_marks.iter().map(|m| m.start + shift..m.end + shift).collect();
                 let (wname, rname) = (w.name.clone(), r.name.clone());
@@ -136,7 +136,7 @@ impl FleetView {
     fn render_result_session(&self, workspace: &str, repo: &str, hit: &SessionHit, indent: f32, cx: &mut Context<Self>) -> AnyElement {
         let (w, r, h) = (workspace.to_string(), repo.to_string(), hit.clone());
         div()
-            .id(SharedString::from(format!("result-session-{}", hit.row.session.session_id)))
+            .id(SharedString::from(format!("result-session-{}{}", hit.row.session.session_id, hit.row.scope(workspace))))
             .flex_none()
             .cursor_pointer()
             .child(self.render_session(workspace, repo, &hit.row, px(indent), cx))

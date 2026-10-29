@@ -37,7 +37,8 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Foreman session name starts with `fm-`.
 - `foreman_core::{discover, rescan, scan}`, the relay files (`send`, `tell`, `inbox_dir`, `outbox_dir`) and the hook events (`append_event`, `EventReader`): shared by `fm` and the app.
 - `foreman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
-- `foreman_core::paths::{normalize, path_key, main_checkout, linked_git_dir}`: path comparison and the `.git` file/dir walk without running git.
+- `foreman_core::paths::{normalize, path_key, within, main_checkout, linked_git_dir}`: path comparison (`within` for "this folder or below") and the `.git` file/dir walk without running git.
+- `foreman_core::{Workspace, Folder, owners}` and `Registry::claim_folders`: a workspace's home, folders (git or plain) and scans; `home()` for where its own sessions run, `contains` for "is this cwd ours", `other_dirs` for the `--add-dir`s, `owners` for which workspace supervises a folder; never a root of your own.
 - `foreman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `foreman_core::process::{command, run, git, shell_execute, alive, started}`: every child process outside the PTY: no console window, drained pipes, a timeout that kills the tree (`Kill::Child` for `claude`, whose tree holds the background service), and ShellExecute and pid liveness; never `Command::new` and `.output()` by hand.
 - `foreman_core::url::origin` (`foreman_workstate::api_base`): the one origin rule; origins are map keys in `servers.json` and the minted records.

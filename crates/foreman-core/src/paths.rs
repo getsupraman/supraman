@@ -48,6 +48,16 @@ pub fn path_key(path: &Path) -> String {
     if cfg!(windows) { normal.to_lowercase() } else { normal }
 }
 
+/// `dir` is `root` or below it, compared by [`path_key`]; a sibling sharing a prefix is not.
+pub fn within(dir: &Path, root: &Path) -> bool {
+    key_within(&path_key(dir), &path_key(root))
+}
+
+/// [`within`] on two [`path_key`]s.
+pub fn key_within(dir: &str, root: &str) -> bool {
+    dir == root || dir.strip_prefix(root).is_some_and(|rest| rest.starts_with('/') || root.ends_with('/'))
+}
+
 /// The git dir a linked worktree's `.git` file names (`gitdir: <path>`, relative to the file's folder).
 pub fn linked_git_dir(git_file: &Path) -> Option<PathBuf> {
     let text = fs::read_to_string(git_file).ok()?;
@@ -79,6 +89,17 @@ mod tests {
 
     fn os(s: &str) -> Option<OsString> {
         Some(OsString::from(s))
+    }
+
+    #[test]
+    fn within_is_the_folder_or_below_it_never_a_sibling_with_a_common_prefix() {
+        let root = Path::new(r"P:\Projects\Gaia");
+        assert!(within(root, root));
+        assert!(within(Path::new(r"P:\Projects\Gaia\src\x"), root));
+        assert!(!within(Path::new(r"P:\Projects\Gaia.Ext"), root));
+        assert!(!within(Path::new(r"P:\Projects"), root));
+        #[cfg(windows)]
+        assert!(within(Path::new("p:/projects/gaia/SRC/"), root));
     }
 
     #[test]

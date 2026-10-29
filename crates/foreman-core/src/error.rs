@@ -8,8 +8,6 @@ pub enum CoreError {
     InvalidName(String),
     #[error("workspace '{0}' already exists (use --force to replace it)")]
     AlreadyExists(String),
-    #[error("{} is already registered as workspace '{by}'", root.display())]
-    RootTaken { root: PathBuf, by: String },
     #[error("workspace '{0}' not found")]
     NotFound(String),
     #[error("not a directory: {}", .0.display())]
@@ -40,7 +38,6 @@ impl CoreError {
             self,
             Self::InvalidName(_)
                 | Self::AlreadyExists(_)
-                | Self::RootTaken { .. }
                 | Self::NotFound(_)
                 | Self::NotADirectory(_)
         )

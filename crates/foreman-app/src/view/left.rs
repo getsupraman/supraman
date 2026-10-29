@@ -5,7 +5,7 @@ use std::{
 
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
-use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
+use foreman_supervisor::{NeedsKind, NeedsYou, RELAY_ROLE, Remedy, workspace_session_name};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use foreman_ui::banner;
 use foreman_ui::button;
@@ -17,7 +17,7 @@ use super::icon::{Icon, Tooltip};
 use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::page;
-use crate::fleet::{self, SessionRow};
+use crate::fleet::{self, RepoNode, SessionRow};
 use crate::work_view;
 
 const TREE_MIN_SHARE: f32 = 0.3;
@@ -437,6 +437,8 @@ impl FleetView {
                     },
                 ))
             });
+            let relay_row = workspace.supervised.iter().any(|r| r.role == Some(RELAY_ROLE) && r.also_in.is_none());
+            let relay_label = self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).filter(|_| !relay_row);
             let work_name = workspace.name.clone();
             let work = button::bordered(&self.hits, format!("work-{}", workspace.name), "Work", cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
@@ -469,7 +471,7 @@ impl FleetView {
                     )
                     .child(work)
                     .child(
-                        clipped(format!("ws-root-{}", workspace.name), workspace.root.display().to_string(), true)
+                        clipped(format!("ws-root-{}", workspace.name), home_text(workspace.home.as_deref()), true)
                             .flex_1()
                             .text_xs()
                             .text_color(secondary(cx)),
@@ -483,7 +485,7 @@ impl FleetView {
                             .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
                     )
                     .child(div().flex_none().text_xs().text_color(state_color).child(state_text))
-                    .children(self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).map(|(text, ok)| {
+                    .children(relay_label.map(|(text, ok)| {
                         // truncates rather than push the buttons after it past the panel's edge
                         clipped(format!("relay-{}", workspace.name), text, false)
                             .text_xs()
@@ -514,7 +516,9 @@ impl FleetView {
                 let rkey = format!("repo:{}/{}", workspace.name, repo.name);
                 let ropen = !self.collapsed.contains(&rkey);
                 let empty = repo.sessions.is_empty();
-                let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
+                let branch = repo.branch.as_deref().filter(|_| repo.kind == foreman_core::FolderKind::Git).map(|b| format!("({b})")).unwrap_or_default();
+                let offers_new = repo.enabled && repo.supervised_in.is_none();
+                let parked = repo.listed && !repo.enabled && repo.supervised_in.is_none();
                 let new_key = format!("new-claude-{}/{}", workspace.name, repo.name);
                 let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", workspace.name, repo.name));
                 let new_claude = glyph_button(&self.hits, new_key, Icon::Plus, "New claude session in this repo", cx)
@@ -538,9 +542,9 @@ impl FleetView {
                         .hover(|s| s.bg(colors.ghost_element_hover))
                         .active(|s| s.bg(colors.ghost_element_active))
                         .when(empty, |d| d.text_color(quiet(cx)))
-                        .when(!repo.enabled, |d| d.opacity(DIMMED))
+                        .when(parked, |d| d.opacity(DIMMED))
                         .child(disclosure((!empty).then_some(ropen), secondary(cx)))
-                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(repo_label(&repo.name, &repo.path, &workspace.root))))
+                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(repo_label(&repo.name, &repo.path, workspace.home.as_deref()))))
                         .child(
                             clipped(format!("branch-{}/{}", workspace.name, repo.name), branch, false)
                                 .text_xs()
@@ -555,21 +559,10 @@ impl FleetView {
                                     .child(SharedString::from(format!("{}", repo.sessions.len()))),
                             )
                         })
-                        .when(!repo.enabled, |d| {
-                            d.child(
-                                div()
-                                    .flex_none()
-                                    .px_1()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(colors.border_variant)
-                                    .text_xs()
-                                    .text_color(secondary(cx))
-                                    .child("disabled"),
-                            )
-                        })
+                        .when(parked, |d| d.child(tag("disabled", cx)))
+                        .children(self.folder_tags(&workspace.name, repo, cx))
                         .child(div().flex_1())
-                        .when(repo.enabled, |d| d.child(new_claude))
+                        .when(offers_new, |d| d.child(new_claude))
                         .child(hit_target(&self.hits, format!("repo-row-{}/{}", workspace.name, repo.name)))
                         .on_mouse_down(MouseButton::Right, {
                             let (w, r) = (workspace.name.clone(), repo.name.clone());
@@ -1177,6 +1170,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let s = &row.session;
+        let at = row.scope(workspace);
         let foreign = row.foreign;
         let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
         let state = if foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
@@ -1186,8 +1180,16 @@ impl FleetView {
             Health::Blocked { waiting_for: Some(w) } => Some(format!("waiting for: {w}")),
             _ => None,
         };
-        let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
-        let marks = self.search_marks.get(&s.session_id);
+        let name = match row.role {
+            Some(role) => role.to_string(),
+            None if s.name.is_empty() => "(unnamed)".to_string(),
+            None => s.name.clone(),
+        };
+        let marks = self.search_marks.get(&s.session_id).filter(|_| row.role.is_none());
+        let relay_state = (row.role == Some(RELAY_ROLE) && fleet::is_alive(&row.health))
+            .then(|| self.relays.get(workspace).and_then(|r| r.label(now_ms())))
+            .flatten()
+            .map(|(text, ok)| (relay_word(&text).to_string(), if ok { status.success } else { status.warning }));
         let hook = row
             .hook
             .as_ref()
@@ -1205,12 +1207,16 @@ impl FleetView {
                     .w(px(78.))
                     .flex_none()
                     .text_xs()
-                    .text_color(state)
-                    .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
+                    .text_color(relay_state.as_ref().map_or(state, |r| r.1))
+                    .child(SharedString::from(match (&relay_state, row.closed) {
+                        (Some((word, _)), _) => word.clone(),
+                        (None, true) => "closed".to_string(),
+                        (None, false) => fleet::health_label(&row.health),
+                    })),
             )
             .child(match marks {
-                Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}", s.id), name, &m.name, cx).flex_1(),
-                _ => clipped(format!("session-name-{}", s.id), name, false).flex_1(),
+                Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx).flex_1(),
+                _ => clipped(format!("session-name-{}{at}", s.id), name, false).flex_1(),
             })
             .child(
                 div()
@@ -1221,15 +1227,15 @@ impl FleetView {
                     .child(match marks.and_then(|m| m.id.clone()) {
                         Some(id) => {
                             let kind = format!("{} · ", s.kind.as_str());
-                            let at = id.start + kind.len()..id.end + kind.len();
-                            foreman_ui::matcher::highlighted(format!("session-id-{}", s.id), format!("{kind}{}", fleet::short_id(s)), &[at], cx).into_any_element()
+                            let id_at = id.start + kind.len()..id.end + kind.len();
+                            foreman_ui::matcher::highlighted(format!("session-id-{}{at}", s.id), format!("{kind}{}", fleet::short_id(s)), &[id_at], cx).into_any_element()
                         }
                         None => SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s))).into_any_element(),
                     }),
             )
             .child({
                 let session_id = s.session_id.clone();
-                star_button(&self.hits, format!("star-{}", s.session_id), row.starred, cx).on_click(cx.listener(
+                star_button(&self.hits, format!("star-{}{at}", s.session_id), row.starred, cx).on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.toggle_star(&session_id, cx);
@@ -1237,7 +1243,7 @@ impl FleetView {
                 ))
             })
             .when(!row.attachable && self.resumable(row), |d| {
-                let key = format!("resume-{}", s.id);
+                let key = format!("resume-{}{at}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
                     button::pill(&self.hits, key, "resume", secondary(cx), cx)
@@ -1248,12 +1254,12 @@ impl FleetView {
             })
             .when_some(self.session_tab(s).filter(|&id| self.active != Some(id)), |d, tab| {
                 d.child(
-                    button::pill(&self.hits, format!("tab-link-{}", s.id), "tab", secondary(cx), cx)
+                    button::pill(&self.hits, format!("tab-link-{}{at}", s.id), "tab", secondary(cx), cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(tab, cx))),
                 )
             })
             .when(row.attachable, |d| {
-                let key = format!("attach-{}", s.id);
+                let key = format!("attach-{}{at}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
                     button::pill(&self.hits, key, "attach", secondary(cx), cx)
@@ -1261,12 +1267,23 @@ impl FleetView {
                             this.attach(&workspace, &repo, &session, window, cx);
                         })),
                 )
+            })
+            .when_some(row.also_in.clone(), |d, owner| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("also-in-{}{at}", s.session_id)))
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_xs()
+                        .text_color(quiet(cx))
+                        .child(SharedString::from(format!("also in {owner}"))),
+                )
             });
 
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
         let shown = self.is_marked(s);
         div()
-            .id(SharedString::from(format!("session-{}", s.id)))
+            .id(SharedString::from(format!("session-{}{at}", s.id)))
             .relative()
             .flex()
             .flex_none()
@@ -1281,7 +1298,7 @@ impl FleetView {
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
             .when(foreign, |d| {
-                let key = format!("foreign-{}", s.session_id);
+                let key = format!("foreign-{}{at}", s.session_id);
                 d.child(
                     div()
                         .id(SharedString::from(key.clone()))
@@ -1305,20 +1322,20 @@ impl FleetView {
             })
             .when_some(waiting_for, |d, w| {
                 d.child(
-                    clipped(format!("waiting-{}", s.id), w, false)
+                    clipped(format!("waiting-{}{at}", s.id), w, false)
                         .pl(px(24.))
                         .text_xs()
                         .text_color(if foreign { secondary(cx) } else { status.warning }),
                 )
             })
             .when_some(hook, |d, h| {
-                d.child(clipped(format!("hook-{}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
+                d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
             })
-            .child(hit_target(&self.hits, format!("session-row-{}", s.session_id)))
+            .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
             .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
                 cx.new(|_| row.clone())
             })
-            .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}", s.session_id))))
+            .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -1327,6 +1344,49 @@ impl FleetView {
                 }),
             )
             .into_any_element()
+    }
+
+    /// `folder` for a plain folder, `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.
+    fn folder_tags(&self, workspace: &str, repo: &RepoNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut out = Vec::new();
+        if repo.kind == foreman_core::FolderKind::Plain {
+            out.push(tag("folder", cx).into_any_element());
+        }
+        if let Some(owner) = &repo.supervised_in {
+            let key = format!("supervised-in-{workspace}/{}", repo.name);
+            let (owner, path) = (owner.clone(), repo.path.clone());
+            out.push(
+                tag(format!("supervised in {owner}"), cx)
+                    .id(SharedString::from(key.clone()))
+                    .relative()
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(cx.theme().colors().text))
+                    .child(hit_target(&self.hits, key))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.reveal_folder(&owner, &path, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let also: Vec<&str> = repo.also_in.iter().map(String::as_str).filter(|w| repo.supervised_in.as_deref() != Some(*w)).collect();
+        if !also.is_empty() {
+            out.push(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(secondary(cx))
+                    .child(SharedString::from(format!("also in {}", also.join(", "))))
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+
+    fn reveal_folder(&mut self, workspace: &str, path: &std::path::Path, cx: &mut Context<Self>) {
+        let folder = self.workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.folder_at(path)).map(|f| f.name.clone());
+        self.reveal(workspace, folder.as_deref(), cx);
     }
 
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1359,7 +1419,7 @@ impl FleetView {
                     .hover(|s| s.bg(colors.ghost_element_hover))
                     .when(!*on, |d| d.text_color(colors.text_muted))
                     .child(if *on { "☑" } else { "☐" })
-                    .child(SharedString::from(repo_label(&repo.name, &repo.path, &draft.root)))
+                    .child(SharedString::from(repo_label(&repo.name, &repo.path, Some(&draft.root))))
                     .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
                     .child(hit_target(&self.hits, key))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1460,8 +1520,35 @@ impl FleetView {
     }
 }
 
-pub(crate) fn repo_label(name: &str, path: &std::path::Path, root: &std::path::Path) -> String {
-    if foreman_core::same_root(path, root) { format!("{name} (root)") } else { format!("./{name}") }
+pub(crate) fn repo_label(name: &str, path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    if home.is_some_and(|h| foreman_core::same_path(path, h)) { format!("{name} (home)") } else { format!("./{name}") }
+}
+
+pub(crate) fn home_text(home: Option<&std::path::Path>) -> String {
+    home.map(|h| h.display().to_string()).unwrap_or_default()
+}
+
+/// The relay row's state word for a [`crate::supervise::RelayStatus::label`].
+fn relay_word(label: &str) -> &str {
+    match label {
+        "relay ready" => "ready",
+        "relay starting" => "starting",
+        "direct" => "direct",
+        _ => "expired",
+    }
+}
+
+fn tag(text: impl Into<SharedString>, cx: &gpui::App) -> Div {
+    div()
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(cx.theme().colors().border_variant)
+        .text_xs()
+        .text_color(secondary(cx))
+        .whitespace_nowrap()
+        .child(text.into())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1520,10 +1607,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repo_labels_name_a_root_repo_as_the_root() {
+    fn folder_labels_name_the_home_and_relay_labels_shorten_to_a_state_word() {
         use std::path::Path;
-        assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Path::new(r"p:/x/gaia/")), "Gaia (root)");
-        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Path::new(r"P:\x\Gaia")), "./child");
+        assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
+        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "./child");
+        assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), None), "./child");
+        assert_eq!(relay_word("relay watcher expired, not re-armed (armed 40 min ago)"), "expired");
+        assert_eq!(relay_word("relay ready"), "ready");
     }
 
     #[test]

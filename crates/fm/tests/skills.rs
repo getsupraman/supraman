@@ -59,7 +59,7 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
 fn skills_bind_every_repo_to_the_workspace_project() {
     let skill = plugin("skills/workspace-controller/SKILL.md");
     assert!(skill.contains("**Bind the repos.**"));
-    assert!(skill.contains("the project `<w>` holds the key of **every enabled repo**"));
+    assert!(skill.contains("the project `<w>` holds the key of **every enabled git folder**"));
     assert!(skill.contains("whenever you create the project or first use it in a session"));
     assert!(skill.contains("again when `fm workspace show <w>` lists a repo the project does not hold yet"));
     assert!(skill.contains("`work_get(refs: [\"<w>\"])` prints the repos the project already holds"), "idempotent");

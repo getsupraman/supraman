@@ -88,6 +88,18 @@ fn want_uses_the_role_the_app_rendered_and_keeps_the_apps_sessions() {
     assert_eq!(d.sessions[1].prompt, "Rendered for Alpha in demo.");
 }
 
+#[test]
+fn a_folder_supervised_in_one_workspace_is_not_wanted_in_another() {
+    let (ws, home) = registered();
+    let out = fm(home.path(), &["workspace", "add", ws.path().join("demo").to_str().unwrap(), "--name", "other"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let out = fm(home.path(), &["want", "other", "Alpha"]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert!(text(&out).contains("Alpha is supervised in workspace demo"), "{}", text(&out));
+    assert!(DesiredState::load(home.path(), "other").unwrap().is_none());
+    assert_eq!(fm(home.path(), &["want", "demo", "Alpha"]).status.code(), Some(0));
+}
+
 /// A folder that is itself a repo is a one-repo workspace, its repo named after the folder; with
 /// repos below it, those are listed too. Registered, the root repo's session runs in the root.
 #[test]
@@ -102,7 +114,7 @@ fn a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root() {
     let out = fm(home.path(), &["workspace", "add", root.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let saved = foreman_core::Registry::at(home.path()).load("gaia").unwrap();
-    let repos: Vec<(&str, &Path)> = saved.repos.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
+    let repos: Vec<(&str, &Path)> = saved.folders.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
     assert_eq!(repos, [("Gaia", root.as_path()), ("Child", root.join("Child").as_path())]);
 
     let out = fm(home.path(), &["want", "gaia", "Gaia"]);

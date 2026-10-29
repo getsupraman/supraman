@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::{CoreError, Repo, Result};
+use crate::{CoreError, Folder, FolderKind, Result};
 
 pub const DEFAULT_DEPTH: usize = 1;
 
@@ -10,7 +10,7 @@ pub const DEFAULT_DEPTH: usize = 1;
 /// named after its folder ([`root_repo_name`]), its path the root.
 ///
 /// Read-only: it never runs git and never writes inside a scanned folder.
-pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {
+pub fn scan(root: &Path, depth: usize) -> Result<Vec<Folder>> {
     if !root.is_dir() {
         return Err(CoreError::NotADirectory(root.to_path_buf()));
     }
@@ -28,23 +28,35 @@ pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {
 }
 
 /// The root repo's name: its folder's name, `<folder>-root` when a repo below already has that name.
-fn root_repo_name(root: &Path, below: &[Repo]) -> String {
+fn root_repo_name(root: &Path, below: &[Folder]) -> String {
     let folder = root.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "root".into());
     if below.iter().any(|r| r.name.eq_ignore_ascii_case(&folder)) { format!("{folder}-root") } else { folder }
 }
 
-fn repo_at(name: String, path: std::path::PathBuf, git_dir: Option<&Path>) -> Repo {
-    Repo {
-        name,
+fn repo_at(name: String, path: std::path::PathBuf, git_dir: Option<&Path>) -> Folder {
+    Folder {
         has_claude_md: path.join("CLAUDE.md").is_file(),
         has_agents_md: path.join("AGENTS.md").is_file(),
         branch: git_dir.and_then(read_branch),
-        enabled: true,
-        path,
+        ..Folder::new(name, path)
     }
 }
 
-fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &mut Vec<Repo>) {
+/// `path` as a folder named `name`: a git folder when it holds a `.git` (a folder, or a linked worktree's
+/// file), else a plain one. Read-only.
+pub(crate) fn folder_at(name: String, path: std::path::PathBuf) -> Folder {
+    let git = path.join(".git");
+    if git.is_dir() {
+        repo_at(name, path, Some(&git))
+    } else if git.exists() {
+        let git_dir = crate::paths::linked_git_dir(&git);
+        repo_at(name, path, git_dir.as_deref())
+    } else {
+        Folder { kind: FolderKind::Plain, ..repo_at(name, path, None) }
+    }
+}
+
+fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &mut Vec<Folder>) {
     if level > depth {
         return;
     }
@@ -99,7 +111,7 @@ mod tests {
         dir.to_path_buf()
     }
 
-    fn names(repos: &[Repo]) -> Vec<&str> {
+    fn names(repos: &[Folder]) -> Vec<&str> {
         repos.iter().map(|r| r.name.as_str()).collect()
     }
 

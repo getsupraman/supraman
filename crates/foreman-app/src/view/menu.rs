@@ -61,11 +61,13 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
     if can_task {
         items.push(item("task", "Task…", MenuAction::Task(w.clone())));
     }
-    items.extend([
-        item("rescan", "Rescan repos", MenuAction::Rescan(w.clone())),
-        item("open-folder", "Open folder", MenuAction::OpenFolder(node.root.clone())),
-        item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: node.root.clone(), title: format!("pwsh · {w}") }),
-    ]);
+    items.push(item("rescan", "Rescan repos", MenuAction::Rescan(w.clone())));
+    if let Some(home) = &node.home {
+        items.extend([
+            item("open-folder", "Open folder", MenuAction::OpenFolder(home.clone())),
+            item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: home.clone(), title: format!("pwsh · {w}") }),
+        ]);
+    }
     if closed_background {
         items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(w.clone())));
     }
@@ -76,7 +78,7 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
 pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
     let title = |what: &str| format!("{workspace} · {} · {what}", repo.name);
     let mut items = Vec::new();
-    if repo.enabled {
+    if repo.enabled && repo.supervised_in.is_none() {
         items.push(item("new-claude", "New claude here", MenuAction::NewClaude { cwd: repo.path.clone(), title: title("claude") }));
     }
     items.extend([
@@ -84,11 +86,13 @@ pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
         item("open-folder", "Open folder", MenuAction::OpenFolder(repo.path.clone())),
     ]);
     let (key, label) = if repo.enabled { ("disable", "Disable") } else { ("enable", "Enable") };
-    items.push(item(
-        key,
-        label,
-        MenuAction::SetRepoEnabled { workspace: workspace.to_string(), repo: repo.name.clone(), enabled: !repo.enabled },
-    ));
+    if repo.listed && (repo.enabled || repo.supervised_in.is_none()) {
+        items.push(item(
+            key,
+            label,
+            MenuAction::SetRepoEnabled { workspace: workspace.to_string(), repo: repo.name.clone(), enabled: !repo.enabled },
+        ));
+    }
     items
 }
 
@@ -165,7 +169,7 @@ mod tests {
     use super::*;
 
     fn node(started: Option<bool>) -> WorkspaceNode {
-        WorkspaceNode { name: "demo".into(), root: r"C:\demo".into(), started, supervised: vec![], repos: vec![] }
+        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, supervised: vec![], repos: vec![] }
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
@@ -174,7 +178,7 @@ mod tests {
 
     fn row(json: &str, health: Health) -> SessionRow {
         let session = parse(&format!("[{json}]")).unwrap().remove(0);
-        SessionRow { attachable: fleet::attachable(&session, &health), session, health, hook: None, foreign: false, starred: false, closed: false }
+        SessionRow::new(session, health)
     }
 
     #[test]
@@ -187,7 +191,18 @@ mod tests {
 
     #[test]
     fn repo_menu_offers_enable_or_disable() {
-        let mut repo = RepoNode { name: "Alpha".into(), path: r"C:\demo\Alpha".into(), branch: None, enabled: true, sessions: vec![], more: 0 };
+        let mut repo = RepoNode {
+            name: "Alpha".into(),
+            path: r"C:\demo\Alpha".into(),
+            kind: foreman_core::FolderKind::Git,
+            branch: None,
+            enabled: true,
+            listed: true,
+            supervised_in: None,
+            also_in: vec![],
+            sessions: vec![],
+            more: 0,
+        };
         assert_eq!(keys(&repo_items("demo", &repo)), ["new-claude", "open-terminal", "open-folder", "disable"]);
         repo.enabled = false;
         let items = repo_items("demo", &repo);
@@ -196,6 +211,12 @@ mod tests {
             items[2].action,
             MenuAction::SetRepoEnabled { workspace: "demo".into(), repo: "Alpha".into(), enabled: true }
         );
+        repo.supervised_in = Some("other".into());
+        assert_eq!(keys(&repo_items("demo", &repo)), ["open-terminal", "open-folder"], "supervised in another workspace: no Enable");
+        repo.enabled = true;
+        assert_eq!(keys(&repo_items("demo", &repo)), ["open-terminal", "open-folder", "disable"], "enabled in two: this one can let go");
+        let home_folder = RepoNode { enabled: false, listed: false, supervised_in: None, ..repo };
+        assert_eq!(keys(&repo_items("demo", &home_folder)), ["open-terminal", "open-folder"], "a folder of the home is not the workspace's to enable");
     }
 
     #[test]

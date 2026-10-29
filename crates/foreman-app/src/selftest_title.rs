@@ -24,7 +24,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 
 async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let root = view
-        .read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == WORKSPACE).map(|w| w.root.clone()))
+        .read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == WORKSPACE).and_then(|w| w.home().map(std::path::Path::to_path_buf)))
         .ok_or_else(|| anyhow!("the registry has no {WORKSPACE}"))?;
     let fallback = format!("fm-title-{}", hex6());
     let id = cx.update(|window, cx| view.update(cx, |v, cx| v.open_shell_in(root.clone(), fallback.clone(), window, cx)))?;

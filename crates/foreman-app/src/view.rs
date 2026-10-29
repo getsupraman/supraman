@@ -719,7 +719,7 @@ impl FleetView {
                     let roots: Vec<PathBuf> = this
                         .workspaces
                         .iter()
-                        .flat_map(|w| w.repos.iter().filter(|r| r.enabled).map(|r| w.root.join(&r.path)))
+                        .flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone()))
                         .collect();
                     let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
                     let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
@@ -1683,7 +1683,7 @@ impl FleetView {
             }),
         };
         let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), link, cx);
-        let cwd = self.workspaces.iter().find(|w| w.name == workspace).map(|w| w.root.clone());
+        let cwd = self.workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.home()).map(Path::to_path_buf);
         self.tabs.push(Tab::new(id, format!("Work · {workspace}"), TabKind::Work(view), cwd));
         self.active = Some(id);
         cx.notify();
