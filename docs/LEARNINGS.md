@@ -3176,7 +3176,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `a_migration_never_replaces_a_file_already_written`,
   `a_split_legacy_credential_migrates_and_every_part_is_deleted`; `tests/oauth.rs`
   `a_6_kb_refresh_token_rotates_through_the_file_store`; `fm/tests/work.rs` unserialized.
-- Gate (`CARGO_TARGET_DIR=C:mbuild\m5-44-18	arget`): build ok, no warnings; `cargo test --release
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-18\target`): build ok, no warnings; `cargo test --release
   --workspace --no-fail-fast` 613 passed, 0 failed; `--selftest` 5 of 5 PASS (130–147 s);
   `--selftest-supervise` PASS (321 s); `--selftest-detach-shutdown` PASS (14 s); 0 `fm-selftest` rows from
   this worktree (6 listed belong to m5-44-4's run, left alone).
