@@ -4213,3 +4213,63 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-56\target`): build ok, no warnings; `cargo test --release --workspace` 686
   passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (step x included); `--selftest-detach-shutdown`
   PASS; no `fm-selftest` sessions left. No m5-44 audit section names m5/56, so no audit finding was in scope.
+
+## 2026-10-29 — m5/59 tree design B: the workspace row is the workspace session
+
+- **Model** (`fleet.rs`): `WorkspaceNode` carries the workspace session (`own`) and the relay (`relay`) apart from
+  `supervised`, which keeps only wanted sessions of no folder (the selftest's park). `SessionRow::role` is gone:
+  neither session has a tree row. `session_count` counts the rows under the workspace row; `rows()`/`into_rows()`
+  walk all of them, the two first (menus, delete, `mark_second_occurrences`, the selftests). Search still finds both
+  by name and shows them as result rows.
+- **Workspace row** (`view/left.rs` `render_workspace_row`): chevron · the workspace session's health dot (hollow when
+  it is stopped, gone, unknown or not wanted) · name · home (clipped, `ws-root-<ws>`) · row count · a 16 px relay slot
+  · four fixed 20 px icon slots: Work `work-<ws>`, Task… `task-<ws>` (started, relay accepts), Attach
+  `attach-ws-<ws>` or Resume `resume-ws-<ws>`, Start `start-<ws>`/Stop `stop-<ws>`. A slot whose action does not
+  apply stays empty, so nothing shifts. Blocked tints the row amber (0.12/0.18, as a session row); `waiting for: …`
+  is a second line (`ws-waiting-<ws>`). The row counts as selected while the active tab is its Work tab or attaches
+  its session.
+- **Relay** is one glyph in its slot (`relay-<ws>`, `signal_high` green ready, `load_circle` amber starting,
+  `warning` amber expired; nothing for `direct` or stopped), with `RelayStatus::label` as its tooltip; the workspace
+  card's `relay` row names `direct`/`stopped` too.
+- **Hover icons** (`foreman_ui::button::revealed`): an `icon` button at opacity 0 that a `group_hover` of its row
+  brings to 1, or always shown when the row is selected. Opacity 0 still paints, so its hit key exists and a selftest
+  click lands (checked in gpui: `with_element_opacity` multiplies, it never skips). Folder rows: `+`
+  `new-claude-<ws>/<f>` and a terminal `terminal-<ws>/<f>` (new key). Session rows: star, then Attach `attach-<id>` or
+  Resume `resume-<id>`, then Tab `tab-link-<id>`. **Two states stay visible without a hover**: a filled star and the
+  Tab icon (the session is open in a tab not shown now); hiding them would hide a fact, not an action.
+  **Keyboard focus**: tree rows take no keyboard focus in Foreman, so only hover and selection reveal.
+- **Menus** (`view/menu.rs` `workspace_items`): after Remove…, the workspace session's full `session_items` under a
+  `workspace session · <name>` caption and the relay's under `relay · <name>`, keys renamed `session-…`/`relay-…`
+  (`section_key`; `stop-session` → `session-stop`/`relay-stop`) so they never clash with the workspace's own. Every
+  item of the old rows' menus is kept, Star and Delete… included. The send-name lookup runs for the workspace menu
+  too. Shared: `foreman_ui::menu::MenuItem::under(caption)` draws a rule and a caption above an item.
+- **Folder rows**: `git_branch` or `folder` icon in place of `./` (`folder_label`; `(home)` kept); the branch without
+  parentheses; the `folder` tag is gone (the icon says it). Search results and the Add review keep `repo_label`.
+- **Hover cards** (`row_card.rs` over `foreman_ui::hover_card`): workspace: home, folders (`(disabled)` marked), state,
+  session (name · health · id), waiting, hook, relay, WorkState (the project an open Work tab read; `WorkView::project`).
+  Session: state, waiting, id, cwd, worktree (`<folder> of <main checkout>` when the cwd's `.git` is a file), branch
+  (`branch_at`, read when the card shows), hook, claimed item, also in. A child's tooltip wins over the row's card
+  (gpui shows the last tooltip request, children paint after parents), so the clipped root path still shows its
+  full-path tooltip (7b's check passes).
+- **Icons** copied from Zed (`.repos/zed/assets/icons`): `play_outlined`, `stop`, `maximize`, `rotate_ccw`, `screen`,
+  `pencil`, `list_todo`, `terminal`, `git_branch`, `folder`, `signal_high`, `load_circle`.
+- **Selftests**: step b reads the workspace session from `own`, then `workspace_row_step` checks `attach-ws-<ws>`
+  paints, no `session-row-<id>` exists for it, and the workspace menu holds `stop, work, task, session-attach,
+  session-stop, session-copy-name, session-copy-id, session-star` under the `workspace session · <name>` caption;
+  step r checks the relay glyph paints while the relay is ready and the relay has no row; step g expects the
+  workspace session on the workspace row and 1 row (park) in the block (was 2 rows: workspace, park). 7b's
+  workspace menu list is unchanged (that workspace never started, so it has no section); 7b gains the two hover
+  cards (`hover_cards`, shots `m5-59-workspace-card`, `m5-59-session-card`). 7f and t0 pass with `task-`/`stop-`
+  now 20 px icons at the row's right end.
+- **Before/after** (`FOREMAN_SHOTS`, `C:\fmbuild\m5-59\shots\{before,after}`; before = master 8671f05 in this
+  worktree detached; its `--selftest-supervise` stopped at step v only because a detached HEAD has no branch, after
+  the shots): started workspace (`m5-14-messages`): before `▾ selftest-… [Work] 2 sessions started d… [Task…] [Stop]`
+  then a `workspace` and a `relay` row; after `▾ ● selftest-… P:\…\selftest-… 1` with the icons hidden until hover
+  and no session or relay row. Unstarted (`m5-31-tree-tabs`): `○ larchsys P:/Projects/LarchSys 8`, folders with the
+  git-branch icon and `master 4`, session rows without pills. Cards: `m5-59-workspace-card`, `m5-59-session-card`.
+- **Red checks** (reverted with `git checkout`): the workspace session pushed into `supervised` →
+  `the_workspace_that_wants_a_session_keeps_its_keys_and_its_rows_sit_by_role_and_folder` fails; the relay section
+  dropped from `workspace_items` → `the_workspace_menu_holds_every_item_of_its_workspace_session_and_relay_under_a_caption` fails.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-59\target`): build ok, no warnings; `cargo test --release --workspace` 689
+  passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` sessions left. No m5-44 audit section names m5/59, so no audit finding was in scope.
