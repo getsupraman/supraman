@@ -3797,4 +3797,14 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - **Gate:** `cargo build --release --workspace` clean; `cargo test --release --workspace` 663 passed, 0 failed.
   Selftests run by the controller: in the agent environment 7c fails every run, also on master UI code and with no
   other selftest running ("window not found" on `close_settings`), while the controller's own run of 2b0fb17
-  passes it. So the agent has no before/after shots past 7c.
+  passes it.
+- **Before/after (`FOREMAN_SHOTS`, `C:mbuild\m5-51\shots\{before,after}`):** taken with 7c's bail turned into a
+  print in a local, uncommitted build; "before" is the same build with master's field geometry, Settings wrapper and
+  summary padding. `m5-43-settings-signed-in`: two nested boxes around the URL → one. `m5-30-search-id`: "5e1f"
+  12.7 px in and 6 px down in the search box → 16.7 and 8, and the summary line 4 px lower. `m5-51-compose`: the
+  task text clear of the border. The 7k check printed 12.67/6 on master geometry (it needs 16/7: red) and passed
+  after; that run PASSed every step.
+- **7f in the controller's run of 44241a8:** "192.0 px under the Inbox (158.0 px besides the search box)". Here the
+  same commit paints Inbox 66.0..262.7 and the tree from 302.7: 40 px, of which the search box is 34, so 6 px (master
+  build: 36, 30 and 6). The tree shows this machine's live sessions, so what sits between them depends on the
+  environment; 7f's failure message now lists every hit key painted in the gap with its height.
