@@ -173,23 +173,28 @@ pub fn write_session_mcp_config(dir: &Path, identity: &SessionIdentity, url: &st
 
 /// [`write_session_mcp_config`] with explicit `headers` beside the `Authorization` one.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
-    let plain = !agent.is_empty()
-        && !agent.starts_with('.')
-        && agent.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    if !plain {
-        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("not a session name: {agent:?}")));
-    }
+    let path = mcp_config_path(dir, agent)?;
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("workstate-{agent}.json"));
     std::fs::write(&path, b"")?;
     restrict_to_owner(&path)?;
     std::fs::write(&path, workstate_mcp_config(url, token, headers))?;
     Ok(path)
 }
 
+/// `<dir>/workstate-<agent>.json`, the one file of `agent`'s WorkState config; `agent` must be a plain session name.
+pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
+    let plain = !agent.is_empty()
+        && !agent.starts_with('.')
+        && agent.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !plain {
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("not a session name: {agent:?}")));
+    }
+    Ok(dir.join(format!("workstate-{agent}.json")))
+}
+
 /// The WorkState URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join(format!("workstate-{agent}.json"))).ok()?;
+    let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v["mcpServers"]["workstate"]["url"].as_str().map(str::to_string)
 }
@@ -572,7 +577,9 @@ mod tests {
         for bad in ["", "..", "../x", r"a\b", "a b"] {
             let id = SessionIdentity { agent: bad.into(), ..identity() };
             assert!(write_session_mcp_config(&dir.path().join("mcp"), &id, "u", "fake-token").is_err(), "{bad:?}");
+            assert!(mcp_config_path(&dir.path().join("mcp"), bad).is_err(), "{bad:?}");
         }
+        assert_eq!(mcp_config_path(&dir.path().join("mcp"), "fm-demo-beta").unwrap(), path_b);
     }
 
     fn out(code: i32, stdout: &str, stderr: &str) -> Output {

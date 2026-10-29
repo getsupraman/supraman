@@ -144,28 +144,15 @@ impl HttpMinter {
     }
 }
 
-/// What a refusal says: `error`/`title`/`message`/`detail` of a JSON body, else its start.
-fn server_reason(body: &str) -> String {
-    let reason = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| ["error", "title", "message", "detail"].iter().find_map(|k| v.get(*k)?.as_str().map(str::to_string)))
-        .unwrap_or_else(|| body.trim().to_string());
-    reason.chars().take(200).collect()
-}
-
 fn refused(status: u16, body: &str) -> MintError {
     MintError::Refused {
         status,
-        reason: server_reason(body),
+        reason: foreman_workstate::server_reason(body),
     }
 }
 
 fn sessions_url(base: &str, session_id: &str) -> String {
-    let id: String = session_id
-        .bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
-        .collect();
-    format!("{base}/api/agent-sessions/{id}")
+    format!("{base}/api/agent-sessions/{}", foreman_workstate::pct_encode(session_id))
 }
 
 impl Minter for HttpMinter {
@@ -274,17 +261,11 @@ impl MintedSessions {
         Ok(Self { path, names })
     }
 
-    /// Written to a `.tmp` beside it, then renamed over it.
     pub fn save(&self) -> std::io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&self.names).map_err(std::io::Error::other)?)?;
-        std::fs::rename(&tmp, path)
+        foreman_core::fs::write_atomic(path, serde_json::to_string_pretty(&self.names).map_err(std::io::Error::other)?)
     }
 
     pub fn get(&self, name: &str) -> Option<&MintedSession> {

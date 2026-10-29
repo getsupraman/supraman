@@ -62,9 +62,7 @@ pub fn migrate_home(home: &Path) -> Result<Vec<String>> {
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
         if let Some(notice) = migrate_desired(&mut table, &stem) {
             let text = toml::to_string(&table).map_err(|source| CoreError::Serialize { name: stem, source })?;
-            let tmp = path.with_extension("toml.tmp");
-            fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-            fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+            crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
             notices.extend(notice);
         }
     }

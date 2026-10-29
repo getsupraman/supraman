@@ -12,6 +12,7 @@ fn fm_cmd(home: &Path, args: &[&str]) -> Command {
         .env("FOREMAN_HOME", home)
         .env("USERPROFILE", home)
         .env("HOME", home)
+        .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("APPDATA")
         .env_remove("FOREMAN_ROLE")
         .env_remove("FOREMAN_WORKSPACE")

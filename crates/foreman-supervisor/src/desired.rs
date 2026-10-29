@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -230,37 +229,15 @@ impl DesiredState {
             .map_err(|source| SupervisorError::Parse { path, source })
     }
 
-    /// Atomic replace: written to a temp file of this process, then renamed over the file (retried
-    /// while another process holds it open), so a reader never sees half a file.
     pub fn save(&self, home: &Path) -> Result<PathBuf> {
         let path = Self::path(home, &self.workspace)?;
         let text = toml::to_string(self).map_err(|source| SupervisorError::Serialize {
             workspace: self.workspace.clone(),
             source,
         })?;
-        let io = |path: &Path| {
-            let path = path.to_path_buf();
-            move |source| SupervisorError::Io { path, source }
-        };
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(io(dir))?;
-        }
-        // one temp name per process: the app and `fm` may save at the same moment
-        let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
-        fs::write(&tmp, text).map_err(io(&tmp))?;
-        let mut tries = 0;
-        loop {
-            match fs::rename(&tmp, &path) {
-                Ok(()) => return Ok(path),
-                Err(e) if tries < 20 && e.kind() == ErrorKind::PermissionDenied => {
-                    tries += 1;
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Err(source) => {
-                    let _ = fs::remove_file(&tmp);
-                    return Err(SupervisorError::Io { path, source });
-                }
-            }
+        match foreman_core::fs::write_atomic(&path, text) {
+            Ok(()) => Ok(path),
+            Err(source) => Err(SupervisorError::Io { path, source }),
         }
     }
 

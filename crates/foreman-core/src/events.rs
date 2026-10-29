@@ -3,12 +3,14 @@
 //! with an [`EventReader`]. Payload facts are in `docs/LEARNINGS.md` (m0/3, m2/2).
 
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::fs::{self, File};
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::fs::rotated;
 
 /// A log reaching this size is renamed to `<session_id>.jsonl.1` (replacing an older one) before
 /// the next append.
@@ -70,22 +72,13 @@ pub fn log_path(home: &Path, session_id: &str) -> PathBuf {
     events_dir(home).join(format!("{session_id}.jsonl"))
 }
 
-fn rotated(path: &Path) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(".1");
-    PathBuf::from(name)
-}
-
 /// Appends `event` as one line, rotating first when the log has reached `rotate_at`.
 pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<PathBuf> {
     let path = log_path(home, &event.session_id);
     fs::create_dir_all(events_dir(home))?;
-    if fs::metadata(&path).is_ok_and(|m| m.len() >= rotate_at) {
-        fs::rename(&path, rotated(&path))?;
-    }
     let mut line = serde_json::to_vec(event).map_err(std::io::Error::other)?;
     line.push(b'\n');
-    OpenOptions::new().create(true).append(true).open(&path)?.write_all(&line)?;
+    crate::fs::append_capped(&path, &line, rotate_at)?;
     Ok(path)
 }
 
@@ -233,6 +226,9 @@ fn read_lines(file: &mut File, offset: &mut u64, out: &mut Vec<Event>) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
     use super::*;
 
     /// m0/3's SessionStart(compact) payload shape, values made up.

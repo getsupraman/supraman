@@ -1,6 +1,6 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -129,11 +129,7 @@ impl fmt::Display for Health {
     }
 }
 
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis() as i64)
-}
+pub use foreman_core::time::now_ms;
 
 impl Session {
     pub fn health(&self, now_ms: i64) -> Health {

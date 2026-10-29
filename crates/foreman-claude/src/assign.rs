@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use foreman_core::{Workspace, Repo};
+use foreman_core::paths::path_key;
+use foreman_core::{Repo, Workspace};
 
 use crate::Session;
 
@@ -45,13 +45,13 @@ fn repo_of_with<'a>(cwd: &Path, workspace: &'a Workspace, main_of: impl Fn(&Path
         workspace
             .repos
             .iter()
-            .filter(|r| is_within(dir, &norm(&r.path)))
-            .max_by_key(|r| norm(&r.path).len())
+            .filter(|r| is_within(dir, &path_key(&r.path)))
+            .max_by_key(|r| path_key(&r.path).len())
     };
-    let cwd_norm = norm(cwd);
+    let cwd_norm = path_key(cwd);
     by_prefix(&cwd_norm).or_else(|| {
-        let main = norm(&main_of(cwd)?);
-        workspace.repos.iter().find(|r| norm(&r.path) == main)
+        let main = path_key(&main_of(cwd)?);
+        workspace.repos.iter().find(|r| path_key(&r.path) == main)
     })
 }
 
@@ -63,60 +63,22 @@ pub fn main_repo_walks() -> u64 {
     MAIN_REPO_WALKS.load(Ordering::Relaxed)
 }
 
-/// Walks up from `dir` to the first `.git`. A directory: its folder is the main repo. A file with
-/// `gitdir: <repo>/.git/worktrees/<n>` (relative or absolute): a linked worktree of `<repo>`.
-/// Case is kept; the path is `/`-separated with `.`/`..` folded.
+/// [`foreman_core::paths::main_checkout`], counted by [`main_repo_walks`].
 pub fn main_repo(dir: &Path) -> Option<PathBuf> {
     MAIN_REPO_WALKS.fetch_add(1, Ordering::Relaxed);
-    for ancestor in dir.ancestors() {
-        let git = ancestor.join(".git");
-        if git.is_dir() {
-            return Some(PathBuf::from(fold(ancestor)));
-        }
-        if !git.is_file() {
-            continue;
-        }
-        let text = fs::read_to_string(&git).ok()?;
-        let gitdir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
-        let mut gitdir = fold(&ancestor.join(gitdir));
-        let at = gitdir.rfind("/.git/worktrees/")?;
-        gitdir.truncate(at);
-        return Some(PathBuf::from(gitdir));
-    }
-    None
+    foreman_core::paths::main_checkout(dir)
 }
 
 fn is_within(dir: &str, root: &str) -> bool {
     dir == root || dir.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// [`fold`], lowercase on Windows.
-fn norm(path: &Path) -> String {
-    let joined = fold(path);
-    if cfg!(windows) { joined.to_lowercase() } else { joined }
-}
-
-/// `/`-separated, no trailing `/`, `.`/`..` folded, no `\\?\`.
-fn fold(path: &Path) -> String {
-    let s = path.to_string_lossy().replace('\\', "/");
-    let s = s.strip_prefix("//?/").unwrap_or(&s);
-    let mut parts: Vec<&str> = Vec::new();
-    for (i, part) in s.split('/').enumerate() {
-        match part {
-            "" if i > 0 => {}
-            "." => {}
-            ".." if parts.len() > 1 => {
-                parts.pop();
-            }
-            p => parts.push(p),
-        }
-    }
-    parts.join("/")
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
+
+    use foreman_core::paths::normalize;
 
     use super::*;
     use crate::parse;
@@ -203,7 +165,7 @@ mod tests {
     fn main_repo_from_git_dir_and_worktree_files() {
         let (tmp, _) = layout();
         let plat = tmp.path().join("Plat");
-        let alpha = fold(&plat.join("Alpha"));
+        let alpha = normalize(&plat.join("Alpha"));
         let found = |dir: &Path| main_repo(dir).map(|p| p.to_string_lossy().into_owned());
         assert_eq!(found(&plat.join("Alpha")).as_deref(), Some(alpha.as_str()), ".git dir");
         assert_eq!(found(&plat.join("Alpha").join("src")).as_deref(), Some(alpha.as_str()), "below a .git dir");

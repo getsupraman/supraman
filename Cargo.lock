@@ -1797,6 +1797,7 @@ name = "foreman-ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "foreman-core",
  "foreman-term",
  "gpui",
  "itertools",

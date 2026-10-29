@@ -99,11 +99,8 @@ fn load(path: &Path, now: i64) -> Ledger {
 }
 
 fn save(path: &Path, ledger: &Ledger) {
-    let tmp = path.with_extension("json.tmp");
-    let written = path.parent().is_some_and(|d| fs::create_dir_all(d).is_ok())
-        && serde_json::to_string(ledger).is_ok_and(|text| fs::write(&tmp, text).is_ok());
-    if written {
-        let _ = fs::rename(&tmp, path);
+    if let Ok(text) = serde_json::to_string(ledger) {
+        let _ = foreman_core::fs::write_atomic(path, text);
     }
 }
 

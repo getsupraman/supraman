@@ -62,12 +62,9 @@ pub struct PeerTarget {
     pub key_file: PathBuf,
 }
 
-/// `~/.claude/sessions`.
+/// claude's session registry: `<claude_dir>/sessions`.
 pub fn sessions_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(h).join(".claude").join("sessions"))
+    foreman_core::paths::claude_dir().map(|d| d.join("sessions"))
 }
 
 /// `\\.\pipe\` + the rest of the name lowercased: what the key file's name hashes. Unix socket

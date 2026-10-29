@@ -1,14 +1,18 @@
 mod discover;
 mod error;
 mod events;
+pub mod fs;
 mod migrate;
 mod model;
+pub mod paths;
 mod plugin;
 mod registry;
 mod relay;
 mod scan;
 mod settings;
 mod slug;
+pub mod time;
+pub mod url;
 
 pub use discover::{discover, rescan, same_root};
 pub use error::{CoreError, Result};
@@ -26,7 +30,8 @@ pub use relay::{
 };
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{
-    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, url_origin, validate_workstate_url,
+    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, validate_workstate_url,
     TERMINAL_FONT_PREFERENCE, clamp_terminal_font_size, default_terminal_font_family,
 };
 pub use slug::{slugify, validate_name};
+pub use url::origin as url_origin;

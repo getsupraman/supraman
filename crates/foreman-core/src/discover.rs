@@ -38,10 +38,8 @@ pub fn rescan(workspace: &Workspace, depth: usize) -> Result<(Workspace, Vec<Str
     Ok((Workspace { repos, ..workspace.clone() }, added, removed))
 }
 
-/// Windows paths compare ignoring case, separator style and a trailing separator.
 pub fn same_root(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
-    norm(a) == norm(b)
+    crate::paths::path_key(a) == crate::paths::path_key(b)
 }
 
 impl Registry {

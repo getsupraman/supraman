@@ -7,7 +7,6 @@
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use foreman_core::{Event, ROTATE_AT, append_event, role_injection_for};
 
@@ -20,8 +19,7 @@ pub fn run(event: &str) {
     let Some(home) = std::env::var_os("FOREMAN_HOME").filter(|h| !h.is_empty()).map(PathBuf::from) else {
         return;
     };
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
-    if let Some(e) = Event::from_payload(event, &payload, ts) {
+    if let Some(e) = Event::from_payload(event, &payload, foreman_core::time::now_ms()) {
         let _ = append_event(&home, &e, ROTATE_AT);
     }
     // A session launched before m2x/2 keeps its launch env on resume: FOREMAN_PLATFORM, FOREMAN_ROLE=platform.

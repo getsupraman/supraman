@@ -8,7 +8,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use foreman_claude::{Claude, ClaudeError, Health, LaunchSpec, Session, SessionIdentity, now_ms, workstate_mcp_config};
 
@@ -224,11 +224,11 @@ fn report_a(label: &str, fleet: &Fleet, spec: &LaunchSpec, file: &str, listener:
 
 /// File names (not contents) under `~/.claude/daemon` that contain `needle`.
 fn persisted_in_daemon(needle: &str) -> String {
-    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) else {
+    let Some(home) = foreman_core::paths::user_home() else {
         return "unknown (no home dir)".into();
     };
     let mut hits = Vec::new();
-    let mut stack = vec![PathBuf::from(home).join(".claude").join("daemon")];
+    let mut stack = vec![home.join(".claude").join("daemon")];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
@@ -542,10 +542,7 @@ pub(crate) fn write(dir: &Path, name: &str, text: &str) -> Result<PathBuf, Strin
     Ok(path)
 }
 
-pub(crate) fn hex6() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-    format!("{:06x}", (nanos ^ (u128::from(std::process::id()) << 20)) & 0xff_ffff)
-}
+pub(crate) use foreman_core::time::hex6;
 
 #[cfg(test)]
 mod tests {
