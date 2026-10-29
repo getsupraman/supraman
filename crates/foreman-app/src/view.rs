@@ -242,7 +242,8 @@ pub struct FleetView {
     pub dismissed_messages: DismissedMessages,
     left_hold: Option<left::Hold>,
     left_hold_timer: Option<gpui::Task<()>>,
-    pub answered: BTreeMap<String, BTreeMap<String, String>>,
+    pub left_holds: u64,
+    pub answered:BTreeMap<String, BTreeMap<String, String>>,
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
@@ -567,6 +568,7 @@ impl FleetView {
             dismissed_messages,
             left_hold: None,
             left_hold_timer: None,
+            left_holds: 0,
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
@@ -1687,6 +1689,7 @@ impl FleetView {
                         cx.subscribe(&terminal, move |this, emitter, event, cx| {
                             match event {
                                 TerminalEvent::Wakeup => cx.notify(),
+                                // The foreground process changed (pty_info.rs); the OSC title is BreadcrumbsChanged.
                                 TerminalEvent::TitleChanged => {
                                     this.resolve_tabs(cx);
                                     cx.notify();

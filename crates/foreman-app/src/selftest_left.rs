@@ -346,9 +346,29 @@ pub async fn steady_click(
     from_name: &str,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<(String, Bounds<Pixels>)> {
+    let mut void = Vec::new();
+    for _ in 0..3 {
+        match held_arrival(view, key, outbox, from_name, cx).await? {
+            Ok((said, aimed)) if void.is_empty() => return Ok((said, aimed)),
+            Ok((said, aimed)) => return Ok((format!("{said} (retaken: {})", void.join("; ")), aimed)),
+            Err(why) => void.push(why),
+        }
+    }
+    bail!("the hold under the pointer was released and armed again before the message was read, in each of 3 tries: {}", void.join("; "))
+}
+
+/// `Err` when the hold was armed again meanwhile: the panel saw the pointer leave (an OS mouse message, or a rest), which shows held rows by design.
+async fn held_arrival(
+    view: &Entity<FleetView>,
+    key: &str,
+    outbox: &std::path::Path,
+    from_name: &str,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<Result<(String, Bounds<Pixels>), String>> {
     let aimed = crate::selftest::scrolled_into_view(view, key, cx).await?;
     let target = aimed.center();
     move_to(target, cx)?;
+    let armed = view.read_with(cx, |v, _| v.left_holds);
     let file = format!("{:013}-selftest-table.json", foreman_claude::now_ms());
     let mut body = vec!["Plan for the selftest (a work_tree, not a question):".to_string()];
     body.extend(TABLE.iter().map(|l| l.to_string()));
@@ -374,7 +394,11 @@ pub async fn steady_click(
     let read_after = started.elapsed();
     move_to(target, cx)?;
     sleep(cx, Duration::from_millis(300)).await;
-    let (now, held, header) = view.read_with(cx, |v, _| (bounds(v, key), v.left_held(), v.hits.borrow().contains_key("messages-area")));
+    let (now, held, header, holds) =
+        view.read_with(cx, |v, _| (bounds(v, key), v.left_held(), v.hits.borrow().contains_key("messages-area"), v.left_holds));
+    if holds != armed {
+        return Ok(Err(format!("{file} read {} ms in, the hold armed {} more time(s)", read_after.as_millis(), holds - armed)));
+    }
     let now = now.ok_or_else(|| anyhow!("{key} is no longer painted after the message arrived"))?;
     shot("m5-18-hover-hold", cx).await;
     if now != aimed {
@@ -400,7 +424,7 @@ pub async fn steady_click(
         if header { "showing older rows only" } else { "not shown" },
         f32::from(now.top())
     );
-    Ok((said, aimed))
+    Ok(Ok((said, aimed)))
 }
 
 pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

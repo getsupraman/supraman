@@ -124,10 +124,15 @@ async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str,
     write_transcript(home, main, id, &format!("selftest refreshed {}", &id[..8]))?;
     let asked = Instant::now();
     trigger(view, cx).await?;
-    until(view, cx, REFRESHED, &format!("a poll, a scan and {id} after Refresh"), |v| {
+    let done = until(view, cx, REFRESHED, &format!("a poll, a scan and {id} after Refresh"), |v| {
         (v.refreshes > polls && v.transcript_scans > scans && row(v, id).is_some_and(|r| r.0)).then_some(())
     })
-    .await?;
+    .await;
+    if let Err(e) = done {
+        let (polled, scanned, shown, took) =
+            view.read_with(cx, |v, _| (v.refreshes - polls, v.transcript_scans - scans, row(v, id).is_some_and(|r| r.0), v.last_refresh_took));
+        bail!("{e:#}: {polled} poll(s) (the last took {took:?}), {scanned} scan(s), row shown {shown}");
+    }
     Ok(asked.elapsed())
 }
 

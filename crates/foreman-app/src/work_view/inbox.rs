@@ -413,5 +413,6 @@ mod tests {
         assert_eq!(row_key(&r), "inbox-ws-blocker_finding:f1");
         assert_eq!(dismiss_key(&r), "inbox-ws-dismiss-blocker_finding:f1");
         assert_eq!(kind_label("stale_in_progress"), "stale in progress");
+        assert_eq!(kind_label("blocker_finding"), "blocker finding");
     }
 }
