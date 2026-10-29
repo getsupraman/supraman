@@ -6,31 +6,18 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
-use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels};
+use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{WORKSPACE, click, sleep},
+    selftest::{WORKSPACE, click, log_offset, sleep, teardown_errors_since, until, until_with},
     selftest_manage::{shot, shot_window},
-    settings_window::Page,
+    settings_window::{Page, SettingsView},
     view::FleetView,
 };
 
 /// Square icon buttons, left to right as painted.
 const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refresh", "bar-settings"];
 const WITHIN: Duration = Duration::from_secs(5);
-
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            bail!("{what}: not within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
-}
 
 fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
     v.hits.borrow().get(key).map(|h| h.bounds)
@@ -44,7 +31,7 @@ fn repo_rows(v: &FleetView) -> usize {
 pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let mut sizes = Vec::new();
     for key in ICONS.iter().chain(&["toggle-stopped", "busy-dec", "busy-inc"]) {
-        let b = until(view, cx, &format!("{key} painted"), |v| bounds(v, key)).await?;
+        let b = until(view, cx, WITHIN, &format!("{key} painted"), |v| bounds(v, key)).await?;
         sizes.push((*key, b));
     }
     let first = sizes[0].1;
@@ -60,24 +47,24 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         }
     }
 
-    let open_rows = until(view, cx, "repo rows of the gate workspace", |v| Some(repo_rows(v)).filter(|n| *n > 0)).await?;
+    let open_rows = until(view, cx, WITHIN, "repo rows of the gate workspace", |v| Some(repo_rows(v)).filter(|n| *n > 0)).await?;
     click(view, "collapse-all", cx).await?;
-    until(view, cx, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
+    until(view, cx, WITHIN, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
     click(view, "expand-all", cx).await?;
-    until(view, cx, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows).then_some(())).await?;
+    until(view, cx, WITHIN, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows).then_some(())).await?;
 
     let shown = view.read_with(cx, |v, _| v.show_stopped);
     click(view, "toggle-stopped", cx).await?;
-    until(view, cx, "the stopped toggle flips", |v| (v.show_stopped != shown).then_some(())).await?;
+    until(view, cx, WITHIN, "the stopped toggle flips", |v| (v.show_stopped != shown).then_some(())).await?;
     click(view, "toggle-stopped", cx).await?;
-    until(view, cx, "the stopped toggle flips back", |v| (v.show_stopped == shown).then_some(())).await?;
+    until(view, cx, WITHIN, "the stopped toggle flips back", |v| (v.show_stopped == shown).then_some(())).await?;
 
     let busy = view.read_with(cx, |v, _| v.max_working);
     // the default is the upper bound (MAX_WORKING_LIMIT): lower first
     click(view, "busy-dec", cx).await?;
-    until(view, cx, "busy − lowers the limit", |v| (v.max_working + 1 == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy − lowers the limit", |v| (v.max_working + 1 == busy).then_some(())).await?;
     click(view, "busy-inc", cx).await?;
-    until(view, cx, "busy + raises it back", |v| (v.max_working == busy).then_some(())).await?;
+    until(view, cx, WITHIN, "busy + raises it back", |v| (v.max_working == busy).then_some(())).await?;
 
     // hover: the tooltip, and the icon's hover fill, in the picture
     let position = view
@@ -91,17 +78,19 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     shot("m5-13-bar-tooltip", cx).await;
 
     click(view, "bar-settings", cx).await?;
-    until(view, cx, "Settings opens its window", |v| v.settings_window).await?;
+    until(view, cx, WITHIN, "Settings opens its window", |v| v.settings_window).await?;
     view.update(cx, |v, cx| v.open_settings_at(Some(Page::About), cx));
     let handle = view.read_with(cx, |v, _| v.settings_window).ok_or_else(|| anyhow!("the settings window closed"))?;
     let page = handle.read_with(cx, |s, _| s.page()).map_err(|e| anyhow!("settings window: {e}"))?;
     if page != Page::About {
         bail!("open_settings_at(About) left the settings window on {page:?}");
     }
+    shown_and_painted(handle, cx).await?;
     shot_window("m5-13-settings-about", Some("Foreman Settings"), cx).await;
+    let closing = log_offset();
     view.update(cx, |v, cx| v.close_settings(cx));
     sleep(cx, Duration::from_millis(1000)).await;
-    let errors = crate::selftest::teardown_errors();
+    let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("close_settings logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
     }
@@ -116,6 +105,23 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     ))
 }
 
+/// Closing a window before Windows has shown, activated and painted it races those messages (F-06b).
+async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    until_with(cx, WITHIN, "the settings window shown", |cx| {
+        handle.update(cx, |_, window, _| crate::tray::is_shown(window)).ok().filter(|shown| *shown).map(|_| ())
+    })
+    .await?;
+    let painted = std::rc::Rc::new(std::cell::Cell::new(false));
+    let flag = painted.clone();
+    handle
+        .update(cx, |_, window, _| {
+            window.on_next_frame(move |_, _| flag.set(true));
+            window.refresh();
+        })
+        .map_err(|e| anyhow!("settings window: {e}"))?;
+    until_with(cx, WITHIN, "a frame of the settings window painted", |_| painted.get().then_some(())).await
+}
+
 /// m5/22: the settings window again, closed the way its caption ✕ does (WM_CLOSE). Neither that nor
 /// the close before it may log gpui's "window not found" / "Invalid window handle" lines.
 #[cfg(windows)]
@@ -123,23 +129,17 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
     click(view, "bar-settings", cx).await?;
-    let started = Instant::now();
-    let handle = loop {
-        if let Some(handle) = view.read_with(cx, |v, _| v.settings_window)
-            && handle.read_with(cx, |_, _| ()).is_ok()
-        {
-            break handle;
-        }
-        if started.elapsed() > WITHIN {
-            bail!("Settings did not open a second time within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    };
+    let handle = until_with(cx, WITHIN, "Settings opens a second time", |cx| {
+        view.read_with(cx, |v, _| v.settings_window).filter(|handle| handle.read_with(cx, |_, _| ()).is_ok())
+    })
+    .await?;
+    shown_and_painted(handle, cx).await?;
     let hwnd = handle
         .update(cx, |_, window, _| crate::tray::hwnd(window))
         .ok()
         .flatten()
         .ok_or_else(|| anyhow!("the settings window has no HWND"))?;
+    let closing = log_offset();
     unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }.map_err(|e| anyhow!("WM_CLOSE: {e}"))?;
     let asked = Instant::now();
     while handle.read_with(cx, |_, _| ()).is_ok() {
@@ -151,7 +151,7 @@ async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWind
     let gone = asked.elapsed();
     // gpui destroys the HWND on a later turn of its executor; give that time to log
     sleep(cx, Duration::from_millis(1000)).await;
-    let errors = crate::selftest::teardown_errors();
+    let errors = teardown_errors_since(closing);
     if !errors.is_empty() {
         bail!("closing the settings window logged {} window-teardown line(s): {}", errors.len(), errors.join(" | "));
     }
@@ -269,8 +269,8 @@ fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
 /// offsets, and at each the last Inbox row's painted bounds and the Inbox's own area meet no tree row's
 /// painted bounds: the tree clips to its own area.
 pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let inbox = until(view, cx, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
-    let tree = until(view, cx, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
+    let inbox = until(view, cx, WITHIN, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
+    let tree = until(view, cx, WITHIN, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
     // the search box sits right above the tree (m5/30)
     let search = view.read_with(cx, |v, _| v.hits.borrow().get("search-box").map(|h| h.bounds)).filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top());
     let between = tree.top() - inbox.bottom() - search.map_or(Pixels::ZERO, |b| b.size.height);
@@ -437,7 +437,7 @@ pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixe
     let file = TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| anyhow!("no table message written"))?;
     let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
     move_to(gpui::point(right, gpui::px(300.)), cx)?;
-    let key = until(view, cx, "the held message once the pointer left", |v| {
+    let key = until(view, cx, WITHIN, "the held message once the pointer left", |v| {
         (!v.left_held()).then(|| v.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
     })
     .await?;
@@ -451,7 +451,7 @@ pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixe
         cx.notify();
     });
     let prefix = format!("msg-table-{key}#");
-    let lines = until(view, cx, "the table's lines painted", |v| {
+    let lines = until(view, cx, WITHIN, "the table's lines painted", |v| {
         let hits = v.hits.borrow();
         let mut lines: Vec<(String, Bounds<Pixels>)> = hits.iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(k, h)| (k.clone(), h.bounds)).collect();
         (lines.len() >= TABLE.len()).then(|| {

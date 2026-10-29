@@ -10,7 +10,7 @@ use foreman_term::Terminal;
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput};
 
 use crate::{
-    selftest::{click, hex6, sleep, wait_for_tab_terminal},
+    selftest::{click, hex6, sleep, wait_for_tab_terminal, until},
     selftest_work::WORKSPACE,
     view::FleetView,
 };
@@ -36,7 +36,7 @@ async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Asyn
     // the earlier steps' tabs go, so every tab cycled through is one of these three
     let before: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| before.into_iter().for_each(|id| v.close_tab(id, cx)));
-    until(view, cx, "the earlier tabs closed", |v| v.tabs.is_empty().then_some(())).await?;
+    until(view, cx, WITHIN, "the earlier tabs closed", |v| v.tabs.is_empty().then_some(())).await?;
 
     let args = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"].map(String::from).into_iter();
     let args: Vec<String> = args.chain([script.display().to_string()]).collect();
@@ -144,17 +144,4 @@ pub(crate) async fn keys(terminal: &Entity<Terminal>, count: usize, cx: &mut Asy
     }
     sleep(cx, Duration::from_millis(500)).await;
     Ok(lines(cx))
-}
-
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            bail!("{what}: not within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
 }

@@ -2,7 +2,46 @@
 //! afterwards. gpui's own read and write turn a screenshot's CF_DIB into a PNG-only entry, which claude's
 //! Alt+V check does not see as an image (m5/46), so steps that borrow the clipboard use this instead.
 
-pub(crate) use win::{Snapshot, put_test_image};
+pub(crate) use win::{Held, Snapshot, put_test_image, sequence};
+
+use std::time::{Duration, Instant};
+
+use gpui::{AsyncWindowContext, ClipboardItem};
+
+const HELD_WITHIN: Duration = Duration::from_secs(60);
+const MUTEX: &str = r"Local\Foreman-selftest-clipboard";
+
+/// The clipboard for this selftest alone, from its save to its put-back: every `--selftest` on the
+/// machine borrows it through the one named mutex, so a parallel run never saves another's test value
+/// as the user's. Released when dropped, on this (the UI) thread, which owns the mutex.
+pub(crate) async fn borrow(step: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Held> {
+    let held = Held::open(MUTEX)?;
+    let started = Instant::now();
+    let mut told = false;
+    while !held.try_take()? {
+        if !told {
+            println!("step {step}: waiting up to {} s for the clipboard, which another selftest holds", HELD_WITHIN.as_secs());
+            told = true;
+        }
+        if started.elapsed() > HELD_WITHIN {
+            anyhow::bail!("another selftest held the clipboard for {} s", HELD_WITHIN.as_secs());
+        }
+        crate::selftest::sleep(cx, Duration::from_millis(100)).await;
+    }
+    if told {
+        println!("step {step}: the clipboard is this run's after {} ms", started.elapsed().as_millis());
+    }
+    Ok(held)
+}
+
+/// The clipboard's text through gpui, as a paste in a Foreman tab sees it.
+pub(crate) fn text(cx: &mut AsyncWindowContext) -> anyhow::Result<Option<String>> {
+    cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
+}
+
+pub(crate) fn put_text(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())))
+}
 
 /// A BITMAPINFOHEADER and 2×2 32-bit pixels.
 fn test_dib() -> Vec<u8> {
@@ -21,13 +60,20 @@ fn test_dib() -> Vec<u8> {
 mod win {
     use std::time::{Duration, Instant};
 
-    use windows::Win32::{
-        Foundation::{GlobalFree, HANDLE, HGLOBAL},
-        System::{
-            DataExchange::{CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard, SetClipboardData},
-            Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-            Ole::CF_DIB,
+    use windows::{
+        Win32::{
+            Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT},
+            System::{
+                DataExchange::{
+                    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
+                    OpenClipboard, SetClipboardData,
+                },
+                Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
+                Ole::CF_DIB,
+                Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
+            },
         },
+        core::PCWSTR,
     };
 
     /// GDI-handle and owner-display formats, which are no HGLOBAL; Windows synthesizes CF_BITMAP again from CF_DIB.
@@ -51,6 +97,42 @@ mod win {
     impl Drop for Open {
         fn drop(&mut self) {
             unsafe { CloseClipboard() }.ok();
+        }
+    }
+
+    pub(crate) struct Held {
+        mutex: HANDLE,
+        owned: std::cell::Cell<bool>,
+    }
+
+    impl Held {
+        pub(crate) fn open(name: &str) -> windows::core::Result<Self> {
+            let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+            let mutex = unsafe { CreateMutexW(None, false, PCWSTR(wide.as_ptr())) }?;
+            Ok(Held { mutex, owned: std::cell::Cell::new(false) })
+        }
+
+        /// An abandoned mutex (a run that died holding it) is taken as well.
+        pub(crate) fn try_take(&self) -> windows::core::Result<bool> {
+            match unsafe { WaitForSingleObject(self.mutex, 0) } {
+                WAIT_OBJECT_0 | WAIT_ABANDONED => {
+                    self.owned.set(true);
+                    Ok(true)
+                }
+                WAIT_TIMEOUT => Ok(false),
+                _ => Err(windows::core::Error::from_thread()),
+            }
+        }
+    }
+
+    impl Drop for Held {
+        fn drop(&mut self) {
+            unsafe {
+                if self.owned.get() {
+                    ReleaseMutex(self.mutex).ok();
+                }
+                CloseHandle(self.mutex).ok();
+            }
         }
     }
 
@@ -92,6 +174,11 @@ mod win {
         }
     }
 
+    /// Changes with every write to the clipboard, by any process.
+    pub(crate) fn sequence() -> u32 {
+        unsafe { GetClipboardSequenceNumber() }
+    }
+
     /// A 2×2 32-bit DIB; Windows offers it as CF_BITMAP too, which `Clipboard.ContainsImage` asks for.
     pub(crate) fn put_test_image() -> windows::core::Result<()> {
         set([(CF_DIB.0 as u32, super::test_dib().as_slice())].into_iter())
@@ -120,6 +207,17 @@ mod win {
 
 #[cfg(not(windows))]
 mod win {
+    pub(crate) struct Held;
+
+    impl Held {
+        pub(crate) fn open(_name: &str) -> anyhow::Result<Self> {
+            Ok(Held)
+        }
+        pub(crate) fn try_take(&self) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+    }
+
     pub(crate) struct Snapshot;
 
     impl Snapshot {
@@ -137,10 +235,28 @@ mod win {
     pub(crate) fn put_test_image() -> anyhow::Result<()> {
         anyhow::bail!("windows only")
     }
+
+    pub(crate) fn sequence() -> u32 {
+        0
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn the_clipboard_is_one_holders_until_dropped() {
+        let name = format!(r"Local\Foreman-selftest-clipboard-test-{}", crate::selftest::hex6());
+        let take = |name: String| std::thread::spawn(move || super::Held::open(&name).unwrap().try_take().unwrap()).join().unwrap();
+        let first = super::Held::open(&name).unwrap();
+        assert!(first.try_take().unwrap());
+        let second = take(name.clone());
+        assert!(!second, "a second holder took the clipboard while the first held it");
+        drop(first);
+        let third = take(name);
+        assert!(third, "the clipboard stayed held after its holder dropped");
+    }
+
     #[test]
     fn the_test_image_is_a_2x2_32_bit_dib() {
         let dib = super::test_dib();

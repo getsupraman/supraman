@@ -45,17 +45,11 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
 }
 
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            let state = view.read_with(cx, |v, _| format!("confirm {:?}, error {:?}", v.confirm.as_ref().map(|c| c.text.clone()), v.action_error));
-            bail!("{what}: not within {} s ({state})", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
+    let result = crate::selftest::until(view, cx, WITHIN, what, f).await;
+    result.map_err(|e| {
+        let state = view.read_with(cx, |v, _| format!("confirm {:?}, error {:?}", v.confirm.as_ref().map(|c| c.text.clone()), v.action_error));
+        e.context(state)
+    })
 }
 
 /// `session_id`'s row anywhere in the whole tree: (name, health).

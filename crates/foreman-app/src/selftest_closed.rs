@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
-    selftest::{click, sleep},
+    selftest::{click, sleep, until},
     stars::Stars,
     view::FleetView,
 };
@@ -74,19 +74,6 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > WITHIN {
-            bail!("{what}: not within {} s", WITHIN.as_secs());
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
-}
-
 /// The tree row of `id`: (name, closed, starred).
 fn row(v: &FleetView, id: &str) -> Option<(String, bool, bool)> {
     v.tree()
@@ -122,7 +109,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let started = Instant::now();
-    let (name, closed, starred) = until(view, cx, "the starred 20-day-old transcript in the tree with stopped hidden", |v| row(v, OLD)).await?;
+    let (name, closed, starred) = until(view, cx, WITHIN, "the starred 20-day-old transcript in the tree with stopped hidden", |v| row(v, OLD)).await?;
     if name != OLD_TITLE || !closed || !starred {
         bail!("{OLD} shows as {name:?} closed={closed} starred={starred}");
     }
@@ -132,18 +119,18 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
 
     click(view, "toggle-stopped", cx).await?;
-    let (name, closed, _) = until(view, cx, "the closed session once stopped sessions are shown", |v| row(v, RECENT)).await?;
+    let (name, closed, _) = until(view, cx, WITHIN, "the closed session once stopped sessions are shown", |v| row(v, RECENT)).await?;
     if name != RECENT_TITLE || !closed {
         bail!("{RECENT} shows as {name:?} closed={closed}: not named by its custom title");
     }
-    until(view, cx, "its resume and star painted", |v| {
+    until(view, cx, WITHIN, "its resume and star painted", |v| {
         (painted(v, &format!("resume-{}", &RECENT[..8])) && painted(v, &format!("star-{RECENT}"))).then_some(())
     })
     .await?;
 
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
     click(view, &format!("resume-{}", &RECENT[..8]), cx).await?;
-    until(view, cx, "resume opens a tab", |v| (v.tabs.len() > tabs).then_some(())).await?;
+    until(view, cx, WITHIN, "resume opens a tab", |v| (v.tabs.len() > tabs).then_some(())).await?;
     let seen = seen_file(home);
     let deadline = Instant::now() + WITHIN;
     let text = loop {
@@ -168,9 +155,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let minted = args.contains("--mcp-config");
 
     click(view, &format!("star-{RECENT}"), cx).await?;
-    until(view, cx, "the star sets", |v| row(v, RECENT).filter(|r| r.2).map(|_| ())).await?;
+    until(view, cx, WITHIN, "the star sets", |v| row(v, RECENT).filter(|r| r.2).map(|_| ())).await?;
     click(view, "toggle-stopped", cx).await?;
-    until(view, cx, "stopped hidden again", |v| (!v.show_stopped).then_some(())).await?;
+    until(view, cx, WITHIN, "stopped hidden again", |v| (!v.show_stopped).then_some(())).await?;
     sleep(cx, Duration::from_millis(300)).await;
     if view.read_with(cx, |v, _| row(v, RECENT)).is_none() {
         bail!("the starred {RECENT} dropped out with stopped sessions hidden");
@@ -189,7 +176,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
 
     click(view, &format!("star-{RECENT}"), cx).await?;
-    until(view, cx, "unstar hides it with stopped hidden", |v| row(v, RECENT).is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "unstar hides it with stopped hidden", |v| row(v, RECENT).is_none().then_some(())).await?;
     let (on_disk, _) = Stars::load(Some(home));
     if on_disk.ids().contains(RECENT) {
         bail!("unstar left {RECENT} in starred.json");

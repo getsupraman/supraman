@@ -2,35 +2,22 @@
 //! `claude --name fm-selftest-<hex>-mark` is typed. Its row must be marked (the time from Enter to the
 //! painted mark is measured); a plain shell tab marks nothing and shows the row's `tab` link, which brings
 //! the claude tab back. On that row, Copy SendMessage name puts the name `~/.claude/sessions` registered on
-//! the clipboard, a toast says so, and the row's y is the same before and after. `/exit` clears the mark.
+//! the clipboard, a toast says so, and the tree area keeps its bottom. `/exit` clears the mark.
 //! The claude's pid is recorded for [`crate::selftest::cleanup`], which kills it if the step does not end it.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use foreman_claude::peer;
-use gpui::{AsyncWindowContext, ClipboardItem, Entity, MouseButton};
+use gpui::{AsyncWindowContext, Bounds, Entity, MouseButton, Pixels};
 
 use crate::{
-    selftest::{CLIPBOARD_TRIES, cargo_root, click, hex6, lock, press, read_own, sleep, wait_for_tab_terminal},
+    selftest::{CLIPBOARD_TRIES, cargo_root, click, hex6, lock, press, read_own, sleep, until, wait_for_tab_terminal},
     view::{FleetView, REFRESH_EVERY},
 };
 
 const STARTED_WITHIN: Duration = Duration::from_secs(40);
 const WITHIN: Duration = Duration::from_secs(10);
-
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, within: Duration, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > within {
-            bail!("{what}: not within {} ms", within.as_millis());
-        }
-        sleep(cx, Duration::from_millis(25)).await;
-    }
-}
 
 /// The session ids whose rows were painted marked in the last frame.
 fn marked(v: &FleetView) -> Vec<String> {
@@ -57,6 +44,7 @@ pub(crate) fn kill_own(pid: u32, start: u64) {
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| earlier.into_iter().for_each(|id| v.close_tab(id, cx)));
+    let _clipboard = crate::selftest_clipboard::borrow("7l", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
     let name = format!("fm-selftest-{}-mark", hex6());
     let shell = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
@@ -152,15 +140,16 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
 }
 
 /// Right-click → Copy SendMessage name: the clipboard holds `name` (unique, so no `[ref]`), a toast says so
-/// and the row has not moved.
+/// and the toast floats over the tree: the tree area's bottom is that of the frame before. Rows re-sort and
+/// notices come and go between polls, so a row's own y proves nothing.
 async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let row = format!("session-row-{sid}");
-    let top = |v: &FleetView| v.hits.borrow().get(&row).map(|h| h.bounds.top());
-    let before = until(view, cx, WITHIN, "the row painted", top).await?;
-    let read = |cx: &mut AsyncWindowContext| cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()));
+    let tree = |v: &FleetView| v.hits.borrow().get("tree-area").map(|h| h.bounds);
+    until(view, cx, WITHIN, "the row painted", |v| v.hits.borrow().contains_key(&row).then_some(())).await?;
+    let before = until(view, cx, WITHIN, "the tree area painted", tree).await?;
     let mut copied = None;
     for _ in 0..CLIPBOARD_TRIES {
-        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("not copied".into())))?;
+        crate::selftest_clipboard::put_text("not copied", cx)?;
         press(view, &row, MouseButton::Right, cx).await?;
         let shown = until(view, cx, WITHIN, "Copy SendMessage name in the menu", |v| v.hits.borrow().contains_key("menu-copy-send-name").then_some(())).await;
         if let Err(e) = shown {
@@ -170,7 +159,7 @@ async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mu
             bail!("{e}: menu {menu:?}; live entries named {name}: {live:?}");
         }
         click(view, "menu-copy-send-name", cx).await?;
-        copied = read_own(cx, &read, |c| c == name).await?;
+        copied = read_own(cx, |c| c == name).await?;
         if copied.as_deref() == Some(name) {
             break;
         }
@@ -178,15 +167,18 @@ async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mu
     if copied.as_deref() != Some(name) {
         bail!("the clipboard holds {copied:?}, not {name:?} ({CLIPBOARD_TRIES} tries)");
     }
-    until(view, cx, WITHIN, "the copy toast", |v| {
-        (v.toast.as_ref().is_some_and(|t| t.text == format!("Copied {name}")) && v.hits.borrow().contains_key("toast")).then_some(())
+    let after = until(view, cx, WITHIN, "the copy toast painted", |v| {
+        let shown = v.toast.as_ref().is_some_and(|t| t.text == format!("Copied {name}")) && v.hits.borrow().contains_key("toast");
+        shown.then(|| tree(v)).flatten()
     })
     .await?;
-    // two frames later, with the toast painted
-    sleep(cx, Duration::from_millis(100)).await;
-    let after = until(view, cx, WITHIN, "the row painted after the copy", top).await?;
-    if after != before {
-        bail!("the row moved from y {:.1} to {:.1} after Copy", f32::from(before), f32::from(after));
+    let edges = |b: Bounds<Pixels>| (f32::from(b.top()), f32::from(b.bottom()), f32::from(b.size.height));
+    let ((top0, bottom0, height0), (top1, bottom1, height1)) = (edges(before), edges(after));
+    // a notice or Inbox row above may push the top down, and the height with it; a toast in the flow lifts the bottom
+    if (bottom1 - bottom0).abs() > 0.5 {
+        bail!("the toast took room from the tree: tree area top {top0:.1} → {top1:.1}, bottom {bottom0:.1} → {bottom1:.1}, height {height0:.1} → {height1:.1}");
     }
-    Ok(format!("Copy SendMessage name copied {name:?}, toast shown, the row stayed at y {:.1}", f32::from(after)))
+    Ok(format!(
+        "Copy SendMessage name copied {name:?}, toast shown over the tree: tree area bottom {bottom1:.1}, height {height0:.1} → {height1:.1}"
+    ))
 }

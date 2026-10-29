@@ -10,16 +10,18 @@ use std::time::{Duration, Instant};
 use anyhow::bail;
 use foreman_term::{Color, CursorShape, NamedColor, Terminal, terminal_settings::TerminalConfig};
 use gpui::{
-    AsyncWindowContext, ClipboardItem, Entity, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    AsyncWindowContext, Entity, Keystroke, Modifiers, MouseButton, MouseDownEvent,
     MouseUpEvent, PlatformInput, rgb,
 };
 
 use crate::{
     selftest::{CLIPBOARD_TRIES, hex6, key, read_own, select_wheel_line, sleep},
+    selftest_clipboard::put_text,
     view::FleetView,
 };
 
 pub(crate) async fn run(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let _clipboard = crate::selftest_clipboard::borrow("6c", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = steps(view, tab, terminal, cx).await;
     saved.restore()?;
@@ -29,14 +31,6 @@ pub(crate) async fn run(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Te
 fn last_line(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> String {
     let content = terminal.read_with(cx, |t, _| t.get_content());
     content.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().trim_end().to_string()
-}
-
-fn clipboard(cx: &mut AsyncWindowContext) -> anyhow::Result<Option<String>> {
-    cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
-}
-
-fn put(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())))
 }
 
 fn right_click(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -61,15 +55,8 @@ fn typed(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
 
 async fn until(what: &str, within: Duration, cx: &mut AsyncWindowContext, mut done: impl FnMut(&mut AsyncWindowContext) -> bool) -> anyhow::Result<Duration> {
     let started = Instant::now();
-    loop {
-        if done(cx) {
-            return Ok(started.elapsed());
-        }
-        if started.elapsed() > within {
-            bail!("{what}: not within {} ms", within.as_millis());
-        }
-        sleep(cx, Duration::from_millis(30)).await;
-    }
+    crate::selftest::until_with(cx, within, what, |cx| done(cx).then_some(())).await?;
+    Ok(started.elapsed())
 }
 
 async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -82,9 +69,9 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     let mut text = String::new();
     for _ in 0..CLIPBOARD_TRIES {
         (_, text) = select_wheel_line(terminal, cx).await?;
-        put("not copied", cx)?;
+        put_text("not copied", cx)?;
         key(cx, "c", ctrl)?;
-        copied = read_own(cx, &clipboard, |c| c == text).await?;
+        copied = read_own(cx, |c| c == text).await?;
         if copied.as_deref() == Some(text.as_str()) {
             break;
         }
@@ -144,9 +131,9 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     let mut copied = None;
     for _ in 0..CLIPBOARD_TRIES {
         (_, text) = select_wheel_line(terminal, cx).await?;
-        put("not copied", cx)?;
+        put_text("not copied", cx)?;
         right_click(terminal, cx)?;
-        copied = read_own(cx, &clipboard, |c| c == text).await?;
+        copied = read_own(cx, |c| c == text).await?;
         if copied.as_deref() == Some(text.as_str()) {
             break;
         }
@@ -163,7 +150,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     let marker = format!("fm-rclick-{}", hex6());
     let mut pasted = false;
     for _ in 0..CLIPBOARD_TRIES {
-        put(&marker, cx)?;
+        put_text(&marker, cx)?;
         right_click(terminal, cx)?;
         if until("right-click paste echoed", Duration::from_secs(2), cx, |cx| last_line(terminal, cx).contains(&marker)).await.is_ok() {
             pasted = true;

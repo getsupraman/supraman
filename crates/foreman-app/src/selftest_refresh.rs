@@ -15,7 +15,7 @@ use anyhow::{Context as _, bail};
 use gpui::{AsyncWindowContext, Entity, Modifiers};
 
 use crate::{
-    selftest::{click, hex6, sleep},
+    selftest::{click, hex6, until},
     selftest_closed::{claude_dir, transcript},
     view::{FleetView, REFRESH_EVERY, TRANSCRIPTS_EVERY},
 };
@@ -29,19 +29,6 @@ const ENDING_TITLE: &str = "selftest ending session";
 const CLOSE_TO_RESUME: Duration = Duration::from_millis(2300);
 const REFRESHED: Duration = Duration::from_millis(1500);
 const WITHIN: Duration = Duration::from_secs(45);
-
-async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, within: Duration, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
-    let started = Instant::now();
-    loop {
-        if let Some(t) = view.read_with(cx, |v, _| f(v)) {
-            return Ok(t);
-        }
-        if started.elapsed() > within {
-            bail!("{what}: not within {} ms", within.as_millis());
-        }
-        sleep(cx, Duration::from_millis(25)).await;
-    }
-}
 
 /// The tree row of `id`: (closed, resume offered and painted).
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
