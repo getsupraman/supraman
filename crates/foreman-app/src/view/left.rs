@@ -5,19 +5,21 @@ use std::{
 
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
-use foreman_supervisor::{NeedsKind, NeedsYou, RELAY_ROLE, Remedy, workspace_session_name};
+use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use foreman_ui::banner;
 use foreman_ui::button;
 use foreman_ui::hit::{HitTargets, hit_target};
+use foreman_ui::hover_card;
 use foreman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
+use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::page;
-use crate::fleet::{self, RepoNode, SessionRow};
+use crate::fleet::{self, RepoNode, SessionRow, WorkspaceNode};
+use crate::row_card;
 use crate::work_view;
 
 const TREE_MIN_SHARE: f32 = 0.3;
@@ -131,6 +133,12 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
 const WORKSPACE_ROW: f32 = 30.;
 const REPO_ROW: f32 = 26.;
 const SESSION_LINE: f32 = 24.;
+/// One hover icon's place: always laid out, so a row's icons never shift.
+const SLOT: f32 = 20.;
+
+fn slot() -> AnyElement {
+    div().flex_none().size(px(SLOT)).into_any_element()
+}
 
 fn disclosure(open: Option<bool>, color: Hsla) -> Div {
     let slot = div().flex().flex_none().items_center().justify_center().size(px(16.));
@@ -142,20 +150,6 @@ fn disclosure(open: Option<bool>, color: Hsla) -> Div {
 
 fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
     button::icon(hits, key, icon.svg(14., cx.theme().colors().text_muted), px(20.), cx).tooltip(Tooltip::text(tip))
-}
-
-fn star_button(hits: &HitTargets, key: String, starred: bool, cx: &gpui::App) -> Stateful<Div> {
-    let (icon, fg) = if starred { (Icon::StarFilled, cx.theme().status().warning) } else { (Icon::Star, cx.theme().colors().text_muted) };
-    let tip = if starred { "Unstar: shown only while it runs or stopped sessions are shown" } else { "Star: always shown, stopped or closed, however old" };
-    button::ghost(hits, key, cx)
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(20.))
-        .rounded_sm()
-        .child(icon.svg(13., fg))
-        .tooltip(Tooltip::text(tip))
 }
 
 impl FleetView {
@@ -411,99 +405,7 @@ impl FleetView {
         for workspace in tree.workspaces.iter().filter(|_| query.is_empty()) {
             let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);
-            let started = workspace.started == Some(true);
-            let (state_text, state_color) = match workspace.started {
-                Some(true) => ("started", status.success),
-                Some(false) => ("stopped", secondary(cx)),
-                None => ("", secondary(cx)),
-            };
-            let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, workspace.name);
-            let pname = workspace.name.clone();
-            let start_stop = button::bordered(&self.hits, toggle_key, if started { "Stop" } else { "Start" }, cx).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    if started {
-                        this.stop_workspace(&pname, cx);
-                    } else {
-                        this.start_workspace(&pname, cx);
-                    }
-                }),
-            );
-            let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
-                let w = workspace.name.clone();
-                button::bordered(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.open_compose(&w, None, window, cx);
-                    },
-                ))
-            });
-            let relay_row = workspace.supervised.iter().any(|r| r.role == Some(RELAY_ROLE) && r.also_in.is_none());
-            let relay_label = self.relays.get(&workspace.name).and_then(|r| r.label(now_ms())).filter(|_| !relay_row);
-            let work_name = workspace.name.clone();
-            let work = button::bordered(&self.hits, format!("work-{}", workspace.name), "Work", cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.open_work(&work_name, cx);
-                },
-            ));
-            body = body.child(
-                div()
-                    .id(SharedString::from(pkey.clone()))
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .h(px(WORKSPACE_ROW))
-                    .pl(px(6.))
-                    .pr_2()
-                    .mt_2()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(colors.ghost_element_hover))
-                    .active(|s| s.bg(colors.ghost_element_active))
-                    .child(disclosure(Some(open), colors.text_muted))
-                    .child(
-                        div()
-                            .flex_none()
-                            .font_weight(FontWeight::BOLD)
-                            .whitespace_nowrap()
-                            .child(SharedString::from(workspace.name.clone())),
-                    )
-                    .child(work)
-                    .child(
-                        clipped(format!("ws-root-{}", workspace.name), home_text(workspace.home.as_deref()), true)
-                            .flex_1()
-                            .text_xs()
-                            .text_color(secondary(cx)),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .whitespace_nowrap()
-                            .text_xs()
-                            .text_color(secondary(cx))
-                            .child(SharedString::from(format!("{} sessions", workspace.session_count()))),
-                    )
-                    .child(div().flex_none().text_xs().text_color(state_color).child(state_text))
-                    .children(relay_label.map(|(text, ok)| {
-                        // truncates rather than push the buttons after it past the panel's edge
-                        clipped(format!("relay-{}", workspace.name), text, false)
-                            .text_xs()
-                            .text_color(if ok { status.success } else { status.warning })
-                    }))
-                    .children(task)
-                    .child(start_stop)
-                    .child(hit_target(&self.hits, format!("ws-row-{}", workspace.name)))
-                    .on_mouse_down(MouseButton::Right, {
-                        let w = workspace.name.clone();
-                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.open_menu(MenuTarget::Workspace(w.clone()), e.position, cx);
-                        })
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx))),
-            );
+            body = body.child(self.render_workspace_row(workspace, open, cx));
             if self.compose.as_ref().is_some_and(|c| c.workspace == workspace.name && c.reply_to.is_none()) {
                 body = body.children(self.render_compose(cx));
             }
@@ -516,64 +418,7 @@ impl FleetView {
             for repo in &workspace.repos {
                 let rkey = format!("repo:{}/{}", workspace.name, repo.name);
                 let ropen = !self.collapsed.contains(&rkey);
-                let empty = repo.sessions.is_empty();
-                let branch = repo.branch.as_deref().filter(|_| repo.kind == foreman_core::FolderKind::Git).map(|b| format!("({b})")).unwrap_or_default();
-                let offers_new = repo.enabled && repo.supervised_in.is_none();
-                let parked = repo.listed && !repo.enabled && repo.supervised_in.is_none();
-                let new_key = format!("new-claude-{}/{}", workspace.name, repo.name);
-                let (new_cwd, new_title) = (repo.path.clone(), format!("{} · {} · claude", workspace.name, repo.name));
-                let new_claude = glyph_button(&self.hits, new_key, Icon::Plus, "New claude session in this repo", cx)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        cx.stop_propagation();
-                        this.new_claude(new_cwd.clone(), new_title.clone(), window, cx);
-                    }));
-                body = body.child(
-                    div()
-                        .id(SharedString::from(rkey.clone()))
-                        .relative()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap_2()
-                        .h(px(REPO_ROW))
-                        .pl(px(26.))
-                        .pr_2()
-                        .text_sm()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(colors.ghost_element_hover))
-                        .active(|s| s.bg(colors.ghost_element_active))
-                        .when(empty, |d| d.text_color(quiet(cx)))
-                        .when(parked, |d| d.opacity(DIMMED))
-                        .child(disclosure((!empty).then_some(ropen), secondary(cx)))
-                        .child(div().flex_none().whitespace_nowrap().child(SharedString::from(repo_label(&repo.name, &repo.path, workspace.home.as_deref()))))
-                        .child(
-                            clipped(format!("branch-{}/{}", workspace.name, repo.name), branch, false)
-                                .text_xs()
-                                .text_color(secondary(cx)),
-                        )
-                        .when(!empty, |d| {
-                            d.child(
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(secondary(cx))
-                                    .child(SharedString::from(format!("{}", repo.sessions.len()))),
-                            )
-                        })
-                        .when(parked, |d| d.child(tag("disabled", cx)))
-                        .children(self.folder_tags(&workspace.name, repo, cx))
-                        .child(div().flex_1())
-                        .when(offers_new, |d| d.child(new_claude))
-                        .child(hit_target(&self.hits, format!("repo-row-{}/{}", workspace.name, repo.name)))
-                        .on_mouse_down(MouseButton::Right, {
-                            let (w, r) = (workspace.name.clone(), repo.name.clone());
-                            cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.open_menu(MenuTarget::Repo { workspace: w.clone(), repo: r.clone() }, e.position, cx);
-                            })
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx))),
-                );
+                body = body.child(self.render_folder_row(workspace, repo, ropen, cx));
                 if !ropen {
                     continue;
                 }
@@ -1160,6 +1005,260 @@ impl FleetView {
         )
     }
 
+    fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {
+        button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
+    }
+
+    fn workspace_selected(&self, workspace: &WorkspaceNode, cx: &gpui::App) -> bool {
+        let Some(tab) = self.active.and_then(|id| self.tab(id)) else { return false };
+        match &tab.kind {
+            TabKind::Work(view) => view.read(cx).workspace == workspace.name,
+            _ => workspace.own.as_ref().is_some_and(|own| Self::tab_runs(tab, &own.session)),
+        }
+    }
+
+    /// The workspace row stands for the workspace session: its health, its `waiting for`, its controls.
+    fn render_workspace_row(&self, workspace: &WorkspaceNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let w = workspace.name.clone();
+        let pkey = format!("workspace:{w}");
+        let group = SharedString::from(format!("ws-group-{w}"));
+        let shown = self.workspace_selected(workspace, cx);
+        let started = workspace.started == Some(true);
+        let own = workspace.own.as_ref();
+        let live = own.filter(|r| fleet::is_alive(&r.health));
+        let blocked = live.is_some_and(|r| matches!(r.health, Health::Blocked { .. }));
+        let waiting = live.and_then(|r| match &r.health {
+            Health::Blocked { waiting_for: Some(why) } => Some(format!("waiting for: {why}")),
+            _ => None,
+        });
+        let dot = match live {
+            Some(r) => div().size(px(8.)).rounded_full().bg(health_color(&r.health, cx)),
+            None => div().size(px(8.)).rounded_full().border_1().border_color(colors.text_disabled),
+        };
+        let relay = self.relays.get(&w).and_then(|r| r.label(now_ms()));
+        let relay_glyph = relay.clone().and_then(|(text, _)| {
+            let (icon, color) = match relay_word(&text) {
+                "direct" => return None,
+                "ready" => (Icon::RelayReady, status.success),
+                "starting" => (Icon::RelayStarting, status.warning),
+                _ => (Icon::Warning, status.warning),
+            };
+            let key = format!("relay-{w}");
+            Some(
+                div()
+                    .id(SharedString::from(key.clone()))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size_full()
+                    .child(icon.svg(14., color))
+                    .child(hit_target(&self.hits, key))
+                    .tooltip(Tooltip::text(text)),
+            )
+        });
+
+        let work = {
+            let w = w.clone();
+            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's WorkState board", &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_work(&w, cx);
+                },
+            ))
+        };
+        let task = (started && self.relay_refusal(&w).is_none()).then(|| {
+            let w = w.clone();
+            self.hover_icon(format!("task-{w}"), Icon::Task, "Task…: write the workspace session a task", &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_compose(&w, None, window, cx);
+                },
+            ))
+        });
+        let session = own.and_then(|row| {
+            let (w, session) = (w.clone(), row.session.clone());
+            if row.attachable {
+                Some(self.hover_icon(format!("attach-ws-{w}"), Icon::Attach, "Attach the workspace session", &group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.attach(&w, "workspace", &session, window, cx);
+                    },
+                )))
+            } else if self.resumable(row) {
+                Some(self.hover_icon(format!("resume-ws-{w}"), Icon::Resume, "Resume the workspace session", &group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.resume(&w, "workspace", &session, window, cx);
+                    },
+                )))
+            } else {
+                None
+            }
+        });
+        let start_stop = {
+            let w = w.clone();
+            let (key, icon, tip) = if started {
+                (format!("stop-{w}"), Icon::Square, "Stop: its supervised sessions stop (stop, never rm)")
+            } else {
+                (format!("start-{w}"), Icon::Play, "Start: supervise the workspace, its session first")
+            };
+            self.hover_icon(key, icon, tip, &group, shown, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                if started {
+                    this.stop_workspace(&w, cx);
+                } else {
+                    this.start_workspace(&w, cx);
+                }
+            }))
+        };
+
+        let registered = self.workspaces.iter().find(|r| r.name == w);
+        let facts = row_card::WorkspaceFacts {
+            name: w.clone(),
+            home: workspace.home.as_ref().map(|h| h.display().to_string()),
+            folders: registered
+                .map(|r| r.folders.iter().map(|f| if f.enabled { f.name.clone() } else { format!("{} (disabled)", f.name) }).collect())
+                .unwrap_or_default(),
+            started: workspace.started,
+            own: own.cloned(),
+            relay: relay.map(|(text, _)| text),
+            project: self.tabs.iter().find_map(|t| match &t.kind {
+                TabKind::Work(view) if view.read(cx).workspace == w => view.read(cx).project().map(|p| p.qualified_ref.clone()),
+                _ => None,
+            }),
+        };
+
+        let line = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(WORKSPACE_ROW))
+            .child(disclosure(Some(open), colors.text_muted))
+            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(dot))
+            .child(div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone())))
+            .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_xs()
+                    .text_color(secondary(cx))
+                    .child(SharedString::from(workspace.session_count().to_string())),
+            )
+            .child(div().flex_none().size(px(16.)).children(relay_glyph))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(2.))
+                    .child(work)
+                    .child(task.map_or_else(slot, IntoElement::into_any_element))
+                    .child(session.map_or_else(slot, IntoElement::into_any_element))
+                    .child(start_stop),
+            );
+        div()
+            .id(SharedString::from(pkey.clone()))
+            .group(group)
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .pl(px(6.))
+            .pr_2()
+            .mt_2()
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
+            .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
+            .child(line)
+            .when_some(waiting, |d, why| {
+                d.child(clipped(format!("ws-waiting-{w}"), why, false).pl(px(48.)).pb(px(4.)).text_xs().text_color(status.warning))
+            })
+            .child(hit_target(&self.hits, format!("ws-row-{w}")))
+            .tooltip(hover_card::tooltip(move || row_card::workspace_card(&facts, now_ms())))
+            .on_mouse_down(MouseButton::Right, {
+                let w = w.clone();
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(MenuTarget::Workspace(w.clone()), e.position, cx);
+                })
+            })
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(pkey.clone(), cx)))
+            .into_any_element()
+    }
+
+    fn render_folder_row(&self, workspace: &WorkspaceNode, repo: &RepoNode, open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let w = &workspace.name;
+        let rkey = format!("repo:{w}/{}", repo.name);
+        let group = SharedString::from(format!("repo-group-{w}/{}", repo.name));
+        let empty = repo.sessions.is_empty();
+        let git = repo.kind == foreman_core::FolderKind::Git;
+        let branch = repo.branch.clone().filter(|_| git).unwrap_or_default();
+        let offers_new = repo.enabled && repo.supervised_in.is_none();
+        let parked = repo.listed && !repo.enabled && repo.supervised_in.is_none();
+        let new_claude = offers_new.then(|| {
+            let (cwd, title) = (repo.path.clone(), format!("{w} · {} · claude", repo.name));
+            self.hover_icon(format!("new-claude-{w}/{}", repo.name), Icon::Plus, "New claude session in this folder", &group, false, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.new_claude(cwd.clone(), title.clone(), window, cx);
+                },
+            ))
+        });
+        let terminal = {
+            let (cwd, title) = (repo.path.clone(), format!("{w} · {} · pwsh", repo.name));
+            self.hover_icon(format!("terminal-{w}/{}", repo.name), Icon::Terminal, "Open a terminal here", &group, false, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_shell_in(cwd.clone(), title.clone(), window, cx);
+                },
+            ))
+        };
+        div()
+            .id(SharedString::from(rkey.clone()))
+            .group(group)
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .h(px(REPO_ROW))
+            .pl(px(26.))
+            .pr_2()
+            .text_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
+            .when(empty, |d| d.text_color(quiet(cx)))
+            .when(parked, |d| d.opacity(DIMMED))
+            .child(disclosure((!empty).then_some(open), secondary(cx)))
+            .child(if git { Icon::GitBranch } else { Icon::Folder }.svg(14., secondary(cx)))
+            .child(div().flex_none().whitespace_nowrap().child(SharedString::from(folder_label(&repo.name, &repo.path, workspace.home.as_deref()))))
+            .child(clipped(format!("branch-{w}/{}", repo.name), branch, false).text_xs().text_color(secondary(cx)))
+            .when(!empty, |d| {
+                d.child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(repo.sessions.len().to_string())))
+            })
+            .when(parked, |d| d.child(tag("disabled", cx)))
+            .children(self.folder_tags(w, repo, cx))
+            .child(div().flex_1())
+            .child(div().flex().flex_none().items_center().gap(px(2.)).child(new_claude.map_or_else(slot, IntoElement::into_any_element)).child(terminal))
+            .child(hit_target(&self.hits, format!("repo-row-{w}/{}", repo.name)))
+            .on_mouse_down(MouseButton::Right, {
+                let (w, r) = (w.clone(), repo.name.clone());
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(MenuTarget::Repo { workspace: w.clone(), repo: r.clone() }, e.position, cx);
+                })
+            })
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(rkey.clone(), cx)))
+            .into_any_element()
+    }
+
     pub(super) fn render_session(
         &self,
         workspace: &str,
@@ -1181,21 +1280,58 @@ impl FleetView {
             Health::Blocked { waiting_for: Some(w) } => Some(format!("waiting for: {w}")),
             _ => None,
         };
-        let name = match row.role {
-            Some(role) => role.to_string(),
-            None if s.name.is_empty() => "(unnamed)".to_string(),
-            None => s.name.clone(),
-        };
-        let marks = self.search_marks.get(&s.session_id).filter(|_| row.role.is_none());
-        let relay_state = (row.role == Some(RELAY_ROLE) && fleet::is_alive(&row.health))
-            .then(|| self.relays.get(workspace).and_then(|r| r.label(now_ms())))
-            .flatten()
-            .map(|(text, ok)| (relay_word(&text).to_string(), if ok { status.success } else { status.warning }));
+        let name = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
+        let marks = self.search_marks.get(&s.session_id);
         let hook = row
             .hook
             .as_ref()
             .filter(|_| s.name.starts_with(foreman_core::FM_PREFIX))
             .map(|h| format!("hook: {}", h.label(now_ms())));
+        let shown = self.is_marked(s);
+        let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
+
+        let star = {
+            let session_id = s.session_id.clone();
+            let (icon, fg, tip) = if row.starred {
+                (Icon::StarFilled, status.warning, "Unstar: shown only while it runs or stopped sessions are shown")
+            } else {
+                (Icon::Star, colors.text_muted, "Star: always shown, stopped or closed, however old")
+            };
+            button::revealed(&self.hits, format!("star-{}{at}", s.session_id), icon.svg(13., fg), px(SLOT), group.clone(), shown || row.starred, cx)
+                .tooltip(Tooltip::text(tip))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_star(&session_id, cx);
+                }))
+        };
+        let reach = if row.attachable {
+            let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
+            Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, "Attach", &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.attach(&workspace, &repo, &session, window, cx);
+                },
+            )))
+        } else if self.resumable(row) {
+            let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
+            Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, "Resume", &group, shown, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.resume(&workspace, &repo, &session, window, cx);
+                },
+            )))
+        } else {
+            None
+        };
+        // open in a tab not shown now: a state, so it shows without a hover
+        let tab = self.session_tab(s).filter(|&id| self.active != Some(id)).map(|tab| {
+            self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, "Show its tab", &group, true, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.activate_tab(tab, cx);
+                },
+            ))
+        });
 
         let line = div()
             .flex()
@@ -1208,12 +1344,8 @@ impl FleetView {
                     .w(px(78.))
                     .flex_none()
                     .text_xs()
-                    .text_color(relay_state.as_ref().map_or(state, |r| r.1))
-                    .child(SharedString::from(match (&relay_state, row.closed) {
-                        (Some((word, _)), _) => word.clone(),
-                        (None, true) => "closed".to_string(),
-                        (None, false) => fleet::health_label(&row.health),
-                    })),
+                    .text_color(state)
+                    .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
             )
             .child(match marks {
                 Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx).flex_1(),
@@ -1234,41 +1366,6 @@ impl FleetView {
                         None => SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s))).into_any_element(),
                     }),
             )
-            .child({
-                let session_id = s.session_id.clone();
-                star_button(&self.hits, format!("star-{}{at}", s.session_id), row.starred, cx).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_star(&session_id, cx);
-                    },
-                ))
-            })
-            .when(!row.attachable && self.resumable(row), |d| {
-                let key = format!("resume-{}{at}", s.id);
-                let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-                d.child(
-                    button::pill(&self.hits, key, "resume", secondary(cx), cx)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.resume(&workspace, &repo, &session, window, cx);
-                        })),
-                )
-            })
-            .when_some(self.session_tab(s).filter(|&id| self.active != Some(id)), |d, tab| {
-                d.child(
-                    button::pill(&self.hits, format!("tab-link-{}{at}", s.id), "tab", secondary(cx), cx)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(tab, cx))),
-                )
-            })
-            .when(row.attachable, |d| {
-                let key = format!("attach-{}{at}", s.id);
-                let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-                d.child(
-                    button::pill(&self.hits, key, "attach", secondary(cx), cx)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.attach(&workspace, &repo, &session, window, cx);
-                        })),
-                )
-            })
             .when_some(row.also_in.clone(), |d, owner| {
                 d.child(
                     div()
@@ -1279,12 +1376,26 @@ impl FleetView {
                         .text_color(quiet(cx))
                         .child(SharedString::from(format!("also in {owner}"))),
                 )
-            });
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(2.))
+                    .child(star)
+                    .child(reach.map_or_else(slot, IntoElement::into_any_element))
+                    .child(tab.map_or_else(slot, IntoElement::into_any_element)),
+            );
 
+        let card = {
+            let (row, claimed) = (row.clone(), self.claimed_item(workspace, &s.name, cx));
+            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), now_ms()))
+        };
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
-        let shown = self.is_marked(s);
         div()
             .id(SharedString::from(format!("session-{}{at}", s.id)))
+            .group(group)
             .relative()
             .flex()
             .flex_none()
@@ -1333,6 +1444,7 @@ impl FleetView {
                 d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
+            .tooltip(card)
             .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
                 cx.new(|_| row.clone())
             })
@@ -1531,11 +1643,15 @@ pub(crate) fn repo_label(name: &str, path: &std::path::Path, home: Option<&std::
     if home.is_some_and(|h| foreman_core::same_path(path, h)) { format!("{name} (home)") } else { format!("./{name}") }
 }
 
+fn folder_label(name: &str, path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    if home.is_some_and(|h| foreman_core::same_path(path, h)) { format!("{name} (home)") } else { name.to_string() }
+}
+
 pub(crate) fn home_text(home: Option<&std::path::Path>) -> String {
     home.map(|h| h.display().to_string()).unwrap_or_default()
 }
 
-/// The relay row's state word for a [`crate::supervise::RelayStatus::label`].
+/// The relay glyph's state for a [`crate::supervise::RelayStatus::label`].
 fn relay_word(label: &str) -> &str {
     match label {
         "relay ready" => "ready",
@@ -1619,6 +1735,8 @@ mod tests {
         assert_eq!(repo_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
         assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "./child");
         assert_eq!(repo_label("child", Path::new(r"P:\x\Gaia\child"), None), "./child");
+        assert_eq!(folder_label("Gaia", Path::new(r"P:\x\Gaia"), Some(Path::new(r"p:/x/gaia/"))), "Gaia (home)");
+        assert_eq!(folder_label("child", Path::new(r"P:\x\Gaia\child"), Some(Path::new(r"P:\x\Gaia"))), "child");
         assert_eq!(relay_word("relay watcher expired, not re-armed (armed 40 min ago)"), "expired");
         assert_eq!(relay_word("relay ready"), "ready");
     }

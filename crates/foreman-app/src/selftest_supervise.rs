@@ -294,7 +294,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let shown = Instant::now();
     let in_panel = loop {
         let in_panel = view.read_with(cx, |v, _| {
-            v.tree().workspaces.iter().any(|p| p.name == tb.a.0 && p.supervised.iter().any(|r| r.session.name == ctrl))
+            v.tree().workspaces.iter().any(|p| p.name == tb.a.0 && p.own.as_ref().is_some_and(|r| r.session.name == ctrl))
         });
         if in_panel || shown.elapsed() > Duration::from_secs(10) {
             break in_panel;
@@ -321,16 +321,16 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             "step b: {ctrl} live, but SessionStart(startup) with the role tag {tag} in its transcript={tagged}, row under its workspace={in_panel}; events: {events_line}"
         );
     }
+    let row_is_session = workspace_row_step(tb, &ctrl, &launched, view, cx).await.context("step b")?;
     let transcript = transcript.unwrap_or_default();
     let listed = skills_listed(&std::fs::read_to_string(&transcript).unwrap_or_default());
     if !template.contains(&format!("/{WORKSPACE_SKILL}")) || ![WORKSPACE_SKILL, REPO_SKILL].iter().all(|s| listed.iter().any(|l| l == s)) {
         bail!("step b: the role must name /{WORKSPACE_SKILL} and the session list it and {REPO_SKILL}; listed {listed:?}");
     }
     println!(
-        "step b: Start clicked → {ctrl} ({}) live after {}, {relay_upgrade} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | row under {} in the panel",
+        "step b: Start clicked → {ctrl} ({}) live after {}, {relay_upgrade} | events: {events_line} | transcript has `{tag}` naming /{WORKSPACE_SKILL}, skills listed {listed:?} | {row_is_session}",
         launched.id,
         secs(live_after),
-        tb.a.0
     );
 
     // right after b: a prompt left open for the whole run is one anything else may answer before a later step looks
@@ -598,18 +598,18 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     })
     .await?;
     sleep(cx, Duration::from_secs(3)).await;
-    let shown = view.read_with(cx, |v, _| {
-        v.tree().workspaces.iter().find(|p| p.name == tb.a.0).map(|p| p.supervised.len()).unwrap_or(0)
+    let (shown, own) = view.read_with(cx, |v, _| {
+        v.tree().workspaces.iter().find(|p| p.name == tb.a.0).map(|p| (p.supervised.len(), p.own.as_ref().map(|r| r.session.name.clone()))).unwrap_or_default()
     });
     let still = rows(cx).await?.into_iter().filter(|s| names.contains(&s.name) && s.pid.is_some()).count();
     println!(
-        "step g: Stop clicked → stopped after {}: {} | still listed, {shown} row(s) shown under {} | restarted since: {still}",
+        "step g: Stop clicked → stopped after {}: {} | still listed: the workspace row's session {own:?}, {shown} row(s) shown under {} | restarted since: {still}",
         secs(clicked.elapsed()),
         stopped.join(", "),
         tb.a.0
     );
-    if shown != 2 || still != 0 {
-        bail!("step g: expected 2 rows shown (workspace, park) and none restarted, got {shown} shown, {still} live");
+    if shown != 1 || own.as_deref() != Some(ctrl.as_str()) || still != 0 {
+        bail!("step g: expected {ctrl} on the workspace row, 1 row shown (park) and none restarted, got {own:?}, {shown} shown, {still} live");
     }
     stop_all_step(tb, view, cx).await.context("step q")
 }
@@ -1294,6 +1294,12 @@ async fn relay_step(
         bail!("the row never showed `relay starting` between the drop and `relay ready`: {labels:?}");
     };
     let relay_row = row(relay_name, cx).await?.ok_or_else(|| anyhow!("{relay_name} is ready but not listed"))?;
+    let glyph = format!("relay-{w}");
+    wait_painted(view, &glyph, Duration::from_secs(5), cx).await.context("the relay glyph")?;
+    let relay_rows: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with(&format!("session-row-{}", relay_row.session_id))).cloned().collect());
+    if !relay_rows.is_empty() {
+        bail!("{relay_name} is ready and has a tree row {relay_rows:?}: the relay is only the workspace row's glyph");
+    }
     let reply = loop {
         let found = read_outbox(&tb.home, w)?
             .into_iter()
@@ -1348,7 +1354,7 @@ async fn relay_step(
         bail!("{relay_name} retired {} after the drop, before the idle timeout of {RELAY_IDLE_SECS} s", secs(retired));
     }
     println!(
-        "step r: {still_direct} | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with fm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → row `relay starting` after {}, {relay_name} ({}) armed and `relay ready` after {} (labels {labels:?}) → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach | idle {RELAY_IDLE_SECS} s → retired, stopped, row `direct` {} after the drop",
+        "step r: {still_direct} | launched {target} ({}, `{}`) | direct: {DIRECT_SENDS} sends into its pipe in {}, all `sent direct`, {answered} of {DIRECT_SENDS} nonces answered with fm tell after {} (none held or dropped) | fallback (empty registry dir): `{}` → drop {} → row `relay starting` after {}, {relay_name} ({}) armed and `relay ready` after {} (labels {labels:?}), glyph {glyph} painted, no row of its own → outbox {} from {} with {nonce} after {} (round trip), in the app's Messages after {} with Attach | idle {RELAY_IDLE_SECS} s → retired, stopped, row `direct` {} after the drop",
         target_row.id,
         launch.lines().next().unwrap_or_default(),
         secs(sent_in),
@@ -1365,6 +1371,37 @@ async fn relay_step(
         secs(retired),
     );
     Ok(())
+}
+
+/// The workspace row is the workspace session's: its Attach icon, and its menu holding the session's items.
+async fn workspace_row_step(tb: &Testbed, ctrl: &str, own: &Session, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let w = tb.a.0.as_str();
+    let attach = format!("attach-ws-{w}");
+    wait_painted(view, &attach, Duration::from_secs(10), cx).await?;
+    let own_rows: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with(&format!("session-row-{}", own.session_id))).cloned().collect());
+    if !own_rows.is_empty() {
+        bail!("{ctrl} has a tree row {own_rows:?}: the workspace row is its row");
+    }
+    crate::selftest_manage::press_painted(view, &format!("ws-row-{w}"), gpui::MouseButton::Right, cx).await?;
+    let keys = crate::selftest_manage::menu_open(view, w, cx).await?;
+    let caption = view.read_with(cx, |v, _| v.menu.as_ref().and_then(|m| m.items.iter().find_map(|i| i.section.clone())));
+    keystroke(cx, "escape", None, Modifiers::default())?;
+    let closed = Instant::now();
+    while view.read_with(cx, |v, _| v.menu.is_some()) {
+        if closed.elapsed() > Duration::from_secs(5) {
+            bail!("the workspace menu stayed open after Esc");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+    for want in ["stop", "work", "task", "session-attach", "session-stop", "session-copy-name", "session-copy-id", "session-star"] {
+        if !keys.contains(&want) {
+            bail!("the menu of {w} has {keys:?}, no {want}");
+        }
+    }
+    if caption.as_deref() != Some(format!("workspace session · {ctrl}").as_str()) {
+        bail!("the menu's first section is {caption:?}, not the workspace session {ctrl}");
+    }
+    Ok(format!("no {ctrl} row; the workspace row paints {attach} and its menu {keys:?}"))
 }
 
 async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

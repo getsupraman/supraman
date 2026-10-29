@@ -58,10 +58,10 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 - `text_input` (`TextInput`, `LineText`, `bind_keys`) — the one text input, single- or multi-line, on gpui's `EntityInputHandler`: selection, IME, dead keys, clipboard. Every text field uses it.
 - `hit::{HitTargets, hit_target}` — every clickable element records its painted bounds under its key; the selftests click through these.
-- `button::{bordered, outline, pill, icon, toolbar, toolbar_turning, ghost, small, choice}` — every clickable button; the key is its element id, hover group and hit key; `toolbar_turning` turns its icon while work it started runs.
+- `button::{bordered, outline, pill, icon, revealed, toolbar, toolbar_turning, ghost, small, choice}` — every clickable button; the key is its element id, hover group and hit key; `toolbar_turning` turns its icon while work it started runs; `revealed` is a row's hover icon in a fixed slot: always laid out and painted, so nothing shifts and its hit key exists, shown while the row's group is hovered or the row is selected.
 - `banner::{tinted, plain, dismissable, tint}` — every notice box: a status colour on its 0.12 tint.
 - `fonts::{UI, MONO, icons}` — the UI's font families; never spell a family name in a view. The terminal's font is the user's (`Settings`).
-- `menu::{ContextMenu, MenuItem, item}` — every right-click menu, generic over the owner's action type; items paint under `menu-<key>`.
+- `menu::{ContextMenu, MenuItem, item}` — every right-click menu, generic over the owner's action type; items paint under `menu-<key>`; `MenuItem::under` starts a captioned section.
 - `confirm::Confirm` — a question before an action that cannot be taken back (`ask`), or a report with only its OK (`report`); the owner places it.
 - `toast::ToastSlot` — short feedback floating over a panel that goes by itself (`TOAST_FOR`); `show` marks a done action with ✓, `show_why` says why nothing was done.
 - `notices::{NoticeKind, render, keep_dismissed, remove_one}` — a list of plain notices with a × each; the owner keeps the kinds and sources.
@@ -110,7 +110,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 **GitMan and FileMan may reuse:** all of `foreman-core`, `foreman-ui`, `foreman-term`, `foreman-workstate`, and `foreman-claude` if they run claude. Their settings live in their own `Settings` table (`Settings::section`/`set_section`) and their settings window registers its pages with `SettingsPages`.
 
 **App-only (in `crates/foreman-app`, not for reuse):**
-- `FleetView` (`crates/foreman-app/src/view.rs`, `crates/foreman-app/src/view/`) — the left tree, tabs, menus, delete flow; `crates/foreman-app/src/work_view.rs` and `crates/foreman-app/src/work_view/` — the Work tab and Inbox.
+- `FleetView` (`crates/foreman-app/src/view.rs`, `crates/foreman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_card.rs` its hover cards), tabs, menus, delete flow; `crates/foreman-app/src/work_view.rs` and `crates/foreman-app/src/work_view/` — the Work tab and Inbox.
 - The tab lifecycle: open, attach, resume, and detach on close or quit (`view.rs` `close_tab`, `start_detach`, `quit_step`).
 - The supervisor policy and its driver: `supervise.rs`, the poll loop (`view.rs` `Poller`), `foreman-supervisor` itself.
 - Hand sessions (`hand.rs`), tokens (`tokens.rs`), sign-in wiring (`signin.rs`), WorkState setup wording (`workstate_setup.rs`).

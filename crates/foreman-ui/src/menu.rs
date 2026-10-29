@@ -12,10 +12,18 @@ pub struct MenuItem<A> {
     pub key: &'static str,
     pub label: String,
     pub action: A,
+    /// Starts a section: a rule, then this caption, above the item.
+    pub section: Option<String>,
 }
 
 pub fn item<A>(key: &'static str, label: impl Into<String>, action: A) -> MenuItem<A> {
-    MenuItem { key, label: label.into(), action }
+    MenuItem { key, label: label.into(), action, section: None }
+}
+
+impl<A> MenuItem<A> {
+    pub fn under(self, caption: impl Into<String>) -> Self {
+        Self { section: Some(caption.into()), ..self }
+    }
 }
 
 pub struct ContextMenu<A> {
@@ -63,6 +71,18 @@ impl<A: Clone + 'static> ContextMenu<A> {
             let key = format!("menu-{}", entry.key);
             let action = entry.action.clone();
             let on_pick = on_pick.clone();
+            if let Some(caption) = &entry.section {
+                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).child(
+                    div()
+                        .px_3()
+                        .pb_1()
+                        .text_size(px(10.))
+                        .text_color(colors.text_placeholder)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(SharedString::from(caption.clone())),
+                );
+            }
             list = list.child(
                 div()
                     .id(SharedString::from(key.clone()))

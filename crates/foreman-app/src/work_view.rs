@@ -249,6 +249,11 @@ impl WorkView {
         cx.new(|cx| WorkView::new(workspace.to_string(), hub, hits, link, cx))
     }
 
+    /// The WorkState project the open view read, once it has.
+    pub fn project(&self) -> Option<&ItemRef> {
+        self.project.as_ref()
+    }
+
     fn new(workspace: String, hub: Entity<WorkHub>, hits: HitTargets, link: FleetLink, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
         let mut view = WorkView {
