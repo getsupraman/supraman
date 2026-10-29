@@ -7,6 +7,7 @@ mod hand;
 mod instance;
 mod search;
 mod selftest;
+mod selftest_box;
 mod selftest_clipboard;
 mod selftest_closed;
 mod selftest_delete;
@@ -152,6 +153,16 @@ fn main() {
     if mode == Mode::App {
         release_own_console();
     }
+    let _machine = match mode {
+        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown => match selftest_clipboard::hold_machine() {
+            Ok(held) => Some(held),
+            Err(error) => {
+                println!("FAIL setup: {error:#}");
+                std::process::exit(1);
+            }
+        },
+        _ => None,
+    };
     let home = match mode {
         Mode::App => Registry::from_env().ok().map(|r| r.home().to_path_buf()),
         _ => Some(selftest::home()),

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, discover, migrate_home};
+use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Workspace, discover};
 
 const USAGE: &str = "\
 usage:
@@ -276,13 +276,8 @@ fn add(args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// The registry of `FOREMAN_HOME`, after [`migrate_home`]; its notices go to stderr.
 fn registry() -> Result<Registry, Failure> {
-    let registry = Registry::from_env()?;
-    for notice in migrate_home(registry.home())? {
-        eprintln!("notice: {notice}");
-    }
-    Ok(registry)
+    Ok(Registry::from_env()?)
 }
 
 fn list() -> Result<(), Failure> {

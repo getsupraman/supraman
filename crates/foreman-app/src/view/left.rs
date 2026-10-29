@@ -274,6 +274,7 @@ impl FleetView {
         keys.extend(self.messages.iter().flat_map(|(w, msgs)| msgs.iter().map(move |m| message_key(w, m))));
         keys.extend(self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| work_key(w, r)));
         self.left_hold = Some(Hold { keys, moved: Instant::now() });
+        self.left_holds += 1;
         self.left_hold_timer = Some(cx.spawn(async move |this, cx| {
             let mut wait = HOLD_STILL;
             loop {

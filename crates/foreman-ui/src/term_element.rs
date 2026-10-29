@@ -5,7 +5,7 @@
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
     FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
+    MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
     point, px, size,
 };
@@ -16,6 +16,8 @@ use foreman_term::{
     TerminalBounds, is_default_background_color,
 };
 use theme::{ActiveTheme, Theme};
+
+use crate::builtin_glyphs::{self, Mark};
 
 pub const FONT_SIZE: Pixels = px(14.);
 pub const MIN_FONT_SIZE: Pixels = px(6.);
@@ -267,222 +269,63 @@ impl LayoutRect {
     }
 }
 
-const BLOCK_SUBCELL_COLUMNS: i32 = 8;
-const BLOCK_SUBCELL_LINES: i32 = 24;
-
+/// A cell painted from geometry ([`builtin_glyphs`]) on the device pixels its edges round to, so
+/// neighbours share their edges.
 #[derive(Clone, Debug, PartialEq)]
-struct BlockElementLayoutRect {
-    line: i32,
-    column: i32,
-    num_of_columns: usize,
-    num_of_lines: usize,
-    color: Hsla,
-}
-
-impl BlockElementLayoutRect {
-    fn paint(&self, origin: GpuiPoint<Pixels>, dims: &TerminalBounds, window: &mut Window) {
-        let subcell_width = dims.cell_width / BLOCK_SUBCELL_COLUMNS as f32;
-        let subcell_height = dims.line_height / BLOCK_SUBCELL_LINES as f32;
-        let position = point(
-            origin.x + self.column as f32 * subcell_width,
-            origin.y + self.line as f32 * subcell_height,
-        );
-        let size = size(
-            subcell_width * self.num_of_columns as f32,
-            subcell_height * self.num_of_lines as f32,
-        );
-        window.paint_quad(fill(Bounds::new(position, size), self.color));
-    }
-}
-
-/// An inclusive rectangle on the subcell grid.
-#[derive(Debug, Clone)]
-struct BlockRegion {
-    start_line: i32,
-    start_col: i32,
-    end_line: i32,
-    end_col: i32,
-    color: Hsla,
-}
-
-impl BlockRegion {
-    fn can_merge_with(&self, other: &BlockRegion) -> bool {
-        if self.color != other.color {
-            return false;
-        }
-        if self.start_line == other.start_line && self.end_line == other.end_line {
-            return self.end_col + 1 == other.start_col || other.end_col + 1 == self.start_col;
-        }
-        if self.start_col == other.start_col && self.end_col == other.end_col {
-            return self.end_line + 1 == other.start_line || other.end_line + 1 == self.start_line;
-        }
-        false
-    }
-
-    fn merge_with(&mut self, other: &BlockRegion) {
-        self.start_line = self.start_line.min(other.start_line);
-        self.start_col = self.start_col.min(other.start_col);
-        self.end_line = self.end_line.max(other.end_line);
-        self.end_col = self.end_col.max(other.end_col);
-    }
-}
-
-fn merge_block_regions(mut merged: Vec<BlockRegion>) -> Vec<BlockRegion> {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let mut i = 0;
-        while i < merged.len() {
-            let mut j = i + 1;
-            while j < merged.len() {
-                if merged[i].can_merge_with(&merged[j]) {
-                    let other = merged.remove(j);
-                    merged[i].merge_with(&other);
-                    changed = true;
-                } else {
-                    j += 1;
-                }
-            }
-            i += 1;
-        }
-    }
-    merged
-}
-
-/// Filled quadrants as a bitmap, bit `row * 2 + column` per 2x2 subcell.
-fn quadrant_char_to_filled_bits(ch: char) -> Option<u8> {
-    Some(match ch {
-        '▘' => 0b0001,
-        '▝' => 0b0010,
-        '▖' => 0b0100,
-        '▗' => 0b1000,
-        '▚' => 0b1001,
-        '▞' => 0b0110,
-        '▛' => 0b0111,
-        '▜' => 0b1011,
-        '▙' => 0b1101,
-        '▟' => 0b1110,
-        _ => return None,
-    })
-}
-
-/// `(column, line, num_of_columns, num_of_lines)` in subcell units for block
-/// elements that are a single rectangle.
-fn block_char_to_rect(ch: char) -> Option<(i32, i32, i32, i32)> {
-    let codepoint = ch as u32;
-    Some(match codepoint {
-        // ▀
-        0x2580 => (0, 0, 8, 12),
-        // ▁▂▃▄▅▆▇█
-        0x2581..=0x2588 => {
-            let eighths = (codepoint - 0x2580) as i32;
-            (0, 24 - eighths * 3, 8, eighths * 3)
-        }
-        // ▉▊▋▌▍▎▏
-        0x2589..=0x258F => (0, 0, (0x2590 - codepoint) as i32, 24),
-        // ▐
-        0x2590 => (4, 0, 4, 24),
-        // ▔
-        0x2594 => (0, 0, 8, 3),
-        // ▕
-        0x2595 => (7, 0, 1, 24),
-        _ => return None,
-    })
-}
-
-/// `░▒▓` as the foreground at reduced opacity rather than a stipple pattern.
-fn shade_char_to_opacity(ch: char) -> Option<f32> {
-    match ch {
-        '░' => Some(0.25),
-        '▒' => Some(0.5),
-        '▓' => Some(0.75),
-        _ => None,
-    }
-}
-
-fn collect_block_element_regions(
+struct BuiltinCell {
     line: i32,
     column: i32,
     ch: char,
     color: Hsla,
-    regions: &mut Vec<BlockRegion>,
-) -> bool {
-    if let Some((sub_col, sub_line, cols, lines)) = block_char_to_rect(ch) {
-        push_block_element_region(line, column, sub_col, sub_line, cols, lines, color, regions);
-        return true;
-    }
-    if let Some(filled) = quadrant_char_to_filled_bits(ch) {
-        for row in 0..2 {
-            for col in 0..2 {
-                if filled & (1 << (row * 2 + col)) != 0 {
-                    push_block_element_region(
-                        line,
-                        column,
-                        col * 4,
-                        row * 12,
-                        4,
-                        12,
-                        color,
-                        regions,
-                    );
+}
+
+impl BuiltinCell {
+    fn paint(&self, origin: GpuiPoint<Pixels>, dims: &TerminalBounds, window: &mut Window) {
+        let scale = window.scale_factor();
+        let device = |v: Pixels| (f32::from(v) * scale).round();
+        let left = device(origin.x + dims.cell_width * self.column as f32);
+        let right = device(origin.x + dims.cell_width * (self.column + 1) as f32);
+        let top = device(origin.y + dims.line_height * self.line as f32);
+        let bottom = device(origin.y + dims.line_height * (self.line + 1) as f32);
+        let light = builtin_glyphs::light_line(f32::from(dims.cell_width) * scale);
+        let at = |[x, y]: [f32; 2]| point(px((left + x) / scale), px((top + y) / scale));
+        let (w, h) = (right - left, bottom - top);
+        let mask = ContentMask { bounds: Bounds::from_corners(at([0., 0.]), at([w, h])) };
+        for mark in builtin_glyphs::marks(self.ch, w, h, light) {
+            let path = match mark {
+                Mark::Quads(quads, opacity) => {
+                    for [l, t, r, b] in quads {
+                        window.paint_quad(fill(Bounds::from_corners(at([l, t]), at([r, b])), self.color.opacity(opacity)));
+                    }
+                    continue;
                 }
+                Mark::Stroke(points, width) => {
+                    let mut path = PathBuilder::stroke(px(width / scale));
+                    path.add_polygon(&points.into_iter().map(at).collect_vec(), false);
+                    path
+                }
+                Mark::RoundRect([l, t, r, b], radius, width) => {
+                    let mut path = PathBuilder::stroke(px(width / scale));
+                    let radii = point(px(radius / scale), px(radius / scale));
+                    let arc = |path: &mut PathBuilder, to| path.arc_to(radii, px(0.), false, true, at(to));
+                    path.move_to(at([l + radius, t]));
+                    path.line_to(at([r - radius, t]));
+                    arc(&mut path, [r, t + radius]);
+                    path.line_to(at([r, b - radius]));
+                    arc(&mut path, [r - radius, b]);
+                    path.line_to(at([l + radius, b]));
+                    arc(&mut path, [l, b - radius]);
+                    path.line_to(at([l, t + radius]));
+                    arc(&mut path, [l + radius, t]);
+                    path.close();
+                    path
+                }
+            };
+            if let Ok(path) = path.build() {
+                window.with_content_mask(Some(mask.clone()), |window| window.paint_path(path, self.color));
             }
         }
-        return true;
     }
-    if let Some(opacity) = shade_char_to_opacity(ch) {
-        push_block_element_region(line, column, 0, 0, 8, 24, color.opacity(opacity), regions);
-        return true;
-    }
-    false
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_block_element_region(
-    line: i32,
-    column: i32,
-    sub_col: i32,
-    sub_line: i32,
-    num_of_columns: i32,
-    num_of_lines: i32,
-    color: Hsla,
-    regions: &mut Vec<BlockRegion>,
-) {
-    let start_line = line * BLOCK_SUBCELL_LINES + sub_line;
-    let start_col = column * BLOCK_SUBCELL_COLUMNS + sub_col;
-    let end_line = start_line + num_of_lines - 1;
-    let end_col = start_col + num_of_columns - 1;
-
-    // Extend the previous region eagerly so runs of `█` keep the quadratic merge small.
-    if let Some(last) = regions.last_mut()
-        && last.color == color
-        && last.start_line == start_line
-        && last.end_line == end_line
-        && last.end_col + 1 == start_col
-    {
-        last.end_col = end_col;
-        return;
-    }
-    regions.push(BlockRegion {
-        start_line,
-        start_col,
-        end_line,
-        end_col,
-        color,
-    });
-}
-
-fn block_element_regions_to_rects(regions: Vec<BlockRegion>) -> Vec<BlockElementLayoutRect> {
-    merge_block_regions(regions)
-        .into_iter()
-        .map(|r| BlockElementLayoutRect {
-            line: r.start_line,
-            column: r.start_col,
-            num_of_columns: (r.end_col - r.start_col + 1) as usize,
-            num_of_lines: (r.end_line - r.start_line + 1) as usize,
-            color: r.color,
-        })
-        .collect()
 }
 
 pub struct LayoutState {
@@ -490,7 +333,7 @@ pub struct LayoutState {
     font_size: Pixels,
     background: Hsla,
     rects: Vec<LayoutRect>,
-    block_rects: Vec<BlockElementLayoutRect>,
+    builtins: Vec<BuiltinCell>,
     runs: Vec<BatchedTextRun>,
     cursor: Option<(Bounds<Pixels>, Hsla)>,
     selection: Vec<LayoutRect>,
@@ -605,7 +448,7 @@ fn prepaint(
     let base = font.font();
     let font_id = cx.text_system().resolve_font(&base);
     let fit = |ch: char, cells: usize| needs_fit(ch, cells, font_id, font.size, cell_width, cx);
-    let (rects, block_rects, runs) = layout_grid(content.cells.iter(), &theme, selected.as_ref(), &base, &fit);
+    let (rects, builtins, runs) = layout_grid(content.cells.iter(), &theme, selected.as_ref(), &base, &fit);
     let selected_text = selected.as_ref().filter(|s| runs.iter().any(|r| r.style.color == s.fg && s.contains(r.line, r.column as usize)));
 
     let cursor = if content.cursor.shape == CursorShape::Hidden || !lit {
@@ -668,7 +511,7 @@ fn prepaint(
         font_size: font.size,
         background: theme.colors().terminal_background,
         rects,
-        block_rects,
+        builtins,
         runs,
         cursor,
         selection,
@@ -779,8 +622,8 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     for run in &state.runs {
         run.paint(origin, &dims, state.font_size, window, cx);
     }
-    for rect in &state.block_rects {
-        rect.paint(origin, &dims, window);
+    for cell in &state.builtins {
+        cell.paint(origin, &dims, window);
     }
     if let Some((bounds, color)) = state.cursor {
         window.paint_quad(fill(bounds + origin, color));
@@ -816,9 +659,9 @@ fn layout_grid<'a>(
     selected: Option<&Selected>,
     font: &Font,
     fit: &dyn Fn(char, usize) -> bool,
-) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
+) -> (Vec<LayoutRect>, Vec<BuiltinCell>, Vec<BatchedTextRun>) {
     let mut runs = Vec::new();
-    let mut block_regions = Vec::new();
+    let mut builtins = Vec::new();
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut current: Option<BatchedTextRun> = None;
     let mut line_runs = 0;
@@ -891,16 +734,9 @@ fn layout_grid<'a>(
                     *color = Some(selected.fg);
                 }
             }
-            if collect_block_element_regions(
-                display_line,
-                col,
-                cell.character(),
-                style.color,
-                &mut block_regions,
-            ) {
-                if let Some(batch) = current.take() {
-                    runs.push(batch);
-                }
+            if builtin_glyphs::is_builtin(cell.character()) {
+                runs.extend(current.take());
+                builtins.push(BuiltinCell { line: display_line, column: col, ch: cell.character(), color: style.color });
                 continue;
             }
             let zero_width = cell.zerowidth();
@@ -946,7 +782,7 @@ fn layout_grid<'a>(
         runs.push(batch);
     }
     give_room(&mut runs[line_runs..], &inked);
-    (rects, block_element_regions_to_rects(block_regions), runs)
+    (rects, builtins, runs)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1093,7 +929,7 @@ mod tests {
             .collect()
     }
 
-    fn grid(cells: &[IndexedCell], theme: &Theme, selected: Option<&Selected>) -> (Vec<LayoutRect>, Vec<BlockElementLayoutRect>, Vec<BatchedTextRun>) {
+    fn grid(cells: &[IndexedCell], theme: &Theme, selected: Option<&Selected>) -> (Vec<LayoutRect>, Vec<BuiltinCell>, Vec<BatchedTextRun>) {
         layout_grid(cells.iter(), theme, selected, &gpui::font("Consolas"), &|_, _| false)
     }
 
@@ -1136,20 +972,6 @@ mod tests {
         assert_eq!(on.family, "Cascadia Code");
     }
 
-    fn single(ch: char) -> Vec<BlockElementLayoutRect> {
-        let mut regions = Vec::new();
-        assert!(collect_block_element_regions(0, 0, ch, Hsla::default(), &mut regions));
-        block_element_regions_to_rects(regions)
-    }
-
-    fn rect(line: i32, column: i32, cols: usize, lines: usize) -> (i32, i32, usize, usize) {
-        (line, column, cols, lines)
-    }
-
-    fn shape(r: &BlockElementLayoutRect) -> (i32, i32, usize, usize) {
-        (r.line, r.column, r.num_of_columns, r.num_of_lines)
-    }
-
     #[test]
     fn selected_text_is_drawn_in_the_background_colour_and_the_rest_is_not() {
         let theme = theme();
@@ -1166,77 +988,24 @@ mod tests {
     }
 
     #[test]
-    fn block_element_full_block_row_is_one_rect_and_no_text_run() {
+    fn box_drawing_and_block_elements_are_builtin_cells_between_text_runs() {
         let theme = theme();
         let fg = Color::Spec(Rgb { r: 215, g: 119, b: 87 });
-        let cells = row(0, "████", fg);
-        let (_, block_rects, runs) = grid(&cells, &theme, None);
-        assert!(runs.is_empty(), "block elements must not become text runs");
-        assert_eq!(block_rects.len(), 1, "adjacent full blocks merge");
-        assert_eq!(shape(&block_rects[0]), rect(0, 0, 32, 24));
-        assert_eq!(block_rects[0].color, foreman_term::rgba_color(215, 119, 87));
+        let cells = row(0, "ab┌─┐█c", fg);
+        let (_, builtins, runs) = grid(&cells, &theme, None);
+        assert_eq!(runs.iter().map(|r| (r.text.as_str(), r.column)).collect_vec(), [("ab", 0), ("c", 6)]);
+        let shown = builtins.iter().map(|b| (b.line, b.column, b.ch)).collect_vec();
+        assert_eq!(shown, [(0, 2, '┌'), (0, 3, '─'), (0, 4, '┐'), (0, 5, '█')]);
+        assert!(builtins.iter().all(|b| b.color == foreman_term::rgba_color(215, 119, 87)));
     }
 
     #[test]
-    fn block_element_full_blocks_on_consecutive_lines_merge_vertically() {
+    fn a_selected_builtin_cell_is_drawn_in_the_selection_colour() {
         let theme = theme();
-        let fg = Color::Named(NamedColor::Foreground);
-        let mut cells = row(0, "██", fg);
-        cells.extend(row(1, "██", fg));
-        let (_, block_rects, runs) = grid(&cells, &theme, None);
-        assert!(runs.is_empty());
-        assert_eq!(block_rects.len(), 1);
-        assert_eq!(shape(&block_rects[0]), rect(0, 0, 16, 48));
-    }
-
-    #[test]
-    fn block_element_halves_quadrants_and_shades_map_to_sub_rects() {
-        assert_eq!(single('▀').iter().map(shape).collect_vec(), [rect(0, 0, 8, 12)]);
-        assert_eq!(single('▄').iter().map(shape).collect_vec(), [rect(12, 0, 8, 12)]);
-        assert_eq!(single('▌').iter().map(shape).collect_vec(), [rect(0, 0, 4, 24)]);
-        assert_eq!(single('▐').iter().map(shape).collect_vec(), [rect(0, 4, 4, 24)]);
-        assert_eq!(single('▘').iter().map(shape).collect_vec(), [rect(0, 0, 4, 12)]);
-        assert_eq!(single('▝').iter().map(shape).collect_vec(), [rect(0, 4, 4, 12)]);
-        let mut diagonal = single('▚').iter().map(shape).collect_vec();
-        diagonal.sort();
-        assert_eq!(diagonal, [rect(0, 0, 4, 12), rect(12, 4, 4, 12)]);
-        // ▛ = upper half plus lower-left quadrant.
-        let mut upper_left = single('▛').iter().map(shape).collect_vec();
-        upper_left.sort();
-        assert_eq!(upper_left, [rect(0, 0, 8, 12), rect(12, 0, 4, 12)]);
-        let shade = single('▒');
-        assert_eq!(shade.iter().map(shape).collect_vec(), [rect(0, 0, 8, 24)]);
-        assert_eq!(shade[0].color, Hsla::default().opacity(0.5));
-    }
-
-    #[test]
-    fn block_element_range_is_fully_custom_painted_inside_its_cell() {
-        for codepoint in 0x2580..=0x259F {
-            let ch = char::from_u32(codepoint).unwrap();
-            let rects = single(ch);
-            assert!(!rects.is_empty(), "U+{codepoint:04X} paints nothing");
-            for r in &rects {
-                assert!(
-                    r.line >= 0
-                        && r.column >= 0
-                        && r.line + r.num_of_lines as i32 <= BLOCK_SUBCELL_LINES
-                        && r.column + r.num_of_columns as i32 <= BLOCK_SUBCELL_COLUMNS,
-                    "U+{codepoint:04X} paints outside its cell: {r:?}"
-                );
-            }
-        }
-        let mut regions = Vec::new();
-        assert!(!collect_block_element_regions(0, 0, '─', Hsla::default(), &mut regions));
-        assert!(!collect_block_element_regions(0, 0, '\u{1FB00}', Hsla::default(), &mut regions));
-    }
-
-    #[test]
-    fn block_element_letters_stay_text_runs_beside_blocks() {
-        let theme = theme();
-        let cells = row(0, "ab█c", Color::Named(NamedColor::Foreground));
-        let (_, block_rects, runs) = grid(&cells, &theme, None);
-        assert_eq!(runs.iter().map(|r| r.text.as_str()).collect_vec(), ["ab", "c"]);
-        assert_eq!(runs[1].column, 3);
-        assert_eq!(block_rects.iter().map(shape).collect_vec(), [rect(0, 16, 8, 24)]);
+        let background = theme.colors().terminal_background;
+        let selected = Selected { start: (0, 1), end: (0, 1), is_block: false, fg: background };
+        let cells = row(0, "─│─", Color::Named(NamedColor::Foreground));
+        let (_, builtins, _) = grid(&cells, &theme, Some(&selected));
+        assert_eq!(builtins.iter().map(|b| b.color == background).collect_vec(), [false, true, false]);
     }
 }

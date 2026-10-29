@@ -3817,3 +3817,131 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   way it subtracted the search box alone. Anything else in the gap still fails. Reproduced with `plugins`
   renamed: tree at 454.7, `notices-area` 145 + `search-box` 34 of 192, 13 px left → 7f passes. Red: `notices-area`
   left out of the list → the controller's exact failure.
+
+## 2026-10-29 — m5/52 the one-time migrations that have run are removed
+
+René, 2026-10-29: "the one time migration code could be removed now". The controller saw René's 438c727c0bea
+start and migrate: `settings.toml` is in tables and the refresh token is in `oauth\secrets\<hash>.bin`.
+
+- **Inventory** (what each reads, since when, verdict):
+  - `foreman_core::migrate_home` (m2x/2, 2026-10-23): `platforms/` → `workspaces/`, and `supervisor/<w>.toml`'s
+    `platform` field, role and `fm-<w>-platform` session renamed. It ran at every app start and `fm` registry
+    command, so René's home went through it six days ago. **Removed** with `DesiredState`'s
+    `#[serde(alias = "platform")]` and its tests (core, supervisor, `fm/tests/workspace.rs`). A home that still has
+    `platforms/` now shows no workspaces and is fixed by renaming the folder.
+  - Flat `settings.toml` keys → tables (m5/44.13, `settings.rs` `take` and `Section::FIELDS`' flat names).
+    **Removed.** `FIELDS` lists the table's key names only. A key outside every table, whether an old flat name
+    or `workstate_env`, gets the notice "`<key>` is not in a table; it is ignored". It keeps no value but stays
+    in `Settings::other`, so a save loses nothing and the human can move it by hand.
+  - Credential Manager → `FileStore` (m5/44.18): `CredentialStore`, `LEGACY_PREFIX`, the move in
+    `FileStore::get`, the no-replace `write` with `MoveFileExW`, and the split-parts code. **Removed** with their
+    tests and the `FileStore::new(home, legacy)` parameter, so `FileStore::new(home)`. `foreman-core` no longer
+    needs `getrandom`, `Win32_Security_Credentials` or `Win32_Storage_FileSystem`. A token still only in
+    Credential Manager now means one new sign-in.
+  - `fm hook`'s `FOREMAN_PLATFORM` / `FOREMAN_ROLE=platform` fallback (m2x/2): already gone. `fm/tests/hook.rs`
+    pins that it is not read. **Nothing to do.**
+  - `WorkStateSettings::origin` dropping a `…/mcp` path: **kept**. It is the one origin rule (`foreman_core::url`),
+    not a migration. Only the comment that called it "an older file's" URL changed.
+  - `MintedSession`'s `#[serde(default)]` fields (`claude_session_id`, `last_active`, `origin`), stars,
+    dismissals, `hands.json`, `servers.json`: **kept**. They are optional fields of today's format, not a reader
+    of an old one.
+  - `foreman_workstate::model`'s legacy agent label: **kept**. WorkState, another program, writes it.
+  - Claude's files (transcripts, `claude agents`, hook payloads): **kept**, written by another program.
+  - `selftest_supervise.rs:125` "as a legacy desired state has it: the relay first": a selftest file belongs to
+    m5/44.19, so not touched. It reads no old format: `set_relay` puts the relay first today too.
+- **Tests on today's shapes, no real files:** `a_tables_file_as_written_today_loads_and_saves_unchanged`, a
+  four-table file shaped like René's with made-up values, loads with no notice and saves back the same tables.
+  `a_token_file_in_todays_layout_loads` builds `<home>/oauth/secrets/<sha256 hex>.bin` by hand with a DPAPI blob
+  under today's entropy. Then `FileStore` and `default_store` both read it. Every other settings test now
+  writes tables; `fm/tests/work.rs`'s scratch home wrote a flat `workstate_url` and now writes `[workstate] url`.
+- **Red checks:** notice loop off → `a_key_outside_a_table_is_a_notice_and_the_rest_of_the_file_stands` fails;
+  file name `{:X}` instead of `{:x}` → `a_token_file_in_todays_layout_loads` fails. Both restored.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-52\target`): release build ok; `cargo test --release --workspace` 652
+  passed, 0 failed. `--selftest` ran once and passed steps 1 to 7b, then failed 7c "window not found" (F-93, as the
+  brief expects). The controller runs the selftest gate.
+
+## 2026-10-29 — m5/58 box drawing and block elements drawn cell-exact, like Windows Terminal
+
+- **Why René's table looked broken.** Box drawing went through the font. In Cascadia Code at 14 px, `─` is narrower
+  than its 8.20 px cell, so a row of them is dashed. `│` is shorter than the 18 px line (line height 1.3 × size,
+  `LINE_HEIGHT_FACTOR`), so verticals stop short of the horizontals in the rows above and below.
+- **What Windows Terminal does** (microsoft/terminal @ f356093, `.repos/terminal/src/renderer/atlas`): it never
+  shapes U+2500–U+259F. `BackendD3D::_drawBuiltinGlyph` (`BackendD3D.cpp:1582`) gives `DrawBuiltinGlyph`
+  (`BuiltinGlyphs.cpp:1824`) one whole-pixel cell (`cellSize`). Each glyph in the `BoxDrawing` table
+  (`BuiltinGlyphs.cpp:139–964`) is up to 4 instructions: a shape plus begin and end `Pos` values. A `Pos` is a
+  fraction of the cell plus a multiple of the light line width (`Pos_Lut`, `:97`).
+  - Thickness: `lightLineWidth = max(1, round(cellW / 6))` (`:1845`), heavy is twice that (`:1869`). This is a
+    sixth of the cell **width**, not the font's underline thickness or the cell height, so the brief's wording
+    does not match WT. I followed WT's source. The corner radius is `min(5 × light, min(w, h) / 2)` (`:1846`).
+  - Snapping (`:1886–1889`): a coordinate is rounded after subtracting half the stroke along the stroke's
+    width, then the half is added back, so a stroke's edges land on whole pixels. A horizontal line's ends are
+    not offset, so `─` runs from 0 to w exactly and the next cell starts where it ends.
+  - Shapes: lines are D2D `DrawLine` with flat caps (`:1913`), double-line corners are hollow rects
+    (`DrawRectangle`, `:1919`) clipped to the cell, arcs `╭╮╯╰` are rounded rects that extend past the cell
+    (`Pos_Max` = 1.5) and are clipped (`:1925`, clip `:1826`), diagonals `╱╲╳` are lines, blocks are filled rects.
+    `░▒▓` are 25/50/75 % stipples done in the shader.
+- **Foreman** (`foreman_ui::builtin_glyphs`, painted by `term_element::BuiltinCell`): `GLYPHS` is WT's table
+  converted 1:1 by a script, covering all 160 entries of U+2500–U+259F. `marks` repeats `DrawBuiltinGlyph`'s
+  arithmetic in device pixels. Our cells are fractional (8.203125 px), so each cell's device rect is its own
+  logical edges × scale, rounded. Neighbours share those edges, and a column keeps one rect on every row.
+  The light width comes from the nominal cell width (`cell_width × scale`), so it is the same in every cell.
+  Lines and hollow rects become quads; diagonals and arcs become gpui stroked paths under a content mask of the
+  cell. A glyph's quads are made disjoint (`disjoint`), so a dimmed (α 0.7) or selected colour is even where
+  strokes cross. Two differences from WT:
+  - Shades are the foreground colour at 25/50/75 % opacity, not a stipple, as before.
+  - Zed's 8×24 subcell block-element painter is gone. Its quads were not snapped, and blocks are now in the same
+    table.
+  - Characters outside U+2500–U+259F keep the font path, with m5/47 ligatures and m5/49 fitting unchanged.
+    Every mark is inside its cell, so m5/47's rule that ink never covers another cell holds.
+- **Selftest 7t** (`selftest_box.rs`) prints `┌───┬───┐ │   │   │ ├───┼───┤ └───┴───┘` in rgb(255, 0, 255) at
+  14 and 23 px. It captures the window (`selftest_manage::capture`, the PrintWindow of `scripts/shot.ps1`, now
+  shared with `shot_window`) and maps the table's cells into the PNG. The window frame is taken as equally
+  wide below and on both sides. The step finds each horizontal stroke's pixel row (rows 0, 2, 3) and each
+  vertical stroke's pixel column (cells 0, 4, 8), then requires unbroken ink along each one between the outer
+  strokes. At scale 1.5 it passed: 12×27 px cells, horizontals at y 221/275/302 unbroken over x 720..=819, and
+  20×45 px cells.
+- Red: 7t with box drawing routed to the font again (`if false && builtin_glyphs::is_builtin(…)` in
+  `layout_grid`) → FAIL "Cascadia Code at 14px: cell 0: the vertical stroke at x 720 does not reach the
+  horizontal ones, a gap at y 233 between y 221 and 302".
+- Tests: `builtin_glyphs::tests` (6: coverage of the range, quads inside the cell on whole pixels, horizontals
+  0..w and verticals 0..h that meet at every junction, heavy = 2 × light and double = two light lines, disjoint
+  crossings, dashes/arcs/diagonals/shades) and `term_element::tests::box_drawing_and_block_elements_are_builtin_cells_between_text_runs`
+  and `a_selected_builtin_cell_is_drawn_in_the_selection_colour`.
+- Step 7c ("close_settings logged 1 window-teardown line") failed in 10 of 11 runs in this agent session, with and
+  without `FOREMAN_SHOTS` (F-93). This stopped the before/after screenshots, so the controller takes them:
+  `FOREMAN_SHOTS=<dir>` writes `m5-58-box-drawing-14.png` and `-23.png` from step 7t.
+
+## 2026-10-29 — m5/44.19 refactor follow-ups F-88 … F-93 and the stream header check (A-45)
+- **Stream header (A-45):** `stream.rs` `HttpReader::feed` refuses a 200 without `X-WorkState-Api: 1` (or with
+  another version) as the v1 client does; the fake's 401 sends the header too, as WorkState 1.1.0 does.
+  Tests: `stream::tests::http_reader_wants_read_api_v1`, `tests/fake.rs` `a_stream_answer_without_the_v1_header_is_refused`
+  (red on master: Connected instead of Lost).
+- **F-92:** `auth.rs` `save_known` writes through `foreman_core::fs::write_atomic`. Test
+  `servers_json_is_written_past_another_writers_temp_name` (a directory at `servers.json.tmp`; red on master).
+- **F-91 closed, the finding was wrong:** WorkState's inbox kind is `blocker_finding` (Skills `ApiV1.Inbox.cs:73`),
+  so `kind_label` already reads "blocker finding"; there is no `blocked_finding`. Pinned in `keys_and_labels`.
+- **F-90 closed, the arm is live:** `TerminalEvent::TitleChanged` is the foreground process changing
+  (`pty_info.rs` `emit_title_changed_if_changed`), which is when a shell tab starts or leaves claude, so it drives
+  `resolve_tabs`. claude's OSC title is `BreadcrumbsChanged`. One line says so at the arm.
+- **F-88, 7j:** no nudge can be lost: `Nudged` is an unbounded channel drained only before a load starts. The bound
+  was tight: Refresh measured 0.45–0.79 s over 20 runs here (0.5–1.3 s in m5/44.13 beside other selftests). Without
+  the transcript nudge the next scan is ≥ 7.5 s away, so `REFRESHED` is 3 s; red (nudge removed) → "1 poll(s) …,
+  0 scan(s), row shown false". A failure now names the late part.
+- **F-88, 6b:** it holds `selftest_clipboard::borrow` across copy, read and paste. The loss is gpui's: Windows
+  `write_to_clipboard` (`gpui_windows/src/clipboard.rs:70`) gives up silently when `OpenClipboard` fails while another
+  process has the clipboard open, but `Chord::Copy` (`copy(Some(false))`) still clears the selection, so the
+  retries copied nothing. 6b now reselects before a retry when the selection is gone, as 6c always did.
+- **F-89:** the hold is right for synthetic input; it is released by `on_hover(false)` or a 2 s rest, and an OS
+  mouse message from the real cursor counts as the pointer leaving. The next 1 px nudge then arms a new hold that
+  already includes the message, so "held: true" with a moved row. `FleetView::left_holds` counts arms; step t0
+  retakes (up to 3) when the hold was armed again while waiting, and still fails when one hold let the row move.
+- **Machine-wide selftest mutex** (controller request): `selftest_clipboard::hold_machine` holds
+  `Local\Foreman-selftest` for `--selftest`, `--selftest-supervise`, `--selftest-detach-shutdown` from `main`, waits
+  up to 20 min ("setup: waiting for another selftest (pid N)" every 30 s, pid from `%TEMP%\Foreman-selftest.pid`).
+  Test `a_selftest_waits_for_the_machine_and_names_the_holder` (red: take always succeeds).
+- **F-93, 7c "window not found" from agent sessions:** a Foreman started from an agent session is not the
+  foreground process, so Settings never becomes the foreground window and stays the thread's *active* window after
+  `SW_HIDE` (measured: active = the closing HWND, foreground another process's window). `DestroyWindow` then sends
+  it the deactivation after gpui dropped it, and gpui's `window.rs` callback logs "window not found". `tray::close`
+  now hands activation to another visible window of the thread (`SetActiveWindow`, no foreground right needed)
+  before the drain. 7c here: 7 of 7 failed before, 3 of 3 and then 10 of 10 passed after.

@@ -337,7 +337,7 @@ impl FakeAuth {
     }
 
     pub fn unauthorized(&self) -> Answer {
-        Answer { status: 401, content_type: "text/plain", api: None, body: String::new(), headers: Vec::new() }
+        Answer { status: 401, content_type: "text/plain", api: Some("1"), body: String::new(), headers: Vec::new() }
             .header("WWW-Authenticate", format!(r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource/api""#, self.base))
     }
 

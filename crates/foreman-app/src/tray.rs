@@ -167,6 +167,7 @@ pub fn close(window: &Window, cx: &mut App) {
             unsafe {
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
+            hand_activation_away(hwnd);
             let started = std::time::Instant::now();
             loop {
                 cx.background_executor().timer(DRAIN_EVERY).await;
@@ -184,6 +185,35 @@ pub fn close(window: &Window, cx: &mut App) {
 const DRAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(10);
 #[cfg(windows)]
 const DRAIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A process that is not in the foreground keeps a hidden window active, and DestroyWindow would then deactivate it after gpui dropped it.
+#[cfg(windows)]
+fn hand_activation_away(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, SetActiveWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, IsWindowVisible};
+    unsafe extern "system" fn first_visible(other: HWND, found: LPARAM) -> windows::core::BOOL {
+        unsafe {
+            let found = &mut *(found.0 as *mut (HWND, Option<HWND>));
+            if other != found.0 && IsWindowVisible(other).as_bool() {
+                found.1 = Some(other);
+                return false.into();
+            }
+        }
+        true.into()
+    }
+    if unsafe { GetActiveWindow() } != hwnd {
+        return;
+    }
+    let mut found: (HWND, Option<HWND>) = (hwnd, None);
+    unsafe {
+        let _ = EnumThreadWindows(GetCurrentThreadId(), Some(first_visible), LPARAM(&mut found as *mut _ as isize));
+        if let Some(other) = found.1 {
+            let _ = SetActiveWindow(other);
+        }
+    }
+}
 
 /// Sent messages are left alone: peeking for them would dispatch them here, inside this task.
 #[cfg(windows)]

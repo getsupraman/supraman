@@ -50,7 +50,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `discover`, `rescan`, `scan`, `branch_at` — a folder to a workspace and its repos; shared by `fm workspace add` and the app's Add workspace.
 - `relay` (`send`, `tell`, `inbox_dir`, `outbox_dir`, `InboxWatcher`, …) — the relay's `inbox`/`outbox` files per workspace.
 - `events` (`append_event`, `EventReader`, `role_injection`) — the hook events `fm hook` appends per session.
-- `migrate_home`, `install_hook_exe`, `find_plugin_dir` — bringing an old home up to date and placing `fm.exe` in the plugin.
+- `install_hook_exe`, `find_plugin_dir` — placing `fm.exe` in the plugin.
 
 ### foreman-ui (`crates/foreman-ui/src/`)
 
