@@ -150,8 +150,6 @@ impl Session {
         }
     }
 
-    /// `state` describes the turn, not the process (a finished turn leaves `done` on a live
-    /// process), so liveness comes from `pid` first.
     fn background_health(&self, now_ms: i64) -> Health {
         use SessionState as S;
         let state = self.state.as_ref();

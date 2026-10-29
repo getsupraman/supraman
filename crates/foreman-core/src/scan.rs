@@ -7,7 +7,7 @@ pub const DEFAULT_DEPTH: usize = 1;
 
 /// Finds the git repos under `root`, at most `depth` levels down (1 = direct children). A `root` that is
 /// itself a repo (a `.git` folder, or the `.git` file of a linked worktree) is one too, listed first
-/// (m5/26): named after its folder ([`root_repo_name`]), its path the root.
+/// named after its folder ([`root_repo_name`]), its path the root.
 ///
 /// Read-only: it never runs git and never writes inside a scanned folder.
 pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {

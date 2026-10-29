@@ -42,7 +42,7 @@ pub enum Kill {
 }
 
 /// A child of the app gets no console window of its own: Foreman has no console to share when started
-/// from Explorer (m5/22), and every `claude`, `git` and `icacls` would flash one.
+/// from Explorer, and every `claude`, `git` and `icacls` would flash one.
 pub fn no_window(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {

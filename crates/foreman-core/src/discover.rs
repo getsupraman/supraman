@@ -55,7 +55,6 @@ impl Registry {
         Ok(())
     }
 
-    /// Load, `edit`, save over it.
     pub fn update(&self, name: &str, edit: impl FnOnce(&mut Workspace)) -> Result<Workspace> {
         let mut workspace = self.load(name)?;
         edit(&mut workspace);

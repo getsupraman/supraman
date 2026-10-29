@@ -2,10 +2,8 @@
 //! into the inbox ([`send`]); the workspace's relay session watches it with `fm inbox` under its
 //! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
 //! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]), as does a
-//! session's own `fm tell` ([`tell`]). Since m5/4 the relay is the fallback: `foreman_claude::human`
-//! writes into a session's pipe first. Since m5/32 the relay runs only on demand ([`relay_demand`]): while
-//! a drop waits in the inbox, and until [`DEFAULT_RELAY_IDLE_MS`] after the last one. Facts behind the
-//! shape: `docs/LEARNINGS.md` m0/4, m3/1 and m5/32.
+//! session's own `fm tell` ([`tell`]). It is the fallback after `foreman_claude::human`'s pipe write, and
+//! runs only on demand ([`relay_demand`]). Facts behind the shape: LEARNINGS m0/4, m3/1 and m5/32.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -285,7 +283,6 @@ pub fn read_answered(home: &Path, workspace: &str) -> Result<BTreeMap<String, St
     }
 }
 
-/// Adds `file → answer` to `answered.json`.
 pub fn mark_answered(home: &Path, workspace: &str, file: &str, answer: &str) -> Result<()> {
     let mut answered = read_answered(home, workspace)?;
     answered.insert(file.to_string(), answer.to_string());

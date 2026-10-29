@@ -1,15 +1,8 @@
-//! What the human sends a session (the task box, Approve/Reply, `fm send`): straight into the session's
-//! pipe ([`crate::peer`]) when it can, else through the workspace's relay inbox
-//! ([`foreman_core::send`]), and which of the two it was ([`Route`]).
-//!
-//! The receiver sends Foreman no receipt (it has no inbox to send one to): a direct send means written,
-//! not confirmed. So:
-//! - only a session Foreman launched in a prompting mode ([`accepts_unmoded`]) is written to: a bypass
-//!   receiver holds a message with no `from-mode`, silently, until it expires;
-//! - every direct message carries its own id (`[m-<8hex>]` in its first line): never the same text twice,
-//!   which the receiver would drop within 30 s;
-//! - each workspace keeps `relay/<w>/direct.json`, the direct sends of the last minute: one that would leave
-//!   fewer than [`RESERVE`] of the receiver's 30-per-burst budget (refill 0.5/s) goes through the relay.
+//! What the human sends a session: into its pipe ([`crate::peer`]) when it can, else through the relay
+//! inbox ([`foreman_core::send`]); [`Route`] says which. A direct send is never confirmed, so it goes only to
+//! a prompting receiver ([`accepts_unmoded`]), carries an `[m-<8hex>]` id (the receiver drops a repeat
+//! within 30 s), and leaves [`RESERVE`] of the receiver's 30-per-burst budget (refill 0.5/s), paced by
+//! `relay/<w>/direct.json`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

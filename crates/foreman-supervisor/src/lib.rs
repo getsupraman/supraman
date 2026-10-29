@@ -1,7 +1,6 @@
 //! Keeps a workspace's wanted sessions alive: desired state, a pure [`reconcile`], restart with
 //! backoff, a concurrency cap, and the Inbox rows ([`NeedsYou`]) for what only the human can fix.
-//! No UI dependency: the app (or a later tray daemon) feeds [`Supervisor::tick`] one
-//! `claude agents --json --all` snapshot at a time.
+//! No UI dependency: the app feeds [`Supervisor::tick`] one `claude agents --json --all` snapshot at a time.
 //!
 //! # Reconcile rules
 //!
@@ -56,13 +55,11 @@
 //! a Re-mint whose stop fails stays due. Tests `a_resume_with_unrecognised_output_is_settled_by_the_next_snapshot`,
 //! `a_stop_that_keeps_failing_is_an_inbox_row_until_it_stops`, `a_remint_whose_stop_fails_is_tried_again`.
 //!
-//! # Held (m5/25)
+//! # Held
 //!
-//! An unelevated Foreman cannot reach a background service an elevated `claude --bg` started (its
-//! pipes refuse lower integrity levels), so every launch would fail after 45 s. [`Supervisor::hold`]
-//! (the app's check before launching) or a launch failing with [`Failure::DaemonUnreachable`] that
-//! [`foreman_claude::daemon_mismatch`] confirms holds every launch and resume of the workspace, and
-//! its Inbox shows one `LaunchFailed` row saying why (Restart as administrator), instead of the backoff rows. Tests
+//! [`Supervisor::hold`] (the app's check before launching), or a launch failing with
+//! [`Failure::DaemonUnreachable`] that [`foreman_claude::daemon_mismatch`] confirms, holds every launch and
+//! resume of the workspace behind one `LaunchFailed` Inbox row (Restart as administrator). Tests
 //! `an_unreachable_service_foreman_cannot_reach_holds_with_one_row`,
 //! `a_hold_from_the_apps_check_comes_before_any_launch`.
 

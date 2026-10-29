@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(repo_name(&plat.join("Alpha").join("not-created-yet"), &p), Some("Alpha"));
     }
 
-    /// m5/26: a workspace whose root is a repo too: its children keep their sessions, the rest of the
+    /// A workspace whose root is a repo too: its children keep their sessions, the rest of the
     /// root is the root repo's.
     #[test]
     fn a_root_repo_takes_what_no_child_repo_does() {

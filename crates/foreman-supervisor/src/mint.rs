@@ -1,11 +1,5 @@
-//! Per-session WorkState tokens (Skills `docs/workstate/14-agent-launch.md` §2). A session with a role
-//! token gets a `wss_` token minted for its name with the static role token as bearer; only the minted
-//! token reaches its config file. The static token stays in Foreman's process: it is the bearer of
-//! the mint, the PATCH of the claude session uuid and the revoke, never a file or an argument.
-//!
-//! The minted token's expiry slides on use (72 h idle window). A session idle longer gets HTTP 401 on
-//! `/mcp`: the supervisor shows it as [`crate::NeedsKind::TokenExpired`] (no turn seen within the
-//! window), and its next launch or resume mints again with `replace`.
+//! Per-session WorkState tokens (Skills `docs/workstate/14-agent-launch.md` §2): only the minted `wss_`
+//! token reaches a session's config file; the bearer never leaves Foreman's process.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,11 +22,11 @@ pub struct MintRequest {
     pub external_role: String,
     /// One live token per name: `replace` revokes the old one and keeps the row and its `sessionId`.
     pub replace: bool,
-    /// The repository a repo session works in: its bare `work_brief()` opens the project bound to it
-    /// (m5/8). `None` for the workspace session and the relay (the workspace root is not a repo).
+    /// The repository a repo session works in: its bare `work_brief()` opens the project bound to it.
+    /// `None` for the workspace session and the relay (the workspace root is not a repo).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<MintRepo>,
-    /// The claude session uuid the token is for, when it is known before claude starts (m5/40): a
+    /// The claude session uuid the token is for, when it is known before claude starts: a
     /// resume's, or the `--session-id` of a foreground `claude`. Never a guess: a `--bg` launch's id
     /// is known only from its row (the PATCH of [`Minter::bind`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,8 +96,8 @@ fn reason_suffix(reason: &str) -> String {
     if reason.is_empty() { String::new() } else { format!(": {reason}") }
 }
 
-/// The three calls on `/api/agent-sessions`. `base` is the server's origin ([`api_base`]), `bearer`
-/// the static role token. Implemented by [`HttpMinter`]; tests use a fake.
+/// The three calls on `/api/agent-sessions`. `base` is the server's origin ([`api_base`]).
+/// Implemented by [`HttpMinter`]; tests use a fake.
 pub trait Minter {
     fn mint(&self, base: &str, bearer: &str, request: &MintRequest) -> Result<Minted, MintError>;
     /// `PATCH /api/agent-sessions/{id}` `{claudeSessionId}`.
@@ -211,13 +205,12 @@ impl Minter for HttpMinter {
 pub struct MintedSession {
     /// WorkState's `sessionId`, for the PATCH and the DELETE.
     pub session_id: String,
-    /// Foreman's role, whose static token is the bearer of the PATCH and the DELETE.
     pub role: String,
     /// The claude session uuid sent with the mint or PATCHed since; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
     /// Epoch ms of the mint or of the last turn seen within the token's window: what slid its expiry
-    /// last. `None` for a file written before m5/7; the first tick sets it.
+    /// last. `None` until the first tick sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active: Option<crate::Millis>,
     /// The server the token is from ([`api_base`] of its MCP URL); `None`: unknown.
@@ -471,7 +464,7 @@ mod tests {
         assert_eq!(git_repo(&wt).unwrap().remote.as_deref(), Some("https://example.invalid/demo/alpha.git"));
         let plain = tempfile::tempdir().unwrap();
         assert_eq!(git_repo(plain.path()), None, "not a repo");
-        // m5/26: a workspace root that is a repo, with a repo inside it: each sends its own root
+        // a workspace root that is a repo, with a repo inside it: each sends its own root
         let child = main.join("child");
         std::fs::create_dir(&child).unwrap();
         run(&child, &["init", "-q"]);

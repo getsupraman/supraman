@@ -363,7 +363,7 @@ mod tests {
         }
     }
 
-    // m5/10: another FOREMAN_HOME's session (a selftest's park) is not this desired state's to report
+    // another FOREMAN_HOME's session (a selftest's park) is not this desired state's to report
     #[test]
     fn another_homes_parked_session_raises_nothing() {
         let d = desired(true, &["fm-demo-workspace"]);

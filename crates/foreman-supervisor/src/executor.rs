@@ -32,7 +32,7 @@ impl Launcher for Claude {
 }
 
 /// The bearer of the mint, PATCH and DELETE of a session's own token ([`crate::mint`]): the app's
-/// OAuth access token (m5/43), never written anywhere.
+/// OAuth access token, never written anywhere.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoleToken {
     /// The WorkState MCP URL; its origin is the API's base.
@@ -172,7 +172,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self
     }
 
-    /// The app's own [`foreman_claude::daemon_mismatch`] before launching (m5/25): `Some` holds every
+    /// The app's own [`foreman_claude::daemon_mismatch`] before launching: `Some` holds every
     /// launch and resume and shows one Inbox row saying why; `None` lets them go again.
     pub fn hold(&mut self, why: Option<String>, now: Millis) {
         self.held = why.map(|why| match self.held.take() {
@@ -1277,7 +1277,7 @@ mod tests {
             sup.minted().get("fm-demo-workspace").unwrap().claude_session_id.as_deref(),
             Some("aaaa0001-0000-4000-8000-000000000001")
         );
-        // a resume mints again with the uuid in its body (m5/40), so there is nothing left to PATCH
+        // a resume mints again with the uuid in its body, so there is nothing left to PATCH
         sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + 200 * SECOND);
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 205 * SECOND);
         let calls = minter.take();
@@ -1776,7 +1776,7 @@ mod tests {
         }
     }
 
-    /// m5/25: an unelevated Foreman facing an elevated service gets one row saying why, at once, and
+    /// An unelevated Foreman facing an elevated service gets one row saying why, at once, and
     /// no more launches — not five 45 s failures.
     #[test]
     fn an_unreachable_service_foreman_cannot_reach_holds_with_one_row() {

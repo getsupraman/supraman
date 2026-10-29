@@ -1,5 +1,5 @@
-//! Writing into a session's own message pipe, as another session's `SendMessage` does (m5/4,
-//! `docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Foreman never registers a pipe, a
+//! Writing into a session's own message pipe, as another session's `SendMessage` does
+//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Foreman never registers a pipe, a
 //! `.json` or a `.key` of its own, so a session cannot answer it there (it answers with `fm tell`).
 //!
 //! Registry: `<pid>.json` (`name`, `messagingSocketPath`, `peerProtocol`, `procStart` = the process
@@ -121,7 +121,6 @@ pub trait Liveness {
     fn alive(&self, pid: u32, proc_start: Option<u64>) -> bool;
 }
 
-/// The running system's processes.
 pub struct System;
 
 impl Liveness for System {
