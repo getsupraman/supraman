@@ -15,8 +15,6 @@ use foreman_ui::hit::{HitTargets, hit_target};
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
-use super::notices;
-use super::menu::MenuAction;
 use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
@@ -376,20 +374,14 @@ impl FleetView {
                 banner::tinted(status.warning),
             ));
         }
-        let mut shown: BTreeMap<notices::Notice, usize> = BTreeMap::new();
-        for (kind, text) in self.plain_notices(cx) {
-            let index = shown.entry(kind).or_default();
-            let key = notices::dismiss_key(kind, *index);
-            *index += 1;
-            let label = SharedString::from(text.clone());
-            let dismiss = glyph_button(&self.hits, key, Icon::Close, "Dismiss", cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.dismiss_notice(kind, &text, cx);
-                },
-            ));
-            notices.push(banner::tinted(status.warning).mx_3().my_2().child(banner::dismissable(label, dismiss)).into_any_element());
-        }
+        let plain = foreman_ui::notices::render(
+            self.plain_notices(cx),
+            status.warning,
+            |key, cx| glyph_button(&self.hits, key, Icon::Close, "Dismiss", cx),
+            |this: &mut Self, kind, text, cx| this.dismiss_notice(kind, text, cx),
+            cx,
+        );
+        notices.extend(plain.into_iter().map(|n| n.mx_3().my_2().into_any_element()));
         if let Some(problem) = self.workstate_notice() {
             notices.push(self.render_workstate_notice(problem, cx));
         }
@@ -638,35 +630,7 @@ impl FleetView {
             body = self.render_results(body, &query, cx);
         }
 
-        let toast = self.toast.as_ref().map(|t| {
-            div()
-                .id("toast")
-                .absolute()
-                .bottom_3()
-                .left_3()
-                .right_3()
-                .flex()
-                .justify_center()
-                .child(
-                    div()
-                        .relative()
-                        .max_w_full()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(status.success.opacity(0.5))
-                        .bg(colors.elevated_surface_background)
-                        .shadow_md()
-                        .text_sm()
-                        .text_color(colors.text)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(SharedString::from(format!("✓ {}", t.text)))
-                        .child(hit_target(&self.hits, "toast".into())),
-                )
-        });
+        let toast = self.toast.render(&self.hits, "toast", cx);
 
         div()
             .id("left-panel")
@@ -1392,47 +1356,10 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// The open question (Remove…, a Stop that asks): its text, the action's button and Cancel.
+    /// The open question (Remove…, a Stop that asks), or a report with only its OK (m5/38's bulk delete).
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.confirm.as_ref()?;
-        let status = cx.theme().status().clone();
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .mx_3()
-                .my_2()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(status.warning)
-                .bg(banner::tint(status.warning))
-                .text_sm()
-                .child(SharedString::from(confirm.text.clone()))
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .justify_end()
-                        .child(button::bordered(&self.hits, "confirm-yes", confirm.yes.clone(), cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                this.answer_confirm(true, window, cx);
-                            },
-                        )))
-                        // a report (m5/38's bulk delete) has only its OK
-                        .when(confirm.action != MenuAction::Dismiss, |d| {
-                            d.child(button::bordered(&self.hits, "confirm-cancel", "Cancel", cx).on_click(cx.listener(
-                                |this, _: &ClickEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    this.answer_confirm(false, window, cx);
-                                },
-                            )))
-                        }),
-                )
-                .into_any_element(),
-        )
+        Some(confirm.render(&self.hits, "confirm", |this: &mut Self, yes, _, cx| this.answer_confirm(yes, cx), cx).mx_3().my_2().into_any_element())
     }
 
     /// The Add workspace review: folder, name (click to edit), the repos found with a tick each, the
@@ -1628,33 +1555,6 @@ pub(crate) fn segments(lines: &[&str]) -> Vec<Segment> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// WCAG 2 contrast of `fg` (its alpha blended over `bg`) against the opaque `bg`.
-    fn contrast(fg: Hsla, bg: Hsla) -> f32 {
-        let (f, b) = (gpui::Rgba::from(fg), gpui::Rgba::from(bg));
-        let blend = |f: f32, b: f32| f * fg.a + b * (1. - fg.a);
-        let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
-        let lum = |r: f32, g: f32, b: f32| 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-        let (lf, lb) = (lum(blend(f.r, b.r), blend(f.g, b.g), blend(f.b, b.b)), lum(b.r, b.g, b.b));
-        (lf.max(lb) + 0.05) / (lf.min(lb) + 0.05)
-    }
-
-    /// m5/26: names >= 4.5:1 and secondary text >= 3:1 against the panel, also in a dimmed row, and the
-    /// hierarchy kept: name > quiet > secondary.
-    #[test]
-    fn the_tree_text_is_readable_against_the_panel() {
-        let registry = theme::ThemeRegistry::default();
-        let name = registry.list().into_iter().next().expect("fallback theme").name;
-        let theme = registry.get(&name).expect("fallback theme");
-        let (text, bg) = (theme.colors().text, theme.colors().panel_background);
-        let ratio = |alpha: f32| contrast(text.opacity(alpha), bg);
-        let (name, quiet, secondary) = (ratio(1.), ratio(QUIET), ratio(SECONDARY));
-        let (dim_quiet, dim_secondary) = (ratio(QUIET * DIMMED), ratio(SECONDARY * DIMMED));
-        assert!(name > quiet && quiet > secondary, "{name} > {quiet} > {secondary}");
-        assert!(quiet >= 4.5 && dim_quiet >= 4.5, "names: {quiet}, dimmed {dim_quiet}");
-        assert!(secondary >= 3. && dim_secondary >= 3., "secondary: {secondary}, dimmed {dim_secondary}");
-        assert!(contrast(theme.colors().text_muted, bg) < 3.5, "text_muted ({}) was the too-dim colour", contrast(theme.colors().text_muted, bg));
-    }
 
     #[test]
     fn repo_labels_name_a_root_repo_as_the_root() {

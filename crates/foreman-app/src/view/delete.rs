@@ -21,7 +21,7 @@ use foreman_claude::{
 use gpui::Context;
 
 use super::FleetView;
-use super::menu::{Confirm, MenuAction};
+use super::menu::{Confirm, Confirmed};
 use crate::fleet::{self, SessionRow};
 
 /// How long a deleted session is kept out of the tree: until the next poll and transcript scan have
@@ -179,11 +179,11 @@ impl FleetView {
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
         let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired)) { " It is another Foreman's session." } else { "" };
-        self.confirm = Some(Confirm {
-            text: format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
-            yes: "Delete".into(),
-            action: MenuAction::DeleteNow { session, discard: None },
-        });
+        self.confirm = Some(Confirm::ask(
+            format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
+            "Delete",
+            Confirmed::Delete { session, discard: None },
+        ));
     }
 
     pub(super) fn delete_now(&mut self, session: Session, discard: Option<String>, cx: &mut Context<Self>) {
@@ -226,14 +226,14 @@ impl FleetView {
         let at = refusal.worktree.as_deref().map(|w| format!(" in {}", w.display())).unwrap_or_default();
         match refusal.discard {
             Some(value) => {
-                self.confirm = Some(Confirm {
-                    text: format!(
+                self.confirm = Some(Confirm::ask(
+                    format!(
                         "claude rm kept {}: its worktree{at} has {commits} that exist on no remote. Discard the worktree and its commits, then delete the session and its transcript?",
                         label(&session)
                     ),
-                    yes: format!("Discard {commits} and delete"),
-                    action: MenuAction::DeleteNow { session, discard: Some(value) },
-                })
+                    format!("Discard {commits} and delete"),
+                    Confirmed::Delete { session, discard: Some(value) },
+                ))
             }
             None => self.action_error = Some(format!("claude rm kept {} ({commits}{at}): {}", label(&session), refusal.text)),
         }
@@ -264,17 +264,17 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 let skip = if skipped.is_empty() { String::new() } else { format!(" Skipped {}: {}.", skipped.len(), listed(&skipped)) };
                 this.confirm = Some(if sessions.is_empty() {
-                    Confirm { text: format!("No closed background session of {workspace} can be deleted.{skip}"), yes: "OK".into(), action: MenuAction::Dismiss }
+                    Confirm::report(format!("No closed background session of {workspace} can be deleted.{skip}"))
                 } else {
                     let n = sessions.len();
-                    Confirm {
-                        text: format!(
+                    Confirm::ask(
+                        format!(
                             "Delete {n} closed background session{} of {workspace}? claude rm removes each, then its transcript is deleted. A session with unpushed commits is kept, never discarded.{skip}",
                             if n == 1 { "" } else { "s" }
                         ),
-                        yes: format!("Delete {n}"),
-                        action: MenuAction::DeleteClosedNow { workspace, sessions, skipped },
-                    }
+                        format!("Delete {n}"),
+                        Confirmed::DeleteClosed { workspace, sessions, skipped },
+                    )
                 });
                 cx.notify();
             })
@@ -314,7 +314,7 @@ impl FleetView {
                 if !failed.is_empty() {
                     text.push_str(&format!(" Failed: {}.", failed.join("; ")));
                 }
-                this.confirm = Some(Confirm { text, yes: "OK".into(), action: MenuAction::Dismiss });
+                this.confirm = Some(Confirm::report(text));
                 cx.notify();
             })
             .ok();

@@ -7,13 +7,12 @@ use std::time::Duration;
 use anyhow::bail;
 use gpui::{AsyncWindowContext, Entity};
 
+use foreman_ui::notices::dismiss_key;
+
 use crate::{
     selftest::{click, until},
     selftest_manage::shot,
-    view::{
-        FleetView,
-        notices::{Notice, dismiss_key},
-    },
+    view::{FleetView, notices::Notice},
 };
 
 const FIRST: &str = "fm-selftest: WorkState session hand-selftest-1, not fm-selftest-x: replace does not override that";

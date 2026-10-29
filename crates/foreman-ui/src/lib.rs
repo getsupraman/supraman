@@ -1,15 +1,19 @@
 //! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
-//! the text input, buttons, banners and fonts, the selftests' hit targets, global init, and the frame / memory
+//! the text input, buttons, banners, fonts and the generic widgets (menu, confirm, toast, notices), the selftests' hit targets, global init, and the frame / memory
 //! probes the selftests print.
 
 pub mod banner;
 pub mod button;
+pub mod confirm;
 pub mod fonts;
 pub mod hit;
+pub mod menu;
+pub mod notices;
 pub mod nudge;
 pub mod term_element;
 pub mod text_input;
 pub mod themes;
+pub mod toast;
 
 use std::{
     cell::{Cell, RefCell},

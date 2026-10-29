@@ -168,7 +168,7 @@ async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mu
         bail!("the clipboard holds {copied:?}, not {name:?} ({CLIPBOARD_TRIES} tries)");
     }
     let after = until(view, cx, WITHIN, "the copy toast painted", |v| {
-        let shown = v.toast.as_ref().is_some_and(|t| t.text == format!("Copied {name}")) && v.hits.borrow().contains_key("toast");
+        let shown = v.toast.text() == Some(format!("Copied {name}").as_str()) && v.hits.borrow().contains_key("toast");
         shown.then(|| tree(v)).flatten()
     })
     .await?;

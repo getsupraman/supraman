@@ -26,6 +26,7 @@ use foreman_term::{
 use foreman_ui::nudge::{self, Nudge, Nudged};
 use foreman_ui::hit::{HitTargets, hit_target};
 use foreman_ui::text_input::{InputEvent, TextInput};
+use foreman_ui::toast::ToastSlot;
 use foreman_ui::{FrameProbe, button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
@@ -376,7 +377,7 @@ pub struct FleetView {
     /// [`Self::resolve_tabs`] runs finished.
     pub tab_resolves: u64,
     /// The last quiet feedback (m5/34): it overlays the tree instead of pushing it down.
-    pub toast: Option<Toast>,
+    pub toast: ToastSlot,
     /// Where the transcripts are read, and the confirmed ones deleted (m5/38): `FOREMAN_CLAUDE_DIR`, else claude's.
     pub claude_dir: Option<PathBuf>,
     /// Session ids deleted from here → when, kept out of the tree until polls catch up ([`delete::HIDE_DELETED_MS`]).
@@ -384,14 +385,6 @@ pub struct FleetView {
     /// Session ids whose delete runs.
     pub deleting: HashSet<String>,
 }
-
-/// A short note over the bottom of the left panel, gone after [`TOAST_FOR`].
-pub struct Toast {
-    pub text: String,
-    pub shown_at: Instant,
-}
-
-pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 
 /// How long Quit waits on the hand tokens' revokes before it closes anyway; the next start revokes the rest.
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
@@ -734,7 +727,7 @@ impl FleetView {
             tabs_resolving: false,
             tabs_again: false,
             tab_resolves: 0,
-            toast: None,
+            toast: ToastSlot::default(),
             claude_dir,
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
@@ -1138,7 +1131,7 @@ impl FleetView {
             self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
-            notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
+            foreman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
             self.daemon_hold = report.daemon_hold;
             self.left_pending.extend(report.left_servers);
             self.last_attempt = report.last_attempt.into_iter().collect();
