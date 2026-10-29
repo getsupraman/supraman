@@ -3859,3 +3859,54 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-52\target`): release build ok; `cargo test --release --workspace` 652
   passed, 0 failed. `--selftest` ran once and passed steps 1 to 7b, then failed 7c "window not found" (F-93, as the
   brief expects). The controller runs the selftest gate.
+
+## 2026-10-29 — m5/58 box drawing and block elements drawn cell-exact, like Windows Terminal
+
+- **Why René's table looked broken.** Box drawing went through the font. In Cascadia Code at 14 px, `─` is narrower
+  than its 8.20 px cell, so a row of them is dashed. `│` is shorter than the 18 px line (line height 1.3 × size,
+  `LINE_HEIGHT_FACTOR`), so verticals stop short of the horizontals in the rows above and below.
+- **What Windows Terminal does** (microsoft/terminal @ f356093, `.repos/terminal/src/renderer/atlas`): it never
+  shapes U+2500–U+259F. `BackendD3D::_drawBuiltinGlyph` (`BackendD3D.cpp:1582`) gives `DrawBuiltinGlyph`
+  (`BuiltinGlyphs.cpp:1824`) one whole-pixel cell (`cellSize`). Each glyph in the `BoxDrawing` table
+  (`BuiltinGlyphs.cpp:139–964`) is up to 4 instructions: a shape plus begin and end `Pos` values. A `Pos` is a
+  fraction of the cell plus a multiple of the light line width (`Pos_Lut`, `:97`).
+  - Thickness: `lightLineWidth = max(1, round(cellW / 6))` (`:1845`), heavy is twice that (`:1869`). This is a
+    sixth of the cell **width**, not the font's underline thickness or the cell height, so the brief's wording
+    does not match WT. I followed WT's source. The corner radius is `min(5 × light, min(w, h) / 2)` (`:1846`).
+  - Snapping (`:1886–1889`): a coordinate is rounded after subtracting half the stroke along the stroke's
+    width, then the half is added back, so a stroke's edges land on whole pixels. A horizontal line's ends are
+    not offset, so `─` runs from 0 to w exactly and the next cell starts where it ends.
+  - Shapes: lines are D2D `DrawLine` with flat caps (`:1913`), double-line corners are hollow rects
+    (`DrawRectangle`, `:1919`) clipped to the cell, arcs `╭╮╯╰` are rounded rects that extend past the cell
+    (`Pos_Max` = 1.5) and are clipped (`:1925`, clip `:1826`), diagonals `╱╲╳` are lines, blocks are filled rects.
+    `░▒▓` are 25/50/75 % stipples done in the shader.
+- **Foreman** (`foreman_ui::builtin_glyphs`, painted by `term_element::BuiltinCell`): `GLYPHS` is WT's table
+  converted 1:1 by a script, covering all 160 entries of U+2500–U+259F. `marks` repeats `DrawBuiltinGlyph`'s
+  arithmetic in device pixels. Our cells are fractional (8.203125 px), so each cell's device rect is its own
+  logical edges × scale, rounded. Neighbours share those edges, and a column keeps one rect on every row.
+  The light width comes from the nominal cell width (`cell_width × scale`), so it is the same in every cell.
+  Lines and hollow rects become quads; diagonals and arcs become gpui stroked paths under a content mask of the
+  cell. A glyph's quads are made disjoint (`disjoint`), so a dimmed (α 0.7) or selected colour is even where
+  strokes cross. Two differences from WT:
+  - Shades are the foreground colour at 25/50/75 % opacity, not a stipple, as before.
+  - Zed's 8×24 subcell block-element painter is gone. Its quads were not snapped, and blocks are now in the same
+    table.
+  - Characters outside U+2500–U+259F keep the font path, with m5/47 ligatures and m5/49 fitting unchanged.
+    Every mark is inside its cell, so m5/47's rule that ink never covers another cell holds.
+- **Selftest 7t** (`selftest_box.rs`) prints `┌───┬───┐ │   │   │ ├───┼───┤ └───┴───┘` in rgb(255, 0, 255) at
+  14 and 23 px. It captures the window (`selftest_manage::capture`, the PrintWindow of `scripts/shot.ps1`, now
+  shared with `shot_window`) and maps the table's cells into the PNG. The window frame is taken as equally
+  wide below and on both sides. The step finds each horizontal stroke's pixel row (rows 0, 2, 3) and each
+  vertical stroke's pixel column (cells 0, 4, 8), then requires unbroken ink along each one between the outer
+  strokes. At scale 1.5 it passed: 12×27 px cells, horizontals at y 221/275/302 unbroken over x 720..=819, and
+  20×45 px cells.
+- Red: 7t with box drawing routed to the font again (`if false && builtin_glyphs::is_builtin(…)` in
+  `layout_grid`) → FAIL "Cascadia Code at 14px: cell 0: the vertical stroke at x 720 does not reach the
+  horizontal ones, a gap at y 233 between y 221 and 302".
+- Tests: `builtin_glyphs::tests` (6: coverage of the range, quads inside the cell on whole pixels, horizontals
+  0..w and verticals 0..h that meet at every junction, heavy = 2 × light and double = two light lines, disjoint
+  crossings, dashes/arcs/diagonals/shades) and `term_element::tests::box_drawing_and_block_elements_are_builtin_cells_between_text_runs`
+  and `a_selected_builtin_cell_is_drawn_in_the_selection_colour`.
+- Step 7c ("close_settings logged 1 window-teardown line") failed in 10 of 11 runs in this agent session, with and
+  without `FOREMAN_SHOTS` (F-93). This stopped the before/after screenshots, so the controller takes them:
+  `FOREMAN_SHOTS=<dir>` writes `m5-58-box-drawing-14.png` and `-23.png` from step 7t.

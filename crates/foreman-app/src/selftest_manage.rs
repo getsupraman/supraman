@@ -233,19 +233,27 @@ pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
 }
 
 pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
-    let title = title.map(str::to_string);
     let Some(dir) = std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from) else {
         return;
     };
     sleep(cx, Duration::from_millis(300)).await;
-    let out = dir.join(format!("{name}.png"));
+    match capture(dir.join(format!("{name}.png")), title, cx).await {
+        Ok(out) => println!("shot: {}", out.display()),
+        Err(e) => println!("shot: {name} failed: {e:#}"),
+    }
+}
+
+/// A PNG of this process's main window, or its window titled `title`, as it is on screen.
+pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
+    let title = title.map(str::to_string);
     let script = cargo_root().join("scripts").join("shot.ps1");
     let pid = std::process::id().to_string();
-    let done = cx
-        .background_executor()
+    cx.background_executor()
         .spawn(async move {
-            std::fs::create_dir_all(&dir).map_err(foreman_core::process::RunError::Spawn)?;
-            foreman_core::process::run(
+            if let Some(dir) = out.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let o = foreman_core::process::run(
                 foreman_core::process::command("pwsh")
                     .args(["-NoLogo", "-NoProfile", "-File"])
                     .arg(&script)
@@ -254,15 +262,13 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
                     .args(title.iter().flat_map(|t| ["-Title", t.as_str()])),
                 Duration::from_secs(60),
                 foreman_core::process::Kill::Tree,
-            )
-            .map(|o| (out, o))
+            )?;
+            if !o.success() {
+                bail!("{} failed: {}", out.display(), o.stderr.trim());
+            }
+            Ok(out)
         })
-        .await;
-    match done {
-        Ok((out, o)) if o.success() => println!("shot: {}", out.display()),
-        Ok((out, o)) => println!("shot: {} failed: {}", out.display(), o.stderr.trim()),
-        Err(e) => println!("shot: {name} failed: {e}"),
-    }
+        .await
 }
 
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<&'static str>> {
