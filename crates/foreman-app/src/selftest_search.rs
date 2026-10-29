@@ -47,6 +47,21 @@ async fn until_focused(view: &Entity<FleetView>, want: bool, what: &str, cx: &mu
     Ok(())
 }
 
+/// The search box (`render_search_box`: 8 px beside, 4 px above) holds the field, whose text starts past its border and padding.
+fn text_inset(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    use foreman_ui::text_input::{PAD_Y, TEXT_LEFT};
+    let (outer, text) = view.read_with(cx, |v, cx| (v.hits.borrow().get("search-box").map(|h| h.bounds), v.search.read(cx).text_bounds()));
+    let (Some(outer), Some(text)) = (outer, text) else {
+        bail!("the search box or its text was not painted");
+    };
+    let (left, top) = (f32::from(text.left() - outer.left()), f32::from(text.top() - outer.top()));
+    let (want_left, want_top) = (8. + f32::from(TEXT_LEFT), 4. + 1. + f32::from(PAD_Y));
+    if left + 1. < want_left || top + 1. < want_top {
+        bail!("the search text starts {left} px in and {top} px down in the search box, not {want_left} and {want_top}");
+    }
+    Ok(format!("the search text starts {left} px in and {top} px down in the search box"))
+}
+
 fn select_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, cx| view.update(cx, |v, cx| v.focus_search(window, cx)))?;
     Ok(())
@@ -85,6 +100,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let summary = view.read_with(cx, |v, cx| v.search_results(cx).summary());
     out.push(format!("{prefix:?} typed by posted keys: {rows:?} ({summary}) in {} ms, stopped sessions hidden in the tree", started.elapsed().as_millis()));
     shot("m5-30-search-id", cx).await;
+    out.push(text_inset(view, cx)?);
 
     select_all(view, cx)?;
     type_query(view, "closed session", cx).await?;

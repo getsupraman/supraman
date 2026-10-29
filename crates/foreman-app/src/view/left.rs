@@ -623,6 +623,8 @@ impl FleetView {
                 d.child(
                     div()
                         .id("notices")
+                        .relative()
+                        .child(hit_target(&self.hits, "notices-area".into()))
                         .flex()
                         .flex_col()
                         .min_h_0()
@@ -1393,9 +1395,8 @@ impl FleetView {
                                 .flex_1()
                                 .min_w_0()
                                 .child(draft.name.clone())
-                                // the text starts 5 px in (the input's border and padding)
                                 .child(hit_target(&self.hits, "add-name".into()))
-                                .child(div().absolute().top_0().bottom_0().left(px(5.)).right(px(5.)).child(hit_target(&self.hits, "add-name-text".into()))),
+                                .child(div().absolute().top_0().bottom_0().left(foreman_ui::text_input::TEXT_LEFT).right(foreman_ui::text_input::TEXT_LEFT).child(hit_target(&self.hits, "add-name-text".into()))),
                         ),
                 )
                 .children(draft.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))

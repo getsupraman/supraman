@@ -147,3 +147,22 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
          outbox file kept; {rest} more × emptied the section and hid it; a newer note showed it again (count 1) and its × hid it"
     ))
 }
+
+pub async fn compose(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.open_compose(WORKSPACE, None, window, cx);
+            if let Some(c) = &v.compose {
+                c.input.update(cx, |input, cx| input.set_text("Rebase m5/51 on main, then run the gate.", cx));
+            }
+        })
+    })?;
+    crate::selftest::scrolled_into_view(view, "compose-text", cx).await?;
+    shot("m5-51-compose", cx).await;
+    view.update(cx, |v, cx| {
+        v.compose = None;
+        cx.notify();
+    });
+    until(view, cx, WITHIN, "the task box closed", |v| (!painted(v, "compose-box")).then_some(())).await?;
+    Ok("task box opened with a line typed, shot, closed".into())
+}

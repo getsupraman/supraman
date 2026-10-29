@@ -564,6 +564,15 @@ impl Rows for Layout {
 
 /// Room kept right of the text for the caret.
 const CARET_ROOM: Pixels = px(2.);
+/// The field's padding beside the text, inside its 1 px border.
+pub const PAD_X: Pixels = px(8.);
+/// The field's padding above and below the text, inside its 1 px border.
+pub const PAD_Y: Pixels = px(3.);
+/// Where the text starts, from the field's outer left edge: the border and [`PAD_X`].
+pub const TEXT_LEFT: Pixels = px(9.);
+const LINE_HEIGHT: Pixels = px(18.);
+/// A single-line field: one line, [`PAD_Y`] above and below, and the border.
+const SINGLE_HEIGHT: Pixels = px(26.);
 
 pub struct TextInput {
     focus_handle: FocusHandle,
@@ -625,7 +634,7 @@ impl TextInput {
             multi_line: false,
             last_layout: None,
             last_bounds: None,
-            last_line_height: px(18.),
+            last_line_height: LINE_HEIGHT,
             scroll: Point::default(),
             autoscroll: true,
             is_selecting: false,
@@ -665,6 +674,11 @@ impl TextInput {
         self.line.select_all();
         self.focus_handle.focus(window, cx);
         self.lit(cx);
+    }
+
+    /// Where the last frame painted the text, inside the border and padding.
+    pub fn text_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.last_bounds
     }
 
     /// Whether the caret is painted at `now`: lit for one interval after an edit or move, then blinking.
@@ -1287,15 +1301,15 @@ impl Render for TextInput {
             .flex()
             .w_full()
             .min_w_0()
-            .when(!multi_line, |d| d.items_center().h(px(22.)))
-            .when(multi_line, |d| d.py_1().on_scroll(cx.listener(Self::scroll_wheel)))
-            .px_1()
+            .when(!multi_line, |d| d.items_center().h(SINGLE_HEIGHT))
+            .when(multi_line, |d| d.py(PAD_Y).on_scroll(cx.listener(Self::scroll_wheel)))
+            .px(PAD_X)
             .rounded_sm()
             .border_1()
             .border_color(if focused { colors.border_focused } else { colors.border })
             .bg(colors.editor_background)
             .text_sm()
-            .line_height(px(18.))
+            .line_height(LINE_HEIGHT)
             .overflow_hidden()
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)
@@ -1356,6 +1370,13 @@ mod tests {
         for c in text.chars() {
             l.replace(l.selection(), &c.to_string(), EditKind::Typing);
         }
+    }
+
+    #[test]
+    fn the_text_has_room_inside_the_border() {
+        assert!(PAD_X >= px(6.) && PAD_Y >= px(2.), "padding {PAD_X:?} × {PAD_Y:?}");
+        assert_eq!(TEXT_LEFT, px(1.) + PAD_X);
+        assert_eq!(SINGLE_HEIGHT, LINE_HEIGHT + PAD_Y * 2. + px(2.));
     }
 
     #[test]

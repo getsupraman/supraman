@@ -864,6 +864,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7n: {dismissed}");
     let hint = step("7n", crate::selftest_messages::placeholder(view, cx)).await?;
     println!("step 7n: {hint}");
+    let composed = step("7n", crate::selftest_messages::compose(view, cx)).await?;
+    println!("step 7n: {composed}");
 
     let notices = step("7o", crate::selftest_notices::run(view, cx)).await?;
     println!("step 7o: {notices}");

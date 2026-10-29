@@ -253,10 +253,26 @@ fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
 pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let inbox = until(view, cx, WITHIN, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
     let tree = until(view, cx, WITHIN, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
-    let search = view.read_with(cx, |v, _| v.hits.borrow().get("search-box").map(|h| h.bounds)).filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top());
-    let between = tree.top() - inbox.bottom() - search.map_or(Pixels::ZERO, |b| b.size.height);
+    let sections: Pixels = view.read_with(cx, |v, _| {
+        let hits = v.hits.borrow();
+        ["messages-area", "notices-area", "search-box"]
+            .iter()
+            .filter_map(|k| hits.get(*k).map(|h| h.bounds))
+            .filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top())
+            .fold(Pixels::ZERO, |sum, b| sum + b.size.height)
+    });
+    let between = tree.top() - inbox.bottom() - sections;
     if f32::from(between) > 20. {
-        bail!("the tree starts at y {:.1}, {:.1} px under the Inbox ({:.1} px besides the search box): something sits between them", f32::from(tree.top()), f32::from(tree.top() - inbox.bottom()), f32::from(between));
+        let mut inside: Vec<String> = view.read_with(cx, |v, _| {
+            v.hits.borrow().iter().filter(|(_, h)| h.bounds.top() >= inbox.bottom() && h.bounds.bottom() <= tree.top()).map(|(k, h)| format!("{k} {:.0}", f32::from(h.bounds.size.height))).collect()
+        });
+        inside.sort();
+        bail!(
+            "the tree starts at y {:.1}, {:.1} px under the Inbox ({:.1} px besides the Messages, notices and search box): something sits between them: {inside:?}",
+            f32::from(tree.top()),
+            f32::from(tree.top() - inbox.bottom()),
+            f32::from(between)
+        );
     }
     let position = tree.center();
     let wheel = |dy: f32, cx: &mut AsyncWindowContext| {

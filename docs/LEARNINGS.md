@@ -3774,3 +3774,46 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `want_adds_a_repo_session_once_and_unwant_retires_it` and `a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root`.
   Master's own `crates`/`plugins` fail these two the same way in this target dir: an `fm.exe` under `C:\fmbuild` has no
   `plugins/foreman` next to it or above it ("No Foreman plugin for …"). Selftests not run (parallel passes, per brief).
+
+## 2026-10-29 — m5/51 one border on the Server URL field, shared TextInput padding
+
+- **One border:** Settings → WorkState → Server URL drew the field inside a second bordered box
+  (`settings_window.rs`). The box is gone; `ws-url` keeps only its id and 280 px width, and the field's own border
+  is the only one, like every other TextInput.
+- **Padding lives in `foreman_ui::text_input`:** `PAD_X` 8 px beside, `PAD_Y` 3 px above and below, inside the 1 px
+  border. A single-line field is 26 px high (was 22, with 4 px beside and 1 px above). `TEXT_LEFT` (border +
+  `PAD_X`) is exported for hit targets that click into the text, and `TextInput::text_bounds` returns where the
+  last frame painted the text.
+- **Callers checked:** left-panel search (`view/results.rs`), Settings Server URL, the task box (`open_compose`,
+  multi-line: now `PAD_Y`/`PAD_X` too), Find in terminal (`view/term.rs`; its 28 px bar holds the 26 px field), the
+  add-workspace name (`view/manage.rs`, painted in `view/left.rs`). Only Server URL had a wrapper border. The
+  add-name text hit target hard-coded the old 5 px inset; it uses `TEXT_LEFT` now (one line in `view/left.rs`).
+- **Result line:** the search summary under the box gets `pt_2` (was `py_1`); its left edge stays at the result
+  rows'.
+- **Hit keys unchanged.**
+- **Tests:** `text_input::tests::the_text_has_room_inside_the_border` (red: `PAD_X` back to 4 px → 1 failed).
+  `--selftest` 7k checks the painted search text starts at least 17 px in and 8 px down in `search-box` (master
+  paints 13 and 6, so it fails there). 7n opens the task box, types a line and writes the `m5-51-compose` shot.
+- **Gate:** `cargo build --release --workspace` clean; `cargo test --release --workspace` 663 passed, 0 failed.
+  Selftests run by the controller: in the agent environment 7c fails every run, also on master UI code and with no
+  other selftest running ("window not found" on `close_settings`), while the controller's own run of 2b0fb17
+  passes it.
+- **Before/after (`FOREMAN_SHOTS`, `C:\fmbuild\m5-51\shots\{before,after}`):** taken with 7c's bail turned into a
+  print in a local, uncommitted build; "before" is the same build with master's field geometry, Settings wrapper and
+  summary padding. `m5-43-settings-signed-in`: two nested boxes around the URL → one. `m5-30-search-id`: "5e1f"
+  12.7 px in and 6 px down in the search box → 16.7 and 8, and the summary line 4 px lower. `m5-51-compose`: the
+  task text clear of the border. The 7k check printed 12.67/6 on master geometry (it needs 16/7: red) and passed
+  after; that run PASSed every step.
+- **7f in the controller's run of 44241a8:** "192.0 px under the Inbox (158.0 px besides the search box)". Here the
+  same commit paints Inbox 66.0..262.7 and the tree from 302.7: 40 px, of which the search box is 34, so 6 px (master
+  build: 36, 30 and 6). The tree shows this machine's live sessions, so what sits between them depends on the
+  environment; 7f's failure message now lists every hit key painted in the gap with its height.
+- **7f, the cause:** the gap held the setup notice `setup-0`, "No Foreman plugin for <exe>: … sessions cannot be
+  started from this build." (`supervise::setup` → `foreman_core::find_plugin_dir`). An exe whose folder and every
+  folder above it lack `plugins\foreman` shows it. `C:\fmbuild\m5-51` has one, so my runs never painted the notice;
+  the controller's build dir has none. The `inbox-ws-*` keys in the gap are the Inbox's own second row, overflowing
+  its 25 % `max_h` and clipped: their bounds lie below `inbox-area`, but they take no space. 7f now subtracts the
+  Messages (`messages-area`), notices (new `notices-area` key on the notices section) and search box sections, the
+  way it subtracted the search box alone. Anything else in the gap still fails. Reproduced with `plugins`
+  renamed: tree at 454.7, `notices-area` 145 + `search-box` 34 of 192, 13 px left → 7f passes. Red: `notices-area`
+  left out of the list → the controller's exact failure.
