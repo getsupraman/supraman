@@ -591,6 +591,8 @@ Measured with `crates/foreman-app/diag/states.ps1` (retired in m5/44.15; see git
 
 ## 2026-10-22 — m2/1 launcher probes
 
+*Now: WorkState is the hosted server (`https://workstate.dikaia.ai`, m5/48) with OAuth and per-session minted tokens (m5/43); the local stack at `localhost:5290` and the static-token routes below are gone.*
+
 Measured with `cargo run -p fm -- probe launch` (runs 1–4; runs 3–4 are the final code, identical answers) and
 `crates/fm/probe/resume.ps1 -Variant bare|prompt|name` (retired in m5/44.15; see git history before 014d286) (CLI 2.1.308, Windows 11). Sessions `aw-m2-probe-<hex>-*`,
 cwd `<worktree>/target/aw-m2-probe-<hex>/<probe>` (plain subfolder, trusted). Every row was stopped + removed.
@@ -773,6 +775,8 @@ start, **auto-updated to 2.1.309 during the unit** — runs 5–8 ran on 2.1.309
 
 ## 2026-10-23 — m2/4 supervisor in the app
 
+*Now: no `workstate_env`, `.env` or static token; Foreman signs in with OAuth (m5/43) against `[workstate] url`, default the hosted server (m5/48).*
+
 Measured with `crates/foreman-app/diag/kill.ps1`, `diag/resume.ps1` (retired in m5/44.15; see git history before 014d286) and `target/release/foreman.exe
 --selftest-supervise` (CLI 2.1.309, Windows 11, worktree m2-4). Sessions `fm-selftest-…`, cwd under the
 worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolation":"none"}}`; every row removed.
@@ -831,6 +835,8 @@ worktree's `target/`, `--strict-mcp-config`, `--settings {"worktree":{"bgIsolati
   `foreman-supervisor` and dev `tempfile`. No new external dependency.
 
 ## Fleet UI after M2 (René's first hand check)
+
+*Now: the `.env` token lines below are gone; see m5/43.*
 
 - **Resume from the tree**: a background session with no process resumes in a tab that runs
   `claude --bg --resume <sessionId>; claude attach <id>` (pwsh `-Command`). The session wakes under the same
@@ -1255,7 +1261,7 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   on Windows — shift+wheel does nothing in a tab, as in Zed on Windows.
 - Tests: `test_report_mode_wheel_without_mouse_mode_scrolls_scrollback` (offset 3, no PTY write, output does not yank,
   a keystroke returns to 0) and `test_report_mode_wheel_on_alt_screen_sends_arrow_keys` (incl. shift → nothing) in
-  `crates/foreman-term/src/terminal.rs`; they pin the port's behaviour for Foreman's mode. Selftest step 6
+  `crates/foreman-term/src/terminal.rs` (now `scroll.rs`); they pin the port's behaviour for Foreman's mode. Selftest step 6
   (`wheel_scroll`): a `-NoProfile` `+` tab, `lines*2+20` lines, wheel events dispatched over the grid through the
   window: `display_offset 0 → 6 → 3 → 0`. Red: handler body disabled → step 6 FAIL "left display_offset at 0".
   The user's pwsh profile prompt has no `PS ` (the first run of step 6 timed out on it), hence `-NoProfile`.
@@ -1274,6 +1280,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   above), PASS on the rerun.
 
 ## 2026-10-26 — mint/7 per-session tokens
+
+*Now: the mint's bearer is the OAuth access token (m5/43), not a static token from `.env`; `crates/foreman-supervisor/src/mint.rs`.*
 
 - **What**: a session whose role has a static WorkState token no longer gets that token in its
   `<FOREMAN_HOME>/mcp/workstate-<name>.json`. At each launch **and each resume** the supervisor POSTs
@@ -1337,6 +1345,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   `agent_launch`). Queued after M4 (backlog 6, then 7: repo-controllers launching units via `agent_launch`).
 
 ## 2026-10-26 — m4/1 read API client
+
+*Now: `client_from_settings` and `workstate_env` are gone; the client takes its bearer from the OAuth sign-in (m5/43), `crates/foreman-workstate/src/client.rs`.*
 
 - **Crate `foreman-workstate`**: serde models for every read API v1 shape (Skills `docs/workstate/10-read-api.md`),
   a blocking `Client` (ureq 3 like the minter: no TLS, no proxy, no redirects, 15 s), and `Stream`, the
@@ -1434,6 +1444,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   s — the Task… overflow above, fixed.
 
 ## 2026-10-26 — m4/2 Work tab
+
+*Now: "not configured" means not signed in; there is no `.env` to choose (m5/43).*
 
 - **What**: a **Work** button on each workspace row (right after the name) opens or focuses the right-pane tab
   `Work · <workspace>` (`TabKind::Work(Entity<WorkView>)`, no terminal; × and middle click close it like any tab).
@@ -1696,7 +1708,7 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   no key mapping was changed. If it recurs, capture the claude version and whether the task box had focus.
 - **Mouse in claude**: a real click inside the prompt text moves claude's cursor (`target/m5-9/s3-click-moves-cursor.png`);
   Shift+drag selects locally while claude has mouse mode on (`s4-shift-drag-selection.png`).
-- **Tests**: `terminal.rs` `test_claude_mouse_modes_report_sgr_click_drag_release` (claude's modes → `CSI <0;6;3M`,
+- **Tests**: `terminal.rs` (now `mouse.rs`) `test_claude_mouse_modes_report_sgr_click_drag_release` (claude's modes → `CSI <0;6;3M`,
   `CSI <32;8;3M`, `CSI <0;8;3m`), `keys.rs` `test_enter_variants_ignore_terminal_modes`, `term_element.rs` selection
   span tests; selftest step 6b (drag over a `wheel line` row → selection text → Ctrl+Shift+C → clipboard → Ctrl+V →
   echoed at the pwsh prompt; the user's clipboard is restored). Red: listeners not registered → `FAIL step 6: step 6b:
@@ -2009,6 +2021,8 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
 
 ## 2026-10-26 — m5/3 first run
 
+*Now: the `.env` offer and `workstate_env` are gone; the three states are worded in `crates/foreman-app/src/workstate_setup.rs` for the OAuth sign-in (m5/43).*
+
 - **Three states, one wording** (`workstate_setup::WsStatus`): (a) no `workstate_env`; (b) the `.env` cannot be read,
   or has no token line for workspace sessions (`WORKSTATE_WORKSPACE_TOKEN` else `_CONTROLLER_`) or repo sessions
   (`_REPO_` else `_ORCHESTRATOR_`) — the same fallback `tokens::token_from` launches with; (c) files fine but
@@ -2123,6 +2137,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 
 ## 2026-10-26 — m5/20 hand sessions minted
 
+*Now: hand sessions are minted with the OAuth access token (m5/43), not a role's static token.*
+
 - A `+` session (`crates/foreman-app/src/hand.rs`) is minted `role: worker` (orchestrator since m5/35), `externalRole: "hand"`, `repo` =
   `git_repo(cwd)`, name `hand-<folder>-<n>`, `launchedBy: foreman/hand`. A worker token cannot mint (doc 14 §2), so the
   bearer is the repo role's static token, else the workspace's; a `.env` with only a worker line opens it plain.
@@ -2218,8 +2234,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 ## 2026-10-27 — m5/26 add-workspace input, contrast, selection, tooltips
 
 - **The "hang" was not one.** René had picked a folder that is itself a repo (`P:\Projects\LarchSys\Gaia`). `scan` listed only the repos *below* the root, so the review said "0 of 0 repos" and Save refused, but the error line sat between the list and the buttons and he did not see it. The frozen caret was by design: a static `▏`, and clicks did not place it. The posted-message repro on 2ae06cd could not make keys fail: a fresh start, a pwsh tab, a full tree, a window re-shown from the tray, and a Medium-IL Foreman (`runas /trustlevel:0x20000`) all kept Win32 focus after the picker (`GetGUIThreadInfo`). SendInput does not work as a test tool in these sessions: injected keys and clicks are dropped for every window (a WinForms textbox too). PostMessage reaches gpui's wndproc. A posted WM_MOUSEMOVE does not hover, because the real cursor's position sends WM_MOUSELEAVE at once.
-- Now `scan` lists a root with `.git` (a folder, or a linked worktree's file) as a repo: first, named after its folder (`<folder>-root` when a child has that name), path = root, shown as `<name> (root)`. Consumers checked by tests: the registry and `fm want` cwd (`tests/want.rs`), `assign::repo_of` (children keep theirs), the `git_repo` mint key (`mint.rs`), branch via the worktree's gitdir. The relay never uses repo paths. The name is a `LineEdit` (`line_edit.rs`): click/arrows/Home/End/Shift/Ctrl+A, a blinking caret, space→`-`, and a refused character shows a hint. Errors sit tinted next to Save, Save while scanning says so, and the window is re-activated after the picker. Step 7b drives it with posted messages and adds a one-repo workspace (shot `add-review-single-repo`).
-- Contrast (WCAG, One Dark panel #22252b, `text` 10.9:1): `text_muted` was 3.2:1, and 1.8:1 in a 0.5-opacity row. The tree now uses `text` blends: quiet 0.78 (7.2:1), secondary 0.62 (5.1:1), dimmed rows 0.8 (5.2 / 3.8). `left.rs::the_tree_text_is_readable_against_the_panel` computes them from the theme (shots `cut-label-tooltip`, `m5-26-selection` show the tree).
+- Now `scan` lists a root with `.git` (a folder, or a linked worktree's file) as a repo: first, named after its folder (`<folder>-root` when a child has that name), path = root, shown as `<name> (root)`. Consumers checked by tests: the registry and `fm want` cwd (`tests/want.rs`), `assign::repo_of` (children keep theirs), the `git_repo` mint key (`mint.rs`), branch via the worktree's gitdir. The relay never uses repo paths. The name is a `LineEdit` (`line_edit.rs`; now `foreman_ui::text_input`, `crates/foreman-ui/src/text_input.rs`): click/arrows/Home/End/Shift/Ctrl+A, a blinking caret, space→`-`, and a refused character shows a hint. Errors sit tinted next to Save, Save while scanning says so, and the window is re-activated after the picker. Step 7b drives it with posted messages and adds a one-repo workspace (shot `add-review-single-repo`).
+- Contrast (WCAG, One Dark panel #22252b, `text` 10.9:1): `text_muted` was 3.2:1, and 1.8:1 in a 0.5-opacity row. The tree now uses `text` blends: quiet 0.78 (7.2:1), secondary 0.62 (5.1:1), dimmed rows 0.8 (5.2 / 3.8). `left.rs::the_tree_text_is_readable_against_the_panel` computes them (now `themes.rs::the_contrast_floors_hold_under_each_bundled_theme`, `crates/foreman-ui/src/themes.rs`) from the theme (shots `cut-label-tooltip`, `m5-26-selection` show the tree).
 - Selection as WT: `SELECTION_BACKGROUND` #FFFFFF, selected glyphs drawn in `terminal_background` (`term_element::Selected`). 6c reads `Terminal::selection_painted`. Cut labels: `clipped.rs` measures each label against its width every frame and attaches the full-text tooltip from the next frame on. 7b hovers the cut root path. At the 280-px minimum panel the row's buttons squeeze that path to 0 px.
 
 ## 2026-10-27 — m5/27 closed interactive sessions, stars
@@ -2308,7 +2324,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   returns early, without stopping, while a text input has the focus (`input_focused`). Its edit and move keys are
   actions bound in the `TextInput` context (`text_input::bind_keys`), so they run before that listener. A dead key
   arrives with `prefer_character_input` and skips the bindings by itself.
-- **`text_input.rs`** replaces `line_edit.rs`. `LineText` is the gpui-free model: grapheme steps, Ctrl+arrow
+- **`text_input.rs`** (now `crates/foreman-ui/src/text_input.rs`) replaces `line_edit.rs`. `LineText` is the gpui-free model: grapheme steps, Ctrl+arrow
   words (`-`, `.` and space separate words), the double-click word, undo where typing runs join until a space or a
   caret move and an IME composition is one step, and UTF-16↔byte maps. `TextInput` is the entity: the element
   from `.repos/zed/crates/gpui/examples/input.rs` plus horizontal scroll, theme colours, a placeholder, its own
@@ -2447,6 +2463,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `--selftest-detach-shutdown` PASS; no `fm-selftest` rows left.
 
 ## 2026-10-28 — m5/35 hand sessions: orchestrator token, their own name, a visible override
+
+*Now: the mint's bearer is the OAuth access token (m5/43); the static role tokens below are gone.*
 
 - **The bug** (skills-9a, from WorkState's `agent_session`): René resumed mw-workflow in a Foreman tab. Before, it
   was `nomos-0c`, an orchestrator on his user registration, named through the session-header helper. After, it was
@@ -2730,8 +2748,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `foreman-workstate` `credentials.rs` (`client_from_settings`), `tokens::token_from`/`token_key`, the first-run
   "Use ~/.workstate/.env" offer and `FOREMAN_WORKSTATE_INSTALL`. An old file's `workstate_env` line is ignored and
   dropped at the next save; an old `…/mcp` `workstate_url` means its origin.
-- **Server URL**: `workstate_url` is an origin (`Settings::workstate_origin`, default `http://127.0.0.1:5290` until
-  the cut-over; `workstate_mcp_url` = origin + `/mcp` for minted configs). `validate_workstate_url`: http(s) only,
+- **Server URL**: `workstate_url` is an origin (`Settings::workstate_origin`, now `WorkStateSettings::origin`; default `http://127.0.0.1:5290` until
+  the cut-over, now `DEFAULT_WORKSTATE_URL`; `workstate_mcp_url` = origin + `/mcp` for minted configs). `validate_workstate_url`: http(s) only,
   a host, an optional port, any path dropped, plain `http` only for 127.0.0.1/localhost/::1.
 - **The client** (`foreman-workstate/src/auth.rs`, `Auth`), written on the ureq stack the crate already had:
   discovery `<origin>/.well-known/oauth-protected-resource/api` → `authorization_servers[0]` → its
@@ -3051,7 +3069,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   a 20 px line is row 1 there but row 0 for `grid_point`. A click test at y = 10 misses the link on the old code
   and passes green for the wrong reason. The tests click at y = 5. `content_index_for_mouse` is `#[cfg(test)]` now
   (only its own tests use it).
-- **Tests:** `terminal.rs` `tests::hyperlinks::{test_plain_click_opens_no_link, test_ctrl_click_opens_osc8_link_of_any_scheme,
+- **Tests:** `terminal.rs` (now `links.rs`) `tests::hyperlinks::{test_plain_click_opens_no_link, test_ctrl_click_opens_osc8_link_of_any_scheme,
   test_ctrl_click_opens_plain_url}` subscribe to `Event::Open` and read the test platform's `opened_url`; nothing
   real is opened. `view.rs` `an_open_event_opens_any_scheme_and_resolves_relative_paths` drives `open_link` with
   fake openers.
