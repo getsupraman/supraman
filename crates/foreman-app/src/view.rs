@@ -2178,7 +2178,8 @@ impl FleetView {
                 let cwd = tab.cwd.clone();
                 TabHeader {
                     id: tab.id,
-                    label: crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title, false, false).max_w(px(280.)).into_any_element(),
+                    label: crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.)).into_any_element(),
+                    title: title.into(),
                     tooltip: Some(Box::new(hover_card::tooltip(move || {
                         tab_card::Card { branch: cwd.as_deref().and_then(foreman_core::branch_at), ..card.clone() }.hover_card()
                     }))),
@@ -2193,6 +2194,10 @@ impl FleetView {
             || icon::Icon::Close.svg(14., muted),
             |this: &mut Self, id, cx| this.activate_tab(id, cx),
             |this: &mut Self, id, cx| this.close_tab(id, cx),
+            |this: &mut Self, from, to, cx| {
+                foreman_ui::tabs::reorder(&mut this.tabs, from, to);
+                cx.notify();
+            },
             cx,
         );
         bar = bar.child(
