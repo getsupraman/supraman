@@ -10,6 +10,7 @@ pub mod process;
 mod registry;
 mod relay;
 mod scan;
+pub mod secret;
 mod settings;
 mod slug;
 pub mod time;
@@ -31,8 +32,9 @@ pub use relay::{
 };
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{
-    DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, validate_workstate_url,
-    TERMINAL_FONT_PREFERENCE, clamp_terminal_font_size, default_terminal_font_family,
+    AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
+    SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TerminalSettings, WindowSettings, WorkStateSettings, clamp_terminal_font_size,
+    default_terminal_font_family, validate_workstate_url,
 };
 pub use slug::{FM_PREFIX, slugify, validate_name};
 pub use url::origin as url_origin;

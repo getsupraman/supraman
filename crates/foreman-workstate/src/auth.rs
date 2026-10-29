@@ -235,7 +235,7 @@ impl Auth {
 
     /// The server URL `settings.toml` names, as an origin.
     pub fn configured_origin(&self) -> String {
-        Settings::load(&self.home).unwrap_or_default().workstate_origin()
+        Settings::load(&self.home).unwrap_or_default().workstate.origin()
     }
 
     /// The issuer `servers.json` names for `origin`; `None` when it names none or cannot be read.

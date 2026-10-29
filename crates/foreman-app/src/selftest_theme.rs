@@ -13,7 +13,7 @@ use gpui::{AsyncWindowContext, Entity};
 use crate::{
     selftest::sleep,
     selftest_manage::{shot, shot_window},
-    settings_window::Page,
+    settings_window::page,
     view::FleetView,
 };
 
@@ -33,7 +33,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     shot("m5-31-tree-tabs", cx).await;
 
-    view.update(cx, |v, cx| v.open_settings_at(Some(Page::Appearance), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::APPEARANCE), cx));
     let handle = {
         let mut handle = None;
         for _ in 0..100 {
@@ -46,7 +46,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         handle.ok_or_else(|| anyhow!("Settings did not open within 5 s"))?
     };
     let page = handle.read_with(cx, |s, _| s.page()).map_err(|e| anyhow!("settings window: {e}"))?;
-    if page != Page::Appearance {
+    if page != page::APPEARANCE {
         bail!("open_settings_at(Appearance) left the settings window on {page:?}");
     }
     shot_window("m5-31-settings-appearance", Some("Foreman Settings"), cx).await;
@@ -63,8 +63,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         bail!("after choosing Foreman Dark and Campbell the app paints {dark:?}");
     }
     let saved = Settings::load(home)?;
-    if saved.theme.as_deref() != Some(FOREMAN_DARK) || saved.terminal_colors.as_deref() != Some("campbell") {
-        bail!("settings.toml has theme {:?}, terminal_colors {:?}", saved.theme, saved.terminal_colors);
+    if saved.appearance.theme.as_deref() != Some(FOREMAN_DARK) || saved.appearance.terminal_colors.as_deref() != Some("campbell") {
+        bail!("settings.toml has theme {:?}, terminal_colors {:?}", saved.appearance.theme, saved.appearance.terminal_colors);
     }
     shot_window("m5-31-settings-foreman-dark", Some("Foreman Settings"), cx).await;
     shot("m5-31-main-foreman-dark", cx).await;
@@ -75,8 +75,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         bail!("back to VS Code Dark Modern, the app paints {back:?}, at start {start:?}");
     }
     let saved = Settings::load(home)?;
-    if saved.theme.as_deref() != Some(DARK_MODERN) || saved.terminal_colors.is_some() {
-        bail!("settings.toml has theme {:?}, terminal_colors {:?} after switching back", saved.theme, saved.terminal_colors);
+    if saved.appearance.theme.as_deref() != Some(DARK_MODERN) || saved.appearance.terminal_colors.is_some() {
+        bail!("settings.toml has theme {:?}, terminal_colors {:?} after switching back", saved.appearance.theme, saved.appearance.terminal_colors);
     }
     view.update(cx, |v, cx| v.close_settings(cx));
     sleep(cx, std::time::Duration::from_millis(500)).await;

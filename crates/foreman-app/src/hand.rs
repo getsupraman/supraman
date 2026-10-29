@@ -442,7 +442,7 @@ mod tests {
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
 
         let mut settings = foreman_core::Settings::load(&home).unwrap();
-        settings.workstate_url = Some(b.clone());
+        settings.workstate.url = Some(b.clone());
         settings.save(&home).unwrap();
         auth.sign_in(&b, &foreman_workstate::auth::http_browser()).unwrap();
         assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);

@@ -20,7 +20,7 @@ fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<foreman_workstate::fake::Fa
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeWorkState::start(vec![("/api/v1/overview".into(), overview())]);
     let oauth = fake.enable_oauth();
-    Settings { workstate_url: Some(fake.base().to_string()), ..Settings::default() }.save(dir.path()).unwrap();
+    Settings { workstate: foreman_core::WorkStateSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
     let store = Arc::new(MemoryStore::default());
     let auth = Arc::new(Auth::with_store(dir.path(), store.clone()).with_sign_in_timeout(Duration::from_secs(10)));
     (dir, fake, oauth, store, auth)

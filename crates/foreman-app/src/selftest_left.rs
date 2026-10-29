@@ -11,7 +11,7 @@ use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, Platfo
 use crate::{
     selftest::{WORKSPACE, click, log_offset, sleep, teardown_errors_since, until, until_with},
     selftest_manage::{shot, shot_window},
-    settings_window::{Page, SettingsView},
+    settings_window::{SettingsView, page},
     view::FleetView,
 };
 
@@ -79,10 +79,10 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 
     click(view, "bar-settings", cx).await?;
     until(view, cx, WITHIN, "Settings opens its window", |v| v.settings_window).await?;
-    view.update(cx, |v, cx| v.open_settings_at(Some(Page::About), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::ABOUT), cx));
     let handle = view.read_with(cx, |v, _| v.settings_window).ok_or_else(|| anyhow!("the settings window closed"))?;
     let page = handle.read_with(cx, |s, _| s.page()).map_err(|e| anyhow!("settings window: {e}"))?;
-    if page != Page::About {
+    if page != page::ABOUT {
         bail!("open_settings_at(About) left the settings window on {page:?}");
     }
     shown_and_painted(handle, cx).await?;

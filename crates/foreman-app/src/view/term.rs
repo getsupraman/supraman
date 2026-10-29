@@ -168,7 +168,7 @@ impl FleetView {
         // replacing the task drops (cancels) the write still waiting
         self.font_save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FONT_SAVE_AFTER).await;
-            let saved = Settings::update(&home, |settings| settings.set_terminal_font_size(f32::from(size) as u32));
+            let saved = Settings::update(&home, |settings| settings.terminal.set_font_size(f32::from(size) as u32));
             this.update(cx, |this, cx| {
                 this.font_save = None;
                 if let Err(e) = saved {
@@ -193,8 +193,8 @@ impl FleetView {
     /// next paint lays each grid out with the new cell metrics and resizes its pty.
     pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) -> Result<(), String> {
         let edit = |settings: &mut Settings| {
-            settings.set_terminal_font_family(family);
-            settings.set_terminal_ligatures(ligatures);
+            settings.terminal.set_font_family(family);
+            settings.terminal.set_ligatures(ligatures);
         };
         let settings = match &self.home {
             Some(home) => Settings::update(home, edit).map_err(|e| format!("Cannot save the terminal font: {e}"))?.0,
@@ -204,7 +204,7 @@ impl FleetView {
                 settings
             }
         };
-        self.term_font_family = settings.terminal_font_family(&self.installed_fonts).into();
+        self.term_font_family = settings.terminal.font_family(&self.installed_fonts).into();
         self.term_ligatures = ligatures;
         cx.notify();
         Ok(())

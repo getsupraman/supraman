@@ -270,7 +270,7 @@ pub struct FleetView {
     registry_writes: Arc<AtomicU64>,
     pub poll_hold: Arc<PollHold>,
     pub left_width: Pixels,
-    /// Every terminal tab's font size (m5/41): `settings.toml` `terminal_font_size`, changed by
+    /// Every terminal tab's font size (m5/41): `settings.toml` `[terminal] font_size`, changed by
     /// Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel in any terminal and by Settings → Appearance.
     pub term_font_size: Pixels,
     /// Every terminal tab's font family and ligatures (m5/47), from `settings.toml` and Settings → Appearance.
@@ -520,13 +520,13 @@ impl FleetView {
         let loaded = home.as_deref().and_then(|h| Settings::load(h).ok());
         let left_width = loaded
             .as_ref()
-            .and_then(|s| s.left_width)
+            .and_then(|s| s.window.left_width)
             .map_or(DEFAULT_LEFT_WIDTH, |w| px(w as f32).max(MIN_LEFT_WIDTH));
         let loaded = loaded.unwrap_or_default();
-        let term_font_size = px(loaded.terminal_font_size() as f32);
+        let term_font_size = px(loaded.terminal.font_size() as f32);
         let installed_fonts: Arc<Vec<String>> = Arc::new(cx.text_system().all_font_names());
-        let term_font_family = SharedString::from(loaded.terminal_font_family(&installed_fonts));
-        let term_ligatures = loaded.terminal_ligatures();
+        let term_font_family = SharedString::from(loaded.terminal.font_family(&installed_fonts));
+        let term_ligatures = loaded.terminal.ligatures();
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
@@ -966,7 +966,7 @@ impl FleetView {
     pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Foreman home: settings cannot be saved.")?;
         let origin = foreman_core::validate_workstate_url(text)?;
-        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workstate_origin();
+        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workstate.origin();
         if origin == current {
             return Ok(());
         }
@@ -1424,7 +1424,7 @@ impl FleetView {
     }
 
     /// [`Self::open_settings`], on `page` when given.
-    pub fn open_settings_at(&mut self, page: Option<settings_window::Page>, cx: &mut Context<Self>) {
+    pub fn open_settings_at(&mut self, page: Option<&'static str>, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window
             && handle
                 .update(cx, |settings, window, cx| {
@@ -1456,7 +1456,7 @@ impl FleetView {
             return;
         };
         let width = f32::from(self.left_width).round() as u32;
-        if let Err(e) = Settings::update(home, |settings| settings.left_width = Some(width)) {
+        if let Err(e) = Settings::update(home, |settings| settings.window.left_width = Some(width)) {
             self.action_error = Some(format!("Cannot save the panel width: {e}"));
         }
     }
@@ -2064,7 +2064,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        if let Err(e) = Settings::update(&home, |settings| settings.run_as_admin = true) {
+        if let Err(e) = Settings::update(&home, |settings| settings.sessions.run_as_admin = true) {
             self.action_error = Some(format!("Cannot save Run Foreman as administrator: {e}"));
             cx.notify();
             return;
@@ -2577,7 +2577,7 @@ mod tests {
 }
 
 fn save_workstate_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
-    Settings::update(home, |settings| settings.workstate_url = Some(origin.to_string()))
+    Settings::update(home, |settings| settings.workstate.url = Some(origin.to_string()))
         .map(drop)
         .map_err(|e| format!("Cannot save settings.toml: {e}"))
 }

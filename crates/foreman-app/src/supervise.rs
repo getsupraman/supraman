@@ -168,7 +168,7 @@ pub fn stop_workspace(home: &Path, workspace: &str) -> anyhow::Result<()> {
 }
 
 pub fn set_max_working(home: &Path, max_working: usize) -> anyhow::Result<()> {
-    Settings::update(home, |settings| settings.max_working = max_working)?;
+    Settings::update(home, |settings| settings.sessions.max_working = max_working)?;
     Ok(())
 }
 
@@ -197,7 +197,7 @@ pub struct Report {
 
 /// The server `settings.toml` names, when Foreman is signed in to it.
 pub fn signed_in_server(auth: &foreman_workstate::Auth, settings: &Settings) -> Option<String> {
-    let origin = settings.workstate_origin();
+    let origin = settings.workstate.origin();
     matches!(auth.status(&origin), foreman_workstate::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 
@@ -284,9 +284,9 @@ pub struct Supervision {
 
 pub const NOTICES_KEPT: usize = 5;
 
-/// Foreman's own plugin first, then `settings.toml` `extra_plugin_dirs` in their order.
+/// Foreman's own plugin first, then `settings.toml` `[sessions] extra_plugin_dirs` in their order.
 pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBuf> {
-    plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.extra_plugin_dirs.iter().cloned()).collect()
+    plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.sessions.extra_plugin_dirs.iter().cloned()).collect()
 }
 
 impl Supervision {
@@ -317,7 +317,7 @@ impl Supervision {
             report.errors.push(format!("Cannot read the settings, using the defaults: {e}"));
             Settings::default()
         });
-        report.max_working = settings.max_working;
+        report.max_working = settings.sessions.max_working;
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {
@@ -339,7 +339,7 @@ impl Supervision {
                 Err(e) => report.errors.push(format!("Cannot read the desired state of {}: {e}", p.name)),
             }
             if let Some(s) = self.supervisors.get_mut(&p.name) {
-                match sync_relay(&self.home, p, &s.desired, settings.relay_idle_ms(), now) {
+                match sync_relay(&self.home, p, &s.desired, settings.sessions.relay_idle_ms(), now) {
                     Ok(Some(saved)) => {
                         log::info!("{}: relay {}", p.name, if saved.wants_relay() { "wanted (a message falls back)" } else { "retired (idle)" });
                         s.desired = saved;
@@ -376,7 +376,7 @@ impl Supervision {
             let _tick = TICK.lock().unwrap_or_else(|e| e.into_inner());
             if ENABLED.load(Ordering::SeqCst) {
                 let names: Vec<&str> = workspaces.iter().map(|p| p.name.as_str()).collect();
-                report.needs = tick_all(self.supervisors.values_mut(), &names, observed, settings.max_working, now);
+                report.needs = tick_all(self.supervisors.values_mut(), &names, observed, settings.sessions.max_working, now);
             }
         }
         if let Some(why) = self.supervisors.values().find_map(|s| s.held()) {
@@ -450,10 +450,8 @@ mod tests {
 
     #[test]
     fn launches_get_extra_plugin_dirs_after_foremans_and_the_fm_rules() {
-        let settings = Settings {
-            extra_plugin_dirs: vec![r"C:\skills\plugins\rlarch".into()],
-            ..Settings::default()
-        };
+        let mut settings = Settings::default();
+        settings.sessions.extra_plugin_dirs = vec![r"C:\skills\plugins\rlarch".into()];
         let own = Path::new(r"C:\fm\plugins\foreman");
         assert_eq!(plugin_dirs(Some(own), &settings), [own.to_path_buf(), r"C:\skills\plugins\rlarch".into()]);
         assert_eq!(plugin_dirs(None, &Settings::default()), Vec::<PathBuf>::new());

@@ -23,11 +23,14 @@ Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`
 - `foreman_ui::hover_card::{HoverCard, tooltip}`: every hover card of a title and `label  value` rows.
 - `foreman_ui::split::SplitPane`: every resizable side-by-side split; the owner keeps and persists the width.
 - `foreman_ui::matcher::{find_all, prefix, highlighted, count}`: case-insensitive matching and a results list's highlighted label and count badge.
+- `foreman_ui::settings_page::{SettingsPages, SettingsPage, row}`: a settings window's pages, registered by id with a title, an icon and a render fn, its page list, and one setting's row.
 - `foreman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `foreman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop.
 - `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `foreman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
 - `foreman_core::Settings::update`: every change to `settings.toml` (load, edit, save, retried against other writers); `Settings::load_with_notices` when a bad key should be shown.
+- `foreman_core::Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
+- `foreman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `foreman_workstate::secret` re-exports it.
 - `foreman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.
 - `foreman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `foreman_core::paths::{normalize, path_key, main_checkout, linked_git_dir}`: path comparison and the `.git` file/dir walk without running git.

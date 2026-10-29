@@ -47,7 +47,7 @@ pub fn workstate_role(role: &str) -> Option<&'static str> {
 #[cfg(test)]
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
     let mut settings = foreman_core::Settings::load(home).unwrap_or_default();
-    settings.workstate_url = Some(base.to_string());
+    settings.workstate.url = Some(base.to_string());
     settings.save(home).unwrap();
     let auth = Arc::new(Auth::with_store(home, Arc::new(foreman_workstate::MemoryStore::default())));
     auth.sign_in(base, &foreman_workstate::auth::http_browser()).unwrap();
@@ -70,7 +70,7 @@ mod tests {
         let home = dir.path().join("home");
         let fake = FakeWorkState::start(vec![]);
         let oauth = fake.enable_oauth();
-        Settings { workstate_url: Some(fake.base().into()), ..Settings::default() }.save(&home).unwrap();
+        Settings { workstate: foreman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
         let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(foreman_workstate::MemoryStore::default()))) };
         assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no WorkState");
 
@@ -215,7 +215,7 @@ mod tests {
 
         // the URL saved on its own, then a plain sign-in there
         let mut settings = Settings::load(&home).unwrap();
-        settings.workstate_url = Some(b.base().into());
+        settings.workstate.url = Some(b.base().into());
         settings.save(&home).unwrap();
         assert_eq!(server(), None, "not signed in to B yet");
         assert!(sup.server_changed(server().as_deref()).is_empty());
