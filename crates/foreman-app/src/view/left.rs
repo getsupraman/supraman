@@ -10,6 +10,7 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use foreman_ui::banner;
 use foreman_ui::button;
 use foreman_ui::hit::{HitTargets, hit_target};
+use foreman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
@@ -1331,6 +1332,9 @@ impl FleetView {
                 d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
+            .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
+                cx.new(|_| row.clone())
+            })
             .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
             .on_mouse_down(
                 MouseButton::Right,

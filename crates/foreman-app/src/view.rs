@@ -50,6 +50,7 @@ use crate::workstate_setup::{self, WsStatus};
 
 pub(crate) mod icon;
 mod delete;
+mod drop;
 mod left;
 mod manage;
 mod menu;
@@ -285,6 +286,7 @@ pub struct FleetView {
     tabs_again: bool,
     pub tab_resolves: u64,
     pub toast: ToastSlot,
+    pub pane_toast: ToastSlot,
     pub claude_dir: Option<PathBuf>,
     pub deleted: StdHashMap<String, i64>,
     pub deleting: HashSet<String>,
@@ -696,6 +698,7 @@ impl FleetView {
             tabs_again: false,
             tab_resolves: 0,
             toast: ToastSlot::default(),
+            pane_toast: ToastSlot::default(),
             claude_dir,
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
@@ -2239,8 +2242,10 @@ impl FleetView {
                 .when_some(find.as_ref(), |d, find| d.child(self.find_bar(*tab_id, find, cx)))
                 .child(
                     div()
+                        .relative()
                         .flex_1()
                         .min_h_0()
+                        .child(hit_target(&self.hits, format!("terminal-{tab_id}")))
                         .on_scroll({
                             // as Zed's TerminalView::scroll_wheel
                             let terminal = terminal.clone();
@@ -2256,7 +2261,8 @@ impl FleetView {
                                 cx.notify();
                             })
                         })
-                        .child(term_element::terminal_grid(terminal.clone(), self.term_font())),
+                        .child(term_element::terminal_grid(terminal.clone(), self.term_font()))
+                        .child(self.terminal_drop(*tab_id, cx)),
                 )
                 .into_any_element(),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
@@ -2274,7 +2280,7 @@ impl FleetView {
             .h_full()
             .min_w_0()
             .child(bar)
-            .child(div().flex_1().min_h_0().child(content))
+            .child(div().relative().flex_1().min_h_0().child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx)))
             .into_any_element()
     }
 }

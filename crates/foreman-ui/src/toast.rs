@@ -12,6 +12,7 @@ pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 struct Toast {
     text: String,
     shown_at: Instant,
+    done: bool,
 }
 
 #[derive(Default)]
@@ -24,8 +25,17 @@ impl ToastSlot {
 
     /// Shows `text` in place of any toast before; `slot` finds this slot in the view when the timer ends.
     pub fn show<V: 'static>(&mut self, text: String, slot: fn(&mut V) -> &mut ToastSlot, cx: &mut Context<V>) {
+        self.put(text, true, slot, cx);
+    }
+
+    /// As [`Self::show`], without the ✓: why nothing was done.
+    pub fn show_why<V: 'static>(&mut self, text: String, slot: fn(&mut V) -> &mut ToastSlot, cx: &mut Context<V>) {
+        self.put(text, false, slot, cx);
+    }
+
+    fn put<V: 'static>(&mut self, text: String, done: bool, slot: fn(&mut V) -> &mut ToastSlot, cx: &mut Context<V>) {
         let shown_at = Instant::now();
-        self.0 = Some(Toast { text, shown_at });
+        self.0 = Some(Toast { text, shown_at, done });
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TOAST_FOR).await;
             this.update(cx, |this, cx| {
@@ -63,7 +73,7 @@ impl ToastSlot {
                         .py_1()
                         .rounded_md()
                         .border_1()
-                        .border_color(success.opacity(0.5))
+                        .border_color(if toast.done { success.opacity(0.5) } else { colors.border })
                         .bg(colors.elevated_surface_background)
                         .shadow_md()
                         .text_sm()
@@ -71,7 +81,7 @@ impl ToastSlot {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(SharedString::from(format!("✓ {}", toast.text)))
+                        .child(SharedString::from(if toast.done { format!("✓ {}", toast.text) } else { toast.text.clone() }))
                         .child(hit_target(hits, key.to_string())),
                 ),
         )
