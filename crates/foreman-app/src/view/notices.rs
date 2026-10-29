@@ -1,7 +1,7 @@
-//! The plain notices above the tree (m5/37): setup, supervise errors, hand tokens and the last action's
-//! error, each with its own ×. Dismissing removes that one notice; raising it again shows it again.
+//! The plain notices above the tree (m5/37): setup, supervise errors, hand tokens, the WorkState inbox's
+//! file and the last action's error, each with its own ×. Dismissing removes that one notice; raising it again shows it again.
 
-use gpui::Context;
+use gpui::{App, Context};
 
 use super::FleetView;
 
@@ -10,6 +10,7 @@ pub enum Notice {
     Setup,
     Supervise,
     Hand,
+    Inbox,
     Action,
 }
 
@@ -19,6 +20,7 @@ impl Notice {
             Notice::Setup => "setup",
             Notice::Supervise => "supervise",
             Notice::Hand => "hand",
+            Notice::Inbox => "inbox",
             Notice::Action => "action",
         }
     }
@@ -37,13 +39,14 @@ pub fn keep_dismissed(dismissed: &mut Vec<String>, errors: &[String]) {
 
 impl FleetView {
     /// Every notice of the box with its kind, in the order drawn.
-    pub(super) fn plain_notices(&self) -> Vec<(Notice, String)> {
+    pub(super) fn plain_notices(&self, cx: &App) -> Vec<(Notice, String)> {
         let setup = self.setup_notices.iter().map(|t| (Notice::Setup, t.clone()));
         let supervise =
             self.supervise_errors.iter().filter(|t| !self.supervise_dismissed.contains(t)).map(|t| (Notice::Supervise, t.clone()));
         let hand = self.hand_notices.iter().map(|t| (Notice::Hand, t.clone()));
+        let inbox = self.work_inbox.read(cx).notice.clone().map(|t| (Notice::Inbox, t));
         let action = self.action_error.iter().map(|t| (Notice::Action, t.clone()));
-        setup.chain(supervise).chain(hand).chain(action).collect()
+        setup.chain(supervise).chain(hand).chain(inbox).chain(action).collect()
     }
 
     /// Removes one notice of `kind` reading `text`.
@@ -57,6 +60,11 @@ impl FleetView {
             Notice::Setup => remove_one(&mut self.setup_notices),
             Notice::Supervise => self.supervise_dismissed.push(text.to_string()),
             Notice::Hand => remove_one(&mut self.hand_notices),
+            Notice::Inbox => self.work_inbox.update(cx, |inbox, _| {
+                if inbox.notice.as_deref() == Some(text) {
+                    inbox.notice = None;
+                }
+            }),
             Notice::Action => {
                 if self.action_error.as_deref() == Some(text) {
                     self.action_error = None;
@@ -84,7 +92,10 @@ mod tests {
 
     #[test]
     fn each_kind_has_its_own_dismiss_key() {
-        let keys = [Notice::Setup, Notice::Supervise, Notice::Hand, Notice::Action].map(|k| dismiss_key(k, 0));
-        assert_eq!(keys, ["notice-dismiss-setup-0", "notice-dismiss-supervise-0", "notice-dismiss-hand-0", "notice-dismiss-action-0"]);
+        let keys = [Notice::Setup, Notice::Supervise, Notice::Hand, Notice::Inbox, Notice::Action].map(|k| dismiss_key(k, 0));
+        assert_eq!(
+            keys,
+            ["notice-dismiss-setup-0", "notice-dismiss-supervise-0", "notice-dismiss-hand-0", "notice-dismiss-inbox-0", "notice-dismiss-action-0"]
+        );
     }
 }

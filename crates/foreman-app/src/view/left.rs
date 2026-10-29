@@ -468,7 +468,7 @@ impl FleetView {
             ));
         }
         let mut shown: BTreeMap<notices::Notice, usize> = BTreeMap::new();
-        for (kind, text) in self.plain_notices() {
+        for (kind, text) in self.plain_notices(cx) {
             let index = shown.entry(kind).or_default();
             let key = notices::dismiss_key(kind, *index);
             *index += 1;

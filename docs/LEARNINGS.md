@@ -3368,3 +3368,56 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   --workspace --no-fail-fast` 650 passed, 0 failed. `--selftest` 5 of 5 exit 0 / PASS (128–155 s).
   `--selftest-supervise` PASS (310 s), `--selftest-detach-shutdown` PASS (14 s). 0 `fm-selftest` rows from
   this worktree (1 row of m5-44-7's run, left alone).
+
+## 2026-10-29 — m5/44.7 app UI-thread work and hands (audit U6a)
+
+- **New shared components:** `foreman_ui::nudge::{nudge, Nudge, Nudged}`, a coalescing wake-up for a loop on a
+  gpui executor (`wait(executor, timeout)` returns on a nudge or the timeout; `take()` without waiting).
+  `foreman_core::process::wait_any_exit(pids, timeout)` blocks until one pid exits (WaitForMultipleObjects;
+  a pid it cannot open is skipped). For CLAUDE.md's list (m5/44.17).
+- **A-37, no timer polling:** the poll loop sleeps until Refresh (nudge), `REFRESH_EVERY`, or an interactive
+  session's process exits (`wait_any_exit` on the background executor). The transcript scan and the WorkState
+  recheck sleep until nudged or their interval; a changed workspace list nudges the scan. Each `Tab` has
+  `watchers`, woken by its terminal's Wakeup/title/close events and by `remove_tab`: the shell-prompt wait
+  (`type_in_shell_when`) reads the content once the output has been still `SHELL_SETTLED`, not every 50 ms; the
+  hand tab checks its token file on an event (at most every `HAND_CHECK_GAP`, `ended` off the UI thread, no
+  `try_lock`); the detach waits on the close event or the pid's exit. The left-panel hold sleeps to its
+  deadline. Zed's marker handshake is not used.
+- **A-29, quit:** Quit detaches the Attach tabs, then revokes every hand token through
+  `hand::release_all_within(hands, QUIT_RELEASE_WITHIN = 5 s)` on the background executor, then closes. The
+  window stays responsive meanwhile; a server that answers gets every revoke; what the deadline cuts off stays
+  in `hands.json` for the next start. Revokes start only after every detach, so a failed detach (the window
+  stays open) never revokes a live hand tab's token. `on_app_quit` (any other end) only tries within gpui's
+  200 ms `SHUTDOWN_TIMEOUT`.
+- **A-30:** a failed `hands.json` save is in `Launch::Minted{notice}` and in `release`'s notice.
+- **Start/Stop off the UI thread:** `desired_writer` runs them in order (one channel, one write at a time) on
+  the background executor; `DesiredState::update` waits on the lock file there. Selftest step q now waits up to
+  5 s for the save (measured 23 ms).
+- **A-27 app side:** `set_workstate_url` reads `AuthStatus` on the background executor; a save failing after
+  that is an action error. `sign_in`, `sign_out`, `leave_servers` use `Auth::configured_origin`.
+- **A-39:** the context menu opens without IO; the SendMessage name is looked up off the UI thread and joins
+  the menu if it is still open (selftest `mark` waits for it already).
+- **A-46:** the app lists through `Registry::load_all`; a corrupt workspace file is a notice ("A workspace is
+  left out, the others run: …") and the others are supervised.
+- **A-03:** every app settings write is `Settings::update` (left width, run-as-admin, server URL, font size,
+  font family, max working). A non-TOML `settings.toml` is now an action error instead of a silent skip.
+- **A-17:** `dismiss_popup`, `pwsh(args)`, `Tab::new`, `fleet::display_name`. Audit partly wrong: of the six
+  "name, else short id" sites only `view.rs` ×2 and `manage.rs` are that; `delete::label` is "name (id)",
+  `left.rs` shows "(unnamed)"; `item.rs` is U6b's.
+- **A-50:** Ctrl+wheel steps once per notch (`ScrollDelta::Lines`) and by distance for a touchpad
+  (`ScrollDelta::Pixels`, 48 px per step, carried between events: `term::zoom_steps`). Moving the handler into
+  `term_element.rs` (foreman-ui, U7's) is not done.
+- **Also:** `FM_PREFIX` for the app's `fm-` literals in `view.rs`, `left.rs`, `fleet.rs` (`menu.rs` is U10's);
+  `new_shell_cwd` uses `paths::user_home`; hand config paths go through `mcp_config_path`; the inbox file's
+  `WorkInbox::notice` is a dismissible notice (`Notice::Inbox`).
+- **A-59:** tests `hand::tests::{quit_release_returns_by_its_deadline_and_still_revokes_a_server_that_answers,
+  a_hands_json_that_cannot_be_saved_is_a_notice}`, `view::tests::{only_open_hand_tabs_holding_a_token_from_elsewhere_restart
+  (stale_tabs), a_corrupt_workspace_file_is_skipped_and_named}`, `term::tests::ctrl_wheel_steps_once_per_notch_and_a_touchpad_by_its_distance`,
+  `process::tests::a_wait_returns_when_one_pid_exits_and_times_out_on_live_ones`. Re-mint and `server_changed`
+  with a failed stop are supervisor tests (m5/44.6's).
+- **Red checks:** the old synchronous release → the quit test fails (`Some([])` instead of `None`, 9 s); `let _ =
+  minted.save()` → "the failed save is reported" fails; `Registry::list` → the corrupt-file test fails; one step
+  per event → the zoom test fails (left 10, right 2).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-7\target`, merged with master 25fa8ab): build ok, no warnings;
+  `cargo test --release --workspace` 656 passed, 0 failed; `--selftest` 5 of 5 PASS (121–134 s);
+  `--selftest-supervise` PASS (302 s); `--selftest-detach-shutdown` PASS (14 s); 0 `fm-selftest` rows.

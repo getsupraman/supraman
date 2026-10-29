@@ -772,9 +772,14 @@ async fn stop_all_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
     let fleet = view.clone();
     let asked = Instant::now();
     cx.update(|window, cx| crate::tray::apply(crate::tray::Command::StopAll, &fleet, window, cx))?;
-    if let Some(w) = others.iter().find(|w| started(w)) {
-        bail!("{w} is still saved as started right after Stop all");
+    // the save runs off the UI thread, one write after another
+    while let Some(w) = others.iter().find(|w| started(w)) {
+        if asked.elapsed() > Duration::from_secs(5) {
+            bail!("{w} is still saved as started 5 s after Stop all");
+        }
+        sleep(cx, Duration::from_millis(20)).await;
     }
+    let saved_after = asked.elapsed();
     let names: Vec<String> = [&tb.c1.0, &tb.c2.0].iter().map(|w| workspace_session_name(w)).collect();
     let stopped = wait_for("step q: the budget workspaces' sessions stopped", Duration::from_secs(60), cx, |rows| {
         let ours: Vec<&Session> = rows.iter().filter(|s| names.contains(&s.name)).collect();
@@ -783,8 +788,9 @@ async fn stop_all_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
     })
     .await?;
     println!(
-        "step q: Stop all → {} saved as not started at once, sessions stopped after {}: {}",
+        "step q: Stop all → {} saved as not started after {} ms, sessions stopped after {}: {}",
         before.iter().map(|w| w.as_str()).collect::<Vec<_>>().join(", "),
+        saved_after.as_millis(),
         secs(asked.elapsed()),
         stopped.join(", ")
     );
