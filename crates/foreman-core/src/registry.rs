@@ -120,29 +120,15 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Repo;
+    use crate::Folder;
 
     fn sample(name: &str) -> Workspace {
         Workspace::new(
             name,
             r"P:\Projects\Magic\Nomos",
             vec![
-                Repo {
-                    name: "Nomos".into(),
-                    path: r"P:\Projects\Magic\Nomos\Nomos".into(),
-                    has_claude_md: true,
-                    has_agents_md: false,
-                    branch: Some("main".into()),
-                    enabled: true,
-                },
-                Repo {
-                    name: "Nomos.Pdf".into(),
-                    path: r"P:\Projects\Magic\Nomos\Nomos.Pdf".into(),
-                    has_claude_md: false,
-                    has_agents_md: true,
-                    branch: None,
-                    enabled: false,
-                },
+                Folder { has_claude_md: true, branch: Some("main".into()), ..Folder::new("Nomos", r"P:\Projects\Magic\Nomos\Nomos") },
+                Folder { has_agents_md: true, enabled: false, ..Folder::new("Nomos.Pdf", r"P:\Projects\Magic\Nomos\Nomos.Pdf") },
             ],
         )
     }
@@ -165,14 +151,14 @@ mod tests {
         let reg = Registry::at(home.path());
         reg.save(&sample("nomos"), false).unwrap();
         let mut changed = sample("nomos");
-        changed.repos.truncate(1);
+        changed.folders.truncate(1);
         assert!(matches!(
             reg.save(&changed, false),
             Err(CoreError::AlreadyExists(n)) if n == "nomos"
         ));
-        assert_eq!(reg.load("nomos").unwrap().repos.len(), 2);
+        assert_eq!(reg.load("nomos").unwrap().folders.len(), 2);
         reg.save(&changed, true).unwrap();
-        assert_eq!(reg.load("nomos").unwrap().repos.len(), 1);
+        assert_eq!(reg.load("nomos").unwrap().folders.len(), 1);
     }
 
     #[test]

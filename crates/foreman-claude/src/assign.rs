@@ -2,15 +2,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use foreman_core::paths::path_key;
-use foreman_core::{Repo, Workspace};
+use foreman_core::paths::{key_within, path_key, within};
+use foreman_core::{Folder, Workspace};
 
 use crate::Session;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Assignment {
-    /// Keyed by [`Repo::name`]; repos without sessions are absent.
+    /// Keyed by [`Folder::name`]; folders without sessions are absent.
     pub by_repo: BTreeMap<String, Vec<Session>>,
+    /// In the workspace's home but in none of its folders.
+    pub in_home: Vec<Session>,
     pub unassigned: Vec<Session>,
 }
 
@@ -25,29 +27,28 @@ pub fn assign_with(sessions: &[Session], workspace: &Workspace, main_of: impl Fn
     for s in sessions {
         match repo_of_with(&s.cwd, workspace, &main_of) {
             Some(repo) => out.by_repo.entry(repo.name.clone()).or_default().push(s.clone()),
+            None if workspace.home().is_some_and(|h| within(&s.cwd, h)) => out.in_home.push(s.clone()),
             None => out.unassigned.push(s.clone()),
         }
     }
     out
 }
 
-/// The repo whose path is `cwd` or an ancestor of it (deepest wins), else the repo owning the
+/// The folder whose path is `cwd` or an ancestor of it (deepest wins), else the git folder owning the
 /// linked worktree `cwd` lies in, found through `main_of`.
-fn repo_of_with<'a>(cwd: &Path, workspace: &'a Workspace, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a Repo> {
-    if workspace.repos.is_empty() {
+fn repo_of_with<'a>(cwd: &Path, workspace: &'a Workspace, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a Folder> {
+    if workspace.folders.is_empty() {
         return None;
     }
-    let by_prefix = |dir: &str| {
-        workspace
-            .repos
-            .iter()
-            .filter(|r| is_within(dir, &path_key(&r.path)))
-            .max_by_key(|r| path_key(&r.path).len())
-    };
     let cwd_norm = path_key(cwd);
-    by_prefix(&cwd_norm).or_else(|| {
+    let by_prefix = workspace
+        .folders
+        .iter()
+        .filter(|r| key_within(&cwd_norm, &path_key(&r.path)))
+        .max_by_key(|r| path_key(&r.path).len());
+    by_prefix.or_else(|| {
         let main = path_key(&main_of(cwd)?);
-        workspace.repos.iter().find(|r| path_key(&r.path) == main)
+        workspace.folders.iter().filter(|r| r.is_git()).find(|r| path_key(&r.path) == main)
     })
 }
 
@@ -63,10 +64,6 @@ pub fn main_repo_walks() -> u64 {
 pub fn main_repo(dir: &Path) -> Option<PathBuf> {
     MAIN_REPO_WALKS.fetch_add(1, Ordering::Relaxed);
     foreman_core::paths::main_checkout(dir)
-}
-
-fn is_within(dir: &str, root: &str) -> bool {
-    dir == root || dir.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -100,14 +97,7 @@ mod tests {
         let abs = format!("gitdir: {}\n", alpha.join(".git").join("worktrees").join("abs").display());
         fs::write(wts.join("abs").join(".git"), abs).unwrap();
         fs::create_dir_all(tmp.path().join("Elsewhere")).unwrap();
-        let repo = |name: &str| Repo {
-            name: name.into(),
-            path: plat.join(name),
-            has_claude_md: false,
-            has_agents_md: false,
-            branch: Some("main".into()),
-            enabled: true,
-        };
+        let repo = |name: &str| Folder { branch: Some("main".into()), ..Folder::new(name, plat.join(name)) };
         let workspace = Workspace::new("plat", &plat, vec![repo("Alpha"), repo("Alpha.Ext")]);
         (tmp, workspace)
     }
@@ -140,7 +130,7 @@ mod tests {
     fn a_root_repo_takes_what_no_child_repo_does() {
         let (tmp, mut p) = layout();
         let plat = tmp.path().join("Plat");
-        p.repos.insert(0, Repo { name: "Plat".into(), path: plat.clone(), ..p.repos[0].clone() });
+        p.folders.insert(0, Folder { name: "Plat".into(), path: plat.clone(), ..p.folders[0].clone() });
         assert_eq!(repo_name(&plat, &p), Some("Plat"));
         assert_eq!(repo_name(&plat.join("docs"), &p), Some("Plat"));
         assert_eq!(repo_name(&plat.join("Alpha").join("src"), &p), Some("Alpha"));
@@ -216,5 +206,25 @@ mod tests {
         assert_eq!(ids("Alpha"), ["a1", "a2"]);
         assert_eq!(ids("Alpha.Ext"), ["e1"]);
         assert_eq!(a.unassigned.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["x1"]);
+    }
+
+    #[test]
+    fn a_plain_folder_takes_its_sessions_and_the_home_takes_what_no_folder_does() {
+        let (tmp, mut p) = layout();
+        let plat = tmp.path().join("Plat");
+        let plain = tmp.path().join("Elsewhere");
+        p.add_folder(&plain);
+        assert_eq!(p.folders[2].kind, foreman_core::FolderKind::Plain);
+        let sessions = vec![
+            session("n1", &plain.join("src")),
+            session("h1", &plat),
+            session("h2", &plat.join("docs")),
+            session("x1", tmp.path()),
+        ];
+        let a = assign(&sessions, &p);
+        let ids = |list: &[Session]| list.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&a.by_repo["Elsewhere"]), ["n1"]);
+        assert_eq!(ids(&a.in_home), ["h1", "h2"]);
+        assert_eq!(ids(&a.unassigned), ["x1"]);
     }
 }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use foreman_claude::{Claude, Session, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, Registry, Repo, Workspace, discover, rescan, validate_name};
+use foreman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, rescan, validate_name};
 use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
@@ -17,7 +17,7 @@ use crate::work_view;
 pub struct AddDraft {
     pub root: PathBuf,
     pub name: Entity<TextInput>,
-    pub repos: Vec<(Repo, bool)>,
+    pub repos: Vec<(Folder, bool)>,
     pub scanning: bool,
     pub error: Option<String>,
     pub hint: Option<String>,
@@ -86,10 +86,30 @@ fn registry(home: Option<&Path>) -> Result<Registry, String> {
 fn add_error(e: &CoreError) -> String {
     match e {
         CoreError::AlreadyExists(name) => format!("The name {name} is taken: choose another."),
-        CoreError::RootTaken { by, .. } => format!("This folder is already registered, as workspace {by}."),
         CoreError::InvalidName(_) => "Use lowercase letters, digits and '-' only for the name.".into(),
         other => other.to_string(),
     }
+}
+
+/// The toast's tail for the folders [`Registry::claim_folders`] disabled.
+fn supervised_elsewhere(taken: &[(String, String)]) -> String {
+    let mut by: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (folder, owner) in taken {
+        match by.iter_mut().find(|(o, _)| o == owner) {
+            Some((_, list)) => list.push(folder),
+            None => by.push((owner, vec![folder])),
+        }
+    }
+    by.iter()
+        .map(|(owner, list)| {
+            let (names, verb) = match list.as_slice() {
+                [one] => (one.to_string(), "stays"),
+                [rest @ .., last] => (format!("{} and {last}", rest.join(", ")), "stay"),
+                [] => unreachable!(),
+            };
+            format!(" {names} {verb} supervised in {owner}, disabled here.")
+        })
+        .collect()
 }
 
 impl FleetView {
@@ -139,9 +159,9 @@ impl FleetView {
                 draft.scanning = false;
                 match found {
                     Ok((workspace, renamed)) => {
-                        draft.root = workspace.root;
+                        draft.root = workspace.home().map(Path::to_path_buf).unwrap_or_default();
                         draft.name.update(cx, |name, cx| name.set_text(&workspace.name, cx));
-                        draft.repos = workspace.repos.into_iter().map(|r| (r, true)).collect();
+                        draft.repos = workspace.folders.into_iter().map(|r| (r, true)).collect();
                         draft.error = if draft.repos.is_empty() {
                             Some(format!("No git repos found directly under {}.", draft.root.display()))
                         } else if renamed {
@@ -197,19 +217,21 @@ impl FleetView {
                 return Err(format!("No git repos found directly under {}.", draft.root.display()));
             }
             validate_name(&name).map_err(|e| add_error(&e))?;
-            let repos = draft.repos.iter().map(|(r, on)| Repo { enabled: *on, ..r.clone() }).collect();
-            let workspace = Workspace::new(name, draft.root.clone(), repos);
+            let folders = draft.repos.iter().map(|(r, on)| Folder { enabled: *on, ..r.clone() }).collect();
+            let mut workspace = Workspace::new(name, draft.root.clone(), folders);
+            workspace.scans.push(Scan { path: draft.root.clone(), depth: DEFAULT_DEPTH });
             let registry = registry(self.home.as_deref())?;
             registry.check_new(&workspace).map_err(|e| add_error(&e))?;
+            let taken = registry.claim_folders(&mut workspace, |_| true).map_err(|e| add_error(&e))?;
             registry.save(&workspace, false).map_err(|e| add_error(&e))?;
-            Ok(workspace.name)
+            Ok((workspace.name, taken))
         })();
         match result {
-            Ok(name) => {
+            Ok((name, taken)) => {
                 self.adding = None;
                 self.collapsed.remove(&format!("workspace:{name}"));
                 self.reload_workspaces();
-                self.show_toast(format!("Added workspace {name}."), cx);
+                self.show_toast(format!("Added workspace {name}.{}", supervised_elsewhere(&taken)), cx);
             }
             Err(e) => draft.error = Some(e),
         }
@@ -444,7 +466,8 @@ impl FleetView {
         let name = name.to_string();
         let task = cx.background_executor().spawn(async move {
             let registry = Registry::at(home);
-            let (workspace, added, removed) = rescan(&registry.load(&name)?, DEFAULT_DEPTH)?;
+            let (mut workspace, added, removed) = rescan(&registry.load(&name)?)?;
+            registry.claim_folders(&mut workspace, |f| added.contains(&f.name))?;
             registry.save(&workspace, true)?;
             Ok::<_, CoreError>((name, added, removed))
         });
@@ -468,7 +491,7 @@ impl FleetView {
 
     fn set_repo_enabled(&mut self, workspace: &str, repo: &str, enabled: bool) {
         let result = registry(self.home.as_deref()).and_then(|r| {
-            r.update(workspace, |w| w.repos.iter_mut().filter(|r| r.name == repo).for_each(|r| r.enabled = enabled))
+            r.update(workspace, |w| w.folders.iter_mut().filter(|r| r.name == repo).for_each(|r| r.enabled = enabled))
                 .map_err(|e| e.to_string())
         });
         match result {
@@ -528,9 +551,9 @@ mod tests {
     #[test]
     fn errors_read_as_what_to_do() {
         assert_eq!(add_error(&CoreError::AlreadyExists("x".into())), "The name x is taken: choose another.");
-        assert_eq!(
-            add_error(&CoreError::RootTaken { root: r"C:\x".into(), by: "y".into() }),
-            "This folder is already registered, as workspace y."
-        );
+        assert_eq!(supervised_elsewhere(&[]), "");
+        let taken = [("Alpha".to_string(), "larchsys".to_string()), ("Beta".to_string(), "larchsys".to_string())];
+        assert_eq!(supervised_elsewhere(&taken), " Alpha and Beta stay supervised in larchsys, disabled here.");
+        assert_eq!(supervised_elsewhere(&taken[..1]), " Alpha stays supervised in larchsys, disabled here.");
     }
 }

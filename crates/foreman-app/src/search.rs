@@ -27,7 +27,7 @@ pub struct RepoHit {
 #[derive(Debug, Clone)]
 pub struct WorkspaceHit {
     pub name: String,
-    pub root: std::path::PathBuf,
+    pub home: Option<std::path::PathBuf>,
     pub name_marks: Vec<Range<usize>>,
     pub supervised: Vec<SessionHit>,
     pub repos: Vec<RepoHit>,
@@ -103,7 +103,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })
                 .collect();
-            let hit = WorkspaceHit { name: w.name.clone(), root: w.root.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.supervised), repos };
+            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.supervised), repos };
             (!hit.name_marks.is_empty() || !hit.supervised.is_empty() || !hit.repos.is_empty()).then_some(hit)
         })
         .collect();
@@ -120,30 +120,34 @@ mod tests {
     use crate::fleet::{RepoNode, WorkspaceNode};
 
     fn row(name: &str, session_id: &str, closed: bool) -> SessionRow {
-        SessionRow {
-            session: Session {
-                id: session_id[..8].to_string(),
-                session_id: session_id.into(),
-                name: name.into(),
-                cwd: PathBuf::new(),
-                kind: Kind::Interactive,
-                state: None,
-                status: None,
-                waiting_for: None,
-                pid: None,
-                started_at: None,
-            },
-            health: Health::Stopped,
-            attachable: false,
-            hook: None,
-            foreign: false,
-            starred: false,
-            closed,
-        }
+        let session = Session {
+            id: session_id[..8].to_string(),
+            session_id: session_id.into(),
+            name: name.into(),
+            cwd: PathBuf::new(),
+            kind: Kind::Interactive,
+            state: None,
+            status: None,
+            waiting_for: None,
+            pid: None,
+            started_at: None,
+        };
+        SessionRow { closed, ..SessionRow::new(session, Health::Stopped) }
     }
 
     fn repo(name: &str, sessions: Vec<SessionRow>) -> RepoNode {
-        RepoNode { name: name.into(), path: PathBuf::from(name), branch: None, enabled: true, sessions, more: 0 }
+        RepoNode {
+            name: name.into(),
+            path: PathBuf::from(name),
+            kind: foreman_core::FolderKind::Git,
+            branch: None,
+            enabled: true,
+            listed: true,
+            supervised_in: None,
+            also_in: vec![],
+            sessions,
+            more: 0,
+        }
     }
 
     fn tree() -> Tree {
@@ -151,7 +155,7 @@ mod tests {
             workspaces: vec![
                 WorkspaceNode {
                     name: "gaia".into(),
-                    root: PathBuf::from("G:/gaia"),
+                    home: Some(PathBuf::from("G:/gaia")),
                     started: Some(true),
                     supervised: vec![row("fm-gaia-root", "aaaa1111-0000", false)],
                     repos: vec![
@@ -161,7 +165,7 @@ mod tests {
                 },
                 WorkspaceNode {
                     name: "nomos".into(),
-                    root: PathBuf::from("N:/nomos"),
+                    home: Some(PathBuf::from("N:/nomos")),
                     started: None,
                     supervised: vec![],
                     repos: vec![repo("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])],

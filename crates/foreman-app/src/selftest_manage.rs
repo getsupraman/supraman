@@ -172,7 +172,7 @@ async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut Asy
     post_click(view, "add-save", 4., cx).await?;
     until(view, cx, WITHIN, "the single repo's review closed on Save", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(SINGLE).context("the registry after Save")?;
-    let paths: Vec<_> = saved.repos.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
+    let paths: Vec<_> = saved.folders.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
     if paths != [(SINGLE, root.as_path())] {
         bail!("registered {SINGLE} with repos {paths:?}");
     }
@@ -186,7 +186,7 @@ async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut Asy
 /// The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE the real cursor's position sends at once.
 async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let key = format!("ws-root-{ADDED}");
-    let full = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == ADDED).map(|w| w.root.display().to_string()));
+    let full = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == ADDED).and_then(|w| w.home().map(|h| h.display().to_string())));
     let full = full.ok_or_else(|| anyhow!("{ADDED} is not in the tree"))?;
     let row = crate::selftest::scrolled_into_view(view, &format!("ws-row-{ADDED}"), cx).await?;
     let started = Instant::now();
@@ -329,7 +329,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     post_keys(&["enter"], cx).await?;
     until(view, cx, WITHIN, "the review closed on Enter", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
-    let flags: Vec<(String, bool)> = saved.repos.iter().map(|r| (r.name.clone(), r.enabled)).collect();
+    let flags: Vec<(String, bool)> = saved.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
     if flags != [("alpha".to_string(), true), ("beta".to_string(), false)] {
         bail!("registered {ADDED} with repos {flags:?}, expected alpha enabled and beta disabled");
     }
@@ -405,7 +405,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     // painted: the next press must see this frame's layout, not the one before Enable
     let plus = format!("new-claude-{ADDED}/beta");
     until(view, cx, WITHIN, "beta's + painted", |v| painted(v, &plus).then_some(())).await?;
-    if !registry.load(ADDED)?.repos.iter().all(|r| r.enabled) {
+    if !registry.load(ADDED)?.folders.iter().all(|r| r.enabled) {
         bail!("Enable did not reach the registry");
     }
     out.push("beta enabled from its menu".into());

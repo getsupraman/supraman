@@ -37,21 +37,28 @@ fn add_list_show_remove_round_trip() {
     assert!(home.path().join("workspaces").join("my-workspace.toml").is_file());
     let text = stdout(&out);
     assert!(text.contains("name: my-workspace"), "{text}");
-    assert!(text.contains("  Alpha\tbranch=main\tclaude_md=no\tagents_md=no\tenabled=yes"), "{text}");
-    assert!(text.contains("  Beta\tbranch=(detached)"), "{text}");
+    assert!(text.contains("  Alpha\tkind=git\tbranch=main\tclaude_md=no\tagents_md=no\tenabled=yes\tpath="), "{text}");
+    assert!(text.contains("  Beta\tkind=git\tbranch=(detached)"), "{text}");
+    assert!(text.contains(&format!("home: {dir}\n")) && text.contains(&format!("scans: 1\n  {dir}\tdepth=1\n")), "{text}");
 
     let out = fm(home.path(), &["workspace", "add", dir]);
     assert_eq!(out.status.code(), Some(1), "duplicate must fail: {out:?}");
     let out = fm(home.path(), &["workspace", "add", dir, "--force"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(!stdout(&out).contains("notice:"), "a replaced workspace does not compete with itself: {}", stdout(&out));
+    let out = fm(home.path(), &["workspace", "add", dir, "--name", "again"]);
+    assert_eq!(out.status.code(), Some(0), "a second workspace on the same folder: {out:?}");
+    assert!(stdout(&out).contains("notice: Alpha is supervised in workspace my-workspace; disabled here"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("  Alpha\tkind=git\tbranch=main\tclaude_md=no\tagents_md=no\tenabled=no"), "{}", stdout(&out));
+    assert_eq!(fm(home.path(), &["workspace", "remove", "again"]).status.code(), Some(0));
 
     let out = fm(home.path(), &["workspace", "list"]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(stdout(&out).starts_with("my-workspace\trepos=2\troot="), "{}", stdout(&out));
+    assert!(stdout(&out).starts_with("my-workspace\tfolders=2\thome="), "{}", stdout(&out));
 
     let out = fm(home.path(), &["workspace", "show", "my-workspace"]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(stdout(&out).contains("repos: 2"));
+    assert!(stdout(&out).contains("folders: 2"));
 
     let out = fm(home.path(), &["workspace", "remove", "my-workspace"]);
     assert_eq!(out.status.code(), Some(0));

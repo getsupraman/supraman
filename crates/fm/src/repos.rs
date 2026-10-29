@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use foreman_claude::{Session, list_sessions, now_ms};
-use foreman_core::{HOOK_EXE, Registry, Repo, Workspace, find_plugin_dir};
+use foreman_core::{Folder, HOOK_EXE, Registry, Workspace, find_plugin_dir, owners};
 use foreman_supervisor::{
     DesiredState, REPO_ROLE, Wanted, fill_paths, render_repo_role, repo_session, repo_session_name,
 };
@@ -21,6 +21,9 @@ pub fn want(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     };
     let workspace = registry.load(w)?;
     let repo = find_repo(&workspace, repo)?;
+    if let Some(owner) = owners(&registry.list()?).get(&foreman_core::paths::path_key(&repo.path)).filter(|o| o.as_str() != w) {
+        return Err(Failure::Usage(format!("{} is supervised in workspace {owner}; a folder's session belongs to one workspace", repo.name)));
+    }
     let mut prompt = render_repo_role(&repo_template(registry.home())?, w, &repo.name);
     if let Some(path) = prompt_file {
         let task = std::fs::read_to_string(path).map_err(|e| Failure::Usage(format!("--prompt-file {path}: {e}")))?;
@@ -66,16 +69,16 @@ pub fn unwant(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
 }
 
 /// By name, then ignoring case, then by slug; else the known names.
-fn find_repo<'a>(workspace: &'a Workspace, name: &str) -> Result<&'a Repo, Failure> {
+fn find_repo<'a>(workspace: &'a Workspace, name: &str) -> Result<&'a Folder, Failure> {
     let slug = foreman_core::slugify(name);
     workspace
-        .repos
+        .folders
         .iter()
         .find(|r| r.name == name)
-        .or_else(|| workspace.repos.iter().find(|r| r.name.eq_ignore_ascii_case(name)))
-        .or_else(|| workspace.repos.iter().find(|r| foreman_core::slugify(&r.name) == slug))
+        .or_else(|| workspace.folders.iter().find(|r| r.name.eq_ignore_ascii_case(name)))
+        .or_else(|| workspace.folders.iter().find(|r| foreman_core::slugify(&r.name) == slug))
         .ok_or_else(|| {
-            let known: Vec<&str> = workspace.repos.iter().map(|r| r.name.as_str()).collect();
+            let known: Vec<&str> = workspace.folders.iter().map(|r| r.name.as_str()).collect();
             Failure::Usage(format!(
                 "workspace {} has no repo '{name}'; known: {}",
                 workspace.name,

@@ -24,8 +24,8 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     close_all(view, cx);
     let (work_root, first_root) = view.read_with(cx, |v, _| {
-        let root = |name: &str| v.workspaces.iter().find(|w| w.name == name).map(|w| w.root.clone());
-        (root(WORKSPACE), v.workspaces.first().map(|w| w.root.clone()))
+        let root = |name: &str| v.workspaces.iter().find(|w| w.name == name).and_then(|w| w.home().map(std::path::Path::to_path_buf));
+        (root(WORKSPACE), v.workspaces.first().and_then(|w| w.home().map(std::path::Path::to_path_buf)))
     });
     let (Some(work_root), Some(first_root)) = (work_root, first_root) else {
         bail!("the registry has no {WORKSPACE} or no first workspace");

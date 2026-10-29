@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use foreman_core::Workspace;
+use foreman_core::paths::{path_key, within};
 use foreman_ui::hover_card::HoverCard;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,16 +72,13 @@ pub fn session_label(name: &str, id: &str) -> String {
     if name.is_empty() { id.to_string() } else { format!("{name} · {id}") }
 }
 
-/// Case- and `/`-insensitive, as [`crate::fleet::shell_cwd`].
+/// The workspace [`crate::fleet::holder_of`] names and its deepest folder holding `cwd`.
 pub fn place(cwd: &Path, workspaces: &[Workspace]) -> (Option<String>, Option<String>) {
-    let key = |p: &Path| -> Vec<String> { p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect() };
-    let at = key(cwd);
-    let inner = |p: &Path| at.starts_with(&key(p)).then(|| p.components().count());
-    let Some(ws) = workspaces.iter().filter(|w| inner(&w.root).is_some()).max_by_key(|w| w.root.components().count()) else {
+    let Some(ws) = crate::fleet::holder_of(cwd, workspaces) else {
         return (None, None);
     };
-    let repo = ws.repos.iter().filter_map(|r| inner(&r.path).map(|depth| (depth, r))).max_by_key(|(depth, _)| *depth);
-    (Some(ws.name.clone()), repo.map(|(_, r)| r.name.clone()))
+    let repo = ws.folders.iter().filter(|r| within(cwd, &r.path)).max_by_key(|r| path_key(&r.path).len());
+    (Some(ws.name.clone()), repo.map(|r| r.name.clone()))
 }
 
 #[cfg(test)]
@@ -109,14 +107,7 @@ mod tests {
 
     #[test]
     fn the_place_is_the_innermost_workspace_and_its_repo() {
-        let repo = |name: &str, path: &str| foreman_core::Repo {
-            name: name.into(),
-            path: path.into(),
-            has_claude_md: false,
-            has_agents_md: false,
-            branch: None,
-            enabled: true,
-        };
+        let repo = foreman_core::Folder::new;
         let outer = Workspace::new("outer", "P:/Projects", vec![]);
         let aw = Workspace::new("autowork", r"P:\Projects\AutoWork", vec![repo("AutoWork", r"P:\Projects\AutoWork"), repo("zed", r"P:\Projects\AutoWork\.repos\zed")]);
         let all = [outer, aw];

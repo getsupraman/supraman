@@ -15,12 +15,12 @@ mod slug;
 pub mod time;
 pub mod url;
 
-pub use discover::{discover, rescan, same_root};
+pub use discover::{discover, rescan, same_path};
 pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
 };
-pub use model::{Repo, Workspace};
+pub use model::{Folder, FolderKind, Scan, Workspace, owners};
 pub use plugin::{HOOK_EXE, find_plugin_dir, install_hook_exe};
 pub use registry::{Registry, home_from};
 pub use relay::{
