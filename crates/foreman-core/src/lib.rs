@@ -34,5 +34,5 @@ pub use settings::{
     DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings, validate_workstate_url,
     TERMINAL_FONT_PREFERENCE, clamp_terminal_font_size, default_terminal_font_family,
 };
-pub use slug::{slugify, validate_name};
+pub use slug::{FM_PREFIX, slugify, validate_name};
 pub use url::origin as url_origin;

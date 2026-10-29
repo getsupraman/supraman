@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -112,8 +113,13 @@ pub struct Supervisor<L, T> {
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
-    /// follows mints a fresh token.
+    /// follows mints a fresh token. A name stays until its stop succeeds or it has no live row.
     remint_due: Vec<String>,
+    /// Consecutive failed `claude stop`s, by name: from [`STOP_FAILURES_SHOWN`] on, an Inbox row.
+    stop_failures: BTreeMap<String, StopFailure>,
+    /// Resumes whose output named no id ([`Resumed::Unknown`]): (name, id, when), settled against the
+    /// next snapshots ([`Self::confirm_resumes`]).
+    unconfirmed: Vec<(String, String, Millis)>,
     /// The server Foreman is signed in to, as [`Self::server_changed`] last saw it.
     origin: Option<String>,
     /// The server [`Self::server_changed`] last scheduled re-mints for.
@@ -152,6 +158,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
+            stop_failures: BTreeMap::new(),
+            unconfirmed: Vec::new(),
             origin: None,
             checked: None,
             held: None,
@@ -211,7 +219,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     pub fn retry(&mut self, name: &str) {
         self.memory.retry(name);
         self.held = None;
-        if self.needs.iter().any(|n| matches!(n.kind, NeedsKind::TokenExpired | NeedsKind::OtherServer) && n.name == name) {
+        if self.needs.iter().any(|n| matches!(n.kind, NeedsKind::TokenExpired | NeedsKind::OtherServer) && n.name == name)
+            && !self.remint_due.iter().any(|n| n == name)
+        {
             self.remint_due.push(name.to_string());
         }
     }
@@ -278,7 +288,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// after execution (a launch refused for trust shows in the same tick). Launches and resumes
     /// go only while `budget` has free slots; each one that starts takes one.
     pub fn tick(&mut self, observed: &[Session], budget: &mut Budget, now: Millis) -> Vec<NeedsYou> {
-        let reminting = self.stop_for_remint(observed, now);
+        let mut stops = BTreeMap::new();
+        let reminting = self.stop_for_remint(observed, &mut stops, now);
+        self.confirm_resumes(observed, now);
         for w in &self.desired.sessions {
             let mut rows = observed.iter().filter(|s| s.name == w.name);
             let alive = match (rows.next(), rows.next()) {
@@ -312,7 +324,17 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                         None => Ok(()),
                     }
                     .and_then(|()| self.launcher.resume(&session_id, &cwd, prompt.as_deref()).map_err(|e| Failure::from(&e)))
-                    .and_then(|out| woke_in_place(&out, &id));
+                    .and_then(|out| match resumed(&out, &id) {
+                        Resumed::InPlace => Ok(()),
+                        Resumed::Copy(other) => Err(copy_failure(&id, &other)),
+                        Resumed::Unknown => {
+                            self.notices.push(format!(
+                                "claude printed {out:?} for the resume of {name} ({id}); the next session list shows whether it woke in place"
+                            ));
+                            self.unconfirmed.push((name.clone(), id.clone(), now));
+                            Ok(())
+                        }
+                    });
                     let result = self.unless_held(result, now);
                     if matches!(result, Some(Ok(()))) && !exempt {
                         budget.take(1);
@@ -321,13 +343,15 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                         self.memory.record_result(&name, result, &self.policy, now);
                     }
                 }
-                // A failed stop is retried by the next tick: the row is still live.
-                Action::Stop { id, .. } => {
-                    let _ = self.launcher.stop(&id);
+                // a failed stop is retried by the next tick: the row is still live
+                Action::Stop { name, id } => {
+                    let result = self.launcher.stop(&id).map(drop).map_err(|e| e.to_string());
+                    stops.insert(name, (id, result));
                 }
                 Action::Wait { .. } | Action::NeedsYou(_) => {}
             }
         }
+        self.record_stops(stops, now);
         self.bind_claude_sessions(observed, now);
         self.revoke_unwanted();
         self.track_activity(observed, now);
@@ -340,6 +364,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .collect();
         needs.extend(self.expired_tokens(observed, &reminting, now));
         needs.extend(self.other_server_tokens(observed, &reminting, now));
+        needs.extend(self.failed_stops());
         if let Some(need) = self.held_need(observed, now) {
             needs.retain(|n| !matches!(n.kind, NeedsKind::LaunchFailed | NeedsKind::GaveUp));
             needs.push(need);
@@ -536,17 +561,71 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// The Re-mint: stops the single live row of each name whose Re-mint was pressed. The supervisor
     /// resumes it after the respawn grace (R13, R3), and the resume mints a fresh token ([`Self::remint`]);
     /// a `--bg --resume` of a live row would start a copy instead (m2/4). Returns the names stopped.
-    fn stop_for_remint(&mut self, observed: &[Session], now: Millis) -> Vec<String> {
+    fn stop_for_remint(&mut self, observed: &[Session], stops: &mut Stops, now: Millis) -> Vec<String> {
         let mut stopped = Vec::new();
         for name in std::mem::take(&mut self.remint_due) {
-            let mut rows = observed.iter().filter(|s| s.name == name && is_live(s, now));
-            if let (Some(row), None) = (rows.next(), rows.next())
-                && self.launcher.stop(&row.id).is_ok()
-            {
-                stopped.push(name);
+            if !self.desired.sessions.iter().any(|w| w.name == name) {
+                continue;
+            }
+            let rows: Vec<&Session> = observed.iter().filter(|s| s.name == name && is_live(s, now)).collect();
+            match rows.as_slice() {
+                [] => {}
+                [row] => {
+                    let result = self.launcher.stop(&row.id).map(drop).map_err(|e| e.to_string());
+                    if result.is_ok() {
+                        stopped.push(name.clone());
+                    } else {
+                        self.remint_due.push(name.clone());
+                    }
+                    stops.insert(name, (row.id.clone(), result));
+                }
+                _ => self.remint_due.push(name),
             }
         }
         stopped
+    }
+
+    /// This tick's `claude stop`s: a failure adds to its name's count, anything else clears it.
+    fn record_stops(&mut self, stops: Stops, now: Millis) {
+        let mut failures = BTreeMap::new();
+        for (name, (id, result)) in stops {
+            if let Err(error) = result {
+                let prev = self.stop_failures.remove(&name);
+                let (count, since) = prev.map_or((0, now), |p| (p.failures, p.since));
+                failures.insert(name, StopFailure { id, failures: count + 1, since, error });
+            }
+        }
+        self.stop_failures = failures;
+    }
+
+    /// [`NeedsKind::StopFailed`] for each name whose stop failed [`STOP_FAILURES_SHOWN`] ticks in a row.
+    fn failed_stops(&self) -> Vec<NeedsYou> {
+        self.stop_failures
+            .iter()
+            .filter(|(_, f)| f.failures >= STOP_FAILURES_SHOWN)
+            .map(|(name, f)| NeedsYou {
+                kind: NeedsKind::StopFailed,
+                workspace: self.desired.workspace.clone(),
+                name: name.clone(),
+                since: f.since,
+                detail: format!("it keeps running: claude stop failed {} times; last: {}", f.failures, f.error),
+                action: Some(Remedy::Attach { id: f.id.clone() }),
+            })
+            .collect()
+    }
+
+    /// A [`Resumed::Unknown`] resume is confirmed once the snapshot shows its own id live, and fails when
+    /// it shows another live row of the name (a copy); unseen, it waits up to `settle`.
+    fn confirm_resumes(&mut self, observed: &[Session], now: Millis) {
+        for (name, id, at) in std::mem::take(&mut self.unconfirmed) {
+            let copies: Vec<&str> =
+                observed.iter().filter(|s| s.name == name && s.id != id && is_live(s, now)).map(|s| s.id.as_str()).collect();
+            if !copies.is_empty() {
+                self.memory.record_result(&name, Err(copy_failure(&id, &copies.join(", "))), &self.policy, now);
+            } else if !observed.iter().any(|s| s.name == name && s.id == id && is_live(s, now)) && now - at < self.policy.settle {
+                self.unconfirmed.push((name, id, at));
+            }
+        }
     }
 
     /// A turn seen on a minted session's single live row slides its token's expiry, unless the token
@@ -667,18 +746,40 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
     }
 }
 
-/// `--bg --resume` of a session the daemon still counts as running starts a copy under a new id
-/// (`backgrounded · <new id8> · …`) instead of waking it (m2/4): a failure, not a start.
-fn woke_in_place(out: &str, id: &str) -> Result<(), Failure> {
-    let woke = out
-        .split_once("backgrounded · ")
-        .and_then(|(_, rest)| rest.split_whitespace().next());
-    match woke {
-        Some(other) if other != id => Err(Failure::Other(format!(
-            "the resume of {id} started a copy {other} (the daemon still counted it running)"
-        ))),
-        _ => Ok(()),
+/// From this many failed `claude stop`s in a row, the name gets a [`NeedsKind::StopFailed`] row.
+pub const STOP_FAILURES_SHOWN: u32 = 3;
+
+/// This tick's `claude stop`s by name: the row id and how it went.
+type Stops = BTreeMap<String, (String, Result<(), String>)>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StopFailure {
+    id: String,
+    failures: u32,
+    since: Millis,
+    error: String,
+}
+
+/// What a `--bg --resume` printed it woke.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Resumed {
+    InPlace,
+    /// A session the daemon still counts as running starts a copy under a new id instead (m2/4).
+    Copy(String),
+    /// No `backgrounded · <id8>`: [`Supervisor::confirm_resumes`] asks the next snapshot.
+    Unknown,
+}
+
+fn resumed(out: &str, id: &str) -> Resumed {
+    match out.split_once("backgrounded · ").and_then(|(_, rest)| rest.split_whitespace().next()) {
+        Some(woke) if woke == id => Resumed::InPlace,
+        Some(woke) if woke.len() == id.len() && woke.chars().all(|c| c.is_ascii_hexdigit()) => Resumed::Copy(woke.to_string()),
+        _ => Resumed::Unknown,
     }
+}
+
+fn copy_failure(id: &str, copy: &str) -> Failure {
+    Failure::Other(format!("the resume of {id} started a copy {copy} (the daemon still counted it running)"))
 }
 
 #[cfg(test)]
@@ -706,6 +807,8 @@ mod tests {
         errors: RefCell<Vec<ClaudeError>>,
         /// What a successful launch/resume prints; `None`: `backgrounded · aaaa0001 · x`.
         output: RefCell<Option<String>>,
+        /// Popped per stop; empty means success.
+        stop_errors: RefCell<Vec<ClaudeError>>,
     }
 
     impl FakeLauncher {
@@ -739,7 +842,7 @@ mod tests {
 
         fn stop(&self, id: &str) -> foreman_claude::Result<String> {
             self.calls.borrow_mut().push(Call::Stop { id: id.into() });
-            Ok(String::new())
+            self.stop_errors.borrow_mut().pop().map_or(Ok(String::new()), Err)
         }
     }
 
@@ -1488,7 +1591,7 @@ mod tests {
             live("fm-nomos-workspace", 7, SessionState::Working, Status::Busy),
             live("fm-nomos-nomos", 8, SessionState::Working, Status::Busy),
         ];
-        assert_eq!(Budget::new(1, &foreign, NOW).free, 0, "unfiltered, they would fill the budget");
+        assert_eq!(Budget::new(1, &foreign, &[], NOW).free, 0, "unfiltered, they would fill the budget");
 
         // --selftest-supervise step f with the limit at 1 while another home is mid-turn: alpha goes, then beta
         let mut sups = [workspace("alpha", dir.path()), workspace("beta", dir.path())];
@@ -1762,8 +1865,160 @@ mod tests {
         assert_eq!(sup.launcher().take().len(), 1);
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert!(needs[0].detail.contains("started a copy bbbb0002"), "{}", needs[0].detail);
-        assert_eq!(woke_in_place("backgrounded · aaaa0001 · fm-demo-workspace", "aaaa0001"), Ok(()));
-        assert_eq!(woke_in_place("", "aaaa0001"), Ok(()));
+        assert_eq!(resumed("backgrounded · aaaa0001 · fm-demo-workspace", "aaaa0001"), Resumed::InPlace);
+        assert_eq!(resumed("backgrounded · bbbb0002 · fm-demo-workspace", "aaaa0001"), Resumed::Copy("bbbb0002".into()));
+        assert_eq!(resumed("", "aaaa0001"), Resumed::Unknown);
+        assert_eq!(resumed("backgrounded · resumed fm-demo-workspace", "aaaa0001"), Resumed::Unknown);
+        assert_eq!(resumed("Session resumed in the background", "aaaa0001"), Resumed::Unknown);
+    }
+
+    #[test]
+    fn a_resume_with_unrecognised_output_is_settled_by_the_next_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "fm-demo-workspace";
+        let stopped = row(SessionState::Stopped, None, None);
+        let mut copy = row(SessionState::Working, Some(Status::Busy), Some(9));
+        copy.id = "bbbb0002".into();
+        let woke = row(SessionState::Working, Some(Status::Busy), Some(9));
+
+        let mut sup = supervisor(true, None, dir.path());
+        *sup.launcher.output.borrow_mut() = Some("Resumed in the background".into());
+        assert_eq!(sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW), []);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        let notices = sup.take_notices();
+        assert!(notices.len() == 1 && notices[0].contains("Resumed in the background") && notices[0].contains("aaaa0001"), "{notices:?}");
+        sup.tick(std::slice::from_ref(&copy), &mut free(), NOW + 2 * SECOND);
+        let a = sup.memory.get(name).unwrap();
+        assert_eq!((a.failures, a.started_at), (1, None));
+        assert_eq!(a.last_error.as_deref(), Some("the resume of aaaa0001 started a copy bbbb0002 (the daemon still counted it running)"));
+
+        let mut sup = supervisor(true, None, dir.path());
+        *sup.launcher.output.borrow_mut() = Some(String::new());
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW);
+        sup.tick(&[], &mut free(), NOW + SECOND);
+        sup.tick(std::slice::from_ref(&woke), &mut free(), NOW + 2 * SECOND);
+        sup.tick(std::slice::from_ref(&copy), &mut free(), NOW + 3 * SECOND);
+        assert_eq!(sup.memory.get(name).unwrap().failures, 0, "confirmed by its own id: a later row is not this resume's");
+    }
+
+    #[test]
+    fn a_stop_that_keeps_failing_is_an_inbox_row_until_it_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(false, None, dir.path());
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        let fail = || ClaudeError::CliFailed { code: Some(1), stderr: "boom".into() };
+        sup.launcher.stop_errors.borrow_mut().extend([fail(), fail(), fail(), fail()]);
+        for t in 0..2 {
+            assert_eq!(sup.tick(std::slice::from_ref(&live), &mut free(), NOW + t * SECOND), [], "not after {}", t + 1);
+        }
+        let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
+        assert_eq!(needs.len(), 1, "{needs:?}");
+        assert_eq!((needs[0].kind, needs[0].since), (NeedsKind::StopFailed, NOW));
+        assert_eq!(needs[0].action, Some(Remedy::Attach { id: "aaaa0001".into() }));
+        assert_eq!(needs[0].detail, "it keeps running: claude stop failed 3 times; last: claude failed (exit 1): boom");
+        let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 3 * SECOND);
+        assert_eq!((needs.len(), needs[0].since), (1, NOW), "since kept");
+        assert_eq!(sup.launcher().take(), vec![Call::Stop { id: "aaaa0001".into() }; 4], "stop, never rm, every tick");
+        assert_eq!(sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 4 * SECOND), [], "stopped");
+        assert_eq!(sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + 5 * SECOND), []);
+    }
+
+    #[test]
+    fn a_remint_whose_stop_fails_is_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
+        let (mut sup, minter) = minting(true, &mcp);
+        sup.tick(&[], &mut free(), NOW);
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
+        sup.launcher().take();
+        minter.take();
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        sup.launcher.stop_errors.borrow_mut().push(ClaudeError::CliFailed { code: Some(1), stderr: "busy".into() });
+        let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
+        assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
+        assert!(needs.iter().any(|n| n.kind == NeedsKind::OtherServer), "still on the other server: {needs:?}");
+        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "not scheduled twice");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 71 * SECOND);
+        assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }], "tried again");
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 72 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "stopped: done");
+        let stopped = row(SessionState::Stopped, None, None);
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 130 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { base, .. }] if base == "https://workstate.example"));
+    }
+
+    #[test]
+    fn a_remint_without_a_live_row_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, _minter) = minting(true, dir.path());
+        sup.remint_due.push("fm-demo-workspace".into());
+        sup.remint_due.push("fm-demo-gone".into());
+        let mut gone = row(SessionState::Working, Some(Status::Busy), Some(2));
+        gone.name = "fm-demo-gone".into();
+        sup.tick(&[row(SessionState::Stopped, None, None), gone], &mut free(), NOW);
+        assert!(sup.remint_due.is_empty(), "{:?}", sup.remint_due);
+        assert!(!sup.launcher().take().iter().any(|c| matches!(c, Call::Stop { .. })));
+    }
+
+    #[test]
+    fn starting_counts_only_a_started_workspace_and_ignores_a_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        assert_eq!(sup.starting(&[], NOW + SECOND), 1);
+        sup.hold(Some("runs as administrator".into()), NOW + SECOND);
+        assert_eq!(sup.starting(&[], NOW + 2 * SECOND), 1, "launched before the hold: still settling");
+        assert_eq!(sup.starting(&[], NOW + 20 * SECOND), 0, "settled");
+        sup.desired.started = false;
+        assert_eq!(sup.starting(&[], NOW + 2 * SECOND), 0);
+        let mut held = supervisor(true, None, dir.path());
+        held.hold(Some("runs as administrator".into()), NOW);
+        held.tick(&[], &mut free(), NOW);
+        assert_eq!(held.starting(&[], NOW + SECOND), 0, "held: nothing launched");
+    }
+
+    #[test]
+    fn a_trust_refusal_on_resume_waits_for_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        let stopped = row(SessionState::Stopped, None, None);
+        sup.launcher.errors.borrow_mut().push(ClaudeError::TrustNeeded { cwd: r"C:\demo\cwd".into() });
+        let needs = sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        assert_eq!(needs.len(), 1);
+        assert_eq!(needs[0].kind, NeedsKind::TrustNeeded);
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 3_600 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "never retried automatically");
+        sup.retry("fm-demo-workspace");
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 3_601 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+    }
+
+    #[test]
+    fn a_row_whose_cwd_is_gone_backs_off_and_is_never_launched_afresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sup = supervisor(true, None, dir.path());
+        let mut stopped = row(SessionState::Stopped, None, None);
+        stopped.cwd = dir.path().join("gone");
+        let gone = || ClaudeError::Spawn {
+            command: "claude --bg --resume".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotADirectory, "The directory name is invalid."),
+        };
+        sup.launcher.errors.borrow_mut().extend([gone(), gone()]);
+        let needs = sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW);
+        assert_eq!(
+            sup.launcher().take(),
+            [Call::Resume { session_id: stopped.session_id.clone(), cwd: stopped.cwd.clone(), prompt: None }]
+        );
+        assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
+        assert!(needs[0].detail.contains("directory name is invalid"), "{}", needs[0].detail);
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 4 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "backing off");
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 5 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]), "a resume again, not a launch");
     }
 
     #[test]

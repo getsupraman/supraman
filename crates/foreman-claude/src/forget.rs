@@ -235,6 +235,42 @@ mod tests {
     }
 
     #[test]
+    fn find_transcript_looks_in_the_cwds_project_dir_first_and_reads_only_files() {
+        let (_tmp, claude) = home();
+        let projects = claude.join("projects");
+        assert_eq!(find_transcript(&claude, SID, None), Some(projects.join("C--work-a").join(format!("{SID}.jsonl"))));
+        assert_eq!(
+            find_transcript(&claude, OTHER, Some(Path::new(r"C:\work\b"))),
+            Some(projects.join("C--work-b").join(format!("{OTHER}.jsonl")))
+        );
+        assert_eq!(find_transcript(&claude, SID, Some(Path::new(r"C:\work\b"))).unwrap().parent(), Some(projects.join("C--work-a").as_path()));
+        let absent = "11111111-2222-4333-8444-555555555555";
+        fs::create_dir_all(projects.join("C--work-b").join(format!("{absent}.jsonl"))).unwrap();
+        assert_eq!(find_transcript(&claude, absent, None), None, "a dir of that name is no transcript");
+        assert_eq!(find_transcript(&claude, "../C--work-a", None), None);
+        assert_eq!(find_transcript(&claude.join("missing"), SID, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_sibling_dir_that_cannot_go_fails_after_the_transcript_went_and_a_second_call_finishes() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let (_tmp, claude) = home();
+        let a = claude.join("projects").join("C--work-a");
+        let held = a.join(SID).join("tool-results").join("r.txt");
+        let open = fs::OpenOptions::new().read(true).share_mode(0).open(&held).unwrap();
+        let err = forget_transcript(&claude, SID, None).unwrap_err();
+        assert!(matches!(&err, ForgetError::Io { path, .. } if path.ends_with(SID)), "{err}");
+        assert!(!a.join(format!("{SID}.jsonl")).exists(), "the transcript went first");
+        assert!(held.exists());
+        assert!(a.join(format!("{OTHER}.jsonl")).exists() && a.join(OTHER).is_dir(), "nothing else");
+        drop(open);
+        let gone = forget_transcript(&claude, SID, None).unwrap();
+        assert_eq!((gone.transcripts.len(), gone.dirs.len()), (0, 1));
+        assert!(!a.join(SID).exists());
+    }
+
+    #[test]
     fn no_projects_dir_is_nothing_to_delete() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(forget_transcript(tmp.path(), SID, None).unwrap(), Forgotten::default());

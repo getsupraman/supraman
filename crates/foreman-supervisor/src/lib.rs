@@ -50,6 +50,11 @@
 //! [`SupervisorMemory::observe`] counts a start that is dead again after `settle` (20 s) but within
 //! `stable_after` (60 s); 60 s alive clears the count. Backoff after failure 1..4: 5 s, 30 s, 2 min,
 //! 10 min; the 5th gives up. A trust refusal is not a counted failure: it waits for Retry.
+//! A resume whose output names no id is settled by the next snapshots: its own id live confirms it,
+//! another live row of the name is a copy and a failure. A `claude stop` (R5, R14, Re-mint) that fails
+//! [`STOP_FAILURES_SHOWN`] ticks in a row is a [`NeedsKind::StopFailed`] row until one succeeds;
+//! a Re-mint whose stop fails stays due. Tests `a_resume_with_unrecognised_output_is_settled_by_the_next_snapshot`,
+//! `a_stop_that_keeps_failing_is_an_inbox_row_until_it_stops`, `a_remint_whose_stop_fails_is_tried_again`.
 //!
 //! # Held (m5/25)
 //!
@@ -73,11 +78,11 @@ mod reconcile;
 pub use budget::{Budget, mid_turn, tick_all, working};
 pub use desired::{
     DEFAULT_PERMISSION_MODE, DesiredState, RELAY_RESUME_PROMPT, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, WantedSession, Wanted,
-    fill_paths, is_foreign, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
+    fill_paths, is_foreign, is_relay, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
     workspace_session_name,
 };
 pub use error::{Result, SupervisorError};
-pub use executor::{LaunchConfig, Launcher, RoleToken, Supervisor, TokenProvider, session_identity};
+pub use executor::{LaunchConfig, Launcher, RoleToken, STOP_FAILURES_SHOWN, Supervisor, TokenProvider, session_identity};
 pub use mint::{HttpMinter, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo};
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};

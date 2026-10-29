@@ -42,6 +42,17 @@ fn tmp_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// An exclusive lock on `path` (created with its folder, never truncated), held until the returned file
+/// drops: serialises a read-modify-write across threads and processes. Blocks while another holds it.
+pub fn lock_file(path: &Path) -> io::Result<fs::File> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    let file = fs::File::options().create(true).truncate(false).write(true).open(path)?;
+    file.lock()?;
+    Ok(file)
+}
+
 /// `path` parsed as JSON. Missing: the default, no notice. Unreadable or not the expected JSON: the
 /// default and a notice naming the file, the error and `fallback` (what the default means to the user).
 pub fn load_json_or_notice<T: DeserializeOwned + Default>(path: &Path, fallback: &str) -> (T, Option<String>) {
@@ -134,6 +145,21 @@ mod tests {
         fs::write(&blocker, "x").unwrap();
         assert!(write_atomic(&blocker.join("x.json"), "y").is_err());
         assert_eq!(fs::read_to_string(&blocker).unwrap(), "x");
+    }
+
+    #[test]
+    fn lock_file_creates_its_dir_excludes_a_second_holder_and_keeps_the_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("x.lock");
+        let held = lock_file(&path).unwrap();
+        let other = fs::File::options().write(true).open(&path).unwrap();
+        assert!(matches!(other.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(held);
+        other.try_lock().unwrap();
+        drop(other);
+        fs::write(&path, "kept").unwrap();
+        drop(lock_file(&path).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "kept");
     }
 
     #[test]

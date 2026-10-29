@@ -506,7 +506,7 @@ mod tests {
             row("fm-x-3", 13, Some(SessionState::Done), Some(Status::Idle), Some(5)),
             row("fm-x-4", 14, Some(SessionState::Working), None, None),
         ];
-        let budget = Budget::new(3, &observed, NOW);
+        let budget = Budget::new(3, &observed, &["x"], NOW);
         assert_eq!(budget.free, 1);
         let actions = reconcile(&d, &observed, &SupervisorMemory::default(), &Policy::default(), budget.free, NOW);
         assert_eq!(
@@ -524,18 +524,18 @@ mod tests {
     fn an_idle_working_row_takes_no_slot() {
         // m3/1, measured m3/2: a session that ended its turn waiting for messages stays `state=working`
         let waiting = row("fm-x-1", 1, Some(SessionState::Working), Some(Status::Idle), Some(7));
-        assert_eq!(Budget::new(1, std::slice::from_ref(&waiting), NOW).free, 1);
+        assert_eq!(Budget::new(1, std::slice::from_ref(&waiting), &["x"], NOW).free, 1);
         assert!(!crate::mid_turn(&waiting, NOW));
         // mid-turn is `status=busy`, whatever `state` says
         let busy = row("fm-x-2", 2, Some(SessionState::Done), Some(Status::Busy), Some(8));
-        assert_eq!(Budget::new(1, &[waiting, busy], NOW).free, 0);
+        assert_eq!(Budget::new(1, &[waiting, busy], &["x"], NOW).free, 0);
         // a parked session waits on the human, not on the model
         let parked = row("fm-x-3", 3, Some(SessionState::Blocked), Some(Status::Waiting), Some(9));
-        assert_eq!(Budget::new(1, &[parked], NOW).free, 1);
+        assert_eq!(Budget::new(1, &[parked], &["x"], NOW).free, 1);
         // no status yet (the pid-less row right after `--bg`): `state=working` still counts
         let mut fresh = row("fm-x-4", 4, Some(SessionState::Working), None, None);
         fresh.started_at = Some(NOW - 2_000);
-        assert_eq!(Budget::new(1, &[fresh], NOW).free, 0);
+        assert_eq!(Budget::new(1, &[fresh], &["x"], NOW).free, 0);
     }
 
     // R11 for the relay
@@ -553,7 +553,16 @@ mod tests {
             ]
         );
         let armed = [running("fm-demo-relay", 1), running("fm-x-relay", 2)];
-        assert_eq!(Budget::new(1, &armed, NOW).free, 1);
+        assert_eq!(Budget::new(1, &armed, &["demo", "x"], NOW).free, 1);
+    }
+
+    // R11 for a repo whose slug ends in relay
+    #[test]
+    fn a_repo_session_whose_slug_ends_in_relay_takes_a_slot() {
+        let repo = crate::repo_session_name("a", "b-relay").unwrap();
+        assert_eq!(repo, "fm-a-b-relay");
+        assert_eq!(Budget::new(1, &[running(&repo, 1)], &["a"], NOW).free, 0);
+        assert_eq!(Budget::new(1, &[running("fm-a-relay", 2)], &["a"], NOW).free, 1);
     }
 
     // R12
