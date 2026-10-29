@@ -9,14 +9,14 @@
 //!   `invalid_grant` (e.g. the server's database restored) drops that pair: "Sign in again".
 //! - **Authorize**: PKCE S256, a random `state` checked on return, exactly one `resource`, the loopback
 //!   redirect `http://127.0.0.1:<ephemeral>/callback` (RFC 8252), 5 minutes at most.
-//! - **Tokens**: the refresh token only in the [`SecretStore`] (Credential Manager), keyed by issuer;
+//! - **Tokens**: the refresh token only in the [`SecretStore`] (a DPAPI-encrypted file), keyed by issuer;
 //!   it rotates, so every refresh stores the new one, under a lock file shared with `fm`. The access
 //!   token stays in memory and is refreshed 5 minutes before it expires. A refused refresh leaves
 //!   "Sign in again" and is not retried until the next sign-in.
 //! - **Sign out**: the refresh token to the revocation endpoint, which ends the whole authorization and
-//!   every `wss_` token minted under it; then the credential and the held tokens go.
+//!   every `wss_` token minted under it; then the stored and the held tokens go.
 //!
-//! No token is ever in a message, a log line, a file of Foreman's or a `Debug` output.
+//! No token is ever in a message, a log line, a plain-text file or a `Debug` output.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -154,9 +154,9 @@ struct Tokens {
 }
 
 impl Auth {
-    /// Refresh tokens in Credential Manager ([`default_store`]).
+    /// Refresh tokens in `home`'s [`default_store`].
     pub fn open(home: &Path) -> Arc<Self> {
-        Arc::new(Self::with_store(home, default_store()))
+        Arc::new(Self::with_store(home, default_store(home)))
     }
 
     pub fn with_store(home: &Path, store: Arc<dyn SecretStore>) -> Self {
@@ -443,7 +443,7 @@ impl Auth {
     }
 
     /// Revokes `origin`'s grant (the refresh token: the whole authorization and every `wss_` minted
-    /// under it), after deleting the credential and dropping held tokens, so no other call waits on the
+    /// under it), after deleting the stored token and dropping held tokens, so no other call waits on the
     /// revoke. `Err` is a notice: a revoke that failed; everything local is gone anyway.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
         let origin = api_base(origin);

@@ -427,30 +427,21 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
 /// WorkState 1.0.0's refresh tokens are longer than one Credential Manager blob.
 #[cfg(windows)]
 #[test]
-fn a_6_kb_refresh_token_rotates_through_credential_manager() {
-    use foreman_workstate::secret::CredentialStore;
+fn a_6_kb_refresh_token_rotates_through_the_file_store() {
+    use foreman_workstate::secret::FileStore;
     let (dir, fake, oauth, _store, _auth) = setup();
-    let mut r = [0u8; 8];
-    getrandom::fill(&mut r).unwrap();
-    let prefix = format!("fm-test-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>());
-    struct Cleanup(CredentialStore, String);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = self.0.delete(&self.1);
-        }
-    }
-    let cleanup = Cleanup(CredentialStore::new(&prefix), oauth.issuer());
+    let store = || Arc::new(FileStore::new(dir.path(), Arc::new(MemoryStore::default())));
     oauth.set_access_ttl(60);
     oauth.set_refresh_len(6 * 1024);
-    let auth = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
+    let auth = Auth::with_store(dir.path(), store());
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     for _ in 0..2 {
         auth.access_token(fake.base()).unwrap();
-        let stored = cleanup.0.get(&cleanup.1).unwrap().unwrap();
+        let stored = store().get(&oauth.issuer()).unwrap().unwrap();
         assert_eq!((stored.len(), Some(&stored)), (6 * 1024, oauth.issued().last()));
     }
     assert_eq!(auth.status(fake.base()), AuthStatus::SignedIn { who: Some("Fake Operator".into()), unsaved: None });
-    let next = Auth::with_store(dir.path(), Arc::new(CredentialStore::new(&prefix)));
+    let next = Auth::with_store(dir.path(), store());
     next.access_token(fake.base()).unwrap();
     assert!(oauth.refusals().is_empty(), "{:?}", oauth.refusals());
 }

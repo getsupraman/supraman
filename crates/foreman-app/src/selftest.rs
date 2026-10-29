@@ -169,10 +169,8 @@ pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String
 /// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
-    // The sign-in (m5/43) never opens a browser, and its refresh tokens go to Credential Manager entries
-    // under a prefix of this run's own, deleted at cleanup: never René's. Single-threaded still.
+    // The sign-in (m5/43) never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
-    unsafe { std::env::set_var(foreman_workstate::secret::PREFIX_VAR, format!("fm-selftest-{}", hex6())) };
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's (m5/27).
     unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
     if mode == Mode::SelftestSupervise {

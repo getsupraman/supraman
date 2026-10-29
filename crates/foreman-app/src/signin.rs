@@ -1,7 +1,7 @@
 //! The app's WorkState sign-in (m5/43): one [`Auth`] per Foreman home, shared by the read API, the
 //! supervisors' mints, the hand mints and Settings, and the browser its authorize step opens.
-//! The selftests swap the system browser for [`foreman_workstate::auth::http_browser`] and keep their
-//! refresh tokens under a credential prefix of their own ([`foreman_workstate::secret::PREFIX_VAR`]).
+//! The selftests swap the system browser for [`foreman_workstate::auth::http_browser`]; their refresh
+//! tokens stay in their scratch home.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -50,11 +50,10 @@ fn issuer_of(home: &Path, origin: &str) -> Option<String> {
     v["servers"][foreman_core::url_origin(origin)]["issuer"].as_str().map(str::to_string)
 }
 
-/// Selftest cleanup: deletes every credential this process signed in with, under its own prefix.
+/// Selftest cleanup: deletes every refresh token this process signed in with.
 pub fn forget_own_credentials() -> Vec<String> {
-    let store = foreman_workstate::secret::default_store();
     let issuers = std::mem::take(&mut *ISSUERS.lock().unwrap_or_else(|e| e.into_inner()));
-    issuers.iter().filter_map(|(_, issuer)| store.delete(issuer).err()).collect()
+    issuers.iter().filter_map(|(home, issuer)| foreman_workstate::secret::default_store(home).delete(issuer).err()).collect()
 }
 
 #[cfg(windows)]
