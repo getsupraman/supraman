@@ -273,6 +273,9 @@ pub struct FleetView {
     pub transcripts_nudge: Nudge,
     poll_nudge: Nudge,
     pub refresh_asks: u64,
+    refreshes_answered: u64,
+    /// The first poll's snapshot (or its failure) is applied; until then the tree shows that it is loading.
+    pub sessions_read: bool,
     pub stars: Stars,
     pub closed_expanded: HashSet<String>,
     pub claude_command: String,
@@ -285,6 +288,7 @@ pub struct FleetView {
     pub claude_dir: Option<PathBuf>,
     pub deleted: StdHashMap<String, i64>,
     pub deleting: HashSet<String>,
+    painted_sessions: bool,
 }
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
@@ -335,7 +339,8 @@ struct Refresh {
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
-    report: Option<Report>,
+    /// The first poll's desired states, so the tree shows started workspaces before the first tick lands.
+    desired: Option<BTreeMap<String, (bool, Vec<String>)>>,
     took: Duration,
 }
 
@@ -348,6 +353,12 @@ struct Poller {
     injected: Arc<Mutex<Vec<Session>>>,
     registry_writes: Arc<AtomicU64>,
     hold: Arc<PollHold>,
+    snapshot: Option<(Vec<Workspace>, Vec<Session>)>,
+    first: bool,
+}
+
+fn timeline(phase: &str, took: Duration) {
+    log::info!("startup {phase}: {} ms (at +{:.0} ms)", took.as_millis(), foreman_ui::ms_since_start(Instant::now()));
 }
 
 impl Poller {
@@ -364,32 +375,48 @@ impl Poller {
         setup
     }
 
-    /// The supervisor ticks only on a snapshot read in this poll: a stale list never drives a launch.
-    fn load(&mut self, with_sessions: bool) -> Refresh {
+    fn read(&mut self, with_sessions: bool) -> Refresh {
         let started = Instant::now();
         let registry_writes = self.registry_writes.load(Ordering::SeqCst);
         let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
+        let registry_took = started.elapsed();
         self.hold.wait();
         let polled_at = now_ms();
+        let listing = Instant::now();
         let sessions = with_sessions.then(|| {
             list_sessions().map_err(|e| e.to_string()).map(|mut rows| {
                 rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
                 rows
             })
         });
+        let list_took = listing.elapsed();
         let main_repos = match &sessions {
             Some(Ok(sessions)) => fleet::main_repos(sessions),
             _ => StdHashMap::new(),
         };
         let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
         let took = started.elapsed();
-        let report = match (&workspaces, &sessions, self.supervision.as_mut()) {
-            (Ok((workspaces, _)), Some(Ok(sessions)), Some(supervision)) => {
-                let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
-                Some(supervision.tick(workspaces, sessions, retries, now_ms()))
-            }
+        self.snapshot = match (&workspaces, &sessions) {
+            (Ok((workspaces, _)), Some(Ok(sessions))) => Some((workspaces.clone(), sessions.clone())),
             _ => None,
         };
+        let desired = match (&self.home, &workspaces) {
+            (Some(home), Ok((workspaces, _))) if self.first => Some(
+                workspaces
+                    .iter()
+                    .filter_map(|w| {
+                        let d = DesiredState::load(home, &w.name).ok()??;
+                        Some((w.name.clone(), (d.started, d.sessions.iter().map(|s| s.name.clone()).collect())))
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        };
+        if self.first {
+            timeline("registry", registry_took);
+            timeline(&format!("list_sessions ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
+            timeline("main repos and events", took - registry_took - list_took);
+        }
         Refresh {
             registry_writes,
             workspaces,
@@ -397,9 +424,23 @@ impl Poller {
             main_repos,
             polled_at,
             events,
-            report,
+            desired,
             took,
         }
+    }
+
+    /// The supervisor ticks only on the snapshot [`Poller::read`] took in this poll: a stale list never drives a launch.
+    fn tick(&mut self) -> Option<Report> {
+        let ticking = Instant::now();
+        let first = std::mem::take(&mut self.first);
+        let (workspaces, sessions) = self.snapshot.take()?;
+        let supervision = self.supervision.as_mut()?;
+        let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
+        let report = supervision.tick(&workspaces, &sessions, retries, now_ms());
+        if first {
+            timeline("supervisor tick", ticking.elapsed());
+        }
+        Some(report)
     }
 }
 
@@ -438,18 +479,33 @@ impl FleetView {
             injected: injected.clone(),
             registry_writes: registry_writes.clone(),
             hold: poll_hold.clone(),
+            snapshot: None,
+            first: true,
         };
+        timeline("window", Duration::ZERO);
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
-            let checked = executor.spawn(async { check_supported() }).await;
-            let supported = checked.is_ok();
-            let (ready, setup) = executor
-                .spawn(async move {
-                    let setup = poller.setup();
-                    (poller, setup)
-                })
-                .await;
+            let checking = Instant::now();
+            let checked = executor.spawn(async move {
+                let checked = check_supported();
+                timeline("version check", checking.elapsed());
+                checked
+            });
+            let first = executor.spawn(async move {
+                let setting_up = Instant::now();
+                let setup = poller.setup();
+                timeline("setup", setting_up.elapsed());
+                let refresh = poller.read(true);
+                (poller, setup, refresh)
+            });
+            let (checked, (ready, setup, mut refresh)) = futures::join!(checked, first);
             poller = ready;
+            let supported = checked.is_ok();
+            if !supported {
+                refresh.sessions = None;
+                poller.snapshot = None;
+            }
+            let mut first = Some(refresh);
             if this
                 .update(cx, |this, cx| {
                     this.cli = match checked {
@@ -465,15 +521,44 @@ impl FleetView {
                 return;
             }
             loop {
-                let (done, refresh) = executor
+                let Ok(asks) = this.read_with(cx, |this, _| this.refresh_asks) else {
+                    return;
+                };
+                let refresh = match first.take() {
+                    Some(refresh) => refresh,
+                    None => {
+                        let (done, refresh) = executor
+                            .spawn(async move {
+                                let refresh = poller.read(supported);
+                                (poller, refresh)
+                            })
+                            .await;
+                        poller = done;
+                        refresh
+                    }
+                };
+                if this
+                    .update(cx, |this, cx| {
+                        this.apply(refresh);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                let (done, report) = executor
                     .spawn(async move {
-                        let refresh = poller.load(supported);
-                        (poller, refresh)
+                        let report = poller.tick();
+                        (poller, report)
                     })
                     .await;
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
-                    this.apply(refresh);
+                    if let Some(report) = report {
+                        this.apply_report(report);
+                    }
+                    this.refreshes += 1;
+                    this.refreshes_answered = asks;
                     let left = std::mem::take(&mut this.left_pending);
                     this.leave_servers(left, cx);
                     this.resolve_tabs(cx);
@@ -599,6 +684,8 @@ impl FleetView {
             transcripts_nudge,
             poll_nudge,
             refresh_asks: 0,
+            refreshes_answered: 0,
+            sessions_read: false,
             action_error: stars_notice.or(dismissed_notice),
             stars,
             closed_expanded: HashSet::new(),
@@ -612,6 +699,7 @@ impl FleetView {
             claude_dir,
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
+            painted_sessions: false,
         }
     }
 
@@ -637,6 +725,7 @@ impl FleetView {
                     return;
                 };
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
+                let scanning = Instant::now();
                 let (back, known, closed) = executor
                     .spawn(async move {
                         let found = scanner.scan(&roots, since, &keep, &live);
@@ -657,6 +746,9 @@ impl FleetView {
                         this.closed_repos = known;
                         this.closed = closed;
                         this.drop_deleted();
+                        if this.transcript_scans == 0 {
+                            timeline("transcripts", scanning.elapsed());
+                        }
                         this.transcript_scans += 1;
                         cx.notify();
                     })
@@ -670,7 +762,15 @@ impl FleetView {
         .detach();
     }
 
+    /// From the start until the first poll is applied, and from a Refresh until the poll it woke is.
+    pub fn refreshing(&self) -> bool {
+        self.refreshes == 0 || self.refreshes_answered < self.refresh_asks
+    }
+
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        if self.refreshing() {
+            return;
+        }
         self.refresh_asks += 1;
         self.poll_nudge.wake();
         self.transcripts_nudge.wake();
@@ -971,35 +1071,39 @@ impl FleetView {
             Some(Err(error)) => self.sessions_error = Some(error),
             None => {}
         }
+        self.sessions_read = true;
         for event in refresh.events {
             HookSignal::record(&mut self.hooks, event);
         }
-        if let Some(report) = refresh.report {
-            self.desired = report.desired;
-            self.needs = report.needs;
-            let (workspaces, desired) = (&self.workspaces, &self.desired);
-            self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
-            self.max_working = report.max_working;
-            self.supervise_errors = report.errors;
-            foreman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
-            self.daemon_hold = report.daemon_hold;
-            self.left_pending.extend(report.left_servers);
-            self.last_attempt = report.last_attempt.into_iter().collect();
-            self.relays = report.relays;
-            self.messages = report.messages;
-            if let Err(e) = self.dismissed_messages.prune(&self.messages) {
-                self.action_error = Some(format!("Cannot save the dismissed messages: {e}"));
-            }
-            for (workspace, on_disk) in report.answered {
-                let answered = self.answered.entry(workspace).or_default();
-                for (file, line) in on_disk {
-                    answered.entry(file).or_insert(line);
-                }
-            }
-            self.ticks += 1;
+        if let Some(desired) = refresh.desired {
+            self.desired = desired;
         }
         self.last_refresh_took = Some(refresh.took);
-        self.refreshes += 1;
+    }
+
+    fn apply_report(&mut self, report: Report) {
+        self.desired = report.desired;
+        self.needs = report.needs;
+        let (workspaces, desired) = (&self.workspaces, &self.desired);
+        self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
+        self.max_working = report.max_working;
+        self.supervise_errors = report.errors;
+        foreman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
+        self.daemon_hold = report.daemon_hold;
+        self.left_pending.extend(report.left_servers);
+        self.last_attempt = report.last_attempt.into_iter().collect();
+        self.relays = report.relays;
+        self.messages = report.messages;
+        if let Err(e) = self.dismissed_messages.prune(&self.messages) {
+            self.action_error = Some(format!("Cannot save the dismissed messages: {e}"));
+        }
+        for (workspace, on_disk) in report.answered {
+            let answered = self.answered.entry(workspace).or_default();
+            for (file, line) in on_disk {
+                answered.entry(file).or_insert(line);
+            }
+        }
+        self.ticks += 1;
     }
 
     pub fn tree(&self) -> Tree {
@@ -2185,6 +2289,10 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
 impl Render for FleetView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.probe.on_render(window);
+        if !self.painted_sessions && self.sessions_read {
+            self.painted_sessions = true;
+            timeline("first paint with sessions", Duration::ZERO);
+        }
         crate::selftest::injected_frame_sleep();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();

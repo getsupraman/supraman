@@ -1,6 +1,11 @@
 //! The buttons. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
-use gpui::{App, Div, ElementId, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, div, prelude::*, px};
+use std::time::Duration;
+
+use gpui::{
+    Animation, AnimationExt as _, App, Div, ElementId, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, Transformation, div, percentage,
+    prelude::*, px,
+};
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
@@ -38,9 +43,15 @@ pub fn icon(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, side: Pi
 
 /// An action bar button: `icon` in `fg`, then any label; the selected fill while `on`.
 pub fn toolbar(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, on: bool, fg: Hsla, cx: &App) -> Stateful<Div> {
+    toolbar_turning(hits, key, icon, on, false, fg, cx)
+}
+
+/// [`toolbar`] whose icon turns once a second while `turning`; it then also paints under `<key>-turning`.
+pub fn toolbar_turning(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, on: bool, turning: bool, fg: Hsla, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();
-    base(hits, key.clone(), |s| s.bg(colors.ghost_element_hover).text_color(colors.text), colors.ghost_element_active)
+    let icon = icon.group_hover(key.clone(), |s| s.text_color(colors.text));
+    let frame = base(hits, key.clone(), |s| s.bg(colors.ghost_element_hover).text_color(colors.text), colors.ghost_element_active)
         .flex()
         .flex_none()
         .items_center()
@@ -52,8 +63,15 @@ pub fn toolbar(hits: &HitTargets, key: impl Into<SharedString>, icon: Svg, on: b
         .rounded_md()
         .text_xs()
         .text_color(fg)
-        .when(on, |d| d.bg(colors.ghost_element_selected))
-        .child(icon.group_hover(key, |s| s.text_color(colors.text)))
+        .when(on, |d| d.bg(colors.ghost_element_selected));
+    if !turning {
+        return frame.child(icon);
+    }
+    frame.child(hit_target(hits, format!("{key}-turning"))).child(icon.with_animation(
+        ElementId::Name(format!("{key}-turning").into()),
+        Animation::new(Duration::from_secs(1)).repeat(),
+        |icon, turned| icon.with_transformation(Transformation::rotate(percentage(turned))),
+    ))
 }
 
 /// A small bordered button: one height, the label centred, a lighter fill and border on hover.
