@@ -3449,3 +3449,39 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-15\target`, on master 199241c): build ok; `cargo test --release
   --workspace` 656 passed, 0 failed; `--selftest` 5 of 5 PASS (alone); `--selftest-supervise` PASS;
   `--selftest-detach-shutdown` PASS; 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.14 selftest hygiene and F-06 (audit U12)
+
+- **Shared helpers (A-18):** `selftest::{until, until_with, until_app}` (poll every 25 ms, fail "what: not within
+  <duration>") replace the 10 local copies and `selftest_manage::until_app`; `selftest_delete` and
+  `selftest_first_run` keep a two-line adapter that adds their state to the error, `selftest_title` and
+  `selftest_term` adapters keep their call shape. `selftest_supervise`'s `until` polls `claude agents` rows every
+  500 ms, an async CLI read, and stays. `selftest_clipboard::{text, put_text}` replace the read/write lambdas;
+  `read_own` reads through `text`.
+- **Step 7l (A-78, F-06a):** the audit's cause holds: the old check compared a session row's absolute y in a
+  tree that re-sorts every 2 s, and Inbox/notice rows above it come and go. It now compares `tree-area` from the
+  frame before the right-click with the frame that painted the toast. Only the **bottom** is asserted: height is
+  bottom − top, and a notice above legitimately moves the top. Red: the toast without `.absolute()` →
+  `FAIL step 7l: … tree area top 298.7 → 298.7, bottom 820.0 → 788.0, height 521.3 → 489.3`.
+- **Step 7c (A-79, F-06b):** both hypotheses fixed. The step waits for `tray::is_shown` and an `on_next_frame`
+  callback on the settings window before each close, and records `selftest::log_offset()` before the close and
+  scans only what follows (`teardown_errors_since`; a rotated log is scanned whole). `tray::close` waits, every
+  10 ms up to 1 s, until the window is hidden and `PeekMessageW(hwnd, PM_NOREMOVE | PM_QS_POSTMESSAGE |
+  PM_QS_INPUT | PM_QS_PAINT)` finds nothing queued, instead of a fixed 100 ms. Sent messages are excluded:
+  peeking for them would dispatch them inside the task. m5/22's discipline is unchanged (hide outside the update,
+  `on_window_should_close` → false).
+- **FAIL lines name the step:** the gate runs each step through `selftest::step(name, …)`, which records the
+  current step; the watchdog, panic hook, teardown-log and "quit before a verdict" lines print it. m5/44.6's
+  run-1 failure at 98 s printed none of these, so it was one of them, most likely the quit or a panic.
+- **Clipboard across selftests:** the clipboard is system-wide, so parallel `--selftest` runs broke each other's
+  7r (m5/44.3 run 5, m5/44.15 2 of 5). Steps 6b, 6c, 7l and 7r now hold the named mutex
+  `Local\Foreman-selftest-clipboard` (`selftest_clipboard::borrow`) from their save to their put-back, waiting up
+  to 60 s and saying so. The mutex is taken by polling `WaitForSingleObject(…, 0)` on the UI thread, which owns it
+  and releases it on drop; an abandoned one counts as taken. 7r also records `GetClipboardSequenceNumber` after
+  its put-back and, on exit 1, says whether another process wrote the clipboard since.
+- **Other shared machine state:** the keyboard modifier state (`GetKeyState`) is the other one; `post_keys`
+  already waits it out (m5/30), and m5/46 run 1's 7k `5e1f` → `%E!F` is the only sign of it. Not covered here.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-14\target`, merged with master c27f4b7): build ok, no warnings;
+  `cargo test --release --workspace` 658 passed, 0 failed; `--selftest` 10 of 10 PASS in a row (120–131 s; before the merge 4 of 4
+  without the mutex, then 8 of 8 with it); `--selftest-supervise` PASS (281 s); `--selftest-detach-shutdown` PASS (13 s);
+  0 `fm-selftest` rows.
