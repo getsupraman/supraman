@@ -19,7 +19,7 @@ pub fn campbell() -> [Hsla; 16] {
 }
 
 /// Windows Terminal's default `wordDelimiters`: a double-click selects up to these.
-pub const WORD_DELIMITERS: &str = " /\\()\"'-.,:;<>~!@#$%^&*|+=[]{}~?\u{2502}";
+pub(crate) const WORD_DELIMITERS: &str = " /\\()\"'-.,:;<>~!@#$%^&*|+=[]{}~?\u{2502}";
 
 /// Windows Terminal's caret blink: Windows' default `GetCaretBlinkTime`.
 pub const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);

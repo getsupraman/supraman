@@ -12,7 +12,7 @@ mod hyperlinks;
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::{Dimensions, Grid, GridIterator, Row, Scroll as AlacScroll},
+    grid::{Dimensions, Grid, Scroll as AlacScroll},
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     selection::{
         Selection as AlacSelection, SelectionRange as AlacSelectionRange,
@@ -20,15 +20,14 @@ use alacritty_terminal::{
     },
     sync::FairMutex,
     term::{
-        Config, Osc52, RenderableCursor, Term, TermMode,
+        Config, RenderableCursor, Term, TermMode,
         cell::{Cell as AlacCell, Flags, Hyperlink as AlacHyperlink},
         search::{Match, RegexIter, RegexSearch},
     },
     tty,
-    vi_mode::{ViModeCursor, ViMotion as AlacViMotion},
     vte::ansi::{
-        ClearMode, CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
-        NamedPrivateMode, PrivateMode,
+        CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle, NamedPrivateMode,
+        PrivateMode,
     },
 };
 use anyhow::{Context as _, Result};
@@ -40,10 +39,11 @@ use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use crate::{
     Cell, Color, Content, Cursor, CursorShape, GridLinesChange, HoveredWord, Hyperlink,
-    HyperlinkData, IndexedCell, Modes, Point, PtyEvent, Range, RenderableCells, Scroll, Search,
-    Selection, SelectionRange, SelectionSide, SelectionType, TerminalBackendEvent, TerminalBounds,
-    ViMotion,
+    IndexedCell, Modes, Point, Range, Search, SelectionRange, TerminalBounds,
+    events::TerminalBackendEvent,
+    mouse::{Selection, SelectionSide, SelectionType},
     pty_info::ProcessIdGetter,
+    scroll::Scroll,
     terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, WORD_DELIMITERS},
 };
 
@@ -54,13 +54,11 @@ pub(super) type AlacrittyTerm = Term<ZedListener>;
 pub(super) type AlacrittyTermConfig = Config;
 pub(super) type AlacrittyTermLock = FairMutex<AlacrittyTerm>;
 pub(super) type AlacrittyCell = AlacCell;
-pub(super) type AlacrittyGridIterator<'a> = GridIterator<'a, AlacCell>;
 pub(super) type AlacrittyHyperlink = AlacHyperlink;
 
 #[derive(Clone)]
 pub(super) struct ZedListener {
-    sender: UnboundedSender<PtyEvent>,
-    generation: u64,
+    sender: UnboundedSender<TerminalBackendEvent>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,19 +121,6 @@ fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
     }
 }
 
-pub(super) fn display_only_term_config(
-    scrolling_history: usize,
-    cursor_shape: SettingsCursorShape,
-) -> AlacrittyTermConfig {
-    Config {
-        scrolling_history,
-        default_cursor_style: alacritty_cursor_style(cursor_shape),
-        semantic_escape_chars: format!("{WORD_DELIMITERS}─"),
-        osc52: Osc52::Disabled,
-        ..Config::default()
-    }
-}
-
 pub(super) fn pty_term_config(
     scrolling_history: usize,
     cursor_shape: SettingsCursorShape,
@@ -146,17 +131,6 @@ pub(super) fn pty_term_config(
         semantic_escape_chars: format!("{WORD_DELIMITERS}─"),
         ..Config::default()
     }
-}
-
-pub(super) fn set_default_cursor_style(
-    config: &mut AlacrittyTermConfig,
-    cursor_shape: SettingsCursorShape,
-) {
-    config.default_cursor_style = alacritty_cursor_style(cursor_shape);
-}
-
-pub(super) fn apply_config(term: &AlacrittyTermLock, config: &AlacrittyTermConfig) {
-    term.lock().set_options(config.clone());
 }
 
 #[cfg(not(windows))]
@@ -194,18 +168,10 @@ pub(super) fn open_pty(
 pub(super) fn new_term(
     config: &AlacrittyTermConfig,
     bounds: TerminalBounds,
-    events_tx: UnboundedSender<PtyEvent>,
+    events_tx: UnboundedSender<TerminalBackendEvent>,
     alternate_scroll: AlternateScroll,
-    generation: u64,
 ) -> Arc<AlacrittyTermLock> {
-    let mut term = Term::new(
-        config.clone(),
-        &bounds,
-        ZedListener {
-            sender: events_tx,
-            generation,
-        },
-    );
+    let mut term = Term::new(config.clone(), &bounds, ZedListener { sender: events_tx });
 
     if let AlternateScroll::Off = alternate_scroll {
         term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
@@ -216,16 +182,13 @@ pub(super) fn new_term(
 
 pub(super) fn spawn_event_loop(
     term: Arc<AlacrittyTermLock>,
-    events_tx: UnboundedSender<PtyEvent>,
+    events_tx: UnboundedSender<TerminalBackendEvent>,
     pty: AlacrittyPty,
     drain_on_exit: bool,
 ) -> Result<PtySender> {
     let event_loop = EventLoop::new(
         term,
-        ZedListener {
-            sender: events_tx,
-            generation: 0,
-        },
+        ZedListener { sender: events_tx },
         pty,
         drain_on_exit,
         false,
@@ -274,18 +237,6 @@ pub(super) fn selection_text(term: &AlacrittyTerm) -> Option<String> {
 
 pub(super) fn scroll_to_point(term: &mut AlacrittyTerm, point: Point) {
     term.scroll_to_point(point.to_alacritty());
-}
-
-pub(super) fn vi_goto_point(term: &mut AlacrittyTerm, point: Point) {
-    term.vi_goto_point(point.to_alacritty());
-}
-
-pub(super) fn toggle_vi_mode(term: &mut AlacrittyTerm) {
-    term.toggle_vi_mode();
-}
-
-pub(super) fn vi_motion(term: &mut AlacrittyTerm, motion: ViMotion) {
-    term.vi_motion(motion.to_alacritty());
 }
 
 fn alacritty_cursor_style(cursor_shape: SettingsCursorShape) -> AlacCursorStyle {
@@ -348,9 +299,7 @@ impl From<AlacTermEvent> for TerminalBackendEvent {
 
 impl EventListener for ZedListener {
     fn send_event(&self, event: AlacTermEvent) {
-        self.sender
-            .unbounded_send(PtyEvent::Event(event.into(), self.generation))
-            .ok();
+        self.sender.unbounded_send(event.into()).ok();
     }
 }
 
@@ -362,29 +311,6 @@ impl Scroll {
             Self::PageDown => AlacScroll::PageDown,
             Self::Top => AlacScroll::Top,
             Self::Bottom => AlacScroll::Bottom,
-        }
-    }
-}
-
-impl ViMotion {
-    fn to_alacritty(self) -> AlacViMotion {
-        match self {
-            Self::Up => AlacViMotion::Up,
-            Self::Down => AlacViMotion::Down,
-            Self::Left => AlacViMotion::Left,
-            Self::Right => AlacViMotion::Right,
-            Self::First => AlacViMotion::First,
-            Self::Last => AlacViMotion::Last,
-            Self::FirstOccupied => AlacViMotion::FirstOccupied,
-            Self::High => AlacViMotion::High,
-            Self::Middle => AlacViMotion::Middle,
-            Self::Low => AlacViMotion::Low,
-            Self::WordLeft => AlacViMotion::WordLeft,
-            Self::WordRight => AlacViMotion::WordRight,
-            Self::WordRightEnd => AlacViMotion::WordRightEnd,
-            Self::Bracket => AlacViMotion::Bracket,
-            Self::ParagraphUp => AlacViMotion::ParagraphUp,
-            Self::ParagraphDown => AlacViMotion::ParagraphDown,
         }
     }
 }
@@ -442,50 +368,6 @@ impl Selection {
     }
 }
 
-impl Hyperlink {
-    pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
-        Self {
-            data: HyperlinkData::Owned {
-                id: id.map(|id| Arc::from(id.to_string())),
-                uri: Arc::from(uri),
-            },
-        }
-    }
-
-    pub fn id(&self) -> Option<&str> {
-        match &self.data {
-            HyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
-            HyperlinkData::Owned { id, .. } => id.as_deref(),
-        }
-    }
-
-    pub fn uri(&self) -> &str {
-        match &self.data {
-            HyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
-            HyperlinkData::Owned { uri, .. } => uri,
-        }
-    }
-
-    fn from_alacritty(hyperlink: AlacHyperlink) -> Self {
-        Self {
-            data: HyperlinkData::Alacritty(hyperlink),
-        }
-    }
-}
-
-fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> Hyperlink {
-    Hyperlink::from_alacritty(hyperlink)
-}
-
-impl From<Hyperlink> for AlacHyperlink {
-    fn from(hyperlink: Hyperlink) -> Self {
-        match hyperlink.data {
-            HyperlinkData::Alacritty(hyperlink) => hyperlink,
-            HyperlinkData::Owned { id, uri } => Self::new(id.as_deref(), uri.to_string()),
-        }
-    }
-}
-
 fn terminal_cell_from_alacritty(cell: &AlacCell) -> Cell {
     Cell { cell: cell.clone() }
 }
@@ -531,7 +413,7 @@ impl Cell {
 
     #[inline]
     pub fn hyperlink(&self) -> Option<Hyperlink> {
-        self.cell.hyperlink().map(terminal_hyperlink_from_alacritty)
+        self.cell.hyperlink().map(Hyperlink)
     }
 
     #[inline]
@@ -584,27 +466,6 @@ impl Cell {
         self.cell
             .flags
             .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
-    }
-}
-
-impl<'a> RenderableCells<'a> {
-    pub(super) fn new(cells: GridIterator<'a, AlacCell>) -> Self {
-        Self { cells }
-    }
-}
-
-impl Iterator for RenderableCells<'_> {
-    type Item = IndexedCell;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.cells.next().map(|cell| IndexedCell {
-            point: terminal_point_from_alacritty(cell.point),
-            cell: terminal_cell_from_alacritty(cell.cell),
-        })
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.cells.size_hint()
     }
 }
 
@@ -822,48 +683,6 @@ fn terminal_selection_range_from_alacritty(range: AlacSelectionRange) -> Selecti
     }
 }
 
-pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
-    term.clear_screen(ClearMode::Saved);
-
-    let cursor = term.grid().cursor.point;
-
-    term.grid_mut().reset_region(..cursor.line);
-
-    let line = term.grid()[cursor.line][..Column(term.grid().columns())]
-        .iter()
-        .cloned()
-        .enumerate()
-        .collect::<Vec<(usize, AlacCell)>>();
-
-    for (index, cell) in line {
-        term.grid_mut()[Line(0)][Column(index)] = cell;
-    }
-
-    term.grid_mut().cursor.point = AlacPoint::new(Line(0), term.grid_mut().cursor.point.column);
-    let new_cursor = term.grid().cursor.point;
-
-    if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
-        term.grid_mut().reset_region((new_cursor.line + 1)..);
-    }
-}
-
-pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
-    term.grid_mut().truncate();
-}
-
-pub(super) fn used_lines(term: &Term<ZedListener>) -> usize {
-    if term.mode().contains(TermMode::ALT_SCREEN) {
-        return term.total_lines();
-    }
-    let grid = term.grid();
-    let cursor_line = grid.cursor.point.line.0.max(0) as usize;
-    let last_occupied_line = (cursor_line + 1..term.screen_lines())
-        .rev()
-        .find(|&line| !grid[Line(line as i32)].is_clear())
-        .unwrap_or(cursor_line);
-    term.history_size() + last_occupied_line + 1
-}
-
 fn adjusted_last_hovered_word(
     grid: &Grid<AlacCell>,
     last_content: &Content,
@@ -977,70 +796,6 @@ pub(super) fn total_lines(term: &Term<ZedListener>) -> usize {
     term.total_lines()
 }
 
-pub(super) fn screen_lines(term: &Term<ZedListener>) -> usize {
-    term.screen_lines()
-}
-
-pub(super) fn full_content_range(term: &Term<ZedListener>) -> Range {
-    let start = AlacPoint::new(term.topmost_line(), Column(0));
-    let end = AlacPoint::new(term.bottommost_line(), term.last_column());
-    Range::from_alacritty(start..=end)
-}
-
-pub(super) fn last_non_empty_lines(term: &Term<ZedListener>, line_count: usize) -> Vec<String> {
-    let grid = term.grid();
-    let mut lines = Vec::new();
-
-    let mut current_line = grid.bottommost_line().0;
-    let topmost_line = grid.topmost_line().0;
-
-    while current_line >= topmost_line && lines.len() < line_count {
-        let (logical_line_start, logical_line) =
-            logical_line_for_row(grid, current_line, topmost_line);
-
-        if let Some(line) = process_line(logical_line) {
-            lines.push(line);
-        }
-
-        current_line = logical_line_start - 1;
-    }
-
-    lines.reverse();
-    lines
-}
-
-pub(super) fn update_vi_cursor_for_scroll(term: &mut Term<ZedListener>, scroll: Scroll) {
-    match scroll {
-        Scroll::Delta(delta) => {
-            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, delta);
-        }
-        Scroll::PageUp => {
-            let lines = term.screen_lines() as i32;
-            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
-        }
-        Scroll::PageDown => {
-            let lines = -(term.screen_lines() as i32);
-            term.vi_mode_cursor = term.vi_mode_cursor.scroll(term, lines);
-        }
-        Scroll::Top => {
-            let point = AlacPoint::new(term.topmost_line(), Column(0));
-            term.vi_mode_cursor = ViModeCursor::new(point);
-        }
-        Scroll::Bottom => {
-            let point = AlacPoint::new(term.bottommost_line(), Column(0));
-            term.vi_mode_cursor = ViModeCursor::new(point);
-        }
-    }
-}
-
-pub(super) fn update_selection_to_vi_cursor(term: &mut Term<ZedListener>) -> Option<Point> {
-    let mut selection = term.selection.take()?;
-    let point = term.vi_mode_cursor.point;
-    selection.update(point, AlacDirection::Right);
-    term.selection = Some(selection);
-    Some(terminal_point_from_alacritty(point))
-}
-
 pub(super) fn find_from_terminal_point(
     term: &AlacrittyTerm,
     point: Point,
@@ -1049,44 +804,6 @@ pub(super) fn find_from_terminal_point(
 ) -> Option<HyperlinkMatch> {
     let point = point.to_alacritty().grid_clamp(term, Boundary::Grid);
     hyperlinks::find_from_grid_point(term, point, regex_searches, path_style)
-}
-
-fn logical_line_for_row(grid: &Grid<AlacCell>, current: i32, topmost: i32) -> (i32, String) {
-    let start = find_logical_line_start(grid, current, topmost);
-    let mut line = String::new();
-    for row in start..=current {
-        line.push_str(&row_to_string(&grid[Line(row)]));
-    }
-    (start, line)
-}
-
-fn find_logical_line_start(grid: &Grid<AlacCell>, current: i32, topmost: i32) -> i32 {
-    let mut line_start = current;
-    while line_start > topmost {
-        let previous_line = Line(line_start - 1);
-        let last_cell = &grid[previous_line][Column(grid.columns() - 1)];
-        if !last_cell.flags.contains(Flags::WRAPLINE) {
-            break;
-        }
-        line_start -= 1;
-    }
-    line_start
-}
-
-fn row_to_string(row: &Row<AlacCell>) -> String {
-    row[..Column(row.len())]
-        .iter()
-        .map(|cell| cell.c)
-        .collect::<String>()
-}
-
-fn process_line(line: String) -> Option<String> {
-    let trimmed = line.trim_end().to_string();
-    if !trimmed.is_empty() {
-        Some(trimmed)
-    } else {
-        None
-    }
 }
 
 pub(super) fn search_matches(term: &AlacrittyTerm, searcher: Search) -> Vec<Range> {
@@ -1110,16 +827,6 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-
-    #[test]
-    fn terminal_hyperlink_from_alacritty_keeps_alacritty_storage() {
-        let hyperlink = AlacHyperlink::new(Some("id"), "https://example.com".to_string());
-        let hyperlink = terminal_hyperlink_from_alacritty(hyperlink);
-
-        assert!(matches!(&hyperlink.data, HyperlinkData::Alacritty(_)));
-        assert_eq!(hyperlink.id(), Some("id"));
-        assert_eq!(hyperlink.uri(), "https://example.com");
-    }
 
     #[test]
     fn terminal_cell_from_alacritty_shares_extra_storage() {
@@ -1192,10 +899,7 @@ mod tests {
         let mut term = Term::new(
             config,
             &TerminalBounds::default(),
-            ZedListener {
-                sender: events_tx,
-                generation: 0,
-            },
+            ZedListener { sender: events_tx },
         );
         for character in "└─zms-demo.target".chars() {
             term.input(character);

@@ -58,7 +58,7 @@ impl Default for RegexSearches {
 }
 
 impl RegexSearches {
-    pub(crate) fn new(
+    pub fn new(
         path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
         path_hyperlink_timeout: Duration,
     ) -> Self {
@@ -180,22 +180,14 @@ fn normalize_hyperlink_match(
         // Use Url::to_file_path() to properly handle Windows drive letters
         // (e.g., file:///C:/path -> C:\path)
         if maybe_url_or_path.starts_with("file://") {
-            if let Ok(url) = Url::parse(&maybe_url_or_path) {
-                if let Ok(path) = url.to_file_path_ext(path_style) {
-                    return HyperlinkMatch {
-                        text: path.to_string_lossy().into_owned(),
-                        is_url: false,
-                        range,
-                    };
-                } else if let Some(path) = try_osc8_url_to_path(url)
-                    && path_style.is_posix()
-                {
-                    return HyperlinkMatch {
-                        text: path,
-                        is_url: false,
-                        range,
-                    };
-                }
+            if let Ok(url) = Url::parse(&maybe_url_or_path)
+                && let Ok(path) = url.to_file_path_ext(path_style)
+            {
+                return HyperlinkMatch {
+                    text: path.to_string_lossy().into_owned(),
+                    is_url: false,
+                    range,
+                };
             }
             // Fallback: strip file:// prefix if URL parsing fails
             let path = maybe_url_or_path
@@ -220,22 +212,6 @@ fn normalize_hyperlink_match(
             range,
         }
     }
-}
-
-// OSC 8 mandates that file:// URIs must be encoded as file://{host}{path}
-// We need to skip the {host} part if it's set
-fn try_osc8_url_to_path(url: url::Url) -> Option<String> {
-    use percent_encoding::percent_decode;
-    if url.scheme() != "file" {
-        return None;
-    }
-
-    let bytes = url
-        .path_segments()?
-        .skip(1)
-        .flat_map(|segment| percent_decode(segment.as_bytes()))
-        .collect::<Vec<u8>>();
-    bytes.try_into().ok()
 }
 
 fn sanitize_url_punctuation<T: EventListener>(
@@ -1232,7 +1208,7 @@ mod tests {
             }
 
             #[test]
-            pub fn cargo_hyperlink_benchmark() {
+            pub(crate) fn cargo_hyperlink_benchmark() {
                 const LINE: &str = "    Compiling terminal v0.1.0 (/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal)\r\n";
                 thread_local! {
                     static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
@@ -1250,7 +1226,7 @@ mod tests {
             }
 
             #[test]
-            pub fn rust_hyperlink_benchmark() {
+            pub(crate) fn rust_hyperlink_benchmark() {
                 const LINE: &str = "    --> /Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42\r\n";
                 thread_local! {
                     static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
@@ -1268,7 +1244,7 @@ mod tests {
             }
 
             #[test]
-            pub fn ls_hyperlink_benchmark() {
+            pub(crate) fn ls_hyperlink_benchmark() {
                 const LINE: &str = "Cargo.toml        experiments        notebooks        rust-toolchain.toml    tooling\r\n";
                 thread_local! {
                     static TEST_TERM_AND_POINT: (Term<VoidListener>, AlacPoint) =
@@ -1287,7 +1263,7 @@ mod tests {
 
             #[test]
             // https://github.com/zed-industries/zed/pull/44407
-            pub fn pr_44407_hyperlink_benchmark() {
+            pub(crate) fn pr_44407_hyperlink_benchmark() {
                 const LINE: &str = "-748, 706, 163, 222, -980, 949, 381, -568, 199, 501, 760, -821, 90, -451, 183, 867, -351, -810, -762, -109, 423, 84, 14, -77, -820, -345, 74, -791, 930, -618, -900, 862, -959, 289, -19, 471, -757, 793, 155, -554, 249, 830, 402, 732, -731, -866, -720, -703, -257, -439, 731, 872, -489, 676, -167, 613, -698, 415, -80, -453, -896, 333, -511, 621, -450, 624, -309, -575, 177, 141, 891, -104, -97, -367, -599, -675, 607, -225, -760, 552, -465, 804, 55, 282, 104, -929, -252,\
 -311, 900, 550, 599, -80, 774, 553, 837, -395, 541, 953, 154, -396, -596, -111, -802, -221, -337, -633, -73, -527, -82, -658, -264, 222, 375, 434, 204, -756, -703, 303, 239, -257, -365, -351, 904, 364, -743, -484, 655, -542, 446, 888, 632, -167, -260, 716, 150, 806, 723, 513, -118, -323, -683, 983, -564, 358, -16, -287, 277, -607, 87, 365, -1, 164, 401, 257, 369, -893, 145, -969, 375, -53, 541, -408, -865, 753, 258, 337, -886, 593, -378, -528, 191, 204, 566, -61, -621, 769, 524, -628, 6,\
 249, 896, -785, -776, 321, -681, 604, -740, 886, 426, -480, -983, 23, -247, 125, -666, 913, 842, -460, -797, -483, -58, -565, -587, -206, 197, 715, 764, -97, 457, -149, -226, 261, 194, -390, 431, 180, -778, 829, -657, -668, 397, 859, 152, -178, 677, -18, 687, -247, 96, 466, -572, 478, 622, -143, -25, -471, 265, 335, 957, 152, -951, -647, 670, 57, 152, -115, 206, 87, 629, -798, -125, -725, -31, 844, 398, -876, 44, 963, -211, 518, -8, -103, -999, 948, 823, 149, -803, 769, -236, -683, 527,\
@@ -1350,7 +1326,7 @@ mod tests {
 
             #[test]
             // https://github.com/zed-industries/zed/issues/44510
-            pub fn issue_44510_hyperlink_benchmark() {
+            pub(crate) fn issue_44510_hyperlink_benchmark() {
                 const LINE: &str = "..............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................\
 ..............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................\
 ..............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................\
@@ -1382,7 +1358,7 @@ mod tests {
                 });
             }
 
-            pub fn find_from_grid_point_bench(
+            pub(crate) fn find_from_grid_point_bench(
                 term: &Term<VoidListener>,
                 point: AlacPoint,
             ) -> Option<HyperlinkMatch> {
@@ -1425,28 +1401,6 @@ mod tests {
             ($file_iri:literal) => { { test_hyperlink!(concat!("‹«👉", $file_iri, "»›"); FileIri) } };
         }
 
-        #[cfg(not(target_os = "windows"))]
-        #[test]
-        fn absolute_file_iri() {
-            test_file_iri!("file:///test/cool/index.rs");
-            test_file_iri!("file:///test/cool/");
-        }
-
-        mod issues {
-            #[cfg(not(target_os = "windows"))]
-            #[test]
-            fn issue_file_iri_with_percent_encoded_characters() {
-                // Non-space characters
-                // file:///test/Ῥόδος/
-                test_file_iri!("file:///test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/"); // URI
-
-                // Spaces
-                test_file_iri!("file:///te%20st/co%20ol/index.rs");
-                test_file_iri!("file:///te%20st/co%20ol/");
-            }
-        }
-
-        #[cfg(target_os = "windows")]
         mod windows {
             mod issues {
                 // The test uses Url::to_file_path(), but it seems that the Url crate doesn't
