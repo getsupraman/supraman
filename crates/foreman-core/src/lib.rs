@@ -2,7 +2,6 @@ mod discover;
 mod error;
 mod events;
 pub mod fs;
-mod migrate;
 mod model;
 pub mod paths;
 mod plugin;
@@ -21,7 +20,6 @@ pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
 };
-pub use migrate::migrate_home;
 pub use model::{Repo, Workspace};
 pub use plugin::{HOOK_EXE, find_plugin_dir, install_hook_exe};
 pub use registry::{Registry, home_from};

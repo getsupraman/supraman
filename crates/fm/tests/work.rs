@@ -17,7 +17,8 @@ fn fixture(name: &str) -> String {
 /// A scratch home with settings naming `url`; signed in when `oauth` is given.
 fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("settings.toml"), format!("workstate_url = '{url}'
+    std::fs::write(dir.path().join("settings.toml"), format!("[workstate]
+url = '{url}'
 ")).unwrap();
     if oauth.is_some() {
         Auth::open(dir.path()).sign_in(url, &http_browser()).unwrap();

@@ -3817,3 +3817,45 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   way it subtracted the search box alone. Anything else in the gap still fails. Reproduced with `plugins`
   renamed: tree at 454.7, `notices-area` 145 + `search-box` 34 of 192, 13 px left → 7f passes. Red: `notices-area`
   left out of the list → the controller's exact failure.
+
+## 2026-10-29 — m5/52 the one-time migrations that have run are removed
+
+René, 2026-10-29: "the one time migration code could be removed now". The controller saw René's 438c727c0bea
+start and migrate: `settings.toml` is in tables and the refresh token is in `oauth\secrets\<hash>.bin`.
+
+- **Inventory** (what each reads, since when, verdict):
+  - `foreman_core::migrate_home` (m2x/2, 2026-10-23): `platforms/` → `workspaces/`, and `supervisor/<w>.toml`'s
+    `platform` field, role and `fm-<w>-platform` session renamed. It ran at every app start and `fm` registry
+    command, so René's home went through it six days ago. **Removed** with `DesiredState`'s
+    `#[serde(alias = "platform")]` and its tests (core, supervisor, `fm/tests/workspace.rs`). A home that still has
+    `platforms/` now shows no workspaces and is fixed by renaming the folder.
+  - Flat `settings.toml` keys → tables (m5/44.13, `settings.rs` `take` and `Section::FIELDS`' flat names).
+    **Removed.** `FIELDS` lists the table's key names only. A key outside every table, whether an old flat name
+    or `workstate_env`, gets the notice "`<key>` is not in a table; it is ignored". It keeps no value but stays
+    in `Settings::other`, so a save loses nothing and the human can move it by hand.
+  - Credential Manager → `FileStore` (m5/44.18): `CredentialStore`, `LEGACY_PREFIX`, the move in
+    `FileStore::get`, the no-replace `write` with `MoveFileExW`, and the split-parts code. **Removed** with their
+    tests and the `FileStore::new(home, legacy)` parameter, so `FileStore::new(home)`. `foreman-core` no longer
+    needs `getrandom`, `Win32_Security_Credentials` or `Win32_Storage_FileSystem`. A token still only in
+    Credential Manager now means one new sign-in.
+  - `fm hook`'s `FOREMAN_PLATFORM` / `FOREMAN_ROLE=platform` fallback (m2x/2): already gone. `fm/tests/hook.rs`
+    pins that it is not read. **Nothing to do.**
+  - `WorkStateSettings::origin` dropping a `…/mcp` path: **kept**. It is the one origin rule (`foreman_core::url`),
+    not a migration. Only the comment that called it "an older file's" URL changed.
+  - `MintedSession`'s `#[serde(default)]` fields (`claude_session_id`, `last_active`, `origin`), stars,
+    dismissals, `hands.json`, `servers.json`: **kept**. They are optional fields of today's format, not a reader
+    of an old one.
+  - `foreman_workstate::model`'s legacy agent label: **kept**. WorkState, another program, writes it.
+  - Claude's files (transcripts, `claude agents`, hook payloads): **kept**, written by another program.
+  - `selftest_supervise.rs:125` "as a legacy desired state has it: the relay first": a selftest file belongs to
+    m5/44.19, so not touched. It reads no old format: `set_relay` puts the relay first today too.
+- **Tests on today's shapes, no real files:** `a_tables_file_as_written_today_loads_and_saves_unchanged`, a
+  four-table file shaped like René's with made-up values, loads with no notice and saves back the same tables.
+  `a_token_file_in_todays_layout_loads` builds `<home>/oauth/secrets/<sha256 hex>.bin` by hand with a DPAPI blob
+  under today's entropy. Then `FileStore` and `default_store` both read it. Every other settings test now
+  writes tables; `fm/tests/work.rs`'s scratch home wrote a flat `workstate_url` and now writes `[workstate] url`.
+- **Red checks:** notice loop off → `a_key_outside_a_table_is_a_notice_and_the_rest_of_the_file_stands` fails;
+  file name `{:X}` instead of `{:x}` → `a_token_file_in_todays_layout_loads` fails. Both restored.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-52\target`): release build ok; `cargo test --release --workspace` 652
+  passed, 0 failed. `--selftest` ran once and passed steps 1 to 7b, then failed 7c "window not found" (F-93, as the
+  brief expects). The controller runs the selftest gate.

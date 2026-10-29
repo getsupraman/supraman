@@ -22,8 +22,7 @@ pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono
 /// A table of `settings.toml` Foreman owns.
 pub trait Section: Serialize + DeserializeOwned + Default {
     const KEY: &'static str;
-    /// Each key's name in a flat file written before the tables, and its name in this table.
-    const FIELDS: &'static [(&'static str, &'static str)];
+    const FIELDS: &'static [&'static str];
 }
 
 /// `[sessions]`: what the supervisor launches and how many may work at once.
@@ -54,12 +53,7 @@ impl Default for SessionSettings {
 
 impl Section for SessionSettings {
     const KEY: &'static str = "sessions";
-    const FIELDS: &'static [(&'static str, &'static str)] = &[
-        ("max_working", "max_working"),
-        ("extra_plugin_dirs", "extra_plugin_dirs"),
-        ("run_as_admin", "run_as_admin"),
-        ("relay_idle_secs", "relay_idle_secs"),
-    ];
+    const FIELDS: &'static [&'static str] = &["max_working", "extra_plugin_dirs", "run_as_admin", "relay_idle_secs"];
 }
 
 impl SessionSettings {
@@ -72,15 +66,14 @@ impl SessionSettings {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkStateSettings {
-    /// An origin like `https://workstate.example`; an older file's `…/mcp` URL means its origin. Unset:
-    /// [`DEFAULT_WORKSTATE_URL`].
+    /// An origin like `https://workstate.example`; any path is dropped. Unset: [`DEFAULT_WORKSTATE_URL`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
 
 impl Section for WorkStateSettings {
     const KEY: &'static str = "workstate";
-    const FIELDS: &'static [(&'static str, &'static str)] = &[("workstate_url", "url")];
+    const FIELDS: &'static [&'static str] = &["url"];
 }
 
 impl WorkStateSettings {
@@ -109,7 +102,7 @@ pub struct AppearanceSettings {
 
 impl Section for AppearanceSettings {
     const KEY: &'static str = "appearance";
-    const FIELDS: &'static [(&'static str, &'static str)] = &[("theme", "theme"), ("terminal_colors", "terminal_colors")];
+    const FIELDS: &'static [&'static str] = &["theme", "terminal_colors"];
 }
 
 /// `[terminal]`: every terminal tab's font.
@@ -130,8 +123,7 @@ pub struct TerminalSettings {
 
 impl Section for TerminalSettings {
     const KEY: &'static str = "terminal";
-    const FIELDS: &'static [(&'static str, &'static str)] =
-        &[("terminal_font_size", "font_size"), ("terminal_font_family", "font_family"), ("terminal_ligatures", "ligatures")];
+    const FIELDS: &'static [&'static str] = &["font_size", "font_family", "ligatures"];
 }
 
 impl TerminalSettings {
@@ -186,11 +178,11 @@ pub struct WindowSettings {
 
 impl Section for WindowSettings {
     const KEY: &'static str = "window";
-    const FIELDS: &'static [(&'static str, &'static str)] = &[("left_width", "left_width")];
+    const FIELDS: &'static [&'static str] = &["left_width"];
 }
 
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
-/// [`Section`]; a file of flat keys loads into them and is written as tables at its next save.
+/// [`Section`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
     pub sessions: SessionSettings,
@@ -199,7 +191,7 @@ pub struct Settings {
     pub terminal: TerminalSettings,
     pub window: WindowSettings,
     /// Every table and key Foreman does not own, as read and written back: a plugin's `[gitman]`, a newer
-    /// build's keys, a retired key such as `workstate_env`. Read and written through [`Settings::section`].
+    /// build's keys, a key outside any table. Read and written through [`Settings::section`].
     pub other: Table,
 }
 
@@ -374,11 +366,16 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
     let appearance = take(&mut table, path, &mut notices);
     let terminal = take(&mut table, path, &mut notices);
     let window = take(&mut table, path, &mut notices);
+    for (key, value) in &table {
+        if !value.is_table() {
+            notices.push(format!("{}: {key} is not in a table; it is ignored", path.display()));
+        }
+    }
     Ok((Settings { sessions, workstate, appearance, terminal, window, other: table }, notices))
 }
 
-/// `S` out of `table`: its own table, with the flat keys of an older file moved in, each key checked on its
-/// own. What `S` does not know stays in `table` for [`Settings::other`].
+/// `S` out of its own table in `table`, each key checked on its own. What `S` does not know stays in
+/// `table` for [`Settings::other`].
 fn take<S: Section>(table: &mut Table, path: &Path, notices: &mut Vec<String>) -> S {
     let at = path.display();
     let mut own = match table.remove(S::KEY) {
@@ -389,17 +386,8 @@ fn take<S: Section>(table: &mut Table, path: &Path, notices: &mut Vec<String>) -
             Table::new()
         }
     };
-    for (flat, key) in S::FIELDS {
-        if let Some(value) = table.remove(*flat) {
-            if own.contains_key(*key) {
-                notices.push(format!("{at}: {flat} is set in [{}] too, as {key}; the [{}] value is used", S::KEY, S::KEY));
-            } else {
-                own.insert(key.to_string(), value);
-            }
-        }
-    }
     let mut known = Table::new();
-    for (_, key) in S::FIELDS {
+    for key in S::FIELDS {
         let Some(value) = own.remove(*key) else { continue };
         let one = Table::from_iter([(key.to_string(), value.clone())]);
         match Value::Table(one).try_into::<S>() {
@@ -445,27 +433,6 @@ mod tests {
         fs::read_to_string(Settings::path(home)).unwrap().parse().unwrap()
     }
 
-    /// A saved file read back with every owned key at its flat name, as a file before the tables had it.
-    fn flattened(mut file: Table) -> Table {
-        fn back<S: Section>(file: &mut Table) {
-            let Some(Value::Table(mut own)) = file.remove(S::KEY) else { return };
-            for (flat, key) in S::FIELDS {
-                if let Some(value) = own.remove(*key) {
-                    file.insert(flat.to_string(), value);
-                }
-            }
-            if !own.is_empty() {
-                file.insert(S::KEY.into(), Value::Table(own));
-            }
-        }
-        back::<SessionSettings>(&mut file);
-        back::<WorkStateSettings>(&mut file);
-        back::<AppearanceSettings>(&mut file);
-        back::<TerminalSettings>(&mut file);
-        back::<WindowSettings>(&mut file);
-        file
-    }
-
     #[test]
     fn absent_is_default_and_round_trips_as_tables() {
         let home = tempfile::tempdir().unwrap();
@@ -484,7 +451,7 @@ mod tests {
         fn check<S: Section>(all: &S) {
             let Value::Table(written) = Value::try_from(all).unwrap() else { panic!() };
             let mut written: Vec<_> = written.keys().cloned().collect();
-            let mut listed: Vec<_> = S::FIELDS.iter().map(|(_, key)| key.to_string()).collect();
+            let mut listed: Vec<_> = S::FIELDS.iter().map(|key| key.to_string()).collect();
             written.sort();
             listed.sort();
             assert_eq!(written, listed, "[{}]", S::KEY);
@@ -495,117 +462,64 @@ mod tests {
         check(&s.appearance);
         check(&s.terminal);
         check(&s.window);
-        let flat: Vec<_> = [SessionSettings::FIELDS, WorkStateSettings::FIELDS, AppearanceSettings::FIELDS, TerminalSettings::FIELDS, WindowSettings::FIELDS]
-            .concat()
-            .into_iter()
-            .map(|(flat, _)| flat)
-            .collect();
-        assert_eq!(flat.len(), 11, "every key a flat file has held");
-        assert!(flat.iter().all(|key| !OWNED.contains(key)), "no flat key is a table's name");
     }
 
-    /// A flat file with every key the app reads, a retired key and a plugin's table: the save writes tables
-    /// and loses nothing.
+    /// The shape of a home's `settings.toml` today, with made-up values: loads with no notice, and a save
+    /// writes the same tables back.
     #[test]
-    fn a_flat_file_with_every_key_round_trips_with_nothing_lost() {
+    fn a_tables_file_as_written_today_loads_and_saves_unchanged() {
         let home = tempfile::tempdir().unwrap();
-        let flat = r#"max_working = 1
-workstate_url = "https://workstate.example/mcp"
-left_width = 512
-extra_plugin_dirs = ['C:\x\plugins\rlarch']
-run_as_admin = true
-relay_idle_secs = 20
-theme = "Foreman Dark"
-terminal_colors = "campbell"
-terminal_font_size = 20
-terminal_font_family = "Lucida Console"
-terminal_ligatures = false
-workstate_env = 'C:/x/.env'
+        let today = r#"[appearance]
+theme = "VS Code Dark Modern"
 
-[gitman]
-fetch_every_secs = 300
+[sessions]
+max_working = 20
+
+[window]
+left_width = 531
+
+[workstate]
+url = "https://workstate.example"
 "#;
-        let (s, notices) = load_text(home.path(), flat);
+        let (s, notices) = load_text(home.path(), today);
         assert!(notices.is_empty(), "{notices:?}");
-        let want = Settings { workstate: WorkStateSettings { url: Some("https://workstate.example/mcp".into()) }, other: s.other.clone(), ..every_key_set() };
-        assert_eq!(s, want);
-        assert_eq!(s.workstate.origin(), "https://workstate.example", "an older file's /mcp URL");
-        assert_eq!(s.other.keys().collect::<Vec<_>>(), ["gitman", "workstate_env"]);
-
+        assert_eq!(s.appearance.theme.as_deref(), Some("VS Code Dark Modern"));
+        assert_eq!((s.sessions.max_working, s.window.left_width), (20, Some(531)));
+        assert_eq!(s.workstate.origin(), "https://workstate.example");
+        assert!(s.other.is_empty(), "{:?}", s.other);
         s.save(home.path()).unwrap();
-        let file = saved(home.path());
-        for key in ["max_working", "workstate_url", "left_width", "theme", "terminal_font_size"] {
-            assert!(!file.contains_key(key), "{key} is in its table now");
-        }
-        assert_eq!(flattened(file), flat.parse::<Table>().unwrap(), "every value is where a flat reader finds it");
+        assert_eq!(saved(home.path()), today.parse::<Table>().unwrap());
         assert_eq!(Settings::load(home.path()).unwrap(), s);
     }
 
-    /// Every `settings.toml` this repo has written (the defaults, the tests' homes, the shapes LEARNINGS
-    /// shows) loads with its values and is written as tables with nothing lost.
+    /// A key outside any table, a former flat name or not, is named in a notice and keeps no value; the
+    /// save keeps it where it is.
     #[test]
-    fn every_shape_this_repo_has_written_migrates() {
-        let shapes = [
-            "max_working = 20\n",
-            "max_working = 3\nextra_plugin_dirs = ['C:\\Projects\\Skills\\plugins\\rlarch']\n",
-            "max_working = 20\nworkstate_env = 'C:/Users/x/.workstate/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n",
-            "max_working = 20\nleft_width = 531\n",
-            "max_working = 20\nrelay_idle_secs = 60\nworkstate_url = \"http://127.0.0.1:1\"\n",
-            "max_working = 20\ntheme = \"Foreman Dark\"\nterminal_colors = \"campbell\"\n",
-            "max_working = 20\nterminal_font_size = 17.6\n",
-            "max_working = 20\nterminal_font_size = 16\nterminal_font_family = \"Consolas\"\nterminal_ligatures = false\n",
-            "max_working = 20\nrun_as_admin = true\n",
-            "max_working = 20\nworkstate_url = \"https://workstate.dikaia.ai\"\nleft_width = 531\ntheme = \"VS Code Dark Modern\"\n",
-        ];
-        for flat in shapes {
-            let home = tempfile::tempdir().unwrap();
-            let (s, notices) = load_text(home.path(), flat);
-            assert!(notices.is_empty(), "{flat}: {notices:?}");
-            let old: Table = flat.parse().unwrap();
-            assert_eq!(s.sessions.max_working as i64, old["max_working"].as_integer().unwrap(), "{flat}");
-            assert_eq!(s.workstate.url.as_deref(), old.get("workstate_url").and_then(Value::as_str), "{flat}");
-            assert_eq!(s.window.left_width.map(i64::from), old.get("left_width").and_then(Value::as_integer), "{flat}");
-            assert_eq!(s.appearance.theme.as_deref(), old.get("theme").and_then(Value::as_str), "{flat}");
-            assert_eq!(s.sessions.run_as_admin, old.get("run_as_admin").and_then(Value::as_bool).unwrap_or(false), "{flat}");
-
-            s.save(home.path()).unwrap();
-            let again = Settings::load(home.path()).unwrap();
-            assert_eq!(again, s, "{flat}");
-            let mut want = old.clone();
-            if let Some(size) = want.get("terminal_font_size").and_then(Value::as_float) {
-                want.insert("terminal_font_size".into(), Value::Integer(size.round() as i64));
-            }
-            assert_eq!(flattened(saved(home.path())), want, "{flat}");
-        }
-    }
-
-    /// The copy of a real file at `FOREMAN_SETTINGS_SAMPLE`, migrated in a test home:
-    /// `FOREMAN_SETTINGS_SAMPLE=<file> cargo test -p foreman-core -- --ignored a_real_settings_file`.
-    #[test]
-    #[ignore = "needs FOREMAN_SETTINGS_SAMPLE"]
-    fn a_real_settings_file_migrates_with_the_same_values() {
-        let sample = std::env::var_os("FOREMAN_SETTINGS_SAMPLE").expect("FOREMAN_SETTINGS_SAMPLE");
-        let flat = fs::read_to_string(sample).unwrap();
+    fn a_key_outside_a_table_is_a_notice_and_the_rest_of_the_file_stands() {
         let home = tempfile::tempdir().unwrap();
-        let (s, notices) = load_text(home.path(), &flat);
-        assert!(notices.is_empty(), "{notices:?}");
+        let (s, notices) = load_text(home.path(), "max_working = 9\nworkstate_env = 'C:/x/.env'\n\n[sessions]\nmax_working = 4\n\n[gitman]\nfetch = true\n");
+        assert_eq!(s.sessions.max_working, 4);
+        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert!(notices.iter().any(|n| n.ends_with("max_working is not in a table; it is ignored")), "{notices:?}");
+        assert!(notices.iter().any(|n| n.ends_with("workstate_env is not in a table; it is ignored")), "{notices:?}");
+        assert!(notices.iter().all(|n| n.contains("settings.toml")), "{notices:?}");
+        let (s, _) = load_text(home.path(), "theme = \"Foreman Dark\"\nleft_width = 300\n");
+        assert_eq!((s.appearance.theme.clone(), s.window.left_width), (None, None), "a flat file is all defaults");
         s.save(home.path()).unwrap();
-        assert_eq!(Settings::load(home.path()).unwrap(), s);
-        assert_eq!(flattened(saved(home.path())), flat.parse::<Table>().unwrap());
-        println!("{s:#?}");
+        assert_eq!(saved(home.path())["left_width"].as_integer(), Some(300), "nothing is dropped");
     }
 
     #[test]
     fn tables_and_keys_of_other_owners_survive_a_save_and_an_update() {
         let home = tempfile::tempdir().unwrap();
-        let text = "future = 1\n\n[gitman]\nfetch = true\n\n[gitman.remotes]\norigin = \"x\"\n\n[terminal]\nfont_size = 18\ncursor = \"bar\"\n";
+        let text = "[future]\nkey = 1\n\n[gitman]\nfetch = true\n\n[gitman.remotes]\norigin = \"x\"\n\n[terminal]\nfont_size = 18\ncursor = \"bar\"\n";
         let (s, notices) = load_text(home.path(), text);
         assert!(notices.is_empty(), "{notices:?}");
         assert_eq!(s.terminal.font_size(), 18);
         Settings::update(home.path(), |s| s.terminal.set_font_size(19)).unwrap();
         let file = saved(home.path());
         assert_eq!(file["gitman"]["remotes"]["origin"].as_str(), Some("x"));
-        assert_eq!(file["future"].as_integer(), Some(1));
+        assert_eq!(file["future"]["key"].as_integer(), Some(1));
         assert_eq!((file["terminal"]["cursor"].as_str(), file["terminal"]["font_size"].as_integer()), (Some("bar"), Some(19)));
     }
 
@@ -644,37 +558,26 @@ fetch_every_secs = 300
     }
 
     #[test]
-    fn a_key_set_both_flat_and_in_its_table_takes_the_table() {
-        let home = tempfile::tempdir().unwrap();
-        let (s, notices) = load_text(home.path(), "max_working = 9\n\n[sessions]\nmax_working = 4\n");
-        assert_eq!(s.sessions.max_working, 4);
-        assert_eq!(notices.len(), 1, "{notices:?}");
-        assert!(notices[0].contains("max_working is set in [sessions] too"), "{notices:?}");
-    }
-
-    #[test]
     fn partial_file_keeps_defaults() {
         let home = tempfile::tempdir().unwrap();
-        let (s, _) = load_text(home.path(), "workstate_url = \"http://x/mcp\"\n");
+        let (s, _) = load_text(home.path(), "[workstate]\nurl = \"http://x/mcp\"\n");
         assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
         assert_eq!(s.workstate.url.as_deref(), Some("http://x/mcp"));
         assert!(s.sessions.extra_plugin_dirs.is_empty());
         assert_eq!(s.sessions.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
-        assert_eq!(load_text(home.path(), "relay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
         assert_eq!(load_text(home.path(), "[sessions]\nrelay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
-        fs::write(Settings::path(home.path()), "max_working = = 3").unwrap();
+        fs::write(Settings::path(home.path()), "[sessions]\nmax_working = = 3").unwrap();
         assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })), "not TOML at all");
     }
 
     #[test]
-    fn workstate_url_is_an_origin_and_an_old_env_line_is_kept() {
+    fn workstate_url_is_an_origin() {
         let home = tempfile::tempdir().unwrap();
         assert_eq!(Settings::default().workstate.origin(), "https://workstate.dikaia.ai");
         assert_eq!(Settings::default().workstate.mcp_url(), "https://workstate.dikaia.ai/mcp");
-        let (s, _) = load_text(home.path(), "workstate_env = 'C:/x/.env'\nworkstate_url = \"http://127.0.0.1:5290/mcp\"\n");
-        assert_eq!(s.workstate.origin(), "http://127.0.0.1:5290", "an older file's /mcp URL");
-        s.save(home.path()).unwrap();
-        assert_eq!(saved(home.path())["workstate_env"].as_str(), Some("C:/x/.env"), "a key with no home is kept, and unused");
+        let (s, _) = load_text(home.path(), "[workstate]\nurl = \"http://127.0.0.1:5290/mcp\"\n");
+        assert_eq!(s.workstate.origin(), "http://127.0.0.1:5290");
+        assert_eq!(s.workstate.mcp_url(), "http://127.0.0.1:5290/mcp");
     }
 
     #[test]
@@ -694,15 +597,14 @@ fetch_every_secs = 300
         let home = tempfile::tempdir().unwrap();
         let load = |text: &str| load_text(home.path(), text).0;
         assert_eq!(Settings::default().terminal.font_size(), DEFAULT_TERMINAL_FONT_SIZE);
-        assert_eq!(load("max_working = 2\n").terminal.font_size(), 14, "missing");
-        assert_eq!(load("terminal_font_size = 18\n").terminal.font_size(), 18);
+        assert_eq!(load("[sessions]\nmax_working = 2\n").terminal.font_size(), 14, "missing");
         assert_eq!(load("[terminal]\nfont_size = 18\n").terminal.font_size(), 18);
-        assert_eq!(load("terminal_font_size = 17.6\n").terminal.font_size(), 18, "a float is rounded");
-        assert_eq!(load("terminal_font_size = 1\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
-        assert_eq!(load("terminal_font_size = -3\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
-        assert_eq!(load("terminal_font_size = 500\n").terminal.font_size(), MAX_TERMINAL_FONT_SIZE);
+        assert_eq!(load("[terminal]\nfont_size = 17.6\n").terminal.font_size(), 18, "a float is rounded");
+        assert_eq!(load("[terminal]\nfont_size = 1\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("[terminal]\nfont_size = -3\n").terminal.font_size(), MIN_TERMINAL_FONT_SIZE);
+        assert_eq!(load("[terminal]\nfont_size = 500\n").terminal.font_size(), MAX_TERMINAL_FONT_SIZE);
         for bad in ["\"big\"", "true", "[14]", "nan"] {
-            let s = load(&format!("max_working = 2\nterminal_font_size = {bad}\n"));
+            let s = load(&format!("[sessions]\nmax_working = 2\n\n[terminal]\nfont_size = {bad}\n"));
             assert_eq!(s.terminal.font_size(), 14, "{bad} is invalid");
             assert_eq!(s.sessions.max_working, 2, "{bad} does not cost the rest of the file");
         }
@@ -760,11 +662,11 @@ fetch_every_secs = 300
         let home = tempfile::tempdir().unwrap();
         let load = |text: &str| load_text(home.path(), text).0;
         assert!(Settings::default().terminal.ligatures(), "on unless set");
-        let s = load("terminal_font_family = \"Consolas\"\nterminal_ligatures = false\n");
+        let s = load("[terminal]\nfont_family = \"Consolas\"\nligatures = false\n");
         assert_eq!(s.terminal.font_family.as_deref(), Some("Consolas"));
         assert!(!s.terminal.ligatures());
-        for bad in ["terminal_font_family = 12\nterminal_ligatures = \"yes\"", "terminal_font_family = [\"x\"]\nterminal_ligatures = 0"] {
-            let s = load(&format!("max_working = 3\n{bad}\n"));
+        for bad in ["font_family = 12\nligatures = \"yes\"", "font_family = [\"x\"]\nligatures = 0"] {
+            let s = load(&format!("[sessions]\nmax_working = 3\n\n[terminal]\n{bad}\n"));
             assert_eq!((s.terminal.font_family.as_deref(), s.terminal.ligatures()), (None, true), "{bad}");
             assert_eq!(s.sessions.max_working, 3, "{bad} does not cost the rest of the file");
         }
@@ -785,7 +687,10 @@ fetch_every_secs = 300
     #[test]
     fn a_bad_key_keeps_its_default_and_is_named_while_the_rest_of_the_file_stands() {
         let home = tempfile::tempdir().unwrap();
-        let (s, notices) = load_text(home.path(), "max_working = \"many\"\nworkstate_url = \"https://ws.example\"\nrun_as_admin = \"yes\"\nleft_width = 300\n");
+        let (s, notices) = load_text(
+            home.path(),
+            "[sessions]\nmax_working = \"many\"\nrun_as_admin = \"yes\"\n\n[workstate]\nurl = \"https://ws.example\"\n\n[window]\nleft_width = 300\n",
+        );
         assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
         assert!(!s.sessions.run_as_admin);
         assert_eq!((s.workstate.url.as_deref(), s.window.left_width), (Some("https://ws.example"), Some(300)));
