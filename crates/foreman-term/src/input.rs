@@ -132,7 +132,8 @@ impl Terminal {
         }
     }
 
-    pub(crate) fn paste(&mut self, text: &str) {
+    /// Bracketed when the program enabled bracketed paste; otherwise line breaks go as returns.
+    pub fn paste(&mut self, text: &str) {
         let paste_text = if self.last_content.mode.contains(Modes::BRACKETED_PASTE) {
             format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
         } else {
@@ -425,6 +426,23 @@ mod tests {
                 [b"\x1b[200~x[201~y\x1b[201~".to_vec()]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_a_pasted_name_goes_without_a_return_and_leaves_the_clipboard(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("kept".to_string())));
+        let terminal = init_terminal_test(cx, b"");
+        terminal.update(cx, |terminal, _| {
+            terminal.paste("twin [d923d7]");
+            assert_eq!(terminal.take_input_log(), [b"twin [d923d7]".to_vec()]);
+        });
+        let terminal = init_terminal_test(cx, b"\x1b[?2004h");
+        terminal.update(cx, |terminal, _| {
+            terminal.paste("twin [d923d7]");
+            assert_eq!(terminal.take_input_log(), [b"\x1b[200~twin [d923d7]\x1b[201~".to_vec()]);
+        });
+        let kept = cx.update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
+        assert_eq!(kept.as_deref(), Some("kept"));
     }
 
     #[gpui::test]

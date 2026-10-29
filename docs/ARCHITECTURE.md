@@ -61,9 +61,9 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `fonts::{UI, MONO, icons}` — the UI's font families; never spell a family name in a view. The terminal's font is the user's (`Settings`).
 - `menu::{ContextMenu, MenuItem, item}` — every right-click menu, generic over the owner's action type; items paint under `menu-<key>`.
 - `confirm::Confirm` — a question before an action that cannot be taken back (`ask`), or a report with only its OK (`report`); the owner places it.
-- `toast::ToastSlot` — short feedback floating over a panel that goes by itself (`TOAST_FOR`).
+- `toast::ToastSlot` — short feedback floating over a panel that goes by itself (`TOAST_FOR`); `show` marks a done action with ✓, `show_why` says why nothing was done.
 - `notices::{NoticeKind, render, keep_dismissed, remove_one}` — a list of plain notices with a × each; the owner keeps the kinds and sources.
-- `tabs::{tab_strip, TabHeader, DraggedTab, reorder, cycled, sanitize}` — the tab strip with drag-to-reorder (`on_move(from, to)`; `DraggedTab { id }` is the payload any other drop target takes), tab cycling, and a program's OSC title as a tab label; tab state and order stay with the owner.
+- `tabs::{tab_strip, TabHeader, DraggedTab, DraggedSession, reorder, cycled, sanitize}` — the tab strip with drag-to-reorder (`on_move(from, to)`; `DraggedTab { id }` is the payload any other drop target takes, `DraggedSession { session_id }` a session row's; a terminal pane takes both and pastes the session's SendMessage name), tab cycling, and a program's OSC title as a tab label; tab state and order stay with the owner.
 - `hover_card::{HoverCard, tooltip}` — a hover card of a title and `label  value` rows.
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.

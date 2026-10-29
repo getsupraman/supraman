@@ -169,9 +169,13 @@ async fn drags(view: &Entity<FleetView>, [a, b, work]: [u64; 3], cx: &mut AsyncW
     ))
 }
 
-/// Left button down on `tab-<id>`, moved in steps to `to` and let go there, as a hand drags it.
 async fn drag(view: &Entity<FleetView>, id: u64, to: Point<Pixels>, shot: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
-    let from = scrolled_into_view(view, &format!("tab-{id}"), cx).await?.center();
+    drag_from(view, &format!("tab-{id}"), to, shot, cx).await
+}
+
+/// Left button down on what is painted under `key`, moved in steps to `to` and let go there, as a hand drags it.
+pub(crate) async fn drag_from(view: &Entity<FleetView>, key: &str, to: Point<Pixels>, shot: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let from = scrolled_into_view(view, key, cx).await?.center();
     let none = Modifiers::default();
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, pressed_button: None, modifiers: none }), cx);
