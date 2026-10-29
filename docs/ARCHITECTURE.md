@@ -38,7 +38,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `fs::load_json_or_notice` — a JSON state file whose loss is a notice, not an error (stars, dismissals).
 - `fs::append_capped` (with `fs::rotated`) — an append-only log rotated to `<file>.1` at a cap (event logs, `foreman.log`).
 - `paths::{user_home, claude_dir}` — the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
-- `paths::{normalize, path_key, main_checkout, linked_git_dir}` — path comparison and the `.git` file/dir walk without running git.
+- `paths::{normalize, path_key, within, key_within, main_checkout, linked_git_dir}` — path comparison (`within`: a folder or below it, never a sibling sharing a prefix) and the `.git` file/dir walk without running git.
 - `time::{now_ms, epoch_ms, modified_ms, hex6}` — epoch milliseconds and a scratch-name suffix.
 - `url::origin` (re-exported as `url_origin`; `foreman_workstate::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
 - `process::{command, run, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. Never `Command::new(..).output()` by hand.
@@ -47,7 +47,8 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `Settings::update` — every change to `settings.toml`: load, edit, save, retried against other writers. `Settings::load_with_notices` when a bad key should be shown.
 - `Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`) — a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `Registry` (`load_all`, `list`, `home_from`) — the workspaces at `<home>/workspaces/<name>.toml`; `load_all` where one corrupt file must not hide the rest (the supervisor), `list` where it should stop the caller.
-- `discover`, `rescan`, `scan`, `branch_at` — a folder to a workspace and its repos; shared by `fm workspace add` and the app's Add workspace.
+- `Workspace` (`model.rs`: `home`, `folders`, `scans`; `home()`, `contains`, `other_dirs`, `folder_at`, `add_folder`, `unique_folder_name`), `Folder` (`kind`: `git` or `plain`), `Scan`, `owners` — a workspace is a name, a home and a set of folders; a root-based file loads as one scan of its root. `owners` says which workspace a folder's supervised session belongs to (the first that has it enabled); `Registry::claim_folders` disables what another workspace owns.
+- `discover`, `rescan`, `scan`, `branch_at` — a folder to a workspace and its repos, and each scan run again; shared by `fm workspace add` and the app's Add workspace and Rescan.
 - `relay` (`send`, `tell`, `inbox_dir`, `outbox_dir`, `InboxWatcher`, …) — the relay's `inbox`/`outbox` files per workspace.
 - `events` (`append_event`, `EventReader`, `role_injection`) — the hook events `fm hook` appends per session.
 - `install_hook_exe`, `find_plugin_dir` — placing `fm.exe` in the plugin.
@@ -95,7 +96,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `proc_tree` — which claude session runs under a tab's shell.
 - `transcript` (`Transcripts`, `first_prompt`) — closed sessions from the transcript files, read only.
 - `forget::forget_transcript` — the one write under the claude dir (see delete confinement).
-- `assign` — mapping sessions onto a workspace's repos.
+- `assign` — mapping sessions onto a workspace's folders (deepest folder, then a worktree's main checkout), then its home.
 
 ### foreman-supervisor (`crates/foreman-supervisor/src/`)
 

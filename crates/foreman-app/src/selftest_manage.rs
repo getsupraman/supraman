@@ -348,14 +348,19 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     click(view, "add-workspace", cx).await?;
     until(view, cx, WITHIN, "the second review", |v| v.adding.as_ref().filter(|d| !d.scanning).map(|_| ())).await?;
     until(view, cx, WITHIN, "Save painted", |v| painted(v, "add-save").then_some(())).await?;
+    let again = view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name_text(cx))).unwrap_or_default();
     click(view, "add-save", cx).await?;
-    let refused = until(view, cx, WITHIN, "the refusal", |v| v.adding.as_ref().and_then(|d| d.error.clone())).await?;
-    if !refused.contains(&format!("already registered, as workspace {ADDED}")) {
-        bail!("the same folder again says: {refused}");
+    until(view, cx, WITHIN, "the second review closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let second = registry.load(&again).with_context(|| format!("the same folder again, saved as {again}"))?;
+    let flags: Vec<(String, bool)> = second.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
+    if flags != [("alpha".to_string(), false), ("beta".to_string(), true)] {
+        bail!("the same folder again as {again}: folders {flags:?}, expected alpha disabled (supervised in {ADDED}) and beta enabled");
     }
-    click(view, "add-cancel", cx).await?;
-    until(view, cx, WITHIN, "the review closed on Cancel", |v| v.adding.is_none().then_some(())).await?;
-    out.push(format!("the same folder again: \"{refused}\""));
+    let tag = format!("supervised-in-{again}/alpha");
+    until(view, cx, WITHIN, "the supervised-in tag", |v| painted(v, &tag).then_some(())).await?;
+    registry.remove(&again)?;
+    until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
+    out.push(format!("the same folder again registers as {again} with alpha disabled, tagged supervised in {ADDED}; removed"));
     out.push(single_repo(view, &registry, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);

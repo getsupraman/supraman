@@ -4060,3 +4060,87 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-54\target`): build ok, no warnings; `cargo test --release --workspace` 663
   passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
   `fm-selftest` sessions left.
+
+## 2026-10-29 — m5/55 workspaces as named sets of folders; tree design A
+
+- **Model** (`foreman_core::model`): a `Workspace` is `name`, `home` (optional; `home()` falls back to the first
+  folder), `created_at`, `[[scans]]` (`path`, `depth`) and `[[folders]]` (`name`, `path`, `kind = "git"|"plain"`,
+  `branch`, `has_claude_md`, `has_agents_md`, `enabled`, `added` for one added by hand). A file in the root-based
+  shape (`root` + `[[repos]]`) deserialises through `Stored`: `home = root`, one scan of the root whose depth is the
+  deepest `a/b` folder name (1 for every file so far), the repos as git folders in order. It is written back in the
+  new shape on the next save (Rescan, Enable/Disable). The folder `name` is stored, so `fm-<ws>-<repo>` never
+  changes with the shape; new names are made unique by slug (`unique_folder_name`, `-2`, `-3`).
+- **Session names kept** (`crates/foreman-supervisor/tests/workspace_files.rs`): a committed root-based fixture
+  (a root repo `Plat-root`, `Nomos.Pdf`, `_Logo`, `group/deep`) and René's `larchsys.toml` and `nomos.toml` (read
+  from the untracked `.claude/briefs/` copies when present; both were checked here) derive the same workspace,
+  relay and repo session names from the raw TOML, after load, and after a save in the new shape.
+- **Ownership** replaces `RootTaken`: `owners(workspaces)` gives each enabled folder (by `path_key`) to the first
+  workspace in registry order that enables it. `Registry::claim_folders` disables, in a workspace being added (fm
+  `workspace add`, the app's Add workspace) or in the folders a Rescan found, those another workspace owns, and
+  reports them (`notice: <folder> is supervised in workspace <owner>; disabled here`; the app's toast). `fm want`
+  refuses a folder another workspace owns. The same folder can now be registered twice; `CoreError::RootTaken` is
+  gone.
+- **Rescan** runs every scan again: a folder found keeps its name and `enabled` (matched by path, not name), a new
+  one is added, a scanned one gone from its scan is dropped, a folder added by hand stays (missing or not).
+- **Mapping** (`assign`): the deepest folder holding the cwd, then a git folder that is the worktree's main
+  checkout, then `in_home`. `fleet::build` groups `in_home` by the first path segment below the home into unlisted
+  folder rows (`listed: false`, `folder` tag; a session in the home itself shows under `<home folder> (home)`), so a
+  session in `P:\Projects\LarchSys\NodeApi` shows under larchsys with no edit, and under gaia once gaia lists it.
+- **The workspace session** runs in `home()` with `--add-dir` for every folder and scan outside it (`other_dirs`,
+  nested ones collapsed); the relay runs in `home()`. A workspace with neither home nor folder cannot Start (an
+  error, not a launch). Plain folders get repo sessions like git ones; the mint sends no repo for them
+  (`git_repo` is `None` outside a repo, unchanged), and the workspace-controller skill binds only `kind=git`
+  folders (`fm workspace show` now prints `home:`, `scans:` and `kind=`/`path=` per folder).
+- **Tree design A** (`fleet.rs`, `view/left.rs`, `view/results.rs`, `view/menu.rs`):
+  - the workspace session and relay rows show their role (`workspace`, `relay`) in place of the name; the relay
+    row's state column carries the relay status word (`ready`, `starting`, `expired`, `direct`) while it is alive,
+    and the workspace row shows the relay label only when there is no relay row;
+  - a wanted `fm-<ws>-<folder>` sits first under its folder; other wanted sessions (the selftest's park) stay in
+    the supervised block;
+  - folder rows: `folder` (plain), `supervised in <ws>` (another workspace owns it: no `+`, no Enable; a click
+    reveals the folder there), `also in <ws>, …` (other workspaces list it); a plain folder shows no branch; the
+    root-repo label is now `<name> (home)`;
+  - a session under several workspaces paints in each; the occurrence in the workspace that wants it, else the
+    first, keeps today's keys; every other occurrence carries `also in <owner>` and every key of the row
+    (`session-row-`, `star-`, `attach-`, `resume-`, `tab-link-`, `marked-`, `foreign-`, `waiting-`, `hook-`,
+    `session-name-`, `session-id-`, the element id, the search result's `result-session-`) ends in `@<its ws>`.
+    `hidden_stopped` counts a session once however many workspaces hide it.
+  - Without the `↗` of the redesign doc: `also in <ws>` is plain text, since the UI font's coverage of the arrow
+    was not checked.
+- **Trust and access** (probe, CLI 2.1.312, scratch `target/aw-m5-55-probe-afc2cc`, sessions
+  `aw-m5-55-probe-afc2cc-*`, stopped and removed, no trust setting read or written): a `--bg` session whose cwd
+  is a trusted plain folder, with `--add-dir` to a freshly `git init`ed folder (untrusted as a cwd) and to a folder
+  under `%TEMP%` outside every trusted tree, launched in auto mode with **no trust and no access prompt**, read
+  both notes and wrote a file into each. The same `git init`ed folder as the cwd is refused (`Workspace not trusted.
+  Run \`claude\` in … once and accept the trust prompt, then retry.`, exit 1). So trust is asked only for the
+  cwd: the home must be trusted, the other folders need nothing. **Recommendation: keep the default (the first
+  folder) and let the user set a trusted parent as home**; a home that is an untrusted repo shows the existing
+  "trust needed" Inbox row at Start, and the repo sessions of untrusted repos need trust as before (per repo).
+- **Trust follows any `.git`:** inside this trusted checkout, a folder holding a fake `.git` (only a HEAD) and one
+  holding a copy of this checkout's `.git` file (`gitdir: …/worktrees/m5-55`; `git rev-parse --show-toplevel`
+  names the copy) were both refused as cwds: `Workspace not trusted …`. So a selftest cannot make a git folder that
+  claude launches in; the first run of step v failed exactly there (the plain folder's session ran, the git one's
+  never did).
+- **Selftest step v** (`selftest_supervise::virtual_step`, before step g): workspace `<testbed>-v`, home unset, of
+  this checkout (git, a linked worktree: kind git with its branch) and the plain `VPlain` inside the testbed's home;
+  each folder's repo session is wanted with a one-word, no-tool prompt and the workspace saved as started; both go
+  live, each first under its folder in `-v`; the plain one's shows under the testbed too as a home folder with
+  `also_in = -v`; `session-row-<id>` for both and `session-row-<id>@<testbed>` painted; not started → both stopped
+  and still listed (stop, never rm). Not two siblings, as c5 asked: the only trusted git folder a selftest may
+  launch in is this checkout, and its siblings are other units' worktrees. Step g still expects 2 supervised rows:
+  the testbed's repo session is unwanted in step w before g, so design A moves nothing there.
+- **Selftest 7b changed on purpose:** it asserted the old refusal of a folder already registered ("already
+  registered, as workspace …"). It now saves the same folder again (as `selftest-add`), checks alpha is disabled
+  there (owned by `selftest-added`) and beta enabled, waits for `supervised-in-selftest-add/alpha` to paint, and
+  removes the second workspace.
+- **Red checks** (reverted with `git checkout`, never committed): `home: s.home` instead of `s.home.or(s.root)` →
+  `the_users_workspace_files_keep_their_session_names` fails (larchsys's home read as its first folder
+  `P:\Projects\LarchSys\AutoWork`; the committed fixture alone does not catch it, as its first folder is the root);
+  the second-occurrence owner taken as the first workspace always → `the_workspace_that_wants_a_session_keeps_its_keys…`
+  fails (`fm-larchsys-gaia` marked `also in gaia` in larchsys, which wants it); `claim_folders` not disabling →
+  `check_new_refuses_a_taken_name_and_a_second_workspace_on_a_folder_gets_it_disabled` fails.
+- **Not built here** (m5/56, m5/59): editing folders, home and scans in the UI and `fm`; hiding disabled folders
+  from the tree; the `kind`/owner columns m5/56 adds to `fm workspace show` beyond `kind=` and `path=`; design B.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-55\target`): build ok, no warnings; `cargo test --release --workspace` 678
+  passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (the run before step v's fix failed at
+  step v, above); `--selftest-detach-shutdown` PASS; no `fm-selftest` sessions left.

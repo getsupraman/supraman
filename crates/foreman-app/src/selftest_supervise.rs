@@ -824,23 +824,23 @@ async fn lowest_row_scrolled_into_view(tb: &Testbed, view: &Entity<FleetView>, c
 
 const PROMPT_OK: &str = "This is an automated Foreman selftest. Reply with the single word ok, use no tool, and stop.";
 
-/// A workspace of two sibling folders inside the testbed's home, one a git folder (a `.git` with a HEAD: not
-/// a repo for git, so claude keeps the testbed's trust) and one plain: each folder's wanted session runs, sits
-/// first under its folder, and shows again under the testbed with keys scoped `@<testbed>`; then it stops.
+/// A workspace of this checkout (a git folder: claude asks trust for any folder holding a `.git`, so a git
+/// folder made here could not launch) and a plain folder in the testbed's home: each folder's wanted session
+/// runs and sits first under its folder, the plain one's shows again under the testbed with keys scoped
+/// `@<testbed>`; then both stop.
 async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = format!("{}-v", tb.a.0);
-    let (git_dir, plain_dir) = (tb.a.1.join("VGit"), tb.a.1.join("VPlain"));
-    std::fs::create_dir_all(git_dir.join(".git"))?;
-    std::fs::write(git_dir.join(".git").join("HEAD"), "ref: refs/heads/main\n")?;
+    let (git_dir, plain_dir) = (cargo_root(), tb.a.1.join("VPlain"));
     std::fs::create_dir_all(&plain_dir)?;
     let mut ws = Workspace::new(name.as_str(), &git_dir, Vec::new());
     ws.home = None;
     ws.add_folder(&git_dir);
     ws.add_folder(&plain_dir);
-    let kinds: Vec<(String, FolderKind)> = ws.folders.iter().map(|f| (f.name.clone(), f.kind)).collect();
-    if kinds != [("VGit".to_string(), FolderKind::Git), ("VPlain".to_string(), FolderKind::Plain)] {
-        bail!("the folders read as {kinds:?}");
+    let kinds: Vec<FolderKind> = ws.folders.iter().map(|f| f.kind).collect();
+    if kinds != [FolderKind::Git, FolderKind::Plain] || ws.folders[0].branch.is_none() || ws.folders[1].branch.is_some() {
+        bail!("the folders read as {:?}", ws.folders);
     }
+    let folders: Vec<String> = ws.folders.iter().map(|f| f.name.clone()).collect();
     Registry::at(&tb.home).save(&ws, true)?;
     let wanted: Vec<WantedSession> =
         ws.folders.iter().map(|f| repo_session(&name, &f.name, &f.path, PROMPT_OK).ok_or_else(|| anyhow!("no name for {}", f.name))).collect::<anyhow::Result<_>>()?;
@@ -873,8 +873,10 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
                 .map(|r| (r.name.as_str(), r.kind, r.sessions.first().map(|s| s.session.name.as_str()), r.sessions.first().and_then(|s| s.also_in.as_deref())))
                 .collect();
             let in_a = |n: &str| a.repos.iter().filter(|r| !r.listed).flat_map(|r| &r.sessions).any(|s| s.session.name == n && s.also_in.as_deref() == Some(&name));
-            firsts == [("VGit", FolderKind::Git, Some(names[0].as_str()), None), ("VPlain", FolderKind::Plain, Some(names[1].as_str()), None)]
-                && names.iter().all(|n| in_a(n))
+            firsts == [
+                (folders[0].as_str(), FolderKind::Git, Some(names[0].as_str()), None),
+                (folders[1].as_str(), FolderKind::Plain, Some(names[1].as_str()), None),
+            ] && in_a(&names[1])
         };
         if ok(&tree) {
             break;
@@ -886,8 +888,8 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
     }
     for s in &live {
         wait_painted(view, &format!("session-row-{}", s.session_id), Duration::from_secs(10), cx).await?;
-        wait_painted(view, &format!("session-row-{}@{}", s.session_id, tb.a.0), Duration::from_secs(10), cx).await?;
     }
+    wait_painted(view, &format!("session-row-{}@{}", live[1].session_id, tb.a.0), Duration::from_secs(10), cx).await?;
     DesiredState::update(&tb.home, &name, |d| d.started = false)?;
     let stop_at = Instant::now();
     let stopped = wait_for("both stopped", Duration::from_secs(60), cx, |rows| {
@@ -896,7 +898,9 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
     })
     .await?;
     println!(
-        "step v: workspace {name} = VGit (git) + VPlain (plain) inside {}, home the first folder | wanted {} live after {} | each first under its folder in {name}, and under {} as a home folder with keys session-row-<id>@{} | not started → stopped (still listed) after {}: {}",
+        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, the plain one's also under {} as a home folder with keys session-row-<id>@{} | not started → stopped (still listed) after {}: {}",
+        folders[0],
+        folders[1],
         tb.a.0,
         names.join(", "),
         secs(live_after),
