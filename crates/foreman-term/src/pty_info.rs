@@ -63,9 +63,6 @@ impl ProcessIdGetter {
         let pid = unsafe { GetProcessId(HANDLE(self.handle as _)) };
         // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
         if pid == 0 {
-            // in the builder process, there is a small chance, almost negligible,
-            // that this value could be zero, which means child_watcher returns None,
-            // GetProcessId returns 0.
             if self.fallback_pid == 0 {
                 return None;
             }
@@ -81,7 +78,6 @@ pub(crate) struct ProcessInfo {
     pub(crate) cwd: PathBuf,
 }
 
-/// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
 pub(crate) struct PtyProcessInfo {
     system: RwLock<System>,
     refresh_kind: ProcessRefreshKind,
@@ -102,11 +98,8 @@ impl PtyProcessInfo {
             .with_cwd(UpdateKind::Always)
             .with_exe(UpdateKind::Always)
             .without_tasks();
-        // `System::new_with_specifics` with a process refresh kind would
-        // snapshot every process on the machine into this terminal's `System`,
-        // retaining one open procfs handle per process for the lifetime of the
-        // terminal (#58651). Refresh only the spawned child so that
-        // `kill_child_process` works before the first foreground refresh.
+        // `new_with_specifics` would snapshot every process into this `System` (#58651); only the child is
+        // refreshed, so `kill_child_process` works before the first foreground refresh.
         let mut system = System::new();
         system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid_getter.fallback_pid()]),
@@ -129,11 +122,7 @@ impl PtyProcessInfo {
         let pid = self.pid_getter.pid()?;
         let fallback_pid = self.pid_getter.fallback_pid();
         let mut system = self.system.write();
-        // sysinfo never evicts processes that are absent from the refreshed pid
-        // set, so entries for former foreground processes (each pinning an open
-        // `/proc/<pid>/stat` handle on Linux) would otherwise accumulate for as
-        // long as this terminal lives (#58651). Rebuild the `System` whenever
-        // the foreground process changes to keep the map bounded.
+        // sysinfo never evicts absent pids, so the `System` is rebuilt when the foreground process changes (#58651).
         if self.last_foreground_pid.lock().replace(pid) != Some(pid) {
             *system = System::new();
         }
@@ -185,7 +174,7 @@ impl PtyProcessInfo {
         self.refreshed_at.lock().take();
     }
 
-    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed;
+    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if it has changed;
     /// at most once per [`REFRESH_INTERVAL`], the last call's refresh deferred to its end.
     pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {

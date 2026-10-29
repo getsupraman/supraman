@@ -1,9 +1,6 @@
-// Minimal terminal grid painter adapted from Zed's
+// Terminal grid painter adapted from Zed's
 // crates/terminal_view/src/terminal_element.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
-// (GPL-3.0-or-later). Kept: cell batching into text runs, background rects,
-// colour conversion, cursor, block-element glyph rects (U+2580-U+259F), selection and search
-// highlights, mouse handling (register_mouse_listeners). Dropped: hyperlink hover, IME, sextant
-// glyph rects, minimum-contrast adjustment, the context menu.
+// (GPL-3.0-or-later).
 
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
@@ -24,14 +21,13 @@ pub const FONT_SIZE: Pixels = px(14.);
 pub const MIN_FONT_SIZE: Pixels = px(6.);
 pub const MAX_FONT_SIZE: Pixels = px(72.);
 
-/// `size` one step up (`delta` 1) or down (-1), within [`MIN_FONT_SIZE`]..=[`MAX_FONT_SIZE`].
 pub fn step_font_size(size: Pixels, delta: i32) -> Pixels {
     (size + px(delta as f32)).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
 }
 const LINE_HEIGHT_FACTOR: f32 = 1.3;
 
 /// The font every terminal grid paints with: `settings.toml` `terminal_font_family`,
-/// `terminal_font_size` and `terminal_ligatures` (m5/41, m5/47).
+/// `terminal_font_size` and `terminal_ligatures`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TermFont {
     pub family: SharedString,
@@ -57,7 +53,6 @@ struct BatchedTextRun {
     column: i32,
     text: String,
     cell_count: usize,
-    /// The byte offset in `text` where each cell starts.
     cell_starts: Vec<usize>,
     /// One character fitted into its cells ([`BatchedTextRun::paint_fitted`]).
     fit: bool,
@@ -196,7 +191,6 @@ fn ink(text: &str, shaped: &ShapedLine, text_system: &WindowTextSystem) -> Optio
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaintedGlyph {
     pub line: i32,
-    /// The cell its character is in.
     pub column: i32,
     pub ch: char,
     pub glyph: u32,
@@ -273,8 +267,6 @@ impl LayoutRect {
     }
 }
 
-/// Block element glyphs are painted on a subcell grid: each terminal cell is
-/// divided into 8 columns (for eighth blocks) and 24 lines.
 const BLOCK_SUBCELL_COLUMNS: i32 = 8;
 const BLOCK_SUBCELL_LINES: i32 = 24;
 
@@ -600,7 +592,7 @@ fn prepaint(
     terminal.update(cx, |terminal, _| terminal.cursor_painted_lit = lit);
     let terminal_ref = terminal.read(cx);
     let content = terminal_ref.last_content();
-    // Windows Terminal: a white selection, its text in the background colour, so it reads inverted (m5/26)
+    // Windows Terminal: a white selection, its text in the background colour, so it reads inverted
     let selected = content.selection.as_ref().map(|sel| {
         let offset = content.display_offset as i32;
         Selected {
@@ -716,10 +708,6 @@ fn selection_rects(
         .collect()
 }
 
-/// As Zed's `TerminalElement::register_mouse_listeners`: while the program has enabled mouse
-/// reporting (and Shift is not held) the Terminal encodes presses, motion and releases for the
-/// PTY; otherwise a left drag selects, double-click a word, triple-click a line, and a right
-/// click copies the selection or, without one, pastes the clipboard as Ctrl+V does.
 fn register_mouse_listeners(terminal: &Entity<Terminal>, hitbox: &Hitbox, window: &mut Window) {
     let mode = MouseInputMode::ReportToTerminal;
     window.on_mouse_event({
@@ -1048,7 +1036,7 @@ fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
     }
 }
 
-/// [`crate::palette`] of `theme`, built once per theme (each built theme has its own id, m5/31).
+/// [`crate::palette`] of `theme`, built once per theme id ([`crate::themes`]).
 fn palette(theme: &Theme) -> std::rc::Rc<foreman_term::terminal_settings::TerminalPalette> {
     thread_local! {
         static PALETTE: std::cell::RefCell<Option<(String, std::rc::Rc<foreman_term::terminal_settings::TerminalPalette>)>> =

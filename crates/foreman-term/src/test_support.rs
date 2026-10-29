@@ -108,8 +108,7 @@ pub(crate) fn raw_content(chunks: &[&[u8]], cx: &mut TestAppContext) -> Content 
 }
 
 /// Polls the terminal content until `expected` appears, or panics after ~1s.
-/// The PTY IO thread writes into the terminal grid independently of the
-/// GPUI executor, so we need a real-time polling loop to synchronize.
+/// The PTY IO thread writes into the terminal grid independently of the GPUI executor.
 pub(crate) async fn assert_content_eventually(
     terminal: &Entity<Terminal>,
     expected: &str,

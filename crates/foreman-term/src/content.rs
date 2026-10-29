@@ -163,7 +163,6 @@ pub struct SelectionRange {
     pub is_block: bool,
 }
 
-// TODO: Un-pub
 #[derive(Clone)]
 pub struct Content {
     pub cells: Vec<IndexedCell>,
@@ -262,7 +261,7 @@ impl Terminal {
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
-        //Note that the ordering of events matters for event processing
+        // The order of events matters.
         while let Some(e) = self.events.pop_front() {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
@@ -276,8 +275,7 @@ impl Terminal {
             debug_assert!(self.last_content.last_hovered_word.is_none());
             self.refresh_hovered_word(window, cx);
 
-            // Because refresh_hovered_word() may result
-            // in new events, but will not trigger a repaint
+            // refresh_hovered_word() may push events without triggering a repaint
             if !self.events.is_empty() {
                 cx.emit(Event::Wakeup);
             }

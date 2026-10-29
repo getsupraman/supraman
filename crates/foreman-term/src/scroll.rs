@@ -43,7 +43,6 @@ impl Terminal {
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
     }
 
-    ///Scroll the terminal
     pub fn scroll_wheel(&mut self, e: &ScrollEvent, scroll_multiplier: f32, mode: MouseInputMode) {
         let mouse_mode = self.mouse_mode(e.shift, mode);
         let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
@@ -99,8 +98,7 @@ impl Terminal {
 
                 let new_offset = (self.scroll_px / line_height) as i32;
 
-                // Whenever we hit the edges, reset our stored scroll to 0
-                // so we can respond to changes in direction quickly
+                // Reset at the edges, so a change of direction responds at once
                 self.scroll_px %= self.last_content.terminal_bounds.height();
 
                 Some(new_offset - old_offset)
@@ -126,7 +124,7 @@ mod tests {
     };
     use util::default;
 
-    /// Foreman's tab passes `ReportToTerminal` for every wheel event (tf/6): a plain shell
+    /// Foreman's tab passes `ReportToTerminal` for every wheel event: a plain shell
     /// scrolls its scrollback and writes nothing, later output keeps the view where the user
     /// left it, and the next keystroke scrolls back to the bottom.
     #[gpui::test]

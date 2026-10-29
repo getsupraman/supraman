@@ -54,7 +54,6 @@ mod tests {
         let tree = rect(0., 560., 480., 260.);
         assert!(Hit { bounds: rect(406., 700., 41., 19.), visible: tree }.fully_visible());
         assert!(Hit { bounds: rect(406., 560., 41., 260.), visible: tree }.fully_visible(), "edges touch");
-        // m3/3: painted 804..823 under an 820 px window, centre inside, bottom outside
         assert!(!Hit { bounds: rect(406., 804., 41., 19.33), visible: tree }.fully_visible());
         assert!(!Hit { bounds: rect(406., 846., 41., 19.), visible: tree }.fully_visible(), "below the fold");
         assert!(!Hit { bounds: rect(406., 550., 41., 19.), visible: tree }.fully_visible(), "under the section above");

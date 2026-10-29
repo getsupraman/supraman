@@ -47,7 +47,6 @@ impl SplitPane {
             }))
             .child(first)
             .child(
-                // A 1 px border with a 7 px grab area over both panels' edges.
                 div().relative().w(px(1.)).h_full().flex_none().bg(border).child(
                     div()
                         .id(id.clone())

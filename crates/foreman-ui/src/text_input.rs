@@ -1,6 +1,4 @@
-//! The text input (m5/30): the tree's search box, the Add workspace name and a terminal's Find bar on one line,
-//! the task box on several (m5/42, [`TextInput::multi_line`]: wrapped, Enter a new line, Ctrl+Enter sends,
-//! Up/Down/Home/End by visual row, growing to [`MAX_ROWS`] and then scrolling). Built on gpui's
+//! The one text input, on one line or several ([`TextInput::multi_line`]). Built on gpui's
 //! `EntityInputHandler` as `.repos/zed/crates/gpui/examples/input.rs` is, so characters, dead keys and IME
 //! compositions come from the OS text input (WM_CHAR / WM_IME_COMPOSITION), not from `key_char`. Keys that
 //! edit or move are actions bound in the `TextInput` context ([`bind_keys`]); every other key must be left
@@ -442,7 +440,6 @@ pub fn filtered(text: &str, accept: fn(char) -> Option<char>) -> (String, Option
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputEvent {
-    /// The text changed.
     Edited,
     /// A character the input's filter does not take; nothing of it was inserted.
     Refused(char),
@@ -717,7 +714,7 @@ impl TextInput {
         if let Some(c) = refused {
             cx.emit(InputEvent::Refused(c));
         }
-        // a refused key leaves the selection alone, as the old field did
+        // a refused key leaves the selection alone
         if taken.is_empty() && marked.is_none() && (range.is_empty() || refused.is_some()) {
             self.lit(cx);
             return;

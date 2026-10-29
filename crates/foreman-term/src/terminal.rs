@@ -1,8 +1,5 @@
 // Vendored from Zed crates/terminal/src/terminal.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
-// (GPL-3.0-or-later). Cut for Foreman: no `settings`/`theme`/`theme_settings`/`task`/
-// `release_channel`; `TerminalSettings` -> `TerminalConfig`, task mode removed, colours from
-// `TerminalPalette`; tests set a `TerminalConfig` instead of a `SettingsStore`. Code Foreman does
-// not reach is deleted, not kept for re-syncing with Zed.
+// (GPL-3.0-or-later).
 
 mod mappings;
 

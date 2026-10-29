@@ -83,7 +83,7 @@ pub enum MouseInputMode {
 /// Minimum pointer movement before a left click begins a selection. This keeps
 /// a click that jitters by a pixel or two (such as the window-focusing click)
 /// from starting a selection and, with `copy_on_select` enabled, clobbering the
-/// clipboard. Mirrors the drag threshold used by gpui's `div` element.
+/// clipboard.
 pub(crate) const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 #[cfg(test)]
@@ -138,12 +138,8 @@ impl Terminal {
     pub fn mouse_move(&mut self, e: &MouseMoveEvent, mode: MouseInputMode, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if self.mouse_mode(e.modifiers.shift, mode) {
-            // A ctrl/cmd press on a link suppressed its button-press report in
-            // `mouse_down`. Since the app never saw the press, we must swallow
-            // the whole gesture rather than forward later motion/release
-            // reports, which would be a press-less (malformed) sequence.
-            // `mouse_up` resolves it: release on the same link opens it,
-            // otherwise the gesture is dropped.
+            // The press on a link sent no report, so the whole gesture is swallowed: forwarding its motion
+            // and release would be a press-less sequence. `mouse_up` opens the link or drops the gesture.
             if self.mouse_down_hyperlink.is_none() {
                 let (point, side) = grid_point_and_side(
                     position,
@@ -193,9 +189,6 @@ impl Terminal {
                 }
             }
 
-            // Ignore tiny pointer movements so that a click that jitters by a
-            // pixel or two (e.g. the window-focusing click) does not begin a
-            // selection. Mirrors the drag threshold used by gpui's `div`.
             if self.selection_phase != SelectionPhase::Selecting
                 && let Some(mouse_down_position) = self.mouse_down_position
                 && (e.position - mouse_down_position).magnitude() <= SELECTION_DRAG_THRESHOLD
@@ -287,7 +280,6 @@ impl Terminal {
 
                     if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
                         if self.last_content.selection.is_some() {
-                            // Shift+click extends the existing selection to this point.
                             self.events
                                 .push_back(InternalEvent::UpdateSelection(position));
                         } else {
@@ -441,7 +433,6 @@ mod tests {
             left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
             terminal.events.clear();
 
-            // Well beyond the drag threshold.
             left_mouse_drag_to(terminal, point(px(90.0), px(10.0)), cx);
 
             assert!(
@@ -513,7 +504,7 @@ mod tests {
     }
 
     /// Scrolled back, output that arrives after the last frame bumps `display_offset` so the view
-    /// stays put (m5/24). A drag dispatched before the next frame must anchor on the row the
+    /// stays put. A drag dispatched before the next frame must anchor on the row the
     /// pointer is over, as its head does, not one line below it.
     #[gpui::test]
     async fn test_drag_anchors_on_the_shown_row_when_output_arrives_scrolled_back(
@@ -565,7 +556,7 @@ mod tests {
         });
     }
 
-    /// m5/9: the modes `claude` enables at startup (measured: `?1000h ?1002h ?1003h ?1006h`) make a
+    /// The modes `claude` enables at startup (measured: `?1000h ?1002h ?1003h ?1006h`) make a
     /// click at a cell, a drag and the release reach the PTY as SGR reports for that cell.
     #[gpui::test]
     async fn test_claude_mouse_modes_report_sgr_click_drag_release(cx: &mut TestAppContext) {

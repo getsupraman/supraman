@@ -219,14 +219,9 @@ impl TerminalBuilder {
             Err(error) => return Task::ready(Err(error)),
         };
         let fut = async move {
-            // Remove SHLVL so the spawned shell initializes it to 1, matching
-            // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
+            // Removed so the shell starts SHLVL at 1, as standalone terminals do.
             env.remove("SHLVL");
 
-            // If the parent environment doesn't have a locale set
-            // (As is the case when launched from a .app on MacOS),
-            // and the Project doesn't have a locale set, then
-            // set a fallback for our child environment to use.
             if std::env::var("LANG").is_err() {
                 env.entry("LANG".to_string())
                     .or_insert_with(|| "en_US.UTF-8".to_string());
@@ -287,11 +282,6 @@ impl TerminalBuilder {
                     .unwrap_or(params.program.clone())
             });
 
-            // Note: when remoting, this shell_kind will scrutinize `ssh` or
-            // `wsl.exe` as a shell and fall back to posix or powershell based on
-            // the compilation target. This is fine right now due to the restricted
-            // way we use the return value, but would become incorrect if we
-            // supported remoting into windows.
             let shell_kind = shell.shell_kind(cfg!(windows));
 
             let scrolling_history = max_scroll_history_lines
@@ -318,17 +308,13 @@ impl TerminalBuilder {
                     alacritty_shell,
                     working_directory.clone(),
                     env.clone(),
-                    // We pass in the foreground thread's signal mask to the child process via pty_options,
-                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                    // otherwise the terminal would inherit the background executor's signal mask which blocks
-                    // some terminal signals
+                    // The foreground thread's signal mask: built on a background thread, the child would block Ctrl-C.
                     #[cfg(not(windows))]
                     child_signal_mask,
                     #[cfg(windows)]
                     shell_kind.tty_escape_args(),
                 );
 
-                //Setup the pty...
                 let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
                     Ok(pty) => pty,
                     Err(error) => {
@@ -344,7 +330,6 @@ impl TerminalBuilder {
 
                 let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
 
-                //And connect them together
                 let pty_tx =
                     spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
 
@@ -360,7 +345,7 @@ impl TerminalBuilder {
                 term_config: config,
                 #[cfg(test)]
                 output_processor: None,
-                events: VecDeque::with_capacity(10), //Should never get this high.
+                events: VecDeque::with_capacity(10),
                 last_content: Default::default(),
                 last_mouse: None,
                 mouse_down_position: None,
@@ -414,21 +399,11 @@ impl TerminalBuilder {
             if !activation_script.is_empty() {
                 for activation_script in activation_script {
                     terminal.write_to_pty(activation_script.into_bytes());
-                    // Simulate enter key press
-                    // NOTE(PowerShell): using `\r\n` will put PowerShell in a continuation mode (infamous >> character)
-                    // and generally mess up the rendering.
+                    // `\r\n` would put PowerShell in continuation mode (>>).
                     terminal.write_to_pty(b"\x0d");
                 }
-                // In order to clear the screen at this point, we have two options:
-                // 1. We can send a shell-specific command such as "clear" or "cls"
-                // 2. We can "echo" a marker message that we will then catch when handling a Wakeup event
-                //    and clear the screen using `terminal.clear()` method
-                // We cannot issue a `terminal.clear()` command at this point as alacritty is evented
-                // and while we have sent the activation script to the pty, it will be executed asynchronously.
-                // Therefore, we somehow need to wait for the activation script to finish executing before we
-                // can proceed with clearing the screen.
+                // The shell clears: `terminal.clear()` now would run before the shell has run the activation script.
                 terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
-                // Simulate enter key press
                 terminal.write_to_pty(b"\x0d");
             }
 
@@ -441,7 +416,6 @@ impl TerminalBuilder {
     }
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
-        //Event loop
         self.terminal.event_loop_task = cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {

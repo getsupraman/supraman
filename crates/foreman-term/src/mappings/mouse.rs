@@ -238,7 +238,6 @@ pub(crate) fn grid_point_and_side(
     )
 }
 
-///Generate the bytes to send to the terminal, from the cell location, a mouse event, and the terminal mode
 fn mouse_report(
     point: Point,
     button: MouseButtonCode,

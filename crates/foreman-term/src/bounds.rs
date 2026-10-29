@@ -84,7 +84,6 @@ pub(crate) fn normalize_terminal_bounds(mut bounds: TerminalBounds) -> TerminalB
 }
 
 impl Terminal {
-    ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
         let new_bounds = normalize_terminal_bounds(new_bounds);
 
@@ -146,14 +145,12 @@ mod tests {
         terminal.events.clear();
         assert_eq!(terminal.last_content.terminal_bounds, base_bounds);
 
-        // Pixel-only change: height grows by 1px but still the same number of rows/cols.
         let mut pixel_changed = base_bounds;
         pixel_changed.bounds.size.height = Pixels::from(101.);
         terminal.set_size(pixel_changed);
         assert!(terminal.events.is_empty());
         assert_eq!(terminal.last_content.terminal_bounds, pixel_changed);
 
-        // Grid change: height increases enough to add a row.
         let mut grid_changed = base_bounds;
         grid_changed.bounds.size.height = Pixels::from(110.);
         terminal.set_size(grid_changed);

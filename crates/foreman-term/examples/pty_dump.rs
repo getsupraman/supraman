@@ -1,4 +1,4 @@
-// m5/9 probe: spawn a program in a ConPTY, print every byte it writes with escape sequences made
+// Spawns a program in a ConPTY and prints every byte it writes with escape sequences made
 // visible (which terminal modes it and conhost request), and the rendered screen after each input.
 // usage: pty_dump <secs> <program> [args...]
 //   PTY_DUMP_SEND  `|`-separated inputs (\e \r \n \xNN escapes), written after <secs>, 1.5 s apart

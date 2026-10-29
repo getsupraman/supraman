@@ -1,5 +1,5 @@
 //! The notice box: text in a status colour on a tint of that colour, never the theme's status
-//! `*_background` fill (unreadable in m1).
+//! `*_background` fill.
 
 use gpui::{App, Div, Hsla, IntoElement, div, prelude::*};
 use theme::ActiveTheme as _;

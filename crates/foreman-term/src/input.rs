@@ -132,7 +132,6 @@ impl Terminal {
         }
     }
 
-    ///Paste text into the terminal
     pub(crate) fn paste(&mut self, text: &str) {
         let paste_text = if self.last_content.mode.contains(Modes::BRACKETED_PASTE) {
             format!("{}{}{}", "\x1b[200~", text.replace('\x1b', ""), "\x1b[201~")
@@ -203,21 +202,16 @@ mod tests {
             .subscribe(cx)
         });
 
-        // Test simple LF conversion
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"line1\nline2\n", cx);
         });
 
-        // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
             make_content(&term, &terminal.last_content)
         });
 
-        // If LF is properly converted to CRLF, each line should start at column 0
-        // The diagonal staircase bug would cause increasing column positions
-
-        // Get the cells and check that lines start at column 0
+        // LF converted to CRLF starts every line at column 0, not in a staircase
         let cells = &content.cells;
         let mut line1_col0 = false;
         let mut line2_col0 = false;
@@ -249,12 +243,10 @@ mod tests {
             .subscribe(cx)
         });
 
-        // Test that existing CRLF doesn't get doubled
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"line1\r\nline2\r\n", cx);
         });
 
-        // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
             make_content(&term, &terminal.last_content)
@@ -262,7 +254,6 @@ mod tests {
 
         let cells = &content.cells;
 
-        // Check that both lines start at column 0
         let mut found_lines_at_column_0 = 0;
         for cell in cells {
             if cell.character() == 'l' && cell.point.column == 0 {
@@ -289,12 +280,10 @@ mod tests {
             .subscribe(cx)
         });
 
-        // Test that bare CR (without LF) is preserved
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"hello\rworld", cx);
         });
 
-        // Get the content by directly accessing the term
         let content = terminal.update(cx, |terminal, _cx| {
             let term = terminal.term.lock_unfair();
             make_content(&term, &terminal.last_content)
@@ -302,7 +291,6 @@ mod tests {
 
         let cells = &content.cells;
 
-        // Check that we have "world" at the beginning of the line
         let mut text = String::new();
         for cell in cells.iter().take(5) {
             if cell.point.line == 0 {

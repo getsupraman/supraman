@@ -16,21 +16,13 @@ pub(crate) struct CwdHistoryEntry {
 impl Terminal {
     pub(crate) fn working_directory(&self) -> Option<PathBuf> {
         if self.is_remote_terminal {
-            // We can't yet reliably detect the working directory of a shell on the
-            // SSH host. Until we can do that, it doesn't make sense to display
-            // the working directory on the client and persist that.
+            // No reliable working directory on an SSH host.
             None
         } else {
             self.client_side_working_directory()
         }
     }
 
-    /// Returns the working directory of the process that's connected to the PTY.
-    /// That means it returns the working directory of the local shell or program
-    /// that's running inside the terminal.
-    ///
-    /// This does *not* return the working directory of the shell that runs on the
-    /// remote host, in case Zed is connected to a remote host.
     pub(crate) fn client_side_working_directory(&self) -> Option<PathBuf> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info
@@ -54,7 +46,7 @@ impl Terminal {
             });
             (at, term.history_size())
         };
-        // cwd_at_line no longer reads the history once the scrollback is full.
+        // cwd_at_line ignores the history once the scrollback is full.
         if history_size >= self.term_config.scrolling_history {
             self.cwd_history.clear();
             return;

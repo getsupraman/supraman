@@ -1,6 +1,5 @@
 // Vendored from Zed crates/terminal/src/alacritty/hyperlinks.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
-// (GPL-3.0-or-later). Tests read Zed's default path hyperlink regexes from a local copy instead of
-// a SettingsStore.
+// (GPL-3.0-or-later).
 
 use alacritty_terminal::{
     Term,
@@ -174,11 +173,7 @@ fn normalize_hyperlink_match(
     path_style: PathStyle,
 ) -> HyperlinkMatch {
     if is_url {
-        // Treat "file://" IRIs like file paths to ensure
-        // that line numbers at the end of the path are
-        // handled correctly.
-        // Use Url::to_file_path() to properly handle Windows drive letters
-        // (e.g., file:///C:/path -> C:\path)
+        // file:// IRIs are paths, so a trailing line number parses; `to_file_path` handles drive letters.
         if maybe_url_or_path.starts_with("file://") {
             if let Ok(url) = Url::parse(&maybe_url_or_path)
                 && let Ok(path) = url.to_file_path_ext(path_style)
@@ -189,7 +184,6 @@ fn normalize_hyperlink_match(
                     range,
                 };
             }
-            // Fallback: strip file:// prefix if URL parsing fails
             let path = maybe_url_or_path
                 .strip_prefix("file://")
                 .unwrap_or(&maybe_url_or_path);
@@ -222,7 +216,6 @@ fn sanitize_url_punctuation<T: EventListener>(
     let mut sanitized_url = url;
     let mut chars_trimmed = 0;
 
-    // Count parentheses in the URL
     let (open_parens, mut close_parens) =
         sanitized_url
             .chars()
@@ -232,12 +225,9 @@ fn sanitize_url_punctuation<T: EventListener>(
                 _ => (opens, closes),
             });
 
-    // Remove trailing characters that shouldn't be at the end of URLs
     while let Some(last_char) = sanitized_url.chars().last() {
         let should_remove = match last_char {
-            // These may be part of a URL but not at the end. It's not that the spec
-            // doesn't allow them, but they are frequently used in plain text as delimiters
-            // where they're not meant to be part of the URL.
+            // Valid in a URL, but in plain text usually a delimiter after it.
             '.' | ',' | ':' | ';' => true,
             '(' => true,
             ')' if close_parens > open_parens => {
@@ -265,9 +255,6 @@ fn sanitize_url_punctuation<T: EventListener>(
     }
 }
 
-/// Returns the byte offset just past the first unbalanced `(` in `s`, or `None`
-/// if all parentheses are balanced. Used to strip prefixes like `Update(` from
-/// path matches while preserving balanced parens in filenames like `file(copy).txt`.
 fn first_unbalanced_open_paren(s: &str) -> Option<usize> {
     let mut balance: i32 = 0;
     let mut first_unmatched = None;
@@ -313,10 +300,7 @@ fn path_match<T>(
             .then_some((elapsed_time.as_millis(), path_hyperlink_timeout.as_millis()))
     };
 
-    // This used to be: `let line = term.bounds_to_string(line_start, line_end)`, however, that
-    // api compresses tab characters into a single space, whereas we require a cell accurate
-    // string representation of the line. The below algorithm does this, but seems a bit odd.
-    // Maybe there is a clean api for doing this, but I couldn't find it.
+    // Cell-accurate, unlike `bounds_to_string`, which compresses a tab into one space.
     let mut line = String::with_capacity(
         (line_end.line.0 - line_start.line.0 + 1) as usize * term.grid().columns(),
     );
@@ -362,8 +346,7 @@ fn path_match<T>(
                     .add(term, Boundary::Grid, 1);
             }
 
-            // There does not appear to be an alacritty api that is
-            // "move to start of current wide char", so we have to do it ourselves.
+            // alacritty has no "move to the start of the current wide char".
             let flags = term.grid().index(point).flags;
             if flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
                 AlacPoint::new(point.line + 1, Column(0))
@@ -426,18 +409,13 @@ fn path_match<T>(
             link_range.start += line_start_offset;
             link_range.end += line_start_offset;
 
-            // Strip prefix up to the first unbalanced `(` in the matched path.
-            // This handles delimiter parens like `Update(.claude/SKILL.md)` while
-            // preserving balanced parens in filenames like `file(copy).txt`.
-            // Analogous to `sanitize_url_punctuation` which strips unbalanced
-            // trailing `)` from URLs.
+            // Strips a delimiter `(` as in `Update(.claude/SKILL.md)`; balanced ones as in `file(copy).txt` stay.
             if let Some(trim) = first_unbalanced_open_paren(&line[path_range.clone()]) {
                 path_range.start += trim;
                 link_range.start = link_range.start.max(path_range.start);
             }
 
             if !link_range.contains(&hovered_point_byte_offset) {
-                // No match, just skip.
                 continue;
             }
             let found = found_from_range(path_range, link_range, line_column);
@@ -570,15 +548,12 @@ mod tests {
 
     #[test]
     fn test_url_parentheses_sanitization() {
-        // Test our sanitize_url_parentheses function directly
         let test_cases = vec![
-            // Cases that should be sanitized (unbalanced parentheses)
             ("https://www.google.com/)", "https://www.google.com/"),
             ("https://example.com/path)", "https://example.com/path"),
             ("https://test.com/))", "https://test.com/"),
             ("https://test.com/(((", "https://test.com/"),
             ("https://test.com/(test)(", "https://test.com/(test)"),
-            // Cases that should NOT be sanitized (balanced parentheses)
             (
                 "https://en.wikipedia.org/wiki/Example_(disambiguation)",
                 "https://en.wikipedia.org/wiki/Example_(disambiguation)",
@@ -588,16 +563,13 @@ mod tests {
                 "https://example.com/path(1)(2)",
                 "https://example.com/path(1)(2)",
             ),
-            // Edge cases
             ("https://test.com/", "https://test.com/"),
             ("https://example.com", "https://example.com"),
         ];
 
         for (input, expected) in test_cases {
-            // Create a minimal terminal for testing
             let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
 
-            // Create a dummy match that spans the entire input
             let start_point = AlacPoint::new(Line(0), Column(0));
             let end_point = AlacPoint::new(Line(0), Column(input.len()));
             let dummy_match = Match::new(start_point, end_point);
@@ -609,8 +581,6 @@ mod tests {
 
     #[test]
     fn test_url_punctuation_sanitization() {
-        // Test URLs with trailing punctuation (sentence/text punctuation)
-        // The sanitize_url_punctuation function removes ., ,, :, ;, from the end
         let test_cases = vec![
             ("https://example.com.", "https://example.com"),
             (
@@ -664,10 +634,8 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            // Create a minimal terminal for testing
             let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
 
-            // Create a dummy match that spans the entire input
             let start_point = AlacPoint::new(Line(0), Column(0));
             let end_point = AlacPoint::new(Line(0), Column(input.len()));
             let dummy_match = Match::new(start_point, end_point);
@@ -693,7 +661,7 @@ mod tests {
                 // This avoids tabs at end of lines causing whitespace-eating line wraps...
                 vec![longest_line_cells + 1]
             } else {
-                // Alacritty has issues with 2 columns, use 3 as the minimum for now.
+                // Alacritty has issues with 2 columns.
                 vec![3, longest_line_cells / 2, longest_line_cells + 1]
             };
             test_hyperlink!(
@@ -733,12 +701,9 @@ mod tests {
 
         #[test]
         fn simple() {
-            // Rust paths
-            // Just the path
             test_path!("‹«/👉test/cool.rs»›");
             test_path!("‹«/test/cool👉.rs»›");
 
-            // path and line
             test_path!("‹«/👉test/cool.rs»:«4»›");
             test_path!("‹«/test/cool.rs»👉:«4»›");
             test_path!("‹«/test/cool.rs»:«👉4»›");
@@ -747,13 +712,11 @@ mod tests {
             test_path!("‹«/test/cool.rs»(«👉4»)›");
             test_path!("‹«/test/cool.rs»(«4»👉)›");
 
-            // path, line, and column
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›");
 
-            // path, line, column, and ':' suffix
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
@@ -765,7 +728,6 @@ mod tests {
             test_path!("/test/cool.rs:4:2👉:", "What is this?");
             test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
-            // path, line, column, and description
             test_path!("‹«/test/co👉ol.rs»:«4»:«2»›:Error!");
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
@@ -780,7 +742,6 @@ mod tests {
             test_path!("Update(src/cool.rs👉)");
             test_path!("Write(‹«/👉test/Cool»›)");
 
-            // Python
             test_path!("‹«awe👉some.py»›");
             test_path!("‹«👉a»› ");
 
@@ -792,13 +753,11 @@ mod tests {
 
         #[test]
         fn simple_with_descriptions() {
-            // path, line, column and description
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
 
-            // path, line, column and description w/extra colons
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›::例Desc例例例");
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›::例Desc例例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›::例Desc例例例");
@@ -894,7 +853,6 @@ mod tests {
 
             test_path!("[\"‹«/test/co👉ol.rs»(«4»,«2»)›\"]");
 
-            // Imbalanced
             test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
             test_path!("('‹«/test/co👉ol.rs»:«4»›' was here...)");
@@ -915,7 +873,6 @@ mod tests {
 
         #[test]
         fn word_wide_chars() {
-            // Rust paths
             test_path!("‹«/👉例/cool.rs»›");
             test_path!("‹«/例👈/cool.rs»›");
             test_path!("‹«/例/cool.rs»:«👉4»›");
@@ -939,7 +896,6 @@ mod tests {
             test_path!("    at ‹«/👉例/Cool Spaces»:«4»:«2»›");
             test_path!("    at ‹«/例👈/Cool Spaces»(«4»,«2»)›");
 
-            // Python
             test_path!("‹«👉例wesome.py»›");
             test_path!("‹«例👈wesome.py»›");
             test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
@@ -955,12 +911,10 @@ mod tests {
             test_path!("    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
         }
 
-        /// These likely rise to the level of being worth fixing.
         mod issues {
             #[test]
             // <https://github.com/alacritty/alacritty/issues/8586>
             fn issue_alacritty_8586() {
-                // Rust paths
                 test_path!("‹«/👉例/cool.rs»›");
                 test_path!("‹«/例👈/cool.rs»›");
                 test_path!("‹«/例/cool.rs»:«👉4»›");
@@ -970,7 +924,6 @@ mod tests {
                 test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
                 test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
 
-                // Python
                 test_path!("‹«👉例wesome.py»›");
                 test_path!("‹«例👈wesome.py»›");
                 test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
@@ -980,7 +933,6 @@ mod tests {
             #[test]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338_regex() {
-                // Issue #12338
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«'test file 👉1.txt'»›");
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«👉'test file 1.txt'»›");
             }
@@ -988,13 +940,11 @@ mod tests {
             #[test]
             // <https://github.com/zed-industries/zed/issues/12338>
             fn issue_12338() {
-                // Issue #12338
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉、2.txt»›");
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test、👈2.txt»›");
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test👉。3.txt»›");
                 test_path!(".rw-r--r--     0     staff 05-27 14:03 ‹«test。👈3.txt»›");
 
-                // Rust paths
                 test_path!("‹«/👉🏃/🦀.rs»›");
                 test_path!("‹«/🏃👈/🦀.rs»›");
                 test_path!("‹«/🏃/👉🦀.rs»:«4»›");
@@ -1004,13 +954,11 @@ mod tests {
                 test_path!("    Compiling Cool (‹«/👉🏃/Cool»›)");
                 test_path!("    Compiling Cool (‹«/🏃👈/Cool»›)");
 
-                // Python
                 test_path!("‹«👉🏃wesome.py»›");
                 test_path!("‹«🏃👈wesome.py»›");
                 test_path!("    ‹File \"«/👉🏃wesome.py»\", line «42»›: Wat?");
                 test_path!("    ‹File \"«/🏃👈wesome.py»\", line «42»›: Wat?");
 
-                // Mojo
                 test_path!("‹«/awe👉some.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome👉.🔥»› is some good Mojo!");
                 test_path!("‹«/awesome.👉🔥»› is some good Mojo!");
@@ -1022,7 +970,6 @@ mod tests {
             #[test]
             // <https://github.com/zed-industries/zed/issues/40202>
             fn issue_40202() {
-                // Elixir
                 test_path!("[‹«lib/blitz_apex_👉server/stats/aggregate_rank_stats.ex»:«35»›: BlitzApexServer.Stats.AggregateRankStats.update/2]
                 1 #=> 1");
             }
@@ -1038,8 +985,7 @@ mod tests {
             #[test]
             // <https://github.com/zed-industries/zed/issues/50531>
             fn issue_50531() {
-                // Paths preceded by "N:" prefix (e.g. grep output line numbers)
-                // should still be clickable
+                // A path after grep's `N:` line-number prefix is still a path.
                 test_path!("0: ‹«foo/👉bar.txt»›");
                 test_path!("0: ‹«👉foo/bar.txt»›");
                 test_path!("42: ‹«👉foo/bar.txt»›");
@@ -1050,9 +996,7 @@ mod tests {
             #[test]
             // <https://github.com/zed-industries/zed/issues/46795>
             fn issue_46795() {
-                // Box drawing characters are commonly used as UI elements and
-                // should not interfere with path detection; they appear rarely
-                // enough in actual paths that false positives should be minimal
+                // Box drawing characters are UI, rarely part of a path.
 
                 test_path!("─‹«/👉test/cool.rs»:«4»:«2»›");
                 test_path!("┤‹«/👉test/cool.rs»:«4»:«2»›");
@@ -1090,7 +1034,6 @@ mod tests {
             }
         }
 
-        /// Minor issues arguably not important enough to fix/workaround...
         mod nits {
             #[test]
             fn alacritty_bugs_with_two_columns() {
@@ -1098,7 +1041,6 @@ mod tests {
                 test_path!("‹«/test/cool.rs»(«👉4»)›");
                 test_path!("‹«/test/cool.rs»(«4»,«👉2»)›");
 
-                // Python
                 test_path!("‹«awe👉some.py»›");
             }
 
@@ -1135,26 +1077,22 @@ mod tests {
             }
 
             #[test]
-            // Filenames with balanced parentheses are preserved as a single path.
-            // Unbalanced leading `(` (e.g. `Update(.claude/SKILL.md)`) is stripped.
             fn parens_in_filename() {
                 test_path!("‹«docker-compose.prod(👉copy).yml»›");
             }
         }
 
         mod windows {
-            // Lots of fun to be had with long file paths (verbatim) and UNC paths on Windows.
+            // Long (verbatim) and UNC paths on Windows:
             // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
             // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
             // See <https://github.com/rust-lang/cargo/issues/13919>
 
             #[test]
             fn default_prompts() {
-                // Windows command prompt
                 test_path!(r#"‹«C:\Users\someone\👉test»›>"#);
                 test_path!(r#"C:\Users\someone\test👉>"#);
 
-                // Windows PowerShell
                 test_path!(r#"PS ‹«C:\Users\someone\👉test\cool.rs»›>"#);
                 test_path!(r#"PS C:\Users\someone\test\cool.rs👉>"#);
             }
@@ -1389,10 +1327,7 @@ mod tests {
     }
 
     mod file_iri {
-        // File IRIs have a ton of use cases. Absolute file URIs are supported on all platforms,
-        // including Windows drive letters (e.g., file:///C:/path) and percent-encoded characters.
-        // Some cases like relative file IRIs are not supported.
-        // See https://en.wikipedia.org/wiki/File_URI_scheme
+        // Relative file IRIs are not supported; see https://en.wikipedia.org/wiki/File_URI_scheme
 
         /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
         /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
@@ -1428,7 +1363,6 @@ mod tests {
                     // file:///test/Ῥόδος/
                     test_file_iri!("file:///C:/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/"); // URI
 
-                    // Spaces
                     test_file_iri!("file:///C:/te%20st/co%20ol/index.rs");
                     test_file_iri!("file:///C:/te%20st/co%20ol/");
                 }
@@ -1494,7 +1428,6 @@ mod tests {
             test_iri!("ftp://例🏃🦀/cool.ftp");
         }
 
-        // There are likely more tests needed for IRI vs URI
         #[test]
         fn iris() {
             // These refer to the same location, see example here:
@@ -1746,7 +1679,6 @@ mod tests {
         // This avoids taking a dependency on the unicode-width crate
         fn width(c: char) -> usize {
             match c {
-                // Fullwidth unicode characters used in tests
                 '例' | '🏃' | '🦀' | '🔥' => 2,
                 '\t' => 8, // it's really 0-8, use the max always
                 _ => 1,

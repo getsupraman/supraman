@@ -1,6 +1,6 @@
-//! Themes (m5/31): Zed theme JSON (`https://zed.dev/schema/themes/v0.2.0.json`) read tolerantly over a
+//! Themes: Zed theme JSON (`https://zed.dev/schema/themes/v0.2.0.json`) read tolerantly over a
 //! base theme, the bundled VS Code Dark Modern (the default) and Foreman Dark (One Dark with Campbell's
-//! ANSI colours, as before m5/31), files in `<FOREMAN_HOME>\themes\*.json`, and the terminal colours
+//! ANSI colours), files in `<FOREMAN_HOME>\themes\*.json`, and the terminal colours
 //! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
 
 use std::{
@@ -36,7 +36,7 @@ pub const DIMMED: f32 = 0.8;
 pub const NAME_FLOOR: f32 = 7.;
 pub const SECONDARY_FLOOR: f32 = 4.5;
 
-/// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer (m5/36).
+/// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer.
 pub const MESSAGE_TINT: f32 = 0.10;
 pub const MESSAGE_TINT_HOVER: f32 = 0.16;
 
@@ -191,14 +191,14 @@ fn fresh_id(name: &str) -> String {
     format!("{name}#{}", GENERATION.fetch_add(1, Ordering::Relaxed))
 }
 
-/// One Dark, the theme Foreman painted with before m5/31; the base every loaded key falls back to.
+/// One Dark: the base every loaded key falls back to.
 pub fn one_dark() -> Theme {
     let registry = theme::ThemeRegistry::default();
     let theme = registry.get(theme::DEFAULT_DARK_THEME).expect("the fallback theme is One Dark");
     (*theme).clone()
 }
 
-/// Today's Foreman dark: One Dark with Campbell's ANSI colours (m5/23); only the backgrounds of the
+/// Foreman Dark: One Dark with Campbell's ANSI colours; only the backgrounds of the
 /// marked row and the search matches are faded to [`BACKGROUND_FLOORS`].
 pub fn foreman_dark() -> Loaded {
     let mut theme = one_dark();
@@ -302,7 +302,6 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     Loaded { theme, applied, ignored, adjusted }
 }
 
-/// Dim ANSI as before m5/31: 70% of the lightness.
 fn dim(mut color: Hsla) -> Hsla {
     color.l *= 0.7;
     color
@@ -437,7 +436,7 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
     adjusted
 }
 
-/// Placeholder and hint text (m5/36): legible, yet clearly below the [`SECONDARY_FLOOR`] that content
+/// Placeholder and hint text: legible, yet clearly below the [`SECONDARY_FLOOR`] that content
 /// holds, so it reads as a hint. `text.placeholder` keeps [`PLACEHOLDER_FLOOR`] <= ratio <
 /// [`PLACEHOLDER_CEILING`] on the panel and the editor background (the inputs').
 pub const PLACEHOLDER_FLOOR: f32 = 2.5;
@@ -476,7 +475,7 @@ pub fn fit_placeholder(theme: &mut Theme) -> Option<Adjustment> {
 }
 
 /// Backgrounds text is painted on, over the panel: (key, the alpha of the theme's text on it, floor).
-/// The marked row (m5/33) holds its ids and states in secondary text; a search result (m5/30) marks
+/// The marked row holds its ids and states in secondary text; a search result marks
 /// the matched part of a name.
 pub const BACKGROUND_FLOORS: [(&str, f32, f32); 2] = [
     ("ghost_element.selected", SECONDARY, SECONDARY_FLOOR),
@@ -782,10 +781,9 @@ mod tests {
         assert_eq!(keys(&dark), pinned(&EXPECTED_FOREMAN_DARK));
     }
 
-    /// The elements m5/30 and m5/33+34 added, on their own backgrounds, under each bundled theme: the search
-    /// box's text, a matched name, the marked row's name, secondary and warning text, the toast's text;
-    /// m5/36's Messages row: its sender (text) and its workspace and age (quiet) on the row's info or
-    /// warning tint, resting and under the pointer.
+    /// Under each bundled theme, on their own backgrounds: the search box's text, a matched name, the
+    /// marked row's name, secondary and warning text, the toast's text; the Messages row: its sender (text)
+    /// and its workspace and age (quiet) on the row's info or warning tint, resting and under the pointer.
     #[test]
     fn the_newer_elements_read_under_each_bundled_theme() {
         for mut theme in [dark_modern().theme, foreman_dark().theme] {
@@ -817,7 +815,7 @@ mod tests {
         }
     }
 
-    /// m5/36: placeholder text reads as a hint under each bundled theme, below what content holds, and is
+    /// Placeholder text reads as a hint under each bundled theme, below what content holds, and is
     /// opaque; a theme whose placeholder is as bright as its text, or too dim, is moved into the range.
     #[test]
     fn the_placeholder_reads_as_a_hint_under_each_bundled_theme() {
@@ -844,7 +842,7 @@ mod tests {
     /// What VS Code Dark Modern needed (reported in LEARNINGS m5/31).
     /// `info` is a 40% grey there (`#BFBFBF66`, 2.58:1 on #1F1F1F); the tree paints Idle in it.
     /// The marked row's `#04395E` left the ids on it at 3.82:1; a match's `#C6510666` a name at 6.94:1.
-    /// m5/36: its translucent placeholder `#FFFFFF56` is made opaque (3.07:1 on the editor background).
+    /// Its translucent placeholder `#FFFFFF56` is made opaque (3.07:1 on the editor background).
     const EXPECTED_ADJUSTMENTS: [(&str, &str, &str); 4] = [
         ("info", "#BFBFBF66", "#868686"),
         ("ghost_element.selected", "#04395E", "#04395E80"),
