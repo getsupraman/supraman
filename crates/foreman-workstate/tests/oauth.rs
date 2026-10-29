@@ -1,6 +1,3 @@
-//! The OAuth sign-in (m5/43) against the fake authorization server: discovery, DCR, PKCE S256, one
-//! resource, the loopback with its state check, the code exchange, refresh rotation, a refused refresh,
-//! re-registration after `invalid_client`, sign-out's revoke, and the 401 a read gets without a token.
 //! The browser is an HTTP GET from the test; refresh tokens go to a [`MemoryStore`].
 
 use std::path::Path;
@@ -26,7 +23,6 @@ fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<foreman_workstate::fake::Fa
     (dir, fake, oauth, store, auth)
 }
 
-/// Every file under `dir`, read as text.
 fn files(dir: &Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -74,7 +70,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     let read = fake.seen().into_iter().find(|s| s.target == "/api/v1/overview").unwrap();
     assert!(read.authorization.as_deref().unwrap().starts_with("Bearer eyJ"), "the OAuth access token");
 
-    // c2: no token in any of Foreman's files
+    // no token in any of Foreman's files
     let issued = oauth.issued();
     assert_eq!(issued.len(), 2);
     for (path, text) in files(dir.path()) {
@@ -161,8 +157,6 @@ fn every_sign_in_registers_a_fresh_client_kept_with_its_refresh_token() {
     assert!(auth.access_token(fake.base()).is_ok());
 }
 
-/// The server's database restored (every client and grant gone): the refresh is refused, the pair is
-/// dropped, "Sign in again"; the next sign-in registers afresh and works.
 #[test]
 fn a_wiped_server_is_sign_in_again_then_a_fresh_registration() {
     let (dir, fake, oauth, store, auth) = setup();
@@ -248,7 +242,6 @@ fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replac
     assert!(oauth.revoked() == 0);
 }
 
-/// Points `origin`'s revocation endpoint in `<home>/oauth/servers.json` at `url`.
 fn revoke_at(home: &Path, origin: &str, url: &str) {
     let path = home.join("oauth").join("servers.json");
     let mut known: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -315,8 +308,7 @@ fn the_fake_names_why_it_refuses_a_refresh_and_its_ids_are_not_guessable() {
     );
 }
 
-/// A refresh in flight holds only the refresh lock: `status()`, which the UI thread calls, answers
-/// meanwhile (F-08).
+/// A refresh in flight holds only the refresh lock: `status()`, which the UI thread calls, answers meanwhile.
 #[test]
 fn status_answers_while_a_refresh_is_in_flight() {
     let (_dir, fake, oauth, _store, auth) = setup();
@@ -368,8 +360,6 @@ fn concurrent_callers_share_one_refresh() {
     assert!(oauth.refusals().is_empty(), "{:?}", oauth.refusals());
 }
 
-/// A `servers.json` that cannot be parsed is reported and left as it is: it holds other origins'
-/// clients (F-09).
 #[test]
 fn a_damaged_servers_json_is_reported_and_never_written_over() {
     let (dir, fake, _oauth, _store, auth) = setup();

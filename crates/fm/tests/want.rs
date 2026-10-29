@@ -88,7 +88,7 @@ fn want_uses_the_role_the_app_rendered_and_keeps_the_apps_sessions() {
     assert_eq!(d.sessions[1].prompt, "Rendered for Alpha in demo.");
 }
 
-/// m5/26: a folder that is itself a repo is a one-repo workspace, its repo named after the folder; with
+/// A folder that is itself a repo is a one-repo workspace, its repo named after the folder; with
 /// repos below it, those are listed too. Registered, the root repo's session runs in the root.
 #[test]
 fn a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root() {

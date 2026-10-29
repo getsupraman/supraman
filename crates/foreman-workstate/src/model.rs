@@ -1,6 +1,4 @@
-//! The read API v1 shapes (Skills `docs/workstate/10-read-api.md`). Lenient on purpose: v1 grows
-//! additively, so unknown fields are ignored, every field defaults when missing, `| null` is an
-//! `Option`, and an enum value this build does not know is `Unknown`. Instants stay ISO-8601 strings.
+//! The read API v1 shapes (Skills `docs/workstate/10-read-api.md`), lenient on purpose: v1 grows additively.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -144,7 +142,6 @@ pub struct JournalEvent {
     pub payload: Value,
 }
 
-// ---- GET /api/v1/overview
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -194,7 +191,6 @@ pub struct Honesty {
     pub followups_open: u32,
 }
 
-// ---- GET /api/v1/runs/{id}/board
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -252,7 +248,6 @@ pub struct RowVerification {
     pub at: String,
 }
 
-// ---- GET /api/v1/items/{id}
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -394,7 +389,6 @@ pub struct Assumption {
     pub revisit_when: Option<ItemRef>,
 }
 
-// ---- GET /api/v1/inbox
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -420,7 +414,6 @@ pub struct InboxRow {
     pub call: String,
 }
 
-// ---- GET /api/v1/journal
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -433,7 +426,6 @@ pub struct Journal {
     pub events: Vec<JournalEvent>,
 }
 
-// ---- GET /api/v1/backlog
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -451,7 +443,6 @@ pub struct BacklogGroup {
     pub items: Vec<ItemRef>,
 }
 
-// ---- GET /api/v1/sessions
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -469,18 +460,16 @@ pub struct SessionRow {
     pub claims: Vec<Claim>,
 }
 
-// ---- GET /api/v1/resolve
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Resolved {
     pub as_of: String,
     pub seq: i64,
-    /// Zero, one or many; the client decides.
+    /// Zero, one or many.
     pub matches: Vec<ItemRef>,
 }
 
-// ---- GET /api/stream
 
 /// One SSE frame's data: "re-read", not the change itself.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -499,7 +488,6 @@ mod tests {
     const ITEM: &str = r#"{"id":"33333333-0000-4000-8000-000000000001","ref":"6","qualifiedRef":"m4/6","kind":"task","title":"E2E","status":"done"}"#;
     const SESSION: &str = r#"{"id":"44444444-0000-4000-8000-000000000001","name":"aw-m4-6","role":"worker","externalRole":null,"origin":null,"launchedBy":null,"claudeSessionId":null,"cwd":null,"tree":null,"client":null,"firstSeenAt":"2026-10-26T10:00:00+00:00","lastSeenAt":"2026-10-26T12:00:00+00:00"}"#;
 
-    /// m5/19: a done task as the real server answered it, every field it may null null.
     #[test]
     fn item_page_takes_the_real_servers_nulls() {
         let json = format!(
@@ -526,7 +514,6 @@ mod tests {
         assert!(page.events[0].payload["forced"].is_null());
     }
 
-    /// The other views' nullables: a board without project or intent, a claim and an inbox row without a run.
     #[test]
     fn board_overview_inbox_and_journal_take_nulls() {
         let claim = format!(

@@ -1,5 +1,4 @@
-//! The one HTTP agent every WorkState call uses: blocking HTTP/1.1, TLS through the OS (schannel,
-//! the machine's own root store) for an `https://` server, no proxy, no redirects, statuses as values.
+//! The one HTTP agent every WorkState call uses.
 
 use std::time::Duration;
 

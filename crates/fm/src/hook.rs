@@ -1,9 +1,4 @@
-//! `fm hook <event>`: run by `plugins/foreman/hooks/hooks.json` inside every session Foreman launches.
-//! Appends one [`Event`] line to `<FOREMAN_HOME>/events/<session_id>.jsonl`; on SessionStart also
-//! prints the role text for `FOREMAN_ROLE` (`{workspace}` filled from `FOREMAN_WORKSPACE`, `{repo}` from
-//! `FOREMAN_REPO`), which Claude
-//! Code adds to the session's context.
-//! Never fails: whatever goes wrong, nothing is printed and the exit code is 0 (see `main`).
+//! Run by `plugins/foreman/hooks/hooks.json`. Never fails: whatever goes wrong, nothing is printed and the exit code is 0.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;

@@ -45,14 +45,14 @@ what it is and what you need (`APPROVE? …`, `DECIDE: …`, `DONE: …`); the d
 `done: APPROVE? sent`, `done: answered fm-<w>-<slug>`); a turn that waits on someone ends `done: waiting on
 <who> for <what>` (`done: waiting on the human for approval`), never with the word BLOCKED in it. Nobody reads your reply text — the human reads
 `fm tell`, sessions read their messages — and Claude Code reads the turn's end: one that asks something leaves
-your row `state=blocked` ("needs input"), one that reads as waiting (`waiting`) leaves `state=working`
-(m3/3); Foreman cannot tell either from a parked or a busy session, and the daemon then restarts a killed
+your row `state=blocked` ("needs input"), one that reads as waiting (`waiting`) leaves `state=working`;
+Foreman cannot tell either from a parked or a busy session, and the daemon then restarts a killed
 you itself. Every question goes to whoever must answer it: `SendMessage` to a session, `fm tell` to the human.
 
 ## 2. `fm` — run it with the Bash tool, bare
 
 `fm` is on your PATH and `Bash(fm:*)` is pre-approved. Use the **Bash** tool, never PowerShell (its rules do
-not match and the call parks, m3/2). One command per call: no pipes, no `&&`, no `;`, no `cd`.
+not match and the call parks). One command per call: no pipes, no `&&`, no `;`, no `cd`.
 
 | Command | Prints |
 |---|---|
@@ -171,7 +171,7 @@ forwards the rest **unchanged**.
 an interpretation the plan already settles, a re-split inside the approved scope — and a `BLOCKED` saying
 a skill (`rlarch:controller`, `rlarch:nested-claude`, any skill a role names) is not in the skill listing:
 answer it yourself, never ask the human — *call the Skill tool for it anyway; a skill can be missing from the
-listing (a plugin skill whose header failed to parse was), only a failed Skill call is a blocker* (m3/4). Sessions call the Skill tool for those skills even when the
+listing (a plugin skill whose header failed to parse was), only a failed Skill call is a blocker*. Sessions call the Skill tool for those skills even when the
 listing does not show them, you too. Answer the sender with
 `SendMessage` (`ANSWER <unit ref>: …`) and record it: `work_note(kind: "decision", from: "<unit ref>", …)`.
 

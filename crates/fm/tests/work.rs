@@ -1,7 +1,3 @@
-//! `fm work overview|board` against a fake WorkState that is also its fake OAuth server (m5/43): the
-//! test signs in, its refresh token in its scratch home, and `fm` refreshes it. Never the real server or
-//! a real token (C21).
-
 use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
@@ -48,7 +44,6 @@ fn oauth_bearer(fake: &FakeWorkState, oauth: &FakeAuth) {
     }
 }
 
-/// The refresh tokens sent to the fake, in order.
 fn refreshes_sent(fake: &FakeWorkState) -> Vec<String> {
     fake.seen()
         .into_iter()
@@ -59,8 +54,8 @@ fn refreshes_sent(fake: &FakeWorkState) -> Vec<String> {
         .collect()
 }
 
-/// F-05's evidence without a token: each refresh token as `rt<n>`, its place among those the fake
-/// issued; which one the store held before and after one `fm`; what fm sent; why the fake refused.
+/// Evidence without a token: each refresh token as `rt<n>`, its place among those the fake issued; which one the
+/// store held before and after one `fm`; what fm sent; why the fake refused.
 fn rt_report(fake: &FakeWorkState, oauth: &FakeAuth, before: Option<&str>, sent_before: usize, after: Option<&str>) -> String {
     let issued: Vec<String> = oauth.issued().into_iter().filter(|t| t.starts_with("fake-rt-")).collect();
     let name = |t: Option<&str>| match t {

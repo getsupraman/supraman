@@ -1,13 +1,4 @@
-//! `fm probe hooks`: the m2/2 hook-ingest probes on throwaway `aw-m2-probe-<hex>-*` sessions, run from
-//! `<cargo root>/target/aw-m2-probe-<hex>/<probe>` with `--plugin-dir <cargo root>/plugins/foreman` and
-//! `FOREMAN_HOME` = `<scratch>/home`. Answers are recorded in `docs/LEARNINGS.md` (m2/2).
-//!
-//! - park: `--permission-mode default` + a Bash command → SessionStart(startup), UserPromptSubmit,
-//!   Notification(permission_prompt) in the log; then stopped.
-//! - compact: a 100k auto-compact window at 80 % with an 8k output reserve, and one large `Read` per
-//!   turn (`--bg --resume` between turns) → Stop, PreCompact(auto), SessionStart(compact). The role file is rewritten v1 → v2 after startup and v2 → v3 before a
-//!   `--bg --resume`, so a `v2` tag in the session's reply can only have come from the compact-time
-//!   injection.
+//! `fm probe hooks`: which hooks a parked and an auto-compacting session fire. Answers: `docs/LEARNINGS.md` m2/2.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,11 +14,11 @@ use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped,
 const ROLE: &str = "probe";
 const WINDOW: &str = "100000";
 /// The output reserve comes off the window: at the default (128k for this model) a 100k window
-/// compacts on every call, in a loop (m2/2).
+/// compacts on every call, in a loop.
 const MAX_OUTPUT: &str = "8000";
 const PCT: &str = "80";
 /// One big file per turn: more than one lets the next `Read` refill the context right after a
-/// compaction, which loops until "rapid-refill breaker tripped" and the turn ends with no Stop (m2/2).
+/// compaction, which loops until "rapid-refill breaker tripped" and the turn ends with no Stop.
 const BIG_FILES: usize = 1;
 const BIG_LINES: usize = 800;
 const ROUNDS: usize = 5;
@@ -38,7 +29,7 @@ const PROMPT_PARK: &str = "This is an automated probe. Run exactly this one Bash
 `echo parked > parked.txt`. Then stop.";
 
 /// Answered in the reply text, read back from the transcript: a file is not a reliable channel, because a
-/// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write (m2/2).
+/// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write.
 const PROMPT_TAGS: &str = "This is an automated probe. Do not use any tool and do not write any file. Look through \
 everything in your context (hook output, system reminders, the conversation summary) for lines that start with \
 FOREMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
@@ -120,12 +111,10 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
     mkdir(&setup.home, "roles")?;
     let tag_v1 = setup.set_role(hex, 1)?;
 
-    // park: permission prompt
     let dir_park = mkdir(root, "park")?;
     let mut spec_park = setup.spec(format!("aw-m2-probe-{hex}-park"), &dir_park, PROMPT_PARK, &[]);
     spec_park.permission_mode = "default".into();
 
-    // compact: small auto-compact window, big files to read
     let dir_compact = mkdir(root, "compact")?;
     for round in 1..=ROUNDS {
         for i in 1..=BIG_FILES {
@@ -244,7 +233,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<b
 }
 
 /// The documented fallback when auto-compaction cannot be triggered cheaply: `claude --resume <id> -p
-/// /compact` (m0/3), with the plugin and env passed again because `-p` starts a fresh process.
+/// /compact`, with the plugin and env passed again because `-p` starts a fresh process.
 fn manual_compact(setup: &Setup, cwd: &Path, session_id: &str, claude: &Claude, name: &str) -> Result<(), String> {
     let _ = claude.find_by_name(name, ROW_WITHIN).ok().and_then(|r| r.into_iter().next()).map(|r| claude.stop(&r.id));
     wait_until_stopped(claude, name)?;
