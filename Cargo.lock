@@ -1739,6 +1739,7 @@ name = "foreman-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "getrandom 0.3.4",
  "serde",
  "serde_json",
  "sha2",
@@ -1825,7 +1826,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "ureq",
- "windows 0.62.2",
 ]
 
 [[package]]
