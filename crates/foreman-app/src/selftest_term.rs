@@ -80,7 +80,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
         bail!("Ctrl+C with {text:?} selected left the clipboard at {copied:?} ({CLIPBOARD_TRIES} tries)");
     }
     sleep(cx, Duration::from_millis(400)).await;
-    let selection = terminal.read_with(cx, |t, _| t.last_content().selection_text.clone());
+    let selection = terminal.read_with(cx, |t, _| t.selection_text());
     if selection.is_some() {
         bail!("Ctrl+C copied {text:?} but left the selection {selection:?}");
     }
@@ -223,7 +223,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     key(cx, "enter", Modifiers::default())?;
     sleep(cx, Duration::from_millis(100)).await;
     let second = view.read_with(cx, |v, _| v.tab(tab).and_then(|t| t.find.as_ref()).and_then(|f| f.at));
-    let selected = terminal.read_with(cx, |t, _| t.last_content().selection_text.clone());
+    let selected = terminal.read_with(cx, |t, _| t.selection_text());
     if count > 1 && second == first {
         bail!("find: Enter stayed on match {first:?} of {count}");
     }
