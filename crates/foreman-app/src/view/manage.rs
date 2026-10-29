@@ -73,7 +73,7 @@ pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Opt
     }
 }
 
-fn send_name_of(session_id: &str) -> Option<String> {
+pub(super) fn send_name_of(session_id: &str) -> Option<String> {
     use foreman_claude::peer;
     let live = peer::live_entries(&peer::sessions_dir()?, &peer::System);
     peer::send_name(&live, session_id)

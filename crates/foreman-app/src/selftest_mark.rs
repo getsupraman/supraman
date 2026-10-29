@@ -104,6 +104,8 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     until(view, cx, WITHIN, "the mark back on the row", |v| marked(v).contains(&sid).then_some(())).await?;
 
     let copied = copy_send_name(view, &sid, name, cx).await.context("Copy SendMessage name")?;
+    let dropped = crate::selftest_drop::run(view, [tab, plain], &sid, name, &cwd, cx).await.context("drop on a terminal")?;
+    println!("step 7l: {dropped}");
 
     terminal.update(cx, |t, _| t.input(b"/exit\r".to_vec()));
     let asked = Instant::now();

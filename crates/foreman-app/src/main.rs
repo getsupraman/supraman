@@ -11,6 +11,7 @@ mod selftest_box;
 mod selftest_clipboard;
 mod selftest_closed;
 mod selftest_delete;
+mod selftest_drop;
 mod selftest_first_run;
 mod selftest_font;
 mod selftest_left;

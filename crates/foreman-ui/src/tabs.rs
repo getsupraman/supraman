@@ -1,6 +1,7 @@
 //! The tab strip: one header per tab, the active one marked with an accent line, each with its close
 //! button; the owner keeps the tabs themselves and appends its own buttons after them. A tab drags as a
-//! [`DraggedTab`]; dropped on another tab of the strip, the owner moves it there.
+//! [`DraggedTab`]; dropped on another tab of the strip, the owner moves it there. A session row drags as a
+//! [`DraggedSession`].
 
 use gpui::{AnyElement, AnyView, App, ClickEvent, Context, Div, MouseButton, MouseDownEvent, SharedString, Svg, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
@@ -27,25 +28,42 @@ pub struct DraggedTab {
     pub title: SharedString,
 }
 
+/// The payload of a session row being dragged, by the session's `session_id`.
+#[derive(Clone)]
+pub struct DraggedSession {
+    pub session_id: String,
+    pub title: SharedString,
+}
+
 impl Render for DraggedTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        div()
-            .font_family(fonts::UI)
-            .text_sm()
-            .px_3()
-            .py_1()
-            .max_w(px(280.))
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .rounded_sm()
-            .border_1()
-            .border_color(colors.border_focused)
-            .bg(colors.tab_active_background)
-            .text_color(colors.text)
-            .opacity(0.9)
-            .child(self.title.clone())
+        chip(self.title.clone(), cx)
     }
+}
+
+impl Render for DraggedSession {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        chip(self.title.clone(), cx)
+    }
+}
+
+fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
+    let colors = cx.theme().colors();
+    div()
+        .font_family(fonts::UI)
+        .text_sm()
+        .px_3()
+        .py_1()
+        .max_w(px(280.))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .rounded_sm()
+        .border_1()
+        .border_color(colors.border_focused)
+        .bg(colors.tab_active_background)
+        .text_color(colors.text)
+        .opacity(0.9)
+        .child(title)
 }
 
 /// The strip, painted under `tab-<id>`, its close button under `close-tab-<id>`. `close_icon` draws the
