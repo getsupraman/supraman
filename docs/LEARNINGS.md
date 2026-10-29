@@ -3130,3 +3130,53 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   the clipboard"; the clipboard and claude paste path, untouched here, and not a known flake), run 6 PASS
   (124 s). `--selftest-supervise` PASS (299 s), `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest`
   rows from this worktree; 4 rows of another checkout's run, left alone.
+
+## 2026-10-29 — m5/44.18 the refresh token in a DPAPI-encrypted file; Credential Manager dropped
+
+- **Why Credential Manager is gone:** it loses writes that several processes make at the same time
+  (m5/44.3, F-05). Another program writing generic credentials could revert Foreman's rotated refresh token,
+  so the next refresh got `invalid_grant` and "Sign in again". René decided on 2026-10-29 to move the token
+  into a file that only Foreman writes.
+- **Layout** (`secret.rs` `FileStore`): `<home>/oauth/secrets/<sha256(issuer) hex>.bin`, one file per key.
+  Each file holds only the DPAPI blob: `CryptProtectData` in current-user scope (no
+  `CRYPTPROTECT_LOCAL_MACHINE`), `CRYPTPROTECT_UI_FORBIDDEN`, and the entropy `Foreman/WorkState refresh
+  token`. Another user, or a program of the same user that lacks the entropy, cannot unprotect the file.
+  A file that will not decrypt is an error ("cannot decrypt …"), so `status` is `SignInAgain`. Nothing
+  else is written: no plaintext, no log line, and errors never carry the token.
+- **Writes:** the sealed bytes go to `<hash>.<random>.tmp` in the same directory and are synced, then
+  renamed over the file. A rename, read or delete is retried up to 8 times on PermissionDenied or a sharing
+  violation (a scanner or a concurrent reader). `set` and `delete` happen only under `refresh.lock`. That
+  covers `access_token`'s rotation and its invalid_grant delete, sign-in's first store (`auth.rs`
+  `sign_in`, the `refresh_lock()` block around `keep_refresh`) and sign-out. The atomic write stays in
+  `secret.rs` until m5/44.4's `foreman_core::fs::write_atomic` lands; a later unit switches the call over.
+- **Migration:** `get` with no file reads Credential Manager under `Foreman/WorkState:<issuer>`
+  (`LEGACY_PREFIX`; `CredentialStore::get` joins m5/44.3's split parts). It writes what it finds with
+  `MoveFileExW` **without** `MOVEFILE_REPLACE_EXISTING`, then deletes the credential and all its parts.
+  `status` reads the store without `refresh.lock`, so the migration may run without it. Because the
+  no-replace rename never overwrites a file, a migration that loses a race cannot overwrite a token
+  that `fm` rotated meanwhile; it reads the winner's file instead. `delete` also deletes a leftover
+  credential, so sign-out cannot bring a token back. A signed-in user stays signed in across the upgrade
+  with no new sign-in.
+- **Test isolation by home:** `FOREMAN_CREDENTIAL_PREFIX` (`PREFIX_VAR`) is removed. `default_store(home)`
+  is per home; the selftest and `fm` tests use scratch homes. Their fake issuers
+  (`http://127.0.0.1:<port>/…`) never match a legacy target, so the migration finds nothing there. Unit
+  tests use `MemoryStore` or `FileStore` with a fake legacy store. The split-parts migration test uses a
+  `CredentialStore` under a random `fm-test-…` prefix of its own.
+- **fm tests:** `CREDENTIAL_WRITERS` and the serialized `Home` are gone. Red check: master 1c09179 with only
+  the lock disabled failed 4 of 60 runs of the `work` binary ("fm stored the rotated refresh token",
+  "and stored the rotated refresh token"), after 20 of 20 passed in a first batch. This unit passed 60 of
+  60 runs of the same binary, plus 20 of 20 runs of `cargo test -p fm`.
+- **For U11 (SecretStore into foreman-core):** the audit's "keep `PREFIX_VAR`" no longer applies. Move
+  `FileStore` and keep `CredentialStore` only as the legacy reader for the migration.
+- **Risk:** an older Foreman or `fm` still running during the upgrade keeps writing Credential Manager.
+  A rotation it makes after the migration is not seen by the new build, so the next refresh is refused
+  and the user must sign in again. Restart every Foreman process at the upgrade.
+- Tests: `secret::tests::a_file_store_keeps_one_encrypted_file_per_key_under_the_home`,
+  `a_file_another_program_sealed_is_refused`, `a_legacy_credential_moves_into_the_file_once_and_is_deleted`,
+  `a_migration_never_replaces_a_file_already_written`,
+  `a_split_legacy_credential_migrates_and_every_part_is_deleted`; `tests/oauth.rs`
+  `a_6_kb_refresh_token_rotates_through_the_file_store`; `fm/tests/work.rs` unserialized.
+- Gate (`CARGO_TARGET_DIR=C:mbuild\m5-44-18	arget`): build ok, no warnings; `cargo test --release
+  --workspace --no-fail-fast` 613 passed, 0 failed; `--selftest` 5 of 5 PASS (130–147 s);
+  `--selftest-supervise` PASS (321 s); `--selftest-detach-shutdown` PASS (14 s); 0 `fm-selftest` rows from
+  this worktree (6 listed belong to m5-44-4's run, left alone).
