@@ -25,7 +25,6 @@ use std::process::ExitStatus;
 use std::sync::Arc;
 use vte::ansi::Rgb;
 
-///Upward flowing events, for changing the title and such
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     TitleChanged,
@@ -123,7 +122,7 @@ impl Terminal {
         match event {
             TerminalBackendEvent::Title(title) => {
                 // ConPTY names the console after the running executable whenever nothing else names
-                // it (at start, and when a program clears its title): that is no title (m5/29)
+                // it (at start, and when a program clears its title): that is no title
                 #[cfg(windows)]
                 let title = if is_default_title(self.shell_program.as_deref(), &title) {
                     String::new()
@@ -175,14 +174,8 @@ impl Terminal {
                 }
             }
             TerminalBackendEvent::ColorRequest(index, format) => {
-                // It's important that the color request is processed here to retain relative order
-                // with other PTY writes. Otherwise applications might witness out-of-order
-                // responses to requests. For example: An application sending `OSC 11 ; ? ST`
-                // (color request) followed by `CSI c` (request device attributes) would receive
-                // the response to `CSI c` first.
-                // Instead of locking, we could store the colors in `self.last_content`. But then
-                // we might respond with out of date value if a "set color" sequence is immediately
-                // followed by a color request sequence.
+                // Answered here, in order with other PTY writes: `OSC 11 ; ? ST` then `CSI c` must get their replies in
+                // that order. Not from `last_content`, which a set-colour just before the query leaves stale.
 
                 let color = self.term.lock().colors()[index].unwrap_or_else(|| {
                     to_vte_rgb(get_color_at_index(index, &TerminalConfig::get(cx).palette))
@@ -223,9 +216,7 @@ impl Terminal {
                 if columns_changed {
                     self.reset_cwd_history();
                 }
-                // If there are matches we need to emit a wake up event to
-                // invalidate the matches and recalculate their locations
-                // in the new terminal layout
+                // matches move with the new layout and must be recalculated
                 if !self.matches.is_empty() {
                     cx.emit(Event::Wakeup);
                 }
@@ -323,8 +314,7 @@ impl Terminal {
                 }
             }
             InternalEvent::ProcessHyperlink(hyperlink, open) => {
-                // history_size must be read here since process_hyperlink cannot lock term
-                // (sync() already holds the lock when dispatching events)
+                // read here: `sync()` holds the term lock while it dispatches events
                 let history_size = term.history_size();
                 self.process_hyperlink(hyperlink.clone(), *open, history_size, cx);
             }
@@ -341,7 +331,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_shells_own_path_is_no_title() {
-        // as measured in the selftest (m5/29): the program did not resolve
+        // as measured: the program did not resolve
         let none = Some("");
         assert!(is_default_title(
             none,
@@ -350,7 +340,7 @@ mod tests {
         assert!(is_default_title(none, r"c:\users\me\.local\bin\claude.exe"));
         assert!(is_default_title(Some("pwsh"), "pwsh"));
         assert!(is_default_title(None, r"C:\WINDOWS\system32\CMD.EXE"));
-        // an elevated Foreman (m5/29 gate)
+        // an elevated Foreman
         assert!(is_default_title(
             none,
             r"Administrator: C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.7.0_x64__8wekyb3d8bbwe\pwsh.exe"

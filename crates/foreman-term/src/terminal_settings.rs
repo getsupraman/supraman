@@ -1,6 +1,5 @@
 // Vendored from Zed crates/terminal/src/terminal_settings.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
-// (GPL-3.0-or-later). The settings-store `TerminalSettings` is replaced by a plain `TerminalConfig`
-// global; `AlternateScroll` is copied from crates/settings_content/src/terminal.rs.
+// (GPL-3.0-or-later); `AlternateScroll` from crates/settings_content/src/terminal.rs.
 
 use std::time::Duration;
 
@@ -34,14 +33,10 @@ pub enum AlternateScroll {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
-    /// Cursor is a block like `█`.
     #[default]
     Block,
-    /// Cursor is an underscore like `_`.
     Underline,
-    /// Cursor is a vertical bar like `⎸`.
     Bar,
-    /// Cursor is a hollow box like `▯`.
     Hollow,
 }
 

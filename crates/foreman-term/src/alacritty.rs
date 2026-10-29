@@ -256,10 +256,7 @@ fn alacritty_cursor_shape(cursor_shape: SettingsCursorShape) -> AlacCursorShape 
 }
 
 impl Dimensions for TerminalBounds {
-    /// Note: this is supposed to be for the back buffer's length,
-    /// but we exclusively use it to resize the terminal, which does not
-    /// use this method. We still have to implement it for the trait though,
-    /// hence, this comment.
+    /// Not the back buffer's length: nothing resizes through this, but the trait requires it.
     fn total_lines(&self) -> usize {
         self.screen_lines()
     }
@@ -716,11 +713,8 @@ fn adjusted_last_hovered_word(
         && grid_lines_change == GridLinesChange::Unchanged
     {
         if total_lines_delta == 0 {
-            // Viewport and content are the same, we can reuse existing match
             Some(last_hovered_word.clone())
         } else {
-            // Content is changed, but viewport is shifted the same, reuse
-            // the match, but need to shift the match lines by the same amount.
             let mut adjusted_hovered_word = last_hovered_word.clone();
             adjusted_hovered_word.word_match = Range::new(
                 Point::new(
@@ -912,7 +906,7 @@ mod tests {
         );
         set_selection(&mut term, Some(&selection));
 
-        // Windows Terminal's delimiters split at - and . too (m5/23)
+        // Windows Terminal's delimiters split at - and . too
         assert_eq!(selection_text(&term).as_deref(), Some("zms"));
     }
 }

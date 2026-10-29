@@ -3625,3 +3625,24 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-10\target`, merged with master 1049b90): build ok, no warnings;
   `cargo test --release --workspace` 651 passed, 0 failed; `--selftest` 5 of 5 PASS (125–141 s; 4 of 4 before the
   merge); `--selftest-supervise` PASS (311 s); `--selftest-detach-shutdown` PASS (13 s); 0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.16a comment pass over foreman-term and foreman-ui (audit U14a: A-69, A-70)
+- **Comments only.** Every changed file, with its `//` comments stripped (outside string literals) and blank lines
+  dropped, is identical to master (`codeonly.py`-style check over 27 files: 0 code differences); `git diff -w master`
+  shows comment lines and 61 trailing comments cut from code lines (`keys.rs`' caret-notation `//1`..`//127`).
+- **Counts (full-line comments):** foreman-term 513 → 303 (plus 61 trailing), foreman-ui 332 → 313. The audit's
+  estimate was 87 and 24; most of foreman-term's cut is vendored-Zed restatement and test scaffolding.
+- **Kept on purpose:** the GPL provenance headers (`Vendored from Zed … @ 03efd49…`) cut to the two-line form; upstream
+  issue links in tests; protocol and platform quirks (claude's keyboard modes, ConPTY default titles, OSC colour-reply
+  order); `m5/26` floors and `LEARNINGS m5/22` as pointers; `m5/44 decision 5` on Ctrl+click links; the shared
+  components' `///` docs, trimmed only where they named a unit (`text_input.rs`, `themes.rs` "before m5/31").
+- **Removed:** unit tags (m3/3, m5/9, m5/15, m5/23, m5/24, m5/29, m5/36, m5/41, m5/47, tf/6), history ("This used to
+  be … I couldn't find it", "as the old field did", "Kept: … Dropped: …", the terminal.rs "Cut for Foreman" note),
+  the SSH/WSL remoting and macOS locale essays, commented-out `NumpadEnter`, a duplicate xterm modifier table, section
+  banners and `///Scroll the terminal`-style restatements.
+- **No code-looks-wrong findings.** One stale name: hyperlinks' test comment called `sanitize_url_parentheses`, a
+  function that does not exist (deleted with the comment).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16a\target`): build ok; `cargo test --release --workspace` 651 passed,
+  0 failed; `--selftest` first series 4 of 5, then 1 of 2 (runs 2 and 7 failed at 72 s, run 7 on step 7j's
+  1.5 s Refresh bound while another gate's foreman ran, as in m5/45; run 2's log was not kept), second series 5 of 5 PASS
+  (120–138 s); `--selftest-supervise` PASS (317 s); `--selftest-detach-shutdown` PASS (13 s); 0 `fm-selftest` rows.

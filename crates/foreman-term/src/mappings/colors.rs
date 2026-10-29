@@ -13,12 +13,10 @@ pub(crate) fn to_vte_rgb(color: impl Into<Rgba>) -> VteRgb {
     VteRgb { r, g, b }
 }
 
-/// Converts an 8 bit ANSI color to its GPUI equivalent.
 /// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
 /// Other than that use case, should only be called with values in the `[0,255]` range
 pub fn get_color_at_index(index: usize, palette: &TerminalPalette) -> Hsla {
     match index {
-        // 0-15 are the same as the named colors above
         0..=15 => palette.ansi[index],
         // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
         // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
@@ -32,7 +30,7 @@ pub fn get_color_at_index(index: usize, palette: &TerminalPalette) -> Hsla {
         }
         // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
         232..=255 => {
-            let i = index as u8 - 232; // Align index to 0..24
+            let i = index as u8 - 232;
             let value = i * 10 + 8;
             rgba_color(value, value, value)
         }
@@ -50,16 +48,6 @@ pub fn get_color_at_index(index: usize, palette: &TerminalPalette) -> Hsla {
 }
 
 /// Generates the RGB channels in [0, 5] for a given index into the 6x6x6 ANSI color cube.
-///
-/// See: [8 bit ANSI color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
-///
-/// Wikipedia gives a formula for calculating the index for a given color:
-///
-/// ```text
-/// index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
-/// ```
-///
-/// This function does the reverse, calculating the `r`, `g`, and `b` components from a given index.
 pub(crate) fn rgb_for_index(i: u8) -> (u8, u8, u8) {
     debug_assert!((16..=231).contains(&i));
     let i = i - 16;
@@ -87,7 +75,6 @@ mod tests {
 
     #[test]
     fn test_rgb_for_index() {
-        // Test every possible value in the color cube.
         for i in 16..=231 {
             let (r, g, b) = rgb_for_index(i);
             assert_eq!(i, 16 + 36 * r + 6 * g + b);

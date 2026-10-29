@@ -14,17 +14,13 @@ pub struct PathLikeTarget {
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
     pub maybe_path: String,
-    /// Current working directory of the terminal
     pub working_directory: Option<PathBuf>,
 }
 
-/// A string inside terminal, potentially useful as a URI that can be opened.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaybeNavigationTarget {
     /// HTTP, git, etc. string determined by the `URL_REGEX` regex.
     Url(String),
-    /// File system path, absolute or relative, existing or not.
-    /// Might have line and column number(s) attached as `file.rs:1:23`
     PathLike(PathLikeTarget),
 }
 
@@ -126,12 +122,10 @@ impl Terminal {
             return;
         }
 
-        // Throttle hyperlink searches to avoid excessive processing
         let now = Instant::now();
         let throttle = !self
             .last_hyperlink_search_position
             .map_or(true, |last_pos| {
-                // Only search if mouse moved significantly or enough time passed
                 let distance_moved = ((position.x - last_pos.x).abs()
                     + (position.y - last_pos.y).abs())
                     > FIND_HYPERLINK_THROTTLE_PX;
@@ -652,7 +646,6 @@ mod tests {
             let mut expected_lines = expected_lines.into_iter();
             for (line, text) in lines.into_iter().enumerate() {
                 let Some(expected_text) = expected_lines.next() else {
-                    // More actual lines than expected lines, ignore
                     return;
                 };
                 assert_eq!(text, expected_text, "Mismatched text at line {line}");
@@ -715,7 +708,6 @@ mod tests {
         }
 
         fn unthrottle(&mut self) {
-            // Suppress hyperlink throttling for testing
             self.terminal.suppress_hyperlink_throttle_once = true;
         }
 
@@ -834,7 +826,6 @@ mod tests {
         let test_entities = TestEntities::new(&terminal, &test_view);
         let expected_hovered_word: HoveredWord = (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
         update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-            // Set initial expected hovered word
             cx.write_output_lines(OUTPUT_ZED_DEV, 1);
             Some(Expected(Wakeups(2), Notifies(0)))
         });

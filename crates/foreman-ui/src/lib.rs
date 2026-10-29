@@ -147,7 +147,7 @@ pub fn process_start() -> Instant {
 /// `Window::present`, so calling [`FrameProbe::on_render`] from the root view's `render` marks one
 /// frame handed to the swap chain. [`FrameProbe::paint_marker`], the root's last child, paints last:
 /// render → marker is the frame's render, layout, prepaint and paint, without the wait for vsync or for
-/// the CPU, which another process can stretch (m5/15).
+/// the CPU, which another process can stretch.
 #[derive(Default)]
 pub struct FrameProbe {
     pub recording: bool,

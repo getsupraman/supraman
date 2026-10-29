@@ -33,7 +33,6 @@ impl Drop for Terminal {
 
 impl Terminal {
     /// Releases live PTY resources while retaining process metadata and buffered output.
-    ///
     /// Calling this method after the resources have already been released is a no-op.
     pub fn release_pty_resources(&mut self) {
         let TerminalType::Pty { resources, info } = &mut self.terminal_type else {

@@ -54,16 +54,13 @@ pub(crate) fn to_esc_str(
 ) -> Option<Cow<'static, str>> {
     let modifiers = TerminalModifiers::new(keystroke);
 
-    // Manual Bindings including modifiers
     let manual_esc_str: Option<&'static str> = match (keystroke.key.as_ref(), &modifiers) {
-        //Basic special keys
         ("tab", TerminalModifiers::None) => Some("\x09"),
         ("escape", TerminalModifiers::None) => Some("\x1b"),
         ("enter", TerminalModifiers::None) => Some("\x0d"),
         ("enter", TerminalModifiers::Shift) => Some("\x0a"),
         ("enter", TerminalModifiers::Alt) => Some("\x1b\x0d"),
         ("backspace", TerminalModifiers::None) => Some("\x7f"),
-        //Interesting escape codes
         ("tab", TerminalModifiers::Shift) => Some("\x1b[Z"),
         ("backspace", TerminalModifiers::Ctrl) => Some("\x08"),
         ("backspace", TerminalModifiers::Alt) => Some("\x1b\x7f"),
@@ -106,74 +103,71 @@ pub(crate) fn to_esc_str(
         ("f18", TerminalModifiers::None) => Some("\x1b[32~"),
         ("f19", TerminalModifiers::None) => Some("\x1b[33~"),
         ("f20", TerminalModifiers::None) => Some("\x1b[34~"),
-        // NumpadEnter, Action::Esc("\n".into());
-        //Mappings for caret notation keys
-        ("a", TerminalModifiers::Ctrl) => Some("\x01"), //1
-        ("A", TerminalModifiers::CtrlShift) => Some("\x01"), //1
-        ("b", TerminalModifiers::Ctrl) => Some("\x02"), //2
-        ("B", TerminalModifiers::CtrlShift) => Some("\x02"), //2
-        ("c", TerminalModifiers::Ctrl) => Some("\x03"), //3
-        ("C", TerminalModifiers::CtrlShift) => Some("\x03"), //3
-        ("d", TerminalModifiers::Ctrl) => Some("\x04"), //4
-        ("D", TerminalModifiers::CtrlShift) => Some("\x04"), //4
-        ("e", TerminalModifiers::Ctrl) => Some("\x05"), //5
-        ("E", TerminalModifiers::CtrlShift) => Some("\x05"), //5
-        ("f", TerminalModifiers::Ctrl) => Some("\x06"), //6
-        ("F", TerminalModifiers::CtrlShift) => Some("\x06"), //6
-        ("g", TerminalModifiers::Ctrl) => Some("\x07"), //7
-        ("G", TerminalModifiers::CtrlShift) => Some("\x07"), //7
-        ("h", TerminalModifiers::Ctrl) => Some("\x08"), //8
-        ("H", TerminalModifiers::CtrlShift) => Some("\x08"), //8
-        ("i", TerminalModifiers::Ctrl) => Some("\x09"), //9
-        ("I", TerminalModifiers::CtrlShift) => Some("\x09"), //9
-        ("j", TerminalModifiers::Ctrl) => Some("\x0a"), //10
-        ("J", TerminalModifiers::CtrlShift) => Some("\x0a"), //10
-        ("k", TerminalModifiers::Ctrl) => Some("\x0b"), //11
-        ("K", TerminalModifiers::CtrlShift) => Some("\x0b"), //11
-        ("l", TerminalModifiers::Ctrl) => Some("\x0c"), //12
-        ("L", TerminalModifiers::CtrlShift) => Some("\x0c"), //12
-        ("m", TerminalModifiers::Ctrl) => Some("\x0d"), //13
-        ("M", TerminalModifiers::CtrlShift) => Some("\x0d"), //13
-        ("n", TerminalModifiers::Ctrl) => Some("\x0e"), //14
-        ("N", TerminalModifiers::CtrlShift) => Some("\x0e"), //14
-        ("o", TerminalModifiers::Ctrl) => Some("\x0f"), //15
-        ("O", TerminalModifiers::CtrlShift) => Some("\x0f"), //15
-        ("p", TerminalModifiers::Ctrl) => Some("\x10"), //16
-        ("P", TerminalModifiers::CtrlShift) => Some("\x10"), //16
-        ("q", TerminalModifiers::Ctrl) => Some("\x11"), //17
-        ("Q", TerminalModifiers::CtrlShift) => Some("\x11"), //17
-        ("r", TerminalModifiers::Ctrl) => Some("\x12"), //18
-        ("R", TerminalModifiers::CtrlShift) => Some("\x12"), //18
-        ("s", TerminalModifiers::Ctrl) => Some("\x13"), //19
-        ("S", TerminalModifiers::CtrlShift) => Some("\x13"), //19
-        ("t", TerminalModifiers::Ctrl) => Some("\x14"), //20
-        ("T", TerminalModifiers::CtrlShift) => Some("\x14"), //20
-        ("u", TerminalModifiers::Ctrl) => Some("\x15"), //21
-        ("U", TerminalModifiers::CtrlShift) => Some("\x15"), //21
-        ("v", TerminalModifiers::Ctrl) => Some("\x16"), //22
-        ("V", TerminalModifiers::CtrlShift) => Some("\x16"), //22
-        ("w", TerminalModifiers::Ctrl) => Some("\x17"), //23
-        ("W", TerminalModifiers::CtrlShift) => Some("\x17"), //23
-        ("x", TerminalModifiers::Ctrl) => Some("\x18"), //24
-        ("X", TerminalModifiers::CtrlShift) => Some("\x18"), //24
-        ("y", TerminalModifiers::Ctrl) => Some("\x19"), //25
-        ("Y", TerminalModifiers::CtrlShift) => Some("\x19"), //25
-        ("z", TerminalModifiers::Ctrl) => Some("\x1a"), //26
-        ("Z", TerminalModifiers::CtrlShift) => Some("\x1a"), //26
-        ("@", TerminalModifiers::Ctrl) => Some("\x00"), //0
-        ("[", TerminalModifiers::Ctrl) => Some("\x1b"), //27
-        ("\\", TerminalModifiers::Ctrl) => Some("\x1c"), //28
-        ("]", TerminalModifiers::Ctrl) => Some("\x1d"), //29
-        ("^", TerminalModifiers::Ctrl) => Some("\x1e"), //30
-        ("_", TerminalModifiers::Ctrl) => Some("\x1f"), //31
-        ("?", TerminalModifiers::Ctrl) => Some("\x7f"), //127
+        ("a", TerminalModifiers::Ctrl) => Some("\x01"),
+        ("A", TerminalModifiers::CtrlShift) => Some("\x01"),
+        ("b", TerminalModifiers::Ctrl) => Some("\x02"),
+        ("B", TerminalModifiers::CtrlShift) => Some("\x02"),
+        ("c", TerminalModifiers::Ctrl) => Some("\x03"),
+        ("C", TerminalModifiers::CtrlShift) => Some("\x03"),
+        ("d", TerminalModifiers::Ctrl) => Some("\x04"),
+        ("D", TerminalModifiers::CtrlShift) => Some("\x04"),
+        ("e", TerminalModifiers::Ctrl) => Some("\x05"),
+        ("E", TerminalModifiers::CtrlShift) => Some("\x05"),
+        ("f", TerminalModifiers::Ctrl) => Some("\x06"),
+        ("F", TerminalModifiers::CtrlShift) => Some("\x06"),
+        ("g", TerminalModifiers::Ctrl) => Some("\x07"),
+        ("G", TerminalModifiers::CtrlShift) => Some("\x07"),
+        ("h", TerminalModifiers::Ctrl) => Some("\x08"),
+        ("H", TerminalModifiers::CtrlShift) => Some("\x08"),
+        ("i", TerminalModifiers::Ctrl) => Some("\x09"),
+        ("I", TerminalModifiers::CtrlShift) => Some("\x09"),
+        ("j", TerminalModifiers::Ctrl) => Some("\x0a"),
+        ("J", TerminalModifiers::CtrlShift) => Some("\x0a"),
+        ("k", TerminalModifiers::Ctrl) => Some("\x0b"),
+        ("K", TerminalModifiers::CtrlShift) => Some("\x0b"),
+        ("l", TerminalModifiers::Ctrl) => Some("\x0c"),
+        ("L", TerminalModifiers::CtrlShift) => Some("\x0c"),
+        ("m", TerminalModifiers::Ctrl) => Some("\x0d"),
+        ("M", TerminalModifiers::CtrlShift) => Some("\x0d"),
+        ("n", TerminalModifiers::Ctrl) => Some("\x0e"),
+        ("N", TerminalModifiers::CtrlShift) => Some("\x0e"),
+        ("o", TerminalModifiers::Ctrl) => Some("\x0f"),
+        ("O", TerminalModifiers::CtrlShift) => Some("\x0f"),
+        ("p", TerminalModifiers::Ctrl) => Some("\x10"),
+        ("P", TerminalModifiers::CtrlShift) => Some("\x10"),
+        ("q", TerminalModifiers::Ctrl) => Some("\x11"),
+        ("Q", TerminalModifiers::CtrlShift) => Some("\x11"),
+        ("r", TerminalModifiers::Ctrl) => Some("\x12"),
+        ("R", TerminalModifiers::CtrlShift) => Some("\x12"),
+        ("s", TerminalModifiers::Ctrl) => Some("\x13"),
+        ("S", TerminalModifiers::CtrlShift) => Some("\x13"),
+        ("t", TerminalModifiers::Ctrl) => Some("\x14"),
+        ("T", TerminalModifiers::CtrlShift) => Some("\x14"),
+        ("u", TerminalModifiers::Ctrl) => Some("\x15"),
+        ("U", TerminalModifiers::CtrlShift) => Some("\x15"),
+        ("v", TerminalModifiers::Ctrl) => Some("\x16"),
+        ("V", TerminalModifiers::CtrlShift) => Some("\x16"),
+        ("w", TerminalModifiers::Ctrl) => Some("\x17"),
+        ("W", TerminalModifiers::CtrlShift) => Some("\x17"),
+        ("x", TerminalModifiers::Ctrl) => Some("\x18"),
+        ("X", TerminalModifiers::CtrlShift) => Some("\x18"),
+        ("y", TerminalModifiers::Ctrl) => Some("\x19"),
+        ("Y", TerminalModifiers::CtrlShift) => Some("\x19"),
+        ("z", TerminalModifiers::Ctrl) => Some("\x1a"),
+        ("Z", TerminalModifiers::CtrlShift) => Some("\x1a"),
+        ("@", TerminalModifiers::Ctrl) => Some("\x00"),
+        ("[", TerminalModifiers::Ctrl) => Some("\x1b"),
+        ("\\", TerminalModifiers::Ctrl) => Some("\x1c"),
+        ("]", TerminalModifiers::Ctrl) => Some("\x1d"),
+        ("^", TerminalModifiers::Ctrl) => Some("\x1e"),
+        ("_", TerminalModifiers::Ctrl) => Some("\x1f"),
+        ("?", TerminalModifiers::Ctrl) => Some("\x7f"),
         _ => None,
     };
     if let Some(esc_str) = manual_esc_str {
         return Some(Cow::Borrowed(esc_str));
     }
 
-    // Automated bindings applying modifiers
     if modifiers.any() {
         let modifier_code = modifier_code(keystroke);
         let modified_esc_str = match keystroke.key.as_ref() {
@@ -213,7 +207,6 @@ pub(crate) fn to_esc_str(
         }
     }
 
-    // Handling alt keys. These work for single ASCII characters.
     if (!cfg!(target_os = "macos") || option_as_meta)
         && keystroke.modifiers.alt
         && keystroke.key.is_ascii()
@@ -267,10 +260,9 @@ mod test {
 
     use super::*;
 
-    /// m5/9: `claude` negotiates no keyboard protocol with us (it queries kitty with `CSI ? u`,
-    /// which we do not answer, and resets modifyOtherKeys with `CSI > 4 m`), and takes LF as
-    /// "insert newline" both directly and through `claude attach`. So Shift+Enter stays LF in
-    /// every mode, Enter CR, Alt+Enter ESC CR.
+    /// `claude` negotiates no keyboard protocol (it queries kitty with `CSI ? u`, which goes unanswered, and
+    /// resets modifyOtherKeys with `CSI > 4 m`) and takes LF as "insert newline", directly and through
+    /// `claude attach`. So Shift+Enter stays LF in every mode, Enter CR, Alt+Enter ESC CR.
     #[test]
     fn test_enter_variants_ignore_terminal_modes() {
         let modes = [
@@ -431,26 +423,13 @@ mod test {
         let regular_enter = Keystroke::parse("enter").unwrap();
         let mode = Modes::NONE;
 
-        // Shift-enter should send line feed (newline)
         assert_eq!(to_esc_str(&shift_enter, mode, false), Some("\x0a".into()));
 
-        // Regular enter should still send carriage return
         assert_eq!(to_esc_str(&regular_enter, mode, false), Some("\x0d".into()));
     }
 
     #[test]
     fn test_modifier_code_calc() {
-        //   Code     Modifiers
-        // ---------+---------------------------
-        //    2     | Shift
-        //    3     | Alt
-        //    4     | Shift + Alt
-        //    5     | Control
-        //    6     | Shift + Control
-        //    7     | Alt + Control
-        //    8     | Shift + Alt + Control
-        // ---------+---------------------------
-        // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
         assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
         assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
         assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
