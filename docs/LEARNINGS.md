@@ -3798,7 +3798,7 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   Selftests run by the controller: in the agent environment 7c fails every run, also on master UI code and with no
   other selftest running ("window not found" on `close_settings`), while the controller's own run of 2b0fb17
   passes it.
-- **Before/after (`FOREMAN_SHOTS`, `C:mbuildm5-51shots{before,after}`):** taken with 7c's bail turned into a
+- **Before/after (`FOREMAN_SHOTS`, `C:\fmbuild\m5-51\shots\{before,after}`):** taken with 7c's bail turned into a
   print in a local, uncommitted build; "before" is the same build with master's field geometry, Settings wrapper and
   summary padding. `m5-43-settings-signed-in`: two nested boxes around the URL → one. `m5-30-search-id`: "5e1f"
   12.7 px in and 6 px down in the search box → 16.7 and 8, and the summary line 4 px lower. `m5-51-compose`: the
