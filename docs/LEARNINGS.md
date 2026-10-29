@@ -3709,3 +3709,8 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   tool even when the listing does not show it" twice (A-76).
 - **Code-looks-wrong (not touched):** `foreman-workstate/src/auth.rs` `save_known` writes `servers.json` through a
   fixed `json.tmp` and a hand-made rename, which CLAUDE.md reserves for `foreman_core::fs::write_atomic`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16c\target`): `cargo build --release --workspace` 0 warnings;
+  `cargo test --release --workspace --no-fail-fast` 660 passed, 2 failed: `fm` `tests/want.rs`
+  `want_adds_a_repo_session_once_and_unwant_retires_it` and `a_workspace_whose_root_is_a_repo_wants_its_session_in_the_root`.
+  Master's own `crates`/`plugins` fail these two the same way in this target dir: an `fm.exe` under `C:\fmbuild` has no
+  `plugins/foreman` next to it or above it ("No Foreman plugin for …"). Selftests not run (parallel passes, per brief).
