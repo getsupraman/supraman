@@ -497,8 +497,8 @@ impl FleetView {
     }
 
     fn open_folder(&mut self, path: &Path) {
-        if let Err(e) = std::process::Command::new("explorer.exe").arg(path).spawn() {
-            self.action_error = Some(format!("Cannot open {}: {e}", path.display()));
+        if let Err(code) = foreman_core::process::shell_execute("open", path.as_os_str(), None, None) {
+            self.action_error = Some(format!("Cannot open {}: ShellExecuteW returned {code}", path.display()));
         }
     }
 

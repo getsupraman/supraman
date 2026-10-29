@@ -13,14 +13,13 @@
 
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock, atomic::{AtomicBool, Ordering}},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Session, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
-use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, scan};
+use foreman_claude::{Claude, Removal, Session, WRITE_TIMEOUT, check_supported, list_sessions, main_repo, main_repo_walks, now_ms};
+use foreman_core::{DEFAULT_DEPTH, Workspace, Registry, process, scan};
 use foreman_term::Terminal;
 use foreman_ui::{memory, mib};
 use gpui::{
@@ -32,7 +31,7 @@ use gpui::{
 use crate::{
     EXIT_CODE, Mode,
     fleet::{self, SessionRow},
-    view::{DETACH_WITHIN, Detach, FleetView, TabKind, process_alive},
+    view::{DETACH_WITHIN, Detach, FleetView, TabKind},
 };
 
 pub(crate) mod frames;
@@ -144,28 +143,6 @@ pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-pub(crate) fn claude(args: &[&str], cwd: Option<&Path>) -> anyhow::Result<String> {
-    let mut command = Command::new("claude");
-    command.args(args).stdin(Stdio::null());
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let out = command
-        .output()
-        .with_context(|| format!("cannot run claude {}", args.join(" ")))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if !out.status.success() {
-        bail!(
-            "claude {} failed ({}): {} {}",
-            args.join(" "),
-            out.status,
-            stdout,
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(stdout)
-}
-
 /// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
 /// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
@@ -248,10 +225,8 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         }
         *SESSION_NAME.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.clone());
         let launched = Instant::now();
-        let out = claude(
-            &["--bg", "--name", &name, "--permission-mode", "auto", PROMPT],
-            Some(&cwd),
-        )?;
+        let out = Claude::default().run_in(&["--bg", "--name", &name, "--permission-mode", "auto", PROMPT], Some(&cwd), WRITE_TIMEOUT)?;
+        let out = out.trim();
         println!(
             "step 2: launched {name} from {} in {} ms: {out}",
             cwd.display(),
@@ -354,14 +329,24 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
         if ids.is_empty() {
             println!("cleanup: no row named {name} in claude agents --json --all");
         }
+        let claude = Claude::default();
         for id in &ids {
-            for verb in ["stop", "rm"] {
-                match claude(&[verb, id], None) {
-                    Ok(out) => println!("cleanup: claude {verb} {id}: {out}"),
-                    Err(e) => {
-                        println!("cleanup: {e:#}");
-                        ok = false;
-                    }
+            match claude.stop(id) {
+                Ok(out) => println!("cleanup: claude stop {id}: {}", out.trim()),
+                Err(e) => {
+                    println!("cleanup: claude stop {id}: {e}");
+                    ok = false;
+                }
+            }
+            match claude.remove(id, None) {
+                Ok(Removal::Removed(out)) => println!("cleanup: claude rm {id}: {out}"),
+                Ok(Removal::Kept(refusal)) => {
+                    println!("cleanup: claude rm {id} kept it: {}", refusal.text);
+                    ok = false;
+                }
+                Err(e) => {
+                    println!("cleanup: claude rm {id}: {e}");
+                    ok = false;
                 }
             }
         }
@@ -590,7 +575,7 @@ fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
         bail!("{name} is listed but {health} ({}) — the close stopped it instead of detaching", raw(&row));
     }
     let pid = row.pid.ok_or_else(|| anyhow!("{name} is {health} but has no pid ({})", raw(&row)))?;
-    if !process_alive(pid) {
+    if !process::alive(pid) {
         bail!("{name}'s pid {pid} is not a running process ({})", raw(&row));
     }
     Ok(row)
@@ -743,7 +728,7 @@ pub(crate) async fn close_attach(
             Some(Detach::Failed) => bail!(
                 "detach failed: claude attach {pid} did not exit within {} s of Ctrl+Z; tab left open (alive: {})",
                 DETACH_WITHIN.as_secs(),
-                process_alive(pid)
+                process::alive(pid)
             ),
             Some(_) if closed.elapsed() > DETACH_WITHIN + Duration::from_secs(1) => {
                 bail!("tab {tab} still open {} ms after its close was clicked", closed.elapsed().as_millis())
@@ -752,7 +737,7 @@ pub(crate) async fn close_attach(
         }
     }
     let gone_after = closed.elapsed();
-    if process_alive(pid) {
+    if process::alive(pid) {
         bail!("the tab went away but the attach process {pid} is still running");
     }
     sleep(cx, Duration::from_secs(2)).await;
@@ -1187,7 +1172,7 @@ async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContex
     }
     sleep(cx, Duration::from_millis(500)).await;
     let tabs = view.read_with(cx, |v, _| v.tabs.iter().map(|t| (t.title.clone(), t.detach)).collect::<Vec<_>>());
-    if !tabs.iter().any(|(title, detach)| *title == attached.title && *detach == Detach::None) || !process_alive(attached.pid) {
+    if !tabs.iter().any(|(title, detach)| *title == attached.title && *detach == Detach::None) || !process::alive(attached.pid) {
         bail!("WM_CLOSE hid the window but did not keep the attach tab: {tabs:?}");
     }
     println!(
@@ -1270,7 +1255,7 @@ pub fn finish(mode: Mode) {
         if !probe.quit {
             bail!("the window closed {} ms after WM_CLOSE, before Quit: closing must only hide it", closed_after.as_millis());
         }
-        if process_alive(probe.attach_pid) {
+        if process::alive(probe.attach_pid) {
             bail!("the window closed with the attach process {} still running", probe.attach_pid);
         }
         std::thread::sleep(Duration::from_secs(2));

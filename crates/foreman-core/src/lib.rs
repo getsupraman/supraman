@@ -6,6 +6,7 @@ mod migrate;
 mod model;
 pub mod paths;
 mod plugin;
+pub mod process;
 mod registry;
 mod relay;
 mod scan;

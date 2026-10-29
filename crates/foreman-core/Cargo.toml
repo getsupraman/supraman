@@ -12,5 +12,8 @@ sha2 = "0.10.9"
 thiserror = "2.0.12"
 toml = "0.9.8"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"

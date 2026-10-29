@@ -7,11 +7,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use foreman_claude::{Claude, Health, LaunchSpec, Removal, claude_dir, is_session_id, new_session_id, no_window, now_ms};
+use foreman_claude::{Claude, Health, LaunchSpec, Removal, claude_dir, is_session_id, new_session_id, now_ms};
+use foreman_core::process::{self, Kill};
 
 use crate::probe::{Fleet, cargo_root, describe, hex6, mkdir, wait_until_stopped, yes};
 use crate::probe_rm::PARENT_VARS;
@@ -106,20 +106,17 @@ fn probe(claude: &Claude, fleet: &mut Fleet, home: &Path, root: &Path, hex: &str
     // the `+` tab's shape without --bg: does a foreground claude take the id?
     let headless = new_session_id();
     let started = Instant::now();
-    let mut command = Command::new(&claude.program);
-    no_window(&mut command)
+    let mut command = process::command(&claude.program);
+    command
         .args(["-p", "--session-id", &headless, "--strict-mcp-config", "This is an automated probe. Reply with the word ready and stop."])
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let output = command.output().map_err(|e| format!("-p: {e}"))?;
+        .current_dir(&cwd);
+    let output = process::run(&mut command, TURN_WITHIN, Kill::Child).map_err(|e| format!("-p: {e}"))?;
     let file = project.as_ref().unwrap().join(format!("{headless}.jsonl"));
     println!(
         "-p --session-id {headless}: exit {:?} in {} ms | stdout {:?} | transcript {headless}.jsonl {}",
-        output.status.code(),
+        output.code,
         started.elapsed().as_millis(),
-        String::from_utf8_lossy(&output.stdout).trim(),
+        output.stdout.trim(),
         yes(file.exists())
     );
     println!("FINDING foreground --session-id kept: {}", yes(file.exists()));

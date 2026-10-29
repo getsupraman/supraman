@@ -24,7 +24,6 @@ usage:
   fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
   fm work overview <workspace>         (its WorkState project: runs with rollups, who works, the inbox)
   fm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
-  fm probe launch
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
   fm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
@@ -139,14 +138,6 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
         ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
         ["work", rest @ ..] => work::work(registry()?.home(), rest),
-        ["probe", "launch"] => {
-            check_claude()?;
-            if probe::launch() {
-                Ok(())
-            } else {
-                Err(Failure::Probe("the decided token route did not work"))
-            }
-        }
         ["probe", "hooks", rest @ ..] => {
             let root = probe_root(rest)?;
             check_claude()?;

@@ -50,12 +50,11 @@
 //! `fm-selftest-<hex>…`, then the dirs.
 
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Claude, Health, LaunchSpec, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
+use foreman_claude::{Claude, Health, LaunchSpec, Removal, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
     DEFAULT_MAX_WORKING, EventReader, RelayDrop, Repo, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
@@ -67,10 +66,10 @@ use foreman_supervisor::{
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
 
 use crate::selftest::{
-    Scratch, claude, click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
+    Scratch, click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
     wait_for_tab_terminal, cargo_root,
 };
-use crate::view::{FleetView, process_alive};
+use crate::view::FleetView;
 use crate::{Mode, supervise};
 
 const PROMPT_TARGET: &str = "This is an automated Foreman selftest. Messages will arrive that contain nonces like \
@@ -145,14 +144,9 @@ pub fn prepare() -> anyhow::Result<()> {
     for root in roots {
         std::fs::create_dir_all(root).with_context(|| format!("create {}", root.display()))?;
     }
-    let git = Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&tb.u.1)
-        .stdin(Stdio::null())
-        .output()
-        .context("git init")?;
-    if !git.status.success() {
-        bail!("git init {}: {}", tb.u.1.display(), String::from_utf8_lossy(&git.stderr));
+    let git = foreman_core::process::git(&tb.u.1, &["init", "-q"]).context("git init")?;
+    if !git.success() {
+        bail!("git init {}: {}", tb.u.1.display(), git.stderr);
     }
     let registry = Registry::at(&home);
     let repo = tb.a.1.join(REPO);
@@ -220,11 +214,12 @@ pub fn remove_own_rows(prefix: &str) -> (bool, Vec<(String, std::path::PathBuf)>
     };
     let own: Vec<Session> = rows.into_iter().filter(|s| s.name.starts_with(prefix)).collect();
     let transcripts = own.iter().map(|s| (s.session_id.clone(), s.cwd.clone())).collect();
+    let claude = Claude::default();
     for row in &own {
         if row.pid.is_some() {
-            match claude(&["stop", &row.id], None) {
-                Ok(out) => println!("cleanup: claude stop {} ({}): {out}", row.id, row.name),
-                Err(e) => println!("cleanup: {e:#}"),
+            match claude.stop(&row.id) {
+                Ok(out) => println!("cleanup: claude stop {} ({}): {}", row.id, row.name, out.trim()),
+                Err(e) => println!("cleanup: claude stop {}: {e}", row.id),
             }
         }
     }
@@ -235,18 +230,17 @@ pub fn remove_own_rows(prefix: &str) -> (bool, Vec<(String, std::path::PathBuf)>
         std::thread::sleep(Duration::from_millis(500));
     }
     for row in &own {
-        match claude(&["rm", &row.id], None) {
-            Ok(out) => println!("cleanup: claude rm {} ({}): {out}", row.id, row.name),
-            Err(e) => {
-                let refusal = format!("{e:#}");
-                match discard_token(&refusal) {
-                    Some(token) => match claude(&["rm", &row.id, "--discard-unpushed", token], None) {
-                        Ok(out) => println!("cleanup: claude rm {} --discard-unpushed: {out}", row.id),
-                        Err(e) => println!("cleanup: {e:#}"),
-                    },
-                    None => println!("cleanup: {refusal}"),
-                }
-            }
+        match claude.remove(&row.id, None) {
+            Ok(Removal::Removed(out)) => println!("cleanup: claude rm {} ({}): {out}", row.id, row.name),
+            Ok(Removal::Kept(refusal)) => match refusal.discard.as_deref() {
+                Some(discard) => match claude.remove(&row.id, Some(discard)) {
+                    Ok(Removal::Removed(out)) => println!("cleanup: claude rm {} --discard-unpushed: {out}", row.id),
+                    Ok(Removal::Kept(again)) => println!("cleanup: claude rm {} --discard-unpushed kept it: {}", row.id, again.text),
+                    Err(e) => println!("cleanup: claude rm {} --discard-unpushed: {e}", row.id),
+                },
+                None => println!("cleanup: claude rm {} kept it: {}", row.id, refusal.text),
+            },
+            Err(e) => println!("cleanup: claude rm {}: {e}", row.id),
         }
     }
     match list_sessions() {
@@ -260,12 +254,6 @@ pub fn remove_own_rows(prefix: &str) -> (bool, Vec<(String, std::path::PathBuf)>
             (false, transcripts)
         }
     }
-}
-
-/// `<sha>@<token>` from rm's "… claude rm <id> --discard-unpushed <sha>@<token>".
-fn discard_token(refusal: &str) -> Option<&str> {
-    let rest = refusal.split_once("--discard-unpushed ")?.1;
-    rest.split_whitespace().next().filter(|t| t.contains('@'))
 }
 
 async fn rows(cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<Session>> {
@@ -422,7 +410,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let pid = idle.pid.unwrap_or_default();
     let killed_at = now_ms();
     let kill = Instant::now();
-    let stop = claude(&["stop", &idle.id], None).context("step c: claude stop")?;
+    let stop = Claude::default().stop(&idle.id).context("step c: claude stop")?;
+    let stop = stop.trim();
     let mut dropped = None;
     let mut lingered = 0u32;
     let resumed = loop {
@@ -454,7 +443,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             raw(&idle)
         );
     }
-    if process_alive(pid) {
+    if foreman_core::process::alive(pid) {
         bail!("step c: the stopped pid {pid} is still running");
     }
     // Right after `--bg --resume` the row shows a transient sessionId for a few seconds, then the
@@ -904,12 +893,15 @@ async fn lowest_row_scrolled_into_view(tb: &Testbed, view: &Entity<FleetView>, c
     ))
 }
 
+const FM_WITHIN: Duration = Duration::from_secs(60);
+
 /// `fm.exe` built beside this `foreman.exe`, run with this process's `FOREMAN_HOME` (the testbed's).
 fn fm(args: &[&str]) -> anyhow::Result<String> {
     let exe = std::env::current_exe()?.with_file_name(foreman_core::HOOK_EXE);
-    let out = Command::new(&exe).args(args).stdin(Stdio::null()).output().with_context(|| format!("run {}", exe.display()))?;
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    if !out.status.success() {
+    let out = foreman_core::process::run(foreman_core::process::command(&exe).args(args), FM_WITHIN, foreman_core::process::Kill::Tree)
+        .with_context(|| format!("run {}", exe.display()))?;
+    let text = format!("{}{}", out.stdout, out.stderr);
+    if !out.success() {
         bail!("fm {}: {}", args.join(" "), text.trim());
     }
     Ok(text)
@@ -1219,7 +1211,7 @@ async fn relay_step(
     wait_painted(view, &attach_key, Duration::from_secs(5), cx).await?;
     // An idle target can keep `state=working` (m0/4), which the busy budget counts: step f's limit of 1
     // would wait on it for ever. Its job is done.
-    claude(&["stop", &target_row.id], None).context("stop the target")?;
+    Claude::default().stop(&target_row.id).context("stop the target")?;
 
     // idle for RELAY_IDLE_SECS after the drop: retired (R14), stopped, the row `direct` again
     let retired = loop {
@@ -1600,13 +1592,6 @@ mod tests {
         assert_eq!(tool_result(p, roster).as_deref(), Some("fm-w-repo\trepo\trunning"));
         assert_eq!(tool_result(p, |t| t.starts_with("Skill: ")).as_deref(), Some("Launching skill: x"));
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn reads_the_discard_token() {
-        let refusal = "claude rm 202c9998 failed (exit 1): kept 202c9998 … discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1@d71f54d8";
-        assert_eq!(discard_token(refusal), Some("3ccd48a1@d71f54d8"));
-        assert_eq!(discard_token("removed 202c9998"), None);
     }
 
     #[test]

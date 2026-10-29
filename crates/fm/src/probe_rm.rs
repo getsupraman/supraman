@@ -9,11 +9,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use foreman_claude::{Claude, Health, LaunchSpec, Removal, claude_dir, forget_transcript, is_session_id, no_window, now_ms};
+use foreman_claude::{Claude, Health, LaunchSpec, Removal, claude_dir, forget_transcript, is_session_id, now_ms};
+use foreman_core::process::{self, Kill};
 
 use crate::probe::{Fleet, cargo_root, describe, hex6, mkdir, wait_until_stopped, yes};
 
@@ -122,21 +122,17 @@ fn probe(claude: &Claude, fleet: &mut Fleet, home: &Path, root: &Path, hex: &str
     );
 
     let started = Instant::now();
-    let mut command = Command::new(&claude.program);
-    no_window(&mut command)
+    let mut command = process::command(&claude.program);
+    command
         .args(["--resume", &sid, "-p", "--strict-mcp-config", "Without using any tool: what single word did you reply with earlier in this conversation? Reply with only that word, or UNKNOWN."])
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = command.spawn().map_err(|e| format!("resume: {e}"))?;
-    let output = wait_output(child, RESUME_WITHIN)?;
+        .current_dir(&cwd);
+    let output = process::run(&mut command, RESUME_WITHIN, Kill::Child).map_err(|e| format!("resume -p: {e}"))?;
     println!(
         "resume -p after rm: exit {:?} in {} ms | stdout {:?} | stderr {:?}",
-        output.status.code(),
+        output.code,
         started.elapsed().as_millis(),
-        first(&String::from_utf8_lossy(&output.stdout)),
-        first(&String::from_utf8_lossy(&output.stderr))
+        first(&output.stdout),
+        first(&output.stderr)
     );
     println!(
         "after resume: transcript {} ({} bytes) | project dir holds {:?}",
@@ -179,19 +175,4 @@ fn len(path: &Path) -> u64 {
 
 fn first(text: &str) -> String {
     text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default().chars().take(200).collect()
-}
-
-fn wait_output(mut child: std::process::Child, within: Duration) -> Result<std::process::Output, String> {
-    let deadline = Instant::now() + within;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().map_err(|e| e.to_string()),
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(200)),
-            Ok(None) => {
-                let _ = child.kill();
-                return Err(format!("resume -p did not finish within {}s; killed", within.as_secs()));
-            }
-            Err(e) => return Err(e.to_string()),
-        }
-    }
 }

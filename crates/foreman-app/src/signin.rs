@@ -58,16 +58,10 @@ pub fn forget_own_credentials() -> Vec<String> {
 
 #[cfg(windows)]
 fn open_system_browser(url: &str) -> Result<(), String> {
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    use windows::core::{HSTRING, w};
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err(format!("{url} is not a web address"));
     }
-    // SAFETY: every string argument is an HSTRING that outlives the call.
-    let opened = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL) };
-    let code = opened.0 as isize;
-    if code > 32 { Ok(()) } else { Err(format!("ShellExecuteW returned {code}")) }
+    foreman_core::process::shell_execute("open", url.as_ref(), None, None).map_err(|code| format!("ShellExecuteW returned {code}"))
 }
 
 #[cfg(not(windows))]

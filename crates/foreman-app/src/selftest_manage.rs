@@ -303,20 +303,23 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
     let done = cx
         .background_executor()
         .spawn(async move {
-            std::fs::create_dir_all(&dir)?;
-            std::process::Command::new("pwsh")
-                .args(["-NoLogo", "-NoProfile", "-File"])
-                .arg(&script)
-                .args(["-ProcessId", &pid, "-Out"])
-                .arg(&out)
-                .args(title.iter().flat_map(|t| ["-Title", t.as_str()]))
-                .output()
-                .map(|o| (out, o))
+            std::fs::create_dir_all(&dir).map_err(foreman_core::process::RunError::Spawn)?;
+            foreman_core::process::run(
+                foreman_core::process::command("pwsh")
+                    .args(["-NoLogo", "-NoProfile", "-File"])
+                    .arg(&script)
+                    .args(["-ProcessId", &pid, "-Out"])
+                    .arg(&out)
+                    .args(title.iter().flat_map(|t| ["-Title", t.as_str()])),
+                Duration::from_secs(60),
+                foreman_core::process::Kill::Tree,
+            )
+            .map(|o| (out, o))
         })
         .await;
     match done {
-        Ok((out, o)) if o.status.success() => println!("shot: {}", out.display()),
-        Ok((out, o)) => println!("shot: {} failed: {}", out.display(), String::from_utf8_lossy(&o.stderr).trim()),
+        Ok((out, o)) if o.success() => println!("shot: {}", out.display()),
+        Ok((out, o)) => println!("shot: {} failed: {}", out.display(), o.stderr.trim()),
         Err(e) => println!("shot: {name} failed: {e}"),
     }
 }

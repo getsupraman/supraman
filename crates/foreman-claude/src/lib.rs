@@ -62,15 +62,16 @@ pub mod transcript;
 pub use assign::{Assignment, assign, assign_with, main_repo, main_repo_walks, repo_of};
 pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, MIN_VERSION, TESTED_VERSION, check_supported, check_version, cli_version,
-    list_sessions, no_window, parse_version,
+    list_sessions, parse_version,
 };
 pub use daemon::{DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, is_elevated, parse_daemon_status};
 pub use error::{ClaudeError, Result};
+pub use foreman_core::process::Output;
 pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_session_id};
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
-    Claude, LaunchSpec, Output, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workstate_mcp_config,
-    mcp_config_path, mcp_config_url, write_mcp_config, write_session_mcp_config,
+    Claude, LaunchSpec, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workstate_mcp_config,
+    mcp_config_path, mcp_config_url, write_mcp_config,
 };
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,

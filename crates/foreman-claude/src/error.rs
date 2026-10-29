@@ -13,12 +13,6 @@ pub enum ClaudeError {
     },
     #[error("`{command}` did not finish within {}s and was killed", .after.as_secs())]
     Timeout { command: String, after: Duration },
-    #[error("`{command}` failed ({status}): {stderr}")]
-    Failed {
-        command: String,
-        status: String,
-        stderr: String,
-    },
     #[error("`claude agents` output is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
     #[error("`claude agents` output is not a JSON array")]

@@ -64,7 +64,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         std::mem::replace(&mut v.show_stopped, true)
     });
     // the ended session's process: a windowless ping of this run's own, killed by its handle
-    let mut process = foreman_claude::no_window(std::process::Command::new("ping").args(["-n", "120", "127.0.0.1"]))
+    let mut process = foreman_core::process::command("ping")
+        .args(["-n", "120", "127.0.0.1"])
         .stdout(std::process::Stdio::null())
         .spawn()?;
     let earlier: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());

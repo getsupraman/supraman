@@ -67,25 +67,12 @@ pub fn toggle(home: &Path) -> bool {
 /// `ShellExecuteW` with the `runas` verb: the UAC prompt. `Ok` once the elevated copy started.
 #[cfg(windows)]
 pub fn relaunch(home: &Path, after: Option<u32>) -> anyhow::Result<()> {
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    use windows::core::{HSTRING, w};
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.to_path_buf());
-    let started = unsafe {
-        ShellExecuteW(
-            None,
-            w!("runas"),
-            &HSTRING::from(exe.as_os_str()),
-            &HSTRING::from(arguments(home, after)),
-            &HSTRING::from(cwd.as_os_str()),
-            SW_SHOWNORMAL,
-        )
-    };
-    // > 32 is success; a declined prompt is SE_ERR_ACCESSDENIED (5)
-    let code = started.0 as isize;
-    anyhow::ensure!(code > 32, "the elevated start was refused (ShellExecuteW runas returned {code}; 5 is a declined UAC prompt)");
-    Ok(())
+    let args = arguments(home, after);
+    foreman_core::process::shell_execute("runas", exe.as_os_str(), Some(args.as_ref()), Some(&cwd)).map_err(|code| {
+        anyhow::anyhow!("the elevated start was refused (ShellExecuteW runas returned {code}; 5 is a declined UAC prompt)")
+    })
 }
 
 #[cfg(not(windows))]
@@ -96,7 +83,7 @@ pub fn relaunch(_home: &Path, _after: Option<u32>) -> anyhow::Result<()> {
 /// Until `pid` has exited, or `within` passed.
 pub fn wait_for_exit(pid: u32, within: Duration) {
     let deadline = Instant::now() + within;
-    while crate::view::process_alive(pid) && Instant::now() < deadline {
+    while foreman_core::process::alive(pid) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
