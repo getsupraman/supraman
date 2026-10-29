@@ -27,6 +27,15 @@ pub struct Workspace {
 pub struct Scan {
     pub path: PathBuf,
     pub depth: usize,
+    /// Folders removed by hand: a rescan does not add them again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<PathBuf>,
+}
+
+impl Scan {
+    pub fn new(path: impl Into<PathBuf>, depth: usize) -> Self {
+        Self { path: path.into(), depth, exclude: Vec::new() }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +99,7 @@ impl From<Stored> for Workspace {
             && scans.is_empty()
         {
             let depth = s.folders.iter().map(|f| f.name.split('/').count()).max().unwrap_or(1).max(1);
-            scans.push(Scan { path: root.clone(), depth });
+            scans.push(Scan::new(root.clone(), depth));
         }
         Self {
             name: s.name,
@@ -230,7 +239,7 @@ enabled = false
     fn a_root_based_file_is_one_scan_of_its_root_with_the_root_as_home() {
         let w: Workspace = toml::from_str(LEGACY).unwrap();
         assert_eq!(w.home(), Some(Path::new(r"C:\Plat")));
-        assert_eq!(w.scans, [Scan { path: r"C:\Plat".into(), depth: 2 }], "deep enough for group/deep");
+        assert_eq!(w.scans, [Scan::new(r"C:\Plat", 2)], "deep enough for group/deep");
         let names: Vec<(&str, FolderKind, bool)> = w.folders.iter().map(|f| (f.name.as_str(), f.kind, f.enabled)).collect();
         assert_eq!(names, [("Alpha", FolderKind::Git, true), ("group/deep", FolderKind::Git, false)]);
         assert_eq!(w.folders[0].branch.as_deref(), Some("master"));
@@ -264,7 +273,7 @@ enabled = false
         assert!(w.contains(Path::new(r"C:\P\Gaia\x")));
         assert!(!w.contains(Path::new(r"C:\P\Gaia.Ext")));
         assert_eq!(w.other_dirs(), [PathBuf::from(r"C:\P\NodeApi")], "the home and nested folders need none");
-        w.scans.push(Scan { path: r"C:\Q".into(), depth: 1 });
+        w.scans.push(Scan::new(r"C:\Q", 1));
         assert_eq!(w.other_dirs(), [PathBuf::from(r"C:\P\NodeApi"), PathBuf::from(r"C:\Q")]);
     }
 

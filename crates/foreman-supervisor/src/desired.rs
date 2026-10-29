@@ -261,6 +261,24 @@ impl DesiredState {
         desired.save(home)?;
         Ok((desired, out))
     }
+
+    /// Unwants the repo session of each of `folders` that `workspace` wants, so the supervisor stops it (stop,
+    /// never rm); returns their names. A workspace that wants none of them is left unwritten.
+    pub fn release(home: &Path, workspace: &str, folders: &[&str]) -> Result<Vec<String>> {
+        let names: Vec<String> = folders.iter().filter_map(|f| repo_session_name(workspace, f)).collect();
+        let wanted = |d: &Self| names.iter().filter(|n| d.sessions.iter().any(|s| &s.name == *n)).cloned().collect::<Vec<_>>();
+        if Self::load(home, workspace)?.is_none_or(|d| wanted(&d).is_empty()) {
+            return Ok(Vec::new());
+        }
+        let (_, released) = Self::update(home, workspace, |d| {
+            let released = wanted(d);
+            for n in &released {
+                d.unwant(n);
+            }
+            released
+        })?;
+        Ok(released)
+    }
 }
 
 /// `<plugin_dir>/roles/<role>.md` with `{workspace}` filled in.
@@ -410,6 +428,23 @@ mod tests {
         let r = repo_session("nomos", "Nomos.Extract", r"C:\n\Nomos.Extract", "p").unwrap();
         assert_eq!((r.role.as_str(), r.repo.as_deref(), r.permission_mode.as_str()), ("repo", Some("Nomos.Extract"), "auto"));
         assert!(!r.exempt_from_budget());
+    }
+
+    #[test]
+    fn release_unwants_only_the_wanted_sessions_of_the_folders_and_writes_nothing_otherwise() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(DesiredState::release(home.path(), "demo", &["Alpha"]).unwrap().is_empty());
+        assert!(!DesiredState::path(home.path(), "demo").unwrap().exists(), "no desired state is made up");
+        DesiredState::update(home.path(), "demo", |d| {
+            d.want(repo_session("demo", "Alpha", r"C:\d\Alpha", "p").unwrap());
+            d.want(repo_session("demo", "Beta", r"C:\d\Beta", "p").unwrap());
+        })
+        .unwrap();
+        assert_eq!(DesiredState::release(home.path(), "demo", &["Alpha", "Gamma"]).unwrap(), ["fm-demo-alpha"]);
+        let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
+        assert_eq!(d.sessions.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["fm-demo-beta"]);
+        assert_eq!(d.retired, ["fm-demo-alpha"], "retired, so the supervisor stops a live one");
+        assert!(DesiredState::release(home.path(), "demo", &["Alpha"]).unwrap().is_empty());
     }
 
     #[test]

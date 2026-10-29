@@ -1,16 +1,23 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use foreman_claude::{ClaudeError, Health, Session, assign, check_supported, list_sessions, now_ms};
-use foreman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, discover};
+use foreman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, discover, owners};
 
 const USAGE: &str = "\
 usage:
-  fm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
+  fm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]   (a parent folder, scanned)
+  fm workspace new <name> [--home <dir>] [--folder <dir>]...   (a workspace of the folders given, or empty)
+  fm workspace add-folder <name> <dir> [--enable]   (git or plain; --enable: it may have a supervised session)
+  fm workspace remove-folder <name> <folder>       (stops its supervised session; stop, never rm)
+  fm workspace enable <name> <folder>   |   fm workspace disable <name> <folder>
+  fm workspace set-home <name> <dir>               (where the workspace and relay sessions run)
+  fm workspace add-scan <name> <dir> [--depth N]   (adds the repos below <dir>, now and on every rescan)
+  fm workspace remove-scan <name> <dir>            (the folders only it found go too)
   fm workspace list
-  fm workspace show <name>
+  fm workspace show <name>                         (home, scans, folders with kind and owner)
   fm workspace remove <name>
   fm sessions [--workspace <name>] [--all]
   fm want <workspace> <repo> [--prompt-file <path>]   (start the repo's session fm-<workspace>-<repo>)
@@ -31,6 +38,7 @@ usage:
   fm plugin install <plugin-dir>  (copies this fm.exe to <plugin-dir>/bin, where the hooks run it)
   fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
 
+mod edit;
 mod hook;
 mod probe;
 mod probe_hooks;
@@ -123,6 +131,13 @@ fn run(args: &[String]) -> Result<(), Failure> {
             Ok(())
         }
         ["workspace", "add", rest @ ..] => add(rest),
+        ["workspace", "new", rest @ ..] => edit::new(&registry()?, rest),
+        ["workspace", "add-folder", rest @ ..] => edit::add_folder(&registry()?, rest),
+        ["workspace", "remove-folder", rest @ ..] => edit::remove_folder(&registry()?, rest),
+        ["workspace", verb @ ("enable" | "disable"), rest @ ..] => edit::set_enabled(&registry()?, *verb == "enable", rest),
+        ["workspace", "set-home", rest @ ..] => edit::set_home(&registry()?, rest),
+        ["workspace", "add-scan", rest @ ..] => edit::add_scan(&registry()?, rest),
+        ["workspace", "remove-scan", rest @ ..] => edit::remove_scan(&registry()?, rest),
         ["workspace", "list"] => list(),
         ["workspace", "show", name] => show(name),
         ["workspace", "remove", name] => remove(name),
@@ -225,12 +240,7 @@ fn parse_add(args: &[&str]) -> Result<AddArgs, Failure> {
                 name = Some(value(&mut it, "--name")?.to_string());
             }
             "--depth" => {
-                let raw = value(&mut it, "--depth")?;
-                depth = raw
-                    .parse()
-                    .ok()
-                    .filter(|d| *d >= 1)
-                    .ok_or_else(|| Failure::Usage(format!("--depth must be a whole number >= 1, got '{raw}'")))?;
+                depth = parse_depth(value(&mut it, "--depth")?)?;
             }
             "--dry-run" => dry_run = true,
             "--force" => force = true,
@@ -251,7 +261,14 @@ fn parse_add(args: &[&str]) -> Result<AddArgs, Failure> {
     })
 }
 
-fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> Result<&'a str, Failure> {
+pub(crate) fn parse_depth(raw: &str) -> Result<usize, Failure> {
+    raw.parse()
+        .ok()
+        .filter(|d| *d >= 1)
+        .ok_or_else(|| Failure::Usage(format!("--depth must be a whole number >= 1, got '{raw}'")))
+}
+
+pub(crate) fn value<'a>(it: &mut std::slice::Iter<'_, &'a str>, flag: &str) -> Result<&'a str, Failure> {
     it.next()
         .copied()
         .ok_or_else(|| Failure::Usage(format!("{flag} needs a value")))
@@ -270,16 +287,16 @@ fn add(args: &[&str]) -> Result<(), Failure> {
     }
     if args.dry_run {
         println!("dry run: would register workspace {} (nothing written)", workspace.name);
-        print_workspace(&workspace, false);
+        print_workspace(&workspace, false, &with_owners(&registry, &workspace)?);
         return Ok(());
     }
     let path = registry.save(&workspace, args.force)?;
     println!("registered workspace {} at {}", workspace.name, path.display());
-    print_workspace(&workspace, true);
+    print_workspace(&workspace, true, &with_owners(&registry, &workspace)?);
     Ok(())
 }
 
-fn registry() -> Result<Registry, Failure> {
+pub(crate) fn registry() -> Result<Registry, Failure> {
     Ok(Registry::from_env()?)
 }
 
@@ -295,8 +312,9 @@ fn list() -> Result<(), Failure> {
 }
 
 fn show(name: &str) -> Result<(), Failure> {
-    let workspace = registry()?.load(name)?;
-    print_workspace(&workspace, true);
+    let registry = registry()?;
+    let workspace = registry.load(name)?;
+    print_workspace(&workspace, true, &with_owners(&registry, &workspace)?);
     Ok(())
 }
 
@@ -310,7 +328,16 @@ fn home_text(p: &Workspace) -> String {
     p.home().map(|h| h.display().to_string()).unwrap_or_else(|| "(none)".into())
 }
 
-fn print_workspace(p: &Workspace, with_created: bool) {
+/// [`owners`] of the registered workspaces with `workspace` as it is now in place of its file.
+pub(crate) fn with_owners(registry: &Registry, workspace: &Workspace) -> Result<HashMap<String, String>, Failure> {
+    let mut all: Vec<Workspace> = registry.list()?.into_iter().filter(|w| w.name != workspace.name).collect();
+    let at = all.partition_point(|w| w.name < workspace.name);
+    all.insert(at, workspace.clone());
+    Ok(owners(&all))
+}
+
+/// `owner=` names the workspace that supervises the folder's session ([`owners`]), `-` for none.
+pub(crate) fn print_workspace(p: &Workspace, with_created: bool, owned: &HashMap<String, String>) {
     println!("name: {}", p.name);
     println!("home: {}", home_text(p));
     if with_created {
@@ -318,7 +345,9 @@ fn print_workspace(p: &Workspace, with_created: bool) {
     }
     println!("scans: {}", p.scans.len());
     for s in &p.scans {
-        println!("  {}\tdepth={}", s.path.display(), s.depth);
+        let skipped: Vec<String> = s.exclude.iter().map(|x| x.display().to_string()).collect();
+        let skipped = if skipped.is_empty() { String::new() } else { format!("\tskips={}", skipped.join(";")) };
+        println!("  {}\tdepth={}{skipped}", s.path.display(), s.depth);
     }
     println!("folders: {}", p.folders.len());
     let yes = |b: bool| if b { "yes" } else { "no" };
@@ -327,8 +356,9 @@ fn print_workspace(p: &Workspace, with_created: bool) {
             (FolderKind::Plain, _) => "-",
             (FolderKind::Git, b) => b.unwrap_or("(detached)"),
         };
+        let owner = owned.get(&foreman_core::paths::path_key(&f.path)).map(String::as_str).unwrap_or("-");
         println!(
-            "  {}\tkind={}\tbranch={branch}\tclaude_md={}\tagents_md={}\tenabled={}\tpath={}",
+            "  {}\tkind={}\tbranch={branch}\tclaude_md={}\tagents_md={}\tenabled={}\towner={owner}\tpath={}",
             f.name,
             if f.is_git() { "git" } else { "plain" },
             yes(f.has_claude_md),

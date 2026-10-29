@@ -1,4 +1,5 @@
 mod discover;
+mod edit;
 mod error;
 mod events;
 pub mod fs;
@@ -16,6 +17,7 @@ pub mod time;
 pub mod url;
 
 pub use discover::{discover, rescan, same_path};
+pub use edit::{Edit, Edited};
 pub use error::{CoreError, Result};
 pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,

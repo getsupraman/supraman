@@ -58,7 +58,7 @@ not match and the call parks). One command per call: no pipes, no `&&`, no `;`, 
 |---|---|
 | `fm roster <w>` | one line per session, tab-separated: `name  role  health  id  cwd` (`role` = `workspace`, `relay`, `repo`, `retired` after unwant, `-` for a row nothing wants; `health` = `running`, `idle`, `blocked (…)`, `stopped`, `orphaned (…)`, `not launched`) |
 | `fm roster <w> --json` | `{"workspace","started","sessions":[{"name","role","repo","health","id","sessionId","cwd","wanted"}]}` |
-| `fm workspace show <w>` | `name:`, `home:`, `created:`, `scans: N` (one `  <path>  depth=…` line each), `folders: N`, then one line per folder, tab-separated: `  <name>  kind=git|plain  branch=…  claude_md=…  agents_md=…  enabled=…  path=…` |
+| `fm workspace show <w>` | `name:`, `home:`, `created:`, `scans: N` (one `  <path>  depth=…` line each, `skips=…` when folders were removed from it), `folders: N`, then one line per folder, tab-separated: `  <name>  kind=git|plain  branch=…  claude_md=…  agents_md=…  enabled=…  owner=<ws>|-  path=…` (`owner`: the workspace that supervises the folder's session) |
 | `fm want <w> <repo> --prompt-file <path>` | `fm-<w>-<slug>: added; repo <name>, cwd <path>` + `the supervisor launches it at its next tick while Foreman runs` |
 | `fm unwant <w> <repo>` | `fm-<w>-<slug>: no longer wanted; the supervisor stops it at its next tick (stop, never rm)` |
 | `fm tell "<text>"` | `told the human (<w>): <file>` — the text is in Foreman's Messages, from you |

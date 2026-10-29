@@ -219,7 +219,7 @@ impl FleetView {
             validate_name(&name).map_err(|e| add_error(&e))?;
             let folders = draft.repos.iter().map(|(r, on)| Folder { enabled: *on, ..r.clone() }).collect();
             let mut workspace = Workspace::new(name, draft.root.clone(), folders);
-            workspace.scans.push(Scan { path: draft.root.clone(), depth: DEFAULT_DEPTH });
+            workspace.scans.push(Scan::new(draft.root.clone(), DEFAULT_DEPTH));
             let registry = registry(self.home.as_deref())?;
             registry.check_new(&workspace).map_err(|e| add_error(&e))?;
             let taken = registry.claim_folders(&mut workspace, |_| true).map_err(|e| add_error(&e))?;
