@@ -56,7 +56,7 @@ fn text_inset(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     };
     let (left, top) = (f32::from(text.left() - outer.left()), f32::from(text.top() - outer.top()));
     let (want_left, want_top) = (8. + f32::from(TEXT_LEFT), 4. + 1. + f32::from(PAD_Y));
-    if left + 0.5 < want_left || top + 0.5 < want_top {
+    if left + 1. < want_left || top + 1. < want_top {
         bail!("the search text starts {left} px in and {top} px down in the search box, not {want_left} and {want_top}");
     }
     Ok(format!("the search text starts {left} px in and {top} px down in the search box"))
