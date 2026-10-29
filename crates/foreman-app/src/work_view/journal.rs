@@ -265,22 +265,9 @@ impl WorkView {
         if feed.older {
             let label = if feed.loading_older { "loading older…" } else { "load older" };
             list = list.child(
-                div()
-                    .id("journal-older")
-                    .relative()
-                    .flex_none()
+                button::outline(&self.hits, "journal-older", label, colors.border, cx)
                     .self_start()
                     .my_1()
-                    .px_2()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(colors.border)
-                    .text_xs()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(colors.ghost_element_hover))
-                    .active(|s| s.bg(colors.ghost_element_active))
-                    .child(label)
-                    .child(hit_target(&self.hits, "journal-older".into()))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.load_older(cx))),
             );
         }

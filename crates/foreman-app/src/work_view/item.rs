@@ -199,21 +199,7 @@ impl WorkView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let back_label = if open.back.is_empty() { "← Board" } else { "← Back" };
-        let back = div()
-            .id("item-back")
-            .relative()
-            .flex_none()
-            .px_2()
-            .rounded_sm()
-            .border_1()
-            .border_color(colors.border)
-            .text_xs()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
-            .child(back_label)
-            .child(hit_target(&self.hits, "item-back".into()))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)));
+        let back = button::outline(&self.hits, "item-back", back_label, colors.border, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)));
         let pane = div()
             .id("item-pane")
             .relative()
@@ -274,16 +260,13 @@ impl WorkView {
         }
         if done_unverified(page) {
             pane = pane.child(
-                div()
+                banner::tinted(status.warning)
                     .relative()
                     .px_2()
                     .py_1()
                     .rounded_sm()
                     .border_1()
                     .border_color(status.warning)
-                    .bg(status.warning.opacity(0.12))
-                    .text_sm()
-                    .text_color(status.warning)
                     .child("⚠ Done, but no orchestrator verification proves it: only the agent's report says so.")
                     .child(hit_target(&self.hits, "item-done-unverified".into())),
             );
@@ -494,21 +477,8 @@ impl WorkView {
                 row = row
                     .child(div().text_color(status.info).child(SharedString::from(format!("worked on by {name}"))))
                     .child(
-                        div()
-                            .id(SharedString::from(key.clone()))
-                            .relative()
-                            .flex_none()
-                            .px_2()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(status.info)
-                            .text_xs()
+                        button::outline(&self.hits, key, "Attach", status.info, cx)
                             .text_color(status.info)
-                            .cursor_pointer()
-                            .hover(|s| s.bg(colors.ghost_element_hover))
-                            .active(|s| s.bg(colors.ghost_element_active))
-                            .child("Attach")
-                            .child(hit_target(&self.hits, key))
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                 let attach = this.link.attach.clone();
                                 attach(&id, window, cx);
@@ -696,7 +666,7 @@ fn prose(text: &str, color: Hsla) -> gpui::Div {
 }
 
 fn mono(text: &str, color: Hsla) -> gpui::Div {
-    div().font_family("Cascadia Mono").text_xs().text_color(color).whitespace_normal().child(SharedString::from(text.to_string()))
+    div().font_family(fonts::MONO).text_xs().text_color(color).whitespace_normal().child(SharedString::from(text.to_string()))
 }
 
 #[cfg(test)]

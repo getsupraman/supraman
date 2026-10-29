@@ -16,7 +16,7 @@ use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subsc
 use super::{FleetView, TOAST_FOR, Toast};
 use super::menu::{Confirm, ContextMenu, MenuAction, MenuItem, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
-use crate::text_input::{InputEvent, TextInput};
+use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
 /// The Add workspace review: what discovery found under `root`, each repo ticked to register it
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn the_name_takes_only_what_a_workspace_name_allows() {
-        use crate::text_input::filtered;
+        use foreman_ui::text_input::filtered;
         assert_eq!(filtered("My Repo_2", name_char), ("my-repo-2".to_string(), None));
         assert_eq!(filtered("aä7", name_char), ("a7".to_string(), Some('ä')));
         assert_eq!(filtered("ä", name_char), (String::new(), Some('ä')));

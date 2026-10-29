@@ -3,6 +3,7 @@
 //! native.
 
 use gpui::{AnyElement, App, FontWeight, Hsla, Pixels, Rgba, Window, WindowControlArea, div, prelude::*, px};
+use foreman_ui::fonts;
 use theme::ActiveTheme as _;
 
 pub const HEIGHT: Pixels = px(34.);
@@ -52,7 +53,7 @@ pub fn icon_button(id: &'static str, glyph: &'static str, cx: &App) -> gpui::Sta
         .occlude()
         .w(px(46.))
         .h_full()
-        .font_family(icon_font())
+        .font_family(fonts::icons())
         .text_size(px(12.))
         .text_color(colors.text_muted)
         .cursor_pointer()
@@ -65,7 +66,7 @@ fn caption_buttons(window: &Window, cx: &App) -> AnyElement {
     div()
         .flex()
         .h_full()
-        .font_family(icon_font())
+        .font_family(fonts::icons())
         .child(Caption::Minimize.render(cx))
         .child(max.render(cx))
         .child(Caption::Close.render(cx))
@@ -107,18 +108,4 @@ impl Caption {
             .child(glyph)
             .into_any_element()
     }
-}
-
-/// Segoe Fluent Icons ships with Windows 11 (build 22000+); Windows 10 has the same glyphs in MDL2.
-#[cfg(windows)]
-fn icon_font() -> &'static str {
-    use windows::Wdk::System::SystemServices::RtlGetVersion;
-    let mut version = unsafe { std::mem::zeroed() };
-    let ok = unsafe { RtlGetVersion(&mut version) }.is_ok();
-    if ok && version.dwBuildNumber >= 22000 { "Segoe Fluent Icons" } else { "Segoe MDL2 Assets" }
-}
-
-#[cfg(not(windows))]
-fn icon_font() -> &'static str {
-    "Segoe Fluent Icons"
 }

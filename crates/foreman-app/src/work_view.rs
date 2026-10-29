@@ -27,7 +27,8 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use crate::clipped::clipped;
-use crate::view::{HitTargets, hit_target};
+use foreman_ui::{banner, button, fonts};
+use foreman_ui::hit::{HitTargets, hit_target};
 use crate::workstate_setup::WsStatus;
 
 pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
@@ -716,20 +717,9 @@ impl WorkView {
     fn journal_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let open = self.journal.open;
-        div()
-            .id("work-journal")
-            .relative()
-            .flex_none()
-            .px_2()
-            .rounded_sm()
-            .border_1()
-            .border_color(if open { colors.border_focused } else { colors.border })
+        let border = if open { colors.border_focused } else { colors.border };
+        button::outline(&self.hits, "work-journal", if open { "Runs" } else { "Journal" }, border, cx)
             .when(open, |d| d.bg(colors.element_selected))
-            .text_xs()
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
-            .child(if open { "Runs" } else { "Journal" })
             .child(hit_target(&self.hits, format!("work-journal={}", if open { "open" } else { "closed" })))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_journal(cx)))
             .into_any_element()

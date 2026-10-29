@@ -5,7 +5,7 @@
 
 use gpui::{App, Entity, Subscription};
 
-use crate::text_input::TextInput;
+use foreman_ui::text_input::TextInput;
 
 pub struct Compose {
     pub workspace: String,

@@ -118,7 +118,7 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
     Ok(())
 }
 
-/// m5/26, m5/30: the review's name (a [`crate::text_input::TextInput`]) edited `selftest-add` → [`ADDED`] by
+/// m5/26, m5/30: the review's name (a [`foreman_ui::text_input::TextInput`]) edited `selftest-add` → [`ADDED`] by
 /// posted messages only. A click at the start of the text puts the caret at 0; idle, the painted caret
 /// blinks; End, three Backspaces and `added`, the letters arriving as WM_CHAR through the input handler;
 /// Save while the folder is "still read" answers with an error line instead of nothing. Each check waits

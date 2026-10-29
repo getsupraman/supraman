@@ -24,11 +24,13 @@ use foreman_term::{
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use foreman_ui::nudge::{self, Nudge, Nudged};
-use foreman_ui::{FrameProbe, term_element};
+use foreman_ui::hit::{HitTargets, hit_target};
+use foreman_ui::text_input::{InputEvent, TextInput};
+use foreman_ui::{FrameProbe, button, term_element};
 use gpui::{
-    AnyElement, AnyWindowHandle, Bounds, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
+    AnyElement, AnyWindowHandle, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
     KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
-    WindowHandle, canvas, div, prelude::*, px,
+    WindowHandle, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 use util::paths::PathStyle;
@@ -41,7 +43,6 @@ use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
-use crate::text_input::{InputEvent, TextInput};
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
@@ -117,25 +118,6 @@ const MESSAGE_LINES: usize = 3;
 /// it, so the workspace tree below them keeps room and stays reachable.
 const INBOX_MAX_SHARE: f32 = 0.25;
 const MESSAGES_MAX_SHARE: f32 = 0.3;
-
-/// Where a clickable thing was painted, and the part of the window it can be seen in: its clip, i.e.
-/// the visible area of the scroll container around it (the whole window when there is none).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Hit {
-    pub bounds: Bounds<Pixels>,
-    pub visible: Bounds<Pixels>,
-}
-
-impl Hit {
-    pub fn fully_visible(&self) -> bool {
-        let (b, v) = (self.bounds, self.visible);
-        b.left() >= v.left() && b.top() >= v.top() && b.right() <= v.right() && b.bottom() <= v.bottom()
-    }
-}
-
-/// [`Hit`]s keyed by the same string as their element id, as of the last painted frame. The selftest
-/// clicks through these.
-pub type HitTargets = Rc<RefCell<StdHashMap<String, Hit>>>;
 
 pub enum Cli {
     Checking,
@@ -2261,22 +2243,6 @@ impl FleetView {
     }
 }
 
-/// An invisible overlay that records its parent's painted bounds and clip under `key`.
-pub(crate) fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
-    let hits = hits.clone();
-    canvas(
-        move |bounds, window, _| {
-            let visible = window.content_mask().bounds;
-            hits.borrow_mut().insert(key, Hit { bounds, visible });
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
-
 fn open_link(target: &MaybeNavigationTarget, open_url: impl FnOnce(&str), open_path: impl FnOnce(&Path)) {
     match target {
         MaybeNavigationTarget::Url(url) => open_url(url),
@@ -2322,33 +2288,6 @@ fn held_line(why: &str) -> String {
     format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
 }
 
-/// A small bordered button whose painted bounds are recorded under `key` (the selftest clicks it): one
-/// height, the label centred, a lighter fill and border on hover, a deeper fill pressed.
-fn button(hits: &HitTargets, key: String, label: impl Into<SharedString>, cx: &gpui::App) -> gpui::Stateful<gpui::Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(SharedString::from(key.clone()))
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .h(px(20.))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.element_background)
-        .text_xs()
-        .text_color(colors.text)
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.element_hover).border_color(colors.border_selected))
-        .active(|s| s.bg(colors.element_active))
-        .child(label.into())
-        .child(hit_target(hits, key))
-}
-
 impl FleetView {
     fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
@@ -2390,31 +2329,12 @@ impl FleetView {
                         let cwd = tab.cwd.clone();
                         tab_card::tooltip(move || tab_card::Card { branch: cwd.as_deref().and_then(tab_card::branch_at), ..card.clone() })
                     })
-                    .child({
-                        let group = SharedString::from(close_key.clone());
-                        div()
-                            .id(group.clone())
-                            .group(group.clone())
-                            .relative()
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .size(px(18.))
-                            .rounded_sm()
-                            .hover(|s| s.bg(colors.ghost_element_hover))
-                            .active(|s| s.bg(colors.ghost_element_active))
-                            .child(
-                                icon::Icon::Close
-                                    .svg(14., colors.text_muted)
-                                    .group_hover(group, |s| s.text_color(colors.text)),
-                            )
-                            .child(hit_target(&self.hits, close_key))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.close_tab(id, cx);
-                            }))
-                    })
+                    .child(button::icon(&self.hits, close_key, icon::Icon::Close.svg(14., colors.text_muted), px(18.), cx).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(id, cx);
+                        },
+                    )))
                     .child(hit_target(&self.hits, format!("tab-{id}")))
                     .on_mouse_down(
                         MouseButton::Middle,
@@ -2427,20 +2347,13 @@ impl FleetView {
             );
         }
         bar = bar.child(
-            div()
-                .id("new-shell")
-                .group("new-shell")
-                .relative()
+            button::ghost(&self.hits, "new-shell", cx)
                 .flex()
                 .items_center()
                 .justify_center()
                 .h_full()
                 .w(px(36.))
-                .cursor_pointer()
-                .hover(|s| s.bg(colors.ghost_element_hover))
-                .active(|s| s.bg(colors.ghost_element_active))
                 .child(icon::Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
-                .child(hit_target(&self.hits, "new-shell".into()))
                 .tooltip(icon::Tooltip::text("New shell"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.new_shell(window, cx);
@@ -2535,7 +2448,7 @@ impl Render for FleetView {
         div()
             .size_full()
             .flex()
-            .font_family("Segoe UI")
+            .font_family(foreman_ui::fonts::UI)
             .bg(colors.background)
             .text_color(colors.text)
             .track_focus(&self.focus)
@@ -2633,7 +2546,6 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
 #[cfg(test)]
 mod tests {
     use foreman_term::PathLikeTarget;
-    use gpui::{point, size};
 
     use super::*;
 
@@ -2652,22 +2564,6 @@ mod tests {
         assert_eq!(opened(&MaybeNavigationTarget::PathLike(relative)), (None, Some(PathBuf::from("C:/repo").join("src/x.rs"))));
         let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
         assert_eq!(opened(&MaybeNavigationTarget::PathLike(absolute)), (None, Some(PathBuf::from("C:/tmp/a.txt"))));
-    }
-
-    fn rect(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
-    }
-
-    #[test]
-    fn a_hit_is_visible_only_when_wholly_inside_its_clip() {
-        let tree = rect(0., 560., 480., 260.);
-        assert!(Hit { bounds: rect(406., 700., 41., 19.), visible: tree }.fully_visible());
-        assert!(Hit { bounds: rect(406., 560., 41., 260.), visible: tree }.fully_visible(), "edges touch");
-        // m3/3: painted 804..823 under an 820 px window, centre inside, bottom outside
-        assert!(!Hit { bounds: rect(406., 804., 41., 19.33), visible: tree }.fully_visible());
-        assert!(!Hit { bounds: rect(406., 846., 41., 19.), visible: tree }.fully_visible(), "below the fold");
-        assert!(!Hit { bounds: rect(406., 550., 41., 19.), visible: tree }.fully_visible(), "under the section above");
-        assert!(!Hit { bounds: rect(470., 700., 41., 19.), visible: tree }.fully_visible(), "past the right edge");
     }
 
     #[test]

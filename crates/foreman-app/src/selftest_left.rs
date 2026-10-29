@@ -249,7 +249,7 @@ async fn check_foreign(
 }
 
 /// What of a hit is on screen: its bounds cut to its clip.
-fn painted_part(h: &crate::view::Hit) -> Option<Bounds<Pixels>> {
+fn painted_part(h: &foreman_ui::hit::Hit) -> Option<Bounds<Pixels>> {
     let b = h.bounds.intersect(&h.visible);
     (b.size.width > Pixels::ZERO && b.size.height > Pixels::ZERO).then_some(b)
 }

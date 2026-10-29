@@ -9,12 +9,15 @@ use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
+use foreman_ui::banner;
+use foreman_ui::button;
+use foreman_ui::hit::{HitTargets, hit_target};
 use theme::ActiveTheme as _;
 
 use super::icon::{Icon, Tooltip};
 use super::notices;
 use super::menu::MenuAction;
-use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE, button, hit_target};
+use super::{Cli, FleetView, MenuTarget, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::Page;
 use crate::fleet::{self, SessionRow};
@@ -131,43 +134,13 @@ fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
 
 /// One square, borderless icon button of the action bar: muted, the text colour on hover, a deeper fill
 /// pressed and while `on` (a toggle that is set).
-fn icon_button(hits: &super::HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
+fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
     let colors = cx.theme().colors();
     tinted_button(hits, key, icon, tip, on, if on { colors.text } else { colors.text_muted }, cx)
 }
 
-fn tinted_button(
-    hits: &super::HitTargets,
-    key: &'static str,
-    icon: Icon,
-    tip: impl Into<SharedString>,
-    on: bool,
-    fg: Hsla,
-    cx: &gpui::App,
-) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(key)
-        .group(key)
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .gap_1()
-        .h(px(26.))
-        .min_w(px(26.))
-        .px(px(5.))
-        .rounded_md()
-        .cursor_pointer()
-        .text_xs()
-        .text_color(fg)
-        .when(on, |d| d.bg(colors.ghost_element_selected))
-        .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
-        .active(|s| s.bg(colors.ghost_element_active))
-        .child(icon.svg(16., fg).group_hover(key, |s| s.text_color(colors.text)))
-        .child(hit_target(hits, key.into()))
-        .tooltip(Tooltip::text(tip))
+fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, fg: Hsla, cx: &gpui::App) -> Stateful<Div> {
+    button::toolbar(hits, key, icon.svg(16., fg), on, fg, cx).tooltip(Tooltip::text(tip))
 }
 
 /// The tree's row heights (m5/14): one per row kind, whatever the row holds.
@@ -184,72 +157,24 @@ fn disclosure(open: Option<bool>, color: Hsla) -> Div {
     }
 }
 
-/// A square glyph button inside a row ([+], ×): the glyph centred in a 20 px hit area, muted, the text
-/// colour and a fill on hover, a deeper fill pressed.
-fn glyph_button(hits: &super::HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    let group = SharedString::from(key.clone());
-    div()
-        .id(group.clone())
-        .group(group.clone())
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(20.))
-        .rounded_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.ghost_element_hover))
-        .active(|s| s.bg(colors.ghost_element_active))
-        .child(icon.svg(14., colors.text_muted).group_hover(group, |s| s.text_color(colors.text)))
-        .child(hit_target(hits, key))
-        .tooltip(Tooltip::text(tip))
+/// A square glyph button inside a row ([+], ×).
+fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
+    button::icon(hits, key, icon.svg(14., cx.theme().colors().text_muted), px(20.), cx).tooltip(Tooltip::text(tip))
 }
 
 /// A session row's star (m5/27): filled in the warning colour while starred, else a muted outline.
-fn star_button(hits: &super::HitTargets, key: String, starred: bool, cx: &gpui::App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    let (icon, fg) = if starred { (Icon::StarFilled, cx.theme().status().warning) } else { (Icon::Star, colors.text_muted) };
+fn star_button(hits: &HitTargets, key: String, starred: bool, cx: &gpui::App) -> Stateful<Div> {
+    let (icon, fg) = if starred { (Icon::StarFilled, cx.theme().status().warning) } else { (Icon::Star, cx.theme().colors().text_muted) };
     let tip = if starred { "Unstar: shown only while it runs or stopped sessions are shown" } else { "Star: always shown, stopped or closed, however old" };
-    div()
-        .id(SharedString::from(key.clone()))
-        .relative()
+    button::ghost(hits, key, cx)
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
         .size(px(20.))
         .rounded_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.ghost_element_hover))
-        .active(|s| s.bg(colors.ghost_element_active))
         .child(icon.svg(13., fg))
-        .child(hit_target(hits, key))
         .tooltip(Tooltip::text(tip))
-}
-
-/// A session row's `attach` / `resume`: a quiet outlined pill whose border and fill come up on hover.
-fn pill(hits: &super::HitTargets, key: String, label: &'static str, cx: &gpui::App) -> Stateful<Div> {
-    let colors = cx.theme().colors();
-    div()
-        .id(SharedString::from(key.clone()))
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .h(px(20.))
-        .px_2()
-        .rounded_sm()
-        .border_1()
-        .border_color(colors.border_variant)
-        .text_xs()
-        .text_color(secondary(cx))
-        .cursor_pointer()
-        .hover(|s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text))
-        .active(|s| s.bg(colors.element_active))
-        .child(label)
-        .child(hit_target(hits, key))
 }
 
 impl FleetView {
@@ -426,45 +351,29 @@ impl FleetView {
         let header = self.render_action_bar(tree.hidden_stopped, cx);
 
         let mut notices: Vec<AnyElement> = Vec::new();
-        // A tint of the text colour, never the theme's `*_background` fills (unreadable in m1).
-        let notice = |text: String, fg: Hsla, bg: Hsla| {
-            div()
-                .mx_3()
-                .my_2()
-                .p_2()
-                .rounded_md()
-                .bg(bg)
-                .text_sm()
-                .text_color(fg)
-                .child(SharedString::from(text))
-                .into_any_element()
-        };
+        let notice = |text: String, banner: Div| banner.mx_3().my_2().child(SharedString::from(text)).into_any_element();
         if let Cli::Failed(error) = &self.cli {
             notices.push(notice(
                 format!("Cannot use the claude CLI, so no sessions are shown: {error}"),
-                status.error,
-                status.error.opacity(0.12),
+                banner::tinted(status.error),
             ));
         }
         if let Some(error) = &self.registry_error {
             notices.push(notice(
                 format!("Cannot read the workspace registry: {error}"),
-                status.error,
-                status.error.opacity(0.12),
+                banner::tinted(status.error),
             ));
         }
         for skipped in &self.registry_skipped {
             notices.push(notice(
                 format!("A workspace is left out, the others run: {skipped}"),
-                status.error,
-                status.error.opacity(0.12),
+                banner::tinted(status.error),
             ));
         }
         if let Some(error) = &self.sessions_error {
             notices.push(notice(
                 format!("Session list is stale, the last read failed (nothing is started or stopped meanwhile): {error}"),
-                status.warning,
-                status.warning.opacity(0.12),
+                banner::tinted(status.warning),
             ));
         }
         let mut shown: BTreeMap<notices::Notice, usize> = BTreeMap::new();
@@ -479,35 +388,19 @@ impl FleetView {
                     this.dismiss_notice(kind, &text, cx);
                 },
             ));
-            notices.push(
-                div()
-                    .mx_3()
-                    .my_2()
-                    .p_2()
-                    .rounded_md()
-                    .bg(status.warning.opacity(0.12))
-                    .text_sm()
-                    .text_color(status.warning)
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(label))
-                    .child(dismiss)
-                    .into_any_element(),
-            );
+            notices.push(banner::tinted(status.warning).mx_3().my_2().child(banner::dismissable(label, dismiss)).into_any_element());
         }
         if let Some(problem) = self.workstate_notice() {
             notices.push(self.render_workstate_notice(problem, cx));
         }
         if let Some(warning) = &self.start_warning {
-            notices.push(notice(warning.clone(), status.warning, status.warning.opacity(0.12)));
+            notices.push(notice(warning.clone(), banner::tinted(status.warning)));
         }
         for (name, r) in &self.removing {
             let waiting = r.wanted.len();
             notices.push(notice(
                 format!("Removing {name}: waiting for its {waiting} supervised session(s) to stop…"),
-                colors.text,
-                colors.element_background,
+                banner::plain(cx),
             ));
         }
         notices.extend(self.render_confirm(cx));
@@ -515,8 +408,7 @@ impl FleetView {
         if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  fm workspace add <dir>".into(),
-                colors.text,
-                colors.element_background,
+                banner::plain(cx),
             ));
         }
 
@@ -545,7 +437,7 @@ impl FleetView {
             };
             let toggle_key = format!("{}-{}", if started { "stop" } else { "start" }, workspace.name);
             let pname = workspace.name.clone();
-            let start_stop = button(&self.hits, toggle_key, if started { "Stop" } else { "Start" }, cx).on_click(
+            let start_stop = button::bordered(&self.hits, toggle_key, if started { "Stop" } else { "Start" }, cx).on_click(
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     if started {
@@ -560,7 +452,7 @@ impl FleetView {
             // the panel's edge)
             let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
                 let w = workspace.name.clone();
-                button(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
+                button::bordered(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
                     move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.open_compose(&w, None, window, cx);
@@ -568,7 +460,7 @@ impl FleetView {
                 ))
             });
             let work_name = workspace.name.clone();
-            let work = button(&self.hits, format!("work-{}", workspace.name), "Work", cx).on_click(cx.listener(
+            let work = button::bordered(&self.hits, format!("work-{}", workspace.name), "Work", cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_work(&work_name, cx);
@@ -867,7 +759,7 @@ impl FleetView {
                         Remedy::RestartElevated => ("Restart as administrator", action.clone(), need.workspace.clone()),
                     };
                     let name = need.name.clone();
-                    Some(button(&self.hits, key, label, cx).on_click(cx.listener(
+                    Some(button::bordered(&self.hits, key, label, cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| match &action {
                             Remedy::Attach { id } => {
                                 this.attach_by_id(&workspace, id, window, cx);
@@ -933,13 +825,13 @@ impl FleetView {
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
         if self.workstate.signed_out() {
             actions = match self.signing_in {
-                Some(_) => actions.child(button(&self.hits, "ws-setup-cancel".into(), "Cancel sign-in", cx).on_click(cx.listener(
+                Some(_) => actions.child(button::bordered(&self.hits, "ws-setup-cancel", "Cancel sign-in", cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.cancel_sign_in();
                     },
                 ))),
-                None => actions.child(button(&self.hits, "ws-setup-signin".into(), "Sign in", cx).on_click(cx.listener(
+                None => actions.child(button::bordered(&self.hits, "ws-setup-signin", "Sign in", cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.sign_in(cx);
@@ -948,14 +840,14 @@ impl FleetView {
             };
         }
         if self.workstate.unreachable() {
-            actions = actions.child(button(&self.hits, "ws-setup-retry".into(), "Retry", cx).on_click(cx.listener(
+            actions = actions.child(button::bordered(&self.hits, "ws-setup-retry", "Retry", cx).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.recheck_workstate();
                 },
             )));
         }
-        actions = actions.child(button(&self.hits, "ws-setup-settings".into(), "Settings…", cx).on_click(cx.listener(
+        actions = actions.child(button::bordered(&self.hits, "ws-setup-settings", "Settings…", cx).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.open_settings_at(Some(Page::WorkState), cx);
@@ -966,17 +858,12 @@ impl FleetView {
                 cx.stop_propagation();
                 this.dismiss_workstate_notice(cx);
             }));
-        div()
+        banner::tinted(color)
             .id("ws-setup-notice")
             .relative()
             .mx_3()
             .my_2()
-            .p_2()
-            .rounded_md()
-            .bg(color.opacity(0.12))
-            .text_sm()
-            .text_color(color)
-            .child(div().flex().items_start().gap_2().child(div().flex_1().min_w_0().child(SharedString::from(problem))).child(dismiss))
+            .child(banner::dismissable(SharedString::from(problem), dismiss))
             .children(self.workstate.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
             .children(self.signing_in.as_ref().map(|url| {
                 div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
@@ -1040,7 +927,7 @@ impl FleetView {
                     .when(!row.call.is_empty(), |d| {
                         d.child(
                             clipped(format!("work-call-{workspace}/{}", row.item.qualified_ref), row.call.clone(), false)
-                                .font_family("Cascadia Mono")
+                                .font_family(foreman_ui::fonts::MONO)
                                 .text_xs()
                                 .text_color(colors.text_muted),
                         )
@@ -1131,7 +1018,7 @@ impl FleetView {
                 body = body.child(match segment {
                     Segment::Text(text) => div().child(SharedString::from(text)),
                     // unwrapped and clipped at the panel's edge: a wrapped column is unreadable
-                    Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family("Cascadia Mono").children(
+                    Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family(foreman_ui::fonts::MONO).children(
                         rows.into_iter().enumerate().map(|(i, row)| {
                             div()
                                 .relative()
@@ -1153,7 +1040,7 @@ impl FleetView {
                 .map(|s| s.id.clone());
             let attach = target.map(|id| {
                 let workspace = workspace.clone();
-                button(&self.hits, format!("msg-attach-{key}"), "Attach", cx).on_click(cx.listener(
+                button::bordered(&self.hits, format!("msg-attach-{key}"), "Attach", cx).on_click(cx.listener(
                     move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.attach_by_id(&workspace, &id, window, cx);
@@ -1164,7 +1051,7 @@ impl FleetView {
                 let row = div().flex().items_center().gap_2().text_xs();
                 let reply = |cx: &mut Context<Self>| {
                     let (w, file) = (workspace.clone(), m.file.clone());
-                    button(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
+                    button::bordered(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
                             this.open_compose(&w, Some(file.clone()), window, cx);
@@ -1174,7 +1061,7 @@ impl FleetView {
                 match state {
                     AskState::Open(Ask::Approve) => {
                         let (w, file) = (workspace.clone(), m.file.clone());
-                        row.child(button(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
+                        row.child(button::bordered(&self.hits, format!("msg-approve-{key}"), "Approve", cx).on_click(cx.listener(
                             move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.approve(&w, &file, cx);
@@ -1313,7 +1200,7 @@ impl FleetView {
                         .flex()
                         .gap_2()
                         .justify_end()
-                        .child(button(&self.hits, "compose-send".into(), "Send", cx).on_click(cx.listener(
+                        .child(button::bordered(&self.hits, "compose-send", "Send", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 this.send_compose(cx);
@@ -1323,7 +1210,7 @@ impl FleetView {
                                 }
                             },
                         )))
-                        .child(button(&self.hits, "compose-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                        .child(button::bordered(&self.hits, "compose-cancel", "Cancel", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.compose = None;
@@ -1418,7 +1305,7 @@ impl FleetView {
                 let key = format!("resume-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
-                    pill(&self.hits, key, "resume", cx)
+                    button::pill(&self.hits, key, "resume", secondary(cx), cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.resume(&workspace, &repo, &session, window, cx);
                         })),
@@ -1426,7 +1313,7 @@ impl FleetView {
             })
             .when_some(self.session_tab(s).filter(|&id| self.active != Some(id)), |d, tab| {
                 d.child(
-                    pill(&self.hits, format!("tab-link-{}", s.id), "tab", cx)
+                    button::pill(&self.hits, format!("tab-link-{}", s.id), "tab", secondary(cx), cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(tab, cx))),
                 )
             })
@@ -1434,7 +1321,7 @@ impl FleetView {
                 let key = format!("attach-{}", s.id);
                 let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
                 d.child(
-                    pill(&self.hits, key, "attach", cx)
+                    button::pill(&self.hits, key, "attach", secondary(cx), cx)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.attach(&workspace, &repo, &session, window, cx);
                         })),
@@ -1520,7 +1407,7 @@ impl FleetView {
                 .rounded_md()
                 .border_1()
                 .border_color(status.warning)
-                .bg(status.warning.opacity(0.12))
+                .bg(banner::tint(status.warning))
                 .text_sm()
                 .child(SharedString::from(confirm.text.clone()))
                 .child(
@@ -1528,7 +1415,7 @@ impl FleetView {
                         .flex()
                         .gap_2()
                         .justify_end()
-                        .child(button(&self.hits, "confirm-yes".into(), confirm.yes.clone(), cx).on_click(cx.listener(
+                        .child(button::bordered(&self.hits, "confirm-yes", confirm.yes.clone(), cx).on_click(cx.listener(
                             |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
                                 this.answer_confirm(true, window, cx);
@@ -1536,7 +1423,7 @@ impl FleetView {
                         )))
                         // a report (m5/38's bulk delete) has only its OK
                         .when(confirm.action != MenuAction::Dismiss, |d| {
-                            d.child(button(&self.hits, "confirm-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                            d.child(button::bordered(&self.hits, "confirm-cancel", "Cancel", cx).on_click(cx.listener(
                                 |this, _: &ClickEvent, window, cx| {
                                     cx.stop_propagation();
                                     this.answer_confirm(false, window, cx);
@@ -1660,13 +1547,13 @@ impl FleetView {
                                 .child(SharedString::from(e))
                                 .child(hit_target(&self.hits, "add-error".into()))
                         }))
-                        .child(button(&self.hits, "add-save".into(), "Save", cx).on_click(cx.listener(
+                        .child(button::bordered(&self.hits, "add-save", "Save", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.save_add(cx);
                             },
                         )))
-                        .child(button(&self.hits, "add-cancel".into(), "Cancel", cx).on_click(cx.listener(
+                        .child(button::bordered(&self.hits, "add-cancel", "Cancel", cx).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.cancel_add(cx);
