@@ -3562,3 +3562,32 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   appearance/theme/font shots are identical; the WorkState settings shots differ only in the fake server's port; the
   notice band of `m5-37-notices-before` (rows 395–680) is identical; the other differences are live session rows,
   counts and timings.
+
+## 2026-10-29 — m5/44.12 foreman-ui widgets: menu, confirm, toast, notices, tabs, hover card, split, matcher (audit U10)
+
+- **Moved into foreman-ui** (no app dependency; each builder takes `&HitTargets`, keys, colours or icons, and
+  callbacks of the form `Fn(&mut V, …, &mut Context<V>)`, wrapped in `cx.listener` inside the widget, so the owner
+  stays any view `V`): `menu` (`ContextMenu<A>`, `MenuItem<A>`, `item`), `confirm` (`Confirm<A>` with
+  `ask`/`report`), `toast` (`ToastSlot`), `notices` (`NoticeKind`, `render`, `dismiss_key`, `keep_dismissed`,
+  `remove_one`), `tabs` (`tab_strip`, `TabHeader`, `cycled`, `sanitize`), `hover_card` (`HoverCard`, `tooltip`,
+  `LAST_CARD`), `split` (`SplitPane`) and `matcher` (`find_all`, `prefix`, `highlighted`, `count`).
+- **MenuAction split (A-22):** the menu carries `MenuAction` (what a row offers); a yes to the question carries
+  `Confirmed` (`Remove`, `StopSession`, `Delete{discard}`, `DeleteClosed`). The `*Now` variants and the `Dismiss`
+  sentinel are gone: a report is `Confirm::report(text)` (`action: None`, no Cancel). The m5/38 texts, buttons and
+  the order of the discard question are unchanged.
+- **App keeps:** the menu builders, `Notice` and its sources, `Tab`/`TabKind`/`Detach` and the detach (CLI), the
+  card's fields (`tab_card::Card`, now `hover_card()` → `HoverCard`), the grouped search results, and `clipped`
+  (the tab label is passed in as an element). The Work tab's 42 % board/item split is fixed, not a `SplitPane`.
+- **SplitPane:** its drag payload carries the divider id, so two splits do not move each other; the max width comes
+  from the split's own bounds (= the old viewport rule, since the split spans the window).
+- **A-16:** `left.rs`'s test-only contrast copy (4.5/3 floors on One Dark) is gone; `themes.rs` asserts the real floors.
+- **A-54:** `tab_card::branch_at` is gone; callers use `foreman_core::branch_at`, and its test moved to `scan.rs`.
+- **A-17 (Esc):** Esc already goes through one `dismiss_popup` on master; nothing to do. `cycled` and `view/term.rs`'s
+  `find_step` are not copies: find starts at the bottom and steps up, so they stay apart.
+- **Pixel check:** `FOREMAN_SHOTS` on master 5ace88c and on this branch (39 shots each): 18 identical (menus repo and
+  workspace, confirm-remove, add review, settings, fonts, work board/journal, search); every other difference is
+  a random session id, fake-server port, start time or refresh timing (each one looked at).
+- **Shared target dir trap:** building a `git archive` copy of master into the same `CARGO_TARGET_DIR` makes cargo
+  see the worktree's edited crates as fresh (workspace members hash by relative path; fingerprints by mtime). Touch
+  the sources afterwards, or build master by detaching the worktree. A master copy outside the worktree also fails
+  the selftest's trust check, and a `foreman.exe` copied alone shows the "fm.exe is missing" notice (7f fails).

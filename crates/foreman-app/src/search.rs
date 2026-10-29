@@ -5,6 +5,8 @@
 
 use std::ops::Range;
 
+use foreman_ui::matcher::{find_all, prefix};
+
 use crate::fleet::{SessionRow, Tree};
 
 /// Where a session row matched: byte ranges in its name, and the matched prefix of its short id.
@@ -82,43 +84,13 @@ impl Results {
     }
 }
 
-fn same(a: char, b: char) -> bool {
-    a == b || a.to_lowercase().eq(b.to_lowercase())
-}
-
-/// Every place `needle` occurs in `hay`, ignoring case, as byte ranges of `hay`, not overlapping.
-pub fn find_all(hay: &str, needle: &str) -> Vec<Range<usize>> {
-    let needle: Vec<char> = needle.chars().collect();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    let chars: Vec<(usize, char)> = hay.char_indices().collect();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + needle.len() <= chars.len() {
-        if chars[i..i + needle.len()].iter().zip(&needle).all(|((_, h), n)| same(*h, *n)) {
-            let end = chars.get(i + needle.len()).map_or(hay.len(), |(at, _)| *at);
-            out.push(chars[i].0..end);
-            i += needle.len();
-        } else {
-            i += 1;
-        }
-    }
-    out
-}
-
-/// Whether `id` starts with `needle`, ignoring case.
-fn id_prefix(id: &str, needle: &str) -> bool {
-    !needle.is_empty() && id.len() >= needle.len() && id.is_char_boundary(needle.len()) && id[..needle.len()].eq_ignore_ascii_case(needle)
-}
-
 /// Where `row` matches `needle`, if it does: its name anywhere, or its id (the 8-hex short id or the full
 /// session id) from the start. The id mark covers the short id as the row shows it.
 pub fn session_marks(row: &SessionRow, needle: &str) -> Option<Marks> {
     let s = &row.session;
     let name = find_all(&s.name, needle);
     let short = crate::fleet::short_id(s);
-    let id = (id_prefix(&s.id, needle) || id_prefix(&s.session_id, needle)).then(|| 0..needle.len().min(short.len()));
+    let id = (prefix(&s.id, needle) || prefix(&s.session_id, needle)).then(|| 0..needle.len().min(short.len()));
     (!name.is_empty() || id.is_some()).then_some(Marks { name, id })
 }
 
@@ -223,15 +195,6 @@ mod tests {
             }
         }
         out
-    }
-
-    #[test]
-    fn find_all_ignores_case_and_returns_byte_ranges() {
-        assert_eq!(find_all("CI-CD-Pipeline", "pipe"), [6..10]);
-        assert_eq!(find_all("aAa", "a"), [0..1, 1..2, 2..3]);
-        assert_eq!(find_all("Grüße GRÜSSE", "grü"), [0..4, 8..12]);
-        assert_eq!(find_all("abc", ""), Vec::<Range<usize>>::new());
-        assert_eq!(find_all("ab", "abc"), Vec::<Range<usize>>::new());
     }
 
     #[test]

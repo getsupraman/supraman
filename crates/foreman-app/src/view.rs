@@ -26,9 +26,13 @@ use foreman_term::{
 use foreman_ui::nudge::{self, Nudge, Nudged};
 use foreman_ui::hit::{HitTargets, hit_target};
 use foreman_ui::text_input::{InputEvent, TextInput};
+use foreman_ui::hover_card;
+use foreman_ui::split::SplitPane;
+use foreman_ui::tabs::{TabHeader, tab_strip};
+use foreman_ui::toast::ToastSlot;
 use foreman_ui::{FrameProbe, button, term_element};
 use gpui::{
-    AnyElement, AnyWindowHandle, ClickEvent, Context, CursorStyle, DragMoveEvent, Entity, FocusHandle,
+    AnyElement, AnyWindowHandle, ClickEvent, Context, Entity, FocusHandle,
     KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
     WindowHandle, div, prelude::*, px,
 };
@@ -72,15 +76,6 @@ pub fn bind_keys(cx: &mut gpui::App) {
         KeyBinding::new("ctrl-pageup", PreviousTab, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-shift-e", FocusSearch, Some(KEY_CONTEXT)),
     ]);
-}
-
-/// The index `step` tabs away from `at`, wrapping; with none active, the first (forward) or last.
-fn cycled(len: usize, at: Option<usize>, step: isize) -> Option<usize> {
-    if len == 0 {
-        return None;
-    }
-    let at = at.map_or(if step > 0 { -1 } else { 0 }, |at| at as isize);
-    Some((at + step).rem_euclid(len as isize) as usize)
 }
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
@@ -154,7 +149,7 @@ pub struct Tab {
     /// The folder it opened in (a Work tab: its workspace's), for [`fleet::shell_cwd`].
     pub cwd: Option<PathBuf>,
     pub find: Option<term::Find>,
-    /// What its program named it with OSC 0/2 ([`tab_card::sanitize`]d); the label while there is one.
+    /// What its program named it with OSC 0/2 ([`foreman_ui::tabs::sanitize`]d); the label while there is one.
     pub program_title: Option<String>,
     /// The claude session it runs, as its card names it, when the tab was opened for one.
     pub session: Option<String>,
@@ -376,7 +371,7 @@ pub struct FleetView {
     /// [`Self::resolve_tabs`] runs finished.
     pub tab_resolves: u64,
     /// The last quiet feedback (m5/34): it overlays the tree instead of pushing it down.
-    pub toast: Option<Toast>,
+    pub toast: ToastSlot,
     /// Where the transcripts are read, and the confirmed ones deleted (m5/38): `FOREMAN_CLAUDE_DIR`, else claude's.
     pub claude_dir: Option<PathBuf>,
     /// Session ids deleted from here → when, kept out of the tree until polls catch up ([`delete::HIDE_DELETED_MS`]).
@@ -384,14 +379,6 @@ pub struct FleetView {
     /// Session ids whose delete runs.
     pub deleting: HashSet<String>,
 }
-
-/// A short note over the bottom of the left panel, gone after [`TOAST_FOR`].
-pub struct Toast {
-    pub text: String,
-    pub shown_at: Instant,
-}
-
-pub const TOAST_FOR: Duration = Duration::from_millis(2500);
 
 /// How long Quit waits on the hand tokens' revokes before it closes anyway; the next start revokes the rest.
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
@@ -414,15 +401,6 @@ pub fn offers_resume(s: &Session, health: &foreman_claude::Health, last_alive: O
         && !s.session_id.is_empty()
         && !s.name.starts_with(FM_PREFIX)
         && (s.kind != foreman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
-}
-
-/// What the fleet/terminal divider drags.
-struct DraggedDivider;
-
-impl Render for DraggedDivider {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        gpui::Empty
-    }
 }
 
 /// The selftest's grip on one poll (m5/21): armed, the next poll stops between its registry read and the
@@ -734,7 +712,7 @@ impl FleetView {
             tabs_resolving: false,
             tabs_again: false,
             tab_resolves: 0,
-            toast: None,
+            toast: ToastSlot::default(),
             claude_dir,
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
@@ -1138,7 +1116,7 @@ impl FleetView {
             self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
             self.max_working = report.max_working;
             self.supervise_errors = report.errors;
-            notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
+            foreman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
             self.daemon_hold = report.daemon_hold;
             self.left_pending.extend(report.left_servers);
             self.last_attempt = report.last_attempt.into_iter().collect();
@@ -1723,7 +1701,7 @@ impl FleetView {
 
     fn cycle_tab(&mut self, step: isize, cx: &mut Context<Self>) {
         let at = self.active.and_then(|id| self.tabs.iter().position(|t| t.id == id));
-        if let Some(next) = cycled(self.tabs.len(), at, step) {
+        if let Some(next) = foreman_ui::tabs::cycled(self.tabs.len(), at, step) {
             self.activate_tab(self.tabs[next].id, cx);
         }
     }
@@ -1903,7 +1881,7 @@ impl FleetView {
                                 TerminalEvent::BreadcrumbsChanged => {
                                     let title = emitter.read(cx).breadcrumb_text.clone();
                                     if let Some(tab) = this.tab_mut(id) {
-                                        tab.program_title = tab_card::sanitize(&title);
+                                        tab.program_title = foreman_ui::tabs::sanitize(&title);
                                     }
                                     this.resolve_tabs(cx);
                                     cx.notify();
@@ -2291,61 +2269,32 @@ fn held_line(why: &str) -> String {
 impl FleetView {
     fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let mut bar = div()
-            .flex()
-            .flex_none()
-            .h(px(32.))
-            .items_end()
-            .bg(colors.tab_bar_background)
-            .border_b_1()
-            .border_color(colors.border);
-        for tab in &self.tabs {
-            let id = tab.id;
-            let active = self.active == Some(id);
-            let close_key = format!("close-tab-{id}");
-            let title = tab.label();
-            bar = bar.child(
-                div()
-                    .id(SharedString::from(format!("tab-{id}")))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h_full()
-                    .px_3()
-                    .text_sm()
-                    .border_r_1()
-                    .border_color(colors.border)
-                    .cursor_pointer()
-                    .bg(if active { colors.tab_active_background } else { colors.tab_inactive_background })
-                    .when(!active, |d| d.text_color(colors.text_muted).hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text)))
-                    // the active tab: an accent line on top
-                    .when(active, |d| {
-                        d.child(div().absolute().top_0().left_0().right_0().h(px(2.)).bg(colors.border_focused))
-                    })
-                    .child(crate::clipped::clipped_with(format!("tab-title-{id}"), title.clone(), false, false).max_w(px(280.)))
-                    .tooltip({
-                        let card = self.tab_card(tab, title);
-                        let cwd = tab.cwd.clone();
-                        tab_card::tooltip(move || tab_card::Card { branch: cwd.as_deref().and_then(tab_card::branch_at), ..card.clone() })
-                    })
-                    .child(button::icon(&self.hits, close_key, icon::Icon::Close.svg(14., colors.text_muted), px(18.), cx).on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.close_tab(id, cx);
-                        },
-                    )))
-                    .child(hit_target(&self.hits, format!("tab-{id}")))
-                    .on_mouse_down(
-                        MouseButton::Middle,
-                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.close_tab(id, cx);
-                        }),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(id, cx))),
-            );
-        }
+        let headers = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let title = tab.label();
+                let card = self.tab_card(tab, title.clone());
+                let cwd = tab.cwd.clone();
+                TabHeader {
+                    id: tab.id,
+                    label: crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title, false, false).max_w(px(280.)).into_any_element(),
+                    tooltip: Some(Box::new(hover_card::tooltip(move || {
+                        tab_card::Card { branch: cwd.as_deref().and_then(foreman_core::branch_at), ..card.clone() }.hover_card()
+                    }))),
+                }
+            })
+            .collect();
+        let muted = colors.text_muted;
+        let mut bar = tab_strip(
+            &self.hits,
+            headers,
+            self.active,
+            || icon::Icon::Close.svg(14., muted),
+            |this: &mut Self, id, cx| this.activate_tab(id, cx),
+            |this: &mut Self, id, cx| this.close_tab(id, cx),
+            cx,
+        );
         bar = bar.child(
             button::ghost(&self.hits, "new-shell", cx)
                 .flex()
@@ -2478,49 +2427,19 @@ impl Render for FleetView {
                 cx,
             ))
             .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .on_drag_move(cx.listener(|this, e: &DragMoveEvent<DraggedDivider>, window, cx| {
-                        let max = (window.viewport_size().width - MIN_RIGHT_WIDTH).max(MIN_LEFT_WIDTH);
-                        this.left_width = (e.event.position.x - e.bounds.left()).clamp(MIN_LEFT_WIDTH, max);
-                        cx.notify();
-                    }))
-                    .child(self.render_left(cx))
-                    .child(
-                        // A 1 px border with a 7 px grab area over both panels' edges.
-                        div()
-                            .relative()
-                            .w(px(1.))
-                            .h_full()
-                            .flex_none()
-                            .bg(colors.border)
-                            .child(
-                                div()
-                                    .id("divider")
-                                    .absolute()
-                                    .top_0()
-                                    .left(px(-3.))
-                                    .w(px(7.))
-                                    .h_full()
-                                    .occlude()
-                                    .cursor(CursorStyle::ResizeLeftRight)
-                                    .on_drag(DraggedDivider, |_, _, _, cx| cx.new(|_| DraggedDivider))
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(|this, _, _, _| this.save_left_width()),
-                                    )
-                                    .on_click(cx.listener(|this, e: &ClickEvent, _, cx| {
-                                        if e.click_count() == 2 {
-                                            this.left_width = DEFAULT_LEFT_WIDTH;
-                                            this.save_left_width();
-                                            cx.notify();
-                                        }
-                                    })),
-                            ),
+                SplitPane { id: "divider".into(), min_first: MIN_LEFT_WIDTH, min_second: MIN_RIGHT_WIDTH, default: DEFAULT_LEFT_WIDTH }
+                    .render(
+                        self.render_left(cx),
+                        self.render_right(cx),
+                        |this: &mut Self, width, cx| {
+                            this.left_width = width;
+                            cx.notify();
+                        },
+                        |this: &mut Self, _| this.save_left_width(),
+                        cx,
                     )
-                    .child(self.render_right(cx)),
+                    .flex_1()
+                    .min_h_0(),
             )
             .children(self.render_menu(cx))
             .child(self.probe.paint_marker())
@@ -2564,17 +2483,6 @@ mod tests {
         assert_eq!(opened(&MaybeNavigationTarget::PathLike(relative)), (None, Some(PathBuf::from("C:/repo").join("src/x.rs"))));
         let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
         assert_eq!(opened(&MaybeNavigationTarget::PathLike(absolute)), (None, Some(PathBuf::from("C:/tmp/a.txt"))));
-    }
-
-    #[test]
-    fn tabs_cycle_wrapping_both_ways() {
-        assert_eq!(cycled(3, Some(0), 1), Some(1));
-        assert_eq!(cycled(3, Some(2), 1), Some(0), "wraps forward");
-        assert_eq!(cycled(3, Some(0), -1), Some(2), "wraps back");
-        assert_eq!(cycled(1, Some(0), 1), Some(0));
-        assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
-        assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
-        assert_eq!(cycled(0, None, 1), None);
     }
 
     #[test]

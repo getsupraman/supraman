@@ -130,7 +130,7 @@ pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<
 /// `raw` (a session's name as the tree shows it) as a WorkState session name: one line, no control or
 /// bidi characters, at most [`MAX_NAME`] characters. `None` when nothing is left.
 pub fn session_name(raw: &str) -> Option<String> {
-    let line = crate::tab_card::sanitize(raw)?;
+    let line = foreman_ui::tabs::sanitize(raw)?;
     let cut: String = line.chars().take(MAX_NAME).collect();
     let cut = cut.trim_end().to_string();
     (!cut.is_empty()).then_some(cut)

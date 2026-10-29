@@ -8,43 +8,14 @@
 use std::{collections::HashSet, ops::Range};
 
 use foreman_claude::now_ms;
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, HighlightStyle, SharedString, Stateful, StyledText, div, prelude::*, px};
+use foreman_ui::matcher::{count, highlighted};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::left::{quiet, repo_label, secondary};
 use super::{FleetView, hit_target};
 use crate::fleet::{Supervised, Tree};
 use crate::search::{self, Results, SessionHit};
-
-/// `text` on one line, cut with an ellipsis, `marks` (byte ranges) in the search match colours.
-pub(crate) fn marked(key: impl Into<SharedString>, text: impl Into<SharedString>, marks: &[Range<usize>], cx: &gpui::App) -> Stateful<Div> {
-    let style = HighlightStyle {
-        background_color: Some(cx.theme().colors().search_match_background),
-        font_weight: Some(FontWeight::BOLD),
-        ..Default::default()
-    };
-    div()
-        .id(key.into())
-        .min_w_0()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis()
-        .child(StyledText::new(text.into()).with_highlights(marks.iter().map(|r| (r.clone(), style))))
-}
-
-fn count(n: usize, cx: &gpui::App) -> Div {
-    let colors = cx.theme().colors();
-    div()
-        .flex_none()
-        .min_w(px(18.))
-        .px_1()
-        .rounded_full()
-        .bg(colors.element_background)
-        .text_xs()
-        .text_center()
-        .text_color(colors.text)
-        .child(SharedString::from(n.to_string()))
-}
 
 impl FleetView {
     /// The whole tree for the search: stopped sessions shown, every closed one listed (none behind `more…`).
@@ -144,7 +115,7 @@ impl FleetView {
             body = body.child(
                 row(format!("result-ws-{}", w.name), 8., 28.)
                     .mt_1()
-                    .child(marked(format!("result-ws-name-{}", w.name), w.name.clone(), &w.name_marks, cx).flex_none().font_weight(FontWeight::BOLD))
+                    .child(highlighted(format!("result-ws-name-{}", w.name), w.name.clone(), &w.name_marks, cx).flex_none().font_weight(FontWeight::BOLD))
                     .child(crate::clipped::clipped(format!("result-ws-root-{}", w.name), w.root.display().to_string(), true).flex_1().text_xs().text_color(secondary(cx)))
                     .child(count(w.count(), cx))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&name, None, cx))),
@@ -162,7 +133,7 @@ impl FleetView {
                     row(format!("result-repo-{}/{}", w.name, r.name), 26., 24.)
                         .text_sm()
                         .when(r.sessions.is_empty(), |d| d.text_color(quiet(cx)))
-                        .child(marked(format!("result-repo-name-{}/{}", w.name, r.name), label, &marks, cx).flex_1())
+                        .child(highlighted(format!("result-repo-name-{}/{}", w.name, r.name), label, &marks, cx).flex_1())
                         .child(count(r.sessions.len(), cx))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&wname, Some(&rname), cx))),
                 );

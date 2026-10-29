@@ -6,13 +6,13 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
+use foreman_ui::hover_card::LAST_CARD;
 use gpui::{AsyncWindowContext, Entity, Modifiers, MouseMoveEvent, PlatformInput, point, px};
 
 use crate::{
     selftest::{hex6, sleep, wait_for_tab_terminal},
     selftest_manage::shot,
     selftest_work::WORKSPACE,
-    tab_card::{self, LAST_CARD},
     view::FleetView,
 };
 
@@ -64,7 +64,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     if !lines.iter().any(|l| l.starts_with("started  ")) {
         bail!("the card has no start time: {:?}", card.text);
     }
-    if let Some(branch) = tab_card::branch_at(&root) {
+    if let Some(branch) = foreman_core::branch_at(&root) {
         if !lines.contains(&format!("branch  {branch}").as_str()) {
             bail!("{} is on {branch}, the card does not say so: {:?}", root.display(), card.text);
         }
