@@ -1,9 +1,3 @@
-//! `--selftest` step 7q (m5/41): one terminal font size for every tab, kept in `settings.toml`. Two `+`
-//! tabs; Ctrl+= twice in the second; both grids are then laid out at the new size (the first once it is
-//! shown again), and after the debounce `settings.toml` holds it. Three Ctrl+wheel notches leave the file
-//! unwritten until the spin stops, then hold the sum. Settings → Appearance shows the size, its + applies to
-//! the open terminal, and a Ctrl+- in the terminal shows on the page. Ctrl+0 is 14 again, saved as unset.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -25,7 +19,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWin
     let saved = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
     let result = check(view, home, cx).await;
     view.update(cx, |v, _| v.shell_args = saved);
-    // whatever failed, the next run starts at 14
+    // whatever failed, the next run starts at the default
     view.update(cx, |v, cx| v.set_term_font_size(term_element::FONT_SIZE, cx));
     close_all(view, cx);
     result
@@ -55,7 +49,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let first_ms = laid_out_at(view, first, &first_term, zoomed, cx).await.context("the other tab")?;
     let saved_ms = saved_as(view, home, f32::from(zoomed) as u32, cx).await?;
 
-    // a wheel spin: the file waits for the last notch
     view.update(cx, |v, cx| v.activate_tab(second, cx));
     laid_out_at(view, second, &second_term, zoomed, cx).await?;
     let grid = second_term.read_with(cx, |t, _| t.last_content().terminal_bounds.bounds);
@@ -100,8 +93,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     ))
 }
 
-/// Settings → Appearance shows `size`; its + applies to the open terminal and is saved; a Ctrl+- in the
-/// terminal shows on the page.
 async fn settings_page(
     view: &Entity<FleetView>,
     home: &Path,
@@ -156,13 +147,11 @@ async fn settings_page(
     result
 }
 
-/// Waits until `tab`'s grid is painted with the cell metrics of `size`.
 async fn laid_out_at(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, size: Pixels, cx: &mut AsyncWindowContext) -> anyhow::Result<u128> {
     let font = view.read_with(cx, |v, _| term_element::TermFont { size, ..v.term_font() });
     laid_out_with(view, tab, terminal, &font, cx).await
 }
 
-/// Waits until `tab`'s grid is painted with the cell metrics of `font`.
 pub(crate) async fn laid_out_with(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, font: &term_element::TermFont, cx: &mut AsyncWindowContext) -> anyhow::Result<u128> {
     let started = Instant::now();
     let want = cx.update(|_, cx| term_element::cell_metrics(font, cx))?;

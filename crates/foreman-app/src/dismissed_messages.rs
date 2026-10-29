@@ -1,7 +1,3 @@
-//! Messages dismissed with their × (m5/36): hidden here, the outbox files untouched. Keyed by outbox file
-//! name per workspace, so a newer message (another file) shows. Persisted as
-//! `<FOREMAN_HOME>/messages-dismissed.json`, `{"workspaces": {"<workspace>": ["<outbox file>", …]}}`.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -27,7 +23,6 @@ impl DismissedMessages {
         home.join(FILE)
     }
 
-    /// An unreadable file starts empty, with the reason.
     pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
         let Some(path) = home.map(Self::path) else {
             return (Self::default(), None);
@@ -40,7 +35,6 @@ impl DismissedMessages {
         self.files.get(workspace).is_some_and(|f| f.contains(file))
     }
 
-    /// Hides `file` of `workspace` and writes the file; `Err` says why it could not be written.
     pub fn dismiss(&mut self, workspace: &str, file: &str) -> Result<(), String> {
         if self.files.entry(workspace.to_string()).or_default().insert(file.to_string()) {
             self.save()?;
@@ -48,9 +42,7 @@ impl DismissedMessages {
         Ok(())
     }
 
-    /// After a poll: forgets the dismissals of each listed workspace whose message is no longer among
-    /// its listed ones (gone from the outbox, or older than what is listed). A workspace not in `messages`
-    /// (an empty outbox, or one that could not be read) keeps its dismissals. Whether anything changed.
+    /// A workspace not in `messages` (an empty or unreadable outbox) keeps its dismissals.
     pub fn prune(&mut self, messages: &BTreeMap<String, Vec<OutboxMessage>>) -> Result<bool, String> {
         let mut changed = false;
         for (workspace, listed) in messages {

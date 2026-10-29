@@ -1,7 +1,3 @@
-//! The settings window, as Zed has one: its own OS window with a page list on the left and one
-//! row per setting on the right. Every change is written to `settings.toml` at once; the
-//! supervisor re-reads it on its next tick.
-
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -21,14 +17,11 @@ use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
 use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
 
-/// The ids the app's pages register under.
 pub mod page {
     pub const SESSIONS: &str = "sessions";
     pub const WORKSTATE: &str = "workstate";
     pub const PLUGINS: &str = "plugins";
-    /// The theme, the terminal colours and the terminal font.
     pub const APPEARANCE: &str = "appearance";
-    /// Foreman's and the claude CLI's versions, the refresh.
     pub const ABOUT: &str = "about";
 }
 
@@ -50,22 +43,17 @@ pub struct SettingsView {
     pages: SettingsPages<SettingsView>,
     page: &'static str,
     focus: FocusHandle,
-    /// The fleet's WorkState status as last shown: a change re-reads settings.toml.
+    /// As last shown: a change re-reads settings.toml.
     workstate: WsStatus,
-    /// The themes on offer, read with settings.toml.
     catalog: Catalog,
-    /// Why the theme settings.toml names is not the one shown.
     theme_problem: Option<String>,
     /// The terminal font size Appearance last painted, for the selftest (step 7q).
     shown_font_size: std::cell::Cell<Option<Pixels>>,
-    /// The installed monospace families; `None` while they are being found.
+    /// `None` while they are being found.
     mono_fonts: Option<Arc<Vec<String>>>,
     font_error: Option<String>,
-    /// The WorkState server URL as typed (m5/43); Enter or Apply uses it.
     url_input: Entity<TextInput>,
     url_error: Option<String>,
-    /// Whether a grant is held for the configured server, read off the UI thread after settings.toml;
-    /// `None` until the first read answers.
     auth: Option<AuthStatus>,
     auth_reads: u64,
     _url_events: Subscription,
@@ -73,8 +61,6 @@ pub struct SettingsView {
 
 static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 
-/// Paints the app with the theme and terminal colours `settings.toml` names (at start, and after
-/// every change on the Appearance page).
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
     let terminal = TerminalColors::from_setting(settings.appearance.terminal_colors.as_deref());
@@ -109,8 +95,6 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&s
 
 impl SettingsView {
     fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // About shows the fleet's CLI check and refresh as they change, WorkState its status, Appearance
-        // the terminal font size a zoom in a terminal changed
         if let Some(fleet) = fleet.upgrade() {
             cx.observe(&fleet, |this, fleet, cx| {
                 let workstate = fleet.read(cx).workstate.clone();
@@ -182,7 +166,6 @@ impl SettingsView {
         self.page
     }
 
-    /// `page` when registered, else the first.
     pub fn show(&mut self, page: &str, cx: &mut Context<Self>) {
         self.page = self.pages.resolve(Some(page));
         cx.notify();
@@ -232,8 +215,6 @@ impl SettingsView {
         self.url_error.clone()
     }
 
-    /// The URL field's Enter and Apply: a valid URL goes to the fleet, which switches servers through a
-    /// sign-in when one is held ([`FleetView::set_workstate_url`]).
     pub fn apply_url(&mut self, cx: &mut Context<Self>) {
         let text = self.url_input.read(cx).text().to_string();
         let result = self.fleet.update(cx, |fleet, cx| fleet.set_workstate_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));
@@ -261,7 +242,7 @@ impl SettingsView {
         self.theme_problem = apply_theme(self.home.as_deref(), cx);
     }
 
-    /// The fleet window owns the size (one path for Settings, the keys and the wheel) and saves it.
+    /// The fleet window owns and saves the size: one path for Settings, the keys and the wheel.
     pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
         self.fleet.update(cx, |fleet, cx| fleet.set_term_font_size(size, cx)).ok();
         cx.notify();
@@ -271,7 +252,6 @@ impl SettingsView {
         self.shown_font_size.get()
     }
 
-    /// The terminal font family (`None`: the default) and ligatures, applied by the fleet window.
     pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) {
         let result = self.fleet.update(cx, |fleet, cx| fleet.set_term_font(family, ligatures, cx));
         self.font_error = match result {
@@ -437,7 +417,6 @@ impl SettingsView {
         ]
     }
 
-    /// Signed in or not, on which server and as whom; Sign in, Sign out and Check now.
     fn render_workstate_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
@@ -527,7 +506,6 @@ impl SettingsView {
         )
     }
 
-    /// The URL the last status is about.
     fn workstate_url(&self) -> String {
         match &self.workstate {
             WsStatus::Ready { url, .. } | WsStatus::NotSignedIn { url } | WsStatus::SignInAgain { url, .. } | WsStatus::Unreachable { url, .. } => {

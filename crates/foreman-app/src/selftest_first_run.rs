@@ -1,11 +1,3 @@
-//! `--selftest` step 7d (m5/3, m5/43): signing in to WorkState. The gate starts signed in to the fake
-//! WorkState's own fake OAuth server (step 1w). Here: Settings → WorkState shows "Signed in on <url> as
-//! <name>"; Sign out revokes the grant and the notice above the tree says "Not signed in" with Sign in;
-//! its Sign in signs in again (the browser is an HTTP GET, never a real one) and the tree's WorkState
-//! rows come back. A new server URL is used only after a sign-in there, and the old grant is revoked;
-//! one that cannot be signed in to leaves the URL as it was. A closed port names the URL and the error
-//! with a Retry. The gate's settings and sign-in are put back.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
@@ -45,7 +37,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let auth = crate::signin::auth(&home);
     let mut lines = Vec::new();
 
-    // a. signed in since step 1w: Settings says so, by name
     let who = until(view, cx, "Ready as the fake operator", |v| match &v.workstate {
         WsStatus::Ready { url, who } if *url == base => who.clone(),
         _ => None,
@@ -68,7 +59,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     shot_window("m5-43-settings-signed-in", Some("Foreman Settings"), cx).await;
     lines.push(format!("Settings → WorkState: signed in on {base} as {who}"));
 
-    // b. Sign out: the grant revoked, the credential gone, the notice offers Sign in
     let revoked = oauth.revoked();
     view.update(cx, |v, cx| v.sign_out(cx));
     let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
@@ -86,7 +76,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     shot("m5-43-not-signed-in", cx).await;
     lines.push(format!("Sign out revoked the grant; notice \"{problem}\" with Sign in"));
 
-    // c. the notice's Sign in: the HTTP browser, the loopback, Ready, and the tree's WorkState rows
     let issued = oauth.issued().len();
     click(view, "ws-setup-signin", cx).await?;
     until(view, cx, "Ready after Sign in, the notice gone", |v| {
@@ -113,7 +102,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} WorkState rows read with them", fresh.len(), rows.len()));
 
-    // d. another server while signed in: used only after a sign-in there; the old grant is revoked
     let other = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
     let revoked = oauth.revoked();
@@ -138,7 +126,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     lines.push(format!("URL → {}: signed in there, saved, the old grant revoked", other.base()));
 
-    // e. a server that cannot be signed in to: the URL stays, the error says why
     let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let closed = format!("http://127.0.0.1:{port}");
     handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -159,7 +146,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     view.update(cx, |v, cx| v.close_settings(cx));
 
-    // f. the server down: the URL, the error and Retry
     Settings { workstate: foreman_core::WorkStateSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
     view.update(cx, |v, _| v.recheck_workstate());
     let down = until(view, cx, "the unreachable notice", |v| {
@@ -178,7 +164,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workstate.unreachable()).then_some(())).await?;
     lines.push(format!("closed port: \"{down}\", Retry shown, × hid it"));
 
-    // the gate's server and a sign-in there again; the other server's grant goes
     auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
     saved.save(&home)?;
     crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;

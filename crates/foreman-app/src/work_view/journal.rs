@@ -1,24 +1,15 @@
-//! The Work tab's journal (m4/4): the project's `GET /api/v1/journal?scope=` events, newest last, in
-//! place of the runs while toggled on. Opening reads the newest page; a stream event (debounced) or a
-//! resync reads what came after the last `seq` shown; "load older" pages back. The v1 journal pages
-//! only forward (`since` is exclusive, and no `since` is the newest page), so an older page is read
-//! forward from a `seq` window below the oldest event shown, widened until it holds a page or reaches
-//! the start ([`older`]).
+//! The v1 journal pages only forward: `since` is exclusive, and no `since` is the newest page.
 
 use foreman_workstate::{Journal, JournalEvent, JournalQuery};
 use gpui::ScrollHandle;
 
 use super::*;
 
-/// The newest page, and each older one at least (when there are that many).
 pub const PAGE: u32 = 50;
 /// Forward reads take the server's maximum page.
 const FORWARD_LIMIT: u32 = 500;
-/// Forward pages read for one answer at most; more is left for the next event.
 const FORWARD_PAGES: usize = 20;
-/// The first window below the oldest event shown, in `seq`s; ×4 per retry.
 pub const OLDER_SPAN: i64 = 200;
-/// Events kept in memory at most; the oldest go first.
 const KEPT: usize = 2000;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -26,22 +17,18 @@ pub struct JournalFeed {
     pub events: Vec<JournalEvent>,
     /// The `since` of the next forward read: the newest `seq` this feed reflects.
     pub cursor: i64,
-    /// Older events exist (or may).
     pub older: bool,
     pub loading_older: bool,
-    /// The last read failed (what is shown stays).
     pub error: Option<String>,
 }
 
 impl JournalFeed {
     pub fn from_newest(page: Journal) -> Self {
-        // Without `since` the cursor is the newest event's seq, or 0 when there is none: then the
-        // snapshot's seq, so the next read is a forward one.
+        // Without `since`, an empty page's cursor is the snapshot's seq, so the next read is a forward one.
         let cursor = page.events.last().map_or(page.seq, |e| e.seq);
         JournalFeed { older: page.has_more, events: page.events, cursor, ..Default::default() }
     }
 
-    /// Appends what is newer than the newest shown; how many.
     pub fn append(&mut self, events: Vec<JournalEvent>, cursor: i64) -> usize {
         let last = self.events.last().map_or(i64::MIN, |e| e.seq);
         let before = self.events.len();
@@ -54,7 +41,6 @@ impl JournalFeed {
         self.events.len() - before
     }
 
-    /// Prepends what is older than the oldest shown, up to [`KEPT`] events in all: the newest stay.
     pub fn prepend(&mut self, events: Vec<JournalEvent>, more: bool) {
         let first = self.events.first().map_or(i64::MAX, |e| e.seq);
         let mut older: Vec<JournalEvent> = events.into_iter().filter(|e| e.seq < first).collect();
@@ -66,7 +52,6 @@ impl JournalFeed {
     }
 }
 
-/// Every event after `since`, ascending (at most [`FORWARD_PAGES`] pages), and the new cursor.
 pub fn after(client: &Client, scope: &str, since: i64) -> foreman_workstate::Result<(Vec<JournalEvent>, i64)> {
     let mut events = Vec::new();
     let mut cursor = since;
@@ -81,10 +66,7 @@ pub fn after(client: &Client, scope: &str, since: i64) -> foreman_workstate::Res
     Ok((events, cursor))
 }
 
-/// The events just before `oldest`, ascending, and whether older ones may exist. The window
-/// `(oldest − span, oldest)` is read forward; with fewer than [`PAGE`] events in it, it widens ×4 until
-/// it reaches `since=1` (`since=0` would be the newest page, so `seq` 1, the workspace's first event,
-/// is never shown). At most [`FORWARD_LIMIT`] events come back.
+/// `since=0` would be the newest page, so `seq` 1, the workspace's first event, is never shown.
 pub fn older(client: &Client, scope: &str, oldest: i64) -> foreman_workstate::Result<(Vec<JournalEvent>, bool)> {
     let mut span = OLDER_SPAN;
     loop {
@@ -135,14 +117,13 @@ impl WorkView {
         cx.notify();
     }
 
-    /// Once the overview names the project (the journal may have been opened before).
+    /// The journal may have been opened before the overview named the project.
     pub(super) fn journal_project_known(&mut self, cx: &mut Context<Self>) {
         if self.journal.open && self.journal.feed.is_none() && !self.journal.reading {
             self.read_journal(cx);
         }
     }
 
-    /// A stream event: the events after the cursor, debounced; nothing before the feed was read.
     pub(super) fn schedule_journal(&mut self, cx: &mut Context<Self>) {
         if self.journal.feed.is_none() || self.journal.pending {
             return;
@@ -154,7 +135,6 @@ impl WorkView {
         });
     }
 
-    /// The newest page when there is no feed yet, else what came after its cursor.
     pub(super) fn read_journal(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.as_ref().map(|p| p.id.clone()) else { return };
         if self.journal.reading {
@@ -385,7 +365,6 @@ mod tests {
         let asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).collect();
         assert_eq!(asked, [target(400), target(1)]);
 
-        // A page in the first window: no widening, and older ones may exist.
         let full: Vec<i64> = (1000..1060).collect();
         fake.set(target(860), page(&full, 1059, false));
         let (events, more) = older(&client, scope, 1060).unwrap();

@@ -1,8 +1,3 @@
-//! The task box: what the human sends a workspace session (a new task, or the answer to an
-//! `APPROVE?`/`DECIDE:`). The text is a multi-line [`TextInput`] (m5/42): Enter a new line, Ctrl+Enter
-//! sends, Escape cancels ([`crate::view::FleetView::on_compose_event`]). This is the rest: whom it is for,
-//! what it answers, and how the last send went.
-
 use gpui::{App, Entity, Subscription};
 
 use foreman_ui::text_input::TextInput;
@@ -12,11 +7,8 @@ pub struct Compose {
     /// The outbox file this answers; `None`: a new task.
     pub reply_to: Option<String>,
     pub input: Entity<TextInput>,
-    /// Why the last send was refused or failed.
     pub error: Option<String>,
-    /// The first line of the last task sent from this box.
     pub sent: Option<String>,
-    /// How it went: `sent direct` or `sent via relay (<why>)`.
     pub route: Option<String>,
     _events: Subscription,
 }
@@ -31,8 +23,7 @@ impl Compose {
     }
 }
 
-/// What a row shows of an answer, and what `answered.json` keeps: its first non-blank line, at most
-/// 80 characters.
+/// What a row shows of an answer, and what `answered.json` keeps.
 pub fn first_line(text: &str) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
     match line.char_indices().nth(80) {

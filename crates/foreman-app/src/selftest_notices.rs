@@ -1,7 +1,3 @@
-//! `--selftest` step 7o (m5/37): the notices above the tree have a ×. Two hand notices and an action error
-//! are raised; × on the first hand notice removes it and leaves the other two, the same notice raised again
-//! shows again, and the rest are dismissed so later steps see an empty box.
-
 use std::time::Duration;
 
 use anyhow::bail;
@@ -20,8 +16,7 @@ const SECOND: &str = "fm-selftest: a second hand notice";
 const ACTION: &str = "fm-selftest: Cannot do the thing";
 const WITHIN: Duration = Duration::from_secs(10);
 
-/// The painted × of the hand notice reading `text`, once the last frame painted exactly one × per hand
-/// notice: the hits are those of the last frame, so a frame from before a change would point elsewhere.
+/// The hits are the last frame's, so a frame from before a change would point elsewhere.
 fn hand_x(v: &FleetView, text: &str) -> Option<String> {
     let hits = v.hits.borrow();
     let count = v.hand_notices.len();

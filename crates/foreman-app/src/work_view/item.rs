@@ -1,10 +1,3 @@
-//! The item page (m4/3): a board row's `GET /api/v1/items/{id}` in a pane right of the board, in the
-//! same Work tab. What was asked (intent, verify command, criteria), what the agent **said** (reports,
-//! muted and marked "claimed") against what was **proven** (verifications, with a pass/fail mark), and
-//! the rest of the v1 item; every section is hidden when empty. The claim's session joins the fleet on
-//! `claudeSessionId`, so a live one offers Attach. Back steps through the items navigated to; Escape
-//! closes the pane.
-
 use std::{cell::RefCell, rc::Rc};
 
 use foreman_workstate::{Claim, ItemPage, ItemResolution, Report, Verification};
@@ -12,7 +5,6 @@ use gpui::Stateful;
 
 use super::*;
 
-/// A fleet session Attach can open: `claude agents` row's Claude uuid, 8-hex id and name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveSession {
     pub claude_session_id: String,
@@ -20,8 +12,6 @@ pub struct LiveSession {
     pub name: String,
 }
 
-/// What a Work tab knows of the fleet: the attachable sessions (refreshed by each poll) and the
-/// fleet's own attach, by 8-hex id.
 #[derive(Clone)]
 pub struct FleetLink {
     pub live: Rc<RefCell<Vec<LiveSession>>>,
@@ -39,21 +29,17 @@ pub struct OpenItem {
     pub id: String,
     pub state: ItemState,
     pub events_open: bool,
-    /// The items navigated away from, newest last: Back returns to them, then to the board.
     pub back: Vec<String>,
 }
 
-/// A verification that proves something: passed, and not recorded by the worker itself.
 pub fn proven(v: &Verification) -> bool {
     v.passed && v.run_by != "worker"
 }
 
-/// `done` with nothing but the agent's word for it.
 pub fn done_unverified(page: &ItemPage) -> bool {
     page.item.status == ItemStatus::Done && !page.verifications.iter().any(proven)
 }
 
-/// The run the item belongs to (itself, when it is one).
 pub fn run_of(page: &ItemPage) -> Option<&str> {
     if page.item.kind == "run" {
         return Some(page.item.id.as_str());
@@ -61,7 +47,6 @@ pub fn run_of(page: &ItemPage) -> Option<&str> {
     page.path.iter().rev().find(|p| p.kind == "run").map(|p| p.id.as_str())
 }
 
-/// An event re-reads the open item when it names the item or the item's run.
 pub fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
     if event.item_id.as_deref() == Some(open.id.as_str()) {
         return true;
@@ -72,7 +57,6 @@ pub fn item_to_reload(event: &StreamEvent, open: &OpenItem) -> bool {
     }
 }
 
-/// The live fleet session holding the claim, joined on `claudeSessionId`.
 pub fn attach_target<'a>(claim: &Claim, live: &'a [LiveSession]) -> Option<&'a LiveSession> {
     let sid = claim.session.as_ref()?.claude_session_id.as_deref().filter(|s| !s.is_empty())?;
     live.iter().find(|s| s.claude_session_id == sid)
@@ -92,20 +76,17 @@ pub fn verification_key(index: usize, passed: bool) -> String {
 }
 
 impl WorkView {
-    /// A board row: the item opens with an empty Back history.
     pub fn show_item(&mut self, id: String, cx: &mut Context<Self>) {
         self.item = Some(OpenItem { id, state: ItemState::Loading, events_open: false, back: Vec::new() });
         self.read_item(cx);
     }
 
-    /// A WorkState row of the app's Inbox: like a board row.
     pub fn open_from_inbox(&mut self, id: String, cx: &mut Context<Self>) {
         self.selected = Some(id.clone());
         self.show_item(id, cx);
         cx.notify();
     }
 
-    /// A path element, child or link: Back returns here.
     pub fn navigate(&mut self, id: String, cx: &mut Context<Self>) {
         let back = match self.item.take() {
             Some(open) if open.id == id => {
@@ -141,7 +122,6 @@ impl WorkView {
         cx.notify();
     }
 
-    /// Escape: closes the item page; whether it was open.
     pub fn escape(&mut self, cx: &mut Context<Self>) -> bool {
         let open = self.item.is_some();
         if open {
@@ -626,7 +606,6 @@ impl WorkView {
         s.into_any_element()
     }
 
-    /// A clickable item: ref, status, title; navigates there.
     fn item_link(&self, key: String, item: &ItemRef, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let colors = cx.theme().colors().clone();
         let id = item.id.clone();

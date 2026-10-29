@@ -1,14 +1,9 @@
-//! Client-drawn title bar, as Zed does it on Windows: the window opens with a transparent titlebar,
-//! and gpui hit-tests `WindowControlArea`s so dragging, snap layouts and the caption buttons stay
-//! native.
-
 use gpui::{AnyElement, App, FontWeight, Hsla, Pixels, Rgba, Window, WindowControlArea, div, prelude::*, px};
 use foreman_ui::fonts;
 use theme::ActiveTheme as _;
 
 pub const HEIGHT: Pixels = px(34.);
 
-/// `title` on the left; `actions` (e.g. the settings button) just left of the caption buttons.
 pub fn render(title: &'static str, actions: Option<AnyElement>, window: &Window, cx: &App) -> AnyElement {
     let colors = cx.theme().colors();
     div()
@@ -41,7 +36,6 @@ pub fn render(title: &'static str, actions: Option<AnyElement>, window: &Window,
         .into_any_element()
 }
 
-/// A 46 px title-bar button with a Segoe icon glyph, e.g. `\u{e713}` (Settings).
 pub fn icon_button(id: &'static str, glyph: &'static str, cx: &App) -> gpui::Stateful<gpui::Div> {
     let colors = cx.theme().colors();
     div()

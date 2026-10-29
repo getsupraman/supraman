@@ -1,9 +1,3 @@
-//! `--selftest` step 7n (m5/36): a Messages row's ×. Two `fm tell` notes from one sender are dropped into
-//! the scratch workspace's outbox; × on the older hides it and the count drops by one, the newer stays,
-//! `messages-dismissed.json` holds it (read back as a restart does) and the outbox file is still there.
-//! Dismissing what is left hides the section; a newer note from the same sender shows it again, and is
-//! dismissed in turn so later steps see no section.
-
 use std::{
     path::Path,
     time::Duration,
@@ -32,7 +26,7 @@ fn dismiss_key(file: &str) -> String {
     format!("msg-dismiss-{WORKSPACE}/{file}")
 }
 
-/// Off the panel, and until the m5/18 hold is over, so a row that arrives is drawn at once.
+/// Off the panel and past the hold, so a row that arrives is drawn at once.
 pub(crate) async fn pointer_off(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
     crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
@@ -47,7 +41,6 @@ fn tell(outbox: &Path, tag: &str, body: &str) -> anyhow::Result<String> {
     Ok(file)
 }
 
-/// × on every Messages row left, until the section is gone.
 async fn dismiss_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<usize> {
     let mut clicked = 0;
     loop {
@@ -63,8 +56,6 @@ async fn dismiss_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> a
     Ok(clicked)
 }
 
-/// m5/36 c5: the empty search box painted with the placeholder colour Dark Modern's file gives
-/// (`#FFFFFF56`, painted as is before m5/36) and with the fitted one, screenshotted with `FOREMAN_SHOTS`.
 pub async fn placeholder(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     use foreman_ui::themes::{hex, parse_color, placeholder_contrast};
     use theme::{ActiveTheme as _, GlobalTheme};
@@ -124,7 +115,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if !reloaded.hides(WORKSPACE, &older) || reloaded.hides(WORKSPACE, &newer) {
         bail!("{FILE} read back as a restart does: {:?}", std::fs::read_to_string(home.join(FILE)).unwrap_or_default());
     }
-    // a poll later the dismissal holds
     let ticks = view.read_with(cx, |v, _| v.ticks);
     until(view, cx, WITHIN, "a poll after the ×", |v| (v.ticks > ticks).then_some(())).await?;
     if view.read_with(cx, |v, _| painted(v, &older_x)) {

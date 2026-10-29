@@ -1,9 +1,4 @@
-//! The bearer of every mint the app makes (m5/43): the access token of the app's WorkState sign-in
-//! ([`crate::signin`]), for the server `settings.toml` names. Not signed in: sessions launch without
-//! WorkState (`--strict-mcp-config`, so never with the user-scope server). Signed in but without a token
-//! now (unreachable, or the sign-in must be done again): the launch fails with the reason. The token is
-//! never logged and never reaches a file: only the session's own minted `wss_` token does
-//! ([`foreman_supervisor::mint`]).
+//! The access token is never logged and never reaches a file; only a session's minted `wss_` token does.
 
 use std::sync::Arc;
 
@@ -23,7 +18,7 @@ impl TokenProvider for AppTokens {
     }
 }
 
-/// (the MCP URL a minted config names, the access token); `None` when not signed in.
+/// `(MCP URL, access token)`.
 pub fn bearer(auth: &Auth) -> Result<Option<(String, String)>, String> {
     match auth.current() {
         Ok((origin, token)) => Ok(Some((format!("{origin}/mcp"), token))),
@@ -32,9 +27,6 @@ pub fn bearer(auth: &Auth) -> Result<Option<(String, String)>, String> {
     }
 }
 
-/// WorkState knows controller, orchestrator and worker. A workspace session runs the workspace's
-/// queue (controller); a repo session runs one repo's units (orchestrator). The relay has no
-/// WorkState role: it only carries messages, and launches without WorkState.
 pub fn workstate_role(role: &str) -> Option<&'static str> {
     match role {
         "workspace" => Some("controller"),
@@ -43,7 +35,6 @@ pub fn workstate_role(role: &str) -> Option<&'static str> {
     }
 }
 
-/// An [`Auth`] for `home`, signed in to `fake` through its fake OAuth server (refresh tokens in memory).
 #[cfg(test)]
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
     let mut settings = foreman_core::Settings::load(home).unwrap_or_default();
@@ -152,7 +143,6 @@ mod tests {
         assert!(sup.take_notices().is_empty());
     }
 
-    /// Records every stop and resume; launches and resumes print a start in place.
     #[derive(Default)]
     struct Recorder(std::cell::RefCell<Vec<String>>);
 
@@ -213,7 +203,6 @@ mod tests {
         let file = home.join("mcp").join("workstate-fm-demo-workspace.json");
         assert!(std::fs::read_to_string(&file).unwrap().contains(&format!("{}/mcp", a.base())));
 
-        // the URL saved on its own, then a plain sign-in there
         let mut settings = Settings::load(&home).unwrap();
         settings.workstate.url = Some(b.base().into());
         settings.save(&home).unwrap();

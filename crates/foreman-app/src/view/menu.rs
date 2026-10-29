@@ -1,7 +1,3 @@
-//! The left panel's right-click menu: what a workspace, repo or session row offers, as [`MenuAction`]s
-//! that [`FleetView::run_action`] carries out. One menu at a time; Esc, a click outside it, or choosing an
-//! item closes it. Every item is also reachable without the menu where it already was.
-
 use std::path::PathBuf;
 
 use foreman_claude::{Kind, Session};
@@ -18,7 +14,6 @@ pub enum MenuAction {
     Work(String),
     Task(String),
     Rescan(String),
-    /// Asks first ([`Confirmed::Remove`]).
     Remove(String),
     OpenFolder(PathBuf),
     OpenTerminal { cwd: PathBuf, title: String },
@@ -26,19 +21,14 @@ pub enum MenuAction {
     SetRepoEnabled { workspace: String, repo: String, enabled: bool },
     Attach { workspace: String, repo: String, session: Session },
     Resume { workspace: String, repo: String, session: Session },
-    /// A session Foreman did not launch asks first ([`Confirmed::StopSession`]).
     StopSession(Session),
     Copy(String),
     ShowInWork { workspace: String, item_id: String },
-    /// Stars or unstars a session by its `session_id` (m5/27).
     ToggleStar(String),
-    /// Asks first ([`Confirmed::Delete`], m5/38, [`super::delete`]).
     Delete(Session),
-    /// "Delete closed background sessions…" of a workspace: asks with the plan first.
     DeleteClosed(String),
 }
 
-/// What a yes to a [`Confirm`] runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confirmed {
     Remove(String),
@@ -52,7 +42,6 @@ pub type MenuItem = foreman_ui::menu::MenuItem<MenuAction>;
 pub type ContextMenu = foreman_ui::menu::ContextMenu<MenuAction>;
 pub type Confirm = foreman_ui::confirm::Confirm<Confirmed>;
 
-/// What the right-click was on, resolved against the tree when the menu opens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuTarget {
     Workspace(String),
@@ -61,7 +50,6 @@ pub enum MenuTarget {
     Session { workspace: String, repo: String, session_id: String },
 }
 
-/// `closed_background`: the workspace has a background session with no process ([`super::delete::bulk_plan`]).
 pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: bool) -> Vec<MenuItem> {
     let w = &node.name;
     let mut items = vec![if node.started == Some(true) {
@@ -104,9 +92,6 @@ pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
     items
 }
 
-/// `resumable`: [`FleetView::resumable`]; `claimed`: the WorkState item the session holds a claim on, as an
-/// open Work tab knows it; `send_name`: what SendMessage takes for it ([`foreman_claude::peer::send_name`]),
-/// which only a running session has; `deletable`: [`FleetView::deletable`].
 pub fn session_items(
     workspace: &str,
     repo: &str,

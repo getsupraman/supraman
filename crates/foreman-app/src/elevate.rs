@@ -1,23 +1,16 @@
-//! Settings → Run Foreman as administrator (m5/25). An elevated `claude --bg` starts the background
-//! service elevated, and an unelevated Foreman (any start from Explorer) cannot reach it
-//! ([`foreman_claude::daemon_mismatch`]). With the setting on, an unelevated app start that owns its
-//! home asks UAC once for an elevated copy of itself and exits; declined, it carries on unelevated and
-//! the Inbox says why. The copy is started `--elevated`, so it never asks again: no loop. Selftests
-//! never elevate, and neither does a launch that only hands off to a running instance.
+//! An elevated `claude --bg` starts the background service elevated, out of an unelevated Foreman's reach.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use foreman_core::Settings;
 
-/// How long the elevated copy waits for the instance that restarted it to quit.
 pub const AFTER_WITHIN: Duration = Duration::from_secs(60);
 
 /// What [`relaunch`] passes: `--elevated --home <home> [--after <pid>]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunched {
     pub home: PathBuf,
-    /// The instance that restarted itself: it still holds the home until it exits.
     pub after: Option<u32>,
 }
 
@@ -29,8 +22,7 @@ pub fn parse_relaunch(args: &[&str]) -> Option<Relaunched> {
     }
 }
 
-/// What the copy gets. UAC starts it with a fresh environment that may lack `FOREMAN_HOME`, so the
-/// home goes along. Windows' command-line quoting: a trailing `\` would escape the closing quote.
+/// UAC's fresh environment may lack `FOREMAN_HOME`; a trailing backslash would escape the closing quote.
 pub fn arguments(home: &Path, after: Option<u32>) -> String {
     let home = home.display().to_string();
     let mut args = format!("--elevated --home \"{}\"", home.trim_end_matches('\\'));
@@ -42,14 +34,10 @@ pub fn arguments(home: &Path, after: Option<u32>) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Start {
-    /// The elevated copy started: this process exits.
     Exit,
-    /// Run here; `declined` when UAC (or anything else) refused the copy.
     Run { declined: Option<String> },
 }
 
-/// The start decision. `app`: the plain app, not a selftest. `relaunched`: this process is the copy.
-/// `relaunch` is tried at most once.
 pub fn start(app: bool, toggle: bool, elevated: bool, relaunched: bool, relaunch: impl FnOnce() -> anyhow::Result<()>) -> Start {
     if !app || !toggle || elevated || relaunched {
         return Start::Run { declined: None };
@@ -64,7 +52,6 @@ pub fn toggle(home: &Path) -> bool {
     Settings::load(home).is_ok_and(|s| s.sessions.run_as_admin)
 }
 
-/// `ShellExecuteW` with the `runas` verb: the UAC prompt. `Ok` once the elevated copy started.
 #[cfg(windows)]
 pub fn relaunch(home: &Path, after: Option<u32>) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
@@ -80,7 +67,6 @@ pub fn relaunch(_home: &Path, _after: Option<u32>) -> anyhow::Result<()> {
     anyhow::bail!("only Windows elevates")
 }
 
-/// Until `pid` has exited, or `within` passed.
 pub fn wait_for_exit(pid: u32, within: Duration) {
     let deadline = Instant::now() + within;
     while foreman_core::process::alive(pid) && Instant::now() < deadline {

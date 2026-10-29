@@ -1,8 +1,3 @@
-//! `--selftest` step 7c (m5/13): the left panel's action bar. Every icon is painted at one size on one line;
-//! Collapse all hides the gate workspace's repo rows and Expand all brings them back; the stopped toggle and
-//! the busy stepper change what they say and are put back; hovering an icon shows its tooltip (screenshotted
-//! with `FOREMAN_SHOTS`); Settings opens the settings window, which `open_settings_at` turns to About.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
@@ -15,7 +10,6 @@ use crate::{
     view::FleetView,
 };
 
-/// Square icon buttons, left to right as painted.
 const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refresh", "bar-settings"];
 const WITHIN: Duration = Duration::from_secs(5);
 
@@ -66,7 +60,6 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     click(view, "busy-inc", cx).await?;
     until(view, cx, WITHIN, "busy + raises it back", |v| (v.max_working == busy).then_some(())).await?;
 
-    // hover: the tooltip, and the icon's hover fill, in the picture
     let position = view
         .read_with(cx, |v, _| bounds(v, "collapse-all"))
         .ok_or_else(|| anyhow!("collapse-all gone"))?
@@ -122,8 +115,6 @@ async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &mut AsyncWin
     until_with(cx, WITHIN, "a frame of the settings window painted", |_| painted.get().then_some(())).await
 }
 
-/// m5/22: the settings window again, closed the way its caption ✕ does (WM_CLOSE). Neither that nor
-/// the close before it may log gpui's "window not found" / "Invalid window handle" lines.
 #[cfg(windows)]
 async fn close_settings_by_wm_close(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
@@ -163,10 +154,6 @@ async fn close_settings_by_wm_close(_view: &Entity<FleetView>, _cx: &mut AsyncWi
     Ok(String::new())
 }
 
-/// `--selftest-supervise` step e2 (m5/10): another Foreman's parked session. A fake `fm-elsewhere-<hex>-park`
-/// row, blocked on a permission prompt with its cwd in `workspace`'s repo, is added to every snapshot
-/// ([`FleetView::injected`]): over two ticks the panel shows it under that repo, dimmed with "another
-/// Foreman", and the Inbox has no row for it, while this home's own park (`own_park`) is still Blocked there.
 pub async fn foreign_row(
     view: &Entity<FleetView>,
     workspace: &str,
@@ -248,13 +235,11 @@ async fn check_foreign(
     ))
 }
 
-/// What of a hit is on screen: its bounds cut to its clip.
 fn painted_part(h: &foreman_ui::hit::Hit) -> Option<Bounds<Pixels>> {
     let b = h.bounds.intersect(&h.visible);
     (b.size.width > Pixels::ZERO && b.size.height > Pixels::ZERO).then_some(b)
 }
 
-/// The least panel background between the Inbox's last painted row and the tree's first.
 const SEAM_MIN: f32 = 4.;
 
 fn tree_row(key: &str) -> bool {
@@ -265,13 +250,9 @@ fn overlaps(a: &Bounds<Pixels>, b: &Bounds<Pixels>) -> bool {
     a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
 }
 
-/// `--selftest` step 7f (m5/16): with a full Inbox above it, the tree is wheeled down through several
-/// offsets, and at each the last Inbox row's painted bounds and the Inbox's own area meet no tree row's
-/// painted bounds: the tree clips to its own area.
 pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let inbox = until(view, cx, WITHIN, "the Inbox painted", |v| v.hits.borrow().get("inbox-area").map(|h| h.visible)).await?;
     let tree = until(view, cx, WITHIN, "the tree painted", |v| v.hits.borrow().get("tree-area").map(|h| h.visible)).await?;
-    // the search box sits right above the tree (m5/30)
     let search = view.read_with(cx, |v, _| v.hits.borrow().get("search-box").map(|h| h.bounds)).filter(|b| b.top() >= inbox.bottom() && b.bottom() <= tree.top());
     let between = tree.top() - inbox.bottom() - search.map_or(Pixels::ZERO, |b| b.size.height);
     if f32::from(between) > 20. {
@@ -318,7 +299,7 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
                 f32::from(last.bottom())
             );
         }
-        // and apart: a row cut by the tree's clip right under one cut by the Inbox's reads as one (m5/16)
+        // and apart: a row cut by the tree's clip right under one cut by the Inbox's reads as one
         if let Some((key, b)) = rows.iter().filter(|(_, b)| b.top() >= last.bottom()).min_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap_or(std::cmp::Ordering::Equal))
             && f32::from(b.top() - last.bottom()) < SEAM_MIN
         {
@@ -342,8 +323,6 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
     ))
 }
 
-/// The table [`steady_click`] drops into the outbox, a `work_tree` as an orchestrator pastes it: tabs and
-/// runs of spaces between columns.
 const TABLE: [&str; 5] = [
     "selftest\tproj\topen\tselftest\t—\t0/6 done",
     "  selftest-shout-textkit     run    open    shout: textkit.shout(text)    —    0/1 done",
@@ -352,7 +331,6 @@ const TABLE: [&str; 5] = [
     "    selftest-shout-textcli-flag  task  open  greet --shout prints textkit.shout(greet(name))  ✗0/3",
 ];
 
-/// The outbox file [`steady_click`] wrote, for [`table_lines`].
 static TABLE_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 pub(crate) fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -361,9 +339,6 @@ pub(crate) fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext
     })
 }
 
-/// `--selftest-supervise` step t0 (m5/18 c1): the pointer moves onto `key` (the workspace's Task…), a
-/// Messages row arrives above it from `outbox` while it does, and the button's painted bounds stay where
-/// they were until the click, sent at the spot first aimed at, lands on it.
 pub async fn steady_click(
     view: &Entity<FleetView>,
     key: &str,
@@ -428,10 +403,6 @@ pub async fn steady_click(
     Ok((said, aimed))
 }
 
-/// `--selftest-supervise` step t0 (m5/18 c2): the pointer leaves the panel and the held row appears; shown
-/// in full, its table is one painted line per row, all of one height, in a monospace block.
-/// `key` / `aimed`: the button [`steady_click`] held still, which the row must now push down, or the hold
-/// was never tested.
 pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let button = key.to_string();
     let file = TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| anyhow!("no table message written"))?;

@@ -1,13 +1,3 @@
-//! `--selftest` step 7j (m5/28): a closed interactive session offers resume at once, and Refresh (the action bar's
-//! button and F5) rescans now. [`ENDING`] is injected as a live interactive session in the gate's main repo, its pid
-//! a windowless `ping` of the selftest's own. Right after a poll the ping is killed and the row taken out of the
-//! `claude agents` snapshot with its transcript written to the fake claude dir (as claude leaves it when its terminal
-//! closes): the time until its closed row paints resume is measured, and must stay under [`CLOSE_TO_RESUME`]. Then,
-//! each right after a poll and a scan finished, a transcript appears for [`FRESH`]: the Refresh button, and F5 with a
-//! Work tab active for a second one ([`FRESH_KEY`]), must poll and scan again within [`REFRESHED`], well before
-//! [`REFRESH_EVERY`] / [`TRANSCRIPTS_EVERY`] would. Last, F5 with a shell tab active reaches its program (a pwsh key
-//! reader prints `F5 0`) and refreshes nothing.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -24,13 +14,11 @@ pub const ENDING: &str = "e2d1c105-0000-4000-8000-00000000e2d1";
 pub const FRESH: &str = "f2e5a7b0-0000-4000-8000-00000000f2e5";
 pub const FRESH_KEY: &str = "f5f5ab0c-0000-4000-8000-00000000f5f5";
 const ENDING_TITLE: &str = "selftest ending session";
-/// From the process gone to resume painted: the pid watch (250 ms), one `claude agents`, one scan (0.9–1.7 s
-/// measured); a poll at the end of the wait cannot pass, it takes [`REFRESH_EVERY`] plus `claude agents` (≥ 2.5 s).
+/// The pid watch (250 ms), one `claude agents`, one scan (0.9–1.7 s); a poll takes [`REFRESH_EVERY`] plus `claude agents` (≥ 2.5 s).
 const CLOSE_TO_RESUME: Duration = Duration::from_millis(2300);
 const REFRESHED: Duration = Duration::from_millis(1500);
 const WITHIN: Duration = Duration::from_secs(45);
 
-/// The tree row of `id`: (closed, resume offered and painted).
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
     let tree = v.tree();
     let row = tree.workspaces.iter().flat_map(|w| w.repos.iter().flat_map(|r| &r.sessions)).find(|r| r.session.session_id == id)?;
@@ -50,7 +38,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         cx.notify();
         std::mem::replace(&mut v.show_stopped, true)
     });
-    // the ended session's process: a windowless ping of this run's own, killed by its handle
     let mut process = foreman_core::process::command("ping")
         .args(["-n", "120", "127.0.0.1"])
         .stdout(std::process::Stdio::null())
@@ -85,7 +72,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
     view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
     until(view, cx, WITHIN, "the injected interactive session running in the tree", |v| row(v, ENDING).filter(|r| !r.0)).await?;
 
-    // right after a poll, its terminal closes: the process ends, claude drops it from `claude agents`, its transcript stays
     let polls = view.read_with(cx, |v, _| v.refreshes);
     until(view, cx, WITHIN, "a poll", |v| (v.refreshes > polls).then_some(())).await?;
     write_transcript(home, &main, ENDING, ENDING_TITLE)?;
@@ -129,8 +115,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
 
 type Trigger = for<'a> fn(&'a Entity<FleetView>, &'a mut AsyncWindowContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>>;
 
-/// Right after a poll and a scan, `id`'s transcript appears and `trigger` runs: both must come again, and the
-/// new closed row show, within [`REFRESHED`].
 async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str, cx: &mut AsyncWindowContext, trigger: Trigger) -> anyhow::Result<Duration> {
     let scans = view.read_with(cx, |v, _| v.transcript_scans);
     until(view, cx, WITHIN, "a scan", |v| (v.transcript_scans > scans).then_some(())).await?;
@@ -147,7 +131,6 @@ async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str,
     Ok(asked.elapsed())
 }
 
-/// F5 with a shell tab active goes to its program, and [`FleetView::refresh_now`] is not called.
 async fn f5_in_a_terminal(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let script = std::env::temp_dir().join(format!("fm-selftest-f5-{}.ps1", hex6()));
     std::fs::write(&script, crate::selftest_tabs::READER).context("the key reader script")?;

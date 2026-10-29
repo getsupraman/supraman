@@ -1,14 +1,4 @@
-//! `--selftest` step 7b (m5/12): managing workspaces through the window. Add workspace on a scratch folder
-//! ([`FOLDER`] under `<cargo root>/target/`, two fake repos; [`FleetView::pick_folder`] stands in for the OS
-//! picker): the review lists both, one is unticked, the name is edited with keys, Enter saves. The name field
-//! gets Win32 messages posted to the window (m5/26), the path a real click and key take through gpui's window
-//! procedure: a click at its start puts the caret there, the caret blinks, End / Backspace / letters edit it,
-//! Save while the folder is still read says so. The tree shows
-//! both repos (the unticked one disabled), also once a poll that read the registry before Save applies. The same folder again is refused inline. Then the right-click
-//! menus: the gate session's row (opened and dismissed with Esc, nothing run), the new workspace's (dismissed
-//! by a click outside it), the disabled repo's Enable, and the workspace's Remove… confirmed: it leaves the
-//! registry and the tree, and the folder is still there. With `FOREMAN_SHOTS=<dir>` each state is
-//! screenshotted there (`scripts/shot.ps1`).
+//! `--selftest` step 7b: managing workspaces through the window.
 
 use std::{
     path::{Path, PathBuf},
@@ -30,9 +20,7 @@ use crate::{
 };
 
 pub const FOLDER: &str = "selftest-add";
-/// A folder that is itself a repo (m5/26).
 pub const SINGLE: &str = "selftest-single";
-/// What the review's name is edited into.
 const ADDED: &str = "selftest-added";
 const WITHIN: Duration = Duration::from_secs(5);
 
@@ -48,8 +36,7 @@ fn typed(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>) -> anyh
     Ok(())
 }
 
-/// Posts `messages` to this window's HWND, as the OS queues a real click or key: they go through gpui's
-/// window procedure (and `TranslateMessage`), not straight to `dispatch_event`.
+/// As the OS queues a real click or key: through gpui's window procedure (and `TranslateMessage`), not straight to `dispatch_event`.
 fn post(cx: &mut AsyncWindowContext, messages: &[(u32, usize, isize)]) -> anyhow::Result<()> {
     use windows::Win32::{
         Foundation::{LPARAM, WPARAM},
@@ -62,7 +49,6 @@ fn post(cx: &mut AsyncWindowContext, messages: &[(u32, usize, isize)]) -> anyhow
     Ok(())
 }
 
-/// A left click posted at `key`'s painted left edge plus `dx`, in the window's physical pixels.
 async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE};
     let bounds = crate::selftest::scrolled_into_view(view, key, cx).await?;
@@ -75,9 +61,7 @@ async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut Async
     Ok(())
 }
 
-/// Keys posted as WM_KEYDOWN / WM_KEYUP: a virtual key for each name (`end`, `backspace`, `enter`, `escape`)
-/// or the key the keyboard layout has for each character. A key that types goes on to `TranslateMessage`'s
-/// WM_CHAR, queued behind it: read what it typed with [`until_app`], never right after this returns (F-04).
+/// A key that types goes on to `TranslateMessage`'s WM_CHAR, queued behind it: read what it typed with [`until_app`], never right after this returns (F-04).
 pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use windows::Win32::UI::{
         Input::KeyboardAndMouse::{
@@ -86,9 +70,7 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
         },
         WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
     };
-    // gpui takes a key's modifiers from this thread's key state (GetKeyState), which a posted message does
-    // not set: a modifier held there, by a real key or by another process's injected input (a parallel
-    // selftest's Alt, m5/30), would turn End into Alt+End. Wait it out first.
+    // gpui takes a key's modifiers from GetKeyState, which a posted message does not set: a held modifier would turn End into Alt+End.
     let held = || {
         [(VK_CONTROL, "Ctrl"), (VK_MENU, "Alt"), (VK_SHIFT, "Shift"), (VK_LWIN, "Win"), (VK_RWIN, "Win")]
             .into_iter()
@@ -118,11 +100,6 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
     Ok(())
 }
 
-/// m5/26, m5/30: the review's name (a [`foreman_ui::text_input::TextInput`]) edited `selftest-add` → [`ADDED`] by
-/// posted messages only. A click at the start of the text puts the caret at 0; idle, the painted caret
-/// blinks; End, three Backspaces and `added`, the letters arriving as WM_CHAR through the input handler;
-/// Save while the folder is "still read" answers with an error line instead of nothing. Each check waits
-/// for the state it asserts: the posted messages are handled after this task yields (F-04).
 async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let name = |v: &FleetView, cx: &gpui::App| {
         v.adding.as_ref().map(|d| {
@@ -149,7 +126,6 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     if lit == 0 || unlit == 0 {
         bail!("the name's caret was painted lit {lit} and unlit {unlit} times in {} ms: it does not blink", started.elapsed().as_millis());
     }
-    // the keystrokes as gpui dispatched them, with the action each ran, for a failure to name
     let seen: std::rc::Rc<std::cell::RefCell<Vec<String>>> = Default::default();
     let observer = cx.update(|_, cx| {
         let (seen, view) = (seen.clone(), view.clone());
@@ -177,9 +153,6 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     Ok(format!("name by posted messages: click → caret 0, caret {lit} lit / {unlit} unlit, edited to {ADDED}; Save while reading: \"{said}\""))
 }
 
-/// m5/26: a folder that is itself a git repo ([`SINGLE`], as René's `P:\Projects\LarchSys\Gaia`) is a
-/// one-repo workspace: the review lists the folder as its repo, a posted click on Save registers it with
-/// the root as the repo's path, and the tree shows the row. It is removed from the registry after.
 async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let root = cargo_root().join("target").join(SINGLE);
     let git = root.join(".git");
@@ -210,9 +183,7 @@ async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut Asy
     Ok(format!("{SINGLE} (a folder that is a repo): one repo, the root, registered by a posted Save and shown"))
 }
 
-/// m5/26: a label shown cut shows its full text as a tooltip: [`ADDED`]'s root path, cut in its row, with
-/// the pointer held over it. The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE
-/// the real cursor's position sends at once.
+/// The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE the real cursor's position sends at once.
 async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let key = format!("ws-root-{ADDED}");
     let full = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == ADDED).map(|w| w.root.display().to_string()));
@@ -257,12 +228,10 @@ fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `scripts/shot.ps1` on this process's window, into `$FOREMAN_SHOTS/<name>.png`, when that is set.
 pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
     shot_window(name, None, cx).await
 }
 
-/// [`shot`] of this process's top-level window titled `title` (the settings window), or its main one.
 pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
     let title = title.map(str::to_string);
     let Some(dir) = std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from) else {
@@ -296,7 +265,6 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
     }
 }
 
-/// The menu's item keys, once it is open with `title`.
 pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<&'static str>> {
     let keys = until(view, cx, WITHIN, &format!("the menu of {title}"), |v| {
         v.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key).collect::<Vec<_>>())
@@ -333,7 +301,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Foreman home"))?;
     let registry = Registry::at(&home);
 
-    // Add: the review
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     let repos = until(view, cx, WITHIN, "the review's repos", |v| {
@@ -350,7 +317,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "beta unticked", |v| v.adding.as_ref().is_some_and(|d| !d.repos[1].1).then_some(())).await?;
     let name_edit = edit_name(view, cx).await?;
     shot("add-review", cx).await;
-    // m5/21: a poll held between its registry read and its apply, Save in between, as a slow poll does
     let hold = view.read_with(cx, |v, _| v.poll_hold.clone());
     hold.armed.store(true, Ordering::SeqCst);
     until(view, cx, WITHIN, "a poll held after its registry read", |_| hold.holding.load(Ordering::SeqCst).then_some(())).await?;
@@ -372,7 +338,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), both repos in the tree", root.display()), name_edit];
     out.push(cut_label_tooltip(view, cx).await?);
 
-    // the same folder again: refused inline
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     until(view, cx, WITHIN, "the second review", |v| v.adding.as_ref().filter(|d| !d.scanning).map(|_| ())).await?;
@@ -387,7 +352,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     out.push(format!("the same folder again: \"{refused}\""));
     out.push(single_repo(view, &registry, cx).await?);
 
-    // the gate session's menu: opened and dismissed with Esc, nothing run
     let session_key = format!("session-row-{}", own.session_id);
     press_painted(view, &session_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, &own.name, cx).await?;
@@ -401,7 +365,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "the session menu closed on Esc", |v| v.menu.is_none().then_some(())).await?;
     out.push(format!("session menu {keys:?} closed by Esc"));
 
-    // the workspace's menu: dismissed by a click outside it
     let ws_key = format!("ws-row-{ADDED}");
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, ADDED, cx).await?;
@@ -422,7 +385,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "the workspace menu closed by a click outside", |v| v.menu.is_none().then_some(())).await?;
     out.push(format!("workspace menu {keys:?} closed by a click outside"));
 
-    // the disabled repo's Enable
     press_painted(view, &beta, MouseButton::Right, cx).await?;
     let keys = menu_open(view, &format!("{ADDED} · ./beta"), cx).await?;
     if keys != ["open-terminal", "open-folder", "enable"] {
@@ -442,7 +404,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     }
     out.push("beta enabled from its menu".into());
 
-    // Remove… confirmed
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     menu_open(view, ADDED, cx).await?;
     click(view, "menu-remove", cx).await?;

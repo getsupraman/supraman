@@ -1,15 +1,4 @@
-//! Delete… on a session row and "Delete closed background sessions…" on a workspace (m5/38). A background
-//! session goes through `claude rm` (which keeps its transcript, LEARNINGS m5/38), then its transcript and
-//! `<sessionId>/` dir are deleted with [`foreman_claude::forget_transcript`], the one write Foreman makes
-//! under the claude dir. A closed interactive session only has the transcript. Every delete asks first.
-//!
-//! Never offered for a session with a process, one open in a tab, or one this home's supervisor wants (Start
-//! resumes it); for another Foreman's the question says so. `rm` refusing to lose a worktree's unpushed commits is shown with its
-//! count; only a single delete then offers `--discard-unpushed`, as a second question. The bulk delete
-//! never discards, and skips starred sessions and the ones another controller launched: the first prompt
-//! carries rlarch's controller header, or points at a `.claude/briefs/` brief that does (the header names
-//! the controller, whose live registry entry says it still runs). claude records no parent session, so a
-//! session another tool launched without such a brief is not recognised as one.
+//! [`foreman_claude::forget_transcript`] is the one write Foreman makes under the claude dir.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,8 +13,6 @@ use super::FleetView;
 use super::menu::{Confirm, Confirmed};
 use crate::fleet::{self, SessionRow};
 
-/// How long a deleted session is kept out of the tree: until the next poll and transcript scan have
-/// caught up. After that, a session resumed by its uuid shows again.
 pub const HIDE_DELETED_MS: i64 = 60_000;
 
 #[derive(Debug)]
@@ -35,7 +22,6 @@ pub enum Outcome {
     Failed(String),
 }
 
-/// Blocking: `claude rm` for a background session, then its transcript under `claude_dir`.
 pub fn delete_blocking(claude: &Claude, claude_dir: Option<&Path>, s: &Session, discard: Option<&str>) -> Outcome {
     let Some(dir) = claude_dir else {
         return Outcome::Failed(format!("Cannot delete {}: no claude dir to find its transcript in", label(s)));
@@ -54,13 +40,11 @@ pub fn delete_blocking(claude: &Claude, claude_dir: Option<&Path>, s: &Session, 
     }
 }
 
-/// `name (id)`, or the id alone.
 pub fn label(s: &Session) -> String {
     let id = fleet::short_id(s);
     if s.name.is_empty() { id.to_string() } else { format!("{} ({id})", s.name) }
 }
 
-/// No process, not alive; a background row with its 8-hex id, or a closed interactive one from its transcript.
 pub fn is_closed(row: &SessionRow) -> bool {
     let s = &row.session;
     s.pid.is_none()
@@ -73,12 +57,10 @@ pub fn is_closed(row: &SessionRow) -> bool {
         }
 }
 
-/// Whether Delete… is offered: closed, not open in a tab, not this home's supervisor's.
 pub fn offers_delete(row: &SessionRow, wanted: bool, in_tab: bool) -> bool {
     is_closed(row) && !wanted && !in_tab
 }
 
-/// A closed background session the bulk delete looks at, with what decides whether it is skipped.
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub session: Session,
@@ -86,13 +68,11 @@ pub struct Candidate {
     pub foreign: bool,
     pub wanted: bool,
     pub in_tab: bool,
-    /// Read from its first prompt ([`Launcher::of`]); `None` also when the transcript was not found.
     pub launcher: Option<Launcher>,
     pub transcript_found: bool,
 }
 
-/// The sessions to delete, and `(label, why)` for each one skipped. `live`: lowercased names of the live
-/// sessions in the peer registry.
+/// `live`: lowercased names of the live sessions in the peer registry.
 pub fn bulk_plan(candidates: Vec<Candidate>, live: &HashSet<String>) -> (Vec<Session>, Vec<(String, String)>) {
     let (mut delete, mut skipped) = (Vec::new(), Vec::new());
     for c in candidates {
@@ -123,7 +103,6 @@ pub fn bulk_plan(candidates: Vec<Candidate>, live: &HashSet<String>) -> (Vec<Ses
     (delete, skipped)
 }
 
-/// Blocking: the transcript and launcher of each closed background session.
 pub fn read_launchers(claude_dir: Option<&Path>, candidates: &mut [Candidate]) {
     for c in candidates {
         let path: Option<PathBuf> = claude_dir.and_then(|d| find_transcript(d, &c.session.session_id, Some(&c.session.cwd)));
@@ -143,7 +122,6 @@ fn listed(items: &[(String, String)]) -> String {
 }
 
 impl FleetView {
-    /// Whether a name is one this home's supervisor wants.
     fn wanted(&self, name: &str) -> bool {
         !name.is_empty() && self.desired.values().any(|(_, wanted)| wanted.iter().any(|w| w == name))
     }
@@ -152,12 +130,10 @@ impl FleetView {
         self.tabs.iter().any(|t| Self::tab_runs(t, s))
     }
 
-    /// Whether Delete… is offered for `row`: [`offers_delete`], and no delete of it under way.
     pub fn deletable(&self, row: &SessionRow) -> bool {
         offers_delete(row, self.wanted(&row.session.name), self.in_tab(&row.session)) && !self.deleting.contains(&row.session.session_id)
     }
 
-    /// The workspace's closed background sessions, every one, stopped and hidden included.
     fn closed_background(&self, workspace: &str) -> Vec<SessionRow> {
         let tree = self.search_tree();
         let Some(node) = tree.workspaces.into_iter().find(|w| w.name == workspace) else { return Vec::new() };
@@ -216,7 +192,6 @@ impl FleetView {
         .detach();
     }
 
-    /// rm kept the session: its unpushed commits, and the discard as a second, explicit question.
     fn ask_discard(&mut self, session: Session, refusal: RmRefusal) {
         let commits = match refusal.unpushed {
             Some(1) => "1 unpushed commit".to_string(),
@@ -239,7 +214,6 @@ impl FleetView {
         }
     }
 
-    /// Reads who launched each closed background session (off the UI thread), then asks with the plan.
     pub(super) fn ask_delete_closed(&mut self, workspace: String, cx: &mut Context<Self>) {
         let mut candidates: Vec<Candidate> = self
             .closed_background(&workspace)
@@ -322,7 +296,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Deleted sessions leave the tree now; their hand tokens are revoked; a poll and a scan follow (m5/28).
     fn forget_rows(&mut self, session_ids: &[String], cx: &mut Context<Self>) {
         if session_ids.is_empty() {
             return;
@@ -354,7 +327,6 @@ impl FleetView {
         self.transcripts_nudge.wake();
     }
 
-    /// Keeps recently deleted sessions out of the last poll and scan; forgets them after [`HIDE_DELETED_MS`].
     pub(super) fn drop_deleted(&mut self) {
         let now = now_ms();
         self.deleted.retain(|_, at| now - *at < HIDE_DELETED_MS);

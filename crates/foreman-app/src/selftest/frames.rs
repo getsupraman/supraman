@@ -1,11 +1,4 @@
-//! Frame checks that hold up when the machine is busy (m5/15).
-//!
-//! A cargo build or a second selftest stretches the frame interval (p50 16.6 → 21–48 ms at 79–100 % CPU)
-//! without Foreman doing more work, so the interval is judged only on a quiet machine: an idle
-//! [`baseline`] taken in the same run, right before the phase, decides. The window's own work per frame
-//! (render → paint, [`foreman_ui::FrameProbe::paint_marker`]) is judged always, quiet or busy, with the UI
-//! thread raised above the build's threads; that is the check a per-frame cost (m4/2's filesystem walk, the
-//! red check's sleep) cannot pass.
+//! A busy machine stretches the frame interval, so it is judged only after a quiet [`baseline`]; own work per frame always.
 
 use std::{sync::OnceLock, time::Duration};
 
@@ -16,19 +9,15 @@ use gpui::{AsyncWindowContext, Entity};
 use super::sleep;
 use crate::view::FleetView;
 
-/// Own work of the fastest tenth of frames: a per-frame cost lifts every frame, preemption only some.
-/// Measured 5–7 ms quiet, up to 10 ms beside a build at 97 % CPU; the red check's 15 ms sleep gives 20–24 ms.
+/// p10: a per-frame cost lifts every frame, preemption only some; measured 5–10 ms, the red check gives 20–24 ms.
 pub(crate) const OWN_WORK_P10_MS: f64 = 16.0;
 /// Idle at 60 Hz is 16.67 ms; a baseline whose median is above this is not a quiet machine.
 const QUIET_P50_MS: f64 = 18.5;
-/// Share of all cores used by other processes above which the machine counts as busy: with the UI thread raised
-/// ([`raise_ui_thread`]) frames held vsync up to here; at 97 % one frame of 58 ms was seen.
+/// At 97 % other-process CPU one frame of 58 ms was seen with the UI thread raised.
 const BUSY_CPU: f64 = 0.75;
 const BASELINE: Duration = Duration::from_secs(1);
 
-/// The gate's UI thread at THREAD_PRIORITY_HIGHEST: a build's rustc threads at normal priority otherwise
-/// preempt it mid-frame, doubling the own work measured (p10 5 → 19 ms at 100 % CPU). The process class
-/// stays normal, so the sessions and shells it starts are not raised.
+/// A build's rustc threads at normal priority otherwise preempt it mid-frame; the process class stays normal, so the sessions and shells it starts are not raised.
 #[cfg(windows)]
 pub(crate) fn raise_ui_thread() -> bool {
     use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST};
@@ -51,14 +40,12 @@ pub(crate) fn injected_frame_sleep() {
     }
 }
 
-/// Frames recorded over a stretch, with how much of the machine other processes used meanwhile.
 pub(crate) struct Stretch {
     pub(crate) stats: FrameStats,
     pub(crate) others_cpu: f64,
 }
 
 impl Stretch {
-    /// Why this window does not count as quiet, if it does not.
     fn busy(&self) -> Option<String> {
         let s = &self.stats;
         (s.p50 > QUIET_P50_MS || s.over_50 > 0 || self.others_cpu >= BUSY_CPU).then(|| {
@@ -96,14 +83,10 @@ pub(crate) async fn record(view: &Entity<FleetView>, length: Duration, cx: &mut 
     recording.stop(view, cx)
 }
 
-/// An idle stretch right before a measured phase.
 pub(crate) async fn baseline(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Stretch {
     record(view, BASELINE, cx).await
 }
 
-/// The verdict on a phase: its own work per frame always; on a quiet machine also no frame over 50 ms.
-/// A quiet-machine failure is confirmed by a second baseline after the phase, so load that started
-/// during the phase reads as SKIP, not as a regression.
 pub(crate) async fn judge(
     phase: &str,
     before: &Stretch,
@@ -135,7 +118,7 @@ pub(crate) async fn judge(
     Ok(format!("{stats}; quiet (baseline p50 {:.2} ms, other processes {:.0} % CPU)", before.stats.p50, before.others_cpu * 100.))
 }
 
-/// Cumulative CPU times in 100 ns units: the whole machine (idle, kernel incl. idle, user) and this process.
+/// 100 ns units; kernel time includes idle.
 #[derive(Clone, Copy)]
 struct Cpu {
     idle: u64,
@@ -164,7 +147,6 @@ impl Cpu {
         None
     }
 
-    /// The share of all cores that processes other than this one used between `self` and `later`.
     fn others_share(&self, later: &Cpu) -> f64 {
         let total = later.total.saturating_sub(self.total);
         if total == 0 {
@@ -196,7 +178,6 @@ mod tests {
     #[test]
     fn others_share_leaves_out_this_process() {
         let a = Cpu { idle: 0, total: 0, own: 0 };
-        // 1000 ticks over all cores: 400 idle, 600 busy of which 100 this process
         assert_eq!(a.others_share(&Cpu { idle: 400, total: 1000, own: 100 }), 0.5);
         assert_eq!(a.others_share(&a), 0.);
     }

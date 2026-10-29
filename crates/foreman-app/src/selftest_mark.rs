@@ -1,10 +1,3 @@
-//! `--selftest` step 7l (m5/33, m5/34): a shell tab of this Foreman, in the gate's session cwd, where
-//! `claude --name fm-selftest-<hex>-mark` is typed. Its row must be marked (the time from Enter to the
-//! painted mark is measured); a plain shell tab marks nothing and shows the row's `tab` link, which brings
-//! the claude tab back. On that row, Copy SendMessage name puts the name `~/.claude/sessions` registered on
-//! the clipboard, a toast says so, and the tree area keeps its bottom. `/exit` clears the mark.
-//! The claude's pid is recorded for [`crate::selftest::cleanup`], which kills it if the step does not end it.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -19,12 +12,10 @@ use crate::{
 const STARTED_WITHIN: Duration = Duration::from_secs(40);
 const WITHIN: Duration = Duration::from_secs(10);
 
-/// The session ids whose rows were painted marked in the last frame.
 fn marked(v: &FleetView) -> Vec<String> {
     v.hits.borrow().keys().filter_map(|k| k.strip_prefix("marked-")).map(String::from).collect()
 }
 
-/// Kills `pid` only while it is still the process created at `start`.
 pub(crate) fn kill_own(pid: u32, start: u64) {
     if peer::started(pid) != Some(start) {
         return;
@@ -103,7 +94,6 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
         bail!("{} rows marked, expected only {name}'s: {others:?}", others.len());
     }
 
-    // another tab: nothing marked, the row links back to its tab
     let plain = cx.update(|window, cx| view.update(cx, |v, cx| v.open_shell_in(cwd.clone(), "plain".into(), window, cx)))?;
     wait_for_tab_terminal(view, plain, WITHIN, cx).await?;
     until(view, cx, WITHIN, "no row marked with a plain shell tab active", |v| marked(v).is_empty().then_some(())).await?;
@@ -139,9 +129,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     ))
 }
 
-/// Right-click → Copy SendMessage name: the clipboard holds `name` (unique, so no `[ref]`), a toast says so
-/// and the toast floats over the tree: the tree area's bottom is that of the frame before. Rows re-sort and
-/// notices come and go between polls, so a row's own y proves nothing.
+/// Rows re-sort and notices come and go between polls, so a row's own y proves nothing.
 async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let row = format!("session-row-{sid}");
     let tree = |v: &FleetView| v.hits.borrow().get("tree-area").map(|h| h.bounds);

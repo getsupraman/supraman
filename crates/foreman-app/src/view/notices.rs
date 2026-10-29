@@ -1,6 +1,3 @@
-//! The plain notices above the tree (m5/37): setup, supervise errors, hand tokens, the WorkState inbox's
-//! file and the last action's error, each with its own ×. Dismissing removes that one notice; raising it again shows it again.
-
 use foreman_ui::notices::{NoticeKind, remove_one};
 use gpui::{App, Context};
 
@@ -28,7 +25,6 @@ impl NoticeKind for Notice {
 }
 
 impl FleetView {
-    /// Every notice of the box with its kind, in the order drawn.
     pub(super) fn plain_notices(&self, cx: &App) -> Vec<(Notice, String)> {
         let setup = self.setup_notices.iter().map(|t| (Notice::Setup, t.clone()));
         let supervise =
@@ -39,7 +35,6 @@ impl FleetView {
         setup.chain(supervise).chain(hand).chain(inbox).chain(action).collect()
     }
 
-    /// Removes one notice of `kind` reading `text`.
     pub fn dismiss_notice(&mut self, kind: Notice, text: &str, cx: &mut Context<Self>) {
         match kind {
             Notice::Setup => remove_one(&mut self.setup_notices, text),

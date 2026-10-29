@@ -1,8 +1,3 @@
-//! `--selftest` step 7i (m5/29): a tab follows the title its program sets. A pwsh tab prints OSC 2 as
-//! claude does (`✳ name`); the tab's label turns to it, and hovering the tab shows the card with the
-//! title, the workspace, folder, kind and start time, not before ~500 ms. An empty OSC 2 (what claude
-//! writes when it exits) brings back the tab's own label.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
@@ -43,7 +38,6 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
 
     let name = format!("fm-osc-{}", hex6());
     let title = format!("\u{2733} {name}");
-    // spaces and a tab inside the title are folded to one space
     terminal.update(cx, |t, _| {
         t.input(format!("Write-Host -NoNewline \"$([char]27)]2;$([char]0x2733)  {name}$([char]9)$([char]7)\"\r").into_bytes())
     });
@@ -86,7 +80,6 @@ struct Shown {
     after: Duration,
 }
 
-/// Holds the pointer over the tab until its card shows `title` first; at least ~500 ms after it came.
 async fn hover_card(view: &Entity<FleetView>, id: u64, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Shown> {
     let bounds = view
         .read_with(cx, |v, _| v.hits.borrow().get(&format!("tab-{id}")).map(|h| h.bounds))

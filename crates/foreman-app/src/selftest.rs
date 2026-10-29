@@ -1,15 +1,4 @@
-//! `--selftest` (the M1 gate), `--selftest-detach <n>`, `--selftest-detach-shutdown` and
-//! `--selftest-perf`.
-//!
-//! Both run against a scratch `FOREMAN_HOME` under `<cargo root>/target/` holding one workspace: a
-//! read-only scan of the folder that contains the main repo, found through the nearest `.git` above
-//! the cargo workspace (P:/Projects/LarchSys → `larchsys`, from the main checkout or any linked worktree).
-//! The gate also launches one `fm-selftest-<hex>` background session with its cwd in
-//! `<cargo root>/target/selftest-cwd`: inside the already-trusted tree the exe was built in, so from a
-//! worktree `assign` has to map it through the worktree's `.git` file to the main repo. [`cleanup`] stops and removes that session
-//! (by the id of the `agents --json --all` row carrying its name) and deletes the scratch dirs on
-//! every exit path: normal end, failure, watchdog, panic. The panel also shows the user's real
-//! sessions in those repos; the selftest only ever acts on its own row, by name.
+//! The panel also shows the user's real sessions; the selftest only ever acts on its own row, by name.
 
 use std::{
     path::{Path, PathBuf},
@@ -46,17 +35,14 @@ const RENDERED_WITHIN: Duration = Duration::from_secs(10);
 pub(crate) struct Scratch {
     pub(crate) dirs: Vec<PathBuf>,
     pub(crate) session_name: Option<String>,
-    /// `--selftest-supervise`: every row whose name starts with this is the run's own; cleanup
-    /// first turns the app's supervisor off, then stops and removes each of them.
+    /// `--selftest-supervise`: every row whose name starts with this is the run's own.
     pub(crate) name_prefix: Option<String>,
-    /// Processes this run started (pid, creation time), killed if still the same process (step 7l).
+    /// Processes this run started (pid, creation time).
     pub(crate) kill: Vec<(u32, u64)>,
-    /// `(sessionId, cwd)` of this run's own `fm-selftest` sessions: cleanup deletes their transcripts in the
-    /// real claude dir (m5/38), the only write a selftest makes there.
+    /// `(sessionId, cwd)` of this run's own `fm-selftest` sessions: their transcripts in the real claude dir are the only write a selftest makes there.
     pub(crate) transcripts: Vec<(String, PathBuf)>,
 }
 
-/// Cleanup deletes this run's own session's transcript ([`Scratch::transcripts`]).
 pub(crate) fn forget_own_transcript(session_id: &str, cwd: &Path) {
     if let Some(scratch) = lock().as_mut()
         && !scratch.transcripts.iter().any(|(s, _)| s == session_id)
@@ -65,7 +51,7 @@ pub(crate) fn forget_own_transcript(session_id: &str, cwd: &Path) {
     }
 }
 
-/// Blocking: the recorded transcripts, from the claude dir `claude` itself writes to (not the fake one).
+/// From the claude dir `claude` itself writes to (not the fake one).
 fn forget_transcripts(transcripts: &[(String, PathBuf)]) -> bool {
     let Some(dir) = foreman_claude::claude_dir() else {
         return transcripts.is_empty();
@@ -94,7 +80,6 @@ fn forget_transcripts(transcripts: &[(String, PathBuf)]) -> bool {
 
 static SCRATCH: Mutex<Option<Scratch>> = Mutex::new(None);
 static SESSION_NAME: Mutex<Option<String>> = Mutex::new(None);
-/// The main repo's folder name, the row the gate expects its session under.
 static REPO: OnceLock<String> = OnceLock::new();
 
 fn repo() -> &'static str {
@@ -106,8 +91,6 @@ pub(crate) fn cargo_root() -> &'static Path {
     manifest.ancestors().nth(2).unwrap_or(manifest)
 }
 
-/// The main repo of the tree `from` lies in: the folder of the nearest `.git` directory, or the repo a
-/// `.git` file's `gitdir:` points into.
 fn find_main_repo(from: &Path) -> anyhow::Result<PathBuf> {
     main_repo(from).ok_or_else(|| {
         anyhow!(
@@ -117,7 +100,6 @@ fn find_main_repo(from: &Path) -> anyhow::Result<PathBuf> {
     })
 }
 
-/// The main repo of the tree the exe was built in: the gate workspace's repo.
 pub(crate) fn main_repo_of_gate() -> anyhow::Result<PathBuf> {
     find_main_repo(cargo_root())
 }
@@ -143,12 +125,10 @@ pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Before the window: scratch dirs, the workspace registered through foreman-core, and (gate only)
-/// the throwaway session launched from the scratch cwd.
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
-    // The sign-in (m5/43) never opens a browser; its refresh tokens stay in the scratch home.
+    // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
-    // Closed sessions are read from a fake claude dir in the scratch home, never the user's (m5/27).
+    // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
@@ -174,7 +154,6 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // Still single-threaded apart from the watchdog, which never reads the environment.
     unsafe { std::env::set_var("FOREMAN_HOME", &home) };
     std::fs::create_dir_all(&cwd)?;
-    // <root>/AutoWork or <root>/AutoWork.worktrees/<unit> → main repo <root>/AutoWork → <root>.
     let main = find_main_repo(cargo_root())?;
     let workspace_root = main
         .parent()
@@ -199,8 +178,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         saved.display()
     );
 
-    // A closed loopback port as the WorkState server, never the real one; the gate's step 1w names its
-    // fake instead (m5/43).
+    // A closed loopback port as the WorkState server, never the real one; the gate's step 1w names its fake instead.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let mut settings = foreman_core::Settings::load(&home)?;
     settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
@@ -266,27 +244,24 @@ pub(crate) fn install_guards(mode: Mode) {
     }));
 }
 
-/// Every selftest's `FOREMAN_HOME`; `main` takes the single-instance lock on it before `prepare` clears it.
+/// `main` takes the single-instance lock on it before `prepare` clears it.
 pub fn home() -> PathBuf {
     cargo_root().join("target").join("selftest-home")
 }
 
-/// The selftest's own log folder ([`foreman_ui::init_logger`]), removed with its home.
 pub fn log_dir() -> PathBuf {
     home().join("logs")
 }
 
-/// What gpui logs for a window dropped under Windows' feet (m5/22, [`crate::tray::close`]): none may appear.
+/// What gpui logs for a window dropped under Windows' feet ([`crate::tray::close`]): none may appear.
 pub(crate) fn teardown_errors() -> Vec<String> {
     teardown_errors_since(0)
 }
 
-/// Where `foreman.log` ends now: [`teardown_errors_since`] then scans only what is written after.
 pub(crate) fn log_offset() -> u64 {
     std::fs::metadata(log_dir().join("foreman.log")).map_or(0, |m| m.len())
 }
 
-/// [`teardown_errors`] in what `foreman.log` holds past `offset`; all of it once it rotated below that.
 pub(crate) fn teardown_errors_since(offset: u64) -> Vec<String> {
     teardown_lines(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default(), offset)
 }
@@ -439,7 +414,6 @@ pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
 
 static STEP: Mutex<&str> = Mutex::new("setup");
 
-/// The gate step running now; every FAIL line that is not a step's own error names it.
 pub(crate) fn current_step() -> &'static str {
     *STEP.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -457,7 +431,6 @@ async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>
     result
 }
 
-/// Polls `check` every 25 ms until it has an answer, or fails with `what` after `within`.
 pub(crate) async fn until_with<T>(
     cx: &mut AsyncWindowContext,
     within: Duration,
@@ -476,7 +449,6 @@ pub(crate) async fn until_with<T>(
     }
 }
 
-/// [`until_with`] on the view's state.
 pub(crate) async fn until<T>(
     view: &Entity<FleetView>,
     cx: &mut AsyncWindowContext,
@@ -487,7 +459,6 @@ pub(crate) async fn until<T>(
     until_with(cx, within, what, |cx| view.read_with(cx, |v, _| f(v))).await
 }
 
-/// [`until`] with the app at hand, for state that lives in other entities (a text input's text).
 pub(crate) async fn until_app<T>(
     view: &Entity<FleetView>,
     cx: &mut AsyncWindowContext,
@@ -498,14 +469,11 @@ pub(crate) async fn until_app<T>(
     until_with(cx, within, what, |cx| view.read_with(cx, |v, cx| f(v, cx))).await
 }
 
-/// A left click at the centre of the element painted under `key`, after scrolling it fully into view
-/// ([`scrolled_into_view`]), through the window's own input dispatch, so it lands only if that element is
-/// really there and hit-testable.
+/// Through the window's own input dispatch, so it lands only if that element is really there and hit-testable.
 pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     press(view, key, MouseButton::Left, cx).await
 }
 
-/// [`click`] with any button: `MouseButton::Right` opens a row's context menu.
 pub(crate) async fn press(view: &Entity<FleetView>, key: &str, button: MouseButton, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let position = scrolled_into_view(view, key, cx).await?.center();
     let modifiers = Modifiers::default();
@@ -541,15 +509,12 @@ pub(crate) async fn press(view: &Entity<FleetView>, key: &str, button: MouseButt
     Ok(())
 }
 
-/// The bounds painted under `key`, once **fully** inside its visible area ([`Hit::visible`], the clip of the
-/// scroll container around it): an element scrolled out of its container is painted but takes no click, so
-/// that container is scrolled with the wheel, from inside its visible area, until the element is in view.
-/// Fails with every bounds it saw when it never gets there (m3/3: the tree once could not scroll at all).
+/// An element scrolled out of its container is painted but takes no click, so the container is scrolled with the wheel until it is fully in view.
 pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Bounds<Pixels>> {
     let margin = px(4.);
     let mut seen = Vec::new();
     for _ in 0..20 {
-        // a refresh can rebuild the tree and drop the row from a frame or two, more often on a busy machine (m5/15)
+        // a refresh can rebuild the tree and drop the row from a frame or two, more often on a busy machine
         let missing = Instant::now();
         let hit = loop {
             if let Some(hit) = view.read_with(cx, |v, _| v.hits.borrow().get(key).copied()) {
@@ -639,8 +604,7 @@ pub(crate) async fn wait_for_tab_terminal(
     }
 }
 
-/// The session's row by name, alive by health and by its own pid. `state` describes the turn, not
-/// the process, so `done` with a live pid is alive (LEARNINGS m1/7).
+/// `state` describes the turn, not the process, so `done` with a live pid is alive (LEARNINGS m1/7).
 fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
     let rows = list_sessions()?;
     let row = rows
@@ -658,7 +622,6 @@ fn session_alive_in_cli(name: &str) -> anyhow::Result<Session> {
     Ok(row)
 }
 
-/// The row's own fields, as `claude agents --json --all` gave them.
 pub(crate) fn raw(s: &Session) -> String {
     format!(
         "state={} status={} pid={}{}",
@@ -680,8 +643,6 @@ fn session_name() -> anyhow::Result<String> {
         .ok_or_else(|| anyhow!("no session was launched"))
 }
 
-/// Step 3: listed under the scratch workspace/repo with a live health and a painted [attach], and the
-/// panel row's id is the one id `claude agents --json --all` has for the name.
 async fn wait_attachable(
     view: &Entity<FleetView>,
     name: &str,
@@ -732,8 +693,6 @@ pub(crate) struct Attached {
     first_line: String,
 }
 
-/// Step 4: click [attach] (`key`; step 7 clicks the item page's Attach); a tab opens; its painted
-/// grid gains output within 10 s.
 pub(crate) async fn open_attach(view: &Entity<FleetView>, key: &str, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
     let before = view.read_with(cx, |v, _| v.tabs.len());
     let clicked = Instant::now();
@@ -786,8 +745,6 @@ async fn session_now(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<
     cx.background_executor().spawn(async move { session_alive_in_cli(&name) }).await
 }
 
-/// Step 5: click the tab's ×. The tab detaches (Ctrl+Z, then waits for `claude attach` to exit) and
-/// goes away; the session is alive afterwards as the same process it was before the close.
 pub(crate) async fn close_attach(
     view: &Entity<FleetView>,
     attached: &Attached,
@@ -923,7 +880,6 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let font = step("7s", crate::selftest_font::run(view, &home(), cx)).await?;
     println!("step 7s: {font}");
 
-    // 8. Idle memory and frame times while the panel keeps refreshing.
     set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
@@ -940,7 +896,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     if refreshes == 0 {
         bail!("step 8: the panel did not refresh during the 6 s frame window");
     }
-    // A poll walks each session cwd once (one may be in flight at either edge); rendering walks none (m4/2b).
+    // A poll walks each session cwd once (one may be in flight at either edge); rendering walks none.
     let polls_allowed = (refreshes + 1) * sessions;
     println!("main_repo walks over those {} frames: {walks} (at most {polls_allowed}: {sessions} sessions × {} polls)", stats.frames, refreshes + 1);
     if walks > polls_allowed {
@@ -951,7 +907,6 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
 pub(crate) const CLIPBOARD_TRIES: usize = 5;
 
-/// The clipboard's text once `own` accepts it, or what it held after 1 s.
 pub(crate) async fn read_own(cx: &mut AsyncWindowContext, own: impl Fn(&str) -> bool) -> anyhow::Result<Option<String>> {
     let started = Instant::now();
     loop {
@@ -963,12 +918,7 @@ pub(crate) async fn read_own(cx: &mut AsyncWindowContext, own: impl Fn(&str) -> 
     }
 }
 
-/// A left drag dispatched over the first `wheel line` row on screen (step 6's output) selects exactly its
-/// text; returns the display row and the text. The row is read from the last frame but the drag lands on
-/// the grid as it is, so it waits for a frame that has caught up with the grid (output it has not shown,
-/// such as PSReadLine's echo wrapping a line, scrolls the grid under it: m5/24), and drags again only when
-/// the grid moved during the drag. The selftest's shell stays far below the scrollback limit, where
-/// `total_lines` stops growing.
+/// The row is read from the last frame but the drag lands on the grid as it is: it waits for a frame that caught up, and drags again when the grid moved.
 pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<(i32, String)> {
     let mut moved = Vec::new();
     for _ in 0..3 {
@@ -1023,18 +973,13 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
     bail!("output moved the grid under each of 3 drags: {}", moved.join("; "))
 }
 
-/// Step 6b (m5/9), on step 6's shell tab: a left drag dispatched over a known output line selects exactly
-/// that line's text, Ctrl+Shift+C puts it on the clipboard, and Ctrl+V types the clipboard into the shell
-/// (PSReadLine echoes it at the prompt). The clipboard is put back as it was ([`crate::selftest_clipboard`]).
 async fn select_copy_paste(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let _clipboard = crate::selftest_clipboard::borrow("6b", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
     let result = async {
         let (row, text) = select_wheel_line(terminal, cx).await?;
 
-        // Another selftest may write the system clipboard at any moment (m5/15): the copied line carries
-        // this run's tag, and each read waits for this run's own value, pressing again if a foreign one
-        // replaced it.
+        // Another selftest may write the system clipboard at any moment: each read waits for this run's own value, pressing again if a foreign one replaced it.
         let mut copied = None;
         for _ in 0..CLIPBOARD_TRIES {
             crate::selftest_clipboard::put_text("not copied", cx)?;
@@ -1086,8 +1031,6 @@ pub(crate) fn key(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) 
     Ok(())
 }
 
-/// Step 6 (tf/6): a `+` tab with more than two screens of output; wheel notches dispatched over its
-/// grid move the scrollback (display_offset) up and back down to the bottom.
 async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let before = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max());
     // the user's profile may print another prompt, or take long; the perf mode does the same
@@ -1102,9 +1045,7 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
     let result = async {
         let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
         let opened = Instant::now();
-        // a terminal is built with placeholder bounds at the origin (6 lines); the grid's first prepaint
-        // gives it the real ones. Sized from the placeholder, the output fit on screen and left 1 line of
-        // scrollback for two notches to scroll (m4/2c).
+        // a terminal is built with placeholder bounds at the origin; output sized from those leaves too little scrollback
         let lines = loop {
             let bounds = terminal.read_with(cx, |t, _| t.last_content().terminal_bounds);
             if bounds.bounds.origin != point(px(0.), px(0.)) {
@@ -1201,7 +1142,6 @@ async fn detach_cycles(view: &Entity<FleetView>, cycles: u32, cx: &mut AsyncWind
     Ok(())
 }
 
-/// What the shutdown variant hands to [`finish`], which checks it after the window is gone.
 struct ShutdownProbe {
     name: String,
     attach_pid: u32,
@@ -1214,9 +1154,6 @@ struct ShutdownProbe {
 
 static SHUTDOWN: Mutex<Option<ShutdownProbe>> = Mutex::new(None);
 
-/// `--selftest-detach-shutdown`: attach, then close the window the way the OS does (WM_CLOSE): it only
-/// hides, the tab still attached. Then Quit, as the tray asks for it: the window must detach the tab and
-/// close by itself; [`finish`] checks the session afterwards.
 async fn detach_on_shutdown(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     let (row, _) = wait_attachable(view, &name, cx).await?;
@@ -1296,13 +1233,9 @@ pub(crate) fn post_close_to_own_windows() -> usize {
     0
 }
 
-/// After the event loop ended. The shutdown variant's verdict: the window closed only after the
-/// attach process exited, and the session is the same live process.
-/// Set once [`start`] printed PASS or FAIL.
 static VERDICT: AtomicBool = AtomicBool::new(false);
 
 pub fn finish(mode: Mode) {
-    // the main window closed by now, on Quit or with the selftest
     let errors = teardown_errors();
     if !errors.is_empty() {
         println!(
@@ -1421,11 +1354,6 @@ mod tests {
         assert_eq!(teardown_lines(log, log.len() as u64 + 1).len(), 2);
     }
 
-    /// <temp>/fm-selftest-discovery-<hex>/
-    ///   Root/Repo/.git/                       main checkout
-    ///   Root/Repo.worktrees/abs/.git          file → <abs Repo>/.git/worktrees/abs
-    ///   Root/Repo.worktrees/rel/crates/app    below a .git file → ../../Repo/.git/worktrees/rel
-    ///   Bare/                                 no .git anywhere
     #[test]
     fn find_main_repo_from_checkout_worktrees_and_nowhere() {
         let tmp = std::env::temp_dir().join(format!("fm-selftest-discovery-{}", hex6()));

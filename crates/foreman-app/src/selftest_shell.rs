@@ -1,7 +1,3 @@
-//! `--selftest` step 7g (m5/22): where the tab bar's `+` shell starts. With a Work tab active, in that
-//! workspace's folder; with no tab, in the first workspace's; never in the exe's folder. Each shell
-//! prints its own `Get-Location`, so this is the pwsh's real cwd, not only what the tab recorded.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -56,7 +52,6 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     Ok(format!("new shell with Work · {WORKSPACE} active in {in_work}; with no tab in the first workspace's {no_tab}"))
 }
 
-/// Clicks the tab bar's `+` (as `new_shell`) and reads the folder its pwsh reports.
 async fn new_shell_cwd(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let id = cx.update(|window, cx| view.update(cx, |v, cx| v.new_shell(window, cx)))?;
     let terminal = wait_for_tab_terminal(view, id, WITHIN, cx).await?;
@@ -80,7 +75,6 @@ fn close_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) {
     view.update(cx, |v, cx| ids.into_iter().for_each(|id| v.close_tab(id, cx)));
 }
 
-/// `P:/a/b` and `p:\a\b\` are one folder.
 fn same(a: &Path, b: &Path) -> bool {
     let key = |p: &Path| p.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
     key(a) == key(b)

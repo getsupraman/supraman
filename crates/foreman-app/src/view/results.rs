@@ -1,10 +1,3 @@
-//! The search box over the tree and its results in place of the tree (m5/30): a summary line, then the
-//! workspaces › repos › sessions found ([`crate::search`]), each with its count and the matched text
-//! highlighted. A session row is the tree's own ([`FleetView::render_session`]), so it keeps its star,
-//! attach / resume and right-click menu; a click elsewhere on it opens it: its attach tab, else an attach
-//! when it can take one. A workspace or repo row, clicked, shows it in the tree: the box is cleared and
-//! the row unfolded.
-
 use std::{collections::HashSet, ops::Range};
 
 use foreman_claude::now_ms;
@@ -18,7 +11,6 @@ use crate::fleet::{Supervised, Tree};
 use crate::search::{self, Results, SessionHit};
 
 impl FleetView {
-    /// The whole tree for the search: stopped sessions shown, every closed one listed (none behind `more…`).
     pub fn search_tree(&self) -> Tree {
         let all: HashSet<String> = self.workspaces.iter().flat_map(|w| w.repos.iter().map(move |r| format!("{}/{}", w.name, r.name))).collect();
         let sup = Supervised {
@@ -49,7 +41,6 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// The box cleared, the workspace (and the repo) unfolded in the tree.
     fn reveal(&mut self, workspace: &str, repo: Option<&str>, cx: &mut Context<Self>) {
         self.collapsed.remove(&format!("workspace:{workspace}"));
         if let Some(repo) = repo {
@@ -58,9 +49,7 @@ impl FleetView {
         self.clear_search(cx);
     }
 
-    /// A click on a session result: the tab it runs in comes forward (an attach tab, or a shell tab whose claude
-    /// it is, m5/33), or one opens when it can attach. Its own attach pill ran first, so the tab it opened is
-    /// the one brought forward.
+    /// The row's own attach pill runs first, so the tab it opened is the one brought forward.
     fn open_result(&mut self, workspace: &str, repo: &str, hit: &SessionHit, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let s = &hit.row.session;
         match self.session_tab(s) {
@@ -72,7 +61,6 @@ impl FleetView {
         }
     }
 
-    /// The results in place of the tree, into `body`.
     pub(super) fn render_results(&mut self, mut body: Stateful<Div>, query: &str, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let results = search::search(&self.search_tree(), query);
@@ -125,7 +113,6 @@ impl FleetView {
             }
             for r in &w.repos {
                 let label = repo_label(&r.name, &r.path, &w.root);
-                // the name sits after `./` in the label, or first in `<name> (root)`
                 let shift = label.find(r.name.as_str()).unwrap_or(0);
                 let marks: Vec<Range<usize>> = r.name_marks.iter().map(|m| m.start + shift..m.end + shift).collect();
                 let (wname, rname) = (w.name.clone(), r.name.clone());

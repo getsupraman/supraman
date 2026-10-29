@@ -1,5 +1,3 @@
-//! The left panel: the header, the Inbox, the Messages, notices and the workspace tree.
-
 use std::{
     collections::{BTreeMap, HashSet},
     time::{Duration, Instant},
@@ -21,14 +19,10 @@ use crate::settings_window::page;
 use crate::fleet::{self, SessionRow};
 use crate::work_view;
 
-/// The tree keeps at least this share of the panel's height, however many notices there are.
 const TREE_MIN_SHARE: f32 = 0.3;
-/// A [`Hold`] ends this long after the pointer last moved, or when it leaves the panel.
 pub const HOLD_STILL: Duration = Duration::from_secs(2);
 
-/// The Inbox and Messages rows there were when the pointer came over the left panel (m5/18). Only these
-/// are drawn while it moves there, so a row arriving above it never shifts what it is aiming at; a row
-/// that goes away still goes at once. The rest appear when the pointer leaves or rests for [`HOLD_STILL`].
+/// Only these rows are drawn while the pointer moves, so a row arriving above never shifts what it aims at.
 pub(crate) struct Hold {
     keys: HashSet<String>,
     moved: Instant,
@@ -46,21 +40,15 @@ fn message_key(workspace: &str, m: &OutboxMessage) -> String {
     format!("{workspace}/{}", m.file)
 }
 
-/// Below each capped, scrolling section (Inbox, Messages, notices): a border that shows against the panel,
-/// then this much panel background before the next, so a row cut by one section's clip never reads as
-/// running into the row cut by the next (m5/16).
 const SEAM_GAP: f32 = 6.;
 
-/// The tree's text blends and their contrast floors live with the themes (m5/26, m5/31).
 pub(crate) use foreman_ui::themes::{DIMMED, QUIET, SECONDARY};
 use foreman_ui::themes::{MESSAGE_TINT, MESSAGE_TINT_HOVER};
 
-/// A name that is a step back: a repo without sessions.
 pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text.opacity(QUIET)
 }
 
-/// Branches, counts, ids, states, paths.
 pub(crate) fn secondary(cx: &gpui::App) -> Hsla {
     cx.theme().colors().text.opacity(SECONDARY)
 }
@@ -102,12 +90,10 @@ fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
     }
 }
 
-/// `2026-10-26T09:30:00+00:00` → `since 2026-10-26 10:30`, local time ([`work_view::short_time`]).
 fn short_since(at: &str) -> String {
     if at.is_empty() { String::new() } else { format!("since {}", work_view::short_time(at)) }
 }
 
-/// The Inbox button's hit-target key for one need.
 pub fn inbox_key(need: &NeedsYou) -> Option<String> {
     let verb = match need.action.as_ref()? {
         Remedy::Attach { .. } => "attach",
@@ -130,8 +116,6 @@ fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
     }
 }
 
-/// One square, borderless icon button of the action bar: muted, the text colour on hover, a deeper fill
-/// pressed and while `on` (a toggle that is set).
 fn icon_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Into<SharedString>, on: bool, cx: &gpui::App) -> Stateful<Div> {
     let colors = cx.theme().colors();
     tinted_button(hits, key, icon, tip, on, if on { colors.text } else { colors.text_muted }, cx)
@@ -141,12 +125,10 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
     button::toolbar(hits, key, icon.svg(16., fg), on, fg, cx).tooltip(Tooltip::text(tip))
 }
 
-/// The tree's row heights (m5/14): one per row kind, whatever the row holds.
 const WORKSPACE_ROW: f32 = 30.;
 const REPO_ROW: f32 = 26.;
 const SESSION_LINE: f32 = 24.;
 
-/// The chevron of a foldable row in a fixed box, so names line up whether a row folds (`Some`) or not.
 fn disclosure(open: Option<bool>, color: Hsla) -> Div {
     let slot = div().flex().flex_none().items_center().justify_center().size(px(16.));
     match open {
@@ -155,12 +137,10 @@ fn disclosure(open: Option<bool>, color: Hsla) -> Div {
     }
 }
 
-/// A square glyph button inside a row ([+], ×).
 fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
     button::icon(hits, key, icon.svg(14., cx.theme().colors().text_muted), px(20.), cx).tooltip(Tooltip::text(tip))
 }
 
-/// A session row's star (m5/27): filled in the warning colour while starred, else a muted outline.
 fn star_button(hits: &HitTargets, key: String, starred: bool, cx: &gpui::App) -> Stateful<Div> {
     let (icon, fg) = if starred { (Icon::StarFilled, cx.theme().status().warning) } else { (Icon::Star, cx.theme().colors().text_muted) };
     let tip = if starred { "Unstar: shown only while it runs or stopped sessions are shown" } else { "Star: always shown, stopped or closed, however old" };
@@ -176,9 +156,6 @@ fn star_button(hits: &HitTargets, key: String, starred: bool, cx: &gpui::App) ->
 }
 
 impl FleetView {
-    /// The left panel's top row (m5/13): add workspace, expand / collapse all, show stopped, refresh, then the busy
-    /// limit, a CLI warning when there is one, and Settings. The claude version and the poll timing live in
-    /// Settings → About.
     fn render_action_bar(&self, hidden_stopped: usize, cx: &mut Context<Self>) -> Stateful<Div> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
@@ -286,7 +263,6 @@ impl FleetView {
             )
     }
 
-    /// The pointer moved over the left panel: start a [`Hold`] on what is there now, or keep it.
     fn pointer_on_left(&mut self, cx: &mut Context<Self>) {
         if let Some(hold) = &mut self.left_hold {
             hold.moved = Instant::now();
@@ -322,7 +298,6 @@ impl FleetView {
         self.left_hold_timer = None;
     }
 
-    /// Whether a [`Hold`] is keeping new Inbox or Messages rows back.
     pub fn left_held(&self) -> bool {
         self.left_hold.is_some()
     }
@@ -331,7 +306,6 @@ impl FleetView {
         self.left_hold.as_ref().is_none_or(|h| h.keys.contains(key))
     }
 
-    /// Every workspace folded (`true`), or everything unfolded.
     pub fn collapse_all(&mut self, collapse: bool, cx: &mut Context<Self>) {
         if collapse {
             self.collapsed.extend(self.workspaces.iter().map(|w| format!("workspace:{}", w.name)));
@@ -404,8 +378,6 @@ impl FleetView {
             ));
         }
 
-        // while the search box holds text, its results stand in for the tree (m5/30, `results.rs`), in a
-        // scroll of their own that starts at the top
         let query = self.search_query(cx);
         let mut body = div()
             .id(if query.is_empty() { "fleet" } else { "search-results" })
@@ -439,9 +411,6 @@ impl FleetView {
                     }
                 }),
             );
-            // only a started workspace: a message goes direct, or waits in the inbox for the relay it starts
-            // (m5/32); the path label beside it says which (a long label plus this button would push Stop past
-            // the panel's edge)
             let task = (started && self.relay_refusal(&workspace.name).is_none()).then(|| {
                 let w = workspace.name.clone();
                 button::bordered(&self.hits, format!("task-{}", workspace.name), "Task…", cx).on_click(cx.listener(
@@ -650,7 +619,6 @@ impl FleetView {
             .child(header)
             .children(self.render_inbox(cx))
             .children(self.render_messages(cx))
-            // notices scroll rather than squeeze the tree below its share
             .when(!notices.is_empty(), |d| {
                 d.child(
                     div()
@@ -671,8 +639,6 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// One row per [`NeedsYou`] across workspaces, oldest first, then each workspace's WorkState rows
-    /// not dismissed ([`WorkInbox`]); nothing when both are empty.
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let all_work: Vec<(String, foreman_workstate::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
@@ -780,8 +746,6 @@ impl FleetView {
         Some(inbox.into_any_element())
     }
 
-    /// What WorkState lacks and how to fix it (m5/3, m5/43): Sign in when not signed in (Cancel while the
-    /// browser page waits), Retry when the server is down, the Settings page, × for this session.
     fn render_workstate_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
@@ -838,8 +802,7 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// A WorkState inbox row: kind, workspace and item ref, since, what, and the MCP call that would
-    /// resolve it (shown, never run: C21). A click opens the item page; × dismisses it here only.
+    /// The MCP call that would resolve it is shown, never run (C21).
     fn render_work_row(&self, workspace: &str, row: &foreman_workstate::InboxRow, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let color = work_kind_color(&row.kind, cx);
@@ -905,7 +868,6 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// Every message not dismissed, by workspace, oldest first.
     fn listed_messages(&self) -> Vec<(&String, &OutboxMessage)> {
         self.messages
             .iter()
@@ -914,14 +876,10 @@ impl FleetView {
             .collect()
     }
 
-    /// The count the MESSAGES header shows.
     pub fn messages_count(&self) -> usize {
         self.listed_messages().len()
     }
 
-    /// What the workspaces' relays received, newest first, across workspaces, less the dismissed ones;
-    /// nothing when empty. A body shows its first lines until clicked; Attach opens the sender's session
-    /// when it is attachable; × hides it here.
     fn render_messages(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let listed = self.listed_messages();
         let total = listed.len();
@@ -981,7 +939,6 @@ impl FleetView {
             for (n, segment) in segments(&lines[..shown]).into_iter().enumerate() {
                 body = body.child(match segment {
                     Segment::Text(text) => div().child(SharedString::from(text)),
-                    // unwrapped and clipped at the panel's edge: a wrapped column is unreadable
                     Segment::Table(rows) => div().flex().flex_col().py_1().overflow_hidden().font_family(foreman_ui::fonts::MONO).children(
                         rows.into_iter().enumerate().map(|(i, row)| {
                             div()
@@ -1088,7 +1045,6 @@ impl FleetView {
                                     .flex()
                                     .gap_2()
                                     .text_sm()
-                                    // the tint and the edge carry the kind; the name reads as a name (m5/36)
                                     .child(div().font_weight(FontWeight::BOLD).text_color(colors.text).child(SharedString::from(sender)))
                                     .child(div().text_color(quiet(cx)).child(SharedString::from(workspace.clone())))
                                     .child(
@@ -1117,8 +1073,6 @@ impl FleetView {
         Some(section.into_any_element())
     }
 
-    /// The open [`Compose`]: its text input, what Ctrl+Enter does, why the relay cannot take it now, the
-    /// last error or the last task sent; Send and Cancel.
     fn render_compose(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let c = self.compose.as_ref()?;
         let colors = cx.theme().colors().clone();
@@ -1203,10 +1157,8 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let s = &row.session;
-        // another Foreman's row (m5/10): its prompt is not this user's, so nothing about it asks for attention
         let foreign = row.foreign;
         let dot = if foreign { colors.text_muted } else { health_color(&row.health, cx) };
-        // a gone or stopped session's state reads as secondary text, not in its grey dot's colour
         let state = if foreign || matches!(row.health, Health::Stopped | Health::Orphaned { .. }) { secondary(cx) } else { dot };
         let blocked = !foreign && matches!(row.health, Health::Blocked { .. });
         let dimmed = foreign || matches!(row.health, Health::Orphaned { .. } | Health::Stopped);
@@ -1247,7 +1199,6 @@ impl FleetView {
                     .text_xs()
                     .text_color(secondary(cx))
                     .child(match marks.and_then(|m| m.id.clone()) {
-                        // a search result's id prefix is marked (m5/30)
                         Some(id) => {
                             let kind = format!("{} · ", s.kind.as_str());
                             let at = id.start + kind.len()..id.end + kind.len();
@@ -1293,7 +1244,6 @@ impl FleetView {
             });
 
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
-        // the row the active tab runs (m5/33)
         let shown = self.is_marked(s);
         div()
             .id(SharedString::from(format!("session-{}", s.id)))
@@ -1356,14 +1306,11 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// The open question (Remove…, a Stop that asks), or a report with only its OK (m5/38's bulk delete).
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.confirm.as_ref()?;
         Some(confirm.render(&self.hits, "confirm", |this: &mut Self, yes, _, cx| this.answer_confirm(yes, cx), cx).mx_3().my_2().into_any_element())
     }
 
-    /// The Add workspace review: folder, name (click to edit), the repos found with a tick each, the
-    /// reason it cannot be saved yet, Save and Cancel.
     fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let draft = self.adding.as_ref()?;
         let colors = cx.theme().colors().clone();
@@ -1455,7 +1402,6 @@ impl FleetView {
                 .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(summary)))
                 .child(repos)
                 .child(
-                    // why it cannot be saved sits next to Save, tinted, where the click lands (m5/26)
                     div()
                         .flex()
                         .items_start()
@@ -1492,15 +1438,10 @@ impl FleetView {
     }
 }
 
-/// How a repo row names it: `./<name>` below the workspace root, `<name> (root)` for a root that is
-/// itself the repo (m5/26).
 pub(crate) fn repo_label(name: &str, path: &std::path::Path, root: &std::path::Path) -> String {
     if foreman_core::same_root(path, root) { format!("{name} (root)") } else { format!("./{name}") }
 }
 
-/// A message body cut into prose and aligned-column runs (m5/18): a run is two or more lines in a row that
-/// each hold a tab or a gap of two or more spaces after their first word, or a box-drawing rule, the
-/// shape of a `work_tree` table. Tabs become spaces to the next multiple of 8.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Segment {
     Text(String),

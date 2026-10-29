@@ -1,6 +1,3 @@
-//! The left panel's model: registered workspaces → their supervised sessions and repos → the sessions
-//! in the enabled ones. Disabled repos come last, without sessions.
-
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -11,9 +8,8 @@ use foreman_core::{Event, Workspace};
 pub struct WorkspaceNode {
     pub name: String,
     pub root: PathBuf,
-    /// `None`: never started (no desired-state file).
+    /// `None`: no desired-state file.
     pub started: Option<bool>,
-    /// Rows named like one of the workspace's wanted sessions, wherever their cwd; stopped ones too.
     pub supervised: Vec<SessionRow>,
     pub repos: Vec<RepoNode>,
 }
@@ -23,10 +19,8 @@ pub struct RepoNode {
     pub name: String,
     pub path: PathBuf,
     pub branch: Option<String>,
-    /// The registry's `enabled`; a disabled repo lists no sessions.
     pub enabled: bool,
     pub sessions: Vec<SessionRow>,
-    /// Closed sessions past [`CLOSED_CAP`], behind its `more…` row.
     pub more: usize,
 }
 
@@ -36,19 +30,15 @@ pub struct SessionRow {
     pub health: Health,
     pub attachable: bool,
     pub hook: Option<HookSignal>,
-    /// [`is_foreign`]: shown dimmed as another Foreman's, never highlighted as blocked.
     pub foreign: bool,
     pub starred: bool,
-    /// From its transcript (m5/27): an interactive session `claude agents` no longer lists.
+    /// From its transcript: an interactive session `claude agents` does not list.
     pub closed: bool,
 }
 
-/// Closed sessions older than this are left out, unless starred.
 pub const CLOSED_WINDOW_MS: i64 = 14 * 24 * 3_600_000;
-/// Per repo, the newest closed sessions shown before its `more…` row.
 pub const CLOSED_CAP: usize = 5;
 
-/// The latest hook event of one session (`fm hook`, `<FOREMAN_HOME>/events`), keyed by sessionId.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookSignal {
     pub last: Event,
@@ -83,7 +73,6 @@ impl HookSignal {
         self.last.event == "Notification" && self.last.notification_type.as_deref() == Some("permission_prompt")
     }
 
-    /// e.g. "permission prompt 12 s ago · compacted 2 min ago".
     pub fn label(&self, now_ms: i64) -> String {
         let e = &self.last;
         let what = match (e.event.as_str(), e.source.as_deref(), e.notification_type.as_deref()) {
@@ -116,8 +105,7 @@ pub fn ago(ms: i64) -> String {
     }
 }
 
-/// A permission prompt the hook reported after `claude agents` was polled marks a live row blocked
-/// before the next poll can show it.
+/// A prompt the hook reported after the poll marks the row blocked before the next poll shows it.
 pub fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> Health {
     match (health, hook) {
         (Health::Running | Health::Idle, Some(h)) if h.is_permission_prompt() && h.last.ts > polled_at => Health::Blocked {
@@ -127,26 +115,20 @@ pub fn with_hook(health: Health, hook: Option<&HookSignal>, polled_at: i64) -> H
     }
 }
 
-/// What the supervisor knows per workspace (from its last tick), and the hook signals.
 #[derive(Default)]
 pub struct Supervised<'a> {
     pub desired: Option<&'a BTreeMap<String, (bool, Vec<String>)>>,
     pub hooks: Option<&'a HashMap<String, HookSignal>>,
-    /// When the `claude agents` snapshot being shown was taken.
     pub polled_at: i64,
-    /// [`main_repos`] of that snapshot; `None` walks the filesystem instead.
+    /// `None` walks the filesystem instead.
     pub main_repos: Option<&'a HashMap<PathBuf, Option<PathBuf>>>,
-    /// Closed sessions from their transcripts ([`foreman_claude::Transcript::to_session`]); a session
-    /// `claude agents` lists is shown from there instead.
+    /// A session `claude agents` lists is shown from there instead.
     pub closed: &'a [Session],
-    /// Starred session ids: shown whatever `show_stopped` and however old.
     pub starred: Option<&'a BTreeSet<String>>,
-    /// `<workspace>/<repo>` whose `more…` was clicked: every closed session of the window shown.
     pub expanded: Option<&'a HashSet<String>>,
 }
 
-/// [`main_repo`] of every distinct session cwd: filled once per poll, off the UI thread, because
-/// [`build`] runs on every frame (m4/2b: a workspace without repos walked every cwd every frame).
+/// Filled once per poll, off the UI thread, because [`build`] runs on every frame.
 pub fn main_repos(sessions: &[Session]) -> HashMap<PathBuf, Option<PathBuf>> {
     let mut out = HashMap::new();
     for s in sessions {
@@ -157,7 +139,6 @@ pub fn main_repos(sessions: &[Session]) -> HashMap<PathBuf, Option<PathBuf>> {
 
 pub struct Tree {
     pub workspaces: Vec<WorkspaceNode>,
-    /// Stopped sessions left out because `show_stopped` was off.
     pub hidden_stopped: usize,
 }
 
@@ -167,8 +148,6 @@ impl WorkspaceNode {
     }
 }
 
-/// `claude attach` only takes over a live background session: an interactive one belongs to the
-/// terminal that started it, and a stopped or orphaned one has no process to attach to.
 pub fn attachable(session: &Session, health: &Health) -> bool {
     session.kind == Kind::Background
         && matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
@@ -178,14 +157,11 @@ pub fn is_alive(health: &Health) -> bool {
     matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
 }
 
-/// [`foreman_supervisor::is_foreign`]. Its prompts are not this user's to answer.
 pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) -> bool {
     let wanted = desired.into_iter().flat_map(|d| d.values()).flat_map(|(_, wanted)| wanted.iter().map(String::as_str));
     foreman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()), wanted)
 }
 
-/// Blocked first (it needs a human), then running, idle, unknown, orphaned, stopped; another Foreman's
-/// blocked row ranks as running.
 fn rank(row: &SessionRow) -> u8 {
     match &row.health {
         Health::Blocked { .. } if row.foreign => 1,
@@ -319,7 +295,6 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
     }
 }
 
-/// What the row's health label says; an orphaned row's process is gone, whatever it last claimed.
 pub fn health_label(health: &Health) -> String {
     match health {
         Health::Orphaned { .. } => "process gone".to_string(),
@@ -332,13 +307,10 @@ pub fn short_id(session: &Session) -> &str {
     session.id.get(..8).unwrap_or(&session.id)
 }
 
-/// Its name, else its short id.
 pub fn display_name(session: &Session) -> &str {
     if session.name.is_empty() { short_id(session) } else { &session.name }
 }
 
-/// Where a new shell starts (m5/22): the folder of the workspace holding `active` (the active tab's
-/// folder; the innermost root when roots nest), else the first workspace's, else `home`.
 pub fn shell_cwd(active: Option<&Path>, workspaces: &[Workspace], home: Option<PathBuf>) -> Option<PathBuf> {
     // Registry roots may use `/` and another drive-letter case than a session's cwd.
     let key = |p: &Path| -> Vec<String> { p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect() };
@@ -507,7 +479,6 @@ mod tests {
         assert_eq!(tree.workspaces[0].repos[0].sessions[0].health, parked, "the hook's permission prompt still blocks it");
     }
 
-    // m5/10
     #[test]
     fn another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked() {
         let mut desired = BTreeMap::new();
@@ -551,7 +522,6 @@ mod tests {
         .to_session()
     }
 
-    // m5/27
     #[test]
     fn closed_sessions_show_with_stopped_newest_first_capped_and_starred_ones_always() {
         const DAY: i64 = 24 * 3_600_000;

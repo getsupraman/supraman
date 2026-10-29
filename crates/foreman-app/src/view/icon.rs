@@ -1,5 +1,4 @@
-//! The left panel's icons: Zed's (`assets/icons`, Lucide-derived, ISC — see `assets/icons/LICENSES`),
-//! compiled in and tinted with the text colour, so no asset source is needed.
+//! Zed's icons (`assets/icons`, Lucide-derived, ISC — see `assets/icons/LICENSES`), compiled in and tinted with the text colour.
 
 use gpui::{AnyView, App, Context, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Svg, Window, div, prelude::*, px, svg};
 use theme::ActiveTheme as _;
@@ -68,11 +67,9 @@ impl Icon {
     }
 }
 
-/// A hover tooltip: one line, in the theme's popover colours.
 pub struct Tooltip(SharedString);
 
 thread_local! {
-    /// The text of the tooltip shown last; the selftest reads it.
     pub static LAST_SHOWN: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
 }
 
@@ -89,7 +86,6 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
-        // offset from the cursor, as Zed's own tooltips are
         div().pl_2().pt_2().child(
             div()
                 .max_w(px(320.))

@@ -1,5 +1,3 @@
-//! The window: fleet tree on the left, terminal tabs on the right.
-
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap as StdHashMap, HashSet},
@@ -66,8 +64,7 @@ gpui::actions!(foreman, [NextTab, PreviousTab, FocusSearch]);
 
 const KEY_CONTEXT: &str = "FleetView";
 
-/// The tab bar's hotkeys. Bindings are matched before [`FleetView::key_down`] runs, so a terminal tab
-/// never sees these chords; everything else (Tab, Shift+Tab, PgUp, Ctrl+V…) still reaches it.
+/// Matched before [`FleetView::key_down`] runs, so a terminal tab never sees these chords.
 pub fn bind_keys(cx: &mut gpui::App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-tab", NextTab, Some(KEY_CONTEXT)),
@@ -79,38 +76,28 @@ pub fn bind_keys(cx: &mut gpui::App) {
 }
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
-/// How often the transcripts of closed sessions are looked at again (m5/27); sooner when nudged.
 pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
-/// Where closed sessions' transcripts are read instead of `CLAUDE_CONFIG_DIR` / `~/.claude` (the selftest's fake).
 pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
-/// What closing an Attach tab types into `claude attach`: Ctrl+Z, its own "drop back to your
-/// shell", which ends the attach process and leaves the session running (LEARNINGS m1/7).
+/// Ctrl+Z: `claude attach`'s own detach, which leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
-/// A command for a new shell is typed once its output has been still this long, or at the limit.
 const SHELL_SETTLED: Duration = Duration::from_millis(500);
 const SHELL_SETTLE_LIMIT: Duration = Duration::from_secs(15);
 /// Claude draws a frame per wakeup; a hand tab looks at its token file at most this often.
 const HAND_CHECK_GAP: Duration = Duration::from_millis(250);
-/// A hand tab with no terminal event looks at its token file this often anyway.
 const HAND_EXIT_FALLBACK: Duration = Duration::from_secs(30);
 /// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
 const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
 const MIN_LEFT_WIDTH: Pixels = px(280.);
 const MIN_RIGHT_WIDTH: Pixels = px(320.);
-/// A background session the daemon may still respawn by itself (it does ~12 s after a death mid-turn) is
-/// not offered for resume: two resumes of one transcript run as two processes (m2/4, R13). An interactive
-/// one is never respawned, so it is offered once its process is gone (m5/28).
+/// The daemon may respawn a background session by itself (~12 s after a death mid-turn); a second resume would run a second process.
 const RESUME_GRACE_MS: i64 = 30_000;
-/// The concurrency stepper's range; 0 pauses every launch and resume.
 pub const MAX_WORKING_LIMIT: usize = 20;
 /// The Messages section shows this many, newest first; a body shows this many lines until clicked.
 const MESSAGES_LISTED: usize = 10;
 const MESSAGE_LINES: usize = 3;
 
-/// The Inbox and Messages sections take at most this share of the left panel each and scroll inside
-/// it, so the workspace tree below them keeps room and stays reachable.
 const INBOX_MAX_SHARE: f32 = 0.25;
 const MESSAGES_MAX_SHARE: f32 = 0.3;
 
@@ -123,18 +110,15 @@ pub enum Cli {
 pub enum TabKind {
     Attach { session_id: String },
     Shell,
-    /// The workspace's WorkState project ([`crate::work_view`]); no terminal.
     Work(Entity<WorkView>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Detach {
     None,
-    /// Close was asked for before the terminal started; the detach runs once it has.
     Pending,
     Detaching,
-    /// `claude attach` did not exit within [`DETACH_WITHIN`]. The tab and its process are left as
-    /// they are: nothing is killed that could hold the session.
+    /// The tab and its process stay: nothing is killed that could hold the session.
     Failed,
 }
 
@@ -146,26 +130,16 @@ pub struct Tab {
     pub error: Option<String>,
     pub exited: bool,
     pub detach: Detach,
-    /// The folder it opened in (a Work tab: its workspace's), for [`fleet::shell_cwd`].
     pub cwd: Option<PathBuf>,
     pub find: Option<term::Find>,
-    /// What its program named it with OSC 0/2 ([`foreman_ui::tabs::sanitize`]d); the label while there is one.
     pub program_title: Option<String>,
-    /// The claude session it runs, as its card names it, when the tab was opened for one.
     pub session: Option<String>,
-    /// It runs `claude` from `+` or a resume in the tab.
     pub hand: bool,
-    /// How a hand session reaches WorkState, as its card says: `Foreman token · <role> · <session>`.
     pub workstate: Option<String>,
-    /// The `hands.json` key of its minted token.
     pub hand_key: Option<String>,
-    /// The server it should be restarted for: its token is from another one.
     pub restart_to: Option<String>,
-    /// Epoch milliseconds.
     pub opened_at: i64,
-    /// The claude session found under a shell tab's pwsh ([`FleetView::resolve_tabs`]): its `sessionId`.
     pub claude: Option<String>,
-    /// Woken on the terminal's output, title and end, and when the tab is removed.
     watchers: Vec<Nudge>,
 }
 
@@ -197,7 +171,6 @@ impl Tab {
         self.watchers.iter().for_each(Nudge::wake);
     }
 
-    /// What its tab shows: the program's title, else its own, and how it ended.
     pub fn label(&self) -> String {
         let mut title = self.program_title.clone().unwrap_or_else(|| self.title.clone());
         if self.exited {
@@ -216,7 +189,6 @@ pub struct FleetView {
     pub cli: Cli,
     pub workspaces: Vec<Workspace>,
     pub registry_error: Option<String>,
-    /// The workspace files that do not load; the others are listed and supervised.
     pub registry_skipped: Vec<String>,
     pub sessions: Vec<Session>,
     /// [`fleet::main_repos`] of `sessions`, so rendering never walks the filesystem.
@@ -234,153 +206,86 @@ pub struct FleetView {
     pub probe: FrameProbe,
     pub hits: HitTargets,
     window: AnyWindowHandle,
-    /// The window was asked to close while Attach tabs were open; it closes once they detached.
     quitting: bool,
-    /// Quit (the tray) was asked for: the window closes and the app with it. Otherwise closing the
-    /// window only hides it (m5/1).
     quit_asked: bool,
-    /// `FOREMAN_HOME` (else `%APPDATA%\Foreman`): desired state, settings, events, roles.
     pub home: Option<PathBuf>,
     pub plugin_dir: Option<PathBuf>,
     pub setup_notices: Vec<String>,
-    /// The Inbox: every workspace's [`NeedsYou`] from the last tick.
     pub needs: Vec<NeedsYou>,
-    /// Per workspace with a desired-state file: started, wanted session names.
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
     pub supervise_errors: Vec<String>,
-    /// Supervise errors hidden with their × while the poll keeps reporting them (m5/37).
     supervise_dismissed: Vec<String>,
-    /// Why a `claude --bg` from here cannot reach the background service (m5/25): a tab that would
-    /// run one prints it instead of failing after 45 s.
     pub daemon_hold: Option<String>,
     pub action_error: Option<String>,
     pub last_attempt: StdHashMap<String, i64>,
     pub hooks: StdHashMap<String, HookSignal>,
-    /// When the shown `claude agents` snapshot was taken.
     pub polled_at: i64,
     pub ticks: u64,
-    /// Retries (`(workspace, name)`) for the next tick.
     retries: Arc<Mutex<Vec<(String, String)>>>,
-    /// Rows added to every `claude agents` snapshot, before the supervisor sees it: the selftest's fake
-    /// sessions (m5/10: another Foreman's parked row).
     pub injected: Arc<Mutex<Vec<Session>>>,
-    /// Bumped by every registry write made from this window ([`FleetView::reload_workspaces`]): a poll
-    /// that read the registry before one carries the older count, and its list is not applied (m5/21).
+    /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
     pub poll_hold: Arc<PollHold>,
     pub left_width: Pixels,
-    /// Every terminal tab's font size (m5/41): `settings.toml` `[terminal] font_size`, changed by
-    /// Ctrl+= / Ctrl+- / Ctrl+0 / Ctrl+wheel in any terminal and by Settings → Appearance.
     pub term_font_size: Pixels,
-    /// Every terminal tab's font family and ligatures (m5/47), from `settings.toml` and Settings → Appearance.
     pub term_font_family: SharedString,
     pub term_ligatures: bool,
-    /// The font families the system has, read at start.
     pub installed_fonts: Arc<Vec<String>>,
-    /// The pending debounced write of `term_font_size` ([`term::FONT_SAVE_AFTER`]).
     font_save: Option<gpui::Task<()>>,
-    /// A touchpad's Ctrl+wheel pixels short of a font step ([`term::zoom_steps`]).
     zoom_carried: f32,
     pub(crate) settings_window: Option<WindowHandle<SettingsView>>,
-    /// `session_id` → when this app last saw it alive.
     last_alive: StdHashMap<String, i64>,
-    /// Per workspace that wants a relay: live, armed.
     pub relays: BTreeMap<String, RelayStatus>,
-    /// Per workspace, what its relay received (oldest first).
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
-    /// `<workspace>/<file>` of the messages shown in full.
     pub expanded: HashSet<String>,
-    /// Messages hidden with their × (m5/36), kept in `<FOREMAN_HOME>`.
     pub dismissed_messages: DismissedMessages,
-    /// While the pointer moves over the left panel, the Inbox and Messages rows it came in on (m5/18).
     left_hold: Option<left::Hold>,
     left_hold_timer: Option<gpui::Task<()>>,
-    /// Per workspace, the questions answered from here: outbox file → the answer's first line (this
-    /// session's, plus `answered.json` as each tick reads it).
     pub answered: BTreeMap<String, BTreeMap<String, String>>,
-    /// `<workspace>/<outbox file>` → how this session's answer went (`sent direct`, `sent via relay (…)`).
     pub answered_route: BTreeMap<String, String>,
-    /// The open task box or reply, at most one.
     pub compose: Option<Compose>,
-    /// The attachable sessions, for the Work tabs' item pages (Claim → Attach).
     work_live: Rc<RefCell<Vec<LiveSession>>>,
-    /// Each workspace's WorkState inbox, shown in the Inbox under the supervisor's rows.
     pub work_inbox: Entity<WorkInbox>,
-    /// The open right-click menu, at most one.
     pub menu: Option<ContextMenu>,
-    /// The question before Remove… or a Stop that asks, at most one.
     pub confirm: Option<Confirm>,
-    /// The Add workspace review, while open.
     pub adding: Option<AddDraft>,
-    /// Removes waiting for their workspace's sessions to stop.
     pub removing: BTreeMap<String, Removing>,
-    /// The next Add workspace takes this folder instead of asking the OS picker (the selftest).
     pub pick_folder: Option<PathBuf>,
-    /// Whether launched sessions get WorkState (m5/3), checked off the UI thread every
-    /// [`workstate_setup::RECHECK_EVERY`] and on [`Self::recheck_workstate`].
     pub workstate: WsStatus,
-    /// The problem whose notice was dismissed; a different problem shows again.
     workstate_dismissed: Option<String>,
     workstate_recheck: Nudge,
-    /// The last Start's warning that its sessions run without WorkState.
     pub start_warning: Option<String>,
-    /// The server a sign-in is waiting on (m5/43): its browser page is open.
     pub signing_in: Option<String>,
-    /// Why the last sign-in did not work.
     pub sign_in_error: Option<String>,
-    /// The `+` sessions' own WorkState tokens (m5/20); `None` without a Foreman home.
     hands: Option<Arc<Mutex<Hands>>>,
-    /// What went wrong minting or revoking them.
     pub hand_notices: Vec<String>,
-    /// Quit's revoke of every hand token has ended, or ran out of [`QUIT_RELEASE_WITHIN`].
     hands_released: bool,
     quit_release: Option<gpui::Task<()>>,
-    /// Start and Stop, written one after another off the UI thread ([`Self::write_desired`]).
     desired_writes: futures::channel::mpsc::UnboundedSender<DesiredWrite>,
-    /// The server open hand tabs were last checked against ([`Self::sync_server`]).
     synced_server: Option<String>,
-    /// Servers whose grant this run revoked or tried to ([`Self::leave_servers`]).
     left_servers: std::collections::HashSet<String>,
-    /// [`supervise::Report::left_servers`] of the last poll, for [`Self::leave_servers`].
     left_pending: Vec<String>,
-    /// Closed sessions from their transcripts (m5/27), as stopped interactive rows.
     pub closed: Vec<Session>,
-    /// [`main_repo`] of each closed session's cwd, merged into `main_repos` after every poll.
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    /// Transcript scans finished.
     pub transcript_scans: u64,
-    /// Scans the transcripts again now (a star, a closed interactive session, Refresh, the selftest).
     pub transcripts_nudge: Nudge,
-    /// Polls `claude agents` now instead of at the end of [`REFRESH_EVERY`] (Refresh).
     poll_nudge: Nudge,
-    /// [`Self::refresh_now`] calls.
     pub refresh_asks: u64,
     pub stars: Stars,
-    /// `<workspace>/<repo>` whose `more…` row was clicked.
     pub closed_expanded: HashSet<String>,
-    /// How a tab's pwsh calls claude for `+` and resume: `claude`, or the selftest's `& '<fake>'`.
     pub claude_command: String,
-    /// The search box over the tree (m5/30); while it holds text, the tree shows its results.
     pub search: Entity<TextInput>,
-    /// Per session id, where the shown result row matched; filled while the results are drawn.
     search_marks: StdHashMap<String, crate::search::Marks>,
-    /// A [`Self::resolve_tabs`] runs; another is asked for while it does.
     tabs_resolving: bool,
     tabs_again: bool,
-    /// [`Self::resolve_tabs`] runs finished.
     pub tab_resolves: u64,
-    /// The last quiet feedback (m5/34): it overlays the tree instead of pushing it down.
     pub toast: ToastSlot,
-    /// Where the transcripts are read, and the confirmed ones deleted (m5/38): `FOREMAN_CLAUDE_DIR`, else claude's.
     pub claude_dir: Option<PathBuf>,
-    /// Session ids deleted from here → when, kept out of the tree until polls catch up ([`delete::HIDE_DELETED_MS`]).
     pub deleted: StdHashMap<String, i64>,
-    /// Session ids whose delete runs.
     pub deleting: HashSet<String>,
 }
 
-/// How long Quit waits on the hand tokens' revokes before it closes anyway; the next start revokes the rest.
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
 
 enum DesiredWrite {
@@ -388,14 +293,11 @@ enum DesiredWrite {
     Stop { home: PathBuf, name: String },
 }
 
-/// Every workspace file that loads, and why each other one does not.
 fn load_registry(registry: Result<Registry, String>) -> Result<(Vec<Workspace>, Vec<String>), String> {
     let (workspaces, failed) = registry?.load_all().map_err(|e| e.to_string())?;
     Ok((workspaces, failed.iter().map(ToString::to_string).collect()))
 }
 
-/// A session with no process, not the supervisor's (`fm-`: Start resumes it); a background one only when
-/// this app has not seen it alive in the last [`RESUME_GRACE_MS`], an interactive one at once.
 pub fn offers_resume(s: &Session, health: &foreman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
     !fleet::is_alive(health)
         && !s.session_id.is_empty()
@@ -403,8 +305,6 @@ pub fn offers_resume(s: &Session, health: &foreman_claude::Health, last_alive: O
         && (s.kind != foreman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
 }
 
-/// The selftest's grip on one poll (m5/21): armed, the next poll stops between its registry read and the
-/// rest, `holding` until cleared (at most [`PollHold::MAX`]).
 #[derive(Default)]
 pub struct PollHold {
     pub armed: AtomicBool,
@@ -428,11 +328,9 @@ impl PollHold {
 }
 
 struct Refresh {
-    /// [`FleetView::registry_writes`] as it was before `workspaces` was read.
     registry_writes: u64,
     workspaces: Result<(Vec<Workspace>, Vec<String>), String>,
     sessions: Option<Result<Vec<Session>, String>>,
-    /// [`fleet::main_repos`] of `sessions`.
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
     events: Vec<Event>,
@@ -440,8 +338,7 @@ struct Refresh {
     took: Duration,
 }
 
-/// Owned by the refresh loop and moved onto a background thread for every poll: the registry read,
-/// the `claude agents` process and the supervisor's `claude` writes all block.
+/// Runs on a background thread: the registry read, `claude agents` and the supervisor's `claude` writes all block.
 struct Poller {
     home: Option<PathBuf>,
     events: Option<EventReader>,
@@ -596,8 +493,6 @@ impl FleetView {
                 let Ok(pids) = alive else {
                     return;
                 };
-                // an interactive session closed outside Foreman: poll when its process ends (m5/28), not at the
-                // end of the wait; a pid this app cannot open is never watched
                 let exited = std::pin::pin!(any_exit(&executor, pids, REFRESH_EVERY));
                 futures::future::select(std::pin::pin!(woken.wait(&executor, REFRESH_EVERY)), exited).await;
             }
@@ -615,7 +510,6 @@ impl FleetView {
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
         Self::watch_transcripts(claude_dir.clone(), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
-        // an input that held the focus went away (the Add review closed): the window's keys come back here
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
         cx.subscribe_in(&search, window, Self::on_search_event).detach();
@@ -719,8 +613,6 @@ impl FleetView {
         }
     }
 
-    /// Closed sessions from the transcripts of the registered repos (m5/27), read on the background
-    /// executor every [`TRANSCRIPTS_EVERY`], at once when nudged (the workspaces changed, a star, Refresh).
     fn watch_transcripts(claude_dir: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
         let Some(claude_dir) = claude_dir else {
             return;
@@ -776,8 +668,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Polls `claude agents` and scans the transcripts now (m5/28): the action bar's Refresh, and F5 while no
-    /// terminal tab is active (a terminal's program gets its F5).
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
         self.refresh_asks += 1;
         self.poll_nudge.wake();
@@ -785,7 +675,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Stars or unstars a session (m5/27); a starred one stays in the tree, stopped or closed.
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
         match self.stars.toggle(session_id) {
             Ok(_) => self.transcripts_nudge.wake(),
@@ -794,7 +683,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Hides a message here (m5/36); its outbox file stays.
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
         if let Err(e) = self.dismissed_messages.dismiss(workspace, file) {
             self.action_error = Some(format!("Cannot save the dismissed message: {e}"));
@@ -803,9 +691,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Revokes the hand tokens an earlier run left, off the UI thread. Quit revokes the live ones
-    /// ([`Self::quit_step`]); any other end of the app tries within gpui's shutdown wait, and the next start
-    /// revokes what is left.
     fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
         let (hands, notice) = Hands::open(home);
         let hands = Arc::new(Mutex::new(hands));
@@ -835,8 +720,6 @@ impl FleetView {
         hands
     }
 
-    /// [`workstate_setup::detect`] on the background executor at start, every
-    /// [`workstate_setup::RECHECK_EVERY`] and at once when nudged.
     fn watch_workstate(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -872,12 +755,10 @@ impl FleetView {
         .detach();
     }
 
-    /// Check WorkState again now (Retry, a changed `.env`), off the UI thread.
     pub fn recheck_workstate(&self) {
         self.workstate_recheck.wake();
     }
 
-    /// Sign in to the server `settings.toml` names (the notice's and Settings' Sign in).
     pub fn sign_in(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -886,9 +767,6 @@ impl FleetView {
         self.sign_in_to(origin, None, cx);
     }
 
-    /// Signs in to `origin` off the UI thread: the browser opens WorkState's sign-in page and the
-    /// loopback waits up to 5 minutes. With `from` (Settings changed the server URL) the URL is saved
-    /// only once that worked, and `from`'s grant goes. Either way [`Self::sync_server`] follows.
     pub fn sign_in_to(&mut self, origin: String, from: Option<String>, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -929,15 +807,12 @@ impl FleetView {
         .detach();
     }
 
-    /// Stops a sign-in that is waiting on the browser.
     pub fn cancel_sign_in(&self) {
         if let Some(home) = &self.home {
             crate::signin::auth(home).cancel_sign_in();
         }
     }
 
-    /// Revokes the grant (every `wss_` token minted under it ends with it), deletes the credential and
-    /// drops the held tokens; a revoke that failed is a notice.
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -960,9 +835,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Settings' server URL. While signed in, the new server is used only after a sign-in there
-    /// ([`Self::sign_in_to`]); otherwise the URL is saved. The sign-in is looked up off the UI thread, so a
-    /// save that fails after that is an action error.
     pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Foreman home: settings cannot be saved.")?;
         let origin = foreman_core::validate_workstate_url(text)?;
@@ -995,9 +867,6 @@ impl FleetView {
         Ok(())
     }
 
-    /// Signed in on `origin`, at start or after a sign-in: every open claude tab whose token is from
-    /// another server is told to restart, and the grants of the servers left go. The supervisors re-mint
-    /// their own sessions ([`foreman_supervisor::Supervisor::server_changed`]).
     fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
         self.synced_server = Some(origin.clone());
         let Some(hands) = self.hands.clone() else {
@@ -1024,8 +893,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Revokes the grant of each of `origins` that is not the server in use, once per run: every token
-    /// minted under it goes with it. One that cannot be reached costs one notice, off the UI thread.
     fn leave_servers(&mut self, origins: Vec<String>, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone().filter(|_| !origins.is_empty()) else {
             return;
@@ -1055,14 +922,12 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The WorkState notice's problem, unless it was dismissed.
     pub fn workstate_notice(&self) -> Option<String> {
         self.workstate.problem().filter(|p| self.workstate_dismissed.as_ref() != Some(p))
     }
 
     fn apply(&mut self, refresh: Refresh) {
         match refresh.workspaces {
-            // read before a write from here, so older than the list `reload_workspaces` showed after it
             Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
             Ok((workspaces, skipped)) => {
                 if self.workspaces != workspaces {
@@ -1074,7 +939,6 @@ impl FleetView {
             }
             Err(error) => self.registry_error = Some(error),
         }
-        // A failed read keeps the last good list on screen, flagged as stale.
         match refresh.sessions {
             Some(Ok(sessions)) => {
                 let now = now_ms();
@@ -1110,7 +974,6 @@ impl FleetView {
         }
         if let Some(report) = refresh.report {
             self.desired = report.desired;
-            // by construction only this home's wanted sessions raise one; kept so, whatever a tick reports
             self.needs = report.needs;
             let (workspaces, desired) = (&self.workspaces, &self.desired);
             self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
@@ -1173,8 +1036,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Runs Start and Stop in the order they were asked for, each on the background executor:
-    /// [`foreman_supervisor::DesiredState::update`] waits on the workspace's lock file.
     fn desired_writer(cx: &mut Context<Self>) -> futures::channel::mpsc::UnboundedSender<DesiredWrite> {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<DesiredWrite>();
         cx.spawn(async move |this, cx| {
@@ -1221,8 +1082,6 @@ impl FleetView {
         tx
     }
 
-    /// Why nothing can be sent through `workspace`'s relay now, if so: it must be started. The relay
-    /// itself need not run: a drop makes the supervisor start it (m5/32), and it waits in the inbox till then.
     pub fn relay_refusal(&self, workspace: &str) -> Option<String> {
         if self.home.is_none() {
             return Some("no Foreman home".into());
@@ -1233,8 +1092,6 @@ impl FleetView {
         }
     }
 
-    /// Opens the task box (`reply_to: None`) or the reply to an outbox message, focused; an open one
-    /// for something else is replaced.
     pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         let input = match &self.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
@@ -1249,7 +1106,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The task box's keys: Ctrl+Enter sends, Esc closes it and gives the keys back to the window.
     fn on_compose_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Confirm => self.send_compose(cx),
@@ -1267,9 +1123,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The box's Ctrl+Enter: to `fm-<w>-workspace` as `fm send` does (direct, else the relay). A task
-    /// clears the box on success; a reply marks its question answered and closes it. A refusal or a
-    /// failure stays in the box.
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
         let Some(c) = &self.compose else {
             return;
@@ -1297,7 +1150,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Into the workspace session's pipe, else through its relay when that is live and armed.
     fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<Sent, String> {
         let home = self.home.as_deref().ok_or("Not sent: no Foreman home.")?;
         let to = workspace_session_name(workspace);
@@ -1306,8 +1158,6 @@ impl FleetView {
             .map_err(|e| format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay))
     }
 
-    /// Sends `text` as the answer to the outbox message `file` and marks it answered, in memory and in
-    /// `answered.json` (a failed save is reported; the row still shows it answered).
     pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<Sent, String> {
         let sent = self.send_to_workspace(workspace, text)?;
         self.answered_route.insert(format!("{workspace}/{file}"), sent.label());
@@ -1321,7 +1171,6 @@ impl FleetView {
         Ok(sent)
     }
 
-    /// The Messages row's Approve: the answer `approve`.
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
         match self.answer(workspace, file, "approve") {
             Ok(_) => self.action_error = None,
@@ -1330,7 +1179,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The shared concurrency budget, saved to `settings.toml`; the next tick applies it.
     pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
         let max_working = max_working.min(MAX_WORKING_LIMIT);
         let result = match &self.home {
@@ -1356,14 +1204,12 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The Inbox's Attach: the existing attach-tab path, by the row's 8-hex id.
     pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
         let session = self.sessions.iter().find(|s| s.id == id)?.clone();
         Some(self.attach(workspace, "supervised", &session, window, cx))
     }
 
-    /// A shell tab in `cwd` with `command` typed at its prompt and NOT run: the human presses Enter
-    /// and answers whatever it asks (the trust prompt is theirs; Foreman never answers it).
+    /// Typed, not run: the human presses Enter and answers the trust prompt; Foreman never answers it.
     pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let title = format!("trust · {}", cwd.display());
         self.type_in_shell(cwd, title, command, window, cx)
@@ -1373,15 +1219,12 @@ impl FleetView {
         self.type_in_shell_when(cwd, title, gpui::Task::ready(command), window, cx)
     }
 
-    /// [`Self::type_in_shell`], typed once `command` is known as well.
     fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let id = self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx);
         let (watch, mut output) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.watchers.push(watch);
         }
-        // Typed once the shell's output has settled (its prompt is up, whatever the profile makes
-        // it look like), or after SHELL_SETTLE_LIMIT regardless.
         cx.spawn(async move |this, cx| {
             let command = command.await;
             let executor = cx.background_executor().clone();
@@ -1418,12 +1261,10 @@ impl FleetView {
         id
     }
 
-    /// Brings the settings window forward, or opens it.
     pub fn open_settings(&mut self, cx: &mut Context<Self>) {
         self.open_settings_at(None, cx);
     }
 
-    /// [`Self::open_settings`], on `page` when given.
     pub fn open_settings_at(&mut self, page: Option<&'static str>, cx: &mut Context<Self>) {
         if let Some(handle) = self.settings_window
             && handle
@@ -1461,14 +1302,11 @@ impl FleetView {
         }
     }
 
-    /// Whether [`Self::resume`] is offered: see [`offers_resume`].
     pub fn resumable(&self, row: &SessionRow) -> bool {
         offers_resume(&row.session, &row.health, self.last_alive.get(&row.session.session_id).copied(), now_ms())
     }
 
-    /// A background session wakes in the background (`claude --bg --resume`, no other flag: the
-    /// same id) and the tab attaches to it, so closing the tab detaches and leaves it running. An
-    /// interactive one resumes in the tab, as it ran before.
+    /// `claude --bg --resume` with no other flag keeps the session id.
     pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let title = format!("{workspace} · {repo} · {}", fleet::display_name(session));
         let sid = &session.session_id;
@@ -1484,7 +1322,6 @@ impl FleetView {
             let kind = TabKind::Attach { session_id: session.id.clone() };
             self.open_tab(title, kind, shell, Some(session.cwd.clone()), window, cx)
         } else {
-            // through the `+` launch (m5/27): its own WorkState token, and the shell stays when claude exits
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
             let own = (!session.name.is_empty()).then(|| session.name.clone());
             let id = self.hand_claude(session.cwd.clone(), title, resume, own, Some(sid.clone()), cx);
@@ -1495,16 +1332,11 @@ impl FleetView {
         }
     }
 
-    /// A shell tab in `cwd` whose pwsh starts `claude` unseen ([`Launch::shell_args`]): the shell stays
-    /// when it exits. With WorkState it runs with its own token ([`crate::hand`]), revoked when claude
-    /// exits or the tab closes. The tab shows at once; its pwsh starts once the token is minted.
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let claude = self.claude_command.clone();
         self.hand_claude(cwd, title, claude, None, None, cx)
     }
 
-    /// [`Self::new_claude`] running `claude` (pwsh's program and arguments); `own` is the session's
-    /// name in the tree, for its WorkState session (m5/35); `resumes` the uuid of the session it resumes.
     fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, resumes: Option<String>, cx: &mut Context<Self>) -> u64 {
         let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
         let (watch, mut changed) = nudge::nudge();
@@ -1577,7 +1409,6 @@ impl FleetView {
         id
     }
 
-    /// With [`Self::daemon_hold`] the tab says first why its claude cannot reach the background service.
     fn claude_shell(&self, launch: &Launch, claude: &str) -> util::shell::Shell {
         let launch_args = match &self.daemon_hold {
             Some(why) => {
@@ -1589,8 +1420,6 @@ impl FleetView {
         pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
-    /// Repaints at each blink edge of the shown terminal's cursor (Windows Terminal's blinking bar);
-    /// nothing while it does not blink. A text input blinks its own caret.
     fn blink_cursor(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -1606,7 +1435,7 @@ impl FleetView {
                 let Ok(wait) = wait else {
                     return;
                 };
-                // a cursor move restarts the blink; the next edge is never later than one interval
+                // a cursor move restarts the blink
                 let wait = wait.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL);
                 cx.background_executor().timer(wait + Duration::from_millis(5)).await;
             }
@@ -1622,7 +1451,6 @@ impl FleetView {
         self.tabs.iter_mut().find(|t| t.id == id)
     }
 
-    /// What clicking the tab does.
     pub fn activate_tab(&mut self, id: u64, cx: &mut Context<Self>) {
         if self.tab(id).is_some() {
             self.active = Some(id);
@@ -1630,9 +1458,6 @@ impl FleetView {
         }
     }
 
-    /// Finds the claude session under every shell tab's pwsh off the UI thread (m5/33), on a title
-    /// change, a terminal's end and every refresh tick. One run at a time; asked for while one runs,
-    /// it runs once more after it.
     pub fn resolve_tabs(&mut self, cx: &mut Context<Self>) {
         if self.tabs_resolving {
             self.tabs_again = true;
@@ -1664,7 +1489,6 @@ impl FleetView {
                         changed = true;
                     }
                 }
-                // a claude just started in a tab: its row comes with the next `claude agents`, so poll now
                 if unlisted {
                     this.poll_nudge.wake();
                 }
@@ -1680,7 +1504,6 @@ impl FleetView {
         .detach();
     }
 
-    /// Whether `tab` runs `session`: an attach tab by its id, a shell tab by the claude under it.
     pub fn tab_runs(tab: &Tab, session: &Session) -> bool {
         match &tab.kind {
             TabKind::Attach { session_id } => *session_id == session.id,
@@ -1689,12 +1512,10 @@ impl FleetView {
         }
     }
 
-    /// The row the active tab runs is marked in the tree (m5/33).
     pub fn is_marked(&self, session: &Session) -> bool {
         self.active.and_then(|id| self.tab(id)).is_some_and(|t| Self::tab_runs(t, session))
     }
 
-    /// A tab that runs `session`.
     pub fn session_tab(&self, session: &Session) -> Option<u64> {
         self.tabs.iter().find(|t| Self::tab_runs(t, session)).map(|t| t.id)
     }
@@ -1706,7 +1527,6 @@ impl FleetView {
         }
     }
 
-    /// The window's keys are this view's: no task box or text input holds them.
     pub fn has_keys(&self, window: &Window) -> bool {
         self.focus.is_focused(window)
     }
@@ -1736,7 +1556,6 @@ impl FleetView {
         )
     }
 
-    /// Focuses the workspace's Work tab, or opens it.
     pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
         let open = self.tabs.iter().find(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == workspace));
         if let Some(id) = open.map(|t| t.id) {
@@ -1762,7 +1581,6 @@ impl FleetView {
         id
     }
 
-    /// A WorkState Inbox row: the workspace's Work tab, on the row's item page.
     pub fn open_work_item(&mut self, workspace: &str, item_id: &str, cx: &mut Context<Self>) -> u64 {
         let id = self.open_work(workspace, cx);
         if let Some(Tab { kind: TabKind::Work(view), .. }) = self.tab(id) {
@@ -1772,7 +1590,6 @@ impl FleetView {
         id
     }
 
-    /// What `tab`'s hover card says, but its branch; `title` is the label as the tab shows it.
     pub(crate) fn tab_card(&self, tab: &Tab, title: String) -> tab_card::Card {
         let (workspace, repo) = tab.cwd.as_deref().map(|cwd| tab_card::place(cwd, &self.workspaces)).unwrap_or_default();
         let attached = match &tab.kind {
@@ -1806,7 +1623,6 @@ impl FleetView {
         }
     }
 
-    /// A shell tab in `cwd`.
     pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx)
     }
@@ -1817,7 +1633,6 @@ impl FleetView {
         self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), cwd, window, cx)
     }
 
-    /// [`fleet::shell_cwd`] for the active tab, never the exe's folder.
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
         let active = self.active.and_then(|id| self.tab(id)).and_then(|t| t.cwd.as_deref());
         fleet::shell_cwd(active, &self.workspaces, foreman_core::paths::user_home())
@@ -1837,7 +1652,6 @@ impl FleetView {
         id
     }
 
-    /// The active tab, its terminal not started yet ([`Self::start_terminal`]).
     fn push_tab(&mut self, title: String, kind: TabKind, cwd: Option<PathBuf>, cx: &mut Context<Self>) -> u64 {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
@@ -1873,7 +1687,6 @@ impl FleetView {
                         cx.subscribe(&terminal, move |this, emitter, event, cx| {
                             match event {
                                 TerminalEvent::Wakeup => cx.notify(),
-                                // claude names the console when it starts, idles, works and exits (m5/29)
                                 TerminalEvent::TitleChanged => {
                                     this.resolve_tabs(cx);
                                     cx.notify();
@@ -1910,7 +1723,6 @@ impl FleetView {
                                     this.start_detach(id, cx);
                                 }
                             }
-                            // Closed while it was starting.
                             None => terminal.update(cx, |t, _| t.release_pty_resources()),
                         }
                     }
@@ -1931,8 +1743,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// A shell tab ends its process. An Attach tab first asks `claude attach` to detach by itself
-    /// ([`DETACH_INPUT`]) and is removed only once that process has exited; see [`Detach`].
     pub fn close_tab(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(tab) = self.tab_mut(id) else {
             return;
@@ -2020,8 +1830,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// While quitting: once no Attach tab is left, every hand token is revoked off the UI thread for at most
-    /// [`QUIT_RELEASE_WITHIN`]. `true` once both are done and the window may close.
     fn quit_step(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.quitting || self.has_attach_tabs() {
             return false;
@@ -2058,8 +1866,6 @@ impl FleetView {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 
-    /// The Inbox's Restart as administrator (m5/25): Settings → Run Foreman as administrator on, then an
-    /// elevated copy (UAC) that waits for this one to quit. Declined, this one stays and says so.
     pub fn restart_elevated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
@@ -2078,7 +1884,6 @@ impl FleetView {
         }
     }
 
-    /// Quit: the window closes as [`Self::should_close`] lets it, and the app ends with it.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.quit_asked = true;
         if self.should_close(window, cx) {
@@ -2086,9 +1891,6 @@ impl FleetView {
         }
     }
 
-    /// Closing the window hides it (with the settings window) unless Quit was asked for. Quitting with
-    /// Attach tabs open detaches them first, then the hand tokens are revoked ([`Self::quit_step`]); the
-    /// window closes after both, or stays open if a detach fails.
     fn should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.quit_asked {
             self.close_settings(cx);
@@ -2120,7 +1922,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Whether one of the text inputs (the search box, the Add review's name) has the keys.
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
@@ -2128,12 +1929,10 @@ impl FleetView {
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
 
-    /// Ctrl+Shift+E: the search box, its text selected.
     pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.search.update(cx, |s, cx| s.focus_all(window, cx));
     }
 
-    /// The search box's text, trimmed; empty while it shows the tree.
     pub fn search_query(&self, cx: &gpui::App) -> String {
         self.search.read(cx).text().trim().to_string()
     }
@@ -2141,7 +1940,6 @@ impl FleetView {
     fn on_search_event(&mut self, _: &Entity<TextInput>, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Edited => cx.notify(),
-            // Esc closes an open menu first, then clears the box, then gives the keys back to the window
             InputEvent::Cancel if self.dismiss_popup() => cx.notify(),
             InputEvent::Cancel if !self.search.read(cx).text().is_empty() => self.clear_search(cx),
             InputEvent::Cancel => self.focus.focus(window, cx),
@@ -2149,7 +1947,6 @@ impl FleetView {
         }
     }
 
-    /// Esc on an open menu closes it, else on the question closes that; `false` when neither is open.
     fn dismiss_popup(&mut self) -> bool {
         self.menu.take().is_some() || self.confirm.take().is_some()
     }
@@ -2165,8 +1962,7 @@ impl FleetView {
             self.open_settings(cx);
             return;
         }
-        // An input's own keys ran as its actions already. What is left must go on unhandled: Windows turns
-        // a key into its character (WM_CHAR, a dead key's too) only after nothing took the key down.
+        // Left unhandled: Windows turns a key into its character (WM_CHAR) only after nothing took the key down.
         if self.input_focused(window, cx) {
             return;
         }
@@ -2234,7 +2030,6 @@ fn open_link(target: &MaybeNavigationTarget, open_url: impl FnOnce(&str), open_p
     }
 }
 
-/// Done once one of `pids` exits within `timeout`; never done otherwise.
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
     let exited = (!pids.is_empty()).then(|| executor.spawn(async move { foreman_core::process::wait_any_exit(&pids, timeout) }));
     async move {
@@ -2252,7 +2047,6 @@ fn pwsh(args: Vec<String>) -> util::shell::Shell {
     util::shell::Shell::WithArguments { program: "pwsh".into(), args, title_override: None }
 }
 
-/// The open hand tabs whose token is one of `elsewhere`'s (minted on another server).
 fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {
     tabs.iter()
         .filter(|t| t.hand && !t.exited)
@@ -2261,7 +2055,6 @@ fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> 
         .collect()
 }
 
-/// The pwsh line a tab runs in place of a `claude --bg` that cannot reach the background service.
 fn held_line(why: &str) -> String {
     format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
 }
@@ -2337,9 +2130,7 @@ impl FleetView {
                         .flex_1()
                         .min_h_0()
                         .on_scroll({
-                            // as Zed's TerminalView::scroll_wheel: the Terminal decides between
-                            // scrollback, a mouse report and alternate-scroll arrow keys; Ctrl+wheel
-                            // zooms every terminal (m5/41)
+                            // as Zed's TerminalView::scroll_wheel
                             let terminal = terminal.clone();
                             cx.listener(move |this, e: &ScrollEvent, _, cx| {
                                 if e.modifiers.control {
@@ -2406,7 +2197,6 @@ impl Render for FleetView {
             .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
-            // a click anywhere but in a text input gives the keys back to the window (an input stops its own)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| {
@@ -2446,7 +2236,6 @@ impl Render for FleetView {
     }
 }
 
-/// Tab id → the `sessionId` of the claude under its shell pid, from one process snapshot.
 fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
     use foreman_claude::{peer, proc_tree};
     let Some(dir) = peer::sessions_dir().filter(|_| !shells.is_empty()) else {
@@ -2507,7 +2296,6 @@ mod tests {
         assert!(!FleetView::tab_runs(&tab(TabKind::Shell, None), &session), "a shell without claude runs nothing");
     }
 
-    /// A-46: one workspace file that does not parse leaves the others listed, and is named.
     #[test]
     fn a_corrupt_workspace_file_is_skipped_and_named() {
         let home = tempfile::tempdir().unwrap();

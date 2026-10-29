@@ -1,8 +1,4 @@
-//! The tray icon that keeps Foreman reachable while its window is hidden (m5/1): closing the window
-//! only hides it, so the supervisor, the relay watcher, hook ingest and the Inbox keep running in this
-//! process. The icon's menu: Open, Stop all workspaces, Quit. A left click opens the window.
-//! The menu and click handlers run inside the tray's own window procedure on gpui's thread; they only
-//! queue a [`Command`], which `main` applies with the app in hand.
+//! The menu and click handlers run inside the tray's own window procedure: they only queue a [`Command`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -18,7 +14,6 @@ pub enum Command {
     Quit,
 }
 
-/// What the tray's menu, its left click and a second launch ask of the running app.
 pub fn apply(command: Command, fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
     match command {
         Command::Open => show(window, cx),
@@ -33,8 +28,6 @@ pub fn apply(command: Command, fleet: &Entity<FleetView>, window: &mut Window, c
 /// gpui allows one prompt at a time.
 static CONFIRMING: AtomicBool = AtomicBool::new(false);
 
-/// With a workspace started, only after a confirm: supervision stops with the app; the sessions keep
-/// running, as they always did when Foreman exits.
 fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
     let started = started(fleet, cx);
     if started.is_empty() {
@@ -67,7 +60,6 @@ fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
     fleet.read(cx).desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
 }
 
-/// A placeholder; m5/14 replaces this one file with the real icon.
 #[cfg(windows)]
 const ICON: &[u8] = include_bytes!("../assets/tray.ico");
 
@@ -131,12 +123,8 @@ pub(crate) fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> 
     }
 }
 
-// `ShowWindow` sends the window its activation, focus and position messages before it returns, and
-// gpui takes a window out of the app while it updates it: called from inside an update (every caller
-// here is), each of those messages finds "window not found" (m5/22, LEARNINGS). So these run as a
-// task of their own, as gpui's own `activate` does.
+// `ShowWindow` from inside a gpui update finds "window not found" (LEARNINGS m5/22): these run as a task of their own.
 
-/// Off the screen and the taskbar; the window, its tabs and everything it drives stay alive.
 #[cfg(windows)]
 pub fn hide(window: &Window, cx: &mut App) {
     use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
@@ -167,11 +155,7 @@ pub fn is_shown(window: &Window) -> bool {
     hwnd(window).is_some_and(|hwnd| unsafe { IsWindowVisible(hwnd) }.as_bool())
 }
 
-/// Closes a window for good: hidden first, outside any update, so the deactivation reaches a window
-/// gpui still has; removed once what Windows posted it on the way (a mouse leave, a paint) has been
-/// handled; gpui destroys the HWND after. Every close goes this way, a caption ✕ included
-/// (`on_window_should_close` → `false`, so Windows never destroys the HWND under gpui, which then
-/// logs "Invalid window handle" for it).
+/// Every close goes this way, a caption ✕ included, so Windows never destroys the HWND under gpui.
 pub fn close(window: &Window, cx: &mut App) {
     let handle = window.window_handle();
     #[cfg(windows)]
@@ -201,8 +185,7 @@ const DRAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(10);
 #[cfg(windows)]
 const DRAIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Hidden, with nothing posted to `hwnd` still queued. Sent messages are left alone: peeking for them
-/// would dispatch them here, inside this task.
+/// Sent messages are left alone: peeking for them would dispatch them here, inside this task.
 #[cfg(windows)]
 fn drained(hwnd: windows::Win32::Foundation::HWND) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{

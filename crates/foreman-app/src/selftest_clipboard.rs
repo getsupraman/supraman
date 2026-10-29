@@ -1,6 +1,4 @@
-//! The user's clipboard, saved in every format a selftest step can copy byte for byte and put back
-//! afterwards. gpui's own read and write turn a screenshot's CF_DIB into a PNG-only entry, which claude's
-//! Alt+V check does not see as an image (m5/46), so steps that borrow the clipboard use this instead.
+//! gpui turns a CF_DIB into a PNG-only entry that claude's Alt+V does not see as an image, so steps that borrow the clipboard use this.
 
 pub(crate) use win::{Held, Snapshot, put_test_image, sequence};
 
@@ -11,9 +9,7 @@ use gpui::{AsyncWindowContext, ClipboardItem};
 const HELD_WITHIN: Duration = Duration::from_secs(60);
 const MUTEX: &str = r"Local\Foreman-selftest-clipboard";
 
-/// The clipboard for this selftest alone, from its save to its put-back: every `--selftest` on the
-/// machine borrows it through the one named mutex, so a parallel run never saves another's test value
-/// as the user's. Released when dropped, on this (the UI) thread, which owns the mutex.
+/// Every `--selftest` on the machine borrows it through the one named mutex; released on drop, on the UI thread that owns it.
 pub(crate) async fn borrow(step: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Held> {
     let held = Held::open(MUTEX)?;
     let started = Instant::now();
@@ -34,7 +30,6 @@ pub(crate) async fn borrow(step: &str, cx: &mut AsyncWindowContext) -> anyhow::R
     Ok(held)
 }
 
-/// The clipboard's text through gpui, as a paste in a Foreman tab sees it.
 pub(crate) fn text(cx: &mut AsyncWindowContext) -> anyhow::Result<Option<String>> {
     cx.update(|_, cx| cx.read_from_clipboard().and_then(|c| c.text()))
 }
@@ -43,7 +38,6 @@ pub(crate) fn put_text(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Resul
     cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())))
 }
 
-/// A BITMAPINFOHEADER and 2×2 32-bit pixels.
 fn test_dib() -> Vec<u8> {
     let mut dib = Vec::new();
     for field in [40u32, 2, 2] {
@@ -112,7 +106,6 @@ mod win {
             Ok(Held { mutex, owned: std::cell::Cell::new(false) })
         }
 
-        /// An abandoned mutex (a run that died holding it) is taken as well.
         pub(crate) fn try_take(&self) -> windows::core::Result<bool> {
             match unsafe { WaitForSingleObject(self.mutex, 0) } {
                 WAIT_OBJECT_0 | WAIT_ABANDONED => {
@@ -174,12 +167,11 @@ mod win {
         }
     }
 
-    /// Changes with every write to the clipboard, by any process.
     pub(crate) fn sequence() -> u32 {
         unsafe { GetClipboardSequenceNumber() }
     }
 
-    /// A 2×2 32-bit DIB; Windows offers it as CF_BITMAP too, which `Clipboard.ContainsImage` asks for.
+    /// Windows offers it as CF_BITMAP too, which `Clipboard.ContainsImage` asks for.
     pub(crate) fn put_test_image() -> windows::core::Result<()> {
         set([(CF_DIB.0 as u32, super::test_dib().as_slice())].into_iter())
     }

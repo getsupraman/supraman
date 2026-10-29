@@ -1,11 +1,3 @@
-//! `--selftest` step 7s (m5/47): the terminal font. The app starts in the default family (Cascadia Code
-//! where installed) with ligatures on. A `+` tab prints `◯x a->b`; as painted, `◯` stays inside its cell
-//! (fitted when the font has no glyph for it), `x` and `b` are at their cells' x, and with Cascadia Code
-//! `->` is drawn with other glyphs than without ligatures. Settings → Appearance → Consolas changes the
-//! open tab's cell metrics and is saved; ligatures off draws `->` plain; Default puts both back as unset.
-//! m5/49: in `⏵⏵ auto mode on` both `⏵` keep at least 85% of their ink height, the first stays out of
-//! the second's cell and the second may overhang the blank after it but not `a`.
-
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -28,7 +20,7 @@ const PRINTED: &str = "◯x a->b";
 const TRIANGLES: &str = "⏵⏵ auto mode on";
 const CASCADIA: &str = "Cascadia Code";
 const PROBED: [char; 5] = ['⏵', '◯', '≥', '≤', '→'];
-/// The families DirectWrite falls back to for symbols; [`probe`] names the one that draws each.
+/// The families DirectWrite falls back to for symbols.
 const FALLBACKS: [&str; 12] = [
     "Segoe UI Symbol", "Segoe UI", "Segoe UI Emoji", "Cambria Math", "Cambria", "Segoe Fluent Icons", "Arial",
     "Lucida Sans Unicode", "Malgun Gothic", "Yu Gothic UI", "MS Gothic", "Microsoft YaHei",
@@ -116,8 +108,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     ))
 }
 
-/// Waits for a paint of the `PRINTED` row in `font` and checks its glyphs against the cells.
-/// `ligated`: whether `->` must (or must not) be drawn with other glyphs than without ligatures.
 async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, font: &TermFont, ligated: Option<bool>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let started = Instant::now();
     let (line, glyphs, cell) = loop {
@@ -189,7 +179,6 @@ async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fon
     ))
 }
 
-/// Which font draws each of `PROBED` at `font`'s size, its advance and its ink width × height.
 fn probe(font: &TermFont, installed: &[String], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     cx.update(|window, cx| {
         let ts = cx.text_system();
@@ -221,7 +210,6 @@ fn probe(font: &TermFont, installed: &[String], cx: &mut AsyncWindowContext) -> 
     .map(|s| format!("at {:?}: {s}", font.size))
 }
 
-/// Waits for a paint of the `TRIANGLES` row and checks each `⏵` against the next non-blank cell.
 async fn triangles_fit(view: &Entity<FleetView>, terminal: &Entity<Terminal>, font: &TermFont, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let started = Instant::now();
     let (row, cell) = loop {
@@ -271,7 +259,6 @@ async fn triangles_fit(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fo
     Ok(format!("`⏵⏵ a` inks {}", shown.join(" and ")))
 }
 
-/// The display line `prefix` starts, as the painter numbers it.
 fn printed_line(terminal: &Terminal, prefix: &str) -> Option<i32> {
     let content = terminal.last_content();
     let mut lines: Vec<(i32, String)> = Vec::new();

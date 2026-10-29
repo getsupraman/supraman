@@ -1,6 +1,4 @@
-//! A terminal tab's own chords, as Windows Terminal's defaults plus René's settings (m5/23): copy, paste,
-//! find, font size and scrolling. [`chord`] decides; [`FleetView::terminal_key`] carries it out. The
-//! full list, with the mouse, is docs/KEYS.md.
+//! The full list, with the mouse, is docs/KEYS.md.
 
 use std::time::Duration;
 
@@ -15,9 +13,7 @@ use foreman_ui::term_element::{FONT_SIZE, TermFont, step_font_size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chord {
-    /// Ctrl+C with a selection, Ctrl+Shift+C, Ctrl+Insert.
     Copy,
-    /// Ctrl+V, Ctrl+Shift+V, Shift+Insert.
     Paste,
     Find,
     /// +1 / -1 px.
@@ -31,11 +27,8 @@ pub enum Chord {
     ScrollBottom,
 }
 
-/// A zoom is written to `settings.toml` this long after the last step, so a wheel spin writes it once.
 pub const FONT_SAVE_AFTER: Duration = Duration::from_millis(500);
 
-/// The chord `k` is in a terminal tab, if any; everything else goes to the program. Ctrl+C is the
-/// program's ^C unless text is selected.
 pub fn chord(k: &Keystroke, has_selection: bool) -> Option<Chord> {
     let m = &k.modifiers;
     if m.alt || m.platform {
@@ -70,12 +63,8 @@ pub fn chord(k: &Keystroke, has_selection: bool) -> Option<Chord> {
     }
 }
 
-/// A terminal tab's find bar (Ctrl+Shift+F): a one-line [`TextInput`] that searches as it is edited.
-/// Enter goes to the next match up, towards older output, Shift+Enter back down, as Windows Terminal's
-/// default direction; Esc closes it.
 pub struct Find {
     pub input: Entity<TextInput>,
-    /// Index into the terminal's `matches` (top to bottom) of the selected one.
     pub at: Option<usize>,
     pub count: usize,
     _events: Subscription,
@@ -87,8 +76,7 @@ impl Find {
     }
 }
 
-/// The match `step` away from `at` (+1: up, older) among `count`, wrapping; with none selected, the
-/// bottom one.
+/// +1 goes up, to older output; with none selected, the bottom one.
 pub fn find_step(at: Option<usize>, count: usize, step: isize) -> Option<usize> {
     if count == 0 {
         return None;
@@ -97,11 +85,8 @@ pub fn find_step(at: Option<usize>, count: usize, step: isize) -> Option<usize> 
     Some((at - step).rem_euclid(count as isize) as usize)
 }
 
-/// A touchpad's pixels per font step.
 const ZOOM_PIXELS: f32 = 48.;
 
-/// The font steps of one Ctrl+wheel event: a wheel notch is one, a touchpad's pixels add up across events
-/// in `carried`.
 pub fn zoom_steps(delta: ScrollDelta, carried: &mut f32) -> i32 {
     match delta {
         ScrollDelta::Lines(lines) => {
@@ -118,8 +103,6 @@ pub fn zoom_steps(delta: ScrollDelta, carried: &mut f32) -> i32 {
 }
 
 impl FleetView {
-    /// A key for the active terminal tab; true when it was one of [`chord`]'s (or went to the find bar)
-    /// and must not reach the program.
     pub(super) fn terminal_key(&mut self, tab_id: u64, terminal: &Entity<Terminal>, k: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let has_selection = terminal.read(cx).last_content().selection.is_some();
         let Some(chord) = chord(k, has_selection) else {
@@ -146,7 +129,6 @@ impl FleetView {
         true
     }
 
-    /// Ctrl+wheel over a terminal: [`zoom_steps`] font steps.
     pub(super) fn wheel_font_size(&mut self, delta: ScrollDelta, cx: &mut Context<Self>) {
         let steps = zoom_steps(delta, &mut self.zoom_carried);
         if steps != 0 {
@@ -154,7 +136,6 @@ impl FleetView {
         }
     }
 
-    /// Every terminal tab's font size, clamped, painted at once and saved [`FONT_SAVE_AFTER`] later.
     pub fn set_term_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
         let size = step_font_size(size.round(), 0);
         if size == self.term_font_size {
@@ -165,7 +146,6 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        // replacing the task drops (cancels) the write still waiting
         self.font_save = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FONT_SAVE_AFTER).await;
             let saved = Settings::update(&home, |settings| settings.terminal.set_font_size(f32::from(size) as u32));
@@ -180,7 +160,6 @@ impl FleetView {
         }));
     }
 
-    /// The debounced write is still waiting.
     pub fn font_save_pending(&self) -> bool {
         self.font_save.is_some()
     }
@@ -189,8 +168,6 @@ impl FleetView {
         TermFont { family: self.term_font_family.clone(), size: self.term_font_size, ligatures: self.term_ligatures }
     }
 
-    /// Every terminal tab's font family (`None`: the default) and ligatures, saved and painted at once; the
-    /// next paint lays each grid out with the new cell metrics and resizes its pty.
     pub fn set_term_font(&mut self, family: Option<&str>, ligatures: bool, cx: &mut Context<Self>) -> Result<(), String> {
         let edit = |settings: &mut Settings| {
             settings.terminal.set_font_family(family);
@@ -210,7 +187,6 @@ impl FleetView {
         Ok(())
     }
 
-    /// The tab's find bar, opened or brought back, focused with its query selected.
     fn open_find(&mut self, tab_id: u64, window: &mut Window, cx: &mut Context<Self>) {
         if self.tab(tab_id).is_some_and(|t| t.find.is_none()) {
             let input = cx.new(|cx| TextInput::new("", None, window, cx));
@@ -258,7 +234,6 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let matches = task.await;
             this.update(cx, |this, cx| {
-                // a later keystroke searched again; its result wins
                 if this.tab(tab_id).and_then(|t| t.find.as_ref()).map(|f| f.query(cx)) != Some(query) {
                     return;
                 }
@@ -394,8 +369,7 @@ mod tests {
 
     #[test]
     fn the_programs_keys_stay_the_programs() {
-        // Ctrl+Tab / Ctrl+PgUp/PgDn are the tab bar's bindings; plain keys, Shift+Enter, Ctrl+letters
-        // other than C/V, and AltGr (Ctrl+Alt) reach the program
+        // Ctrl+Tab / Ctrl+PgUp/PgDn are the tab bar's bindings
         for (key, ctrl, shift) in [
             ("tab", true, false),
             ("pageup", true, false),

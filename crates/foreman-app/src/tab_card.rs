@@ -1,18 +1,12 @@
-//! What a terminal tab's hover card says (m5/29): its whole title, then what is known of the tab, one
-//! line per field ([`foreman_ui::hover_card`]). The title is the one its program set with OSC 0/2
-//! ([`foreman_ui::tabs::sanitize`]), else the tab's own label.
-
 use std::path::Path;
 
 use foreman_core::Workspace;
 use foreman_ui::hover_card::HoverCard;
 
-/// What a tab is, as its card says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// `claude` started from `+` or resumed in the tab: a human drives it.
     Hand,
-    /// `claude attach` to a background session.
     Attach,
     Shell,
 }
@@ -27,7 +21,6 @@ impl Kind {
     }
 }
 
-/// What the card shows; `None` fields are left out.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Card {
     pub title: String,
@@ -37,15 +30,13 @@ pub struct Card {
     pub branch: Option<String>,
     pub session: Option<String>,
     pub kind: Option<Kind>,
-    /// A hand tab's WorkState credential: Foreman's token overrides the user's `workstate` entry
-    /// ([`crate::hand`]).
+    /// Foreman's token overrides the user's `workstate` entry ([`crate::hand`]).
     pub workstate: Option<String>,
     /// Epoch milliseconds.
     pub started: Option<i64>,
 }
 
 impl Card {
-    /// The lines under the title, as `(label, value)`.
     pub fn rows(&self) -> Vec<(&'static str, String)> {
         let mut rows = Vec::new();
         let mut put = |label, value: Option<String>| {
@@ -76,13 +67,11 @@ fn local_time(ms: i64) -> Option<String> {
     Some(if today { at.format("%H:%M") } else { at.format("%Y-%m-%d %H:%M") }.to_string())
 }
 
-/// `name · id`, or the id alone for an unnamed session.
 pub fn session_label(name: &str, id: &str) -> String {
     if name.is_empty() { id.to_string() } else { format!("{name} · {id}") }
 }
 
-/// The workspace holding `cwd` (the innermost when roots nest) and the repo of it holding `cwd`, by
-/// name. Case- and `/`-insensitive, as [`crate::fleet::shell_cwd`].
+/// Case- and `/`-insensitive, as [`crate::fleet::shell_cwd`].
 pub fn place(cwd: &Path, workspaces: &[Workspace]) -> (Option<String>, Option<String>) {
     let key = |p: &Path| -> Vec<String> { p.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect() };
     let at = key(cwd);
