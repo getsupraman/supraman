@@ -145,7 +145,7 @@ impl Session {
     /// message, so it is `Idle` (m3/8). A `waitingFor` (a permission prompt) keeps it `Blocked`.
     pub fn supervised_health(&self, now_ms: i64) -> Health {
         match self.health(now_ms) {
-            Health::Blocked { waiting_for: None } if self.pid.is_some() && self.name.starts_with("fm-") => Health::Idle,
+            Health::Blocked { waiting_for: None } if self.pid.is_some() && self.name.starts_with(foreman_core::FM_PREFIX) => Health::Idle,
             health => health,
         }
     }

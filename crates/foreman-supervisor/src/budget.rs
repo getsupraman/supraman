@@ -1,10 +1,12 @@
 use foreman_claude::{Session, SessionState, Status};
 
-use crate::{Launcher, Millis, NeedsYou, RELAY_ROLE, Supervisor, TokenProvider, is_foreign, is_live};
+use foreman_core::FM_PREFIX;
+
+use crate::{Launcher, Millis, NeedsYou, Supervisor, TokenProvider, is_foreign, is_live, is_relay};
 
 /// The concurrency budget of one tick, shared by every workspace's supervisor of this home: at most
 /// `max` of its `fm-` sessions busy at once. Starts as `max` minus the rows in `observed` that are mid-turn
-/// ([`mid_turn`]); every start the supervisors are still waiting to see, and every launch/resume of this
+/// ([`mid_turn`]), the relays of `workspaces` aside; every start the supervisors are still waiting to see, and every launch/resume of this
 /// tick, takes one more slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
@@ -13,10 +15,10 @@ pub struct Budget {
 }
 
 impl Budget {
-    pub fn new<'a>(max: usize, observed: impl IntoIterator<Item = &'a Session>, now: Millis) -> Self {
+    pub fn new<'a>(max: usize, observed: impl IntoIterator<Item = &'a Session>, workspaces: &[&str], now: Millis) -> Self {
         Self {
             max,
-            free: max.saturating_sub(working(observed, now)),
+            free: max.saturating_sub(working(observed, workspaces, now)),
         }
     }
 
@@ -25,11 +27,11 @@ impl Budget {
     }
 }
 
-/// Live `fm-` rows that are mid-turn, relays aside ([`crate::WantedSession::exempt_from_budget`]).
-pub fn working<'a>(observed: impl IntoIterator<Item = &'a Session>, now: Millis) -> usize {
+/// Live `fm-` rows that are mid-turn, the relays of `workspaces` aside ([`crate::WantedSession::exempt_from_budget`]).
+pub fn working<'a>(observed: impl IntoIterator<Item = &'a Session>, workspaces: &[&str], now: Millis) -> usize {
     observed
         .into_iter()
-        .filter(|s| s.name.starts_with("fm-") && !s.name.ends_with(&format!("-{RELAY_ROLE}")) && mid_turn(s, now))
+        .filter(|s| s.name.starts_with(FM_PREFIX) && !is_relay(&s.name, workspaces.iter().copied()) && mid_turn(s, now))
         .count()
 }
 
@@ -62,12 +64,13 @@ where
     T: TokenProvider + 'a,
 {
     let mut supervisors: Vec<&mut Supervisor<L, T>> = supervisors.into_iter().collect();
+    let names: Vec<String> = workspaces.iter().map(|w| w.to_string()).chain(supervisors.iter().map(|s| s.desired.workspace.clone())).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
     let own = |s: &&Session| {
-        let workspaces = workspaces.iter().copied().chain(supervisors.iter().map(|s| s.desired.workspace.as_str()));
         let wanted = supervisors.iter().flat_map(|s| s.desired.sessions.iter().map(|w| w.name.as_str()));
-        !is_foreign(&s.name, workspaces, wanted)
+        !is_foreign(&s.name, names.iter().copied(), wanted)
     };
-    let mut budget = Budget::new(max_working, observed.iter().filter(own), now);
+    let mut budget = Budget::new(max_working, observed.iter().filter(own), &names, now);
     for s in &supervisors {
         budget.take(s.starting(observed, now));
     }

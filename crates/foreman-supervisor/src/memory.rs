@@ -112,7 +112,10 @@ impl SupervisorMemory {
                 a.trust_needed = Some(cwd);
                 a.started_at = None;
             }
-            Err(Failure::Other(e) | Failure::DaemonUnreachable(e)) => fail(a, e, policy, now),
+            Err(Failure::Other(e) | Failure::DaemonUnreachable(e)) => {
+                a.started_at = None;
+                fail(a, e, policy, now);
+            }
         }
     }
 

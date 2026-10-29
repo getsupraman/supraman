@@ -30,6 +30,8 @@ pub enum NeedsKind {
     TokenExpired,
     /// A live minted session's token is from another WorkState server than the one Foreman uses.
     OtherServer,
+    /// `claude stop` failed on a session that should stop: it keeps running.
+    StopFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
