@@ -68,23 +68,16 @@ pub fn unwant(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// By name, then ignoring case, then by slug; else the known names.
+/// [`Workspace::find_folder`]; else the known names.
 fn find_repo<'a>(workspace: &'a Workspace, name: &str) -> Result<&'a Folder, Failure> {
-    let slug = foreman_core::slugify(name);
-    workspace
-        .folders
-        .iter()
-        .find(|r| r.name == name)
-        .or_else(|| workspace.folders.iter().find(|r| r.name.eq_ignore_ascii_case(name)))
-        .or_else(|| workspace.folders.iter().find(|r| foreman_core::slugify(&r.name) == slug))
-        .ok_or_else(|| {
-            let known: Vec<&str> = workspace.folders.iter().map(|r| r.name.as_str()).collect();
-            Failure::Usage(format!(
-                "workspace {} has no repo '{name}'; known: {}",
-                workspace.name,
-                if known.is_empty() { "none".into() } else { known.join(", ") }
-            ))
-        })
+    workspace.find_folder(name).ok_or_else(|| {
+        let known: Vec<&str> = workspace.folders.iter().map(|r| r.name.as_str()).collect();
+        Failure::Usage(format!(
+            "workspace {} has no repo '{name}'; known: {}",
+            workspace.name,
+            if known.is_empty() { "none".into() } else { known.join(", ") }
+        ))
+    })
 }
 
 /// `<home>/roles/repo.md` as the app wrote it (`{fm}`/`{home}` filled), else the template of the plugin

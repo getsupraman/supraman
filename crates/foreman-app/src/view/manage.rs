@@ -9,12 +9,14 @@ use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
-use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, is_foremans, repo_items, session_items, workspace_items};
+use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet;
 use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
 pub struct AddDraft {
+    /// No folder: a workspace whose folders Edit folders… adds afterwards.
+    pub empty: bool,
     pub root: PathBuf,
     pub name: Entity<TextInput>,
     pub repos: Vec<(Folder, bool)>,
@@ -42,7 +44,7 @@ impl AddDraft {
         let name = cx.new(|cx| TextInput::new("workspace name", Some(name_char), window, cx));
         let events = cx.subscribe_in(&name, window, |this: &mut FleetView, _, event: &InputEvent, window, cx| this.on_name_event(event, window, cx));
         name.update(cx, |name, cx| name.focus_all(window, cx));
-        Self { root, name, repos: Vec::new(), scanning: true, error: None, hint: None, _name_events: events }
+        Self { empty: false, root, name, repos: Vec::new(), scanning: true, error: None, hint: None, _name_events: events }
     }
 
     pub fn name_text(&self, cx: &gpui::App) -> String {
@@ -141,7 +143,22 @@ impl FleetView {
         .detach();
     }
 
+    pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {
+        let position = self.hits.borrow().get("add-workspace").map(|h| h.bounds.bottom_left()).unwrap_or_default();
+        self.menu = Some(ContextMenu { title: "Add workspace".into(), position, items: add_items() });
+        cx.notify();
+    }
+
+    pub fn begin_add_empty(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        let mut draft = AddDraft::new(PathBuf::new(), window, cx);
+        (draft.empty, draft.scanning) = (true, false);
+        self.adding = Some(draft);
+        cx.notify();
+    }
+
     pub fn begin_add(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
         self.adding = Some(AddDraft::new(root.clone(), window, cx));
         cx.notify();
         let scan = cx.background_executor().spawn(async move {
@@ -191,7 +208,7 @@ impl FleetView {
             return;
         };
         match name_event(event, &mut draft.error, &mut draft.hint) {
-            NameKey::Save => self.save_add(cx),
+            NameKey::Save => self.save_add(window, cx),
             NameKey::Cancel if self.dismiss_popup() => {}
             NameKey::Cancel => self.adding = None,
             NameKey::Edited => {}
@@ -202,7 +219,7 @@ impl FleetView {
         cx.notify();
     }
 
-    pub fn save_add(&mut self, cx: &mut Context<Self>) {
+    pub fn save_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(draft) = &mut self.adding else {
             return;
         };
@@ -212,14 +229,24 @@ impl FleetView {
             return;
         }
         let name = draft.name_text(cx);
+        let empty = draft.empty;
         let result = (|| {
+            if empty {
+                validate_name(&name).map_err(|e| add_error(&e))?;
+                let mut workspace = Workspace::new(name, PathBuf::new(), Vec::new());
+                workspace.home = None;
+                let registry = registry(self.home.as_deref())?;
+                registry.check_new(&workspace).map_err(|e| add_error(&e))?;
+                registry.save(&workspace, false).map_err(|e| add_error(&e))?;
+                return Ok((workspace.name, Vec::new()));
+            }
             if draft.repos.is_empty() {
                 return Err(format!("No git repos found directly under {}.", draft.root.display()));
             }
             validate_name(&name).map_err(|e| add_error(&e))?;
             let folders = draft.repos.iter().map(|(r, on)| Folder { enabled: *on, ..r.clone() }).collect();
             let mut workspace = Workspace::new(name, draft.root.clone(), folders);
-            workspace.scans.push(Scan { path: draft.root.clone(), depth: DEFAULT_DEPTH });
+            workspace.scans.push(Scan::new(draft.root.clone(), DEFAULT_DEPTH));
             let registry = registry(self.home.as_deref())?;
             registry.check_new(&workspace).map_err(|e| add_error(&e))?;
             let taken = registry.claim_folders(&mut workspace, |_| true).map_err(|e| add_error(&e))?;
@@ -232,6 +259,9 @@ impl FleetView {
                 self.collapsed.remove(&format!("workspace:{name}"));
                 self.reload_workspaces();
                 self.show_toast(format!("Added workspace {name}.{}", supervised_elsewhere(&taken)), cx);
+                if empty {
+                    self.edit_folders(&name, window, cx);
+                }
             }
             Err(e) => draft.error = Some(e),
         }
@@ -344,6 +374,9 @@ impl FleetView {
             }
             MenuAction::Task(w) => self.open_compose(&w, None, window, cx),
             MenuAction::Rescan(w) => self.rescan_workspace(&w, cx),
+            MenuAction::EditFolders(w) => self.edit_folders(&w, window, cx),
+            MenuAction::AddFromFolder => self.add_workspace(window, cx),
+            MenuAction::AddEmpty => self.begin_add_empty(window, cx),
             MenuAction::Remove(w) => {
                 let started = self.desired.get(&w).is_some_and(|d| d.0);
                 let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
@@ -404,6 +437,7 @@ impl FleetView {
                 Confirmed::StopSession(session) => self.stop_session(session, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
+                Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
             }
         }
         cx.notify();

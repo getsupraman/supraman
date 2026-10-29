@@ -22,6 +22,8 @@ pub struct RepoHit {
     pub path: std::path::PathBuf,
     pub name_marks: Vec<Range<usize>>,
     pub sessions: Vec<SessionHit>,
+    /// A listed folder of the workspace that is not enabled there, nor supervised elsewhere.
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +101,13 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                 .repos
                 .iter()
                 .filter_map(|r| {
-                    let repo = RepoHit { name: r.name.clone(), path: r.path.clone(), name_marks: find_all(&r.name, needle), sessions: hits(&r.sessions) };
+                    let repo = RepoHit {
+                        name: r.name.clone(),
+                        path: r.path.clone(),
+                        name_marks: find_all(&r.name, needle),
+                        sessions: hits(&r.sessions),
+                        disabled: r.listed && !r.enabled && r.supervised_in.is_none(),
+                    };
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })
                 .collect();
@@ -161,6 +169,7 @@ mod tests {
                     repos: vec![
                         repo("Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]),
                         repo("api", vec![]),
+                        RepoNode { enabled: false, ..repo("FounderOS-DEMO", vec![]) },
                     ],
                 },
                 WorkspaceNode {
@@ -221,6 +230,10 @@ mod tests {
         let r = search(&tree(), "api");
         assert_eq!(names(&r), ["gaia (0)", "  ./api (0)"]);
         assert_eq!(r.summary(), "0 sessions, 1 workspace or repo by name");
+        assert!(!r.workspaces[0].repos[0].disabled);
+        let r = search(&tree(), "founder");
+        assert_eq!(names(&r), ["gaia (0)", "  ./FounderOS-DEMO (0)"]);
+        assert!(r.workspaces[0].repos[0].disabled, "labelled disabled");
         assert!(search(&tree(), "zzqx").is_empty());
         assert!(search(&tree(), "   ").is_empty());
     }

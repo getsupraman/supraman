@@ -20,7 +20,7 @@ pub fn discover(dir: &Path, name: Option<&str>, depth: usize) -> Result<Workspac
         let name = workspace.unique_folder_name(&found.name);
         workspace.folders.push(Folder { name, ..found });
     }
-    workspace.scans.push(Scan { path: root, depth });
+    workspace.scans.push(Scan::new(root, depth));
     Ok(workspace)
 }
 
@@ -31,7 +31,8 @@ pub fn rescan(workspace: &Workspace) -> Result<(Workspace, Vec<String>, Vec<Stri
     let mut found: Vec<Folder> = Vec::new();
     for s in &workspace.scans {
         for f in scan(&s.path, s.depth)? {
-            if !found.iter().any(|o| path_key(&o.path) == path_key(&f.path)) {
+            let excluded = s.exclude.iter().any(|x| path_key(x) == path_key(&f.path));
+            if !excluded && !found.iter().any(|o| path_key(&o.path) == path_key(&f.path)) {
                 found.push(f);
             }
         }
@@ -126,7 +127,7 @@ mod tests {
         assert_eq!(w.name, "my-projects");
         assert_eq!(names(&w), [("Alpha", true), ("Beta", true)]);
         assert_eq!(w.home(), Some(root.as_path()));
-        assert_eq!(w.scans, [Scan { path: root.clone(), depth: 1 }]);
+        assert_eq!(w.scans, [Scan::new(root.clone(), 1)]);
         assert_eq!(discover(&root, Some("x"), 1).unwrap().name, "x");
         assert!(matches!(discover(&root, Some("Bad Name"), 1), Err(CoreError::InvalidName(_))));
         assert!(matches!(discover(&root.join("nope"), None, 1), Err(CoreError::NotADirectory(_))));

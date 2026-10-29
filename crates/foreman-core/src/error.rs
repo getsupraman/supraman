@@ -12,6 +12,12 @@ pub enum CoreError {
     NotFound(String),
     #[error("not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
+    #[error("workspace '{workspace}' has no folder '{folder}'; known: {known}")]
+    NoFolder { workspace: String, folder: String, known: String },
+    #[error("workspace '{workspace}' has no scan of {}", path.display())]
+    NoScan { workspace: String, path: PathBuf },
+    #[error("{folder} is supervised in workspace {owner}; a folder's session belongs to one workspace")]
+    SupervisedElsewhere { folder: String, owner: String },
     #[error("cannot locate the Foreman home: set FOREMAN_HOME or APPDATA")]
     NoHome,
     #[error("{}: {source}", path.display())]
@@ -40,6 +46,9 @@ impl CoreError {
                 | Self::AlreadyExists(_)
                 | Self::NotFound(_)
                 | Self::NotADirectory(_)
+                | Self::NoFolder { .. }
+                | Self::NoScan { .. }
+                | Self::SupervisedElsewhere { .. }
         )
     }
 

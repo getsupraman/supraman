@@ -51,6 +51,7 @@ use crate::workstate_setup::{self, WsStatus};
 pub(crate) mod icon;
 mod delete;
 mod drop;
+mod folders;
 mod left;
 mod manage;
 mod menu;
@@ -252,6 +253,7 @@ pub struct FleetView {
     pub menu: Option<ContextMenu>,
     pub confirm: Option<Confirm>,
     pub adding: Option<AddDraft>,
+    pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
     pub workstate: WsStatus,
@@ -664,6 +666,7 @@ impl FleetView {
             menu: None,
             confirm: None,
             adding: None,
+            editing: None,
             removing: BTreeMap::new(),
             pick_folder: None,
             workstate: WsStatus::Checking,
@@ -1118,6 +1121,7 @@ impl FleetView {
             closed: &self.closed,
             starred: Some(self.stars.ids()),
             expanded: Some(&self.closed_expanded),
+            disabled_folders: false,
         };
         fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
     }
@@ -2035,6 +2039,7 @@ impl FleetView {
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
+            || self.editing.as_ref().is_some_and(|e| e.path.read(cx).is_focused(window))
             || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
@@ -2084,10 +2089,16 @@ impl FleetView {
         // the review keeps Enter and Esc after a click on one of its repos took the keys from its name
         if self.adding.is_some() && !k.modifiers.modified() && matches!(k.key.as_str(), "enter" | "escape") {
             if k.key == "enter" {
-                self.save_add(cx);
+                self.save_add(window, cx);
             } else {
                 self.adding = None;
             }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if self.editing.is_some() && !k.modifiers.modified() && k.key == "escape" {
+            self.editing = None;
             cx.notify();
             cx.stop_propagation();
             return;

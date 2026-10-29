@@ -38,6 +38,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_core::{discover, rescan, scan}`, the relay files (`send`, `tell`, `inbox_dir`, `outbox_dir`) and the hook events (`append_event`, `EventReader`): shared by `fm` and the app.
 - `foreman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `foreman_core::paths::{normalize, path_key, within, main_checkout, linked_git_dir}`: path comparison (`within` for "this folder or below") and the `.git` file/dir walk without running git.
+- `foreman_core::{Registry::edit, Edit, Edited}`: every change to a registered workspace's folders, home and scans (`fm workspace add-folder`/`remove-folder`/`enable`/`disable`/`set-home`/`add-scan`/`remove-scan`, the app's Edit folders…), under the file's lock; a removed folder's session goes through `DesiredState::release`.
 - `foreman_core::{Workspace, Folder, owners}` and `Registry::claim_folders`: a workspace's home, folders (git or plain) and scans; `home()` for where its own sessions run, `contains` for "is this cwd ours", `other_dirs` for the `--add-dir`s, `owners` for which workspace supervises a folder; never a root of your own.
 - `foreman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `foreman_core::process::{command, run, git, shell_execute, alive, started}`: every child process outside the PTY: no console window, drained pipes, a timeout that kills the tree (`Kill::Child` for `claude`, whose tree holds the background service), and ShellExecute and pid liveness; never `Command::new` and `.output()` by hand.
@@ -46,7 +47,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_workstate::{Client, Stream, Auth}`: the read API v1 (GET only, C21), `/api/stream`, and the OAuth sign-in whose `bearer_for(origin)` every read and mint carries; `FakeWorkState` (feature `fake`) in tests.
 - `foreman_claude::mcp_config_path`: the path of a session's WorkState config file, with the session-name check; write, read and delete it through this.
 - `foreman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.
-- `foreman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `fm want`).
+- `foreman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `fm want`); `DesiredState::release` stops the sessions of folders taken away (stop, never rm).
 
 ## Comments state the present, not the past
 

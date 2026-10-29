@@ -586,6 +586,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     scroll_step(tb, view, cx).await.context("step s")?;
     virtual_step(tb, view, cx).await.context("step v")?;
+    edit_step(tb, view, cx).await.context("step x")?;
 
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
@@ -910,6 +911,112 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
         stopped.join(", ")
     );
     Ok(())
+}
+
+/// Through the window: Add workspace → Empty, two sibling folders of the testbed added by Edit folders… (a git
+/// one, never launched, see [`virtual_step`], and a plain one), the testbed as home; the plain folder's
+/// wanted session runs under it; the git folder disabled leaves the tree and search finds it `disabled`; the
+/// plain folder removed after the question stops its session (stop, never rm). The file follows each change.
+async fn edit_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = format!("{}-x", tb.a.0);
+    let (git_dir, plain_dir) = (tb.a.1.join("XGit"), tb.a.1.join("XPlain"));
+    std::fs::create_dir_all(git_dir.join(".git"))?;
+    std::fs::write(git_dir.join(".git").join("HEAD"), "ref: refs/heads/main
+")?;
+    std::fs::create_dir_all(&plain_dir)?;
+    let registry = Registry::at(&tb.home);
+    let within = Duration::from_secs(10);
+
+    click(view, "add-workspace", cx).await?;
+    click(view, "menu-add-empty", cx).await?;
+    view.update(cx, |v, cx| v.adding.as_ref().map(|d| d.name.update(cx, |n, cx| n.set_text(&name, cx))));
+    click(view, "add-save", cx).await?;
+    let made = saved(&registry, &name, "saved empty", |w| w.folders.is_empty() && w.home.is_none() && w.scans.is_empty(), cx).await?;
+    wait_painted(view, "edit-folders", within, cx).await?;
+
+    for dir in [&git_dir, &plain_dir] {
+        view.update(cx, |v, _| v.pick_folder = Some(dir.clone()));
+        click(view, "edit-add-folder", cx).await?;
+    }
+    let kinds = |w: &Workspace| w.folders.iter().map(|f| (f.name.clone(), f.kind, f.enabled)).collect::<Vec<_>>();
+    let both = vec![("XGit".to_string(), FolderKind::Git, true), ("XPlain".to_string(), FolderKind::Plain, true)];
+    saved(&registry, &name, "with XGit and XPlain", |w| kinds(w) == both, cx).await?;
+    let home = tb.a.1.clone();
+    view.update(cx, |v, cx| v.editing.as_ref().map(|e| e.path.update(cx, |p, cx| p.set_text(&home.display().to_string(), cx))));
+    click(view, "edit-set-home", cx).await?;
+    saved(&registry, &name, "homed in the testbed", |w| w.home.as_deref() == Some(home.as_path()), cx).await?;
+
+    let wanted = repo_session(&name, "XPlain", &plain_dir, PROMPT_OK).ok_or_else(|| anyhow!("no name for XPlain"))?;
+    let session_name = wanted.name.clone();
+    let started = Instant::now();
+    DesiredState::update(&tb.home, &name, |d| {
+        d.want(wanted.clone());
+        d.started = true;
+    })?;
+    let live = wait_for("XPlain's session live", Duration::from_secs(180), cx, |rows| rows.iter().find(|s| s.name == session_name && s.pid.is_some()).cloned()).await?;
+    let live_after = started.elapsed();
+    // the testbed's own sessions in the home show as its unlisted folders
+    let folders_of = |v: &FleetView| {
+        let node = v.tree().workspaces.into_iter().find(|n| n.name == name)?;
+        Some(node.repos.iter().filter(|r| r.listed).map(|r| (r.name.clone(), r.sessions.first().map(|s| s.session.name.clone()))).collect::<Vec<_>>())
+    };
+    let placed = vec![("XGit".to_string(), None), ("XPlain".to_string(), Some(session_name.clone()))];
+    crate::selftest::until(view, cx, within, "XGit and XPlain in the tree, the session first under XPlain", |v| (folders_of(v).as_ref() == Some(&placed)).then_some(()))
+        .await
+        .map_err(|e| e.context(format!("listed folders {:?}", view.read_with(cx, |v, _| folders_of(v)))))?;
+    wait_painted(view, &format!("session-row-{}", live.session_id), within, cx).await?;
+
+    click(view, "edit-enable-XGit", cx).await?;
+    saved(&registry, &name, "with XGit disabled", |w| w.folder("XGit").is_some_and(|f| !f.enabled), cx).await?;
+    let only_plain = vec![("XPlain".to_string(), Some(session_name.clone()))];
+    crate::selftest::until(view, cx, within, "the disabled XGit out of the tree", |v| (folders_of(v).as_ref() == Some(&only_plain)).then_some(())).await?;
+    view.update(cx, |v, cx| v.search.update(cx, |s, cx| s.set_text("XGit", cx)));
+    wait_painted(view, &format!("result-disabled-{name}/XGit"), within, cx).await?;
+    view.update(cx, |v, cx| v.clear_search(cx));
+
+    click(view, "edit-remove-XPlain", cx).await?;
+    wait_painted(view, "confirm-yes", within, cx).await?;
+    let question = view.read_with(cx, |v, _| v.confirm.as_ref().map(|c| c.text.clone())).unwrap_or_default();
+    if !question.contains(&session_name) || !question.contains("stop, never rm") {
+        bail!("the question before removing XPlain does not name its stop: {question:?}");
+    }
+    click(view, "confirm-yes", cx).await?;
+    let stop_at = Instant::now();
+    saved(&registry, &name, "without XPlain", |w| w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>() == ["XGit"], cx).await?;
+    let stopped = wait_for("XPlain's session stopped", Duration::from_secs(60), cx, |rows| {
+        rows.iter().find(|s| s.name == session_name && s.pid.is_none()).map(|s| format!("{} [{}]", s.name, raw(s)))
+    })
+    .await?;
+    let desired = DesiredState::load(&tb.home, &name)?.ok_or_else(|| anyhow!("no desired state for {name}"))?;
+    if desired.sessions.iter().any(|s| s.name == session_name) || !desired.retired.contains(&session_name) {
+        bail!("{session_name} is still wanted or not retired: {desired:?}");
+    }
+    DesiredState::update(&tb.home, &name, |d| d.started = false)?;
+    click(view, "edit-done", cx).await?;
+    println!(
+        "step x: Add workspace → Empty → {name} saved with no folder (created {}) | Edit folders…: XGit (git) and XPlain (plain), siblings in {}, added by the picker, home set to it | {session_name} live after {}, first under XPlain | XGit disabled → out of the tree, search shows it `disabled` | Remove XPlain asked {question:?} → removed from the file, stopped after {} (still listed, never rm): {stopped}",
+        made.created_at,
+        tb.a.0,
+        secs(live_after),
+        secs(stop_at.elapsed()),
+    );
+    Ok(())
+}
+
+/// The workspace's file once `ok` holds for it.
+async fn saved(registry: &Registry, name: &str, what: &str, ok: impl Fn(&Workspace) -> bool, cx: &mut AsyncWindowContext) -> anyhow::Result<Workspace> {
+    let started = Instant::now();
+    loop {
+        if let Ok(w) = registry.load(name)
+            && ok(&w)
+        {
+            return Ok(w);
+        }
+        if started.elapsed() > Duration::from_secs(10) {
+            bail!("{name}.toml: not {what}: {:?}", registry.load(name).ok());
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
 }
 
 const FM_WITHIN: Duration = Duration::from_secs(60);

@@ -160,6 +160,7 @@ async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut Asy
     std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")?;
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
+    click(view, "menu-add-from-folder", cx).await?;
     let (repos, error) = until(view, cx, WITHIN, "the single repo's review", |v| {
         let d = v.adding.as_ref().filter(|d| !d.scanning)?;
         Some((d.repos.iter().map(|(r, _)| (r.name.clone(), r.path.clone())).collect::<Vec<_>>(), d.error.clone()))
@@ -309,6 +310,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
+    click(view, "menu-add-from-folder", cx).await?;
     let repos = until(view, cx, WITHIN, "the review's repos", |v| {
         let d = v.adding.as_ref().filter(|d| !d.scanning)?;
         Some(d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>())
@@ -333,19 +335,21 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     if flags != [("alpha".to_string(), true), ("beta".to_string(), false)] {
         bail!("registered {ADDED} with repos {flags:?}, expected alpha enabled and beta disabled");
     }
-    let (alpha, beta) = (format!("repo-row-{ADDED}/alpha"), format!("repo-row-{ADDED}/beta"));
-    until(view, cx, WITHIN, "the new workspace's repos in the tree", |v| (painted(v, &alpha) && painted(v, &beta)).then_some(())).await?;
+    let alpha = format!("repo-row-{ADDED}/alpha");
+    let in_tree = |v: &FleetView, repo: &str| v.tree().workspaces.iter().find(|w| w.name == ADDED).is_some_and(|w| w.repos.iter().any(|r| r.name == repo));
+    until(view, cx, WITHIN, "alpha in the tree, the disabled beta not", |v| (painted(v, &alpha) && !in_tree(v, "beta")).then_some(())).await?;
     let applied = view.read_with(cx, |v, _| v.refreshes);
     hold.holding.store(false, Ordering::SeqCst);
     until(view, cx, WITHIN, "the held poll applied", |v| (v.refreshes > applied).then_some(())).await?;
     if !view.read_with(cx, |v, _| v.workspaces.iter().any(|w| w.name == ADDED)) {
         bail!("a poll that read the registry before Save took {ADDED} out of the tree when it applied");
     }
-    let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), both repos in the tree", root.display()), name_edit];
+    let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), only alpha in the tree", root.display()), name_edit];
     out.push(cut_label_tooltip(view, cx).await?);
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
+    click(view, "menu-add-from-folder", cx).await?;
     until(view, cx, WITHIN, "the second review", |v| v.adding.as_ref().filter(|d| !d.scanning).map(|_| ())).await?;
     until(view, cx, WITHIN, "Save painted", |v| painted(v, "add-save").then_some(())).await?;
     let again = view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name_text(cx))).unwrap_or_default();
@@ -379,7 +383,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let ws_key = format!("ws-row-{ADDED}");
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, ADDED, cx).await?;
-    if keys != ["start", "work", "rescan", "open-folder", "open-terminal", "remove"] {
+    if keys != ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"] {
         bail!("the menu of {ADDED} has {keys:?}");
     }
     shot("menu-workspace", cx).await;
@@ -396,13 +400,14 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "the workspace menu closed by a click outside", |v| v.menu.is_none().then_some(())).await?;
     out.push(format!("workspace menu {keys:?} closed by a click outside"));
 
-    press_painted(view, &beta, MouseButton::Right, cx).await?;
-    let keys = menu_open(view, &format!("{ADDED} · ./beta"), cx).await?;
-    if keys != ["open-terminal", "open-folder", "enable"] {
-        bail!("the menu of the disabled beta has {keys:?}");
-    }
-    shot("menu-repo", cx).await;
-    click(view, "menu-enable", cx).await?;
+    // a menu closed but still painted takes the next press as a click outside it
+    until(view, cx, WITHIN, "a frame without the closed menu", |v| (!painted(v, "menu-remove")).then_some(())).await?;
+    press_painted(view, &ws_key, MouseButton::Right, cx).await?;
+    menu_open(view, ADDED, cx).await?;
+    click(view, "menu-edit-folders", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… with beta's box", |v| painted(v, "edit-enable-beta").then_some(())).await?;
+    shot("edit-folders", cx).await;
+    click(view, "edit-enable-beta", cx).await?;
     until(view, cx, WITHIN, "beta enabled in the tree", |v| {
         v.tree().workspaces.iter().find(|w| w.name == ADDED)?.repos.iter().find(|r| r.name == "beta" && r.enabled).map(|_| ())
     })
@@ -413,7 +418,9 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     if !registry.load(ADDED)?.folders.iter().all(|r| r.enabled) {
         bail!("Enable did not reach the registry");
     }
-    out.push("beta enabled from its menu".into());
+    click(view, "edit-done", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
+    out.push("beta enabled in Edit folders…, then in the tree with its +".into());
 
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     menu_open(view, ADDED, cx).await?;
