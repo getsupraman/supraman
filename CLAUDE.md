@@ -8,7 +8,7 @@ Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work ru
 
 Before you build something generic yourself (a text input, a list, a dialog, an HTTP or OAuth client, a file watcher, a process helper, a parser, …), search for a shared one and use it. If none fits, extract a shared one into the crate it belongs to and list it below. Do not grow a private copy inside a feature. A unit that keeps a local implementation says why in its report.
 
-Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`, written by m5/44):
+Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHITECTURE.md`):
 
 - `foreman_ui::text_input`: the one text input (EntityInputHandler: selection, IME, clipboard); every text field uses it.
 - `foreman_ui::button::{bordered, outline, pill, icon, toolbar, ghost, small, choice}`: every clickable button; the key is its id, hover group and hit key.
@@ -24,6 +24,8 @@ Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`
 - `foreman_ui::split::SplitPane`: every resizable side-by-side split; the owner keeps and persists the width.
 - `foreman_ui::matcher::{find_all, prefix, highlighted, count}`: case-insensitive matching and a results list's highlighted label and count badge.
 - `foreman_ui::settings_page::{SettingsPages, SettingsPage, row}`: a settings window's pages, registered by id with a title, an icon and a render fn, its page list, and one setting's row.
+- `foreman_ui::nudge::nudge`: a loop on a gpui executor that sleeps until nudged or timed out, never a timer polling a flag.
+- `foreman_ui::themes` (`contrast`, `fit_floors`) and `foreman_ui::term_element::terminal_grid`: the themes with their contrast floors, and the terminal painter.
 - `foreman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `foreman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop.
 - `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
@@ -32,13 +34,18 @@ Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`
 - `foreman_core::Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `foreman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `foreman_workstate::secret` re-exports it.
 - `foreman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.
+- `foreman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Foreman session name starts with `fm-`.
+- `foreman_core::{discover, rescan, scan}`, the relay files (`send`, `tell`, `inbox_dir`, `outbox_dir`) and the hook events (`append_event`, `EventReader`): shared by `fm` and the app.
 - `foreman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `foreman_core::paths::{normalize, path_key, main_checkout, linked_git_dir}`: path comparison and the `.git` file/dir walk without running git.
 - `foreman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `foreman_core::process::{command, run, git, shell_execute, alive, started}`: every child process outside the PTY: no console window, drained pipes, a timeout that kills the tree (`Kill::Child` for `claude`, whose tree holds the background service), and ShellExecute and pid liveness; never `Command::new` and `.output()` by hand.
 - `foreman_core::url::origin` (`foreman_workstate::api_base`): the one origin rule; origins are map keys in `servers.json` and the minted records.
 - `foreman_workstate::{http_agent, pct_encode, server_reason}`: the HTTP agent, path/query encoding and a refusal's reason for every WorkState call.
+- `foreman_workstate::{Client, Stream, Auth}`: the read API v1 (GET only, C21), `/api/stream`, and the OAuth sign-in whose `bearer_for(origin)` every read and mint carries; `FakeWorkState` (feature `fake`) in tests.
 - `foreman_claude::mcp_config_path`: the path of a session's WorkState config file, with the session-name check; write, read and delete it through this.
+- `foreman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.
+- `foreman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `fm want`).
 
 ## Comments state the present, not the past
 
