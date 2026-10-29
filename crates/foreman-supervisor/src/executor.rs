@@ -522,12 +522,12 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     m.session_id
                 ));
             }
-            let file = self.config.mcp_dir.join(format!("workstate-{name}.json"));
-            match std::fs::remove_file(&file) {
-                Err(e) if e.kind() != ErrorKind::NotFound => {
-                    self.notices.push(format!("Cannot delete {}: {e}", file.display()));
-                }
-                _ => {}
+            match foreman_claude::mcp_config_path(&self.config.mcp_dir, &name) {
+                Ok(file) => match std::fs::remove_file(&file) {
+                    Err(e) if e.kind() != ErrorKind::NotFound => self.notices.push(format!("Cannot delete {}: {e}", file.display())),
+                    _ => {}
+                },
+                Err(e) => self.notices.push(format!("Cannot delete the WorkState config of {name}: {e}")),
             }
             self.save_minted();
         }

@@ -111,16 +111,6 @@ impl Default for Settings {
     }
 }
 
-/// `http://127.0.0.1:5290/mcp` → `http://127.0.0.1:5290`.
-pub fn url_origin(url: &str) -> String {
-    let url = url.trim();
-    let start = url.find("://").map_or(0, |i| i + 3);
-    match url[start..].find(['/', '?', '#']) {
-        Some(i) => url[..start + i].to_string(),
-        None => url.trim_end_matches('/').to_string(),
-    }
-}
-
 /// A server URL typed into Settings as the origin to keep: `http(s)://host[:port]`, any path dropped.
 /// Plain `http` only for this machine (a token must not cross a network in the clear).
 pub fn validate_workstate_url(text: &str) -> std::result::Result<String, String> {
@@ -162,7 +152,7 @@ pub fn validate_workstate_url(text: &str) -> std::result::Result<String, String>
 impl Settings {
     /// The server's origin: `workstate_url` without any path, else [`DEFAULT_WORKSTATE_URL`].
     pub fn workstate_origin(&self) -> String {
-        url_origin(self.workstate_url.as_deref().unwrap_or(DEFAULT_WORKSTATE_URL))
+        crate::url::origin(self.workstate_url.as_deref().unwrap_or(DEFAULT_WORKSTATE_URL))
     }
 
     /// The MCP endpoint a minted session's config names.
@@ -218,15 +208,19 @@ impl Settings {
         home.join("settings.toml")
     }
 
-    /// The defaults when the file does not exist.
+    /// [`Self::load_with_notices`] without the notices.
     pub fn load(home: &Path) -> Result<Self> {
+        Self::load_with_notices(home).map(|(settings, _)| settings)
+    }
+
+    /// The defaults when the file does not exist. A key with a value of the wrong type keeps its
+    /// default and is named in a notice; only a file that is not TOML at all is an error.
+    pub fn load_with_notices(home: &Path) -> Result<(Self, Vec<String>)> {
         let path = Self::path(home);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(CoreError::io(&path, e)),
-        };
-        toml::from_str(&text).map_err(|source| CoreError::Parse { path, source })
+        match read(&path)? {
+            Some(text) => parse(&path, &text),
+            None => Ok((Self::default(), Vec::new())),
+        }
     }
 
     pub fn save(&self, home: &Path) -> Result<PathBuf> {
@@ -235,12 +229,55 @@ impl Settings {
             name: "settings".into(),
             source,
         })?;
-        fs::create_dir_all(home).map_err(|e| CoreError::io(home, e))?;
-        let tmp = path.with_extension("toml.tmp");
-        fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-        fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+        crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
         Ok(path)
     }
+
+    /// Load, `edit`, save, against other writers as `foreman_supervisor::DesiredState::update` does:
+    /// a file changed between the load and the save starts it over (up to 10 times). `edit` may run more than once.
+    pub fn update<T>(home: &Path, mut edit: impl FnMut(&mut Self) -> T) -> Result<(Self, T)> {
+        let path = Self::path(home);
+        let mut attempt = 0;
+        loop {
+            let before = read(&path)?;
+            let mut settings = match &before {
+                Some(text) => parse(&path, text)?.0,
+                None => Self::default(),
+            };
+            let out = edit(&mut settings);
+            attempt += 1;
+            if read(&path)? != before && attempt < 10 {
+                continue;
+            }
+            settings.save(home)?;
+            return Ok((settings, out));
+        }
+    }
+}
+
+fn read(path: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(CoreError::io(path, e)),
+    }
+}
+
+fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
+    let parse_error = |source| CoreError::Parse { path: path.to_path_buf(), source };
+    let mut table: toml::Table = text.parse().map_err(parse_error)?;
+    let mut notices = Vec::new();
+    let keys: Vec<String> = table.keys().cloned().collect();
+    for key in keys {
+        let one = toml::Table::from_iter([(key.clone(), table[&key].clone())]);
+        if let Err(e) = toml::Value::Table(one).try_into::<Settings>() {
+            let why = e.message().lines().next().unwrap_or_default().to_string();
+            notices.push(format!("{}: {key} is not valid ({why}); its default is used", path.display()));
+            table.remove(&key);
+        }
+    }
+    let settings = toml::Value::Table(table).try_into().map_err(parse_error)?;
+    Ok((settings, notices))
 }
 
 #[cfg(test)]
@@ -279,8 +316,8 @@ mod tests {
         assert_eq!(s.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
         fs::write(Settings::path(home.path()), "relay_idle_secs = 20\n").unwrap();
         assert_eq!(Settings::load(home.path()).unwrap().relay_idle_ms(), 20_000);
-        fs::write(Settings::path(home.path()), "max_working = \"many\"").unwrap();
-        assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })));
+        fs::write(Settings::path(home.path()), "max_working = = 3").unwrap();
+        assert!(matches!(Settings::load(home.path()), Err(CoreError::Parse { .. })), "not TOML at all");
     }
 
     #[test]
@@ -412,5 +449,65 @@ terminal_font_size = {bad}
         s.save(home.path()).unwrap();
         let text = fs::read_to_string(Settings::path(home.path())).unwrap();
         assert!(!text.contains("terminal_font_family") && !text.contains("terminal_ligatures"), "the defaults are saved as unset: {text}");
+    }
+
+    #[test]
+    fn a_bad_key_keeps_its_default_and_is_named_while_the_rest_of_the_file_stands() {
+        let home = tempfile::tempdir().unwrap();
+        fs::write(
+            Settings::path(home.path()),
+            "max_working = \"many\"
+workstate_url = \"https://ws.example\"
+run_as_admin = \"yes\"
+left_width = 300
+",
+        )
+        .unwrap();
+        let (s, notices) = Settings::load_with_notices(home.path()).unwrap();
+        assert_eq!(s.max_working, DEFAULT_MAX_WORKING);
+        assert!(!s.run_as_admin);
+        assert_eq!((s.workstate_url.as_deref(), s.left_width), (Some("https://ws.example"), Some(300)));
+        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert!(notices.iter().any(|n| n.contains("max_working is not valid")), "{notices:?}");
+        assert!(notices.iter().any(|n| n.contains("run_as_admin is not valid")), "{notices:?}");
+        assert!(notices.iter().all(|n| n.contains("settings.toml") && !n.contains('\n')),"{notices:?}");
+        assert_eq!(Settings::load(home.path()).unwrap(), s);
+        let (_, quiet) = Settings::load_with_notices(tempfile::tempdir().unwrap().path()).unwrap();
+        assert!(quiet.is_empty(), "no file, no notice");
+    }
+
+    #[test]
+    fn update_edits_what_is_on_disk_and_keeps_the_rest() {
+        let home = tempfile::tempdir().unwrap();
+        let (s, out) = Settings::update(home.path(), |s| {
+            s.left_width = Some(400);
+            7
+        })
+        .unwrap();
+        assert_eq!((s.left_width, out), (Some(400), 7));
+        Settings::update(home.path(), |s| s.theme = Some("Foreman Dark".into())).unwrap();
+        let back = Settings::load(home.path()).unwrap();
+        assert_eq!((back.left_width, back.theme.as_deref()), (Some(400), Some("Foreman Dark")));
+        fs::write(Settings::path(home.path()), "left_width = = 1").unwrap();
+        assert!(Settings::update(home.path(), |s| s.left_width = Some(1)).is_err(), "a file that is not TOML is not overwritten");
+        assert_eq!(fs::read_to_string(Settings::path(home.path())).unwrap(), "left_width = = 1");
+    }
+
+    #[test]
+    fn update_starts_over_when_another_writer_saved_meanwhile() {
+        let home = tempfile::tempdir().unwrap();
+        Settings::default().save(home.path()).unwrap();
+        let mut calls = 0;
+        let (s, ()) = Settings::update(home.path(), |s| {
+            calls += 1;
+            if calls == 1 {
+                Settings { theme: Some("Other".into()), ..Settings::default() }.save(home.path()).unwrap();
+            }
+            s.left_width = Some(333);
+        })
+        .unwrap();
+        assert_eq!(calls, 2, "the edit ran again on the other writer's file");
+        assert_eq!((s.theme.as_deref(), s.left_width), (Some("Other"), Some(333)));
+        assert_eq!(Settings::load(home.path()).unwrap(), s);
     }
 }

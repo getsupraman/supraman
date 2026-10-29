@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
+use crate::http::{pct_encode, server_reason};
 use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Resolved, Sessions};
 
 /// The response header every v1 answer carries.
@@ -35,13 +36,9 @@ fn reason_suffix(reason: &str) -> String {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// `http://127.0.0.1:5290/mcp` → `http://127.0.0.1:5290`.
+/// The server's origin, from its MCP URL: [`foreman_core::url::origin`].
 pub fn api_base(mcp_url: &str) -> String {
-    let start = mcp_url.find("://").map_or(0, |i| i + 3);
-    match mcp_url[start..].find('/') {
-        Some(i) => mcp_url[..start + i].to_string(),
-        None => mcp_url.trim_end_matches('/').to_string(),
-    }
+    foreman_core::url::origin(mcp_url)
 }
 
 /// `?for=` of [`Client::brief`].
@@ -239,27 +236,12 @@ pub(crate) fn scrub(token: &str, text: &str) -> String {
     if token.is_empty() { text.to_string() } else { text.replace(token, "<redacted>") }
 }
 
-/// What a refusal says: `error`/`title`/`message`/`detail` of a JSON body, else its start.
-fn server_reason(body: &str) -> String {
-    let reason = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| ["error", "title", "message", "detail"].iter().find_map(|k| v.get(*k)?.as_str().map(str::to_string)))
-        .unwrap_or_else(|| body.trim().to_string());
-    reason.chars().take(200).collect()
-}
-
-fn encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
-        .collect()
-}
-
 fn segment(id: &str) -> String {
-    encode(id)
+    pct_encode(id)
 }
 
 fn with_query(path: &str, pairs: &[(&str, Option<&str>)]) -> String {
-    let query: Vec<String> = pairs.iter().filter_map(|(k, v)| v.map(|v| format!("{k}={}", encode(v)))).collect();
+    let query: Vec<String> = pairs.iter().filter_map(|(k, v)| v.map(|v| format!("{k}={}", pct_encode(v)))).collect();
     if query.is_empty() { path.to_string() } else { format!("{path}?{}", query.join("&")) }
 }
 
@@ -272,6 +254,7 @@ mod tests {
         assert_eq!(api_base("http://127.0.0.1:5290/mcp"), "http://127.0.0.1:5290");
         assert_eq!(api_base("http://localhost:9/"), "http://localhost:9");
         assert_eq!(api_base("http://localhost:9"), "http://localhost:9");
+        assert_eq!(api_base("https://ws.example?x=/y"), "https://ws.example", "a query is not part of the origin");
     }
 
     #[test]

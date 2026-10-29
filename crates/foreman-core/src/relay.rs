@@ -12,10 +12,11 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::fs::write_atomic;
+use crate::time::{modified_ms, now_ms};
 use crate::{CoreError, Result, validate_name};
 
 /// Written by the relay each time its watcher is armed (first arm and every re-arm).
@@ -62,12 +63,7 @@ pub struct RelayDrop {
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
-fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-}
-
-/// Drops `{to, body}` into the workspace's inbox: written as `<name>.json.tmp`, then renamed, so the
-/// watcher never sees half a file. Names sort in drop order (`<ms>-<pid>-<seq>.json`).
+/// Drops `{to, body}` into the workspace's inbox, written atomically so the watcher never sees half a file. Names sort in drop order (`<ms>-<pid>-<seq>.json`).
 pub fn send(home: &Path, workspace: &str, to: &str, body: &str) -> Result<PathBuf> {
     if to.trim().is_empty() {
         return Err(CoreError::io(
@@ -79,16 +75,14 @@ pub fn send(home: &Path, workspace: &str, to: &str, body: &str) -> Result<PathBu
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let name = format!("{:013}-{}-{seq:04}.json", now_ms(), std::process::id());
     let path = dir.join(&name);
-    let tmp = dir.join(format!("{name}.tmp"));
     let text = serde_json::to_string(&RelayDrop {
         to: to.to_string(),
         body: body.to_string(),
     })
-    .map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
-    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    .map_err(|e| CoreError::io(&path, io::Error::other(e)))?;
+    write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
     let stamp = dir.with_file_name(LAST_DROP_FILE);
-    fs::write(&stamp, now_ms().to_string()).map_err(|e| CoreError::io(&stamp, e))?;
+    write_atomic(&stamp, now_ms().to_string()).map_err(|e| CoreError::io(&stamp, e))?;
     Ok(path)
 }
 
@@ -126,10 +120,8 @@ pub fn tell(home: &Path, workspace: &str, from_name: &str, body: &str) -> Result
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let name = format!("{:013}-tell-{}-{seq:04}.json", now_ms(), std::process::id());
     let path = dir.join(&name);
-    let tmp = dir.join(format!("{name}.tmp"));
     let text = serde_json::json!({ "from": from_name, "from_name": from_name, "body": body }).to_string();
-    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+    write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
     Ok(path)
 }
 
@@ -162,13 +154,6 @@ struct OutboxFile {
     #[serde(default)]
     from_name: String,
     body: String,
-}
-
-fn modified_ms(meta: &fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_millis() as i64)
 }
 
 /// Every message in the workspace's outbox, oldest first (by arrival, then file name). `ready.json`
@@ -300,16 +285,14 @@ pub fn read_answered(home: &Path, workspace: &str) -> Result<BTreeMap<String, St
     }
 }
 
-/// Adds `file → answer` to `answered.json` (written to a `.tmp`, then renamed).
+/// Adds `file → answer` to `answered.json`.
 pub fn mark_answered(home: &Path, workspace: &str, file: &str, answer: &str) -> Result<()> {
     let mut answered = read_answered(home, workspace)?;
     answered.insert(file.to_string(), answer.to_string());
     let dir = ensure_relay_dirs(home, workspace)?;
     let path = dir.join(ANSWERED_FILE);
-    let tmp = dir.join(format!("{ANSWERED_FILE}.tmp"));
-    let text = serde_json::to_string_pretty(&answered).map_err(|e| CoreError::io(&tmp, io::Error::other(e)))?;
-    fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-    fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))
+    let text = serde_json::to_string_pretty(&answered).map_err(|e| CoreError::io(&path, io::Error::other(e)))?;
+    write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))
 }
 
 /// `fm inbox --dir <inbox>`'s state: each [`InboxWatcher::scan`] turns every new `*.json` drop into
@@ -474,7 +457,7 @@ mod tests {
         )
         .unwrap();
         fs::write(outbox.join("msg-0003.json"), "{\"from\": ").unwrap();
-        let old = SystemTime::now() - std::time::Duration::from_secs(60);
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
         for (name, age) in [("msg-0001.json", 2), ("msg-0002.json", 1)] {
             let f = fs::File::options().write(true).open(outbox.join(name)).unwrap();
             f.set_modified(old + std::time::Duration::from_secs(age)).unwrap();

@@ -11,6 +11,17 @@ Before you build something generic yourself (a text input, a list, a dialog, an 
 Reusable components (the full list with when to use each: `docs/ARCHITECTURE.md`, written by m5/44):
 
 - `foreman-app/src/text_input.rs`: the one text input (EntityInputHandler: selection, IME, clipboard); every text field uses it.
+- `foreman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
+- `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
+- `foreman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
+- `foreman_core::Settings::update`: every change to `settings.toml` (load, edit, save, retried against other writers); `Settings::load_with_notices` when a bad key should be shown.
+- `foreman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.
+- `foreman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
+- `foreman_core::paths::{normalize, path_key, main_checkout, linked_git_dir}`: path comparison and the `.git` file/dir walk without running git.
+- `foreman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
+- `foreman_core::url::origin` (`foreman_workstate::api_base`): the one origin rule; origins are map keys in `servers.json` and the minted records.
+- `foreman_workstate::{http_agent, pct_encode, server_reason}`: the HTTP agent, path/query encoding and a refusal's reason for every WorkState call.
+- `foreman_claude::mcp_config_path`: the path of a session's WorkState config file, with the session-name check; write, read and delete it through this.
 
 ## Comments state the present, not the past
 

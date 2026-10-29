@@ -6,7 +6,6 @@ pub mod themes;
 
 use std::{
     cell::{Cell, RefCell},
-    io::Write as _,
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Mutex, OnceLock},
@@ -59,7 +58,7 @@ impl log::Log for Logger {
             Some(file) => {
                 let _guard = self.write.lock().unwrap_or_else(|e| e.into_inner());
                 let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-                append_capped(file, &format!("{stamp} {line}\n"), LOG_CAP);
+                let _ = foreman_core::fs::append_capped(file, format!("{stamp} {line}\n").as_bytes(), LOG_CAP);
             }
             None => eprintln!("{line}"),
         }
@@ -73,19 +72,6 @@ impl log::Log for Logger {
 /// (0x80070578). Harmless (nothing is drawn) and out of Foreman's reach (LEARNINGS, m5/22).
 pub fn is_vsync_race(target: &str, message: &str) -> bool {
     target == "gpui_windows::platform" && message.starts_with("Invalid window handle") && message.contains("0x80070578")
-}
-
-/// Appends `text` to `file`, first moving a file of `cap` bytes or more to `<file>.1`. Opened per line
-/// (lines are rare), so the folder can be removed while the app runs, as a selftest's home is.
-pub fn append_capped(file: &Path, text: &str, cap: u64) {
-    if std::fs::metadata(file).is_ok_and(|m| m.len() >= cap) {
-        let mut old = file.as_os_str().to_owned();
-        old.push(".1");
-        let _ = std::fs::rename(file, old);
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file) {
-        let _ = f.write_all(text.as_bytes());
-    }
 }
 
 /// Log lines go to `<dir>/foreman.log` (created here) when `dir` is given, never to a console;
@@ -267,7 +253,7 @@ pub fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_capped, is_vsync_race};
+    use super::is_vsync_race;
 
     #[test]
     fn only_the_vsync_race_line_is_silenced() {
@@ -275,21 +261,5 @@ mod tests {
         assert!(!is_vsync_race("gpui_windows::window", "Invalid window handle. (0x80070578)"), "a window's own teardown still shows");
         assert!(!is_vsync_race("gpui::window", "window not found"));
         assert!(!is_vsync_race("gpui_windows::platform", "Device lost"));
-    }
-
-    #[test]
-    fn log_file_rotates_at_the_cap_and_keeps_one_previous() {
-        let dir = std::env::temp_dir().join(format!("foreman-ui-log-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("foreman.log");
-        for n in 0..25 {
-            append_capped(&file, &format!("line {n:02}\n"), 64);
-        }
-        let current = std::fs::read_to_string(&file).unwrap();
-        let previous = std::fs::read_to_string(dir.join("foreman.log.1")).unwrap();
-        assert!(current.ends_with("line 24\n") && current.len() < 64 + 8, "{current}");
-        assert!(previous.len() >= 64 && previous.len() < 64 + 8, "{previous}");
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2, "never a third file");
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

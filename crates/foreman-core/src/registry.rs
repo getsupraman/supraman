@@ -56,8 +56,25 @@ impl Registry {
         toml::from_str(&text).map_err(|source| CoreError::Parse { path, source })
     }
 
-    /// Sorted by name; an absent registry directory is an empty list, and is not created.
+    /// Sorted by name; an absent registry directory is an empty list, and is not created. The first
+    /// file that cannot be loaded fails the whole list; [`Self::load_all`] keeps the others.
     pub fn list(&self) -> Result<Vec<Workspace>> {
+        self.names()?.iter().map(|n| self.load(n)).collect()
+    }
+
+    /// Every workspace that loads, sorted by name, and an error for each file that does not.
+    pub fn load_all(&self) -> Result<(Vec<Workspace>, Vec<CoreError>)> {
+        let (mut loaded, mut failed) = (Vec::new(), Vec::new());
+        for name in self.names()? {
+            match self.load(&name) {
+                Ok(w) => loaded.push(w),
+                Err(e) => failed.push(e),
+            }
+        }
+        Ok((loaded, failed))
+    }
+
+    fn names(&self) -> Result<Vec<String>> {
         let dir = self.workspaces_dir();
         let entries = match fs::read_dir(&dir) {
             Ok(entries) => entries,
@@ -75,7 +92,7 @@ impl Registry {
             }
         }
         names.sort();
-        names.iter().map(|n| self.load(n)).collect()
+        Ok(names)
     }
 
     pub fn save(&self, workspace: &Workspace, force: bool) -> Result<PathBuf> {
@@ -87,11 +104,7 @@ impl Registry {
             name: workspace.name.clone(),
             source,
         })?;
-        let dir = self.workspaces_dir();
-        fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
-        let tmp = path.with_extension("toml.tmp");
-        fs::write(&tmp, text).map_err(|e| CoreError::io(&tmp, e))?;
-        fs::rename(&tmp, &path).map_err(|e| CoreError::io(&path, e))?;
+        crate::fs::write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))?;
         Ok(path)
     }
 
@@ -196,6 +209,21 @@ mod tests {
         let err = reg.load("broken").unwrap_err();
         assert!(matches!(err, CoreError::Parse { .. }));
         assert!(!err.is_user_error());
+    }
+
+    #[test]
+    fn one_corrupt_file_fails_list_but_load_all_keeps_the_others() {
+        let home = tempfile::tempdir().unwrap();
+        let reg = Registry::at(home.path());
+        assert_eq!(reg.load_all().unwrap().0, vec![]);
+        reg.save(&sample("alpha"), false).unwrap();
+        reg.save(&sample("zeta"), false).unwrap();
+        fs::write(reg.workspaces_dir().join("broken.toml"), "name = ").unwrap();
+        assert!(reg.list().is_err());
+        let (loaded, failed) = reg.load_all().unwrap();
+        assert_eq!(loaded.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha", "zeta"]);
+        assert_eq!(failed.len(), 1);
+        assert!(matches!(&failed[0], CoreError::Parse { path, .. } if path.ends_with("broken.toml")), "{failed:?}");
     }
 
     #[test]

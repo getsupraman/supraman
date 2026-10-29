@@ -17,6 +17,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
+use foreman_core::time::epoch_ms;
+
 use crate::session::{Kind, Session, SessionState};
 
 /// What a transcript says about its session.
@@ -286,25 +288,12 @@ fn session_id_of(path: &Path) -> Option<String> {
     Some(path.file_stem()?.to_string_lossy().into_owned())
 }
 
-fn epoch_ms(t: SystemTime) -> i64 {
-    t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-}
-
 /// claude's project dir name for `path`: every character but an ASCII letter or digit becomes `-`.
 pub fn slug(path: &Path) -> String {
     path.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
-/// `CLAUDE_CONFIG_DIR`, else `~/.claude`.
-pub fn claude_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
-        return Some(PathBuf::from(dir));
-    }
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .filter(|h| !h.is_empty())
-        .map(|h| PathBuf::from(h).join(".claude"))
-}
+pub use foreman_core::paths::claude_dir;
 
 struct Cached {
     len: u64,

@@ -21,7 +21,7 @@ pub fn scan(root: &Path, depth: usize) -> Result<Vec<Repo>> {
     let git = root.join(".git");
     if git.exists() {
         let name = root_repo_name(root, &repos);
-        let git_dir = if git.is_dir() { Some(git) } else { linked_git_dir(&git) };
+        let git_dir = if git.is_dir() { Some(git) } else { crate::paths::linked_git_dir(&git) };
         repos.insert(0, repo_at(name, root.to_path_buf(), git_dir.as_deref()));
     }
     Ok(repos)
@@ -42,13 +42,6 @@ fn repo_at(name: String, path: std::path::PathBuf, git_dir: Option<&Path>) -> Re
         enabled: true,
         path,
     }
-}
-
-/// The git dir a linked worktree's `.git` file points at (`gitdir: <path>`, relative to the file).
-fn linked_git_dir(git_file: &Path) -> Option<std::path::PathBuf> {
-    let text = fs::read_to_string(git_file).ok()?;
-    let dir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
-    Some(git_file.parent()?.join(dir))
 }
 
 fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &mut Vec<Repo>) {
@@ -84,7 +77,7 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &
 /// worktree's file); `None` when HEAD is detached or there is no repo.
 pub fn branch_at(dir: &Path) -> Option<String> {
     let git = dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())?;
-    let git_dir = if git.is_dir() { git } else { linked_git_dir(&git)? };
+    let git_dir = if git.is_dir() { git } else { crate::paths::linked_git_dir(&git)? };
     read_branch(&git_dir)
 }
 
