@@ -3130,3 +3130,52 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   the clipboard"; the clipboard and claude paste path, untouched here, and not a known flake), run 6 PASS
   (124 s). `--selftest-supervise` PASS (299 s), `--selftest-detach-shutdown` PASS (13 s). 0 `fm-selftest`
   rows from this worktree; 4 rows of another checkout's run, left alone.
+
+## 2026-10-29 — m5/44.4 shared foundations in foreman-core (audit U3)
+
+- **New in `foreman-core`** (listed in `CLAUDE.md`): `fs::{write_atomic, load_json_or_notice, append_capped,
+  rotated}`, `paths::{user_home, claude_dir, normalize, path_key, linked_git_dir, main_checkout}`,
+  `time::{now_ms, epoch_ms, modified_ms, hex6}`, `url::origin`; `Settings::{update, load_with_notices}`;
+  `Registry::load_all`. In other crates: `foreman_workstate::{pct_encode, server_reason}` (`http.rs`) and
+  `foreman_claude::mcp_config_path`.
+- **`write_atomic`'s temp name is `<file>.<pid>-<seq>.tmp`**, unique per process *and* per call. A per-process
+  name, as `desired.rs` had, still lets two threads of the app clobber each other. Red check: with a fixed
+  `<file>.tmp`, `concurrent_writers_never_clobber_each_others_temp_file` fails 3 of 3 (8 threads; every
+  writer's `write_atomic` errors on the shared temp file). It passed 20 of 20 with
+  the real name. The name ends in `.tmp`, so the relay's `*.json` watcher never takes a half-written drop.
+- **One origin rule** (`url::origin`): trim, then cut at the first `/`, `?` or `#` after `://`; spelling
+  kept, no lowercasing, so the keys already in `servers.json` and the minted records stay the same.
+  `every_origin_the_tests_use_is_unchanged` checks every origin in the repo's tests against the `/`-only
+  cut `api_base` used. Only a URL with a `?`/`#` before any `/`, or with surrounding whitespace, now gives
+  a different origin; none is stored.
+- **`CLAUDE_CONFIG_DIR`** now moves the peer registry (`sessions_dir`) with the transcripts. Without the
+  variable, the path is byte-identical (`claude_dir_without_the_variable_is_byte_identical_to_home_dot_claude`).
+  `user_home` treats an empty `USERPROFILE` as unset and falls back to `HOME`; before, an empty
+  `USERPROFILE` meant no home at all. `fm/tests/relay.rs` removes `CLAUDE_CONFIG_DIR`, so a set variable
+  cannot point it at the real registry.
+- **Settings keys are lenient one by one.** A key with a value of the wrong type keeps its default, and
+  `load_with_notices` names it ("settings.toml: max_working is not valid (…); its default is used"). Only
+  a file that is not TOML at all is still an error. Before, one bad key failed the whole file: the
+  supervisor ran on all-default settings and the app's saves were skipped. Now the other keys hold, and
+  a save drops the bad value. The app shows no notice yet (U6a/U6b).
+- **Behaviour changes, all improvements:**
+  - an event log or `foreman.log` that cannot rotate (the file held open) still gets the line;
+  - `same_root` also folds `.`/`..` and `\?\`;
+  - `human.rs`'s pacing ledger cleans up its temp file;
+  - the relay's `last-drop` stamp is written atomically;
+  - revoke deletes a session's config through `mcp_config_path`, so its name check applies;
+  - a failed save names the target file, not its temp file.
+- **Left for later, with the reason:**
+  - `auth.rs`'s `split_origin` and `pct`, the remaining A-04/A-05 sites: m5/44.18 is rewriting that file.
+  - A-05's status-and-body read: `client.rs` checks the API header and maps a failed body read to
+    `Transport`, while mint ignores a failed body read. One helper would change one of them.
+  - Mint's test HTTP server is not moved onto `FakeWorkState` (A-05): `fake::Seen` records no
+    `Content-Type`, which the mint tests check, and `fake.rs` is outside this unit.
+  - `fm/src/main.rs` and `repos.rs` keep `Registry::list`: a CLI that stops on a corrupt file says which one.
+  - `fm/tests/work.rs`'s test prefixes (A-09) are m5/44.18's file.
+  - `foreman-app` (A-02 app files, A-03 callers, A-08 `tab_card.rs`, A-09 `selftest.rs` `hex6`, A-46's
+    notice) is U6a/U6b's.
+  - `mint::git_repo` still runs git: the main-checkout root sent to WorkState is what git prints (Mint).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-4\target`, 19fb774): build ok, no warnings; `cargo test --release
+  --workspace` 628 passed, 0 failed. `--selftest` 5 of 5 PASS (128–135 s). `--selftest-supervise` PASS
+  (302 s), `--selftest-detach-shutdown` PASS (15 s). No `fm-selftest` rows left.
