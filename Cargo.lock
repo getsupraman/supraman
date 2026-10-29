@@ -1716,7 +1716,6 @@ dependencies = [
  "tempfile",
  "theme",
  "tray-icon",
- "unicode-segmentation",
  "util",
  "windows 0.62.2",
 ]
@@ -1806,6 +1805,7 @@ dependencies = [
  "serde",
  "serde_json",
  "theme",
+ "unicode-segmentation",
  "windows 0.62.2",
 ]
 
