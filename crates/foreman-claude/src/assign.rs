@@ -32,11 +32,7 @@ pub fn assign_with(sessions: &[Session], workspace: &Workspace, main_of: impl Fn
 }
 
 /// The repo whose path is `cwd` or an ancestor of it (deepest wins), else the repo owning the
-/// linked worktree `cwd` lies in, found through the worktree's `.git` file.
-pub fn repo_of<'a>(cwd: &Path, workspace: &'a Workspace) -> Option<&'a Repo> {
-    repo_of_with(cwd, workspace, main_repo)
-}
-
+/// linked worktree `cwd` lies in, found through `main_of`.
 fn repo_of_with<'a>(cwd: &Path, workspace: &'a Workspace, main_of: impl Fn(&Path) -> Option<PathBuf>) -> Option<&'a Repo> {
     if workspace.repos.is_empty() {
         return None;
@@ -125,7 +121,7 @@ mod tests {
     }
 
     fn repo_name<'a>(cwd: &Path, p: &'a Workspace) -> Option<&'a str> {
-        repo_of(cwd, p).map(|r| r.name.as_str())
+        repo_of_with(cwd, p, main_repo).map(|r| r.name.as_str())
     }
 
     #[test]
