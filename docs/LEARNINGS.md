@@ -3485,3 +3485,51 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   `cargo test --release --workspace` 658 passed, 0 failed; `--selftest` 10 of 10 PASS in a row (120–131 s; before the merge 4 of 4
   without the mutex, then 8 of 8 with it); `--selftest-supervise` PASS (281 s); `--selftest-detach-shutdown` PASS (13 s);
   0 `fm-selftest` rows.
+
+## 2026-10-29 — m5/44.9 terminal performance and clipboard (audit U7), TERM_PROGRAM=foreman (A-66 decision 2)
+
+- **One paste path (A-13):** `Terminal::paste_clipboard(cx) -> bool` pastes the clipboard's text and returns false
+  when it holds none (an image). Ctrl+V / Ctrl+Shift+V / Shift+Insert (`view/term.rs` `terminal_key`) return false
+  then, so the key reaches the program as before (m5/46). Right-click without a selection (`term_element.rs`
+  `register_mouse_listeners`) now does the same: an image-only clipboard sends the Ctrl+V keystroke through
+  `try_keystroke` instead of doing nothing.
+- **Selection text on demand (A-40):** `Content::selection_text` is gone; `make_content` no longer builds the string on
+  every sync under the term lock. `Terminal::selection_text()` reads it when asked (selftests 6b/6c, the wheel-line
+  helper, unit tests).
+- **Process refresh throttled (A-41):** `PtyProcessInfo::emit_title_changed_if_changed` runs at most once per
+  `REFRESH_INTERVAL` (1 s). A call inside the interval schedules one refresh at its end, so the last output burst is
+  always followed by one. Input with `\r` (`write_input`) calls `refresh_soon`, and the next wakeup refreshes at once.
+  BreadcrumbsChanged (the console title claude sets) is not throttled. 7l over 5 runs: registered 1.1–2.1 s, row
+  marked 2.3–3.2 s.
+- **Theme files parsed once (A-42):** `themes::parse_file` caches each `<home>\themes\*.json` by (modified ms, length).
+  `catalog` and `resolve` still list the folder on each call, so a new or changed file shows up, but an Appearance
+  change no longer re-reads and re-parses every file. The listing still runs on the UI thread. Moving it off means
+  changing `settings_window.rs` (m5/44.11's file), so that is left for later.
+- **Bounded caches (A-44, term/ui parts):** `term_element` `WIDTH_PER_PX` is cleared when it reaches 4096 entries,
+  because a font change leaves the old FontIds' entries behind. `record_cwd_change` keeps one entry per
+  scrollback position (`cwd_at_line` only ever finds the last one). Once the scrollback is full it clears the
+  history, which `cwd_at_line` ignores from then on anyway.
+- **Clipboard tests (A-62):** `test_paste_clipboard_brackets_or_turns_newlines_into_returns` (bracketed paste strips
+  inner ESC; `a\r\nb\n` → `a\rb\r`), `test_paste_clipboard_leaves_an_image_to_the_caller`, `test_copy_trims_trailing_blanks`
+  (the `Copy` event through `sync`; red without `trim_line_ends`: `Some("ab\ncd\t")`). The image-only case is tested on
+  `paste_clipboard`; `terminal_key` needs a FleetView and only maps a false onto `return false`.
+- **TERM_PROGRAM=foreman (A-66):** `insert_terminal_env` sets `TERM_PROGRAM=foreman`, `TERM=xterm-256color`,
+  `COLORTERM=truecolor` and `TERM_PROGRAM_VERSION` (Foreman's version), with no `ZED_TERM`. What claude 2.1.312's bundle
+  does with these (grepped read-only from `claude.exe`):
+  - `ZED_TERM` turns on **strikethrough** (`dDn`: a terminal list ending `…||!!i.WT_SESSION||!!i.ZED_TERM||VTE≥4400`)
+    and **synchronized output** (DEC 2026). For DEC 2026, `Se` is the env fallback ("likely") that the capability
+    probe uses when it gets no answer. Foreman's alacritty answers no XTVERSION (`CSI >0q`), so claude never sends
+    DECRQM 2026 ("DECRQM 2026 not asked (no XTVERSION reply)"), and `deadline()` settles the probe on that "likely".
+    Without `ZED_TERM`, both would be off on Windows (no `WT_SESSION`). Foreman's vte processor honours 2026
+    (`StdSyncHandler`). The tab env therefore sets `CLAUDE_CODE_FORCE_SYNC_OUTPUT=1` and
+    `CLAUDE_CODE_FORCE_STRIKETHROUGH=1`, claude's own overrides, which give the same result.
+  - `"zed"` as TERM_PROGRAM: claude offers `/terminal-setup`, which for zed writes a Shift+Enter binding into
+    `~/.config/zed/keymap.json`. That file is Zed's, and Foreman never reads it. With `foreman` the command is not
+    offered. Shift+Enter in Foreman already sends `\n` (`mappings/keys.rs`).
+  - Unchanged: colours (`COLORTERM=truecolor` → level 3), OSC 8 hyperlinks (neither `zed` nor `foreman` is in claude's
+    list and there is no `WT_SESSION`: off both ways), Alt+V (`chat:imagePaste` is bound per platform, and only
+    iTerm/Apple_Terminal change keys; 7r passed 5/5), the scroll/wheel and keyboard-dialect checks (vscode, mintty,
+    ghostty, iTerm, JetBrains only). The terminal name in claude's telemetry and `/status` reads `foreman`.
+  - Not verified: whether `claude --bg` forwards `CLAUDE_CODE_FORCE_STRIKETHROUGH` to its worker. Its forward list has
+    `TERM_PROGRAM*`, `WT_SESSION` and `ZED_TERM`. Sync output in daemon mode comes from the attaching client's
+    `syncOutput`, which reads the tab env.

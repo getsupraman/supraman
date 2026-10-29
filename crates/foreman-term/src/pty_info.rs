@@ -3,7 +3,11 @@
 
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
@@ -11,6 +15,9 @@ use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 use crate::{Event, Terminal};
+
+/// The shortest gap between two refreshes while output streams.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 pub struct ProcessIdGetter {
@@ -83,6 +90,7 @@ pub(crate) struct PtyProcessInfo {
     last_foreground_pid: Mutex<Option<Pid>>,
     pub(crate) current: RwLock<Option<ProcessInfo>>,
     task: Mutex<Option<Task<()>>>,
+    refreshed_at: Mutex<Option<Instant>>,
 }
 
 impl PtyProcessInfo {
@@ -114,6 +122,7 @@ impl PtyProcessInfo {
             last_foreground_pid: Mutex::new(None),
             current: RwLock::new(None),
             task: Mutex::new(None),
+            refreshed_at: Mutex::new(None),
         }
     }
 
@@ -186,13 +195,28 @@ impl PtyProcessInfo {
         self.load()
     }
 
-    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed
+    /// The next refresh runs without waiting out [`REFRESH_INTERVAL`].
+    pub(crate) fn refresh_soon(&self) {
+        self.refreshed_at.lock().take();
+    }
+
+    /// Updates the cached process info, emitting a [`Event::TitleChanged`] event if the Zed-relevant info has changed;
+    /// at most once per [`REFRESH_INTERVAL`], the last call's refresh deferred to its end.
     pub(crate) fn emit_title_changed_if_changed(self: &Arc<Self>, cx: &mut Context<'_, Terminal>) {
         if self.task.lock().is_some() {
             return;
         }
+        let wait = self
+            .refreshed_at
+            .lock()
+            .map_or(Duration::ZERO, |at| REFRESH_INTERVAL.saturating_sub(at.elapsed()));
         let this = self.clone();
+        let executor = cx.background_executor().clone();
         let change_task = cx.background_executor().spawn(async move {
+            if !wait.is_zero() {
+                executor.timer(wait).await;
+            }
+            *this.refreshed_at.lock() = Some(Instant::now());
             let previous = this.current.read().clone();
             let current = this.load();
             let has_changed = match (previous.as_ref(), current.as_ref()) {
