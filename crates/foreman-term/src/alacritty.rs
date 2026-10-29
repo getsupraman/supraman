@@ -934,12 +934,6 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
         cell: terminal_cell_from_alacritty(ic.cell),
     }));
 
-    let selection_text = if content.selection.is_some() {
-        term.selection_to_string()
-    } else {
-        None
-    };
-
     let grid = term.grid();
     let (last_hovered_word, grid_lines_change) = adjusted_last_hovered_word(grid, last_content);
 
@@ -958,7 +952,6 @@ pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> 
         display_offset: grid.display_offset(),
         columns: grid.columns(),
         screen_lines: grid.screen_lines(),
-        selection_text,
         selection: content
             .selection
             .map(terminal_selection_range_from_alacritty),

@@ -1011,7 +1011,7 @@ pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut Asyn
             window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: none, click_count: 1 }), cx);
         })?;
         sleep(cx, Duration::from_millis(200)).await;
-        let (selected, now) = terminal.read_with(cx, |t, _| (t.last_content().selection_text.clone(), t.grid_extent()));
+        let (selected, now) = terminal.read_with(cx, |t, _| (t.selection_text(), t.grid_extent()));
         if selected.as_deref() == Some(text.as_str()) {
             return Ok((row, text));
         }

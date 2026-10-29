@@ -7,7 +7,7 @@
 
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
-    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent,
+    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
     point, px, size,
@@ -531,6 +531,8 @@ pub fn is_monospace(text_system: &gpui::TextSystem, family: &str) -> bool {
     }
 }
 
+const WIDTH_CACHE_CAP: usize = 4096;
+
 /// Whether `ch` in `cells` cells is painted alone and fitted: the font has no glyph for it (a
 /// fallback font draws it), or its glyph is wider than the cells. ASCII and box drawing never are.
 fn needs_fit(ch: char, cells: usize, font_id: FontId, font_size: Pixels, cell_width: Pixels, cx: &App) -> bool {
@@ -541,6 +543,10 @@ fn needs_fit(ch: char, cells: usize, font_id: FontId, font_size: Pixels, cell_wi
         static WIDTH_PER_PX: RefCell<HashMap<(FontId, char), Option<f32>>> = RefCell::new(HashMap::new());
     }
     let per_px = WIDTH_PER_PX.with_borrow_mut(|cache| {
+        // font changes leave the old fonts' entries behind
+        if cache.len() >= WIDTH_CACHE_CAP && !cache.contains_key(&(font_id, ch)) {
+            cache.clear();
+        }
         *cache.entry((font_id, ch)).or_insert_with(|| {
             (!drawn_by_fallback(cx.text_system(), font_id, ch)).then(|| f32::from(cx.text_system().layout_width(font_id, px(100.), ch)) / 100.)
         })
@@ -713,7 +719,7 @@ fn selection_rects(
 /// As Zed's `TerminalElement::register_mouse_listeners`: while the program has enabled mouse
 /// reporting (and Shift is not held) the Terminal encodes presses, motion and releases for the
 /// PTY; otherwise a left drag selects, double-click a word, triple-click a line, and a right
-/// click copies the selection or, without one, pastes the clipboard.
+/// click copies the selection or, without one, pastes the clipboard as Ctrl+V does.
 fn register_mouse_listeners(terminal: &Entity<Terminal>, hitbox: &Hitbox, window: &mut Window) {
     let mode = MouseInputMode::ReportToTerminal;
     window.on_mouse_event({
@@ -728,8 +734,8 @@ fn register_mouse_listeners(terminal: &Entity<Terminal>, hitbox: &Hitbox, window
                 } else if e.button == MouseButton::Right {
                     if terminal.last_content().selection.is_some() {
                         terminal.copy(Some(false));
-                    } else if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                        terminal.paste(&text);
+                    } else if !terminal.paste_clipboard(cx) {
+                        terminal.try_keystroke(&Keystroke::parse("ctrl-v").unwrap(), false);
                     }
                 }
                 cx.notify();

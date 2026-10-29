@@ -127,11 +127,11 @@ impl FleetView {
         };
         match chord {
             Chord::Copy => terminal.update(cx, |t, _| t.copy(Some(false))),
-            Chord::Paste => match cx.read_from_clipboard().and_then(|c| c.text()) {
-                Some(text) => terminal.update(cx, |t, _| t.paste(&text)),
-                // an image on the clipboard: Ctrl+V goes to the program as ^V
-                None => return false,
-            },
+            Chord::Paste => {
+                if !terminal.update(cx, |t, cx| t.paste_clipboard(cx)) {
+                    return false;
+                }
+            }
             Chord::Find => self.open_find(tab_id, window, cx),
             Chord::FontSize(delta) => self.set_term_font_size(step_font_size(self.term_font_size, delta), cx),
             Chord::FontReset => self.set_term_font_size(FONT_SIZE, cx),

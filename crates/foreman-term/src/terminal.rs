@@ -503,7 +503,6 @@ pub struct Content {
     pub display_offset: usize,
     pub columns: usize,
     pub screen_lines: usize,
-    pub selection_text: Option<String>,
     pub selection: Option<SelectionRange>,
     pub cursor: Cursor,
     /// The cursor style blinks: the default one does, a program's DECSCUSR may make it steady.
@@ -540,7 +539,6 @@ impl Default for Content {
             display_offset: Default::default(),
             columns: Default::default(),
             screen_lines: Default::default(),
-            selection_text: Default::default(),
             selection: Default::default(),
             cursor: Cursor {
                 shape: CursorShape::Block,
@@ -662,17 +660,17 @@ const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
-/// Inserts Zed-specific environment variables for terminal sessions.
-/// Used by both local terminals and remote terminals (via SSH).
-pub fn insert_zed_terminal_env(
+pub fn insert_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
 ) {
-    env.insert("ZED_TERM".to_string(), "true".to_string());
-    env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+    env.insert("TERM_PROGRAM".to_string(), "foreman".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
+    // claude gives synchronized output and strikethrough only to terminals it knows; see LEARNINGS m5/44.9.
+    env.insert("CLAUDE_CODE_FORCE_SYNC_OUTPUT".to_string(), "1".to_string());
+    env.insert("CLAUDE_CODE_FORCE_STRIKETHROUGH".to_string(), "1".to_string());
 }
 
 ///Upward flowing events, for changing the title and such
@@ -1136,7 +1134,7 @@ impl TerminalBuilder {
                     .or_insert_with(|| "en_US.UTF-8".to_string());
             }
 
-            insert_zed_terminal_env(&mut env, &version);
+            insert_terminal_env(&mut env, &version);
 
             #[derive(Default)]
             struct ShellParams {
@@ -2323,6 +2321,11 @@ impl Terminal {
                 term.history_size(),
             ));
         }
+        if input.contains(&b'\r')
+            && let TerminalType::Pty { info, .. } = &self.terminal_type
+        {
+            info.refresh_soon();
+        }
 
         self.events.push_back(InternalEvent::Scroll(Scroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
@@ -2489,6 +2492,15 @@ impl Terminal {
         self.input(paste_text.into_bytes());
     }
 
+    /// Pastes the clipboard's text; false when it holds none (an image), and the caller sends ^V instead.
+    pub fn paste_clipboard(&mut self, cx: &App) -> bool {
+        let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) else {
+            return false;
+        };
+        self.paste(&text);
+        true
+    }
+
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
@@ -2518,6 +2530,10 @@ impl Terminal {
         let term = self.term.lock_unfair();
         let content = term.renderable_content();
         f(RenderableCells::new(content.display_iter))
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        selection_text(&self.term.lock_unfair())
     }
 
     pub fn get_content(&self) -> String {
@@ -2983,10 +2999,20 @@ impl Terminal {
             return;
         }
 
-        let scrollback_position = self.pending_cwd_boundary.take().unwrap_or_else(|| {
+        let (scrollback_position, history_size) = {
             let term = self.term.lock_unfair();
-            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size())
-        });
+            let at = self.pending_cwd_boundary.take().unwrap_or_else(|| {
+                Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size())
+            });
+            (at, term.history_size())
+        };
+        // cwd_at_line no longer reads the history once the scrollback is full.
+        if history_size >= self.term_config.scrolling_history {
+            self.cwd_history.clear();
+            return;
+        }
+        self.cwd_history
+            .retain(|entry| entry.scrollback_position != scrollback_position);
         self.cwd_history.push(CwdHistoryEntry {
             scrollback_position,
             working_directory: new_working_directory,
@@ -4095,7 +4121,7 @@ mod tests {
             left_mouse_drag_to(terminal, to, cx);
             left_mouse_up_at(terminal, to, cx);
             terminal.sync(window, cx);
-            assert_eq!(terminal.last_content.selection_text.as_deref(), Some(shown.as_str()));
+            assert_eq!(terminal.selection_text().as_deref(), Some(shown.as_str()));
         });
     }
 
@@ -4977,7 +5003,7 @@ mod tests {
                 );
                 terminal.last_content = make_content(&term, &terminal.last_content);
             }
-            assert_eq!(terminal.last_content.selection_text.as_deref(), Some("old"));
+            assert_eq!(terminal.selection_text().as_deref(), Some("old"));
             terminal.events.push_back(InternalEvent::Copy(None));
             terminal
                 .events
@@ -4995,7 +5021,7 @@ mod tests {
             assert_eq!(terminal.last_content.terminal_bounds, bounds);
             assert_eq!(terminal.viewport_lines(), bounds.num_lines());
             assert!(terminal.matches.is_empty());
-            assert!(terminal.last_content.selection_text.is_none());
+            assert!(terminal.selection_text().is_none());
             assert!(terminal.events.is_empty());
             assert!(
                 !terminal
@@ -5224,6 +5250,62 @@ mod tests {
                 cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
             assert_eq!(clipboard_text.as_deref(), Some("original"));
         }
+    }
+
+    #[gpui::test]
+    async fn test_paste_clipboard_brackets_or_turns_newlines_into_returns(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"");
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("a\r\nb\n".to_string())));
+        terminal.update(cx, |terminal, cx| {
+            assert!(terminal.paste_clipboard(cx));
+            assert_eq!(terminal.take_input_log(), [b"a\rb\r".to_vec()]);
+        });
+
+        let terminal = init_terminal_test(cx, b"\x1b[?2004h");
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("x\x1b[201~y".to_string())));
+        terminal.update(cx, |terminal, cx| {
+            assert!(terminal.paste_clipboard(cx));
+            assert_eq!(terminal.take_input_log(), [b"\x1b[200~x[201~y\x1b[201~".to_vec()]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_paste_clipboard_leaves_an_image_to_the_caller(cx: &mut TestAppContext) {
+        let terminal = init_terminal_test(cx, b"");
+        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![0x89, b'P', b'N', b'G']);
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_image(&image)));
+        terminal.update(cx, |terminal, cx| {
+            assert!(!terminal.paste_clipboard(cx));
+            assert!(terminal.take_input_log().is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_copy_trims_trailing_blanks(cx: &mut TestAppContext) {
+        let (terminal, cx) = init_terminal_test_with_window(cx, b"ab   \r\ncd\t ");
+        cx.run_until_parked();
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            alacritty::set_selection(
+                &mut terminal.term.lock(),
+                Some(&Selection::simple_range(Range::new(Point::new(0, 0), Point::new(1, 5)))),
+            );
+            terminal.copy(None);
+            terminal.sync(window, cx);
+        });
+        let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(copied.as_deref(), Some("ab\ncd"));
+    }
+
+    #[test]
+    fn test_terminal_env_names_foreman_not_zed() {
+        let mut env = HashMap::default();
+        insert_terminal_env(&mut env, &"1.2.3");
+        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("foreman"));
+        assert_eq!(env.get("TERM_PROGRAM_VERSION").map(String::as_str), Some("1.2.3"));
+        assert_eq!(env.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(env.get("CLAUDE_CODE_FORCE_SYNC_OUTPUT").map(String::as_str), Some("1"));
+        assert_eq!(env.get("CLAUDE_CODE_FORCE_STRIKETHROUGH").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("ZED_TERM"));
     }
 
     mod hyperlinks {
@@ -6414,6 +6496,25 @@ mod tests {
         let entry = &terminal.cwd_history[0];
         assert_eq!(entry.scrollback_position, 0);
         assert_eq!(entry.working_directory, working_directory);
+    }
+
+    #[test]
+    fn test_record_cwd_change_keeps_one_entry_per_position_and_none_at_scrollback_cap() {
+        let mut terminal = make_display_only_terminal();
+        for dir in ["/a", "/b", "/c"] {
+            terminal.record_cwd_change(PathBuf::from(dir));
+        }
+        assert_eq!(
+            terminal.cwd_history,
+            vec![CwdHistoryEntry {
+                scrollback_position: 0,
+                working_directory: PathBuf::from("/c"),
+            }]
+        );
+
+        terminal.term_config.scrolling_history = 0;
+        terminal.record_cwd_change(PathBuf::from("/d"));
+        assert!(terminal.cwd_history.is_empty());
     }
 
     #[test]

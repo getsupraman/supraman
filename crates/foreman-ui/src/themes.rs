@@ -4,10 +4,10 @@
 //! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -77,7 +77,7 @@ pub struct ZedThemeFamily {
     pub themes: Vec<ZedTheme>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ZedTheme {
     #[serde(default)]
     pub name: String,
@@ -550,14 +550,37 @@ pub fn catalog(home: Option<&Path>) -> Catalog {
         errors: Vec::new(),
     };
     for (file, family) in theme_files(home, &mut catalog.errors) {
-        for theme in family.themes {
-            catalog.entries.push(Entry { name: theme.name, file: Some(file.clone()) });
+        for theme in &family.themes {
+            catalog.entries.push(Entry { name: theme.name.clone(), file: Some(file.clone()) });
         }
     }
     catalog
 }
 
-fn theme_files(home: Option<&Path>, errors: &mut Vec<String>) -> Vec<(PathBuf, ZedThemeFamily)> {
+/// A theme file's modification time and length, and what it parsed to.
+type Parsed = (i64, u64, Result<Arc<ZedThemeFamily>, String>);
+
+/// Each theme file parsed once, again only when its time or length changes.
+static PARSED: Mutex<Option<HashMap<PathBuf, Parsed>>> = Mutex::new(None);
+
+fn parse_file(file: &Path) -> Result<Arc<ZedThemeFamily>, String> {
+    let meta = std::fs::metadata(file).map_err(|e| e.to_string())?;
+    let stamp = (foreman_core::time::modified_ms(&meta), meta.len());
+    let mut parsed = PARSED.lock().unwrap_or_else(|e| e.into_inner());
+    let parsed = parsed.get_or_insert_default();
+    if let Some((at, len, family)) = parsed.get(file)
+        && (*at, *len) == stamp
+    {
+        return family.clone();
+    }
+    let family = std::fs::read_to_string(file)
+        .map_err(|e| e.to_string())
+        .and_then(|t| parse_family(&t).map(Arc::new).map_err(|e| e.to_string()));
+    parsed.insert(file.to_owned(), (stamp.0, stamp.1, family.clone()));
+    family
+}
+
+fn theme_files(home: Option<&Path>, errors: &mut Vec<String>) -> Vec<(PathBuf, Arc<ZedThemeFamily>)> {
     let Some(Ok(dir)) = home.map(|h| std::fs::read_dir(themes_dir(h))) else {
         return Vec::new();
     };
@@ -570,7 +593,7 @@ fn theme_files(home: Option<&Path>, errors: &mut Vec<String>) -> Vec<(PathBuf, Z
         .into_iter()
         .filter_map(|file| {
             let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            match std::fs::read_to_string(&file).map_err(|e| e.to_string()).and_then(|t| parse_family(&t).map_err(|e| e.to_string())) {
+            match parse_file(&file) {
                 Ok(family) => Some((file, family)),
                 Err(e) => {
                     errors.push(format!("{name}: {e}"));
@@ -603,7 +626,7 @@ pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>
         let mut errors = Vec::new();
         let found = theme_files(home, &mut errors)
             .into_iter()
-            .find_map(|(_, family)| family.themes.into_iter().find(|t| t.name == name));
+            .find_map(|(_, family)| family.themes.iter().find(|t| t.name == name).cloned());
         match found {
             Some(zed) => {
                 let loaded = from_zed(&one_dark(), &zed);
@@ -866,6 +889,22 @@ mod tests {
         assert_eq!(gone.theme.name.as_ref(), DARK_MODERN);
         assert!(gone.problem.unwrap().contains("Gone"));
         assert_eq!(resolve(None, TerminalColors::Theme, None).theme.name.as_ref(), DEFAULT_THEME);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_theme_file_is_parsed_again_only_when_it_changes() {
+        let home = std::env::temp_dir().join(format!("foreman-themes-cache-{}", std::process::id()));
+        let dir = themes_dir(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("c.json");
+        std::fs::write(&file, r#"{"themes":[{"name":"Cee"}]}"#).unwrap();
+        let first = parse_file(&file).unwrap();
+        assert!(Arc::ptr_eq(&first, &parse_file(&file).unwrap()));
+
+        std::fs::write(&file, r#"{"themes":[{"name":"Cee 2"}]}"#).unwrap();
+        let names: Vec<String> = catalog(Some(&home)).entries.into_iter().map(|e| e.name).collect();
+        assert_eq!(names.last().map(String::as_str), Some("Cee 2"));
         std::fs::remove_dir_all(&home).unwrap();
     }
 
