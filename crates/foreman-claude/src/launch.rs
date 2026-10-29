@@ -2,11 +2,12 @@
 //! `docs/LEARNINGS.md` (m1/5 trust refusal, m2/1 launcher probes).
 
 use std::ffi::OsString;
-use std::io::{ErrorKind, Read};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use foreman_core::process::{self, Kill, Output, RunError};
 
 use crate::{ClaudeError, Result, Session, parse};
 
@@ -42,18 +43,8 @@ impl LaunchSpec {
         }
     }
 
-    /// The decided token route (m2/1), one file per session (m3/2): `<dir>/workstate-<agent>.json` holds
-    /// the role's token and the session's identity headers (owner-only ACL, see
-    /// [`write_session_mcp_config`]) and the session gets it via `--mcp-config <file> --strict-mcp-config`,
-    /// so the user-scope `workstate` is never loaded. `dir` is `<FOREMAN_HOME>/mcp`; the caller reads `token`.
-    pub fn with_session_token(mut self, dir: &Path, identity: &SessionIdentity, url: &str, token: &str) -> std::io::Result<Self> {
-        self.mcp_config = Some(write_session_mcp_config(dir, identity, url, token)?);
-        self.strict_mcp_config = true;
-        Ok(self)
-    }
-
-    /// [`LaunchSpec::with_session_token`] for a per-session `wss_` token (mint/7): the file holds that
-    /// token and no identity headers, since the token's principal carries the name and role and the
+    /// A per-session `wss_` token (mint/7) in an owner-only `<dir>/workstate-<agent>.json`, loaded with
+    /// `--mcp-config <file> --strict-mcp-config`; the token's principal carries the name and role, and the
     /// mint stored the rest on WorkState's session row.
     pub fn with_minted_token(mut self, dir: &Path, agent: &str, url: &str, token: &str) -> std::io::Result<Self> {
         self.mcp_config = Some(write_mcp_config(dir, agent, url, token, &[])?);
@@ -127,23 +118,6 @@ pub struct SessionIdentity {
     pub foreman_role: String,
 }
 
-impl SessionIdentity {
-    /// The headers that carry a value, in a fixed order.
-    pub fn headers(&self) -> Vec<(&'static str, String)> {
-        [
-            ("X-WorkState-Agent", Some(&self.agent)),
-            ("X-WorkState-Session", self.session.as_ref()),
-            ("X-WorkState-Launched-By", Some(&self.launched_by)),
-            ("X-WorkState-Origin", Some(&self.origin)),
-            ("X-WorkState-Cwd", Some(&self.cwd)),
-            ("X-WorkState-Foreman-Role", Some(&self.foreman_role)),
-        ]
-        .into_iter()
-        .filter_map(|(k, v)| v.filter(|v| !v.is_empty()).map(|v| (k, v.clone())))
-        .collect()
-    }
-}
-
 /// The `workstate` server entry with the token and `headers` written in, shaped like Skills' `plugin.mcp.json`.
 pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
     let mut map = serde_json::Map::new();
@@ -163,15 +137,9 @@ pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) 
     .to_string()
 }
 
-/// Writes `<dir>/workstate-<agent>.json`. The file is created empty, restricted to the current user
-/// (Windows: inheritance removed, the user alone granted full control; unix: 0600), and only then
-/// filled, so the token is never readable by anyone else. Refuses an agent name that is not a plain
-/// file name (letters, digits, `-`, `_`, `.`).
-pub fn write_session_mcp_config(dir: &Path, identity: &SessionIdentity, url: &str, token: &str) -> std::io::Result<PathBuf> {
-    write_mcp_config(dir, &identity.agent, url, token, &identity.headers())
-}
-
-/// [`write_session_mcp_config`] with explicit `headers` beside the `Authorization` one.
+/// Writes `<dir>/workstate-<agent>.json` with `headers` beside the `Authorization` one. The file is
+/// created empty, restricted to the current user (Windows: inheritance removed, the user alone granted
+/// full control; unix: 0600), and only then filled, so the token is never readable by anyone else.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
     std::fs::create_dir_all(dir)?;
@@ -200,20 +168,24 @@ pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
+const ICACLS_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
-    let out = crate::no_window(&mut Command::new("icacls"))
-        .arg(path)
-        .args(["/inheritance:r", "/grant:r", &format!("{user}:F")])
-        .stdin(Stdio::null())
-        .output()?;
-    if out.status.success() {
+    let out = process::run(
+        process::command("icacls").arg(path).args(["/inheritance:r", "/grant:r", &format!("{user}:F")]),
+        ICACLS_TIMEOUT,
+        Kill::Tree,
+    )
+    .map_err(|e| std::io::Error::other(format!("icacls {}: {e}", path.display())))?;
+    if out.success() {
         Ok(())
     } else {
         Err(std::io::Error::other(format!(
             "icacls {}: {}",
             path.display(),
-            String::from_utf8_lossy(&out.stdout).trim()
+            out.stdout.trim()
         )))
     }
 }
@@ -222,14 +194,6 @@ fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-/// What a finished `claude` process left behind.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Output {
-    pub code: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
 }
 
 /// The `claude` program. Injectable so tests run a fake.
@@ -307,7 +271,11 @@ impl Claude {
     }
 
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
-        parse(&self.simple(&["agents", "--json", "--all"])?)
+        self.list_sessions_within(WRITE_TIMEOUT)
+    }
+
+    pub(crate) fn list_sessions_within(&self, timeout: Duration) -> Result<Vec<Session>> {
+        parse(&self.run_within(&["agents", "--json", "--all"], timeout)?)
     }
 
     /// Every row named `name`, newest first. Polls until one exists or `within` passes, because the
@@ -325,7 +293,16 @@ impl Claude {
     }
 
     fn simple(&self, args: &[&str]) -> Result<String> {
-        let out = self.exec(args.iter().map(OsString::from).collect(), None, &[], WRITE_TIMEOUT)?;
+        self.run_within(args, WRITE_TIMEOUT)
+    }
+
+    pub(crate) fn run_within(&self, args: &[&str], timeout: Duration) -> Result<String> {
+        self.run_in(args, None, timeout)
+    }
+
+    /// `claude <args>` from `cwd`, no flag of Foreman's added: stdout, or the [`classify`]d failure.
+    pub fn run_in(&self, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
+        let out = self.exec(args.iter().map(OsString::from).collect(), cwd, &[], timeout)?;
         match classify(&out) {
             Some(e) => Err(e),
             None => Ok(out.stdout),
@@ -338,40 +315,18 @@ impl Claude {
             self.program.display(),
             args.first().map(|a| a.to_string_lossy()).unwrap_or_default()
         );
-        let mut cmd = Command::new(&self.program);
-        crate::no_window(&mut cmd).args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut cmd = process::command(&self.program);
+        cmd.args(&args);
         if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }
         for (k, v) in env {
             cmd.env(k, v);
         }
-        let mut child = cmd.spawn().map_err(|source| match source.kind() {
-            ErrorKind::NotFound => ClaudeError::NotInstalled,
-            _ => ClaudeError::Spawn {
-                command: command.clone(),
-                source,
-            },
-        })?;
-        let stdout = drain(child.stdout.take());
-        let stderr = drain(child.stderr.take());
-        let deadline = Instant::now() + timeout;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ClaudeError::Timeout { command, after: timeout });
-                }
-                Err(source) => return Err(ClaudeError::Spawn { command, source }),
-            }
-        };
-        Ok(Output {
-            code: status.code(),
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
+        process::run(&mut cmd, timeout, Kill::Child).map_err(|e| match e {
+            RunError::Spawn(source) if source.kind() == ErrorKind::NotFound => ClaudeError::NotInstalled,
+            RunError::Spawn(source) => ClaudeError::Spawn { command, source },
+            RunError::Timeout(after) => ClaudeError::Timeout { command, after },
         })
     }
 }
@@ -450,16 +405,6 @@ fn trust_refusal(text: &str) -> Option<PathBuf> {
     Some(PathBuf::from(dir.trim()))
 }
 
-fn drain(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        String::from_utf8_lossy(&buf).into_owned()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,24 +464,14 @@ mod tests {
         assert_eq!(strs(&resume_argv("1234-uuid", Some("go on"))), ["--bg", "--resume", "1234-uuid", "--", "go on"]);
     }
 
-    fn identity() -> SessionIdentity {
-        SessionIdentity {
-            agent: "fm-demo-alpha".into(),
-            session: None,
-            launched_by: "foreman/demo".into(),
-            origin: "foreman/demo/Alpha".into(),
-            cwd: r"C:\demo\Alpha".into(),
-            foreman_role: "repo".into(),
-        }
-    }
-
     #[test]
-    fn session_token_lands_in_an_owner_only_file_per_session_not_in_argv() {
+    fn minted_token_lands_in_an_owner_only_file_per_session_not_in_argv() {
         let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
         let spec = LaunchSpec::new("fm-demo-alpha", "C:\\", "hi")
-            .with_session_token(&dir.path().join("mcp"), &identity(), "http://127.0.0.1:5290/mcp", "fake-token")
+            .with_minted_token(&mcp, "fm-demo-alpha", "https://ws.example/mcp", "fake-token")
             .unwrap();
-        let path = dir.path().join("mcp").join("workstate-fm-demo-alpha.json");
+        let path = mcp.join("workstate-fm-demo-alpha.json");
         assert_eq!(spec.mcp_config.as_deref(), Some(path.as_path()));
         assert!(spec.strict_mcp_config);
         assert!(spec.env.is_empty());
@@ -545,41 +480,28 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let ws = &v["mcpServers"]["workstate"];
         assert_eq!(ws["type"], "http");
-        assert_eq!(ws["url"], "http://127.0.0.1:5290/mcp");
-        assert_eq!(mcp_config_url(&dir.path().join("mcp"), "fm-demo-alpha").as_deref(), Some("http://127.0.0.1:5290/mcp"));
-        assert_eq!(mcp_config_url(&dir.path().join("mcp"), "fm-demo-beta"), None);
-        assert_eq!(
-            ws["headers"],
-            serde_json::json!({
-                "Authorization": "Bearer fake-token",
-                "X-WorkState-Agent": "fm-demo-alpha",
-                "X-WorkState-Launched-By": "foreman/demo",
-                "X-WorkState-Origin": "foreman/demo/Alpha",
-                "X-WorkState-Cwd": r"C:\demo\Alpha",
-                "X-WorkState-Foreman-Role": "repo",
-            }),
-            "no X-WorkState-Session while the uuid is unknown"
-        );
+        assert_eq!(ws["url"], "https://ws.example/mcp");
+        assert_eq!(ws["headers"], serde_json::json!({ "Authorization": "Bearer fake-token" }));
+        assert_eq!(mcp_config_url(&mcp, "fm-demo-alpha").as_deref(), Some("https://ws.example/mcp"));
+        assert_eq!(mcp_config_url(&mcp, "fm-demo-beta"), None);
         #[cfg(windows)]
         {
-            let acl = Command::new("icacls").arg(&path).output().unwrap();
+            let acl = std::process::Command::new("icacls").arg(&path).output().unwrap();
             let acl = String::from_utf8_lossy(&acl.stdout);
             let user = std::env::var("USERNAME").unwrap();
             let grants: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
             assert_eq!(grants.len(), 1, "{acl}");
             assert!(grants[0].contains(&format!("{user}:(F)")), "{acl}");
         }
-        let other = SessionIdentity { agent: "fm-demo-beta".into(), session: Some("u-1".into()), ..identity() };
-        let path_b = write_session_mcp_config(&dir.path().join("mcp"), &other, "http://x/mcp", "fake-token").unwrap();
+        let path_b = write_mcp_config(&mcp, "fm-demo-beta", "http://x/mcp", "fake-token", &[("X-Extra", "1".into())]).unwrap();
         assert_ne!(path_b, path, "one file per session");
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path_b).unwrap()).unwrap();
-        assert_eq!(v["mcpServers"]["workstate"]["headers"]["X-WorkState-Session"], "u-1");
+        assert_eq!(v["mcpServers"]["workstate"]["headers"]["X-Extra"], "1");
         for bad in ["", "..", "../x", r"a\b", "a b"] {
-            let id = SessionIdentity { agent: bad.into(), ..identity() };
-            assert!(write_session_mcp_config(&dir.path().join("mcp"), &id, "u", "fake-token").is_err(), "{bad:?}");
-            assert!(mcp_config_path(&dir.path().join("mcp"), bad).is_err(), "{bad:?}");
+            assert!(write_mcp_config(&mcp, bad, "u", "fake-token", &[]).is_err(), "{bad:?}");
+            assert!(mcp_config_path(&mcp, bad).is_err(), "{bad:?}");
         }
-        assert_eq!(mcp_config_path(&dir.path().join("mcp"), "fm-demo-beta").unwrap(), path_b);
+        assert_eq!(mcp_config_path(&mcp, "fm-demo-beta").unwrap(), path_b);
     }
 
     fn out(code: i32, stdout: &str, stderr: &str) -> Output {

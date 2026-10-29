@@ -64,15 +64,9 @@ pub fn git_repo(dir: &Path) -> Option<MintRepo> {
 
 /// `git -C <dir> <args>`: trimmed stdout when it succeeds and prints something.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = foreman_claude::no_window(&mut std::process::Command::new("git"))
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (out.status.success() && !text.is_empty()).then_some(text)
+    let out = foreman_core::process::git(dir, args).ok()?;
+    let text = out.stdout.trim().to_string();
+    (out.success() && !text.is_empty()).then_some(text)
 }
 
 /// The `201` of a mint. `token` is shown once; `Debug` never prints it.

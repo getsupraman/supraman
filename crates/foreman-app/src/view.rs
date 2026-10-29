@@ -580,13 +580,13 @@ impl FleetView {
                 };
                 // an interactive session closed outside Foreman: poll when its process ends (m5/28), not at the
                 // end of the wait; a pid this app cannot open is never watched
-                let watched: Vec<u32> = pids.into_iter().filter(|&pid| process_alive(pid)).collect();
+                let watched: Vec<u32> = pids.into_iter().filter(|&pid| foreman_core::process::alive(pid)).collect();
                 let next = Instant::now() + REFRESH_EVERY;
                 let mut slices = 0u32;
                 while Instant::now() < next && !woken.swap(false, Ordering::SeqCst) {
                     executor.timer(Duration::from_millis(50)).await;
                     slices += 1;
-                    if slices % 5 == 0 && watched.iter().any(|&pid| !process_alive(pid)) {
+                    if slices % 5 == 0 && watched.iter().any(|&pid| !foreman_core::process::alive(pid)) {
                         break;
                     }
                 }
@@ -1965,7 +1965,7 @@ impl FleetView {
                 let exited = this
                     .read_with(cx, |this, _| this.tab(id).is_none_or(|t| t.exited))
                     .unwrap_or(true);
-                if exited || !pid.is_some_and(process_alive) {
+                if exited || !pid.is_some_and(foreman_core::process::alive) {
                     this.update(cx, |this, cx| this.remove_tab(id, cx)).ok();
                     return;
                 }
@@ -2532,28 +2532,6 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
             Some((tab, entry.session_id?))
         })
         .collect()
-}
-
-#[cfg(windows)]
-pub fn process_alive(pid: u32) -> bool {
-    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    unsafe {
-        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return false;
-        };
-        let mut code = 0u32;
-        let ok = GetExitCodeProcess(handle, &mut code).is_ok();
-        let _ = CloseHandle(handle);
-        ok && code == STILL_ACTIVE.0 as u32
-    }
-}
-
-#[cfg(not(windows))]
-pub fn process_alive(_pid: u32) -> bool {
-    false
 }
 
 #[cfg(test)]

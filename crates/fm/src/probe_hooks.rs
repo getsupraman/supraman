@@ -11,11 +11,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use foreman_claude::{Claude, LaunchSpec};
+use foreman_core::process::{self, Kill};
 use foreman_core::{Event, EventReader, role_tag};
 
 use crate::probe::{Fleet, ROW_WITHIN, describe, hex6, mkdir, wait_until_stopped, cargo_root, write, yes};
@@ -250,19 +250,21 @@ fn manual_compact(setup: &Setup, cwd: &Path, session_id: &str, claude: &Claude, 
     wait_until_stopped(claude, name)?;
     let spec = setup.spec(name.to_string(), cwd, "", &[]);
     let started = Instant::now();
-    let out = Command::new(&claude.program)
-        .args(["--resume", session_id, "-p", "/compact", "--plugin-dir"])
-        .arg(&setup.plugin)
-        .args(&spec.extra_args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("claude -p /compact: {e}"))?;
+    let out = process::run(
+        process::command(&claude.program)
+            .args(["--resume", session_id, "-p", "/compact", "--plugin-dir"])
+            .arg(&setup.plugin)
+            .args(&spec.extra_args)
+            .current_dir(cwd),
+        TURN_WITHIN,
+        Kill::Child,
+    )
+    .map_err(|e| format!("claude -p /compact: {e}"))?;
     let mut log = Log::new(&setup.home);
     log.wait(session_id, Duration::from_secs(5), |es| auto_or_manual(es, "manual"));
     println!(
         "  manual /compact: exit {:?} in {:.1}s | {}",
-        out.status.code(),
+        out.code,
         started.elapsed().as_secs_f32(),
         summary(log.of(session_id))
     );

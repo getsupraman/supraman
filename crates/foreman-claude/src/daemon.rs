@@ -5,10 +5,9 @@
 //! then starts a service of its own, which loses the lock race to the running one, and gives up after
 //! 45 s with "Couldn't reach the background service". Nothing a child's flags or console change fixes.
 
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
+
+use foreman_core::process::{self, Kill};
 
 /// What `claude` prints when its `--bg` cannot connect to the service (2.1.311).
 pub const UNREACHABLE: &str = "Couldn't reach the background service";
@@ -63,21 +62,9 @@ pub fn daemon_mismatch() -> Option<String> {
 
 /// One `claude daemon status`, read-only: it never starts or stops the service.
 pub fn daemon_status() -> DaemonReach {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let out = crate::no_window(&mut Command::new("claude"))
-            .args(["daemon", "status"])
-            .stdin(Stdio::null())
-            .output();
-        let _ = tx.send(out);
-    });
-    match rx.recv_timeout(STATUS_TIMEOUT) {
-        Ok(Ok(out)) => parse_daemon_status(&format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        )),
-        _ => DaemonReach::Unknown,
+    match process::run(process::command("claude").args(["daemon", "status"]), STATUS_TIMEOUT, Kill::Child) {
+        Ok(out) => parse_daemon_status(&format!("{}\n{}", out.stdout, out.stderr)),
+        Err(_) => DaemonReach::Unknown,
     }
 }
 
@@ -115,6 +102,9 @@ pub fn is_elevated() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::process::{Command, Stdio};
+    use std::thread;
+
     use super::*;
 
     /// 2.1.311 from an elevated shell, verbatim but for the paths.

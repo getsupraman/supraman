@@ -1,9 +1,6 @@
-use std::io::{ErrorKind, Read};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::{ClaudeError, Result, Session, parse};
+use crate::{Claude, ClaudeError, Result, Session};
 
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
 /// The oldest claude CLI Foreman runs on (docs/RELEASE.md): every CLI fact it relies on (`--bg`, the
@@ -46,11 +43,11 @@ fn dotted((major, minor, patch): (u32, u32, u32)) -> String {
 
 /// One `claude agents --json --all` process: interactive and background, live and stopped.
 pub fn list_sessions() -> Result<Vec<Session>> {
-    parse(&run(&["agents", "--json", "--all"], LIST_TIMEOUT)?)
+    Claude::default().list_sessions_within(LIST_TIMEOUT)
 }
 
 pub fn cli_version() -> Result<ClaudeVersion> {
-    parse_version(&run(&["--version"], LIST_TIMEOUT)?)
+    parse_version(&Claude::default().run_within(&["--version"], LIST_TIMEOUT)?)
 }
 
 pub fn check_supported() -> Result<ClaudeVersion> {
@@ -83,72 +80,6 @@ pub fn check_version(version: &ClaudeVersion) -> Result<()> {
             minimum: dotted(MIN_VERSION),
         })
     }
-}
-
-/// A console child of the app gets no console window of its own: Foreman has no console to share
-/// when started from Explorer (m5/22), and every `claude`, `git` and `icacls` would flash one.
-pub fn no_window(command: &mut Command) -> &mut Command {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt as _;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command
-}
-
-fn run(args: &[&str], timeout: Duration) -> Result<String> {
-    let command = format!("claude {}", args.join(" "));
-    let mut child = no_window(&mut Command::new("claude"))
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|source| match source.kind() {
-            ErrorKind::NotFound => ClaudeError::NotInstalled,
-            _ => ClaudeError::Spawn {
-                command: command.clone(),
-                source,
-            },
-        })?;
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ClaudeError::Timeout {
-                    command,
-                    after: timeout,
-                });
-            }
-            Err(source) => return Err(ClaudeError::Spawn { command, source }),
-        }
-    };
-    let stdout = stdout.join().unwrap_or_default();
-    if !status.success() {
-        return Err(ClaudeError::Failed {
-            command,
-            status: status.to_string(),
-            stderr: stderr.join().unwrap_or_default().trim().to_string(),
-        });
-    }
-    Ok(stdout)
-}
-
-fn drain(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        String::from_utf8_lossy(&buf).into_owned()
-    })
 }
 
 #[cfg(test)]

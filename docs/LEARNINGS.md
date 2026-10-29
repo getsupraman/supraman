@@ -3275,3 +3275,45 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   FAIL at step 7c "window not found" (F-06b), run 1 FAIL at 98 s, step not captured, run 8 PASS;
   `--selftest-supervise` PASS (327 s); `--selftest-detach-shutdown` PASS (16 s); 0 `fm-selftest` rows from
   this worktree (4 listed belong to m5-44-5, left alone).
+
+## 2026-10-29 — m5/44.5 one process helper in foreman-core (audit U4)
+
+- **`foreman_core::process`:** `command(program)` (CREATE_NO_WINDOW), `run(cmd, timeout, Kill)` (stdin
+  null, both pipes drained on threads, exit code + stdout + stderr, `RunError::{Spawn, Timeout}`),
+  `git(dir, args)` (30 s), `shell_execute(verb, target, args, cwd)` (ShellExecuteW, `Err(code)`),
+  `started(pid)` / `alive(pid)`. Every spawn outside the PTY and the test modules goes through it: the
+  claude runner (`Claude::exec`), the free `list_sessions`/`cli_version`, `daemon_status`, `icacls`, mint's
+  `git`, the fm probes, the selftest launch/stop/rm, `git init`, `fm` and the screenshot script, the
+  sign-in browser, the elevation hand-off's `runas`, and Open folder (ShellExecute instead of a bare
+  `explorer.exe`). `foreman_claude::no_window`, `view::process_alive` and peer's private
+  `process_start` are gone; `peer::started` re-exports core's.
+- **Tree kill, but not for claude:** `Kill::Tree` puts the child in a job object (no kill-on-close: a
+  normal exit leaves descendants running) and `TerminateJobObject`s it on timeout. The claude background
+  service is a descendant of the `claude --bg` that started it (measured: the daemon's parent pid is a
+  gone `claude --bg`), so a tree kill of a timed-out `--bg` would kill the service and every session in
+  it. Every `claude` call therefore uses `Kill::Child`, as before.
+- **`pwsh` here is a Store app-execution alias** (`%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`): the
+  real pwsh is not a descendant of the caller, so no job reaches it. The tree-kill test uses System32
+  `powershell`. A timed-out `pwsh` child of Foreman can leave the real one running.
+- **One CLI failure variant:** `ClaudeError::Failed` is gone; `list_sessions()` and `cli_version()` run
+  through `Claude` and fail as `CliFailed` ("claude failed (exit N): …", with trust and daemon detection).
+  Timeouts unchanged: 10 s for the free `list_sessions`/`--version`, 60 s for `Claude`'s calls, 10 s for
+  `daemon status`. The argv of every claude call is unchanged; the selftest launch keeps its own argv
+  (no `--`) through `Claude::run_in`.
+- **Behaviour changes:** `daemon status` on timeout kills its child instead of leaking a thread and a
+  process every 15 s (A-31). The selftest's stop/rm get the 60 s timeout, so a hung CLI no longer holds
+  the SCRATCH lock (A-32); rm refusals are read by `RmRefusal::parse`, not a third parser (A-10). The
+  probes and the selftest's `git`, `fm` and screenshot spawns flash no console. `fm probe launch`, the
+  static-token route (`with_session_token`, `SessionIdentity::headers`, `write_session_mcp_config`) and
+  the 127.0.0.1:5290 URL are deleted (A-54/A-55). `SessionIdentity` itself stays: the executor builds it.
+- **Left alone:** the PTY shells and spawns inside test modules. `executor.rs`'s doc link now names
+  `with_minted_token` (fixed after m5/44.6 merged).
+- Tests: `process::tests::{output_and_exit_code_come_back, a_missing_program_is_a_spawn_error_with_its_kind,
+  a_timeout_kills_the_tree_or_only_the_child, git_runs_in_the_given_dir,
+  this_process_is_alive_and_a_spent_pid_is_not}`; launch.rs
+  `minted_token_lands_in_an_owner_only_file_per_session_not_in_argv` replaces the session-token test. Red
+  check: with the job object disabled, `a_timeout_kills_the_tree_or_only_the_child` fails (1 of 5).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-5\target`): build ok, no warnings; `cargo test --release
+  --workspace` 634 passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (329 s);
+  `--selftest-detach-shutdown` PASS (17 s); 0 `fm-selftest` rows from this worktree. After merging master
+  a6b50cd (m5/44.6): `cargo test --release --workspace` 646 passed, 0 failed.

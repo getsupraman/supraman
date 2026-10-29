@@ -126,36 +126,11 @@ pub struct System;
 
 impl Liveness for System {
     fn alive(&self, pid: u32, proc_start: Option<u64>) -> bool {
-        process_start(pid).is_some_and(|start| proc_start.is_none_or(|want| want == start))
+        started(pid).is_some_and(|start| proc_start.is_none_or(|want| want == start))
     }
 }
 
-#[cfg(windows)]
-fn process_start(pid: u32) -> Option<u64> {
-    use windows::Win32::Foundation::{CloseHandle, FILETIME, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
-    // SAFETY: plain Win32 calls on a handle this function opens and closes.
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut code = 0u32;
-        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
-        let running = GetExitCodeProcess(handle, &mut code).is_ok() && code == STILL_ACTIVE.0 as u32;
-        let times = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user).is_ok();
-        let _ = CloseHandle(handle);
-        (running && times).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
-    }
-}
-
-/// No start time off Windows: a running pid is taken as the registered one.
-#[cfg(not(windows))]
-fn process_start(pid: u32) -> Option<u64> {
-    Path::new("/proc").join(pid.to_string()).exists().then_some(0)
-}
-
-/// The start time `pid` runs with, `None` when it does not run (or cannot be opened).
-pub fn started(pid: u32) -> Option<u64> {
-    process_start(pid)
-}
+pub use foreman_core::process::started;
 
 fn read_entries(dir: &Path) -> Vec<RegistryEntry> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -613,7 +588,7 @@ mod tests {
         let pid = std::process::id();
         assert!(System.alive(pid, None));
         if cfg!(windows) {
-            let start = process_start(pid).unwrap();
+            let start = started(pid).unwrap();
             assert!(System.alive(pid, Some(start)));
             assert!(!System.alive(pid, Some(start + 1)), "same pid, other process");
         }
