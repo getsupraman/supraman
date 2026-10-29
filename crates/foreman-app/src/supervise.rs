@@ -1,8 +1,3 @@
-//! The app's supervisor: one [`foreman_supervisor::Supervisor`] per workspace that has a desired-state
-//! file, ticked after every `claude agents --json --all` poll on that snapshot, all workspaces with one
-//! shared budget ([`tick_all`]). Runs on the refresh loop's background thread; the UI only writes
-//! files (desired state, settings) and queues Retries.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -22,8 +17,7 @@ use foreman_supervisor::{
 
 use crate::tokens::AppTokens;
 
-/// Off: no tick acts. The selftest's cleanup turns it off, then takes [`TICK`] to wait out a tick
-/// in flight, so nothing it removes is resumed behind its back.
+/// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 pub static TICK: Mutex<()> = Mutex::new(());
 
@@ -32,15 +26,11 @@ pub fn disable_and_wait() {
     drop(TICK.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
-/// What the app found at start: where the plugin is and whether its hook exe is current.
 pub struct Setup {
     pub plugin_dir: Option<PathBuf>,
     pub notices: Vec<String>,
 }
 
-/// [`migrate_home`] (before anything reads the registry), `fm plugin install` for the `fm.exe` built next
-/// to `foreman.exe`, and the role templates at `<home>/roles/{workspace,relay,repo}.md` (the SessionStart hook
-/// fills in `{workspace}`/`{repo}` from `FOREMAN_WORKSPACE`/`FOREMAN_REPO`; `{fm}` and `{home}` are filled here).
 pub fn setup(home: &Path) -> Setup {
     let mut notices = migrate_home(home)
         .unwrap_or_else(|e| vec![format!("Cannot migrate {} to workspace names: {e}", home.display())]);
@@ -80,19 +70,16 @@ pub fn setup(home: &Path) -> Setup {
     }
 }
 
-/// Forward slashes: the relay's Monitor runs its command under Git Bash (m0/4).
+/// The relay's Monitor runs its command under Git Bash (LEARNINGS m0/4).
 fn forward(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
-/// The permission rules every session gets so `fm` never parks (m3/2): the plugin's `bin/` is on the
-/// session's PATH, and a session may also call the exe by its absolute path.
+/// So `fm` never parks: by name on the session's PATH, or by its absolute path.
 pub fn fm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
     vec!["Bash(fm:*)".into(), format!("Bash({}:*)", forward(&plugin_dir.join("bin").join(HOOK_EXE)))]
 }
 
-/// `<home>/roles/<role>.md` from the plugin's template, with `{fm}` (the plugin's hook exe) and `{home}`
-/// filled in; `{workspace}` and `{repo}` stay for the hook, [`role_prompt`] and `fm want`.
 pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow::Result<()> {
     let file = format!("{role}.md");
     let template = fill_paths(
@@ -109,11 +96,7 @@ pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow
     Ok(())
 }
 
-/// Start: the workspace's desired state with its `fm-<workspace>-workspace` session first (cwd = the
-/// workspace root, prompt = the role), `started = true`, saved. Other wanted sessions (repo sessions
-/// `fm want` added) are kept, after it. The relay is not wanted here: the tick wants it on demand
-/// ([`sync_relay`]); one that is wanted already follows the root. Its dirs are created and its last
-/// `ready.json` forgotten. Read-modify-write through [`DesiredState::update`]: `fm want` writes the same file.
+/// The relay is not wanted here: [`sync_relay`] wants it on demand.
 pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Workspace) -> anyhow::Result<DesiredState> {
     let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/foreman found for this build"))?;
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
@@ -137,17 +120,12 @@ pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Works
     Ok(desired)
 }
 
-/// `fm-<workspace>-relay` as the tick wants it: its dirs created (its `--add-dir` must exist before it
-/// launches), and the rendered role from `<home>/roles`, which has the relay's paths filled in.
+/// Its dirs are created here: its `--add-dir` must exist before it launches.
 pub fn relay_wanted(home: &Path, workspace: &Workspace) -> anyhow::Result<foreman_supervisor::WantedSession> {
     let relay_dir = ensure_relay_dirs(home, &workspace.name)?;
     Ok(relay_session(&workspace.name, &workspace.root, relay_dir, role_prompt(home, RELAY_ROLE, &workspace.name)?))
 }
 
-/// The relay on demand (m5/32): wanted while the workspace is started and a fallback drop waits in its
-/// inbox or the last one is younger than `idle_ms` ([`relay_demand`]); otherwise a wanted relay is retired,
-/// which R14 stops, also one an older desired state lists. Queued drops stay in the inbox for the next relay.
-/// `Some` with the saved state when it changed.
 pub fn sync_relay(home: &Path, workspace: &Workspace, desired: &DesiredState, idle_ms: Millis, now: Millis) -> anyhow::Result<Option<DesiredState>> {
     let demand = desired.started && relay_demand(home, &workspace.name, now, idle_ms)?;
     if demand == desired.wants_relay() {
@@ -158,8 +136,6 @@ pub fn sync_relay(home: &Path, workspace: &Workspace, desired: &DesiredState, id
     Ok(Some(saved))
 }
 
-/// Stop: `started = false`, saved. The next tick stops the live wanted sessions (never removes them):
-/// the workspace session, then the repo sessions, the relay last.
 pub fn stop_workspace(home: &Path, workspace: &str) -> anyhow::Result<()> {
     if DesiredState::load(home, workspace)?.is_some() {
         DesiredState::update(home, workspace, |desired| desired.started = false)?;
@@ -172,41 +148,29 @@ pub fn set_max_working(home: &Path, max_working: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One tick's outcome, for the UI.
 #[derive(Debug, Clone, Default)]
 pub struct Report {
     pub needs: Vec<NeedsYou>,
-    /// Per workspace with a desired-state file: started, and the wanted session names.
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
     pub errors: Vec<String>,
-    /// Per wanted name, the supervisor's last launch/resume attempt.
     pub last_attempt: HashMap<String, Millis>,
-    /// Per workspace with a desired-state file: its messaging path.
     pub relays: BTreeMap<String, RelayStatus>,
-    /// Per registered workspace, the last [`MESSAGES_SHOWN`] outbox messages, oldest first.
     pub messages: BTreeMap<String, Vec<OutboxMessage>>,
-    /// Per workspace with messages, its `answered.json` (outbox file → the answer's first line).
+    /// outbox file → the answer's first line.
     pub answered: BTreeMap<String, BTreeMap<String, String>>,
-    /// Why no `claude --bg` from here can reach the background service ([`DaemonWatch`]); a tab
-    /// that would run one says so.
+    /// Why no `claude --bg` from here can reach the background service.
     pub daemon_hold: Option<String>,
-    /// Servers whose minted tokens were replaced this tick ([`Supervisor::server_changed`]): their grants go.
     pub left_servers: Vec<String>,
 }
 
-/// The server `settings.toml` names, when Foreman is signed in to it.
 pub fn signed_in_server(auth: &foreman_workstate::Auth, settings: &Settings) -> Option<String> {
     let origin = settings.workstate.origin();
     matches!(auth.status(&origin), foreman_workstate::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 
-/// How often an unelevated Foreman asks `claude daemon status` whether it can reach the service.
 pub const DAEMON_CHECK_EVERY: Millis = 15_000;
 
-/// The app's check before launching (m5/25): [`foreman_claude::daemon_mismatch`] at most every
-/// [`DAEMON_CHECK_EVERY`], at once after a Retry, its result handed to every supervisor. An elevated
-/// Foreman reaches every service, and the check runs nothing for it.
 pub struct DaemonWatch {
     check: fn() -> Option<String>,
     checked_at: Option<Millis>,
@@ -226,7 +190,6 @@ impl DaemonWatch {
         self.why.clone()
     }
 
-    /// A supervisor's own launch found the mismatch: the others hold too, until the next check.
     pub fn found(&mut self, why: &str, now: Millis) {
         if self.why.is_none() {
             self.why = Some(why.to_string());
@@ -236,24 +199,18 @@ impl DaemonWatch {
 }
 
 pub const MESSAGES_SHOWN: usize = 20;
-/// Monitor expires after 30 min (m0/4); a relay that has not re-armed a minute later has lost it.
+/// Monitor expires after 30 min; a relay that has not re-armed a minute later has lost it.
 pub const REARM_WITHIN_MS: Millis = 31 * 60 * 1000;
 
-/// What the workspace row says about its messaging path (m5/32): `direct` while no relay is wanted, else
-/// how far the relay is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayStatus {
     pub started: bool,
-    /// The desired state wants `fm-<w>-relay`: a message fell back to it within the idle timeout.
     pub wanted: bool,
-    /// The `fm-<w>-relay` row is live ([`is_live`]).
     pub live: bool,
-    /// When it last armed its watcher (`ready.json`); forgotten whenever the row is not live.
     pub ready_at: Option<Millis>,
 }
 
 impl RelayStatus {
-    /// `(text, healthy)`; `None` when the workspace is stopped and its relay with it.
     pub fn label(&self, now: Millis) -> Option<(String, bool)> {
         if !self.started && !self.live {
             return None;
@@ -275,16 +232,13 @@ pub struct Supervision {
     plugin_dir: Option<PathBuf>,
     config: LaunchConfig,
     supervisors: BTreeMap<String, Supervisor<Claude, AppTokens>>,
-    /// The last [`NOTICES_KEPT`] supervisor notices (a failed revoke or PATCH), shown until the app restarts.
     notices: Vec<String>,
     pub daemon: DaemonWatch,
-    /// The hold as last logged.
     daemon_logged: Option<String>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
 
-/// Foreman's own plugin first, then `settings.toml` `[sessions] extra_plugin_dirs` in their order.
 pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBuf> {
     plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.sessions.extra_plugin_dirs.iter().cloned()).collect()
 }
@@ -309,8 +263,6 @@ impl Supervision {
         }
     }
 
-    /// Re-reads settings and every registered workspace's desired state, applies the queued Retries
-    /// (`(workspace, name)`), then ticks every supervisor on `observed`.
     pub fn tick(&mut self, workspaces: &[Workspace], observed: &[Session], retries: Vec<(String, String)>, now: Millis) -> Report {
         let mut report = Report::default();
         let settings = Settings::load(&self.home).unwrap_or_else(|e| {
@@ -509,7 +461,6 @@ mod tests {
         assert_eq!(d.sessions[0].cwd, PathBuf::from(r"C:\demo"));
         assert!(d.sessions[0].prompt.contains("workspace controller for demo"), "{}", d.sessions[0].prompt);
 
-        // a relay wanted on demand, and a park
         let mut extra = d.clone();
         extra.started = false;
         let mut park = extra.sessions[0].clone();
@@ -587,7 +538,6 @@ mod tests {
         assert_eq!(report.relays["beta"], RelayStatus { started: false, wanted: false, live: false, ready_at: None });
         assert!(report.messages.is_empty(), "{report:?}");
 
-        // beta wants a relay that is not running: its stale ready.json is forgotten; alpha has a message
         let mut d = DesiredState::workspace_controller("beta", r"C:\b", "p");
         d.sessions.insert(0, relay_session("beta", r"C:\b", home.path().join("relay").join("beta"), "r"));
         d.save(home.path()).unwrap();
@@ -604,9 +554,6 @@ mod tests {
         assert_eq!(report.messages["alpha"][0].from_name, "fm-alpha-workspace");
     }
 
-    /// m5/32: no relay by default; a fallback drop wants it (first), it stays wanted while a drop waits and
-    /// until the idle timeout after the last one, then it is retired; an older desired state that lists it
-    /// retires it the same way, and keeps a queued drop for the next relay.
     #[test]
     fn the_relay_is_wanted_on_a_fallback_and_retired_after_the_idle_timeout() {
         let home = tempfile::tempdir().unwrap();
@@ -634,7 +581,6 @@ mod tests {
         assert_eq!(d.retired, ["fm-demo-relay"]);
         assert_eq!(d.sessions.len(), 1);
 
-        // upgrade: a desired state written before m5/32 lists the relay, with a drop queued
         let mut old = DesiredState::workspace_controller("demo", r"C:\demo", "p");
         old.started = true;
         old.sessions.insert(0, relay_wanted(home.path(), &workspace).unwrap());
@@ -646,7 +592,6 @@ mod tests {
         foreman_core::InboxWatcher::new(&inbox).scan().unwrap();
         let d = sync_relay(home.path(), &workspace, &old, idle, later).unwrap().expect("retired on upgrade");
         assert_eq!(d.retired, ["fm-demo-relay"]);
-        // and without a drop, at once
         old.save(home.path()).unwrap();
         assert!(sync_relay(home.path(), &workspace, &old, idle, later).unwrap().is_some_and(|d| !d.wants_relay()));
     }
@@ -658,8 +603,6 @@ mod tests {
         Some("runs as administrator".into())
     }
 
-    /// m5/25: a started workspace whose service Foreman cannot reach is held before its first launch,
-    /// with one Inbox row and `daemon_hold` for the tabs; the check runs every 15 s, and at once on Retry.
     #[test]
     fn an_unreachable_service_holds_a_started_workspace_before_any_launch() {
         let home = tempfile::tempdir().unwrap();

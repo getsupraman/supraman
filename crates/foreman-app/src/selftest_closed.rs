@@ -1,12 +1,3 @@
-//! `--selftest` step 7h (m5/27): closed interactive sessions and stars, against a fake claude dir in the
-//! scratch home ([`crate::view::CLAUDE_DIR_VAR`]), never the user's `~/.claude`. [`prepare`] writes two
-//! transcripts in the gate repo's project dir (cwd the main repo): [`RECENT`], an hour old, and [`OLD`],
-//! 20 days old and already in `starred.json`, as a star from an earlier run. [`run`]: OLD shows with stopped
-//! sessions hidden (a star read at start, past the 14-day window), RECENT only once they are shown, named by
-//! its custom title; its resume opens a tab whose pwsh runs a fake `claude.cmd` with `--resume <id>` in
-//! its cwd; starring it keeps it with stopped hidden, written to `starred.json` and read back as a restart
-//! would; unstarring hides it again.
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -37,7 +28,7 @@ fn fake_claude(home: &Path) -> PathBuf {
     claude_dir(home).join("claude.cmd")
 }
 
-/// One transcript: a meta line, the prompt with its cwd, an ai-title, the custom title (claude's key order).
+/// claude's key order.
 pub(crate) fn transcript(id: &str, cwd: &Path, title: &str) -> String {
     let user = serde_json::json!({
         "parentUuid": null, "isSidechain": false, "type": "user",
@@ -50,7 +41,6 @@ pub(crate) fn transcript(id: &str, cwd: &Path, title: &str) -> String {
     )
 }
 
-/// Before the window: the fake claude dir with both transcripts and `claude.cmd`, and OLD starred.
 pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
     let dir = claude_dir(home).join("projects").join(foreman_claude::transcript::slug(main_repo));
     std::fs::create_dir_all(&dir)?;
@@ -74,7 +64,6 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The tree row of `id`: (name, closed, starred).
 fn row(v: &FleetView, id: &str) -> Option<(String, bool, bool)> {
     v.tree()
         .workspaces
@@ -166,7 +155,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if !on_disk.ids().contains(RECENT) || !on_disk.ids().contains(OLD) {
         bail!("starred.json holds {:?}", on_disk.ids());
     }
-    // a restart reads starred.json as start-up does
     view.update(cx, |v, cx| {
         v.stars = on_disk;
         cx.notify();

@@ -1,10 +1,4 @@
-//! The Work tab: a workspace's WorkState project (ref `<workspace>`) as its runs, in the overview's
-//! order, each expandable into its board. One app-wide `/api/stream` ([`WorkHub`]) keeps every tab
-//! live. Read only (C21): each read is a read API v1 GET on the background executor, and the token
-//! stays inside the hub's [`Client`] — no message here can carry it ([`foreman_workstate::Error`] and
-//! [`foreman_workstate::CredentialsError`] never print it). A row click opens its item page
-//! ([`item`]) in a pane right of the board. The journal ([`journal`]) can take the runs' place; the
-//! app's Inbox shows each workspace's WorkState inbox ([`inbox`]).
+//! Read only (C21): the token stays inside the hub's [`Client`]; no message here may carry it.
 
 mod inbox;
 mod item;
@@ -35,7 +29,6 @@ pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
 pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
 pub use journal::JournalView;
 
-/// Events arriving closer together than this cost one re-read.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
 
 fn after_debounce<T: 'static>(cx: &mut Context<T>, then: impl FnOnce(&mut T, &mut Context<T>) + 'static) {
@@ -58,8 +51,6 @@ enum HubState {
     Unconfigured(String),
 }
 
-/// The app's one WorkState connection: the [`Client`] from `settings.toml` and the `/api/stream`
-/// subscriber, started when the first Work tab opens.
 pub struct WorkHub {
     home: Option<PathBuf>,
     state: HubState,
@@ -69,10 +60,9 @@ pub struct WorkHub {
 }
 
 pub enum HubEvent {
-    /// The client was (re)read from the settings: ready, or why not.
     Configured,
     Changed(StreamEvent),
-    /// Connected again after a loss: frames may have been missed, re-read everything.
+    /// Connected again after a loss: frames may have been missed.
     Resync,
     Connection,
 }
@@ -84,8 +74,7 @@ struct GlobalHub(Entity<WorkHub>);
 impl Global for GlobalHub {}
 
 impl WorkHub {
-    /// The app's hub, created (and its stream started) on first use. An unconfigured hub reads the
-    /// settings again, so a sign-in meanwhile takes effect when the next Work tab opens.
+    /// An unconfigured hub reads the settings again, so a sign-in meanwhile takes effect.
     pub fn shared(home: Option<PathBuf>, cx: &mut App) -> Entity<WorkHub> {
         if let Some(GlobalHub(hub)) = cx.try_global::<GlobalHub>() {
             let hub = hub.clone();
@@ -105,7 +94,6 @@ impl WorkHub {
         hub
     }
 
-    /// After a sign-in, a sign-out or a new server: the client and the stream are made again.
     pub fn reconfigure(home: Option<PathBuf>, cx: &mut App) {
         if let Some(GlobalHub(hub)) = cx.try_global::<GlobalHub>() {
             hub.clone().update(cx, |hub, cx| {
@@ -127,7 +115,6 @@ impl WorkHub {
         }
     }
 
-    /// The stream's state as one short line, and whether it is live.
     pub fn connection(&self) -> (String, bool) {
         match (&self.state, self.connected, &self.lost) {
             (HubState::Ready(_), true, _) => ("live".into(), true),
@@ -192,8 +179,7 @@ impl WorkHub {
     }
 }
 
-/// A client for the configured server when signed in there; no network call (the bearer is asked for
-/// at each read). Not signed in, or the sign-in broken: the notice's words.
+/// No network call: the bearer is asked for at each read.
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let home = home.ok_or_else(|| "No Foreman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
     let auth = crate::signin::auth(&home);
@@ -205,7 +191,6 @@ fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     }
 }
 
-/// A read's failure as the Work tab says it: an unreachable server in the notice's words.
 fn read_failed(e: foreman_workstate::Error) -> String {
     match e {
         foreman_workstate::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
@@ -214,7 +199,6 @@ fn read_failed(e: foreman_workstate::Error) -> String {
     }
 }
 
-/// What the tab shows when it is not the runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shown {
     Loading,
@@ -229,7 +213,6 @@ pub enum BoardState {
     Failed(String),
 }
 
-/// A board row was clicked (its item page opens).
 pub enum WorkEvent {
     ItemSelected(String),
 }
@@ -254,7 +237,6 @@ pub struct WorkView {
     pub overview_reads: u64,
     pub board_reads: u64,
     link: FleetLink,
-    /// The item page, when one is open.
     pub item: Option<OpenItem>,
     item_pending: bool,
     pub item_reads: u64,
@@ -441,7 +423,6 @@ impl WorkView {
     }
 }
 
-/// The project whose ref is `workspace` (resolved once, then by id), its runs and the overview's `seq`.
 fn read_overview(client: &Client, workspace: &str, project: Option<ItemRef>) -> Result<(ItemRef, i64, OverviewProject), String> {
     let failed = read_failed;
     let project = match project {
@@ -459,7 +440,6 @@ fn no_project(workspace: &str) -> String {
     format!("WorkState has no project with ref '{workspace}', so there is no work to show for this workspace.")
 }
 
-/// The one project among a resolve's matches.
 pub fn pick_project(resolved: Resolved, workspace: &str) -> Result<ItemRef, String> {
     let mut found: Vec<ItemRef> = resolved.matches.into_iter().filter(|m| m.kind == "project").collect();
     match found.len() {
@@ -469,23 +449,19 @@ pub fn pick_project(resolved: Resolved, workspace: &str) -> Result<ItemRef, Stri
     }
 }
 
-/// Closed runs start collapsed.
 pub fn starts_expanded(status: ItemStatus) -> bool {
     !matches!(status, ItemStatus::Done | ItemStatus::Cancelled | ItemStatus::Superseded)
 }
 
-/// The run whose board an event changes, when that board is shown.
 pub fn board_to_reload<'a>(event: &'a StreamEvent, expanded: &HashSet<String>) -> Option<&'a str> {
     event.run_id.as_deref().filter(|run| expanded.contains(*run))
 }
 
-/// A board's rows without the run's own row (the server lists the run first, with a numeric ref):
-/// the run is the section's header.
+/// The server lists the run first; the run is the section's header.
 pub fn item_rows(board: &Board) -> impl Iterator<Item = &BoardRow> {
     board.rows.iter().filter(move |r| r.item.id != board.run.id)
 }
 
-/// `10/13 done` — the denominator leaves out cancelled and superseded.
 pub fn done_text(r: &Rollup) -> String {
     format!("{}/{} done", r.done, r.counted())
 }
@@ -502,13 +478,11 @@ fn status_color(status: ItemStatus, cx: &App) -> Hsla {
     }
 }
 
-/// A server timestamp (`2026-10-26T09:30:00+00:00`) as this machine's local time, `2026-10-26 10:30` in
-/// CET (m5/18: the server's times are UTC).
+/// The server's times are UTC.
 pub(crate) fn short_time(at: &str) -> String {
     short_time_in(at, &chrono::Local)
 }
 
-/// [`short_time`] in `zone`; what does not parse as RFC 3339 is shown cut to the minute, as sent.
 fn short_time_in<Tz: chrono::TimeZone>(at: &str, zone: &Tz) -> String
 where
     Tz::Offset: std::fmt::Display,
@@ -704,7 +678,7 @@ impl Render for WorkView {
         let board = self.render_board(cx);
         let root = div().size_full().flex().bg(colors.editor_background).text_color(colors.text);
         match &self.item {
-            // The board keeps 42% of the tab (1300–2000 px wide), so another row is one click away.
+            // The board keeps 42% of the tab, so another row is one click away.
             Some(open) => root
                 .child(div().flex_none().w(relative(0.42)).min_w(px(380.)).h_full().child(board))
                 .child(self.render_item(open, cx)),

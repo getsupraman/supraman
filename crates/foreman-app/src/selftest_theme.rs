@@ -1,7 +1,3 @@
-//! `--selftest` step 7m (m5/31): the theme. The app starts in VS Code Dark Modern with its terminal colours;
-//! Settings → Appearance switches to Foreman Dark with Campbell's ANSI colours at once (the theme every
-//! window paints with, the terminals' palette, `settings.toml`), and back. Shots with `FOREMAN_SHOTS`.
-
 use std::path::Path;
 
 use anyhow::{anyhow, bail};
@@ -17,7 +13,6 @@ use crate::{
     view::FleetView,
 };
 
-/// (theme name, panel background, ANSI 8) as painted now.
 fn painted(cx: &mut AsyncWindowContext) -> anyhow::Result<(String, String, String)> {
     cx.update(|_, cx| {
         let theme = theme::ActiveTheme::theme(cx);

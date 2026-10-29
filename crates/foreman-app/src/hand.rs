@@ -1,31 +1,5 @@
-//! Hand sessions (m5/20): the `+` on a repo row types `claude` into a shell. With WorkState set up
-//! that claude gets its own minted `wss_` token like a supervised session ([`foreman_supervisor::mint`]):
-//! role orchestrator (m5/35: a human drives it and runs queues, so it needs work_status/work_update),
-//! `externalRole` `hand`, `repo` of its cwd, in an owner-only file passed as `--mcp-config <file>`
-//! WITHOUT `--strict-mcp-config`, so the human keeps every other MCP server. The tab's pwsh runs the
-//! launch as its `-EncodedCommand` (m5/22): nothing is typed or echoed, and only the path is in it.
-//!
-//! **The override is deliberate.** `--mcp-config` beats the user-scope `workstate` registration
-//! (LEARNINGS mint/7), so a hand session talks to WorkState with Foreman's token, not the user's: it is
-//! revoked with the tab and labelled `foreman/hand`. The tab card says so (`WorkState  Foreman token ·
-//! orchestrator · <name>`).
-//!
-//! **Its name** is the session's own (m5/35): a resume mints with the name the tree shows for it
-//! (registered name, else the transcript's title), a fresh `+` with `hand-<folder>-<n>`. It cannot be
-//! renamed later: a minted token's name is its credential's, WorkState ignores `X-WorkState-Agent` and
-//! refuses `work_session` for it (Skills `docs/workstate/11-sessions.md`, resolution order (a)). The
-//! generated name stays the key of the config file and of `hands.json` either way.
-//!
-//! **Its claude session id** goes with the mint (`claudeSessionId`, m5/40): a resume's uuid, or for a
-//! fresh `+` a new one that claude is started with (`--session-id`). WorkState lets a launcher take over
-//! a name registered without one only when the ids match.
-//!
-//! The token is revoked when that claude exits (the launch deletes its file, [`Hands::ended`]),
-//! when its tab closes, on quit, and on the next start for what an earlier run left
-//! ([`Hands::release_all`]). The mint's bearer is the access token of the app's WorkState sign-in
-//! (m5/43; the operator as controller, which caps the orchestrator mint). Not signed in: the tab opens
-//! plain. A refused orchestrator mint opens the tab plain with the reason; it never falls back to a
-//! worker token.
+//! `--mcp-config` without `--strict-mcp-config` deliberately overrides the user-scope `workstate` registration (LEARNINGS mint/7).
+//! A minted token's name is its credential's and cannot be renamed; see Skills `docs/workstate/11-sessions.md`, resolution order (a).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -35,25 +9,17 @@ use foreman_supervisor::{HttpMinter, MintError, MintRepo, MintRequest, MintedSes
 use foreman_workstate::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
-/// The WorkState role of every hand session, `+` and resume alike.
 pub const ROLE: &str = "orchestrator";
-/// A session's own name is cut to this many characters for WorkState.
 const MAX_NAME: usize = 64;
 const LAUNCHED_BY: &str = "foreman/hand";
-/// What the launch prints before it starts plain `claude` when its file is already gone, quoted for a
-/// pwsh '…' string.
+/// Quoted for a pwsh '…' string.
 const STALE: &str = "This tab''s WorkState token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
 
-/// How the `+` session starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
-    /// No WorkState: plain `claude`, as before m5/20.
     Plain,
-    /// Its own token in `config`. `name` keys the file and `hands.json`; `session` is the WorkState
-    /// session's name; `notice` says why it is not the one asked for. `new_session` is the
-    /// `--session-id` a fresh `+` starts claude with, the one its mint carries; `None` for a resume.
+    /// `name` keys the file and `hands.json`; `session` is the WorkState session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
-    /// WorkState is set up but the mint failed: plain `claude`, and this notice.
     Unminted(String),
 }
 
@@ -63,10 +29,7 @@ impl Launch {
         self.script_with("claude")
     }
 
-    /// What the tab's pwsh runs before its first prompt: `claude` (its program and arguments, e.g.
-    /// `claude --resume '<id>'`, m5/27). It deletes the config file once claude exits, however it exits,
-    /// which is how [`Hands::ended`] sees it. Should the file be gone already (the tab closed while it
-    /// started), it starts plain `claude`, saying why (m5/18), without the `--session-id` its mint carried.
+    /// It deletes the config file once claude exits, however it exits, which is how [`Hands::ended`] sees it.
     pub fn script_with(&self, claude: &str) -> String {
         match self {
             Launch::Minted { config, new_session, .. } => {
@@ -85,33 +48,28 @@ impl Launch {
         self.shell_args_with("claude")
     }
 
-    /// Appended to the tab's pwsh flags: [`Self::script_with`] runs unseen, and the shell stays when it ends.
     pub fn shell_args_with(&self, claude: &str) -> [String; 3] {
         ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script_with(claude))]
     }
 }
 
-/// pwsh's `-EncodedCommand`: base64 of the UTF-16LE script, so no quoting reaches the command line.
 pub fn encoded_command(script: &str) -> String {
     use base64::Engine as _;
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// The hand sessions this app minted a token for, by name, persisted at [`Hands::path`].
 pub struct Hands {
     home: PathBuf,
     auth: Arc<Auth>,
     minter: Box<dyn Minter + Send>,
     repo_of: fn(&Path) -> Option<MintRepo>,
     minted: MintedSessions,
-    /// The WorkState name of each key in `minted` launched by this run.
     sessions: std::collections::HashMap<String, String>,
     /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
     left: Vec<String>,
 }
 
-/// What the panel says when `n` open claude tabs hold tokens from another server than `to`.
 pub fn restart_notice(n: usize, to: &str) -> Option<String> {
     (n > 0).then(|| {
         let (tabs, them) = if n == 1 { ("tab", "it") } else { ("tabs", "them") };
@@ -119,16 +77,13 @@ pub fn restart_notice(n: usize, to: &str) -> Option<String> {
     })
 }
 
-/// [`Hands::release_all`] on a thread of its own, waited on for at most `within`: its notices, or `None` when
-/// time ran out. It goes on revoking until the process ends; what it does not reach stays in `hands.json`.
+/// It goes on revoking after `within` until the process ends; what it does not reach stays in `hands.json`.
 pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<Vec<String>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || tx.send(hands.lock().unwrap_or_else(|e| e.into_inner()).release_all()));
     rx.recv_timeout(within).ok()
 }
 
-/// `raw` (a session's name as the tree shows it) as a WorkState session name: one line, no control or
-/// bidi characters, at most [`MAX_NAME`] characters. `None` when nothing is left.
 pub fn session_name(raw: &str) -> Option<String> {
     let line = foreman_ui::tabs::sanitize(raw)?;
     let cut: String = line.chars().take(MAX_NAME).collect();
@@ -141,7 +96,6 @@ impl Hands {
         home.join("supervisor").join("hands.json")
     }
 
-    /// Over HTTP, with the repo from git. An unreadable file is forgotten, with a notice.
     pub fn open(home: &Path) -> (Self, Option<String>) {
         Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo)
     }
@@ -181,20 +135,15 @@ impl Hands {
         foreman_claude::mcp_config_path(&self.mcp_dir(), name)
     }
 
-    /// `Some` notice when the record of the minted tokens could not be saved: a token it lost is not
-    /// revoked at the next start.
     fn save(&self) -> Option<String> {
         let path = Self::path(&self.home);
         self.minted.save().err().map(|e| format!("Cannot save {} ({e}): a hand token minted here is not revoked if Foreman ends without Quit", path.display()))
     }
 
-    /// The bearer of the mint and the revoke: (the MCP URL, the sign-in's access token); `None` when
-    /// not signed in.
     fn bearer(&self) -> Result<Option<(String, String)>, String> {
         crate::tokens::bearer(&self.auth)
     }
 
-    /// `hand-<folder>-<n>`, the lowest `n` not held.
     fn next_name(&self, cwd: &Path) -> String {
         let folder: String = cwd
             .file_name()
@@ -204,17 +153,12 @@ impl Hands {
         (1..).map(|n| format!("hand-{folder}-{n}")).find(|n| self.minted.get(n).is_none()).unwrap()
     }
 
-    /// Mints the token of a `+` session in `cwd` and writes its config file. `own` is the session's
-    /// own name when it has one (a resume); else, or when another launcher holds that name, it is
-    /// `hand-<folder>-<n>`.
     #[cfg(test)]
     pub fn launch(&mut self, cwd: &Path, own: Option<&str>) -> Launch {
         self.launch_for(cwd, own, None)
     }
 
-    /// [`Self::launch`] for a resume of `claude_session` (its full uuid; anything else is not sent).
-    /// That uuid, or a fresh `+`'s new one, goes with the mint and is kept with the token so Delete can
-    /// revoke it ([`Self::release_session`]).
+    /// `claude_session` is its full uuid; anything else is not sent.
     pub fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
         let (url, bearer) = match self.bearer() {
             Ok(Some(b)) => b,
@@ -285,12 +229,10 @@ impl Hands {
         }
     }
 
-    /// The session's claude has exited: its config file is gone.
     pub fn ended(&self, name: &str) -> bool {
         self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token and deletes its config file. `Some` notice when the revoke failed.
     pub fn release(&mut self, name: &str) -> Option<String> {
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
@@ -322,7 +264,6 @@ impl Hands {
         }
     }
 
-    /// Every token minted for claude session `claude_session_id` (m5/38: its Delete), as [`Self::release`].
     pub fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
         let names: Vec<String> = self
             .minted
@@ -333,18 +274,15 @@ impl Hands {
         names.iter().filter_map(|n| self.release(n)).collect()
     }
 
-    /// Every hand token: on quit, and on start for those an earlier run left.
     pub fn release_all(&mut self) -> Vec<String> {
         let names: Vec<String> = self.minted.names().cloned().collect();
         names.iter().filter_map(|n| self.release(n)).collect()
     }
 
-    /// The open sessions whose token is not from `origin`, with the server it is from (`None`: unknown).
     pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
         self.minted.elsewhere(origin)
     }
 
-    /// The servers of tokens [`Self::release`] left to their server's grant revoke, since the last call.
     pub fn take_left(&mut self) -> Vec<String> {
         std::mem::take(&mut self.left)
     }
@@ -364,12 +302,8 @@ mod tests {
 
     use super::*;
 
-    /// A request the fake server should have seen: fail, never hang.
     const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-    /// A WorkState stand-in on 127.0.0.1 that is also its fake OAuth server: answers a mint with each of
-    /// `mints` in turn (then 201s), DELETE with 204, and sends back (request line, Authorization, body)
-    /// of each `/api/agent-sessions` request.
     fn fake_workstate(mints: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<(String, String, String)>, Arc<FakeAuth>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -409,7 +343,6 @@ mod tests {
         })
     }
 
-    /// A Foreman home signed in to the fake at `url`; not signed in without one.
     fn home_with(dir: &Path, url: Option<&str>) -> (PathBuf, Arc<Auth>) {
         let home = dir.join("home");
         match url {
@@ -425,7 +358,6 @@ mod tests {
         }
     }
 
-    /// The sign-in's access token is the bearer.
     fn oauth(auth: &str) -> bool {
         auth.starts_with("Bearer eyJ")
     }
@@ -501,7 +433,6 @@ mod tests {
                 "claudeSessionId": sid
             })
         );
-        // m5/40: claude starts with the uuid its mint carried, and the token keeps it
         assert!(launch.script().contains(&format!("try {{ claude --session-id '{sid}' --mcp-config '")), "{}", launch.script());
         assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid.as_str()));
         let text = std::fs::read_to_string(&config).unwrap();
@@ -533,12 +464,10 @@ mod tests {
         assert!(!script.contains("--strict-mcp-config") && !script.contains("wss_"));
         assert_eq!(launch.shell_args(), ["-NoExit".to_string(), "-EncodedCommand".into(), encoded_command(&script)]);
         assert_eq!(Launch::Plain.script(), "claude");
-        // m5/27: a closed session resumed through the same launch keeps its own token
         let resume = launch.script_with("claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'");
         assert!(resume.contains("try { claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' --mcp-config '"), "{resume}");
         assert!(resume.ends_with("; claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' }"), "the stale branch resumes too: {resume}");
         assert_eq!(Launch::Plain.script_with("claude --resume 'x'"), "claude --resume 'x'");
-        // m5/40: a fresh + starts with its uuid; the stale branch starts a session of its own
         let fresh = Launch::Minted {
             name: "hand-alpha-1".into(),
             session: "hand-alpha-1".into(),
@@ -588,7 +517,6 @@ mod tests {
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
 
-        // exit: the launch deleted the file
         let Launch::Minted { name, config, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert!(!hands.ended(&name));
@@ -600,14 +528,12 @@ mod tests {
         assert!(oauth(&bearer));
         assert!(!hands.ended(&name), "forgotten");
 
-        // close: the tab went while claude ran
         let Launch::Minted { name, config, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         assert_eq!(hands.release(&name), None);
         assert_eq!(seen.recv_timeout(WAIT).unwrap().0, "DELETE /api/agent-sessions/h2 HTTP/1.1");
         assert!(!config.exists(), "close deletes the file");
 
-        // quit
         let Launch::Minted { config: c3, .. } = hands.launch(alpha, None) else { panic!() };
         let Launch::Minted { config: c4, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
@@ -618,7 +544,6 @@ mod tests {
         assert_eq!(deleted, ["DELETE /api/agent-sessions/h3 HTTP/1.1", "DELETE /api/agent-sessions/h4 HTTP/1.1"]);
         assert!(!c3.exists() && !c4.exists() && hands.names().is_empty());
 
-        // restart: a run that ended without quitting left one; the next start revokes it
         let Launch::Minted { config: c5, .. } = hands.launch(alpha, None) else { panic!() };
         seen.recv_timeout(WAIT).unwrap();
         drop(hands);
@@ -631,7 +556,6 @@ mod tests {
         assert!(third.names().is_empty(), "the revoke was saved");
     }
 
-    /// Mints at once; each revoke takes `revoke_takes`, and is counted once it is done.
     struct SlowRevokes {
         revoke_takes: std::time::Duration,
         revoked: Arc<std::sync::atomic::AtomicUsize>,
@@ -664,7 +588,6 @@ mod tests {
         (home, Arc::new(Mutex::new(hands)), revoked, auth)
     }
 
-    /// A-29: quit waits for the revokes at most `within`; an unreachable server cannot hold it N × 15 s.
     #[test]
     fn quit_release_returns_by_its_deadline_and_still_revokes_a_server_that_answers() {
         let dir = tempfile::tempdir().unwrap();
@@ -688,7 +611,6 @@ mod tests {
         assert_eq!(left.names().len(), 3, "what quit did not reach stays for the next start");
     }
 
-    /// A-30: a mint whose record cannot be saved says so, and so does a release.
     #[test]
     fn a_hands_json_that_cannot_be_saved_is_a_notice() {
         let dir = tempfile::tempdir().unwrap();
@@ -739,7 +661,6 @@ mod tests {
         assert!(hands.release_all().is_empty());
     }
 
-    /// Signed in, but the grant no longer refreshes: plain, saying to sign in again; no mint.
     #[test]
     fn hand_with_a_broken_sign_in_opens_it_plain_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
@@ -771,8 +692,6 @@ mod tests {
         assert!(hands.names().is_empty());
     }
 
-    /// m5/35: a resume mints an orchestrator under the session's own name, on the same bearer; the
-    /// file key stays Foreman's.
     #[test]
     fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -802,14 +721,12 @@ mod tests {
         assert_eq!(hands.release(&short), None);
         seen.recv_timeout(WAIT).unwrap();
 
-        // the same session in a second tab would take the first one's token: it gets the generated name
         let Launch::Minted { session, notice, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
         assert_eq!(session, "hand-alpha-2");
         assert!(notice.is_some_and(|n| n.contains("another tab holds that name")));
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body["name"].as_str(), Some("hand-alpha-2"));
 
-        // a title is cut to one line of 64 characters; a blank one is no name
         let Launch::Minted { session, .. } = hands.launch(alpha, Some(&format!("  Fix the\tdeploy\n{}", "x".repeat(80)))) else { panic!() };
         assert_eq!(session, format!("Fix the deploy {}", "x".repeat(49)));
         seen.recv_timeout(WAIT).unwrap();
@@ -817,7 +734,6 @@ mod tests {
         assert_eq!(session, "hand-alpha-4");
         seen.recv_timeout(WAIT).unwrap();
 
-        // released, the name is free again
         assert!(hands.release_all().is_empty());
         let Launch::Minted { session, .. } = hands.launch(alpha, Some("mw-workflow")) else { panic!() };
         assert_eq!(session, "mw-workflow");
@@ -838,7 +754,6 @@ mod tests {
         assert_eq!(names, ["nomos-0c", "hand-alpha-1"]);
     }
 
-    /// A bearer whose role cannot mint an orchestrator: plain, with the reason, and no worker mint.
     #[test]
     fn hand_refused_orchestrator_is_not_minted_as_a_worker() {
         let dir = tempfile::tempdir().unwrap();
@@ -853,8 +768,6 @@ mod tests {
         assert!(hands.names().is_empty());
     }
 
-    /// The tab's pwsh as Foreman starts it, with a stand-in `claude.cmd` first on PATH that fails: it
-    /// gets only the path, the file is gone after it, and the terminal shows none of the script.
     #[cfg(windows)]
     #[test]
     fn hand_launch_deletes_the_config_when_claude_exits_and_shows_no_script() {
@@ -885,8 +798,6 @@ mod tests {
         assert!(!shown.contains("Test-Path") && !shown.contains("mcp-config"), "the script is not shown: {shown}");
     }
 
-    /// The launch run again after claude exited (m5/18 c5): no `--mcp-config` to the deleted file,
-    /// plain claude after the notice.
     #[test]
     fn hand_launch_runs_plain_claude_once_the_config_is_gone() {
         let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {

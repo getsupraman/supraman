@@ -1,6 +1,3 @@
-//! Starred sessions (m5/27): always shown in the tree, stopped or closed, however old, until unstarred.
-//! Persisted as `<FOREMAN_HOME>/starred.json`, `{"sessions": ["<sessionId>", …]}`.
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +20,6 @@ impl Stars {
         home.join("starred.json")
     }
 
-    /// An unreadable file starts empty, with the reason.
     pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
         let Some(path) = home.map(Self::path) else {
             return (Self::default(), None);
@@ -36,7 +32,6 @@ impl Stars {
         &self.sessions
     }
 
-    /// Stars or unstars `session_id` and writes the file; `Err` says why it could not be written.
     pub fn toggle(&mut self, session_id: &str) -> Result<bool, String> {
         let on = if self.sessions.remove(session_id) {
             false

@@ -1,14 +1,9 @@
-//! One-line labels cut with an ellipsis when they do not fit (m5/26). Each painted frame measures the
-//! label's text in its own text style against the width it got; a label the last frame painted cut shows
-//! its full text as a tooltip on hover. Keys are the labels' element ids, one per label on screen.
-
 use std::{cell::RefCell, collections::HashMap};
 
 use gpui::{Bounds, Div, ElementId, Pixels, SharedString, Stateful, canvas, div, prelude::*};
 
 use crate::view::icon::Tooltip;
 
-/// Labels kept at most; the one painted longest ago goes first, a label no longer on screen.
 const KEPT: usize = 512;
 
 #[derive(Default)]
@@ -34,22 +29,18 @@ impl Cut {
 }
 
 thread_local! {
-    /// The labels painted cut, with their bounds.
     static CUT: RefCell<Cut> = RefCell::default();
 }
 
-/// Where the last frame painted the label `key`, when it painted it cut.
 pub fn cut_at(key: &str) -> Option<Bounds<Pixels>> {
     CUT.with(|cut| cut.borrow().labels.get(key).map(|(_, b)| *b))
 }
 
-/// `text` on one line, cut with an ellipsis (`middle`: in the middle, as a path reads best) when it does
-/// not fit, with the tooltip once it has been painted cut. Give it `min_w_0` / `flex_1` as a row needs.
+/// Give it `min_w_0` / `flex_1` as a row needs.
 pub fn clipped(key: impl Into<SharedString>, text: impl Into<SharedString>, middle: bool) -> Stateful<Div> {
     clipped_with(key, text, middle, true)
 }
 
-/// [`clipped`], without its tooltip when `own_tooltip` is false: its parent shows the full text another way.
 pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>, middle: bool, own_tooltip: bool) -> Stateful<Div> {
     let (key, text) = (key.into(), text.into());
     let label = div()

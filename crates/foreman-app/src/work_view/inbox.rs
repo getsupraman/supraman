@@ -1,8 +1,4 @@
-//! WorkState rows in the app's Inbox (m4/4): per registered workspace whose WorkState project exists,
-//! `GET /api/v1/inbox?project=` — what waits on a human. One [`WorkInbox`] per app, driven by the
-//! [`WorkHub`]'s stream: an event re-reads the inboxes of the project it touches (debounced like the
-//! boards), a resync re-reads every one; never a timer. Every read runs on the background executor.
-//! Dismissals are local ([`Dismissed`]): Foreman writes nothing to WorkState (C21).
+//! Foreman writes nothing to WorkState (C21): dismissals are local ([`Dismissed`]).
 
 use std::{
     collections::BTreeMap,
@@ -15,18 +11,13 @@ use foreman_workstate::{Inbox, InboxRow, Overview};
 
 use super::*;
 
-/// Under the Foreman home.
 pub const DISMISSED_FILE: &str = "workstate-dismissed.json";
 
-/// Rows dismissed here, per workspace: row key → the row's `since` when it was dismissed. A key is
-/// `kind:item`, so a row that changes kind is another row and shows. A dismissed row shows again when
-/// its `since` differs (the condition started over, even while the app was closed) or once a read has
-/// seen it gone ([`Dismissed::prune`]), so a row that disappears and comes back is new again.
+/// Per workspace: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
 
 impl Dismissed {
-    /// An unreadable file is no dismissals, with the reason.
     pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
         let Some(home) = home else { return (Self::default(), None) };
         let (dismissed, notice) = load_json_or_notice(&home.join(DISMISSED_FILE), "every WorkState inbox row shows");
@@ -45,8 +36,7 @@ impl Dismissed {
         self.0.entry(workspace.to_string()).or_default().insert(row.key.clone(), row.since.clone());
     }
 
-    /// After a successful read of `workspace`'s inbox: forgets the dismissals whose row is gone or
-    /// started over. Whether anything was forgotten.
+    /// Only after a successful read of `workspace`'s inbox.
     pub fn prune(&mut self, workspace: &str, rows: &[InboxRow]) -> bool {
         let Some(keys) = self.0.get_mut(workspace) else { return false };
         let before = keys.len();
@@ -58,7 +48,6 @@ impl Dismissed {
         changed
     }
 
-    /// Workspaces no longer registered keep nothing.
     pub fn retain_workspaces(&mut self, workspaces: &[String]) -> bool {
         let before = self.0.len();
         self.0.retain(|w, _| workspaces.contains(w));
@@ -66,13 +55,10 @@ impl Dismissed {
     }
 }
 
-/// Which inboxes a stream event can have changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Touched {
-    /// The workspaces whose project holds the event's run (none: another project's run).
     Workspaces(Vec<String>),
-    /// No run, or a run the last overview did not list (a new run, maybe this project's): every
-    /// inbox, and the overview again to learn the run.
+    /// No run, or a run the last overview did not list: every inbox, and the overview again.
     All { overview: bool },
 }
 
@@ -97,7 +83,6 @@ struct Plan {
     workspaces: HashSet<String>,
 }
 
-/// One workspace's read: its project (resolved first when `None`).
 struct Ask {
     workspace: String,
     project: Option<ItemRef>,
@@ -105,7 +90,6 @@ struct Ask {
 
 enum Outcome {
     Read(ItemRef, Inbox),
-    /// No project with the workspace's ref: nothing to show, quietly.
     NoProject,
     Failed(String),
 }
@@ -139,7 +123,6 @@ pub struct WorkInbox {
     hub: Entity<WorkHub>,
     home: Option<PathBuf>,
     workspaces: Vec<String>,
-    /// Workspace → its project, once resolved.
     projects: HashMap<String, ItemRef>,
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
@@ -148,9 +131,7 @@ pub struct WorkInbox {
     /// The newest dismissals not yet on disk; one writer at a time takes them.
     unsaved: Arc<Mutex<Option<String>>>,
     pending: Option<Plan>,
-    /// Workspace → why its last read failed (the rows of the read before stay on screen).
     pub failures: HashMap<String, String>,
-    /// Why the dismissals could not be read or the last save failed.
     pub notice: Option<String>,
     pub reads: u64,
 }
@@ -160,7 +141,6 @@ struct GlobalInbox(Entity<WorkInbox>);
 impl Global for GlobalInbox {}
 
 impl WorkInbox {
-    /// The app's one inbox; starts the hub (and so the stream) when it is configured.
     pub fn shared(home: Option<PathBuf>, cx: &mut App) -> Entity<WorkInbox> {
         if let Some(GlobalInbox(inbox)) = cx.try_global::<GlobalInbox>() {
             return inbox.clone();
@@ -188,7 +168,6 @@ impl WorkInbox {
         inbox
     }
 
-    /// The registered workspaces, after each poll; reads only the ones that are new.
     pub fn set_workspaces(&mut self, workspaces: Vec<String>, cx: &mut Context<Self>) {
         if workspaces == self.workspaces {
             return;
@@ -206,7 +185,6 @@ impl WorkInbox {
         cx.notify();
     }
 
-    /// Every row not dismissed, by workspace in registry order, each workspace's newest first.
     pub fn rows(&self) -> Vec<(&str, &InboxRow)> {
         self.workspaces
             .iter()
@@ -363,7 +341,6 @@ pub fn dismiss_key(row: &InboxRow) -> String {
     format!("inbox-ws-dismiss-{}", row.key)
 }
 
-/// `blocked_finding` → `blocker finding`.
 pub fn kind_label(kind: &str) -> String {
     kind.replace('_', " ")
 }
@@ -383,9 +360,7 @@ mod tests {
         d.dismiss("w", &blocked);
         assert!(d.hides("w", &blocked));
         assert!(!d.hides("other", &blocked), "dismissals are per workspace");
-        // Another kind for the same item is another key.
         assert!(!d.hides("w", &row("done_unverified:t1", "2026-10-26T10:00:00+00:00")));
-        // The same key started over: shows again.
         assert!(!d.hides("w", &row("blocked:t1", "2026-10-26T11:00:00+00:00")));
         assert!(!d.prune("w", std::slice::from_ref(&blocked)));
         assert!(d.hides("w", &blocked));

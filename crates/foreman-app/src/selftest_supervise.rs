@@ -1,53 +1,4 @@
-//! `--selftest-supervise`: the M2 gate, through the real UI (clicks on painted hit targets) and the
-//! real `claude` CLI. `FOREMAN_HOME` = `<cargo root>/target/selftest-home`; four throwaway workspaces
-//! rooted at fresh dirs under `<cargo root>/target/` (never Nomos, never the user's registry); every
-//! session is `fm-selftest-<hex>-…`. One line per step:
-//!
-//! - a. workspaces registered: `selftest-<hex>` (testbed, plain dir: trusted, inside the checkout),
-//!   `-u` (`git init`ed: untrusted by construction), `-c1`/`-c2` (plain, for the budget). The testbed's
-//!   desired state also wants `fm-selftest-<hex>-park` (`--permission-mode default`, told to run one
-//!   Bash command): the workspace session itself is `auto`, so the park is a separate wanted session.
-//!   The desired state also lists `fm-selftest-<hex>-relay`, as one written before m5/32 does (relay on demand).
-//! - b. Start (click) → `fm-selftest-<hex>-workspace` live and no relay: the old desired state's relay is retired
-//!   (R14) and never launched, the row shows `direct`; the workspace session's event log has
-//!   SessionStart(startup) and its transcript the role tag the hook injected.
-//! - r. a target `fm-selftest-<hex>-target` (launched here, auto, Foreman's plugin, told to answer each nonce
-//!   with `fm tell`) gets 30 messages straight into its pipe, one a second (`foreman_claude::human`), and
-//!   answers every nonce: delivered, none held or dropped, and still no relay row. Then one forced fallback (a
-//!   `Sender` whose registry dir is empty) drops into the inbox → the supervisor wants the relay (row `relay
-//!   starting`), launches it, it arms (`relay ready`) and sends the drop; the nonce comes back into the app's
-//!   Messages with Attach. [`RELAY_IDLE_SECS`] after the drop the relay is retired and stopped, the row
-//!   shows `direct` again.
-//! - t. (run after c) the task box: Task… (click) on the testbed, a two-line task typed key by key, Ctrl+Enter →
-//!   delivered direct (the box shows `sent direct: …`, the workspace session's transcript has it framed as the
-//!   human's, no relay drop) and the box cleared; an `APPROVE?` injected into the outbox as from the workspace
-//!   session → Approve (click) → `approve` delivered direct, the row shows `answered: approve · sent direct`,
-//!   also in `answered.json`; text typed and Escape → the box closed, nothing sent.
-//!   `FOREMAN_SELFTEST_HOLD_SECS=<n>` holds the box and the answered row on screen for `n` s before
-//!   Escape (for a screenshot), after writing `<FOREMAN_HOME>/hold`.
-//! - e. (run right after b) the park session → hook Notification(permission_prompt) for it, and Inbox Blocked
-//!   with Attach to its row.
-//! - c. its turn ended → `claude stop` (a stop the daemon never respawns; a kill of a `working` row it does,
-//!   m2/4) → the row drops the pid, and the supervisor resumes it: same sessionId, new pid.
-//! - h. (around c) the window hidden by WM_CLOSE, the close button's path, before the stop: c's resume
-//!   happens with it hidden. Then Open, the tray's command → shown, repainted, and the panel shows the resumed
-//!   pid, ticks counted while hidden, no Inbox row for the session.
-//! - w. `fm want <testbed> Repo --prompt-file …` (the testbed's repo is a plain dir `<root>/Repo`: a `git init`ed
-//!   one is untrusted, step d) → the supervisor launches `fm-selftest-<hex>-repo`; its first task runs
-//!   `fm roster` itself with the Bash tool (no park), and that call's result in its transcript lists it with role
-//!   `repo` (the reply text is the model's, not asserted); `fm roster` from here lists it too; `fm unwant` → the supervisor stops it and does not bring it back.
-//! - d. Start `-u` → Inbox TrustNeeded with Run in terminal; the click opens a pwsh tab there with
-//!   `claude` typed and NOT run; the tab is closed. Nothing is accepted.
-//! - f. busy limit set to 1 with the stepper, Start `-c1` and `-c2` → never more than 1 of this run's
-//!   sessions `working`, and both get launched.
-//! - s. the window made 480 px tall → the tree overflows; its lowest row is scrolled wholly into view, size
-//!   restored.
-//! - g. Stop (click) → the testbed's sessions stopped, the relay too, rows kept.
-//! - q. Stop all, the tray's command → every other started workspace of this run (`-u`, `-c1`, `-c2`)
-//!   saved as not started, and their sessions stopped.
-//!
-//! Cleanup (every exit path, see `selftest::cleanup`): supervisor off, then stop + rm every row named
-//! `fm-selftest-<hex>…`, then the dirs.
+//! `--selftest-supervise`: the M2 gate; every session is `fm-selftest-<hex>-…`, and cleanup acts only on those (`selftest::cleanup`).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -76,10 +27,10 @@ const PROMPT_TARGET: &str = "This is an automated Foreman selftest. Messages wil
 FOREMAN-DIRECT-1a2b3c01 or FOREMAN-RELAY-1a2b3c. Each time you get one or more of them, run exactly one Bash command: \
 fm tell \"<every nonce you got since your last reply, space-separated>\" and then wait for more. Never use SendMessage. \
 Do nothing else.";
-/// Step r's direct sends to the target, one a second: half the receiver's burst, none paced (m5/4).
+/// One a second: half the receiver's burst, none paced.
 const DIRECT_SENDS: usize = 30;
 const REPO: &str = "Repo";
-/// `settings.toml` `[sessions] relay_idle_secs` for this run: long enough for the relay to launch, arm and send.
+/// Long enough for the relay to launch, arm and send.
 const RELAY_IDLE_SECS: u64 = 60;
 const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
@@ -171,12 +122,11 @@ pub fn prepare() -> anyhow::Result<()> {
         add_dirs: Vec::new(),
         resume_prompt: None,
     });
-    // as a desired state written before m5/32 has it: the relay first
+    // as a legacy desired state has it: the relay first
     let relay_dir = foreman_core::ensure_relay_dirs(&home, &tb.a.0)?;
     desired.sessions.insert(0, relay_session(&tb.a.0, &tb.a.1, relay_dir, "relay"));
     desired.save(&home)?;
-    // no sign-in, and a closed loopback port as the server: the status check never reaches a real
-    // WorkState (m5/43)
+    // no sign-in, and a closed loopback port as the server: the status check never reaches a real WorkState
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let mut settings = Settings::default();
     settings.sessions.relay_idle_secs = Some(RELAY_IDLE_SECS);
@@ -201,10 +151,7 @@ pub fn prepare() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stops and removes every row whose name starts with `prefix` (this run's own), after turning the
-/// app's supervisor off so it cannot resume them meanwhile. A `--discard-unpushed` refusal is
-/// answered for these rows only (m2/2). True when none is left; with `(sessionId, cwd)` of each, for
-/// their transcripts.
+/// True when none is left; with `(sessionId, cwd)` of each, for their transcripts.
 pub fn remove_own_rows(prefix: &str) -> (bool, Vec<(String, std::path::PathBuf)>) {
     supervise::disable_and_wait();
     let rows = match list_sessions() {
@@ -266,7 +213,6 @@ async fn row(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Option<S
     Ok(rows(cx).await?.into_iter().find(|s| s.name == name))
 }
 
-/// Polls `claude agents --json --all` every 500 ms until `done` returns a value.
 async fn wait_for<T>(
     what: &str,
     within: Duration,
@@ -296,8 +242,7 @@ async fn wait_painted(view: &Entity<FleetView>, key: &str, within: Duration, cx:
     Ok(())
 }
 
-/// The plugin the app under test found ([`find_plugin_dir`]), whose `bin/fm.exe` its setup installed: in a
-/// release folder that is its own `plugins/foreman`, not the repo's.
+/// In a release folder that is its own `plugins/foreman`, not the repo's.
 fn plugin_dir() -> anyhow::Result<PathBuf> {
     find_plugin_dir(&std::env::current_exe()?).map_err(anyhow::Error::msg)
 }
@@ -310,7 +255,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let tb = testbed()?;
     let ctrl = workspace_session_name(&tb.a.0);
 
-    // b. Start through the UI
     wait_painted(view, &format!("start-{}", tb.a.0), Duration::from_secs(30), cx).await.context("step b")?;
     let notices = view.read_with(cx, |v, _| v.setup_notices.clone());
     if !notices.is_empty() {
@@ -389,17 +333,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         tb.a.0
     );
 
-    // right after b: the park parks seconds after Start, and a prompt left open for the whole run is one
-    // anything else may answer before a later step looks (m5/11)
+    // right after b: a prompt left open for the whole run is one anything else may answer before a later step looks
     park_step(tb, view, cx).await.context("step e")?;
     let foreign = crate::selftest_left::foreign_row(view, &tb.a.0, &tb.a.1.join(REPO), &tb.park(), &tb.hex, cx).await.context("step e2")?;
     println!("step e2: {foreign}");
 
     relay_step(tb, &relay_name, view, cx).await.context("step r")?;
 
-    // c. stop its process once its turn ended; the supervisor resumes it. `claude stop`, not a kill: the
-    // daemon respawns a session killed while `state=working`/`blocked` by itself (m2/4, R13), and which of
-    // those the workspace session's turn leaves is the model's (m5/11); a stopped one it never respawns.
+    // `claude stop`, not a kill: the daemon respawns a session killed while `state=working`/`blocked` (R13), never a stopped one.
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
         rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
@@ -448,8 +389,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if foreman_core::process::alive(pid) {
         bail!("step c: the stopped pid {pid} is still running");
     }
-    // Right after `--bg --resume` the row shows a transient sessionId for a few seconds, then the
-    // session's own again (m2/4).
+    // Right after `--bg --resume` the row shows a transient sessionId for a few seconds.
     let transient = (resumed.session_id != idle.session_id).then(|| resumed.session_id.clone());
     let settled = wait_for("step c: sessionId back to the original", Duration::from_secs(30), cx, |rows| {
         rows.iter()
@@ -476,13 +416,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     reopen(&tb.a.0, &ctrl, &settled, hidden, view, cx).await.context("step h")?;
 
-    // after c, not right after r: the drops give the workspace session turns of its own, and c's stop must
-    // not land mid-turn
+    // after c, not right after r: the drops give the workspace session turns of its own, and c's stop must not land mid-turn
     task_box_step(tb, &transcript, view, cx).await.context("step t")?;
 
     want_step(tb, view, cx).await.context("step w")?;
 
-    // d. untrusted workspace → TrustNeeded with Run in terminal; nothing is run or accepted
     let u_ctrl = workspace_session_name(&tb.u.0);
     wait_painted(view, &format!("start-{}", tb.u.0), Duration::from_secs(10), cx).await?;
     click(view, &format!("start-{}", tb.u.0), cx).await?;
@@ -512,8 +450,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         .read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max())
         .filter(|id| Some(*id) != tabs_before)
         .ok_or_else(|| anyhow!("step d: Run in terminal opened no tab"))?;
-    // The command sits typed on the prompt line and stays there: nothing ran it. The tab is closed
-    // whatever happened, so its shell lets go of the dir.
+    // The tab is closed whatever happened, so its shell lets go of the dir.
     let typed: anyhow::Result<String> = async {
         let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
         // PSReadLine may draw a history prediction after the typed text; it is display only.
@@ -554,8 +491,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("step d: the Run in terminal tab did not close");
     }
 
-    // f. busy limit 1 (the settings window's stepper path), two more workspaces started: never
-    // more than one working
     view.update(cx, |v, cx| v.set_max_working(1, cx));
     let saved = Settings::load(&tb.home)?.sessions.max_working;
     if saved != 1 {
@@ -564,8 +499,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let prefix = format!("fm-selftest-{}", tb.hex);
     let (c1, c2) = (workspace_session_name(&tb.c1.0), workspace_session_name(&tb.c2.0));
     let hit = |key: String, cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.hits.borrow().get(&key).copied());
-    // the tree scrolls: a Start below the fold is scrolled into view by `click`, which fails unless it
-    // ends up wholly visible (m3/3)
     let mut clicked_at = Vec::new();
     let mut folds = Vec::new();
     for (name, _) in [&tb.c1, &tb.c2] {
@@ -603,8 +536,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     while first_live.iter().any(Option::is_none) {
         let rows = rows(cx).await?;
         let now = now_ms();
-        // relays are outside the budget (an armed one may show `working` throughout, m0/4); working is
-        // what the budget counts: mid-turn (m3/2)
+        // relays are outside the budget (an armed one may show `working` throughout)
         let working: Vec<&Session> = rows
             .iter()
             .filter(|s| s.name.starts_with(&prefix) && !s.name.ends_with("-relay") && mid_turn(s, now))
@@ -633,7 +565,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         sleep(cx, Duration::from_millis(500)).await;
     }
     let fmt = |d: Option<Duration>| d.map_or("-".to_string(), secs);
-    // the one that went second may only have gone once the first one's turn ended
     let (first, second) = if first_live[0] <= first_live[1] { (0, 1) } else { (1, 0) };
     if !first_idle[first].is_some_and(|idle| first_live[second].is_some_and(|live| live >= idle)) {
         bail!(
@@ -655,7 +586,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     scroll_step(tb, view, cx).await.context("step s")?;
 
-    // g. Stop through the UI: stopped, rows and transcripts kept
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
     // the relay was retired in step r: stopped already, and no longer the workspace's
@@ -682,7 +612,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     stop_all_step(tb, view, cx).await.context("step q")
 }
 
-/// When step h hid the window, and the tick count then.
 struct Hidden {
     at: Instant,
     ticks: u64,
@@ -703,8 +632,6 @@ async fn hide(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     Ok(Hidden { at, ticks })
 }
 
-/// Open, as the tray asks for it: the window is back and painting, and what it shows is the state the
-/// supervisor reached while it was hidden.
 async fn reopen(
     workspace: &str,
     ctrl: &str,
@@ -763,7 +690,6 @@ async fn reopen(
     Ok(())
 }
 
-/// Step q: Stop all through the tray's command, after g stopped the testbed by its button.
 async fn stop_all_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let others = [&tb.u.0, &tb.c1.0, &tb.c2.0];
     let started = |w: &str| DesiredState::load(&tb.home, w).ok().flatten().is_some_and(|d| d.started);
@@ -799,10 +725,7 @@ async fn stop_all_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWin
     Ok(())
 }
 
-/// Step e: the park session (permission mode default, one Bash command that writes a file) stops at its
-/// permission prompt: Foreman's Notification hook records `permission_prompt` for it, and the Inbox shows it
-/// Blocked with Attach to its row. Fails, rather than waits, when the prompt was answered before (by whom
-/// this run cannot know: the transcript has the command's result).
+/// Fails, rather than waits, when the prompt was answered before (by whom this run cannot know).
 async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let park = tb.park();
     let attach_key = format!("inbox-attach-{park}");
@@ -854,9 +777,6 @@ async fn park_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     Ok(())
 }
 
-/// Step s: the workspace tree scrolls (m3/3: it could not, and the last workspaces were out of reach). The
-/// window is made 480 px tall so the tree overflows; its lowest row's hit target, below the fold, is
-/// scrolled wholly into view by the wheel; then the window gets its size back.
 async fn scroll_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let original = cx.update(|window, _| window.viewport_size())?;
     cx.update(|window, _| window.resize(size(original.width, px(480.))))?;
@@ -915,7 +835,6 @@ fn fm(args: &[&str]) -> anyhow::Result<String> {
     Ok(text)
 }
 
-/// Step w: a repo session on demand through `fm want`, `fm` run from inside it, `fm roster`, `fm unwant`.
 async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let name = foreman_supervisor::repo_session_name(w, REPO).ok_or_else(|| anyhow!("no session name for {REPO}"))?;
@@ -932,8 +851,7 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     if attempt.is_none() {
         bail!("{name} is live, but the supervisor never launched it");
     }
-    // its first task: `fm roster` from inside the session, which must not park. Asserted on the command's
-    // result in the transcript, not on the reply: what the model writes around it is its own (m5/11).
+    // Asserted on the command's result in the transcript, not on the reply: what the model writes around it is its own.
     let mut events = EventReader::new(&tb.home);
     let mut transcript = None;
     let ran = |t: &str| t.starts_with("Bash: ") && t.contains("fm roster");
@@ -995,8 +913,7 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
 const WORKSPACE_SKILL: &str = "foreman:workspace-controller";
 const REPO_SKILL: &str = "foreman:repo-controller";
 
-/// The `foreman:` skills of a transcript's `skill_listing` attachments: `attachment.names`, else the
-/// `- <name>: <description>` lines of `attachment.content` (CLI 2.1.309 writes both).
+/// `attachment.names`, else the `- <name>: <description>` lines of `attachment.content` (CLI 2.1.309 writes both).
 fn skills_listed(transcript: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in transcript.lines().filter(|l| l.contains("\"skill_listing\"")) {
@@ -1022,7 +939,6 @@ fn skills_listed(transcript: &str) -> Vec<String> {
     out
 }
 
-/// The last assistant text of a transcript (`.jsonl`) and the commands of its tool calls (`tool: command`).
 fn transcript_turn(path: &str) -> (Option<String>, Vec<String>) {
     let Ok(text) = std::fs::read_to_string(path) else { return (None, Vec::new()) };
     let mut last = None;
@@ -1047,8 +963,6 @@ fn transcript_turn(path: &str) -> (Option<String>, Vec<String>) {
     (last, tools)
 }
 
-/// The result of the first tool call whose `tool: command` (as [`transcript_turn`] lists it) matches, once
-/// the transcript has it: a string, or the text parts of a list.
 fn tool_result(path: &str, matches: impl Fn(&str) -> bool) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut id = None;
@@ -1076,8 +990,6 @@ fn tool_result(path: &str, matches: impl Fn(&str) -> bool) -> Option<String> {
     None
 }
 
-/// Step r: the relay armed, a message from the Rust API to a session launched here, its answer back in
-/// the outbox and in the app's Messages section.
 async fn relay_step(
     tb: &Testbed,
     relay_name: &str,
@@ -1112,7 +1024,6 @@ async fn relay_step(
         sleep(cx, Duration::from_millis(250)).await;
     }
 
-    // direct: DIRECT_SENDS messages straight into the target's pipe, one a second
     let tag = crate::selftest::hex6();
     let nonces: Vec<String> = (1..=DIRECT_SENDS).map(|i| format!("FOREMAN-DIRECT-{tag}{i:02}")).collect();
     let direct_started = Instant::now();
@@ -1160,7 +1071,6 @@ async fn relay_step(
     if !reason.starts_with("no session named") {
         bail!("the forced fallback's reason is {reason:?}");
     }
-    // the drop wants the relay: `relay starting`, launched, armed, `relay ready`
     let label = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.relays.get(w).and_then(|r| r.label(now_ms())).map(|(t, _)| t));
     let mut starting_after = None;
     let mut ready_after = None;
@@ -1214,14 +1124,11 @@ async fn relay_step(
     if reply.from_name != target {
         bail!("{} came from {:?}, not {target}", reply.file, reply.from_name);
     }
-    // the sender is live and in the background: its message offers Attach
     let attach_key = format!("msg-attach-{w}/{}", reply.file);
     wait_painted(view, &attach_key, Duration::from_secs(5), cx).await?;
-    // An idle target can keep `state=working` (m0/4), which the busy budget counts: step f's limit of 1
-    // would wait on it for ever. Its job is done.
+    // An idle target can keep `state=working`, which the busy budget counts: step f's limit of 1 would wait on it for ever.
     Claude::default().stop(&target_row.id).context("stop the target")?;
 
-    // idle for RELAY_IDLE_SECS after the drop: retired (R14), stopped, the row `direct` again
     let retired = loop {
         let desired = DesiredState::load(&tb.home, w)?.ok_or_else(|| anyhow!("{w} has no desired state"))?;
         let stopped = row(relay_name, cx).await?.is_some_and(|r| r.pid.is_none());
@@ -1262,8 +1169,6 @@ async fn relay_step(
     Ok(())
 }
 
-/// m5/32: no relay row, the desired state does not want it (one listed before is retired), and the
-/// workspace row shows `direct`.
 async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let w = tb.a.0.as_str();
     let started = Instant::now();
@@ -1287,8 +1192,7 @@ async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: 
     Ok(format!("no {relay_name} row, the old desired state's relay retired, row `direct`"))
 }
 
-/// Keys through the window's own input dispatch, as gpui_windows makes them: `enter` for a new line,
-/// `space`, else the character itself.
+/// As gpui_windows makes them: `enter` for a new line, `space`, else the character itself.
 fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, modifiers: Modifiers) -> anyhow::Result<()> {
     let event = KeyDownEvent {
         keystroke: Keystroke { modifiers, key: key.into(), key_char: key_char.map(String::from) },
@@ -1301,8 +1205,7 @@ fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, mod
     Ok(())
 }
 
-/// `text` typed into the focused text input: Enter as its key, each character as a keystroke that no
-/// binding takes, which gpui then hands to the input's handler as a real key's WM_CHAR is.
+/// Each character a keystroke that no binding takes, which gpui then hands to the input's handler as a real key's WM_CHAR is.
 fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
     for ch in text.chars() {
         let c = ch.to_string();
@@ -1319,13 +1222,11 @@ fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The task box's (text, selection) as its input holds them.
 fn compose_state(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Option<(String, std::ops::Range<usize>)> {
     view.read_with(cx, |v, cx| v.compose.as_ref().map(|c| (c.text(cx), c.input.read(cx).line.selection())))
 }
 
-/// Waits until the task box's input has the keys and a frame painted it so: only then is its input
-/// handler the window's, which typed characters go to.
+/// Only once a frame painted it focused is its input handler the window's, which typed characters go to.
 async fn until_compose_focused(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
     loop {
@@ -1366,8 +1267,7 @@ fn drops(home: &std::path::Path, w: &str) -> anyhow::Result<Vec<(String, RelayDr
     Ok(out)
 }
 
-/// The registry entry of a session this run launched, by the exact name it chose, registered in `cwd`:
-/// what a direct send resolves to. A selftest writes into no other session's pipe.
+/// A selftest writes into no other session's pipe.
 fn own_peer(name: &str, cwd: &std::path::Path) -> anyhow::Result<peer::PeerTarget> {
     let prefix = format!("fm-selftest-{}-", testbed()?.hex);
     if !name.starts_with(&prefix) {
@@ -1382,7 +1282,6 @@ fn own_peer(name: &str, cwd: &std::path::Path) -> anyhow::Result<peer::PeerTarge
     Ok(t)
 }
 
-/// The `m-<8hex>` of a `sent direct [m-…]` label.
 fn direct_id(label: &str) -> anyhow::Result<String> {
     label
         .strip_prefix("sent direct [")
@@ -1391,14 +1290,12 @@ fn direct_id(label: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow!("{label:?} is not a direct send"))
 }
 
-/// Whether the session's transcript holds `text` as Foreman framed it for `w` with `id` (JSON-escaped, as
-/// the transcript stores a message's content).
+/// JSON-escaped, as the transcript stores a message's content.
 fn in_transcript(transcript: &str, w: &str, text: &str, id: &str) -> bool {
     let framed = serde_json::to_string(&foreman_claude::human::framed(w, text, id)).unwrap_or_default();
     std::fs::read_to_string(transcript).is_ok_and(|t| t.contains(framed.trim_matches('"')))
 }
 
-/// Direct sends recorded for `to` in the workspace's ledger.
 fn ledger_count(home: &std::path::Path, w: &str, to: &str) -> anyhow::Result<usize> {
     let path = foreman_core::relay_dir(home, w)?.join(foreman_claude::human::LEDGER_FILE);
     let v: serde_json::Value = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
@@ -1416,9 +1313,6 @@ async fn wait_delivered(transcript: &str, w: &str, text: &str, id: &str, cx: &mu
     Ok(started.elapsed())
 }
 
-/// Step t0 (m5/18), as soon as Task… shows and while Messages holds a row or two (in the E2E the first one
-/// came a second after Start): a row arriving above the hovered Task… does not move it, and a work_tree in
-/// a message paints as table lines. The task box it opens is closed again for step r.
 async fn steady_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let task_key = format!("task-{w}");
@@ -1436,8 +1330,6 @@ async fn steady_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindo
     Ok(())
 }
 
-/// Step t: the task box and the Approve button, each through the UI, each delivered direct like `fm send`'s.
-/// `transcript`: the workspace session's.
 async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let ctrl = workspace_session_name(w);
@@ -1457,7 +1349,6 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     // the workspace session reads this as the human's: it must not start work
     let first = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.");
     let task = format!("{first}\nDo nothing and send nothing.");
-    // m5/42: two lines typed, the caret moved up and back down, the last word selected and typed over
     let typed = format!("{first}\nDo nothing and send WRONG.");
     type_text(cx, &typed)?;
     let state = compose_state(view, cx);
@@ -1495,7 +1386,6 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let task_id = direct_id(&route)?;
     let task_in = wait_delivered(transcript, w, &task, &task_id, cx).await?;
 
-    // an APPROVE? as the workspace session would send it, newest in the outbox
     let file = format!("{:013}-selftest-approve.json", now_ms());
     let body = format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)");
     let outbox = outbox_dir(&tb.home, w)?;
@@ -1526,8 +1416,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         bail!("answered.json has {saved:?}, not {file} → approve");
     }
 
-    // text typed and Escape: closed, nothing sent. The Approve click gave the keys to the window: a click
-    // in the box takes them back.
+    // The Approve click gave the keys to the window: a click in the box takes them back.
     click(view, "compose-text", cx).await?;
     until_compose_focused(view, cx).await?;
     type_text(cx, "typed, not sent")?;
@@ -1549,8 +1438,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     if !closed || after != before || before.1 != 2 {
         bail!("Escape: box closed={closed}, (relay drops, direct sends) {before:?} → {after:?}, expected 2 direct sends");
     }
-    // Both messages reach the workspace session as two prompts; a later step's kill in the gap between them
-    // is a kill mid-turn, which the daemon resumes instead of the supervisor. So: idle for SETTLED without a break.
+    // A later step's kill between the two prompts is a kill mid-turn, which the daemon resumes instead of the supervisor.
     const SETTLED: Duration = Duration::from_secs(15);
     let started = Instant::now();
     let mut idle_since: Option<Instant> = None;
@@ -1604,7 +1492,7 @@ mod tests {
 
     #[test]
     fn reads_the_foreman_skills_of_a_skill_listing() {
-        // shape of a CLI 2.1.309 transcript line (m3/3), shortened
+        // shape of a CLI 2.1.309 transcript line, shortened
         let names = r#"{"attachment":{"type":"skill_listing","content":"- x: y\n","names":["graphify","foreman:workspace-controller","rlarch:orchestrate","foreman:repo-controller"]},"type":"attachment"}"#;
         let content = r#"{"attachment":{"type":"skill_listing","content":"- graphify (graphify-windows): Use for: x\n- foreman:repo-controller: Be the repo-controller: of one repo\n"},"type":"attachment"}"#;
         let other = r#"{"type":"user","message":{"content":"- foreman:fake: not a listing"}}"#;

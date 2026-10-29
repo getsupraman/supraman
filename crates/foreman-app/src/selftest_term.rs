@@ -1,10 +1,3 @@
-//! `--selftest` step 6c (m5/23): the terminal behaves like Windows Terminal. On step 6's shell tab, after
-//! step 6b left its marker at the PSReadLine prompt: Ctrl+C with a selection copies it and the shell gets
-//! no ^C; PSReadLine's parameter colour is Campbell's bright black; Ctrl+C without a selection cancels the
-//! line; a right-click with a selection copies it and without one pastes; the cursor is a blinking bar,
-//! lit right after a key; Ctrl+Shift+F finds; Ctrl+= / Ctrl+0 zoom the terminals. The clipboard is shared with
-//! other selftests (m5/15), so every clipboard check retries as step 6b does, and the clipboard is put back.
-
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
@@ -42,8 +35,7 @@ fn right_click(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyh
     })
 }
 
-/// `text` typed into the focused find bar: keystrokes no binding takes, which gpui hands to the input's
-/// handler as a real key's WM_CHAR is (m5/42).
+/// Keystrokes no binding takes, which gpui hands to the input's handler as a real key's WM_CHAR is.
 fn typed(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     for c in text.chars() {
         let name = if c == ' ' { "space".to_string() } else { c.to_string() };
@@ -63,7 +55,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     let ctrl = Modifiers::control();
     let mut report = Vec::new();
 
-    // Ctrl+C with a selection: the clipboard gets the text, the selection goes, the prompt line stays
     let prompt = last_line(terminal, cx);
     let mut copied = None;
     let mut text = String::new();
@@ -103,7 +94,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
         let at = chars.windows(needle.len()).rposition(|w| w == needle.as_slice())?;
         Some(cells[at + 1].cell.foreground())
     });
-    // m5/31: the default theme's own bright black (VS Code Dark Modern #666666), in the OSC answers too
     let (index_8, theme_8, theme) = cx.update(|_, cx| {
         let theme = theme::ActiveTheme::theme(cx);
         (TerminalConfig::get(cx).palette.ansi[8], theme.colors().terminal_ansi_bright_black, theme.name.to_string())
@@ -117,7 +107,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("palette[8] = {theme} bright black #666666; PSReadLine drew `-LiteralPath` in {fg:?}"));
 
-    // Ctrl+C without a selection: ^C reaches PSReadLine, which drops the line for a fresh prompt
     let line = last_line(terminal, cx);
     key(cx, "c", ctrl)?;
     let took = until("^C cancelled the prompt line", Duration::from_secs(5), cx, |cx| {
@@ -127,7 +116,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     .await?;
     report.push(format!("Ctrl+C without a selection → ^C: a fresh prompt after {} ms", took.as_millis()));
 
-    // right-click with a selection copies it and clears it
     let mut copied = None;
     for _ in 0..CLIPBOARD_TRIES {
         (_, text) = select_wheel_line(terminal, cx).await?;
@@ -146,7 +134,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
         bail!("right-click copied {text:?} but kept the selection");
     }
 
-    // right-click without a selection pastes
     let marker = format!("fm-rclick-{}", hex6());
     let mut pasted = false;
     for _ in 0..CLIPBOARD_TRIES {
@@ -162,8 +149,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("right-click with a selection → clipboard, cleared; without → pasted {marker}"));
 
-    // a blinking bar: lit and unlit frames while idle, lit right after a key. PSReadLine hides the cursor
-    // (DECTCEM) while it redraws the line, and a frame painted then has none (m5/24): wait that out only.
+    // PSReadLine hides the cursor (DECTCEM) while it redraws the line, and a frame painted then has none: wait that out only.
     let shown = until("the cursor shown after PSReadLine's redraw", Duration::from_secs(1), cx, |cx| {
         terminal.read_with(cx, |t, _| t.last_content().cursor.shape != CursorShape::Hidden)
     })
@@ -187,7 +173,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     let mut solid_after_key = true;
     for _ in 0..4 {
-        // wait for an unlit frame, press End (PSReadLine moves nowhere), and look at the next frame
+        // End: PSReadLine moves nowhere
         until("an unlit cursor frame", Duration::from_secs(2), cx, |cx| !terminal.read_with(cx, |t, _| t.cursor_painted_lit)).await?;
         key(cx, "end", Modifiers::default())?;
         sleep(cx, Duration::from_millis(80)).await;
@@ -201,7 +187,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
         shown.as_millis()
     ));
 
-    // Ctrl+Shift+F finds; Enter steps; Esc closes and clears the highlights
     key(cx, "f", Modifiers { control: true, shift: true, ..Default::default() })?;
     // the bar's input takes typed characters once a frame painted it focused
     until("the find bar's input painted focused", Duration::from_secs(3), cx, |cx| {
@@ -230,7 +215,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     if !selected.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("wheel line 1")) {
         bail!("find: the selected match is {selected:?}");
     }
-    // Shift+Enter steps back down to where Enter came from
     key(cx, "enter", Modifiers { shift: true, ..Default::default() })?;
     sleep(cx, Duration::from_millis(100)).await;
     let back = view.read_with(cx, |v, _| v.tab(tab).and_then(|t| t.find.as_ref()).and_then(|f| f.at));
@@ -239,7 +223,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     key(cx, "enter", Modifiers::default())?;
     sleep(cx, Duration::from_millis(100)).await;
-    // m5/26: the selection as Windows Terminal paints it: white, its text in the terminal's background
     let background = cx.update(|_, cx| theme::ActiveTheme::theme(cx).colors().terminal_background)?;
     until("the selection painted", Duration::from_secs(2), cx, |cx| terminal.read_with(cx, |t, _| t.selection_painted.is_some())).await?;
     let painted = terminal.read_with(cx, |t, _| t.selection_painted);
@@ -260,7 +243,6 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("Ctrl+Shift+F \"wheel line 1\" typed into its input: {count} matches, Enter {first:?} → {second:?}, Shift+Enter back, Esc closed"));
 
-    // Ctrl+= / Ctrl+- / Ctrl+0 zoom every terminal (m5/41; step 7q checks a second tab and the file)
     let size = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.term_font_size);
     let before = size(cx);
     key(cx, "=", ctrl)?;

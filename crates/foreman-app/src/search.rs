@@ -1,15 +1,9 @@
-//! The tree's search (m5/30), as VS Code's Search panel shows results: sessions found by name or by a
-//! prefix of their id, workspaces and repos by name, grouped workspace › repo with the count of sessions
-//! found under each. Matching ignores case. The tree searched is the whole one: stopped, closed and
-//! starred sessions, and the closed ones behind `more…` ([`crate::view::FleetView::search_tree`]).
-
 use std::ops::Range;
 
 use foreman_ui::matcher::{find_all, prefix};
 
 use crate::fleet::{SessionRow, Tree};
 
-/// Where a session row matched: byte ranges in its name, and the matched prefix of its short id.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Marks {
     pub name: Vec<Range<usize>>,
@@ -35,13 +29,11 @@ pub struct WorkspaceHit {
     pub name: String,
     pub root: std::path::PathBuf,
     pub name_marks: Vec<Range<usize>>,
-    /// Its supervised sessions that matched (shown under the workspace, as in the tree).
     pub supervised: Vec<SessionHit>,
     pub repos: Vec<RepoHit>,
 }
 
 impl WorkspaceHit {
-    /// The sessions found under it, its badge.
     pub fn count(&self) -> usize {
         self.supervised.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
@@ -57,7 +49,6 @@ impl Results {
         self.workspaces.iter().map(WorkspaceHit::count).sum()
     }
 
-    /// Workspaces and repos found by their own name.
     pub fn places(&self) -> usize {
         self.workspaces
             .iter()
@@ -69,7 +60,6 @@ impl Results {
         self.workspaces.is_empty()
     }
 
-    /// VS Code's summary line: `3 sessions in 2 workspaces`, plus the places found by name.
     pub fn summary(&self) -> String {
         let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let (sessions, places) = (self.sessions(), self.places());
@@ -84,8 +74,7 @@ impl Results {
     }
 }
 
-/// Where `row` matches `needle`, if it does: its name anywhere, or its id (the 8-hex short id or the full
-/// session id) from the start. The id mark covers the short id as the row shows it.
+/// The id mark covers the short id as the row shows it.
 pub fn session_marks(row: &SessionRow, needle: &str) -> Option<Marks> {
     let s = &row.session;
     let name = find_all(&s.name, needle);
@@ -94,8 +83,6 @@ pub fn session_marks(row: &SessionRow, needle: &str) -> Option<Marks> {
     (!name.is_empty() || id.is_some()).then_some(Marks { name, id })
 }
 
-/// `tree` filtered by `query` (trimmed): a workspace stays when its name, one of its repos' names or one
-/// of its sessions matches; a repo when its name or one of its sessions does. Order is the tree's.
 pub fn search(tree: &Tree, query: &str) -> Results {
     let needle = query.trim();
     if needle.is_empty() {

@@ -1,8 +1,3 @@
-//! m5/25: an elevated Foreman holds its home, and a second launch from Explorer (unelevated, Medium IL)
-//! hands off to it: it asks the elevated window forward and exits, instead of failing on the lock and
-//! starting a second Foreman. Needs an elevated test process (else skipped); the second launch runs at
-//! Medium through `runas /trustlevel:0x20000`.
-
 #![cfg(windows)]
 
 use std::process::{Command, Stdio};
@@ -37,7 +32,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
         .unwrap();
     let log = home.path().join("logs").join("foreman.log");
     let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
-    // up, with its lock: the app logs its tick errors or nothing, so give it time to take the lock
+    // the app logs its tick errors or nothing, so give it time to take the lock
     std::thread::sleep(Duration::from_secs(5));
     assert!(first.try_wait().unwrap().is_none(), "the elevated Foreman exited: {}", read_log());
 

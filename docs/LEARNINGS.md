@@ -3710,3 +3710,26 @@ rlarch, no extra_plugin_dirs). Task: `--shout` for `textcli greet` on a new `tex
   fm.exe") until `plugins/foreman` sits in a folder above the target dir, as `C:\fmbuild\gate\plugins` does.
 - Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16b\target`, `C:\fmbuild\m5-44-16b\plugins\foreman` copied from the repo):
   build ok, no warnings; `cargo test --release --workspace` 662 passed, 0 failed. Selftests not run (per brief).
+
+## 2026-10-29 — m5/44.16d comment pass over foreman-app (audit U14d: A-65, A-67, A-68)
+- **Comments only.** Every changed file (55), with its `//` and `/* */` comments stripped outside string and char
+  literals and blank lines dropped, is identical to master: 0 code differences. No trailing comments were cut.
+- **Counts (full-line comments):** foreman-app 1598 → 294. The UI files (`view.rs`, `view/*`) 431 → 44, the selftests
+  about 640 → 140, `hand.rs` 102 → 13, the rest about 450 → 97. The audit's estimate was 330.
+- **Kept on purpose:** platform and protocol quirks (WM_CHAR after an unhandled key-down, posted keys not in
+  GetKeyState, ShowWindow inside a gpui update, ConPTY titles, PSReadLine's DECTCEM redraw, CF_DIB → PNG-only),
+  claude CLI behaviour (`--resume` keeps the id only in full, the daemon's respawn after ~12 s, transcript shapes),
+  timing bounds and their reasons, `SAFETY:` lines, C21 pointers, and `LEARNINGS mX/Y`, `F-04`, `F-06b`, `R13`
+  as pointers to evidence. `hand.rs`'s 28-line module essay is two lines (the deliberate `--mcp-config` override, and
+  the pointer to Skills `docs/workstate/11-sessions.md` on names).
+- **Removed:** unit tags as narration (bare `(m5/4)`, `(m4/2b)`, `as before m5/20`, …), history ("written before
+  m5/32", "placeholder; m5/14 replaces this"), step-label comments in the selftests, module essays, and docs that
+  restate a name or signature.
+- **Contradicting comments (deleted):** `view.rs`'s `TitleChanged` arm said claude names the console through it; the
+  OSC title arrives as `BreadcrumbsChanged` (A-65), so that arm may never fire for claude. `work_view/inbox.rs`
+  `kind_label` was documented as `blocked_finding` → "blocker finding", but the code gives "blocked finding".
+- **Gate needs the plugin:** with `CARGO_TARGET_DIR` outside the repo, `fm`'s `want` tests find no `plugins/foreman`
+  above `fm.exe` and fail; a copy at `C:\fmbuild\m5-44-16d\plugins\foreman` fixes it.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-44-16d\target`): `cargo build --release --workspace` no warnings;
+  `cargo test --release --workspace` 662 passed, 0 failed. Selftests not run (brief: parallel comment passes share
+  the clipboard and keyboard); the controller runs them on master.

@@ -1,7 +1,3 @@
-//! Managing workspaces from the window: Add (folder → the discovery `fm workspace add` runs → a review →
-//! the registry), Remove (Stop first, then the registry entry and its desired state; no file is
-//! deleted), Rescan, repo Enable/Disable, and what the context menu's other items do.
-
 use std::{
     path::{Path, PathBuf},
     sync::atomic::Ordering,
@@ -18,28 +14,21 @@ use crate::fleet;
 use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
-/// The Add workspace review: what discovery found under `root`, each repo ticked to register it
-/// enabled (unticked ones are registered disabled), and the name, a [`TextInput`] that takes only what
-/// a workspace name can hold ([`name_char`]).
 pub struct AddDraft {
     pub root: PathBuf,
     pub name: Entity<TextInput>,
     pub repos: Vec<(Repo, bool)>,
     pub scanning: bool,
     pub error: Option<String>,
-    /// Why the last key typed into the name was not taken.
     pub hint: Option<String>,
     _name_events: Subscription,
 }
 
-/// A Remove waiting for its workspace's sessions to stop.
 pub struct Removing {
     pub requested_at: i64,
     pub wanted: Vec<String>,
 }
 
-/// What a workspace name takes of a typed character: lowercase letters, digits and `-` as
-/// [`validate_name`] wants, capitals lowered, a space as `-`.
 fn name_char(c: char) -> Option<char> {
     match c {
         ' ' | '_' => Some('-'),
@@ -49,7 +38,6 @@ fn name_char(c: char) -> Option<char> {
 }
 
 impl AddDraft {
-    /// The review of `root`, its name focused.
     pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<FleetView>) -> Self {
         let name = cx.new(|cx| TextInput::new("workspace name", Some(name_char), window, cx));
         let events = cx.subscribe_in(&name, window, |this: &mut FleetView, _, event: &InputEvent, window, cx| this.on_name_event(event, window, cx));
@@ -69,8 +57,6 @@ pub enum NameKey {
     Edited,
 }
 
-/// What an event of the name does to the review: Enter saves, Esc cancels, an edit clears the error and
-/// the hint, a character a name cannot hold says so under the field.
 pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Option<String>) -> NameKey {
     match event {
         InputEvent::Confirm | InputEvent::ConfirmBack => NameKey::Save,
@@ -87,7 +73,6 @@ pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Opt
     }
 }
 
-/// What SendMessage takes for the live session `session_id`, from `~/.claude/sessions` (read only).
 fn send_name_of(session_id: &str) -> Option<String> {
     use foreman_claude::peer;
     let live = peer::live_entries(&peer::sessions_dir()?, &peer::System);
@@ -98,7 +83,6 @@ fn registry(home: Option<&Path>) -> Result<Registry, String> {
     home.map(Registry::at).ok_or_else(|| "no Foreman home".to_string())
 }
 
-/// What the review says about an error: the user's own mistakes plainly, the rest with their cause.
 fn add_error(e: &CoreError) -> String {
     match e {
         CoreError::AlreadyExists(name) => format!("The name {name} is taken: choose another."),
@@ -109,10 +93,7 @@ fn add_error(e: &CoreError) -> String {
 }
 
 impl FleetView {
-    /// Add workspace: a folder picker, then the review ([`AddDraft`]) in the left panel. The one entry
-    /// point for every Add button; [`FleetView::pick_folder`] stands in for the picker (the selftest).
-    /// The picker is modal on its own thread: once it returns, the window is activated and the review's
-    /// name takes the focus, so the keys reach it whatever Windows gave the activation to (m5/26).
+    /// The window is activated after the picker returns, so the keys reach the review whatever Windows gave the activation to.
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         if let Some(path) = self.pick_folder.take() {
@@ -140,13 +121,11 @@ impl FleetView {
         .detach();
     }
 
-    /// The review of `root`: discovery runs off the UI thread (it walks the folder).
     pub fn begin_add(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         self.adding = Some(AddDraft::new(root.clone(), window, cx));
         cx.notify();
         let scan = cx.background_executor().spawn(async move {
             match discover(&root, None, DEFAULT_DEPTH) {
-                // a folder name that slugs to nothing valid still gets its repos listed
                 Err(CoreError::InvalidName(_)) => discover(&root, Some("workspace"), DEFAULT_DEPTH).map(|w| (w, true)),
                 other => other.map(|w| (w, false)),
             }
@@ -193,7 +172,6 @@ impl FleetView {
         };
         match name_event(event, &mut draft.error, &mut draft.hint) {
             NameKey::Save => self.save_add(cx),
-            // Esc closes an open menu or question first
             NameKey::Cancel if self.dismiss_popup() => {}
             NameKey::Cancel => self.adding = None,
             NameKey::Edited => {}
@@ -204,8 +182,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Registers the reviewed workspace; a refusal (no repos, invalid or taken name, folder already
-    /// registered) stays in the review.
     pub fn save_add(&mut self, cx: &mut Context<Self>) {
         let Some(draft) = &mut self.adding else {
             return;
@@ -245,7 +221,6 @@ impl FleetView {
         cx.notify();
     }
 
-    /// The registry as it is now, without waiting for the next poll.
     pub(crate) fn reload_workspaces(&mut self) {
         self.registry_writes.fetch_add(1, Ordering::SeqCst);
         match super::load_registry(registry(self.home.as_deref())) {
@@ -263,13 +238,10 @@ impl FleetView {
         self.removing.retain(|name, _| names.contains(name));
     }
 
-    /// Says what an action did over the bottom of the left panel, moving nothing (m5/34).
     pub fn show_toast(&mut self, text: String, cx: &mut Context<Self>) {
         self.toast.show(text, |this: &mut Self| &mut this.toast, cx);
     }
 
-    /// Opens the menu of the row under the pointer; nothing when the row is gone. A session's SendMessage
-    /// name is looked up off the UI thread and joins the menu if it is still open.
     pub fn open_menu(&mut self, target: MenuTarget, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.menu = self.menu_for(&target, None, cx).map(|(title, items)| ContextMenu { title, position, items });
         cx.notify();
@@ -323,7 +295,6 @@ impl FleetView {
         }
     }
 
-    /// The item `name` holds a claim on, as the workspace's open Work tab has read it (none without one).
     fn claimed_item(&self, workspace: &str, name: &str, cx: &Context<Self>) -> Option<String> {
         if name.is_empty() {
             return None;
@@ -416,8 +387,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Stop first when started; the entry and its desired state go once no session it wants is alive
-    /// ([`FleetView::finish_removals`], after each poll). Nothing on disk outside the Foreman home is touched.
+    /// Nothing on disk outside the Foreman home is touched.
     pub fn remove_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let (started, wanted) = self.desired.get(name).cloned().unwrap_or_default();
         if started {
@@ -427,7 +397,7 @@ impl FleetView {
         self.finish_removals(cx);
     }
 
-    /// Completes each Remove whose sessions are no longer alive in a snapshot taken after it was asked.
+    /// Only a snapshot taken after the Remove was asked counts.
     pub fn finish_removals(&mut self, cx: &mut Context<Self>) {
         let now = now_ms();
         let ready: Vec<String> = self
@@ -513,7 +483,6 @@ impl FleetView {
         }
     }
 
-    /// `claude stop <id>`, off the UI thread; the row changes at the next poll.
     fn stop_session(&mut self, session: Session, cx: &mut Context<Self>) {
         let id = session.id.clone();
         let task = cx.background_executor().spawn(async move { Claude::default().stop(&id) });

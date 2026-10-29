@@ -1,17 +1,3 @@
-// foreman: the fleet app. Workspaces → supervised sessions and repos → sessions on the left, with
-// Start/Stop per workspace, the Inbox and the shared busy-session limit; attached terminals in tabs on
-// the right. Only workspaces the human started are supervised (`foreman-supervisor`).
-//   foreman                  the app
-//   foreman --selftest       the M1 gate: one throwaway session, attach, detach, the Work tab on a fake
-//                            WorkState, cleanup, perf
-//   foreman --selftest-detach <n>       one session, n attach/close cycles, alive after each
-//   foreman --selftest-detach-shutdown  attach, close the window, session still alive
-//   foreman --selftest-perf  1 then 10 pwsh tabs: private bytes and frame times
-//   foreman --selftest-supervise        the M2 gate: Start, kill → resume, trust, park, budget, Stop
-// One Foreman per FOREMAN_HOME (`instance`); closing its window hides it, the tray icon brings it back
-// or quits (`tray`), so supervision outlives the window (m5/1). Log lines go to <home>\logs\foreman.log
-// (a selftest's home has its own), never to a console (m5/22).
-
 mod clipped;
 mod compose;
 mod dismissed_messages;
@@ -92,7 +78,6 @@ impl Mode {
 const USAGE: &str =
     "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
 
-/// The mode, and for the elevated copy [`elevate::relaunch`] started what it was given.
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -118,14 +103,7 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     (mode, None)
 }
 
-/// Variables Foreman must not pass on when it was started from a Claude Code tool shell
-/// (LEARNINGS, fleet UI; tf/5). Without `CLAUDE_CODE_CHILD_SESSION` gone, every `claude` a tab runs
-/// keeps no transcript. `CLAUDECODE=1` marks the tool shell: with it, `NO_COLOR` is that shell's,
-/// not the user's, and would render every tab monochrome; `CLAUDECODE` itself makes a tab's
-/// `claude` count as nested. A `NO_COLOR` without `CLAUDECODE` is the user's choice and stays.
-/// The rest of `TOOL_SHELL` is the parent session's identity (tf/8): its messaging socket and
-/// token would let a tab's process speak as that session. Without `CLAUDECODE` they stay too, so a
-/// `CLAUDE_EFFORT` a user set on purpose is kept.
+/// Tool-shell variables a tab must not inherit; see LEARNINGS fleet UI, tf/5 and tf/8.
 fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
     let mut scrub = vec!["CLAUDE_CODE_CHILD_SESSION"];
     if get("CLAUDECODE").as_deref() == Some("1") {
@@ -135,8 +113,7 @@ fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {
     scrub
 }
 
-/// What a Claude Code 2.1 tool shell exports besides `CLAUDECODE`, `NO_COLOR` and
-/// `CLAUDE_CODE_CHILD_SESSION`, as measured on 2026-10-26.
+/// A Claude Code 2.1 tool shell's other exports, as measured on 2026-10-26.
 const TOOL_SHELL: [&str; 10] = [
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_PID",
@@ -150,11 +127,7 @@ const TOOL_SHELL: [&str; 10] = [
     "CLAUDE_JOB_DIR",
 ];
 
-/// foreman.exe is a console program whose manifest asks for no console of its own
-/// (`consoleAllocationPolicy` detached, assets/foreman.manifest): started from Explorer it has none,
-/// from a shell it shares the shell's, so `--selftest` prints there and the shell waits for its exit
-/// code (a GUI-subsystem exe gets neither from pwsh). A Windows without that policy gives the app a
-/// console of its own, which goes here, after a flash.
+/// A Windows that ignores the manifest's detached `consoleAllocationPolicy` gives the app its own console.
 #[cfg(windows)]
 fn release_own_console() {
     use windows::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
@@ -186,12 +159,11 @@ fn main() {
     if mode == Mode::App {
         foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
     }
-    // Restarted as administrator from the Inbox: the old instance still holds the home until it quits.
+    // The old instance holds the home until it quits.
     if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
         elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
     }
-    // Before `prepare`: a selftest clears its home, which a running one on the same home still uses.
-    // First, so a launch that only hands off to a running instance never asks UAC.
+    // Before `prepare`, which clears a home a running selftest may use, and before any UAC prompt.
     let mut acquired = home.as_deref().map(instance::acquire);
     if let Some(home) = home.as_deref()
         && matches!(acquired, Some(Ok(Acquired::First(_))))

@@ -1,8 +1,3 @@
-//! `--selftest` step 7e (m5/17): the tab hotkeys. Two shell tabs run a key reader (pwsh `ReadKey`, which
-//! prints every key its console gets) and a Work tab sits beside them; with a terminal holding the keys,
-//! real KeyDowns of Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PgDn and Ctrl+PgUp move the active tab, wrapping both
-//! ways, and neither reader prints a thing for them. A plain Tab and Shift+Tab still reach the reader.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -108,7 +103,6 @@ fn chord(m: Modifiers) -> &'static str {
     if m.shift { "ctrl-shift-" } else { "ctrl-" }
 }
 
-/// A KeyDown through the window's own dispatch, as the platform delivers it.
 pub(crate) fn press(cx: &mut AsyncWindowContext, key: &str, modifiers: Modifiers) -> anyhow::Result<()> {
     let keystroke = Keystroke { modifiers, key: key.into(), key_char: None };
     cx.update(|window, cx| {
@@ -129,7 +123,6 @@ pub(crate) async fn reader(view: &Entity<FleetView>, tab: u64, cx: &mut AsyncWin
     Ok(terminal)
 }
 
-/// The reader's key lines once it has printed `count` of them, and a moment later in case more follow.
 pub(crate) async fn keys(terminal: &Entity<Terminal>, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<String>> {
     let lines = |cx: &mut AsyncWindowContext| -> Vec<String> {
         let text = terminal.read_with(cx, |t, _| t.get_content());

@@ -1,12 +1,3 @@
-//! `--selftest` step 7p (m5/38): Delete… from the menu, on the gate's own sessions only. The app reads and
-//! deletes transcripts in the fake claude dir of the scratch home ([`crate::view::CLAUDE_DIR_VAR`]), never
-//! `~/.claude`. [`prepare`] writes [`DELETE_ME`], a closed interactive session with its `<id>/` dir. [`run`]:
-//! its menu offers Delete…, the question names it, and once confirmed the row, the transcript and the dir
-//! are gone while the other fixtures stay. Then the gate's own background session (step 2): its live menu
-//! has no Delete, it is stopped from its menu, a fixture transcript with its id is planted, and Delete…
-//! runs `claude rm` on it: the row leaves the tree and `claude agents`, the fixture goes. Its real transcript
-//! is deleted by cleanup ([`crate::selftest::forget_own_transcript`]).
-
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -27,7 +18,6 @@ fn project(home: &Path, cwd: &Path) -> PathBuf {
     claude_dir(home).join("projects").join(slug(cwd))
 }
 
-/// A transcript and its `<id>/subagents/` file in the fake claude dir.
 fn plant(home: &Path, cwd: &Path, id: &str, title: &str) -> anyhow::Result<(PathBuf, PathBuf)> {
     let dir = project(home, cwd);
     std::fs::create_dir_all(dir.join(id).join("subagents"))?;
@@ -52,7 +42,6 @@ async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &
     })
 }
 
-/// `session_id`'s row anywhere in the whole tree: (name, health).
 fn row(v: &FleetView, session_id: &str) -> Option<(String, Health)> {
     v.search_tree()
         .workspaces
@@ -62,7 +51,6 @@ fn row(v: &FleetView, session_id: &str) -> Option<(String, Health)> {
         .map(|r| (r.session.name, r.health))
 }
 
-/// Right-click → Delete… → the question names `name` → Delete; the row leaves the tree.
 async fn delete_from_menu(view: &Entity<FleetView>, session_id: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
     press_painted(view, &format!("session-row-{session_id}"), MouseButton::Right, cx).await?;
     let keys = menu_open(view, name, cx).await?;
@@ -113,7 +101,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncW
         bail!("{DELETE_ME} came back after a scan");
     }
 
-    // the gate's own background session: no Delete while it runs; stopped from its menu, then deleted
     let session = until(view, cx, &format!("{own}'s row"), |v| {
         v.search_tree()
             .workspaces

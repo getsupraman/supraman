@@ -1,14 +1,4 @@
-//! `--selftest` step 7: the Work tab against a [`FakeWorkState`] on 127.0.0.1 (never the real server,
-//! C21). [`prepare`] registers workspace [`WORKSPACE`] (an empty scratch dir), starts the fake with a
-//! project of that ref (one live run, one done run) and points the scratch home's `settings.toml` at it
-//! and at a fake `.env`. [`run`] opens the tab with the row's Work button, checks what it paints,
-//! expands the done run, selects a row, then changes a row on the fake, pushes stream events and waits
-//! for the new status to be painted. Then the item page (m4/3): sw2/1's page with criteria, one report and
-//! one verification, its claim joined to the session the gate launched (Attach opens and detaches it), a
-//! stream push checking a criterion, a link to sw1/1 (done on a worker's word only: the warning), Back,
-//! Back to the board, Escape. Then m4/4: the fake's inbox rows in the app's Inbox from the start; a
-//! click opens the item page; × dismisses a row, which stays hidden across a reload and shows again
-//! once it starts over; the Work tab's journal with a live event and an older page.
+//! `--selftest` step 7: the Work tab against a [`FakeWorkState`] on 127.0.0.1 (never the real server, C21).
 
 use std::{
     cell::RefCell,
@@ -47,12 +37,10 @@ const LIVE_WITHIN: Duration = Duration::from_secs(2);
 static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
 static OAUTH: OnceLock<std::sync::Arc<foreman_workstate::fake::FakeAuth>> = OnceLock::new();
 
-/// The keys of the WorkState rows step 7 sees in the Inbox.
 pub fn inbox_keys() -> [String; 2] {
     [format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}")]
 }
 
-/// The fake WorkState and its OAuth server, once step 1w started them.
 pub fn fake() -> Option<(&'static FakeWorkState, &'static foreman_workstate::fake::FakeAuth)> {
     Some((FAKE.get()?, OAUTH.get()?.as_ref()))
 }
@@ -99,7 +87,6 @@ fn overview(seq: i64) -> String {
     .to_string()
 }
 
-/// The live run's board; `finished` is after the change the stream announces: sw2/1 done and verified.
 fn live_board(seq: i64, finished: bool) -> String {
     let task1 = item(TASK_1, "sw2/1", "task", "Wire the Work tab", if finished { "done" } else { "in_progress" });
     let mut r1 = row(task1.clone(), LIVE_RUN, 1, "1");
@@ -118,7 +105,7 @@ fn live_board(seq: i64, finished: bool) -> String {
         r2["blockedBy"] = json!([item(TASK_1, "sw2/1", "task", "Wire the Work tab", "in_progress")]);
     }
     let r21 = row(item("5e1f0000-0000-4000-8000-0000000002b1", "sw2/2.1", "subtask", "Indent by depth", "open"), TASK_2, 2, "2.1");
-    // The server lists the run itself first, with a numeric ref (observed live in m4/2's brief).
+    // The server lists the run itself first, with a numeric ref.
     let mut run_row = row(item(LIVE_RUN, "13", "run", "The live run", "in_progress"), PROJECT, 0, "13");
     run_row["parentId"] = json!(PROJECT);
     json!({
@@ -148,8 +135,6 @@ fn item_target(id: &str) -> String {
     format!("/api/v1/items/{id}")
 }
 
-/// sw2/1's item page; `claimed_by` is the gate's own session (name, Claude session id). `all_checked`
-/// is after the change the stream announces: c3 checked.
 fn task1_page(seq: i64, claimed_by: &Session, all_checked: bool) -> String {
     let task1 = item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done");
     let session = json!({ "id": "ws-session-1", "name": claimed_by.name, "role": "worker", "claudeSessionId": claimed_by.session_id });
@@ -188,8 +173,7 @@ fn task1_page(seq: i64, claimed_by: &Session, all_checked: bool) -> String {
     .to_string()
 }
 
-/// sw1/1: done, and only the worker's own verification says so. Shaped like the real server's done
-/// task (m5/19): every field it may null is null, the intent first of all.
+/// Shaped like the real server's done task: every field it may null is null, the intent first of all.
 fn shipped_page() -> String {
     let session = json!({ "id": "ws-session-0", "name": "aw-old", "role": "worker", "externalRole": null, "origin": null,
                           "launchedBy": null, "claudeSessionId": null, "cwd": null, "tree": null, "client": null,
@@ -225,8 +209,6 @@ fn shipped_page() -> String {
     .to_string()
 }
 
-/// The project's inbox: sw2/2 blocked, sw1/1 done on a worker's word; `extra` adds a question on sw2/1,
-/// `restarted` gives sw1/1's row a new `since` (its condition started over).
 fn inbox(seq: i64, extra: bool, restarted: bool) -> String {
     let mut rows = vec![
         json!({ "key": format!("blocked:{TASK_2}"), "kind": "blocked", "item": item(TASK_2, "sw2/2", "task", "Render the board", "blocked"),
@@ -276,7 +258,6 @@ fn board_target(run: &str) -> String {
     format!("/api/v1/runs/{run}/board")
 }
 
-/// Before the window: the workspace, the fake server, and the scratch home's settings and `.env`.
 pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(root)?;
     Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, Vec::new()), true)?;
@@ -290,7 +271,6 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         (item_target(SHIPPED), Answer::json(shipped_page())),
         (item_target(TASK_2), Answer::json(task2_page())),
         (inbox_target(), Answer::json(inbox(100, false, false))),
-        // The gate's other workspace has no project.
         (
             format!("/api/v1/resolve?ref={}", crate::selftest::WORKSPACE),
             Answer::json(json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [] }).to_string()),
@@ -308,8 +288,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
             )),
         ),
     ]);
-    // signed in to the fake's own OAuth server (the browser an HTTP GET), so the WorkState notice
-    // (m5/3) has nothing to say during the gate; step 7d signs out and in again through the UI
+    // signed in to the fake's own OAuth server, so the WorkState notice has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
     let mut settings = Settings::load(home)?;
     settings.workstate.url = Some(fake.base().to_string());
@@ -361,18 +340,15 @@ fn escape(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `launched`: the session the gate launched, which sw2/1's claim names.
 pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = FAKE.get().ok_or_else(|| anyhow!("no fake WorkState (prepare did not run)"))?;
     let mut lines = Vec::new();
 
-    // The fake's inbox joined the app's Inbox without opening anything.
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the WorkState rows in the Inbox", cx).await?;
     crate::selftest_manage::shot("m5-14-inbox", cx).await;
     lines.push(format!("Inbox painted the fake's 2 WorkState rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
-    // Open: the Work button on the workspace row; frames measured while the overview and boards load.
     let before = frames::baseline(view, cx).await;
     let recording = frames::start(view, cx);
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
@@ -398,12 +374,10 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     let title = view.read_with(cx, |v, _| v.tab(tab).map(|t| t.title.clone()).unwrap_or_default());
     lines.push(format!("tab \"{title}\" painted 2 runs and sw2's 3 rows (depth 1, 1, 2) {} ms after the click; run row as header, sw1 collapsed; frames while loading: {stats}", loaded.as_millis()));
 
-    // Expand the done run.
     click(view, "work-run-sw1", cx).await?;
     let expanded = painted(view, &["work-row-sw1/1", "work-row-sw1/2", &status_key("sw1/1", ItemStatus::Done)], LOADED_WITHIN, "sw1 expanded", cx).await?;
     lines.push(format!("clicked sw1: its 2 rows painted after {} ms", expanded.as_millis()));
 
-    // Select a row: highlighted, and the seam m4/3 hooks fires.
     let selected: Rc<RefCell<Vec<String>>> = Rc::default();
     let sink = selected.clone();
     cx.update(|_, cx| {
@@ -419,7 +393,6 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     }
     lines.push("clicked sw2/2: selected and ItemSelected emitted".into());
 
-    // Live: the fake's board changes, three events announce it; one re-read paints the new status.
     let deadline = Instant::now() + LOADED_WITHIN;
     while fake.streams() == 0 && fake.push(": ping") == 0 {
         if Instant::now() > deadline {
@@ -453,8 +426,6 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     lines.push(item_page(view, &work, fake, launched, cx).await.context("item page")?);
     lines.push(inbox_and_journal(view, tab, &work, fake, cx).await.context("inbox and journal")?);
 
-    // Read only, with an access token of the sign-in, and nothing but the read API; `/health` (m5/3) is a
-    // GET with no token, and the sign-in's own requests go to the OAuth endpoints only.
     let oauth = OAUTH.get().ok_or_else(|| anyhow!("no fake OAuth server"))?;
     let issued = oauth.issued();
     let is_oauth = |t: &str| t.starts_with("/.well-known/") || t.starts_with("/connect/");
@@ -471,7 +442,6 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     }
     lines.push(format!("the fake saw {} reads, every one a GET with an access token of the sign-in (none for /health)", seen.len()));
 
-    // Middle-click closes it like any tab.
     let position = scrolled_into_view(view, &format!("tab-{tab}"), cx).await?.center();
     cx.update(|window, cx| {
         let modifiers = Modifiers::default();
@@ -486,7 +456,6 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     Ok(lines.join("; "))
 }
 
-/// The item page: sections, claimed vs proven, the done-unverified warning, live, Back, Escape, Attach.
 async fn item_page(
     view: &Entity<FleetView>,
     work: &Entity<WorkView>,
@@ -534,7 +503,6 @@ async fn item_page(
         opened.as_millis()
     ));
 
-    // Live: c3 is checked on the fake, one event names the item.
     let reads_before = work.read_with(cx, |w, _| w.item_reads);
     fake.set(item_target(TASK_1), Answer::json(task1_page(111, launched, true)));
     let pushed = Instant::now();
@@ -563,7 +531,6 @@ async fn item_page(
     click(view, "item-events", cx).await?;
     painted(view, &["item-event-90", "item-event-95", "item-event-101"], LIVE_WITHIN, "events expanded", cx).await?;
 
-    // A link to sw1/1: done on the worker's word only.
     click(view, "item-link-in-relates-sw1/1", cx).await?;
     painted(view, &["item-header-sw1/1", "item-done-unverified", &verification_key(0, true), "item-report-1"], LOADED_WITHIN, "sw1/1 via the link", cx).await?;
     if is_painted(view, "item-intent", cx) {
@@ -596,7 +563,6 @@ async fn item_page(
     let stats = frames::judge("step 7 item page", &before, &during, view, cx).await?;
     lines.push(format!("Escape closed it; frames on the item page: {stats}"));
 
-    // Attach from the claim: the fleet's own attach tab, detached the way step 5 does it.
     click(view, "work-row-sw2/1", cx).await?;
     painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Attach", cx).await?;
     let attached = open_attach(view, &attach_key, &launched.id, cx).await?;
@@ -606,8 +572,6 @@ async fn item_page(
     Ok(lines.join("; "))
 }
 
-/// m4/4: an Inbox row opens its item page; × dismisses one, across a reload, until it starts over; the
-/// journal reads the newest page, takes a live event and pages back.
 async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkState, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let mut lines = Vec::new();
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
@@ -623,7 +587,6 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     }
     lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2's item page".into());
 
-    // Dismiss: gone, written to the file, and the click did not reach the row under the ×.
     click(view, &format!("inbox-ws-dismiss-done_unverified:{SHIPPED}"), cx).await?;
     sleep(cx, Duration::from_millis(100)).await;
     if is_painted(view, &shipped, cx) {
@@ -645,8 +608,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
         sleep(cx, Duration::from_millis(50)).await;
     }
 
-    // A reload (an event without a run re-reads every inbox) adds a row; the dismissed one stays hidden.
-    // off the panel first: under a resting pointer the m5/18 hold keeps the new row back for HOLD_STILL
+    // off the panel first: under a resting pointer the hold keeps the new row back for HOLD_STILL
     let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
     crate::selftest_left::move_to(gpui::point(right, gpui::px(300.)), cx)?;
     let deadline = Instant::now() + LIVE_WITHIN;
@@ -664,13 +626,11 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     if is_painted(view, &shipped, cx) {
         bail!("the dismissed {shipped} came back on a reload");
     }
-    // It starts over (a new since): it shows again.
     fake.set(inbox_target(), Answer::json(inbox(122, true, true)));
     fake.push(&json!({ "seq": 122, "runId": DONE_RUN, "itemId": SHIPPED, "kind": "transition" }).to_string());
     painted(view, &[&shipped], LIVE_WITHIN, "sw1/1's row after it started over", cx).await?;
     lines.push(format!("× hid sw1/1's row and wrote {DISMISSED_FILE}; a reload added a question and kept it hidden; a new since showed it again"));
 
-    // The journal: the newest page, a live event, an older page.
     click(view, "work-journal=closed", cx).await?;
     painted(view, &["work-journal=open", "journal-event-150", "journal-event-151", "journal-event-152", "journal-older"], LOADED_WITHIN, "the journal", cx).await?;
     let event_153 = journal_event(153, Some(item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done")), "verification", "verified: PASS");

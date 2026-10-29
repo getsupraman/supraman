@@ -1,10 +1,3 @@
-//! `--selftest` step 7k (m5/30): the search box over the tree. Ctrl+Shift+E (dispatched: a posted Ctrl is not
-//! in the keyboard state Windows reads) focuses it; the query is typed as posted WM_KEYDOWNs, whose letters
-//! reach the box as WM_CHAR through its input handler, as a real key's do. Step 7h's closed transcripts are
-//! the data: [`RECENT`]'s id prefix finds it and only it, though [`OLD`]'s id holds the same four digits
-//! further in; its title finds it too, while stopped sessions are hidden in the tree; the gate workspace is
-//! found by its name; a query nothing matches says so. Esc (posted) clears the box and the tree is back.
-
 use std::time::{Duration, Instant};
 
 use anyhow::bail;
@@ -19,7 +12,6 @@ use crate::{
 
 const WITHIN: Duration = Duration::from_secs(5);
 
-/// The result rows painted: workspaces, repos and sessions, by their hit keys, sorted.
 fn result_rows(v: &FleetView) -> Vec<String> {
     let mut rows: Vec<String> = v
         .hits
@@ -36,7 +28,6 @@ fn query(v: &FleetView, cx: &gpui::App) -> String {
     v.search.read(cx).text().to_string()
 }
 
-/// `text` typed into the box by posted keys, once the box shows exactly it.
 async fn type_query(view: &Entity<FleetView>, text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let keys: Vec<String> = text.chars().map(String::from).collect();
     post_keys(&keys.iter().map(String::as_str).collect::<Vec<_>>(), cx).await?;
@@ -45,7 +36,6 @@ async fn type_query(view: &Entity<FleetView>, text: &str, cx: &mut AsyncWindowCo
         .map_err(|e| e.context(format!("it reads {:?}", view.read_with(cx, |v, cx| query(v, cx)))))
 }
 
-/// Waits until the search box has the focus (`want`) or not.
 async fn until_focused(view: &Entity<FleetView>, want: bool, what: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
     while cx.update(|window, cx| view.read(cx).search.read(cx).is_focused(window))? != want {
@@ -57,7 +47,6 @@ async fn until_focused(view: &Entity<FleetView>, want: bool, what: &str, cx: &mu
     Ok(())
 }
 
-/// Selects everything in the box, so the next typed query replaces it.
 fn select_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, cx| view.update(cx, |v, cx| v.focus_search(window, cx)))?;
     Ok(())
@@ -72,7 +61,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let tree_row = format!("ws-row-{WORKSPACE}");
     until_app(view, cx, WITHIN, "the tree before the search", |v, _| v.hits.borrow().contains_key(&tree_row).then_some(())).await?;
 
-    // Ctrl+Shift+E through the window's key dispatch, as the key binding takes it
+    // dispatched: a posted Ctrl is not in the keyboard state Windows reads
     let keystroke = Keystroke { modifiers: Modifiers { control: true, shift: true, ..Default::default() }, key: "e".into(), key_char: None };
     cx.update(|window, cx| window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke, is_held: false, prefer_character_input: false }), cx))?;
     until_focused(view, true, "the search box focused by Ctrl+Shift+E", cx).await?;
@@ -97,7 +86,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     out.push(format!("{prefix:?} typed by posted keys: {rows:?} ({summary}) in {} ms, stopped sessions hidden in the tree", started.elapsed().as_millis()));
     shot("m5-30-search-id", cx).await;
 
-    // the title of the same closed session
     select_all(view, cx)?;
     type_query(view, "closed session", cx).await?;
     let recent = format!("session-row-{RECENT}");
@@ -109,7 +97,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     .map_err(|e| e.context(format!("rows painted {:?}", view.read_with(cx, |v, _| result_rows(v)))))?;
     out.push("\"closed session\" finds it by its title".into());
 
-    // the gate workspace by its name
     select_all(view, cx)?;
     type_query(view, WORKSPACE, cx).await?;
     let ws = format!("result-ws-{WORKSPACE}");
@@ -124,13 +111,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     out.push(format!("{WORKSPACE:?} finds the workspace, its name marked"));
 
-    // nothing
     select_all(view, cx)?;
     type_query(view, "zzqx9", cx).await?;
     until_app(view, cx, WITHIN, "No results", |v, _| (v.hits.borrow().contains_key("search-none") && result_rows(v).is_empty()).then_some(())).await?;
     out.push("\"zzqx9\": No results".into());
 
-    // Esc clears it and the tree is back
     post_keys(&["escape"], cx).await?;
     until_app(view, cx, WITHIN, "the box cleared by Esc and the tree back", |v, cx| {
         let hits = v.hits.borrow();

@@ -1,14 +1,6 @@
-//! One Foreman per `FOREMAN_HOME` in the user's session: a named mutex `Local\Foreman-<key>`, the key
-//! hashed from the home's canonical path, so a selftest's scratch home never collides with the user's
-//! running app. A second launch on the same home sets the named event `Local\Foreman-<key>-open`,
-//! which the first one waits on to bring its window to the front, and exits.
-
 use std::path::Path;
 
-/// FNV-1a of the lowercased canonical path (Windows paths are case-insensitive): stable across builds,
-/// unlike `DefaultHasher`, so an old and a new `foreman.exe` on one home still see each other. A home
-/// that does not exist yet hashes as its absolute path, which is what its canonical path becomes once
-/// it does, less the `\\?\` prefix.
+/// FNV-1a, stable across builds unlike `DefaultHasher`, so an old and a new `foreman.exe` on one home see each other.
 pub fn key(home: &Path) -> String {
     let path = std::fs::canonicalize(home)
         .or_else(|_| std::path::absolute(home))
@@ -27,9 +19,7 @@ pub fn key(home: &Path) -> String {
 }
 
 pub enum Acquired {
-    /// This process is Foreman for the home; the lock is held until the value is dropped.
     First(Instance),
-    /// Another process holds it; it was asked to show its window.
     Running,
 }
 
@@ -91,7 +81,6 @@ mod imp {
     }
 
     impl Instance {
-        /// Calls `opened` on a thread of its own each time a second launch asks for the window.
         pub fn on_open(&self, opened: impl Fn() + Send + 'static) -> anyhow::Result<()> {
             let open = unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, false, &self.open_name) }?;
             let open = open.0 as isize;
@@ -147,7 +136,6 @@ mod tests {
         first.on_open(move || { tx.send(()).ok(); }).unwrap();
         assert!(matches!(acquire(home.path()).unwrap(), Acquired::Running));
         rx.recv_timeout(Duration::from_secs(5)).expect("the first instance was not asked to open");
-        // another spelling of the same directory is the same home
         let upper = std::path::PathBuf::from(home.path().to_string_lossy().to_uppercase());
         assert!(matches!(acquire(&upper).unwrap(), Acquired::Running));
         drop(first);

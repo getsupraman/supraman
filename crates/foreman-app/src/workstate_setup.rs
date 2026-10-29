@@ -1,7 +1,4 @@
-//! Whether the sessions Foreman launches will have WorkState (m5/3, m5/43), and if not, what is
-//! missing and how to fix it — one wording for the notice above the tree, Settings → WorkState and the
-//! Work tab. [`detect`] asks `GET /health` and then the sign-in for an access token (a refresh when one
-//! is due), so it runs off the UI thread.
+//! One wording for the notice above the tree, Settings → WorkState and the Work tab.
 
 use std::path::Path;
 use std::time::Duration;
@@ -9,23 +6,20 @@ use std::time::Duration;
 use foreman_core::Settings;
 use foreman_workstate::{Auth, AuthError, AuthStatus};
 
-/// How often the status is checked again while the app runs.
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WsStatus {
     Checking,
-    /// Signed in, and the server answers; `who` is the token's name or subject when it says.
+    /// `who` is the token's name or subject when it says.
     Ready { url: String, who: Option<String> },
     NotSignedIn { url: String },
-    /// The grant no longer works (a refused refresh, a wiped server).
     SignInAgain { url: String, why: String },
-    /// `/health` did not answer 2xx, or the refresh could not reach the server.
     Unreachable { url: String, error: String },
 }
 
-/// `/health`, then an access token for the configured server. Blocks up to a few seconds.
+/// Blocks up to a few seconds.
 pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
     let url = settings.workstate.origin();
@@ -51,7 +45,6 @@ pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
 }
 
 impl WsStatus {
-    /// What is wrong, in one sentence; `None` when nothing is (or not known yet).
     pub fn problem(&self) -> Option<String> {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
@@ -63,7 +56,6 @@ impl WsStatus {
         }
     }
 
-    /// How to fix it, in one sentence.
     pub fn fix(&self) -> Option<String> {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
@@ -77,12 +69,10 @@ impl WsStatus {
         }
     }
 
-    /// `problem` and `fix` as one paragraph: the Work tab's message.
     pub fn message(&self) -> Option<String> {
         Some(format!("{} {}", self.problem()?, self.fix()?))
     }
 
-    /// The notice offers Sign in.
     pub fn signed_out(&self) -> bool {
         matches!(self, WsStatus::NotSignedIn { .. } | WsStatus::SignInAgain { .. })
     }
@@ -91,7 +81,6 @@ impl WsStatus {
         matches!(self, WsStatus::Unreachable { .. })
     }
 
-    /// The line Start shows when `workspace` was started anyway: it never blocks.
     pub fn start_warning(&self, workspace: &str) -> Option<String> {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,

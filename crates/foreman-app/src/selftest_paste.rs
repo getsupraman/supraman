@@ -1,8 +1,4 @@
-//! `--selftest` step 7r (m5/46): an image on the clipboard survives a step that borrows the clipboard
-//! (as 6b, 6c and 7l do), and claude's Alt+V image check, run in a Foreman shell tab, still finds it.
-//! The tab runs the exact command claude 2.1 runs on win32, through `cmd` so that pwsh's fix-up of a
-//! `powershell.exe` child's environment does not apply, as it does not for claude. The user's clipboard
-//! is saved first and put back afterwards ([`crate::selftest_clipboard`]).
+//! The tab runs claude's command through `cmd`, so pwsh's fix-up of a `powershell.exe` child's environment does not apply, as it does not for claude.
 
 use std::time::{Duration, Instant};
 
