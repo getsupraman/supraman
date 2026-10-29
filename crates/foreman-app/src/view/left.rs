@@ -623,6 +623,8 @@ impl FleetView {
                 d.child(
                     div()
                         .id("notices")
+                        .relative()
+                        .child(hit_target(&self.hits, "notices-area".into()))
                         .flex()
                         .flex_col()
                         .min_h_0()
