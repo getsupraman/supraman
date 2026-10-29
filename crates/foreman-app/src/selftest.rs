@@ -939,6 +939,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let boxed = step("7t", crate::selftest_box::run(view, &home(), cx)).await?;
     println!("step 7t: {boxed}");
 
+    let reordered = step("7u", crate::selftest_tabs::reorder(view, cx)).await?;
+    println!("step 7u: {reordered}");
+
     set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);

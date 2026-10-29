@@ -1,10 +1,12 @@
 //! The tab strip: one header per tab, the active one marked with an accent line, each with its close
-//! button; the owner keeps the tabs themselves and appends its own buttons after them.
+//! button; the owner keeps the tabs themselves and appends its own buttons after them. A tab drags as a
+//! [`DraggedTab`]; dropped on another tab of the strip, the owner moves it there.
 
 use gpui::{AnyElement, AnyView, App, ClickEvent, Context, Div, MouseButton, MouseDownEvent, SharedString, Svg, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::button;
+use crate::fonts;
 use crate::hit::{HitTargets, hit_target};
 
 /// Longer program titles are cut to this many characters, with an ellipsis.
@@ -13,11 +15,43 @@ pub const MAX_TITLE: usize = 200;
 pub struct TabHeader {
     pub id: u64,
     pub label: AnyElement,
+    /// What the dragged tab shows under the cursor.
+    pub title: SharedString,
     pub tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
+/// The payload of a tab being dragged, from any strip; other drop targets take it by its `id`.
+#[derive(Clone)]
+pub struct DraggedTab {
+    pub id: u64,
+    pub title: SharedString,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        div()
+            .font_family(fonts::UI)
+            .text_sm()
+            .px_3()
+            .py_1()
+            .max_w(px(280.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .rounded_sm()
+            .border_1()
+            .border_color(colors.border_focused)
+            .bg(colors.tab_active_background)
+            .text_color(colors.text)
+            .opacity(0.9)
+            .child(self.title.clone())
+    }
+}
+
 /// The strip, painted under `tab-<id>`, its close button under `close-tab-<id>`. `close_icon` draws the
-/// close glyph; a middle click closes too.
+/// close glyph; a middle click closes too. A tab dropped on another gets `on_move(from, to)`, indices
+/// into `tabs`; the target shows a bar on the side the tab lands.
+#[allow(clippy::too_many_arguments)]
 pub fn tab_strip<V: 'static>(
     hits: &HitTargets,
     tabs: Vec<TabHeader>,
@@ -25,9 +59,11 @@ pub fn tab_strip<V: 'static>(
     close_icon: impl Fn() -> Svg,
     on_activate: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
     on_close: impl Fn(&mut V, u64, &mut Context<V>) + Clone + 'static,
+    on_move: impl Fn(&mut V, usize, usize, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> Div {
     let colors = cx.theme().colors().clone();
+    let ids: std::rc::Rc<[u64]> = tabs.iter().map(|t| t.id).collect();
     let mut bar = div()
         .flex()
         .flex_none()
@@ -36,10 +72,12 @@ pub fn tab_strip<V: 'static>(
         .bg(colors.tab_bar_background)
         .border_b_1()
         .border_color(colors.border);
-    for tab in tabs {
+    for (ix, tab) in tabs.into_iter().enumerate() {
         let id = tab.id;
         let is_active = active == Some(id);
         let (close, middle, activate) = (on_close.clone(), on_close.clone(), on_activate.clone());
+        let (moved, over_ids, drop_ids) = (on_move.clone(), ids.clone(), ids.clone());
+        let drop_border = colors.drop_target_border;
         bar = bar.child(
             div()
                 .id(SharedString::from(format!("tab-{id}")))
@@ -72,10 +110,48 @@ pub fn tab_strip<V: 'static>(
                         middle(this, id, cx);
                     }),
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| activate(this, id, cx))),
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| activate(this, id, cx)))
+                .on_drag(DraggedTab { id, title: tab.title }, |tab, _, _, cx| cx.new(|_| tab.clone()))
+                .drag_over::<DraggedTab>(move |style, dragged: &DraggedTab, _, _| {
+                    match over_ids.iter().position(|&d| d == dragged.id).and_then(|from| landing(from, ix)) {
+                        Some(Side::Before) => style.border_0().border_l_2().border_color(drop_border),
+                        Some(Side::After) => style.border_0().border_r_2().border_color(drop_border),
+                        None => style,
+                    }
+                })
+                .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                    if let Some(from) = drop_ids.iter().position(|&d| d == dragged.id)
+                        && from != ix
+                    {
+                        moved(this, from, ix, cx);
+                    }
+                })),
         );
     }
     bar
+}
+
+#[derive(Debug, PartialEq)]
+enum Side {
+    Before,
+    After,
+}
+
+/// Where the tab at `from`, dropped on the one at `to`, lands: before it when it comes from its right.
+fn landing(from: usize, to: usize) -> Option<Side> {
+    match from.cmp(&to) {
+        std::cmp::Ordering::Greater => Some(Side::Before),
+        std::cmp::Ordering::Less => Some(Side::After),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+/// `items` with the one at `from` taken out and put back at `to`; out of range changes nothing.
+pub fn reorder<T>(items: &mut Vec<T>, from: usize, to: usize) {
+    if from < items.len() && to < items.len() {
+        let item = items.remove(from);
+        items.insert(to, item);
+    }
 }
 
 /// The index `step` tabs away from `at`, wrapping; with none active, the first (forward) or last.
@@ -139,6 +215,27 @@ mod tests {
         assert_eq!(cycled(3, None, 1), Some(0), "none active: the first");
         assert_eq!(cycled(3, None, -1), Some(2), "none active: the last");
         assert_eq!(cycled(0, None, 1), None);
+    }
+
+    #[test]
+    fn a_dropped_tab_takes_the_target_place() {
+        let mut v = vec!['a', 'b', 'c', 'd'];
+        reorder(&mut v, 1, 0);
+        assert_eq!(v, ['b', 'a', 'c', 'd'], "second before the first");
+        reorder(&mut v, 0, 3);
+        assert_eq!(v, ['a', 'c', 'd', 'b'], "first to the end");
+        reorder(&mut v, 2, 2);
+        assert_eq!(v, ['a', 'c', 'd', 'b'], "onto itself");
+        reorder(&mut v, 4, 0);
+        reorder(&mut v, 0, 4);
+        assert_eq!(v, ['a', 'c', 'd', 'b'], "out of range");
+    }
+
+    #[test]
+    fn the_marker_is_on_the_side_the_tab_lands() {
+        assert_eq!(landing(1, 0), Some(Side::Before));
+        assert_eq!(landing(0, 3), Some(Side::After));
+        assert_eq!(landing(2, 2), None);
     }
 
     #[test]

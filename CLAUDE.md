@@ -19,7 +19,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_ui::confirm::Confirm`: every question before an action that cannot be taken back (`ask`), and every report with only its OK (`report`); the owner places it.
 - `foreman_ui::toast::ToastSlot`: every short feedback that floats over a panel and goes by itself.
 - `foreman_ui::notices::{NoticeKind, render, keep_dismissed, remove_one}`: every list of plain notices with a × each; the owner keeps the kinds and their sources.
-- `foreman_ui::tabs::{tab_strip, TabHeader, cycled, sanitize}`: the tab strip, tab cycling, and a program's OSC title as a tab label; tab state and detach stay with the owner.
+- `foreman_ui::tabs::{tab_strip, TabHeader, DraggedTab, reorder, cycled, sanitize}`: the tab strip with drag-to-reorder (`on_move(from, to)`), the dragged tab's payload for any other drop target, tab cycling, and a program's OSC title as a tab label; tab state, order and detach stay with the owner.
 - `foreman_ui::hover_card::{HoverCard, tooltip}`: every hover card of a title and `label  value` rows.
 - `foreman_ui::split::SplitPane`: every resizable side-by-side split; the owner keeps and persists the width.
 - `foreman_ui::matcher::{find_all, prefix, highlighted, count}`: case-insensitive matching and a results list's highlighted label and count badge.
