@@ -30,6 +30,9 @@ pub struct LaunchSpec {
     /// the session (m2/1). Use `--settings {"env":…}` in `extra_args` for env the session must see.
     pub env: Vec<(String, String)>,
     pub extra_args: Vec<String>,
+    /// `--resume <sessionId>`: beside the other flags it starts a copy under a new id that carries that
+    /// session's transcript; the original keeps its id and name (m5/61). claude cannot rename a session.
+    pub resume: Option<String>,
 }
 
 impl LaunchSpec {
@@ -54,6 +57,10 @@ impl LaunchSpec {
     /// variadic and would otherwise swallow it.
     pub fn argv(&self) -> Vec<OsString> {
         let mut args: Vec<OsString> = vec!["--bg".into(), "--name".into(), self.name.clone().into()];
+        if let Some(session_id) = &self.resume {
+            args.push("--resume".into());
+            args.push(session_id.clone().into());
+        }
         if !self.permission_mode.is_empty() {
             args.push("--permission-mode".into());
             args.push(self.permission_mode.clone().into());
@@ -427,6 +434,7 @@ mod tests {
             add_dirs: vec![PathBuf::from(r"C:\fm\relay\demo")],
             env: vec![("A".into(), "1".into())],
             extra_args: vec!["--model".into(), "opus".into()],
+            resume: None,
         }
     }
 
@@ -441,6 +449,14 @@ mod tests {
                 "--looks-like-a-flag but is the prompt",
             ]
         );
+    }
+
+    #[test]
+    fn a_launch_that_resumes_names_the_session_right_after_its_own_name() {
+        let spec = LaunchSpec { resume: Some("fc5bf027-48e3-4510-90b2-63a00eb76df8".into()), ..full() };
+        let argv = strs(&spec.argv());
+        assert_eq!(argv[..5], ["--bg", "--name", "fm-demo-a", "--resume", "fc5bf027-48e3-4510-90b2-63a00eb76df8"]);
+        assert_eq!(argv[5..], strs(&full().argv())[3..]);
     }
 
     #[test]

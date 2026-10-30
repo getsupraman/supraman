@@ -6,7 +6,7 @@ use foreman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 
 use crate::{
     Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
-    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, api_base, is_live, mid_turn, reconcile,
+    NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, api_base, is_live, mid_turn, reconcile,
 };
 
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
@@ -303,7 +303,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             match action {
                 Action::Launch(_) | Action::Resume { .. } if self.held.is_some() => {}
                 Action::Launch(w) => {
-                    let result = self.launch(&w, now).map(drop);
+                    let result = self.launch(&w, observed, now).map(drop);
                     let result = self.unless_held(result, now);
                     if matches!(result, Some(Ok(()))) && !w.exempt_from_budget() {
                         budget.take(1);
@@ -352,6 +352,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             }
         }
         self.record_stops(stops, now);
+        self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
         self.revoke_unwanted();
         self.track_activity(observed, now);
@@ -411,8 +412,16 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         })
     }
 
-    fn launch(&mut self, w: &WantedSession, now: Millis) -> Result<String, Failure> {
+    fn launch(&mut self, w: &WantedSession, observed: &[Session], now: Millis) -> Result<String, Failure> {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
+        if let Some(from) = &w.fork_from {
+            // a copy of a live conversation would leave two sessions going on from one history
+            if let Some(s) = observed.iter().find(|s| &s.session_id == from && is_live(s, now)) {
+                return Err(Failure::Other(format!("the session to adopt ({}) runs again: stop it, then Retry", s.id)));
+            }
+            spec.resume = Some(from.clone());
+            spec.prompt = adopt_prompt(&self.desired.workspace, w);
+        }
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.config.plugin_dirs.clone();
@@ -484,6 +493,28 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
         }
         Ok(())
+    }
+
+    /// [`DesiredState::forked`] for each adopted session whose own row shows, in the file too.
+    fn settle_forks(&mut self, observed: &[Session]) {
+        let landed: Vec<(String, String)> = self
+            .desired
+            .sessions
+            .iter()
+            .filter_map(|w| {
+                let from = w.fork_from.as_ref()?;
+                let row = observed.iter().find(|s| s.name == w.name && !s.session_id.is_empty() && &s.session_id != from)?;
+                Some((w.name.clone(), row.session_id.clone()))
+            })
+            .collect();
+        for (name, session_id) in landed {
+            self.desired.forked(&name, &session_id);
+            if let Some(home) = &self.config.foreman_home
+                && let Err(e) = DesiredState::update(home, &self.desired.workspace, |d| d.forked(&name, &session_id))
+            {
+                self.notices.push(format!("Cannot record that {name} continues as {session_id}: {e}"));
+            }
+        }
     }
 
     /// PATCHes the claude session uuid onto each minted session once its single live row shows it:
@@ -1059,6 +1090,7 @@ mod tests {
             permission_mode: "auto".into(),
             add_dirs: Vec::new(),
             resume_prompt: None,
+            fork_from: None,
         }
     }
 
@@ -2050,5 +2082,65 @@ mod tests {
         assert_eq!(sup.launcher().take(), [], "respawn grace");
         sup.tick(&[dead], &mut free(), NOW + 40 * SECOND);
         assert_eq!(sup.launcher().take().len(), 1);
+    }
+
+    // m5/61
+    #[test]
+    fn an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once() {
+        let mcp = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
+        let (sup, minter) = minting(true, mcp.path());
+        let mut sup = sup;
+        sup.config.foreman_home = Some(home.path().into());
+        sup.desired.sessions.clear();
+        let adopted = crate::adopted_session("demo", "Alpha", r"C:\demo\Alpha", "the repo role", from).unwrap();
+        sup.desired.sessions.push(adopted.clone());
+        sup.desired.save(home.path()).unwrap();
+        let original = Session {
+            id: "fc5bf027".into(),
+            session_id: from.into(),
+            name: "mine".into(),
+            cwd: r"C:\demo\Alpha".into(),
+            ..row(SessionState::Working, Some(Status::Idle), Some(42))
+        };
+
+        sup.tick(std::slice::from_ref(&original), &mut free(), NOW);
+        assert_eq!(sup.launcher().take(), [], "the original still runs: no copy");
+        let need = sup.needs_you().iter().find(|n| n.name == "fm-demo-alpha").cloned().unwrap();
+        assert!(need.detail.contains("runs again: stop it, then Retry"), "{}", need.detail);
+        assert_eq!(need.action, Some(Remedy::Adopt { from: from.into() }));
+        sup.retry("fm-demo-alpha");
+
+        let stopped = Session { pid: None, state: Some(SessionState::Stopped), status: None, ..original };
+        sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 60 * SECOND);
+        let calls = sup.launcher().take();
+        assert!(!calls.iter().any(|c| matches!(c, Call::Resume { .. })), "the original is never resumed in place: {calls:?}");
+        let argv = launch_argv(&calls);
+        assert!(argv.starts_with(&format!("--bg --name fm-demo-alpha --resume {from} ")), "{argv}");
+        assert!(argv.contains("--strict-mcp-config") && argv.contains("workstate-fm-demo-alpha.json"), "a fresh mint: {argv}");
+        assert!(argv.ends_with(&format!("-- {}", crate::adopt_prompt("demo", &adopted))), "{argv}");
+        assert!(!argv.contains("the repo role"), "the role comes with the session's start, not twice: {argv}");
+        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { request, .. }] if request.name == "fm-demo-alpha" && request.claude_session_id.is_none()));
+
+        // the copy's row, first with the original's uuid, then its own
+        let copy = |session_id: &str| Session {
+            id: "f050c443".into(),
+            session_id: session_id.into(),
+            name: "fm-demo-alpha".into(),
+            ..row(SessionState::Working, Some(Status::Busy), Some(43))
+        };
+        sup.tick(&[stopped.clone(), copy(from)], &mut free(), NOW + 61 * SECOND);
+        assert_eq!(sup.desired.sessions[0].fork_from.as_deref(), Some(from));
+        let own = "f050c443-6aa7-47b2-a9e4-63a5b6e9d04d";
+        sup.tick(&[stopped.clone(), copy(own)], &mut free(), NOW + 62 * SECOND);
+        assert_eq!(sup.desired.sessions[0].fork_from, None);
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap().unwrap().sessions[0].fork_from, None, "in the file too");
+        assert_eq!(sup.launcher().take(), [], "a live copy needs nothing");
+        sup.tick(&[stopped.clone(), copy(own)], &mut free(), NOW + 200 * SECOND);
+        // stopped later, it is resumed as itself
+        let copy_stopped = Session { pid: None, state: Some(SessionState::Stopped), status: None, ..copy(own) };
+        sup.tick(&[stopped, copy_stopped], &mut free(), NOW + 3_600 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { session_id, .. }] if session_id == own));
     }
 }

@@ -20,6 +20,7 @@
 //! | R10 | yes | 0, or 1 not live | started < `settle` ago | `Wait(Settling)` | `just_started_waits_to_settle_instead_of_launching_again` |
 //! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |
 //! | R2 | yes | 0 | | `Launch` | `absent_is_launched` |
+//! | R2 | yes | 0, `fork_from` set (an Adopt) | | `Launch` with `--resume <fork_from>`: a copy under a new id that carries the conversation (claude cannot rename one); a live row of that uuid fails it; `fork_from` goes once the name's row shows another uuid; Remedy `Adopt` (Retry, Start fresh) | `an_adopted_session_is_launched_as_a_copy_and_a_failed_copy_offers_retry_or_start_fresh`, `an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once` |
 //! | R13 | yes | 1 not live | alive < `respawn_grace` (30 s) ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn, and a resume while it still counts a dead one running starts a copy (m2/4) | `a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace` |
 //! | R3 | yes | 1 not live (stopped, done, orphaned) | | `Resume` from the row's cwd | `stopped_or_orphaned_is_resumed_from_its_own_cwd` |
 //! | R14 | any | 1 live, name in `retired` (not wanted) | | `Stop`, before the relay; never launched or resumed | `retired_sessions_are_stopped_before_the_relay_and_never_relaunched` |
@@ -75,7 +76,7 @@ mod reconcile;
 pub use budget::{Budget, mid_turn, tick_all, working};
 pub use desired::{
     DEFAULT_PERMISSION_MODE, DesiredState, RELAY_RESUME_PROMPT, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, WantedSession, Wanted,
-    fill_paths, is_foreign, is_relay, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
+    adopt_prompt, adopted_session, fill_paths, is_foreign, is_relay, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
     workspace_session_name,
 };
 pub use error::{Result, SupervisorError};

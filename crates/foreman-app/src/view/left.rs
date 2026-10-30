@@ -5,7 +5,7 @@ use std::{
 
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
-use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, workspace_session_name};
+use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, repo_session_name, workspace_session_name};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
 use foreman_ui::banner;
 use foreman_ui::button;
@@ -102,7 +102,7 @@ fn short_since(at: &str) -> String {
 pub fn inbox_key(need: &NeedsYou) -> Option<String> {
     let verb = match need.action.as_ref()? {
         Remedy::Attach { .. } => "attach",
-        Remedy::Retry => "retry",
+        Remedy::Retry | Remedy::Adopt { .. } => "retry",
         Remedy::RunInTerminal { .. } => "run",
         Remedy::Remint { .. } => "remint",
         Remedy::RestartElevated => "restart-elevated",
@@ -596,20 +596,27 @@ impl FleetView {
                         Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.workspace.clone()),
                         Remedy::Remint { .. } => ("Re-mint", action.clone(), need.workspace.clone()),
                         Remedy::RestartElevated => ("Restart as administrator", action.clone(), need.workspace.clone()),
+                        Remedy::Adopt { .. } => ("Retry", action.clone(), need.workspace.clone()),
                     };
                     let name = need.name.clone();
-                    Some(button::bordered(&self.hits, key, label, cx).on_click(cx.listener(
+                    let fresh = matches!(action, Remedy::Adopt { .. }).then(|| {
+                        let (workspace, name) = (workspace.clone(), name.clone());
+                        button::bordered(&self.hits, format!("inbox-fresh-{name}"), "Start fresh", cx)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.start_fresh(&workspace, &name, cx)))
+                    });
+                    let primary = button::bordered(&self.hits, key, label, cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| match &action {
                             Remedy::Attach { id } => {
                                 this.attach_by_id(&workspace, id, window, cx);
                             }
-                            Remedy::Retry | Remedy::Remint { .. } => this.retry(&workspace, &name, cx),
+                            Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. } => this.retry(&workspace, &name, cx),
                             Remedy::RunInTerminal { cwd, command } => {
                                 this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
                             }
                             Remedy::RestartElevated => this.restart_elevated(window, cx),
                         },
-                    )))
+                    ));
+                    Some(div().flex().flex_none().gap_1().child(primary).children(fresh))
                 }
                 _ => None,
             };
@@ -1479,7 +1486,11 @@ impl FleetView {
 
         let card = {
             let (row, claimed) = (row.clone(), self.claimed_item(workspace, &s.name, cx));
-            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), open, now_ms()))
+            let adopt = match self.adoption(workspace, repo, &row) {
+                Some(crate::fleet::Adoption::No(why)) => Some(why),
+                _ => None,
+            };
+            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), open, adopt.clone(), now_ms()))
         };
         let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
@@ -1548,6 +1559,21 @@ impl FleetView {
                         cx.stop_propagation();
                         this.reveal_folder(&owner, &path, cx);
                     }))
+                    .into_any_element(),
+            );
+        }
+        let adopting = repo_session_name(workspace, &repo.name)
+            .and_then(|name| self.needs.iter().find(|n| n.workspace == workspace && n.name == name && matches!(n.action, Some(Remedy::Adopt { .. }))));
+        if let Some(need) = adopting {
+            let key = format!("adopt-failed-{workspace}/{}", repo.name);
+            let why = format!("{}: {}. Retry or Start fresh in the Inbox.", need.name, need.detail);
+            out.push(
+                tag("adopt failed", cx)
+                    .id(SharedString::from(key.clone()))
+                    .relative()
+                    .text_color(cx.theme().status().warning)
+                    .child(hit_target(&self.hits, key))
+                    .tooltip(Tooltip::text(why))
                     .into_any_element(),
             );
         }
