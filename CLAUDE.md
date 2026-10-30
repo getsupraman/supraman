@@ -30,6 +30,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop.
 - `foreman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `foreman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
+- `foreman_core::prune::prune`: the one retention rule for event logs and relay files left in the home; never a cleanup of your own.
 - `foreman_core::Settings::update`: every change to `settings.toml` (load, edit, save, retried against other writers); `Settings::load_with_notices` when a bad key should be shown.
 - `foreman_core::Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `foreman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `foreman_workstate::secret` re-exports it.
@@ -43,7 +44,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `foreman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `foreman_core::process::{command, run, git, shell_execute, alive, started}`: every child process outside the PTY: no console window, drained pipes, a timeout that kills the tree (`Kill::Child` for `claude`, whose tree holds the background service), and ShellExecute and pid liveness; never `Command::new` and `.output()` by hand.
 - `foreman_core::url::origin` (`foreman_workstate::api_base`): the one origin rule; origins are map keys in `servers.json` and the minted records.
-- `foreman_workstate::{http_agent, pct_encode, server_reason}`: the HTTP agent, path/query encoding and a refusal's reason for every WorkState call.
+- `foreman_workstate::{http_agent, read_reply, pct_encode, server_reason}`: the HTTP agent, an answer read whole, path/query encoding and a refusal's reason for every WorkState call; tests serve them from `FakeWorkState`, never a hand-rolled server.
 - `foreman_workstate::{Client, Stream, Auth}`: the read API v1 (GET only, C21), `/api/stream`, and the OAuth sign-in whose `bearer_for(origin)` every read and mint carries; `FakeWorkState` (feature `fake`) in tests.
 - `foreman_claude::mcp_config_path`: the path of a session's WorkState config file, with the session-name check; write, read and delete it through this.
 - `foreman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.

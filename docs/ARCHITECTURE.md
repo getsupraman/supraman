@@ -40,6 +40,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `paths::{user_home, claude_dir}` — the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `paths::{normalize, path_key, within, key_within, main_checkout, linked_git_dir}` — path comparison (`within`: a folder or below it, never a sibling sharing a prefix) and the `.git` file/dir walk without running git.
 - `time::{now_ms, epoch_ms, modified_ms, hex6}` — epoch milliseconds and a scratch-name suffix.
+- `prune::{prune, KEEP_MS}` — the one retention rule for what sessions leave in the home: event logs, relay outbox messages, sent and rejected drops, and the `answered.json` entries of gone messages, after 30 days unmodified; a drop still waiting is never removed. The supervision runs it hourly.
 - `url::origin` (re-exported as `url_origin`; `foreman_workstate::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
 - `process::{command, run, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. Never `Command::new(..).output()` by hand.
 - `secret::{SecretStore, FileStore, MemoryStore, default_store}` — every secret at rest: one DPAPI-encrypted file per key under `<home>/oauth/secrets`; `MemoryStore` in tests.
@@ -77,11 +78,12 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 ### foreman-workstate (`crates/foreman-workstate/src/`)
 
-- `http_agent`, `pct_encode`, `server_reason` (`http.rs`) — the HTTP agent, path/query encoding and a refusal's reason for every WorkState call, the mint included.
+- `http_agent`, `read_reply`, `pct_encode`, `server_reason` (`http.rs`) — the HTTP agent, an answer read whole (status, headers, body; a body that cannot be read is a transport failure), path/query encoding and a refusal's reason for every WorkState call, the mint and OAuth included.
 - `Client` (`client.rs`) — the blocking read API v1 client (`overview`, `board`, `item`, `brief`, `inbox`, `journal`, `backlog`, `sessions`, `resolve`); GET only; its bearer comes from a `BearerSource` at each read; no error carries the token.
 - `Stream` (`stream.rs`) — the `/api/stream` subscriber on its own thread: `StreamSignal::{Connected, Event, Lost}`; an event means "re-read".
 - `Auth` (`auth.rs`) — the OAuth 2.1 native client: sign-in, `access_token`, refresh under `refresh.lock`, `bearer_for(origin)`.
 - `health` — the unauthenticated `GET /health`.
+- `fake::FakeWorkState` (feature `fake`) — the one test server for anything that talks HTTP to WorkState: routes by `<METHOD> <target>` or by target, `set` to change an answer, `seen()` for each request's method, target, Authorization, Content-Type and body.
 - `model` — the read API v1 shapes, lenient (v1 grows additively).
 - `fake::FakeWorkState` (feature `fake`) — the read API and its OAuth server on 127.0.0.1 for tests and selftests.
 - `secret` re-exports `foreman_core::secret`.
