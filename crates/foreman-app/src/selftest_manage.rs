@@ -398,11 +398,18 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     if flags != [("alpha".to_string(), false), ("beta".to_string(), true)] {
         bail!("the same folder again as {again}: folders {flags:?}, expected alpha disabled (supervised in {ADDED}) and beta enabled");
     }
-    let tag = format!("supervised-in-{again}/alpha");
-    until(view, cx, WITHIN, "the supervised-in tag", |v| painted(v, &tag).then_some(())).await?;
+    let in_again = |v: &FleetView, repo: &str| v.tree().workspaces.iter().find(|w| w.name == again).is_some_and(|w| w.repos.iter().any(|r| r.name == repo));
+    until(view, cx, WITHIN, "beta in the second workspace, alpha (supervised in the first) not", |v| {
+        (painted(v, &format!("repo-row-{again}/beta")) && !in_again(v, "alpha") && !painted(v, &format!("supervised-in-{again}/alpha"))).then_some(())
+    })
+    .await?;
+    view.update(cx, |v, cx| v.search.update(cx, |s, cx| s.set_text("alpha", cx)));
+    let found = format!("result-supervised-in-{again}/alpha");
+    until(view, cx, WITHIN, "search finds alpha in the second workspace, supervised in the first", |v| painted(v, &found).then_some(())).await?;
+    view.update(cx, |v, cx| v.clear_search(cx));
     registry.remove(&again)?;
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
-    out.push(format!("the same folder again registers as {again} with alpha disabled, tagged supervised in {ADDED}; removed"));
+    out.push(format!("the same folder again registers as {again} with alpha disabled, out of its tree and found by search as supervised in {ADDED}; removed"));
     out.push(single_repo(view, &registry, cx).await?);
     out.push(hover_cards(view, own, cx).await?);
 
