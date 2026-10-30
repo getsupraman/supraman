@@ -5,6 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use fm::fire::{self, Host, Report, Request, RunCtx};
+use fm::run::{RunLog, SessionEnd};
 use foreman_core::schedule::{self, Action, ActionKind, Fired, Outcome, Overlap, Prompt, RunEvent, Schedule, Span, Stage, Status, Trigger};
 use foreman_core::secret::{MemoryStore, SecretStore};
 use foreman_core::{Folder, Registry, Workspace};
@@ -143,9 +144,13 @@ impl Host for TestHost<'_> {
         self.now
     }
 
-    fn session(&mut self, _ctx: &RunCtx, gate: Option<&str>) -> (Outcome, String) {
+    fn session(&mut self, _ctx: &RunCtx, gate: Option<&str>, _log: &mut dyn RunLog) -> SessionEnd {
         self.gates.push(gate.map(str::to_string));
-        (Outcome::Done, "the test's session stage".into())
+        SessionEnd { outcome: Outcome::Done, why: "the test's session stage".into(), tokens: None, recorded: false }
+    }
+
+    fn end_dead_session(&mut self, _home: &Path, _session: &schedule::LiveSession) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -544,11 +549,14 @@ fn fm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
     child.wait_with_output().unwrap()
 }
 
-/// The real host: Run now through `fm`, the task's line through `fmw`; the session stage waits for sched/6.
+/// The real host: Run now through `fm`, the task's line through `fmw`. Folder Alpha is no git repo, so the session
+/// stage stops at its worktree, before any `claude` or WorkState call.
 #[test]
 fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     let f = fixture();
-    let s = script_schedule("gate", "gate.cmd", ActionKind::ScriptThenSession);
+    let mut s = script_schedule("gate", "gate.cmd", ActionKind::ScriptThenSession);
+    s.permissions.profile = schedule::Profile::WorktreeEdit;
+    s.action.worktree = true;
     schedule::edit(&f.home, &f.workspace(), |all| {
         all.push(s.clone());
         Ok(())
@@ -558,24 +566,24 @@ fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     let fp = schedule::approve(&f.home, &*store, &f.workspace(), "gate", 1).unwrap().approval.unwrap().fingerprint;
 
     let out = fm_bin("fm", &f, &["schedule", "run", "demo", "gate"], "");
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("gate-") && stdout.trim_end().ends_with(&format!("skipped: {}", fire::LAUNCH_PENDING)), "{stdout}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("gate-") && stderr.contains(" failed: ") && stderr.contains("is not a git repo"), "{stderr}");
 
     let home = f.home.to_str().unwrap();
     let out = fm_bin("fmw", &f, &["schedule", "fire", "--home", home, "demo", "gate", "--fingerprint", "0bad"], "");
     assert_eq!(out.status.code(), Some(3), "{out:?}");
     assert!(out.stdout.is_empty() && out.stderr.is_empty(), "fmw writes to fire.log alone: {out:?}");
     let out = fm_bin("fmw", &f, &["schedule", "fire", "--home", home, "demo", "gate", "--fingerprint", &fp], "");
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
     let out = fm_bin("fmw", &f, &["schedule", "fire", "--home", home, "demo", "nope", "--fingerprint", &fp], "");
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     let log = fs::read_to_string(schedule::fire_log(&f.home)).unwrap();
     let lines: Vec<&str> = log.lines().collect();
     assert_eq!(lines.len(), 4, "{log}");
-    assert!(lines[0].contains(" demo/gate run_now gate-") && lines[0].ends_with(fire::LAUNCH_PENDING), "{log}");
+    assert!(lines[0].contains(" demo/gate run_now gate-") && lines[0].contains("is not a git repo"), "{log}");
     assert!(lines[1].contains(" demo/gate task gate-") && lines[1].contains("refused: the task's fingerprint"), "{log}");
-    assert!(lines[2].contains(" demo/gate task gate-") && lines[2].ends_with(fire::LAUNCH_PENDING), "{log}");
+    assert!(lines[2].contains(" demo/gate task gate-") && lines[2].contains("is not a git repo"), "{log}");
     assert!(lines[3].contains(" demo/nope task - refused: workspace demo has no schedule nope"), "{log}");
 }
 

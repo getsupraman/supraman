@@ -35,7 +35,18 @@ impl Profile {
     pub fn tools(self) -> &'static [&'static str] {
         match self {
             Self::Read => &["Read", "Glob", "Grep"],
-            Self::WorktreeEdit => &["Read", "Glob", "Grep", "Edit", "Write"],
+            Self::WorktreeEdit => &[
+                "Read",
+                "Glob",
+                "Grep",
+                "Edit",
+                "Write",
+                "Bash(git status:*)",
+                "Bash(git diff:*)",
+                "Bash(git log:*)",
+                "Bash(git add:*)",
+                "Bash(git commit:*)",
+            ],
             Self::Auto => &[],
         }
     }
@@ -56,10 +67,12 @@ impl std::str::FromStr for Profile {
 }
 
 impl Permissions {
-    /// `--allowedTools`: `always` (Foreman's own, `fm_allowed_tools`), the profile's, then the schedule's.
-    pub fn allowed(&self, always: &[String]) -> Vec<String> {
+    /// `--allowedTools`: `always` (Foreman's own, `fm_allowed_tools`), the profile's, then the schedule's. A
+    /// `worktree-edit` run may push its own `branch` and no other.
+    pub fn allowed(&self, always: &[String], branch: &str) -> Vec<String> {
         let profile = self.profile.tools().iter().map(|t| t.to_string());
-        dedup(always.iter().cloned().chain(profile).chain(self.allow_tools.iter().cloned()))
+        let push = (self.profile == Profile::WorktreeEdit).then(|| format!("Bash(git push -u origin {branch})"));
+        dedup(always.iter().cloned().chain(profile).chain(push).chain(self.allow_tools.iter().cloned()))
     }
 
     /// `--disallowedTools`: [`DEFAULT_DENY`], then the schedule's.
@@ -93,6 +106,11 @@ pub fn run_id(id: &str, stamp: &str) -> String {
 /// `fm-<workspace>-sched-<id>-<stamp>`; see docs/research/scheduler.md "The session name".
 pub fn session_name(workspace: &str, id: &str, stamp: &str) -> String {
     format!("{}{workspace}-{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX)
+}
+
+/// `fm-sched/<id>/<stamp>`: the branch of a run's worktree.
+pub fn run_branch(id: &str, stamp: &str) -> String {
+    format!("{}sched/{id}/{stamp}", crate::FM_PREFIX)
 }
 
 /// `<folder>/.claude/worktrees/fm-sched-<id>-<stamp>`.

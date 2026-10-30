@@ -141,7 +141,7 @@ impl Hands {
     }
 
     fn bearer(&self) -> Result<Option<(String, String)>, String> {
-        crate::tokens::bearer(&self.auth)
+        foreman_supervisor::bearer(&self.auth)
     }
 
     fn next_name(&self, cwd: &Path) -> String {

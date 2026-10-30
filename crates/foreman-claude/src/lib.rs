@@ -79,4 +79,4 @@ pub use launch::{
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };
-pub use transcript::{Launcher, Transcript, Transcripts, claude_dir, first_prompt};
+pub use transcript::{Launcher, Transcript, Transcripts, Usage, claude_dir, first_prompt};
