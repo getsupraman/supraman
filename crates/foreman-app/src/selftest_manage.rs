@@ -260,6 +260,81 @@ async fn card_on(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContex
     }
 }
 
+/// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width (m5/63).
+async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspace: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const LONG: &str = "a-folder-with-a-rather-long-name-for-edit-folders";
+    const BRANCH: &str = "copilot/fix-the-edit-folders-dialog-overflowing-its-box";
+    let long = cargo_root().join("target").join("selftest-edit-long").join(LONG);
+    std::fs::create_dir_all(long.join(".git"))?;
+    std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}
+"))?;
+    let width = view.read_with(cx, |v, _| v.left_width);
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.left_width = crate::view::MIN_LEFT_WIDTH;
+            v.edit_folders(workspace, window, cx);
+        })
+    })?;
+    view.update(cx, |v, _| v.pick_folder = Some(long.clone()));
+    click(view, "edit-add-folder", cx).await?;
+    let folders = until(view, cx, WITHIN, "the long folder added", |_| {
+        let w = registry.load(workspace).ok()?;
+        w.folders.iter().any(|f| f.path == long).then(|| w.folders.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+    })
+    .await?;
+    let long_name = registry.load(workspace)?.folders.into_iter().find(|f| f.path == long).map(|f| f.name).ok_or_else(|| anyhow!("no long folder"))?;
+    let fits = until(view, cx, WITHIN, "every Edit folders row inside the dialog", |v| {
+        let hits = v.hits.borrow();
+        let dialog = hits.get("edit-folders")?.bounds;
+        let mut rights = Vec::new();
+        for f in &folders {
+            let state = [format!("edit-enable-{f}"), format!("edit-elsewhere-{f}")].into_iter().find(|k| hits.contains_key(k))?;
+            let mut keys = vec![state, format!("edit-remove-{f}")];
+            keys.extend(Some(format!("edit-home-{f}")).filter(|k| hits.contains_key(k)));
+            for key in &keys {
+                let b = hits.get(key)?.bounds;
+                if b.left() < dialog.left() || b.right() > dialog.right() + px(0.5) {
+                    return None;
+                }
+            }
+            rights.push(hits.get(&format!("edit-remove-{f}"))?.bounds.right());
+        }
+        let same = rights.windows(2).all(|p| (f32::from(p[0]) - f32::from(p[1])).abs() < 0.5);
+        same.then_some((f32::from(dialog.size.width), rights.first().copied().map(f32::from)))
+    })
+    .await;
+    if fits.is_err() {
+        shot("m5-63-edit-folders-min", cx).await;
+    }
+    let fits = fits.map_err(|e| {
+        let found = view.read_with(cx, |v, _| {
+            let hits = v.hits.borrow();
+            let mut keys: Vec<String> = hits.keys().filter(|k| k.starts_with("edit-")).map(|k| format!("{k} {:?}", hits[k].bounds)).collect();
+            keys.sort();
+            keys
+        });
+        e.context(format!("painted {found:?}"))
+    })?;
+    let cut = [format!("edit-folder-path-{long_name}"), format!("edit-branch-{long_name}")];
+    for key in &cut {
+        until(view, cx, WITHIN, &format!("{key} painted cut"), |_| crate::clipped::cut_at(key).map(|_| ())).await?;
+    }
+    if !view.read_with(cx, |v, _| painted(v, "edit-elsewhere-alpha")) {
+        bail!("alpha in {workspace} shows no `supervised in` badge");
+    }
+    shot("m5-63-edit-folders-min", cx).await;
+    view.update(cx, |v, cx| {
+        v.left_width = width;
+        cx.notify();
+    });
+    click(view, "edit-done", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
+    Ok(format!(
+        "Edit folders… of {workspace} at the minimum left width ({:.0} px dialog): {folders:?} keep their boxes and buttons inside, Remove at x {:?} in every row, {LONG}'s path and branch {BRANCH} clipped with a tooltip",
+        fits.0, fits.1
+    ))
+}
+
 fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     let git = root.join(name).join(".git");
     std::fs::create_dir_all(&git)?;
@@ -400,6 +475,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     }
     let tag = format!("supervised-in-{again}/alpha");
     until(view, cx, WITHIN, "the supervised-in tag", |v| painted(v, &tag).then_some(())).await?;
+    out.push(edit_folders_fit(view, &registry, &again, cx).await?);
     registry.remove(&again)?;
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
     out.push(format!("the same folder again registers as {again} with alpha disabled, tagged supervised in {ADDED}; removed"));

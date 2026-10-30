@@ -12,9 +12,15 @@ use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, SharedStrin
 use theme::ActiveTheme as _;
 
 use super::FleetView;
+use super::icon::Icon;
 use super::left::{secondary, tag};
 use super::menu::{Confirm, Confirmed};
+use crate::clipped::clipped;
 use crate::fleet;
+
+const STATE_COLUMN: gpui::Pixels = px(16.);
+/// As wide as the `Home` button, so `home` and `Home` rows keep the same columns.
+const HOME_SLOT: gpui::Pixels = px(48.);
 
 pub struct EditFolders {
     pub workspace: String,
@@ -239,33 +245,23 @@ impl FleetView {
                 this.request_edit(&w, edit.clone(), cx);
             }))
         };
-        let mut folders = div().flex().flex_col().gap(px(2.));
+        let mut folders = div().flex().flex_col().gap(px(2.)).min_w_0();
         if w.folders.is_empty() {
             folders = folders.child(div().text_xs().text_color(secondary(cx)).child("No folders yet: add one below."));
         }
         for f in &w.folders {
             let elsewhere = owned.get(&foreman_core::paths::path_key(&f.path)).filter(|_| !f.enabled).cloned();
             let is_home = w.home().is_some_and(|h| foreman_core::same_path(h, &f.path));
-            let kind = if f.is_git() { f.branch.as_deref().map(|b| format!("git ({b})")).unwrap_or_else(|| "git".into()) } else { "folder".into() };
-            let mut row = div()
-                .id(SharedString::from(format!("edit-folder-{}", f.name)))
-                .relative()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_1()
-                .text_sm()
-                .child(hit_target(&self.hits, format!("edit-folder-{}", f.name)));
-            row = match &elsewhere {
-                Some(owner) => row.child(tag(format!("supervised in {owner}"), cx).relative().child(hit_target(&self.hits, format!("edit-elsewhere-{}", f.name)))),
+            let state = div().flex_none().w(STATE_COLUMN);
+            let state = match &elsewhere {
+                Some(_) => state,
                 None => {
                     let edit = Edit::SetEnabled { folder: f.name.clone(), enabled: !f.enabled };
                     let w = name.clone();
-                    row.child(
+                    state.child(
                         div()
                             .id(SharedString::from(format!("edit-enable-{}", f.name)))
                             .relative()
-                            .flex_none()
                             .cursor_pointer()
                             .child(if f.enabled { "☑" } else { "☐" })
                             .child(hit_target(&self.hits, format!("edit-enable-{}", f.name)))
@@ -276,16 +272,60 @@ impl FleetView {
                     )
                 }
             };
-            row = row
-                .child(div().flex_none().whitespace_nowrap().when(!f.enabled, |d| d.text_color(secondary(cx))).child(SharedString::from(f.name.clone())))
-                .child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(kind)))
-                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_xs().text_color(colors.text_muted).child(SharedString::from(f.path.display().to_string())))
-                .when(is_home, |d| d.child(tag("home", cx)))
-                .when(!is_home, |d| d.child(edit_button(format!("edit-home-{}", f.name), "Home", Edit::SetHome(Some(f.path.clone())), cx)))
+            let kind = match (f.is_git(), &f.branch) {
+                (true, Some(b)) => clipped(format!("edit-branch-{}", f.name), b.clone(), false).flex_shrink(8.).text_xs().text_color(secondary(cx)).into_any_element(),
+                _ => div().flex_none().text_xs().text_color(secondary(cx)).child(if f.is_git() { "git" } else { "folder" }).into_any_element(),
+            };
+            let named = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .min_w_0()
+                .child(state)
+                .child(clipped(format!("edit-name-{}", f.name), f.name.clone(), false).when(!f.enabled, |d| d.text_color(secondary(cx))))
+                .child(if f.is_git() { Icon::GitBranch } else { Icon::Folder }.svg(12., secondary(cx)).flex_none())
+                .child(kind);
+            let path = clipped(format!("edit-folder-path-{}", f.name), f.path.display().to_string(), true).flex_1().text_xs().text_color(colors.text_muted);
+            let located = div().flex().items_center().gap_2().min_w_0().text_xs();
+            let located = match &elsewhere {
+                Some(owner) => located.child(
+                    tag(format!("supervised in {owner}"), cx)
+                        .relative()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(hit_target(&self.hits, format!("edit-elsewhere-{}", f.name))),
+                ),
+                None => located.child(div().flex_none().w(STATE_COLUMN)),
+            };
+            let home = if is_home {
+                tag("home", cx).into_any_element()
+            } else {
+                edit_button(format!("edit-home-{}", f.name), "Home", Edit::SetHome(Some(f.path.clone())), cx).into_any_element()
+            };
+            let buttons = div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .child(div().flex().flex_none().justify_end().min_w(HOME_SLOT).child(home))
                 .child(edit_button(format!("edit-remove-{}", f.name), "Remove", Edit::RemoveFolder(f.name.clone()), cx));
-            folders = folders.child(row);
+            folders = folders.child(
+                div()
+                    .id(SharedString::from(format!("edit-folder-{}", f.name)))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .px_1()
+                    .text_sm()
+                    .child(hit_target(&self.hits, format!("edit-folder-{}", f.name)))
+                    .child(div().flex().flex_col().flex_1().min_w_0().child(named).child(located.child(path)))
+                    .child(buttons),
+            );
         }
-        let mut scans = div().flex().flex_col().gap(px(2.));
+        let mut scans = div().flex().flex_col().gap(px(2.)).min_w_0();
         for (i, s) in w.scans.iter().enumerate() {
             let skips = if s.exclude.is_empty() { String::new() } else { format!(" · skips {}", s.exclude.len()) };
             scans = scans.child(
@@ -294,9 +334,10 @@ impl FleetView {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .min_w_0()
                     .px_1()
                     .text_xs()
-                    .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(SharedString::from(format!("{}  depth {}{skips}", s.path.display(), s.depth))))
+                    .child(clipped(format!("edit-scan-{i}"), format!("{}  depth {}{skips}", s.path.display(), s.depth), true).flex_1())
                     .child(edit_button(format!("edit-scan-remove-{i}"), "Remove", Edit::RemoveScan(s.path.clone()), cx)),
             );
         }
@@ -319,6 +360,7 @@ impl FleetView {
                 .flex()
                 .flex_col()
                 .gap_2()
+                .min_w_0()
                 .mx_3()
                 .my_2()
                 .p_2()
@@ -332,9 +374,10 @@ impl FleetView {
                         .flex()
                         .items_center()
                         .justify_between()
+                        .gap_2()
                         .text_xs()
                         .text_color(colors.text_muted)
-                        .child(SharedString::from(format!("EDIT FOLDERS · {}", w.name)))
+                        .child(clipped("edit-title", format!("EDIT FOLDERS · {}", w.name), false))
                         .child(typed("edit-done", "Done", |this, cx| this.close_edit_folders(cx), cx)),
                 )
                 .child(
@@ -344,7 +387,7 @@ impl FleetView {
                         .gap_2()
                         .text_xs()
                         .text_color(colors.text_muted)
-                        .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(SharedString::from(home_line)))
+                        .child(clipped("edit-home-line", home_line, true).flex_1())
                         .children(reset),
                 )
                 .child(div().text_xs().text_color(colors.text_muted).child("FOLDERS  ☑ may have a supervised session"))
