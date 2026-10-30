@@ -88,24 +88,23 @@ pub(crate) async fn record(view: &Entity<FleetView>, length: Duration, cx: &mut 
     recording.stop(view, cx)
 }
 
-/// The first quiet second within [`CALM_WITHIN`], else the last one measured.
+/// The first second within [`CALM_WITHIN`] with other processes under [`BUSY_CPU`], else the last one measured.
 pub(crate) async fn baseline(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Stretch {
     let deadline = Instant::now() + CALM_WITHIN;
     loop {
         let stretch = record(view, BASELINE, cx).await;
-        if stretch.busy().is_none() || Instant::now() >= deadline {
+        if stretch.others_cpu < BUSY_CPU || Instant::now() >= deadline {
             return stretch;
         }
     }
 }
 
-/// `Ok(Some(note))`: the machine was busy, nothing judged; `Err`: own work over its budget on a quiet one.
+/// `Ok(Some(note))`: nothing more to judge; `Err`: own work over its budget with other processes quiet.
 fn busy_or_over(phase: &str, before: &Stretch, during: &Stretch) -> Result<Option<String>, String> {
     let stats = &during.stats;
     let others = before.others_cpu.max(during.others_cpu);
-    let busy = before.busy().map(|why| format!("baseline {why}")).or_else(|| (during.others_cpu >= BUSY_CPU).then(|| "during the phase".to_string()));
-    if let Some(why) = busy {
-        return Ok(Some(format!("{stats}; machine busy ({:.0} % CPU by others): frame budget not judged ({why})", others * 100.)));
+    if others >= BUSY_CPU {
+        return Ok(Some(format!("{stats}; machine busy ({:.0} % CPU by others): frame budget not judged", others * 100.)));
     }
     if !(stats.work_p10 <= OWN_WORK_P10_MS) {
         return Err(format!(
@@ -114,7 +113,7 @@ fn busy_or_over(phase: &str, before: &Stretch, during: &Stretch) -> Result<Optio
             others * 100.
         ));
     }
-    Ok(None)
+    Ok(before.busy().map(|why| format!("{stats}; interval checks SKIP (baseline {why})")))
 }
 
 pub(crate) async fn judge(
@@ -133,7 +132,7 @@ pub(crate) async fn judge(
     if stats.over_50 > 0 {
         let after = record(view, BASELINE, cx).await;
         if let Some(why) = after.busy() {
-            return Ok(format!("{stats}; machine busy ({:.0} % CPU by others): frame budget not judged (baseline after the phase {why})", after.others_cpu * 100.));
+            return Ok(format!("{stats}; interval checks SKIP (baseline after the phase {why})"));
         }
         bail!(
             "{phase}: frames over 50 ms on a quiet machine: {stats} (baseline before: {}; after: {})",
@@ -210,6 +209,9 @@ mod tests {
         let note = busy_or_over("p", &window(5., 0.1), &window(19.2, 0.5)).unwrap().unwrap();
         assert!(note.contains("machine busy (50 % CPU by others): frame budget not judged"), "{note}");
         assert!(busy_or_over("p", &window(5., 0.6), &window(19.2, 0.1)).unwrap().unwrap().contains("60 % CPU by others"), "a busy baseline");
+        let slow = Stretch { stats: stats(42., 3), others_cpu: 0.15 };
+        assert!(busy_or_over("p", &slow, &window(19.2, 0.1)).is_err(), "slow frames alone still judge own work");
+        assert!(busy_or_over("p", &slow, &window(12., 0.1)).unwrap().unwrap().contains("interval checks SKIP"));
     }
 
     #[test]
