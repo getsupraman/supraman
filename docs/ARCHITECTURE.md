@@ -10,7 +10,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 | Crate | Owns | Depends on |
 |---|---|---|
 | `crates/foreman-app` | The `foreman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
-| `crates/fm` | The `fm` CLI: `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor. | claude, core, supervisor, workstate |
+| `crates/fm` | The `fm` CLI (`lib.rs`, shared by `fm.exe` and the console-less `fmw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run` and `secret set`, `fire.rs`), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor. | claude, core, supervisor, workstate |
 | `crates/foreman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workstate |
 | `crates/foreman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
 | `crates/foreman-workstate` | Every WorkState read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
@@ -34,7 +34,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 ### foreman-core (`crates/foreman-core/src/`)
 
 - `fs::write_atomic` — every write of a file another process or thread may read (settings, registry, desired state, minted sessions, relay files). A unique temp file renamed over the target.
-- `fs::lock_file` — an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`DesiredState::update`, `refresh.lock`).
+- `fs::lock_file` — an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`DesiredState::update`, `refresh.lock`). `fs::try_lock_file` takes it only when free (`None` while held): a schedule's overlap lock.
 - `fs::load_json_or_notice` — a JSON state file whose loss is a notice, not an error (stars, dismissals).
 - `fs::append_capped` (with `fs::rotated`) — an append-only log rotated to `<file>.1` at a cap (event logs, `foreman.log`).
 - `paths::{user_home, claude_dir}` — the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
@@ -42,7 +42,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `time::{now_ms, epoch_ms, modified_ms, hex6}` — epoch milliseconds and a scratch-name suffix.
 - `prune::{prune, KEEP_MS}` — the one retention rule for what sessions leave in the home: event logs, relay outbox messages, sent and rejected drops, the `answered.json` entries of gone messages, and the schedules' rotated run records and spent run worktrees, after 30 days unmodified, and the state dirs of removed schedules; a drop still waiting is never removed. The supervision runs it hourly.
 - `url::origin` (re-exported as `url_origin`; `foreman_workstate::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
-- `process::{command, run, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. Never `Command::new(..).output()` by hand.
+- `process::{command, run, run_watched, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. `run_watched` also kills the child when its `stop` returns true and returns what a killed child wrote (`Ended::{Exited, TimedOut, Stopped}`). Never `Command::new(..).output()` by hand.
 - `secret::{SecretStore, FileStore, MemoryStore, default_store}` — every secret at rest: one DPAPI-encrypted file per key under `<home>/oauth/secrets`; `MemoryStore` in tests.
 - `slug::{slugify, validate_name, FM_PREFIX}` — a repo or workspace name as a session-name part; every Foreman session name starts with `fm-`.
 - `Settings::update` — every change to `settings.toml`: load, edit, save, retried against other writers. `Settings::load_with_notices` when a bad key should be shown.
