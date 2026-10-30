@@ -4393,7 +4393,11 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   (`"prompt 6"` against `"title 6.100"`); `with_cache` ignoring the file → the cache test fails ("only the grown file
   is read", 2 against 1); `loading` never naming transcripts → `--selftest` FAIL at 7w ("a cold start: the loading
   line naming the transcripts while the scan is held: not within 15s").
-- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-62\target`, master 2df7eb5 merged): build ok, no warnings; `cargo test
-  --release --workspace` 692 passed, 0 failed; `--selftest` 5 of 5 PASS (3a: every source done 523–617 ms after the
-  loading line; 7w warm row 25–33 ms, cold line gone after 63–110 ms); `--selftest-supervise` PASS;
-  `--selftest-detach-shutdown` PASS; no `fm-selftest` sessions left. No m5-44 audit section names m5/62.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-62\target`, master ae3713f merged, m5/63 and m5/64 in): build ok, no
+  warnings; `cargo test --release --workspace` 692 passed, 0 failed; `--selftest` 5 of 5 PASS in a row (3a: every
+  source done 523–617 ms after the loading line; 7w warm row 28–52 ms, background rename 63–85 ms);
+  `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session from this worktree left.
+  The first gate run on the merged tree failed `--selftest` 3 of 5 at step 7 (board load own work p10 19.5–20 ms
+  over the 16 ms budget; 8–13 ms in every other run) and `--selftest-supervise` once at step c ("the stopped pid …
+  is still running") while another unit's rustc and foreman were busy; each passed on rerun. Before the m5/63 merge
+  all passed. No m5-44 audit section names m5/62.
