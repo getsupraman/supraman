@@ -348,6 +348,12 @@ impl SettingsView {
             "Foreman runs unelevated now.".into()
         };
         let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
+        let reopen = self.settings.sessions.reopen_tabs;
+        let reopen_toggle = button::small("reopen-tabs", if reopen { "On" } else { "Off" }, cx)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.reopen_tabs = !reopen, cx)));
+        let on_click = self.settings.sessions.resume_tabs_on_click;
+        let resume_toggle = button::small("resume-tabs-on-click", if on_click { "On a click" } else { "At once" }, cx)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.resume_tabs_on_click = !on_click, cx)));
         vec![
             row(
                 "Busy sessions at most",
@@ -365,6 +371,20 @@ impl SettingsView {
                  start asks Windows (UAC) once. Takes effect the next time Foreman starts.",
                 toggle.into_any_element(),
                 Some(now),
+                cx,
+            ),
+            row(
+                "Reopen last tabs on start",
+                "Foreman keeps the open tabs, in their order, and reopens them when it starts again: shells in                  their folder, attached background sessions attached again while they run (a stopped one waits for                  Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh WorkState                  token. A tab whose folder or session is gone is left out with one notice.",
+                reopen_toggle.into_any_element(),
+                None,
+                cx,
+            ),
+            row(
+                "Resume reopened claude tabs",
+                "At once: each claude tab of the last run resumes its conversation when Foreman starts. On a click:                  it opens with a Resume button and nothing runs until you click it.",
+                resume_toggle.into_any_element(),
+                None,
                 cx,
             ),
         ]

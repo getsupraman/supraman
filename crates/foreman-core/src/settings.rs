@@ -43,17 +43,35 @@ pub struct SessionSettings {
     /// Edited in the file; the selftest shortens it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
+    /// Reopen the tabs open at the last close when Foreman starts.
+    #[serde(skip_serializing_if = "is_true")]
+    pub reopen_tabs: bool,
+    /// Reopened claude tabs wait for a click on Resume instead of resuming at once.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub resume_tabs_on_click: bool,
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 impl Default for SessionSettings {
     fn default() -> Self {
-        Self { max_working: DEFAULT_MAX_WORKING, extra_plugin_dirs: Vec::new(), run_as_admin: false, relay_idle_secs: None }
+        Self {
+            max_working: DEFAULT_MAX_WORKING,
+            extra_plugin_dirs: Vec::new(),
+            run_as_admin: false,
+            relay_idle_secs: None,
+            reopen_tabs: true,
+            resume_tabs_on_click: false,
+        }
     }
 }
 
 impl Section for SessionSettings {
     const KEY: &'static str = "sessions";
-    const FIELDS: &'static [&'static str] = &["max_working", "extra_plugin_dirs", "run_as_admin", "relay_idle_secs"];
+    const FIELDS: &'static [&'static str] =
+        &["max_working", "extra_plugin_dirs", "run_as_admin", "relay_idle_secs", "reopen_tabs", "resume_tabs_on_click"];
 }
 
 impl SessionSettings {
@@ -415,7 +433,14 @@ mod tests {
 
     fn every_key_set() -> Settings {
         Settings {
-            sessions: SessionSettings { max_working: 1, extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()], run_as_admin: true, relay_idle_secs: Some(20) },
+            sessions: SessionSettings {
+                max_working: 1,
+                extra_plugin_dirs: vec![r"C:\x\plugins\rlarch".into()],
+                run_as_admin: true,
+                relay_idle_secs: Some(20),
+                reopen_tabs: false,
+                resume_tabs_on_click: true,
+            },
             workstate: WorkStateSettings { url: Some("https://workstate.example".into()) },
             appearance: AppearanceSettings { theme: Some("Foreman Dark".into()), terminal_colors: Some("campbell".into()) },
             terminal: TerminalSettings { font_size: Some(20), font_family: Some("Lucida Console".into()), ligatures: Some(false) },
@@ -444,6 +469,19 @@ mod tests {
         assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "window", "workstate"]);
         assert_eq!(file["terminal"]["font_size"].as_integer(), Some(20));
         assert_eq!(file["workstate"]["url"].as_str(), Some("https://workstate.example"));
+    }
+
+    #[test]
+    fn tabs_reopen_and_claude_tabs_resume_at_once_unless_set() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings::default();
+        assert!(s.sessions.reopen_tabs && !s.sessions.resume_tabs_on_click);
+        s.save(home.path()).unwrap();
+        let file = saved(home.path());
+        let sessions = file.get("sessions").and_then(Value::as_table);
+        assert!(sessions.is_none_or(|t| !t.contains_key("reopen_tabs") && !t.contains_key("resume_tabs_on_click")), "{file:?}");
+        let (s, notices) = load_text(home.path(), "[sessions]\nreopen_tabs = false\nresume_tabs_on_click = true\n");
+        assert!(!s.sessions.reopen_tabs && s.sessions.resume_tabs_on_click && notices.is_empty(), "{notices:?}");
     }
 
     #[test]

@@ -988,6 +988,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let notices = step("7o", crate::selftest_notices::run(view, cx)).await?;
     println!("step 7o: {notices}");
 
+    let reopened = step("7x", crate::selftest_reopen::run(view, &home(), &session_name()?, cx)).await?;
+    println!("step 7x: {reopened}");
+
     let deleted = step("7p", crate::selftest_delete::run(view, &home(), &session_name()?, cx)).await?;
     println!("step 7p: {deleted}");
 

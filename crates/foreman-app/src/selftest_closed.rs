@@ -20,11 +20,11 @@ pub fn claude_dir(home: &Path) -> PathBuf {
     home.join("fake-claude")
 }
 
-fn seen_file(home: &Path) -> PathBuf {
+pub(crate) fn seen_file(home: &Path) -> PathBuf {
     claude_dir(home).join("resumed.txt")
 }
 
-fn fake_claude(home: &Path) -> PathBuf {
+pub(crate) fn fake_claude(home: &Path) -> PathBuf {
     claude_dir(home).join("claude.cmd")
 }
 
