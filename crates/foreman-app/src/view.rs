@@ -56,6 +56,7 @@ mod left;
 mod manage;
 mod menu;
 pub(crate) mod notices;
+mod reopen;
 mod results;
 mod term;
 
@@ -114,6 +115,8 @@ pub enum TabKind {
     Attach { session_id: String },
     Shell,
     Work(Entity<WorkView>),
+    /// Reopened from the last run, waiting for a click on Resume.
+    Saved(crate::saved_tabs::SavedTab),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -143,6 +146,9 @@ pub struct Tab {
     pub restart_to: Option<String>,
     pub opened_at: i64,
     pub claude: Option<String>,
+    /// The full uuid it was launched or attached with, and that session's name.
+    pub launched_session: Option<String>,
+    pub session_name: Option<String>,
     watchers: Vec<Nudge>,
 }
 
@@ -166,6 +172,8 @@ impl Tab {
             restart_to: None,
             opened_at: now_ms(),
             claude: None,
+            launched_session: None,
+            session_name: None,
             watchers: Vec::new(),
         }
     }
@@ -265,6 +273,8 @@ pub struct FleetView {
     pub signing_in: Option<String>,
     pub sign_in_error: Option<String>,
     hands: Option<Arc<Mutex<Hands>>>,
+    /// The last run's hand tokens are released, so a reopened tab's mint is not revoked with them.
+    hands_ready: bool,
     pub hand_notices: Vec<String>,
     hands_released: bool,
     quit_release: Option<gpui::Task<()>>,
@@ -306,6 +316,12 @@ pub struct FleetView {
     pub deleted: StdHashMap<String, i64>,
     pub deleting: HashSet<String>,
     painted_sessions: bool,
+    pub tabs_restored: bool,
+    tabs_reopening: bool,
+    tabs_frozen: bool,
+    tabs_saved: Option<crate::saved_tabs::SavedTabs>,
+    tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
+    pub tab_notices: Vec<String>,
 }
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
@@ -582,6 +598,7 @@ impl FleetView {
                     let left = std::mem::take(&mut this.left_pending);
                     this.leave_servers(left, cx);
                     this.resolve_tabs(cx);
+                    this.reopen_tabs(cx);
                     let pids: Vec<u32> = this
                         .sessions
                         .iter()
@@ -621,6 +638,7 @@ impl FleetView {
         let transcripts_hold: Arc<PollHold> = Arc::default();
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
+        let tabs_writes = Self::tabs_writer(home.clone(), cx);
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
         cx.subscribe_in(&search, window, Self::on_search_event).detach();
@@ -697,6 +715,7 @@ impl FleetView {
             start_warning: None,
             signing_in: None,
             sign_in_error: None,
+            hands_ready: hands.is_none(),
             hands,
             hand_notices: Vec::new(),
             hands_released: false,
@@ -735,6 +754,12 @@ impl FleetView {
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),
             painted_sessions: false,
+            tabs_restored: false,
+            tabs_reopening: false,
+            tabs_frozen: false,
+            tabs_saved: None,
+            tabs_writes,
+            tab_notices: Vec::new(),
         }
     }
 
@@ -986,6 +1011,8 @@ impl FleetView {
             notices.extend(notice);
             this.update(cx, |this, cx| {
                 this.hand_notices.extend(notices);
+                this.hands_ready = true;
+                this.reopen_tabs(cx);
                 cx.notify();
             })
             .ok();
@@ -1603,8 +1630,11 @@ impl FleetView {
     }
 
     /// `claude --bg --resume` with no other flag keeps the session id.
-    pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let title = format!("{workspace} · {repo} · {}", fleet::display_name(session));
+    pub fn resume(&mut self, workspace: &str, repo: &str, session: &Session, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        self.resume_titled(format!("{workspace} · {repo} · {}", fleet::display_name(session)), session, cx)
+    }
+
+    fn resume_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
         let sid = &session.session_id;
         if session.kind == foreman_claude::Kind::Background {
             let script = match &self.daemon_hold {
@@ -1616,7 +1646,13 @@ impl FleetView {
             };
             let shell = pwsh(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
             let kind = TabKind::Attach { session_id: session.id.clone() };
-            self.open_tab(title, kind, shell, Some(session.cwd.clone()), window, cx)
+            let id = self.push_tab(title, kind, Some(session.cwd.clone()), cx);
+            self.start_terminal(id, shell, Some(session.cwd.clone()), cx);
+            if let Some(tab) = self.tab_mut(id) {
+                tab.launched_session = Some(sid.clone());
+                tab.session_name = Some(session.name.clone());
+            }
+            id
         } else {
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
             let own = (!session.name.is_empty()).then(|| session.name.clone());
@@ -1639,6 +1675,8 @@ impl FleetView {
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
             tab.watchers.push(watch);
+            tab.launched_session = resumes.clone();
+            tab.session_name = own.clone();
         }
         let Some(hands) = self.hands.clone() else {
             self.start_terminal(id, self.claude_shell(&Launch::Plain, &claude), Some(cwd), cx);
@@ -1650,10 +1688,13 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let launch = launch.await;
             this.update(cx, |this, cx| {
-                if let Launch::Minted { name, session, notice, .. } = &launch {
+                if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
                     if let Some(tab) = this.tab_mut(id) {
                         tab.workstate = Some(format!("Foreman token · {} · {session}", crate::hand::ROLE));
                         tab.hand_key = Some(name.clone());
+                        if new_session.is_some() {
+                            tab.launched_session = new_session.clone();
+                        }
                     }
                     this.hand_notices.extend(notice.clone());
                 }
@@ -1804,7 +1845,7 @@ impl FleetView {
         match &tab.kind {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
-            TabKind::Work(_) => false,
+            TabKind::Work(_) | TabKind::Saved(_) => false,
         }
     }
 
@@ -1832,24 +1873,25 @@ impl FleetView {
         workspace: &str,
         repo: &str,
         session: &Session,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> u64 {
+        self.attach_titled(format!("{workspace} · {repo} · {}", fleet::display_name(session)), session, cx)
+    }
+
+    fn attach_titled(&mut self, title: String, session: &Session, cx: &mut Context<Self>) -> u64 {
         let shell = util::shell::Shell::WithArguments {
             program: "claude".into(),
             args: vec!["attach".into(), session.id.clone()],
             title_override: None,
         };
-        self.open_tab(
-            format!("{workspace} · {repo} · {}", fleet::display_name(session)),
-            TabKind::Attach {
-                session_id: session.id.clone(),
-            },
-            shell,
-            Some(session.cwd.clone()),
-            window,
-            cx,
-        )
+        let id = self.push_tab(title, TabKind::Attach { session_id: session.id.clone() }, Some(session.cwd.clone()), cx);
+        self.start_terminal(id, shell, Some(session.cwd.clone()), cx);
+        if let Some(tab) = self.tab_mut(id) {
+            tab.launched_session = Some(session.session_id.clone());
+            tab.session_name = Some(session.name.clone());
+        }
+        id
     }
 
     pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
@@ -1897,11 +1939,12 @@ impl FleetView {
             Some(Err(id)) => (Some(id.clone()), Some(tab.opened_at)),
             None => (tab.session.clone(), Some(tab.opened_at)),
         };
-        let kind = match tab.kind {
+        let kind = match &tab.kind {
             TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
             TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
             TabKind::Shell => Some(tab_card::Kind::Shell),
             TabKind::Work(_) => None,
+            TabKind::Saved(saved) => reopen::kind_of(saved),
         };
         tab_card::Card {
             title,
@@ -2459,6 +2502,7 @@ impl FleetView {
                         .child(self.terminal_drop(*tab_id, cx)),
                 )
                 .into_any_element(),
+            Some(Tab { id, kind: TabKind::Saved(saved), .. }) => self.saved_placeholder(*id, saved, cx),
             Some(Tab { error: Some(error), .. }) => placeholder(format!("Cannot start the terminal: {error}"), cx),
             Some(_) => placeholder("starting…".into(), cx),
             None => placeholder(
@@ -2499,6 +2543,7 @@ impl Render for FleetView {
             timeline("first paint with sessions", Duration::ZERO);
         }
         crate::selftest::injected_frame_sleep();
+        self.persist_tabs(cx);
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
         div()
