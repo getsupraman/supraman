@@ -150,6 +150,57 @@ pub fn covered(workspace: &Workspace, s: &Schedule) -> Result<Covered> {
     Ok(Covered { fingerprint: hex(&Sha256::digest(json.as_bytes())), json, command_sha256 })
 }
 
+/// One covered field that differs between two covered JSONs; `None` where the field is absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub field: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// The leaves of a covered JSON as `(dotted field, value)`, sorted by field; an array is one value. Not JSON: none.
+pub fn covered_fields(json: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+        flatten("", &value, &mut out);
+    }
+    out.sort();
+    out
+}
+
+fn flatten(at: &str, value: &serde_json::Value, out: &mut Vec<(String, String)>) {
+    match value {
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            for (k, v) in map {
+                flatten(&if at.is_empty() { k.clone() } else { format!("{at}.{k}") }, v, out);
+            }
+        }
+        serde_json::Value::String(s) => out.push((at.to_string(), s.clone())),
+        serde_json::Value::Null => out.push((at.to_string(), "none".into())),
+        other => out.push((at.to_string(), other.to_string())),
+    }
+}
+
+/// What changed from the `approved` covered JSON to the one `now`, by field, removed fields last.
+pub fn covered_diff(approved: &str, now: &str) -> Vec<Change> {
+    let before = covered_fields(approved);
+    let after = covered_fields(now);
+    let mut out: Vec<Change> = after
+        .iter()
+        .filter_map(|(field, value)| {
+            let was = before.iter().find(|(f, _)| f == field).map(|(_, v)| v);
+            (was != Some(value)).then(|| Change { field: field.clone(), before: was.cloned(), after: Some(value.clone()) })
+        })
+        .collect();
+    out.extend(
+        before
+            .iter()
+            .filter(|(f, _)| !after.iter().any(|(a, _)| a == f))
+            .map(|(field, value)| Change { field: field.clone(), before: Some(value.clone()), after: None }),
+    );
+    out
+}
+
 /// `/a:b` → the folder's `.claude/commands/a/b.md` (shown relative), else the user's `commands/a/b.md` when
 /// it exists (shown absolute), else the folder's path as not found.
 pub fn command_file(folder: &Path, name: &str) -> (String, std::path::PathBuf) {

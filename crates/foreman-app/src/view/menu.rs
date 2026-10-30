@@ -4,8 +4,11 @@ use foreman_claude::{Kind, Session};
 use foreman_ui::menu::item;
 use gpui::{AnyElement, Context};
 
+use foreman_core::schedule::Status;
+
 use super::FleetView;
 use crate::fleet::{self, RepoNode, SessionRow, WorkspaceNode};
+use crate::schedules::{Primary, ScheduleRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
@@ -32,6 +35,13 @@ pub enum MenuAction {
     Delete(Session),
     DeleteClosed(String),
     Details(MenuTarget),
+    Approve { workspace: String, id: String },
+    RunNow { workspace: String, id: String },
+    EditSchedule { workspace: String, id: String },
+    DryRun { workspace: String, id: String },
+    SetPaused { workspace: String, id: String, paused: bool },
+    History { workspace: String, id: String },
+    RemoveSchedule { workspace: String, id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +53,9 @@ pub enum Confirmed {
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
     Edit { workspace: String, edit: foreman_core::Edit },
+    /// `fingerprint`: the covered state the question showed; another one is not approved.
+    ApproveSchedule { workspace: String, id: String, fingerprint: String },
+    RemoveSchedule { workspace: String, id: String },
 }
 
 pub type MenuItem = foreman_ui::menu::MenuItem<MenuAction>;
@@ -55,6 +68,7 @@ pub enum MenuTarget {
     Repo { workspace: String, repo: String },
     /// By `session_id`, which every row has (an interactive one has no 8-hex `id`).
     Session { workspace: String, repo: String, session_id: String },
+    Schedule { workspace: String, id: String },
 }
 
 /// `own` and `relay` are [`session_items`] of the workspace session and the relay, which have no row of their
@@ -207,6 +221,25 @@ pub fn session_items(
     items
 }
 
+/// The row's one action first, then the rest; Approve is offered only while the schedule is pending.
+pub fn schedule_items(row: &ScheduleRow) -> Vec<MenuItem> {
+    let (w, id) = (row.workspace.clone(), row.schedule.id.clone());
+    let mut items = vec![match row.primary() {
+        Primary::Approve => item("approve", "Approve…", MenuAction::Approve { workspace: w.clone(), id: id.clone() }),
+        Primary::RunNow => item("run-now", "Run now", MenuAction::RunNow { workspace: w.clone(), id: id.clone() }),
+    }];
+    items.push(item("edit-schedule", "Edit…", MenuAction::EditSchedule { workspace: w.clone(), id: id.clone() }));
+    items.push(item("dry-run", "Dry run", MenuAction::DryRun { workspace: w.clone(), id: id.clone() }));
+    items.push(match row.schedule.status {
+        Status::Paused => item("resume", "Resume", MenuAction::SetPaused { workspace: w.clone(), id: id.clone(), paused: false }),
+        _ => item("pause", "Pause", MenuAction::SetPaused { workspace: w.clone(), id: id.clone(), paused: true }),
+    });
+    items.push(item("history", "History", MenuAction::History { workspace: w.clone(), id: id.clone() }));
+    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Schedule { workspace: w.clone(), id: id.clone() })));
+    items.push(item("remove-schedule", "Remove…", MenuAction::RemoveSchedule { workspace: w, id }));
+    items
+}
+
 /// Named `fm-…`: launched by a Foreman supervisor (or its selftest), so Stop does not ask.
 pub fn is_foremans(session: &Session) -> bool {
     session.name.starts_with("fm-")
@@ -237,7 +270,7 @@ mod tests {
     use super::*;
 
     fn node(started: Option<bool>) -> WorkspaceNode {
-        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, own: None, relay: None, supervised: vec![], repos: vec![] }
+        WorkspaceNode { name: "demo".into(), home: Some(r"C:\demo".into()), started, own: None, relay: None, supervised: vec![], scheduled: Default::default(), repos: vec![] }
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
@@ -284,6 +317,29 @@ mod tests {
         assert_eq!(items[10].label, "Stop", "an fm- session stops without a question");
         let keys = keys(&items);
         assert_eq!(keys.iter().collect::<std::collections::HashSet<_>>().len(), keys.len(), "keys unique");
+    }
+
+    #[test]
+    fn a_schedules_menu_leads_with_its_one_action_and_pauses_or_resumes() {
+        let s: foreman_core::schedule::Schedule = serde_json::from_value(serde_json::json!({
+            "id": "nightly", "folder": "Alpha", "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "script", "script": "gate.cmd"}
+        }))
+        .unwrap();
+        let mut row = ScheduleRow { workspace: "demo".into(), schedule: s, status: Status::Pending, command_changed: false, next_fire: None, running: None, runs: vec![] };
+        let all = ["edit-schedule", "dry-run", "pause", "history", "details", "remove-schedule"];
+        assert_eq!(keys(&schedule_items(&row)), [&["approve"][..], &all].concat());
+        row.status = Status::Active;
+        row.schedule.status = Status::Active;
+        let items = schedule_items(&row);
+        assert_eq!(keys(&items), [&["run-now"][..], &all].concat());
+        assert_eq!(items[0].action, MenuAction::RunNow { workspace: "demo".into(), id: "nightly".into() });
+        assert_eq!(items[3].action, MenuAction::SetPaused { workspace: "demo".into(), id: "nightly".into(), paused: true });
+        row.status = Status::Paused;
+        row.schedule.status = Status::Paused;
+        let items = schedule_items(&row);
+        assert_eq!(keys(&items)[..4], ["run-now", "edit-schedule", "dry-run", "resume"], "Run now of a paused schedule is fire's to refuse");
+        assert_eq!(items[5].action, MenuAction::Details(MenuTarget::Schedule { workspace: "demo".into(), id: "nightly".into() }));
+        assert_eq!(items[6].label, "Remove…");
     }
 
     #[test]

@@ -123,6 +123,8 @@ pub struct Run {
     pub stages: Vec<Stage>,
     /// `(ts, outcome, why)`.
     pub ended: Option<(i64, Outcome, String)>,
+    /// The `ended` line's token totals.
+    pub tokens: Option<Tokens>,
 }
 
 pub fn runs_path(home: &Path, workspace: &str) -> Result<PathBuf> {
@@ -160,7 +162,7 @@ pub fn runs(home: &Path, workspace: &str) -> Result<Vec<Run>> {
         let i = match out.iter().position(|x| x.run == r.run) {
             Some(i) => i,
             None => {
-                out.push(Run { run: r.run.clone(), schedule: r.schedule.clone(), started: None, stages: Vec::new(), ended: None });
+                out.push(Run { run: r.run.clone(), schedule: r.schedule.clone(), started: None, stages: Vec::new(), ended: None, tokens: None });
                 out.len() - 1
             }
         };
@@ -168,7 +170,10 @@ pub fn runs(home: &Path, workspace: &str) -> Result<Vec<Run>> {
         match r.event {
             RunEvent::Started { trigger, .. } => run.started = Some((r.ts, trigger)),
             RunEvent::Stage(stage) => run.stages.push(stage),
-            RunEvent::Ended { outcome, why, .. } => run.ended = Some((r.ts, outcome, why)),
+            RunEvent::Ended { outcome, why, tokens, .. } => {
+                run.ended = Some((r.ts, outcome, why));
+                run.tokens = tokens;
+            }
         }
     }
     Ok(out)

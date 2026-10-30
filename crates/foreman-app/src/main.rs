@@ -7,6 +7,7 @@ mod hand;
 mod instance;
 mod row_details;
 mod saved_tabs;
+mod schedules;
 mod search;
 mod selftest;
 mod selftest_box;
@@ -286,6 +287,11 @@ fn main() {
             Err(error) => eprintln!("no tray icon: {error:#}"),
         }
         let fleet = handle.update(cx, |_, _, cx| cx.entity()).expect("the window just opened");
+        cx.observe(&fleet, |fleet, cx| {
+            let tip = fleet.read(cx).tray_tooltip();
+            TRAY.with(|t| t.borrow().as_ref().map(|t| t.set_tooltip(&tip)));
+        })
+        .detach();
         let window = AnyWindowHandle::from(handle);
         cx.spawn(async move |cx| {
             while let Some(command) = received.next().await {

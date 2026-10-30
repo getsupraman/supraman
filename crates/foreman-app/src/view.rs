@@ -58,6 +58,7 @@ mod menu;
 pub(crate) mod notices;
 mod reopen;
 mod results;
+pub(crate) mod schedules;
 mod term;
 
 pub(crate) use left::grid;
@@ -326,7 +327,21 @@ pub struct FleetView {
     tabs_saved: Option<crate::saved_tabs::SavedTabs>,
     tabs_writes: futures::channel::mpsc::UnboundedSender<crate::saved_tabs::SavedTabs>,
     pub tab_notices: Vec<String>,
+    /// Each workspace's schedules as the last poll read them.
+    pub schedules: BTreeMap<String, Vec<crate::schedules::ScheduleRow>>,
+    pub schedule_errors: Vec<String>,
+    schedule_errors_dismissed: Vec<String>,
+    /// A failed `sync` by `<ws>/<id>` of the schedule acted on: on its row and in the Inbox until a sync succeeds.
+    pub sync_errors: BTreeMap<String, String>,
+    pub registrar: schedules::SharedRegistrar,
+    pub schedule_store: Arc<dyn foreman_core::secret::SecretStore>,
+    pub schedule_edit: Option<schedules::ScheduleEdit>,
+    /// Scheduled runs whose Inbox notice was dismissed, by workspace and run id.
+    pub runs_dismissed: DismissedMessages,
 }
+
+/// The dismissed run notices beside the dismissed messages.
+const RUNS_DISMISSED: &str = "schedules/dismissed.json";
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
 
@@ -378,6 +393,8 @@ struct Refresh {
     events: Vec<Event>,
     /// The first poll's desired states, so the tree shows started workspaces before the first tick lands.
     desired: Option<BTreeMap<String, (bool, Vec<String>)>>,
+    /// Each workspace's schedules and the errors reading them; `None` without a home or a registry.
+    schedules: Option<(BTreeMap<String, Vec<crate::schedules::ScheduleRow>>, Vec<String>)>,
     took: Duration,
 }
 
@@ -392,6 +409,7 @@ struct Poller {
     hold: Arc<PollHold>,
     snapshot: Option<(Vec<Workspace>, Vec<Session>)>,
     first: bool,
+    store: Option<Arc<dyn foreman_core::secret::SecretStore>>,
 }
 
 pub(crate) fn timeline(phase: &str, took: Duration) {
@@ -450,6 +468,16 @@ impl Poller {
             ),
             _ => None,
         };
+        let schedules = match (&self.home, &workspaces) {
+            (Some(home), Ok((workspaces, _))) => {
+                for run in crate::schedules::recover(home, workspaces) {
+                    log::info!("recovered the dead scheduled run {run} as interrupted");
+                }
+                let store = self.store.get_or_insert_with(|| foreman_core::secret::default_store(home));
+                Some(crate::schedules::read(home, workspaces, &**store, now_ms()))
+            }
+            _ => None,
+        };
         if self.first {
             timeline("registry done", registry_took);
             timeline(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
@@ -464,6 +492,7 @@ impl Poller {
             polled_at,
             events,
             desired,
+            schedules,
             took,
         }
     }
@@ -520,6 +549,7 @@ impl FleetView {
             hold: poll_hold.clone(),
             snapshot: None,
             first: true,
+            store: None,
         };
         timeline("window", Duration::ZERO);
         cx.spawn(async move |this, cx| {
@@ -637,6 +667,11 @@ impl FleetView {
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let (stars, stars_notice) = Stars::load(home.as_deref());
         let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
+        let (runs_dismissed, runs_notice) = DismissedMessages::load_at(home.as_deref().map(|h| h.join(RUNS_DISMISSED)), "every failed scheduled run shows");
+        let schedule_store: Arc<dyn foreman_core::secret::SecretStore> = match home.as_deref() {
+            Some(h) => foreman_core::secret::default_store(h),
+            None => Arc::new(foreman_core::secret::MemoryStore::default()),
+        };
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
         let transcripts_hold: Arc<PollHold> = Arc::default();
@@ -745,7 +780,7 @@ impl FleetView {
             loaded_at_scan: 0,
             transcripts_cache: None,
             transcripts_restart: false,
-            action_error: stars_notice.or(dismissed_notice),
+            action_error: stars_notice.or(dismissed_notice).or(runs_notice),
             stars,
             closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
@@ -766,6 +801,14 @@ impl FleetView {
             tabs_saved: None,
             tabs_writes,
             tab_notices: Vec::new(),
+            schedules: BTreeMap::new(),
+            schedule_errors: Vec::new(),
+            schedule_errors_dismissed: Vec::new(),
+            sync_errors: BTreeMap::new(),
+            registrar: Arc::new(foreman_core::schedule::WindowsRegistrar),
+            schedule_store,
+            schedule_edit: None,
+            runs_dismissed,
         }
     }
 
@@ -1299,6 +1342,11 @@ impl FleetView {
         }
         if let Some(desired) = refresh.desired {
             self.desired = desired;
+        }
+        if let Some((schedules, errors)) = refresh.schedules {
+            self.schedules = schedules;
+            self.schedule_errors = errors;
+            foreman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
         }
         self.last_refresh_took = Some(refresh.took);
     }

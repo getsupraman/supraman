@@ -170,6 +170,15 @@ impl Host for RealHost {
 
 /// `--home <home> <workspace> <id> [--fingerprint <hex>]`, as the task gives them; `print` echoes the result.
 pub fn fire_cmd(args: &[&str], print: bool) -> u8 {
+    fired_cmd(args, print, Fired::Task)
+}
+
+/// Run now from the Foreman window: `--home <home> <workspace> <id>`, the path of `fm schedule run`.
+pub fn run_now_cmd(args: &[&str]) -> u8 {
+    fired_cmd(args, false, Fired::RunNow)
+}
+
+fn fired_cmd(args: &[&str], print: bool, trigger: Fired) -> u8 {
     let (mut home, mut fingerprint, mut positional) = (None, None, Vec::new());
     let mut it = args.iter();
     while let Some(&arg) = it.next() {
@@ -186,7 +195,8 @@ pub fn fire_cmd(args: &[&str], print: bool) -> u8 {
         return EXIT_UNKNOWN;
     };
     let home = Path::new(home);
-    let req = Request { home, workspace, id, trigger: Fired::Task, fingerprint };
+    let fingerprint = fingerprint.filter(|_| trigger == Fired::Task);
+    let req = Request { home, workspace, id, trigger, fingerprint };
     let report = fire(&req, &mut RealHost::new(home));
     if print {
         print_report(&report);
@@ -507,6 +517,32 @@ fn overlap(live: &Paths, policy: Overlap) -> Result<fs::File, Overlapped> {
             fs::write(&live.restart, b"").map_err(|e| Overlapped::Io(format!("cannot write {}: {e}", live.restart.display())))?;
             foreman_core::fs::lock_file(&live.lock).map_err(|e| io(&live.lock, e))
         }
+    }
+}
+
+/// The app's recovery (scheduler.md, step 11): a live file whose fm is gone, while no fire holds the overlap
+/// lock, is recovered as [`recover_dead_run`] does; the run id when it was.
+pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String> {
+    let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
+    let dead: Live = serde_json::from_slice(&fs::read(&live.json).ok()?).ok()?;
+    if fm_alive(&dead) {
+        return None;
+    }
+    let _lock = foreman_core::fs::try_lock_file(&live.lock).ok()??;
+    let still: Live = serde_json::from_slice(&fs::read(&live.json).ok()?).ok()?;
+    if still.run != dead.run {
+        return None;
+    }
+    let now = foreman_core::time::now_ms();
+    recover_dead_run(home, workspace, id, &live, now, &mut RealHost::new(home));
+    Some(dead.run)
+}
+
+/// The live file's fm runs: its pid is up with the start time it recorded.
+pub fn fm_alive(live: &Live) -> bool {
+    match (process::started(live.fm_pid), live.fm_started) {
+        (Some(now), Some(then)) => now == then,
+        (running, _) => running.is_some(),
     }
 }
 

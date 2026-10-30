@@ -116,7 +116,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })
                 .collect();
-            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.own.iter().chain(&w.relay).chain(&w.supervised).cloned().collect::<Vec<_>>()), repos };
+            let hit = WorkspaceHit { name: w.name.clone(), home: w.home.clone(), name_marks: find_all(&w.name, needle), supervised: hits(&w.own.iter().chain(&w.relay).chain(&w.supervised).chain(w.scheduled.values().flatten()).cloned().collect::<Vec<_>>()), repos };
             (!hit.name_marks.is_empty() || !hit.supervised.is_empty() || !hit.repos.is_empty()).then_some(hit)
         })
         .collect();
@@ -173,6 +173,7 @@ mod tests {
                     own: Some(row("fm-gaia-workspace", "cccc3333-0000", false)),
                     relay: None,
                     supervised: vec![row("fm-gaia-root", "aaaa1111-0000", false)],
+                    scheduled: Default::default(),
                     repos: vec![
                         repo("Web", vec![row("CI-CD-pipeline", "5e1f7e57-0001", true), row("docs", "01d05e1f-0002", false)]),
                         repo("api", vec![]),
@@ -186,6 +187,7 @@ mod tests {
                     own: None,
                     relay: None,
                     supervised: vec![],
+                    scheduled: Default::default(),
                     repos: vec![repo("pipeline-tools", vec![row("Pipeline fix", "bbbb2222-0003", false)])],
                 },
             ],

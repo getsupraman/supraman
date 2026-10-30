@@ -61,6 +61,13 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
+/// Starts `cmd` with no pipes and does not wait for it: a child that outlives the call (Run now's `fmw`).
+/// Its exit is never reaped by the caller; it returns the pid.
+pub fn spawn_detached(cmd: &mut Command) -> std::io::Result<u32> {
+    let child = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    Ok(child.id())
+}
+
 /// How [`run_watched`] ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ended {
@@ -302,6 +309,22 @@ mod tests {
         let out = run(&mut powershell("[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 3"), Duration::from_secs(60), Kill::Tree).unwrap();
         assert_eq!(out, Output { code: Some(3), stdout: "out".into(), stderr: "err".into() });
         assert!(!out.success());
+    }
+
+    #[test]
+    fn a_detached_child_runs_on_after_the_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let done = dir.path().join("done");
+        let script = format!("Start-Sleep -Milliseconds 300; Set-Content -LiteralPath '{}' x", done.display());
+        let started = Instant::now();
+        let pid = spawn_detached(&mut powershell(&script)).unwrap();
+        assert!(pid > 0 && started.elapsed() < Duration::from_millis(300), "returns before the child ends");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !done.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(done.exists(), "the child finished on its own");
+        assert!(spawn_detached(&mut command("foreman-no-such-program")).is_err());
     }
 
     #[test]

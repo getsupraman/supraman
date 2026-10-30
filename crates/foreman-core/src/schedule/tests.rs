@@ -597,6 +597,7 @@ fn run_records_read_the_doc_lines_and_fold_by_run() {
     assert_eq!(folded[0].started, Some((1793595600000, Fired::Task)));
     assert_eq!(folded[0].stages.len(), 2);
     assert_eq!(folded[0].ended, Some((1793597430000, Outcome::Done, "fixed 2 bugs, PR #41".into())));
+    assert_eq!(folded[0].tokens.map(|t| t.capped()), Some(81234 + 9120 + 40211));
     assert_eq!((folded[1].started, &folded[1].ended), (Some((1, Fired::RunNow)), &None));
 }
 
@@ -716,4 +717,45 @@ fn the_live_and_state_dirs_and_secret_keys_are_per_workspace_and_schedule() {
     assert!(state_dir(home, "demo", "../x").is_err() && live_dir(home, "..").is_err());
     assert_eq!(fire_log(home), home.join("schedules").join("fire.log"));
     assert_eq!(secret_key("demo", "fix", "API_TOKEN"), "foreman/schedule/demo/fix/API_TOKEN");
+}
+
+#[test]
+fn a_runs_session_name_gives_back_its_schedule_id() {
+    assert_eq!(schedule_of_session("nomos", "fm-nomos-sched-autofix-prod-bugs-20261102-090000"), Some("autofix-prod-bugs"));
+    assert_eq!(schedule_of_session("nomos", "fm-nomos-sched-fix-20261102-090000-2"), Some("fix"), "a second run in the same second");
+    assert_eq!(schedule_of_session("nomos", &session_name("nomos", "a-1", "20261102-090000")), Some("a-1"));
+    for other in ["fm-nomos-sched-fix", "fm-nomos-sched--20261102-090000", "fm-nomos-alpha", "fm-other-sched-fix-20261102-090000", "fm-nomos-sched-fix-2026110-090000", "nomos-sched-fix-20261102-090000"] {
+        assert_eq!(schedule_of_session("nomos", other), None, "{other}");
+    }
+}
+
+#[test]
+fn the_diff_names_each_covered_field_that_changed_since_the_approval() {
+    let f = fixture();
+    let store = MemoryStore::default();
+    let s = approved(&f, &store);
+    let approval = s.approval.clone().unwrap();
+    let now = |s: &Schedule| covered(&f.ws, s).unwrap().json;
+    assert!(covered_diff(&approval.covered, &now(&s)).is_empty(), "nothing changed");
+    let fields = covered_fields(&approval.covered);
+    assert!(fields.contains(&("trigger.at".into(), "09:00".into())), "{fields:?}");
+    assert!(fields.contains(&("trigger.days".into(), r#"["mon"]"#.into())), "an array is one value: {fields:?}");
+    assert!(fields.iter().any(|(k, _)| k == "files.scripts/gate.ps1"), "the script's hash is covered: {fields:?}");
+
+    let s = change(&f, "autofix-prod-bugs", |s| {
+        s.trigger = Trigger::Weekly { days: vec![Day::Mon, Day::Fri], at: "10:30".parse().unwrap() };
+        s.caps.max_tokens = 1_000_000;
+    });
+    fs::write(f.folder.join("scripts").join("gate.ps1"), "exit 0").unwrap();
+    let diff = covered_diff(&approval.covered, &now(&s));
+    let shown: Vec<(&str, Option<&str>, Option<&str>)> = diff.iter().map(|c| (c.field.as_str(), c.before.as_deref(), c.after.as_deref())).collect();
+    assert_eq!(shown.iter().map(|c| c.0).collect::<Vec<_>>(), ["caps.max_tokens", "files.scripts/gate.ps1", "trigger.at", "trigger.days"]);
+    assert_eq!(shown[0], ("caps.max_tokens", Some("3000000"), Some("1000000")));
+    assert_eq!(shown[2], ("trigger.at", Some("09:00"), Some("10:30")));
+    assert_eq!(shown[3], ("trigger.days", Some(r#"["mon"]"#), Some(r#"["mon","fri"]"#)));
+
+    let removed = covered_diff(r#"{"a":1,"b":{"c":2}}"#, r#"{"a":1}"#);
+    assert_eq!(removed, [Change { field: "b.c".into(), before: Some("2".into()), after: None }]);
+    assert_eq!(covered_diff(r#"{"a":null}"#, r#"{"a":"x"}"#)[0].before.as_deref(), Some("none"));
+    assert!(covered_fields("not json").is_empty());
 }

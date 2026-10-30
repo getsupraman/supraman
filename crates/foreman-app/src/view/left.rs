@@ -129,8 +129,8 @@ fn tinted_button(hits: &HitTargets, key: &'static str, icon: Icon, tip: impl Int
 }
 
 const WORKSPACE_ROW: f32 = 30.;
-const REPO_ROW: f32 = 26.;
-const SESSION_LINE: f32 = 24.;
+pub(super) const REPO_ROW: f32 = 26.;
+pub(super) const SESSION_LINE: f32 = 24.;
 /// One hover icon's place: always laid out, so a row's icons never shift.
 const SLOT: f32 = 20.;
 
@@ -409,6 +409,7 @@ impl FleetView {
         notices.extend(self.render_confirm(cx));
         notices.extend(self.render_add(cx));
         notices.extend(self.render_edit_folders(cx));
+        notices.extend(self.render_schedule_edit(cx));
         if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(
                 "No workspaces registered. Add one with the folder button above, or:  fm workspace add <dir>".into(),
@@ -441,6 +442,7 @@ impl FleetView {
             for row in &workspace.supervised {
                 body = body.child(self.render_session(&workspace.name, "supervised", row, grid::indent(1), cx));
             }
+            body = body.children(self.render_schedules(workspace, cx));
             for repo in &workspace.repos {
                 let rkey = format!("repo:{}/{}", workspace.name, repo.name);
                 let ropen = !self.collapsed.contains(&rkey);
@@ -552,10 +554,12 @@ impl FleetView {
         let total = self.needs.len() + all_work.len();
         let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
         let mut needs: Vec<&NeedsYou> = self.needs.iter().filter(|n| self.shown_now(&need_key(n))).collect();
-        if needs.is_empty() && work_rows.is_empty() {
+        let scheduled = self.render_schedule_inbox(cx);
+        if needs.is_empty() && work_rows.is_empty() && scheduled.is_empty() {
             return None;
         }
         let waiting = total - needs.len() - work_rows.len();
+        let total = total + scheduled.len();
         let colors = cx.theme().colors().clone();
         let now = now_ms();
         needs.sort_by_key(|n| (n.since, n.kind));
@@ -657,6 +661,7 @@ impl FleetView {
         for (workspace, row) in &work_rows {
             inbox = inbox.child(self.render_work_row(workspace, row, cx));
         }
+        inbox = inbox.children(scheduled);
         Some(inbox.into_any_element())
     }
 
@@ -1060,7 +1065,7 @@ impl FleetView {
         )
     }
 
-    fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {
+    pub(super) fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {
         button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
     }
 

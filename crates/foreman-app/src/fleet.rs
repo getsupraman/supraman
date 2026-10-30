@@ -18,6 +18,8 @@ pub struct WorkspaceNode {
     pub relay: Option<SessionRow>,
     /// Wanted sessions of no folder here.
     pub supervised: Vec<SessionRow>,
+    /// Scheduled runs' sessions by schedule id ([`foreman_core::schedule::schedule_of_session`]), shown under it.
+    pub scheduled: BTreeMap<String, Vec<SessionRow>>,
     pub repos: Vec<RepoNode>,
 }
 
@@ -186,20 +188,25 @@ pub struct Tree {
 impl WorkspaceNode {
     /// The rows under the workspace row; the workspace session and the relay have none.
     pub fn session_count(&self) -> usize {
-        self.supervised.len() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
+        self.supervised.len() + self.scheduled.values().map(Vec::len).sum::<usize>() + self.repos.iter().map(|r| r.sessions.len()).sum::<usize>()
     }
 
     /// Every session of the workspace, the workspace session and the relay first.
     pub fn rows(&self) -> impl Iterator<Item = &SessionRow> {
-        self.own.iter().chain(&self.relay).chain(&self.supervised).chain(self.repos.iter().flat_map(|r| &r.sessions))
+        self.own.iter().chain(&self.relay).chain(&self.supervised).chain(self.scheduled.values().flatten()).chain(self.repos.iter().flat_map(|r| &r.sessions))
     }
 
     fn rows_mut(&mut self) -> impl Iterator<Item = &mut SessionRow> {
-        self.own.iter_mut().chain(&mut self.relay).chain(&mut self.supervised).chain(self.repos.iter_mut().flat_map(|r| r.sessions.iter_mut()))
+        self.own
+            .iter_mut()
+            .chain(&mut self.relay)
+            .chain(&mut self.supervised)
+            .chain(self.scheduled.values_mut().flatten())
+            .chain(self.repos.iter_mut().flat_map(|r| r.sessions.iter_mut()))
     }
 
     pub fn into_rows(self) -> impl Iterator<Item = SessionRow> {
-        self.own.into_iter().chain(self.relay).chain(self.supervised).chain(self.repos.into_iter().flat_map(|r| r.sessions))
+        self.own.into_iter().chain(self.relay).chain(self.supervised).chain(self.scheduled.into_values().flatten()).chain(self.repos.into_iter().flat_map(|r| r.sessions))
     }
 }
 
@@ -295,6 +302,23 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
             let (started, wanted) = wanted_of(&workspace.name);
             let (theirs, rest): (Vec<Session>, Vec<Session>) =
                 sessions.iter().cloned().partition(|s| wanted.contains(&s.name));
+            let mut scheduled: BTreeMap<String, Vec<SessionRow>> = BTreeMap::new();
+            let rest: Vec<Session> = rest
+                .into_iter()
+                .filter_map(|s| match foreman_core::schedule::schedule_of_session(&workspace.name, &s.name) {
+                    Some(id) => {
+                        let r = row(s.clone());
+                        if show_stopped || r.health != Health::Stopped || r.starred {
+                            scheduled.entry(id.to_string()).or_default().push(r);
+                        } else {
+                            hidden.insert(r.session.session_id.clone());
+                        }
+                        None
+                    }
+                    None => Some(s),
+                })
+                .collect();
+            scheduled.values_mut().for_each(|rows| sort(rows));
             let (own, relay) = (workspace_session_name(&workspace.name), relay_session_name(&workspace.name));
             let folder_of_wanted = |name: &str| {
                 workspace.folders.iter().find(|f| repo_session_name(&workspace.name, &f.name).as_deref() == Some(name)).map(|f| f.name.clone())
@@ -427,6 +451,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                 own: own_row,
                 relay: relay_row,
                 supervised,
+                scheduled,
                 repos,
             }
         })
@@ -907,6 +932,29 @@ mod tests {
         assert_eq!(tree.hidden_stopped, 0, "the stopped wanted row is shown, not hidden");
         let never = build(&[workspace()], &sessions(), NOW, false, &Supervised::default());
         assert_eq!(never.workspaces[0].started, None);
+    }
+
+    #[test]
+    fn a_scheduled_runs_session_sits_under_its_schedule_not_its_folder() {
+        let mut list = rows(&[
+            ("eeee0001", "fm-larchsys-sched-nightly-20261102-090000", r"P:\L\Gaia\.claude\worktrees\fm-sched-nightly-20261102-090000"),
+            ("eeee0002", "fm-larchsys-sched-nightly-20261101-090000", r"P:\L\Gaia"),
+            ("eeee0003", "fm-larchsys-sched-weekly-fix-20261102-090000-2", r"P:\L\Skills"),
+            ("eeee0004", "mine", r"P:\L\Gaia"),
+        ]);
+        list[1].state = Some(foreman_claude::SessionState::Stopped);
+        list[1].pid = None;
+        let ws = overlapping();
+        let tree = build(&ws[1..], &list, NOW, false, &Supervised::default());
+        let w = &tree.workspaces[0];
+        let ids: Vec<(&str, Vec<&str>)> = w.scheduled.iter().map(|(id, r)| (id.as_str(), r.iter().map(|r| r.session.id.as_str()).collect())).collect();
+        assert_eq!(ids, [("nightly", vec!["eeee0001"]), ("weekly-fix", vec!["eeee0003"])], "the stopped run is hidden with stopped rows");
+        assert_eq!(tree.hidden_stopped, 1);
+        assert!(w.repos.iter().all(|r| r.sessions.iter().all(|s| !s.session.name.contains("-sched-"))), "not under a folder too");
+        assert_eq!(w.session_count(), 3);
+        assert!(w.rows().any(|r| r.session.id == "eeee0003"), "menus find it");
+        let shown = build(&ws[1..], &list, NOW, true, &Supervised::default());
+        assert_eq!(shown.workspaces[0].scheduled["nightly"].len(), 2);
     }
 
     #[test]

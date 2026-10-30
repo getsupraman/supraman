@@ -472,6 +472,30 @@ fn fire_records_a_dead_run_left_behind_as_interrupted() {
     assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, "fm (pid 4242) ended without finishing the run"));
 }
 
+/// The window's recovery: a live file whose fm is gone is ended as interrupted; one whose fm runs, or whose lock is
+/// held by a fire, is left alone.
+#[test]
+fn the_app_recovers_a_run_whose_fm_is_gone_and_leaves_a_live_one() {
+    let f = fixture();
+    f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
+    fs::create_dir_all(f.live()).unwrap();
+    let me = std::process::id();
+    let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, foreman_core::process::started(me).unwrap());
+    fs::write(f.live().join("gate.json"), &mine).unwrap();
+    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "its fm runs");
+
+    let reused = format!(r#"{{"run":"gate-20261101-090000","fm_pid":{me},"fm_started":1,"started_at":1,"stage":"script"}}"#);
+    fs::write(f.live().join("gate.json"), &reused).unwrap();
+    let held = foreman_core::fs::try_lock_file(&f.live().join("gate.lock")).unwrap().unwrap();
+    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "a fire holds the lock");
+    drop(held);
+    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate").as_deref(), Some("gate-20261101-090000"), "a reused pid is not its fm");
+    let (outcome, why) = ended(&f.records("gate-20261101-090000"));
+    assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, format!("fm (pid {me}) ended without finishing the run").as_str()));
+    assert!(!f.live().join("gate.json").exists());
+    assert_eq!(fire::recover_if_dead(&f.home, "demo", "gate"), None, "nothing left");
+}
+
 /// Every file under `dir`, read whole.
 fn files_holding(dir: &Path, needle: &str) -> Vec<PathBuf> {
     let wide: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -585,6 +609,30 @@ fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     assert!(lines[1].contains(" demo/gate task gate-") && lines[1].contains("refused: the task's fingerprint"), "{log}");
     assert!(lines[2].contains(" demo/gate task gate-") && lines[2].contains("is not a git repo"), "{log}");
     assert!(lines[3].contains(" demo/nope task - refused: workspace demo has no schedule nope"), "{log}");
+}
+
+/// The window's Run now: `fmw schedule run --home`, no console output, recorded as `run_now`.
+#[test]
+fn fmw_runs_now_for_the_window() {
+    let f = fixture();
+    schedule::edit(&f.home, &f.workspace(), |all| {
+        all.push(script_schedule("gate", "exit0.cmd", ActionKind::Script));
+        Ok(())
+    })
+    .unwrap();
+    let home = f.home.to_str().unwrap();
+    let refused = fm_bin("fmw", &f, &["schedule", "run", "--home", home, "demo", "gate"], "");
+    assert_eq!(refused.status.code(), Some(3), "pending: {refused:?}");
+    let store = foreman_core::secret::default_store(&f.home);
+    schedule::approve(&f.home, &*store, &f.workspace(), "gate", 1).unwrap();
+    let out = fm_bin("fmw", &f, &["schedule", "run", "--home", home, "demo", "gate", "--fingerprint", "0bad"], "");
+    assert_eq!(out.status.code(), Some(0), "Run now has no task fingerprint to check: {out:?}");
+    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
+    let runs = schedule::runs(&f.home, "demo").unwrap();
+    let last = runs.last().unwrap();
+    assert_eq!(last.started.map(|(_, t)| t), Some(Fired::RunNow));
+    assert_eq!(last.ended.as_ref().map(|e| e.1), Some(Outcome::Ok));
+    assert_eq!(fm_bin("fmw", &f, &["schedule", "run", "demo", "gate"], "").status.code(), Some(2), "no --home");
 }
 
 /// `fm schedule secret set` keeps the value in the home's DPAPI store under the schedule's key, and only there.

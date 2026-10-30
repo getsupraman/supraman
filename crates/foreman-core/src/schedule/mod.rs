@@ -20,12 +20,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{Workspace, validate_name};
 
-pub use approval::{APPROVAL_KEY, Covered, Refusal, approve, command_file, covered, effective_status, mac, verify, verify_approval};
+pub use approval::{APPROVAL_KEY, Change, Covered, Refusal, approve, command_file, covered, covered_diff, covered_fields, effective_status, mac, verify, verify_approval};
 pub use live::{FIRE_LOG_CAP, Live, LiveSession, MASK, Reported, STDERR_TAIL, fire_log, live_dir, masked_tail, secret_key, state_dir};
 pub use next::{next_fire, next_fire_local, previous_fire};
 pub use registrar::{FMW_EXE, FakeRegistrar, Registrar, SyncTarget, Synced, fmw_exe, sync, task_root, task_root_for};
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};
-pub use session::{DEFAULT_DENY, base_prompt, preamble, run_branch, run_id, run_stamp, run_worktree, session_name};
+pub use session::{DEFAULT_DENY, base_prompt, preamble, run_branch, run_id, run_stamp, run_worktree, schedule_of_session, session_name};
 pub use store::{edit, file_path, load, schedules_dir};
 #[cfg(windows)]
 pub use task_service::WindowsRegistrar;
@@ -130,9 +130,27 @@ pub enum Day {
 }
 
 impl Day {
+    pub const ALL: [Day; 7] = [Day::Mon, Day::Tue, Day::Wed, Day::Thu, Day::Fri, Day::Sat, Day::Sun];
+
     pub fn weekday(self) -> chrono::Weekday {
         use chrono::Weekday::*;
         [Mon, Tue, Wed, Thu, Fri, Sat, Sun][self as usize]
+    }
+
+    /// `mon`..`sun`, as the TOML writes it.
+    pub fn as_str(self) -> &'static str {
+        ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][self as usize]
+    }
+}
+
+/// `weekly mon,fri 09:00`, `daily 09:00` or `interval 2h from 08:00`: the form `fm schedule add --every` takes.
+impl fmt::Display for Trigger {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Trigger::Weekly { days, at } => write!(f, "weekly {} {at}", days.iter().map(|d| d.as_str()).collect::<Vec<_>>().join(",")),
+            Trigger::Daily { at } => write!(f, "daily {at}"),
+            Trigger::Interval { at, every } => write!(f, "interval {every} from {at}"),
+        }
     }
 }
 
