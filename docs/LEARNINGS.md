@@ -4737,3 +4737,41 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-2\target`): build ok; `cargo test --release --workspace` 727 passed,
   0 failed, 3 ignored; `--selftest` 5/5 PASS; `--selftest-supervise` PASS (after the `VGit` fix);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
+
+## 2026-10-30 — sched/3 the Task Scheduler registrar: `schedule::sync`
+
+- **Crate: `foreman-core`, in `schedule/`** (`registrar.rs` the trait, `sync` and `FakeRegistrar`; `task_xml.rs` the
+  pure builder; `task_service.rs` the COM `WindowsRegistrar`). The builder needs `Schedule` and the approved
+  fingerprint, which live there, and `windows` 0.62 is already a dependency of the crate: only features were added
+  (`Win32_System_TaskScheduler` with the `Com`, `Ole` and `Variant` it needs, and `Security_Authorization` for the
+  SID string). No package entered `Cargo.lock`. The app is the only caller (C100); `fm` links the crate but never
+  calls `sync`. The run level comes from `foreman_claude::task_run_level`, next to `is_elevated`.
+- **The service's pid is the roster's `supervisorPid`** (`<claude_dir>/daemon/roster.json`, read only), checked with
+  `process::alive`. `claude daemon status` cannot be used for it: from an unelevated process facing an elevated
+  service it reads `NotRunning` (sched/1 probe (a)). `pid_elevated` opens the pid with
+  `PROCESS_QUERY_LIMITED_INFORMATION` and reads `TokenElevation`.
+- **Change detection is a digest, not the XML.** Task Scheduler gives back different XML from what it was given: it
+  reorders elements, adds `URI`, `IdleSettings` and `UseUnifiedSchedulingEngine`, writes `<Sunday />` for `<Sunday/>`,
+  and **leaves out default values** (`<RunLevel>LeastPrivilege</RunLevel>` and `<Enabled>true</Enabled>` are absent
+  on read-back). So `task_xml` writes `definition_digest` (sha256 of the definition rendered with a fixed start date,
+  16 hex) into `RegistrationInfo/Version`, which it keeps, and `sync` compares that. An unchanged task is not written,
+  and a new run level, fingerprint, trigger or setting is registered again. That covers Decision 5's "re-register when
+  the level changes": `Synced.level` reports the level the folder now has.
+- **StartBoundary is the local date of the first start after now**, with the trigger's `at` and no zone. A start date
+  in the past together with `StartWhenAvailable` risks a "missed" start that fires the moment Approve registers it.
+  For an interval, this means the first cycle is the next one starting at `at`. The date is outside the digest, so a
+  later sync does not register the task again just because the day changed.
+- **COM**: `ITaskService` is created, connected and used on a scoped thread of its own with
+  `CoInitializeEx(COINIT_MULTITHREADED)` for each call, never the caller's thread (m5/68). `RegisterTask` on the root
+  with the full path (`\Foreman\<ws>\<id>`) creates the folders. `DeleteFolder` is called on the parent, only when
+  `GetTasks(TASK_ENUM_HIDDEN)` and `GetFolders` are both empty. Missing folders come back as 0x80070002/0x80070003 and
+  read as empty.
+- **Real-task test** (`schedule::tests::registrar::a_real_task_registers_reads_back_and_goes_with_its_folder`,
+  `#[ignore]`) run once from this unit's elevated shell under René's grant. It registered `\ForemanProbe-sched-3\probe`,
+  read back InteractiveToken, StartWhenAvailable, WakeToRun, Parallel, `<Sunday />`, `T03:33:00`, the command and the
+  `Version`; it registered the task again at HighestAvailable and read `<RunLevel>HighestAvailable</RunLevel>` back;
+  then it deleted the task and the folder (`tasks left in \ForemanProbe-sched-3: 0; folder deleted: true`; a separate
+  COM `GetFolder` said `folder: gone`).
+- **Not probed: an unelevated registrant asking for HighestAvailable.** This shell is elevated, and running the test
+  at Medium IL (`runas /trustlevel`) would open a console. If Task Scheduler refuses an unelevated Foreman a
+  HighestAvailable task, `sync` returns `CoreError::Tasks` with the HRESULT; sched/7 has to show that error.
