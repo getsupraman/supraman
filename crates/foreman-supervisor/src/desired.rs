@@ -109,10 +109,11 @@ pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl I
 }
 
 /// `fm-<workspace>-<slug of repo>`. `None` when the slug is empty or would take the name of the
-/// workspace's own sessions (`workspace`, `relay`).
+/// workspace's own sessions (`workspace`, `relay`) or of a scheduled run (`sched-…`).
 pub fn repo_session_name(workspace: &str, repo: &str) -> Option<String> {
     let slug = foreman_core::slugify(repo);
-    (!slug.is_empty() && slug != WORKSPACE_ROLE && slug != RELAY_ROLE).then(|| format!("{FM_PREFIX}{workspace}-{slug}"))
+    let reserved = slug == WORKSPACE_ROLE || slug == RELAY_ROLE || slug.starts_with(foreman_core::schedule::SCHED_SLUG_PREFIX);
+    (!slug.is_empty() && !reserved).then(|| format!("{FM_PREFIX}{workspace}-{slug}"))
 }
 
 /// A repo-controller for `repo`: cwd = the repo's checkout (it merges there like a controller does, so the
@@ -483,6 +484,8 @@ mod tests {
         assert_eq!(repo_session_name("nomos", "Relay"), None);
         assert_eq!(repo_session_name("nomos", "workspace"), None);
         assert_eq!(repo_session_name("nomos", "..."), None);
+        assert_eq!(repo_session_name("nomos", "Sched.Nightly"), None, "fm-<ws>-sched-… is a scheduled run's");
+        assert_eq!(repo_session_name("nomos", "scheduler").as_deref(), Some("fm-nomos-scheduler"));
         let r = repo_session("nomos", "Nomos.Extract", r"C:\n\Nomos.Extract", "p").unwrap();
         assert_eq!((r.role.as_str(), r.repo.as_deref(), r.permission_mode.as_str()), ("repo", Some("Nomos.Extract"), "auto"));
         assert!(!r.exempt_from_budget());

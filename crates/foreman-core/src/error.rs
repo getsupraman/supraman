@@ -18,6 +18,12 @@ pub enum CoreError {
     NoScan { workspace: String, path: PathBuf },
     #[error("{folder} is supervised in workspace {owner}; a folder's session belongs to one workspace")]
     SupervisedElsewhere { folder: String, owner: String },
+    #[error("workspace '{workspace}' has no schedule '{id}'")]
+    NoSchedule { workspace: String, id: String },
+    #[error("schedule '{id}': {why}")]
+    InvalidSchedule { id: String, why: String },
+    #[error("{0}")]
+    Secret(String),
     #[error("cannot locate the Foreman home: set FOREMAN_HOME or APPDATA")]
     NoHome,
     #[error("{}: {source}", path.display())]
@@ -29,6 +35,11 @@ pub enum CoreError {
     Parse {
         path: PathBuf,
         source: toml::de::Error,
+    },
+    #[error("cannot serialize the schedules of workspace '{workspace}': {source}")]
+    SerializeSchedules {
+        workspace: String,
+        source: toml::ser::Error,
     },
     #[error("cannot serialize workspace '{name}': {source}")]
     Serialize {
@@ -49,6 +60,8 @@ impl CoreError {
                 | Self::NoFolder { .. }
                 | Self::NoScan { .. }
                 | Self::SupervisedElsewhere { .. }
+                | Self::NoSchedule { .. }
+                | Self::InvalidSchedule { .. }
         )
     }
 
