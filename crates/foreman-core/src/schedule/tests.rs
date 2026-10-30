@@ -689,3 +689,22 @@ fn a_runs_session_name_is_a_valid_name_and_profiles_map_onto_claudes_flags() {
     assert_eq!(p.allowed(&["Bash(fm:*)".into()]), ["Bash(fm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
     assert_eq!(p.denied().len(), DEFAULT_DENY.len() + 1);
 }
+
+#[test]
+fn a_stderr_tail_is_masked_before_it_is_cut() {
+    let secrets = vec!["s3cr3t".to_string(), String::new()];
+    assert_eq!(masked_tail("token=s3cr3t done", &secrets, 2048), "token=*** done");
+    let long = format!("{}s3cr3t", "x".repeat(5000));
+    assert_eq!(masked_tail(&long, &secrets, 10), "xxxxxxx***");
+    assert_eq!(masked_tail("aé", &[], 1), "", "never a cut inside a char");
+}
+
+#[test]
+fn the_live_and_state_dirs_and_secret_keys_are_per_workspace_and_schedule() {
+    let home = Path::new(r"C:\h");
+    assert_eq!(live_dir(home, "demo").unwrap(), home.join("schedules").join("live").join("demo"));
+    assert_eq!(state_dir(home, "demo", "fix").unwrap(), home.join("schedules").join("state").join("demo").join("fix"));
+    assert!(state_dir(home, "demo", "../x").is_err() && live_dir(home, "..").is_err());
+    assert_eq!(fire_log(home), home.join("schedules").join("fire.log"));
+    assert_eq!(secret_key("demo", "fix", "API_TOKEN"), "foreman/schedule/demo/fix/API_TOKEN");
+}

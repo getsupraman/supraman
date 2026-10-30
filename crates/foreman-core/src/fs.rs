@@ -59,6 +59,19 @@ pub fn lock_file(path: &Path) -> io::Result<fs::File> {
     Ok(file)
 }
 
+/// [`lock_file`] without the wait: `None` while another holds it.
+pub fn try_lock_file(path: &Path) -> io::Result<Option<fs::File>> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    let file = fs::File::options().create(true).truncate(false).write(true).open(path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
 /// `path` parsed as JSON. Missing: the default, no notice. Unreadable or not the expected JSON: the
 /// default and a notice naming the file, the error and `fallback` (what the default means to the user).
 pub fn load_json_or_notice<T: DeserializeOwned + Default>(path: &Path, fallback: &str) -> (T, Option<String>) {
@@ -166,6 +179,18 @@ mod tests {
         fs::write(&path, "kept").unwrap();
         drop(lock_file(&path).unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), "kept");
+    }
+
+    #[test]
+    fn try_lock_file_takes_a_free_lock_and_returns_none_while_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("x.lock");
+        let held = try_lock_file(&path).unwrap().expect("free");
+        assert!(try_lock_file(&path).unwrap().is_none(), "held by the first");
+        drop(held);
+        let again = try_lock_file(&path).unwrap().expect("released");
+        assert!(matches!(fs::File::options().write(true).open(&path).unwrap().try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(again);
     }
 
     #[test]
