@@ -225,42 +225,105 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
     Ok(format!("{ADDED}'s root path painted cut ({:.0} px); hovered, its tooltip reads the whole path", f32::from(bounds.size.width)))
 }
 
-/// The workspace and session rows' hover cards, as [`foreman_ui::hover_card::HoverCard::text`].
-async fn hover_cards(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let ws = card_on(view, &format!("ws-row-{ADDED}"), cx).await?;
+/// Resting on a workspace, a folder and a session row shows no card while each row's icon keeps its tooltip;
+/// Details in the row's menu shows what the card did, and OK closes it (m5/71).
+async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let folder = until(view, cx, WITHIN, &format!("a folder row of {ADDED}"), |v| {
+        v.hits.borrow().keys().find_map(|k| k.strip_prefix(&format!("repo-row-{ADDED}/")).map(str::to_string))
+    })
+    .await?;
+    let ws_row = format!("ws-row-{ADDED}");
+    let session_row = format!("session-row-{}", own.session_id);
+    let rows = [
+        (ws_row.clone(), format!("work-{ADDED}")),
+        (format!("repo-row-{ADDED}/{folder}"), format!("terminal-{ADDED}/{folder}")),
+        (session_row.clone(), format!("star-{}", own.session_id)),
+    ];
+    for (row, icon) in &rows {
+        no_card_on(view, row, icon, cx).await?;
+    }
+
+    let ws = details_of(view, &ws_row, ADDED, cx).await?;
     for want in [format!("{ADDED}\n"), "\nfolders  alpha, beta (disabled)\n".into(), "\nstate  never started\n".into(), "\nsession  not wanted\n".into()] {
         if !ws.starts_with(ADDED) || !format!("{ws}\n").contains(&want) {
-            bail!("the card of {ADDED}'s row reads {ws:?}, without {want:?}");
+            bail!("Details of {ADDED} reads {ws:?}, without {want:?}");
         }
     }
-    shot("m5-59-workspace-card", cx).await;
-    let session = card_on(view, &format!("session-row-{}", own.session_id), cx).await?;
+    let session = details_of(view, &session_row, &own.name, cx).await?;
     let cwd = format!("\ncwd  {}\n", own.cwd.display());
+    let uuid = format!("\nuuid  {}\n", own.session_id);
     if session.lines().next() != Some(own.name.as_str()) || !session.contains("\nstate  ") || !format!("{session}\n").contains(&cwd) {
-        bail!("the card of {}'s row reads {session:?}, not its name, state and {cwd:?}", own.name);
+        bail!("Details of {} reads {session:?}, not its name, state and {cwd:?}", own.name);
     }
-    shot("m5-59-session-card", cx).await;
-    Ok(format!("hover cards: {ADDED}'s row {:?}; {}'s row {:?}", ws.replace('\n', " | "), own.name, session.replace('\n', " | ")))
+    if own.id != own.session_id && !session.contains(&uuid) {
+        bail!("Details of {} reads {session:?}, without {uuid:?}", own.name);
+    }
+    if let Some(card) = foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+        bail!("a hover card showed during the Details checks: {card:?}");
+    }
+    Ok(format!(
+        "no card on {ADDED}'s row, folder {folder} or {}'s row, their icons' tooltips shown; Details: {:?}; {:?}",
+        own.name,
+        ws.replace('\n', " | "),
+        session.replace('\n', " | ")
+    ))
 }
 
-/// Rests the pointer near the row's left edge, off its icons and labels, until its card shows.
-async fn card_on(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let bounds = crate::selftest::scrolled_into_view(view, key, cx).await?;
+/// Rests the pointer near the row's left edge, off its icons and labels, long past the tooltip delay: no card shows.
+/// Then on the row's `icon`, whose tooltip shows, so the rest was a real hover.
+async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let bounds = crate::selftest::scrolled_into_view(view, row, cx).await?;
     let position = point(bounds.left() + px(4.), bounds.top() + px(6.));
     crate::selftest_left::move_to(point(px(1.), px(1.)), cx)?;
     sleep(cx, Duration::from_millis(100)).await;
     foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
     let started = Instant::now();
-    loop {
+    while started.elapsed() < Duration::from_millis(1500) {
         crate::selftest_left::move_to(position, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
-        if let Some(text) = foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow().clone()) {
-            return Ok(text);
+    }
+    if let Some(card) = foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+        bail!("resting on {row} at {position:?} showed the card {card:?}");
+    }
+    let at = crate::selftest::scrolled_into_view(view, icon, cx).await?.center();
+    crate::view::icon::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    let started = Instant::now();
+    loop {
+        crate::selftest_left::move_to(at, cx)?;
+        sleep(cx, Duration::from_millis(50)).await;
+        if crate::view::icon::LAST_SHOWN.with(|l| l.borrow().is_some()) {
+            break;
         }
         if started.elapsed() > WITHIN {
-            bail!("resting on {key} at {position:?} showed no card");
+            bail!("resting on {icon} at {at:?} showed no tooltip");
         }
     }
+    crate::selftest_left::move_to(point(px(1.), px(1.)), cx)?;
+    if let Some(card) = foreman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
+        bail!("resting on {icon} showed the card {card:?}");
+    }
+    Ok(())
+}
+
+/// Details from the row's menu: its report's text, once painted; OK closes it.
+async fn details_of(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    press_painted(view, row, MouseButton::Right, cx).await?;
+    let keys = menu_open(view, title, cx).await?;
+    if !keys.contains(&"details") {
+        bail!("the menu of {title} has {keys:?}, no details");
+    }
+    click(view, "menu-details", cx).await?;
+    let text = until(view, cx, WITHIN, &format!("Details of {title}"), |v| {
+        v.confirm.as_ref().filter(|c| c.action.is_none() && painted(v, "confirm-yes")).map(|c| c.text.clone())
+    })
+    .await?;
+    if view.read_with(cx, |v, _| painted(v, "confirm-cancel")) {
+        bail!("Details of {title} offers a Cancel");
+    }
+    shot(&format!("m5-71-details-{}", if title == ADDED { "workspace" } else { "session" }), cx).await;
+    click(view, "confirm-yes", cx).await?;
+    until(view, cx, WITHIN, &format!("Details of {title} closed by OK"), |v| v.confirm.is_none().then_some(())).await?;
+    Ok(text)
 }
 
 /// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width (m5/63).
@@ -563,7 +626,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
     out.push(format!("the same folder again registers as {again} with alpha disabled, out of its tree and found by search as supervised in {ADDED}; removed"));
     out.push(single_repo(view, &registry, cx).await?);
-    out.push(hover_cards(view, own, cx).await?);
+    out.push(row_details(view, own, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);
     press_painted(view, &session_key, MouseButton::Right, cx).await?;
@@ -581,7 +644,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let ws_key = format!("ws-row-{ADDED}");
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, ADDED, cx).await?;
-    if keys != ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"] {
+    if keys != ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"] {
         bail!("the menu of {ADDED} has {keys:?}");
     }
     shot("menu-workspace", cx).await;

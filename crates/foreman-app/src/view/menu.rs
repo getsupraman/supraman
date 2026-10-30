@@ -31,6 +31,7 @@ pub enum MenuAction {
     ToggleStar(String),
     Delete(Session),
     DeleteClosed(String),
+    Details(MenuTarget),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +78,7 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
             item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: home.clone(), title: format!("pwsh · {w}") }),
         ]);
     }
+    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Workspace(w.clone()))));
     if closed_background {
         items.push(item("delete-closed", "Delete closed background sessions…", MenuAction::DeleteClosed(w.clone())));
     }
@@ -116,6 +118,7 @@ fn section_key(of: Section, key: &'static str) -> &'static str {
         (Section::Own, "show-in-work") => "session-show-in-work",
         (Section::Own, "star") => "session-star",
         (Section::Own, "delete") => "session-delete",
+        (Section::Own, "details") => "session-details",
         (Section::Relay, "attach") => "relay-attach",
         (Section::Relay, "resume") => "relay-resume",
         (Section::Relay, "stop-session") => "relay-stop",
@@ -125,6 +128,7 @@ fn section_key(of: Section, key: &'static str) -> &'static str {
         (Section::Relay, "show-in-work") => "relay-show-in-work",
         (Section::Relay, "star") => "relay-star",
         (Section::Relay, "delete") => "relay-delete",
+        (Section::Relay, "details") => "relay-details",
         (_, other) => other,
     }
 }
@@ -196,6 +200,7 @@ pub fn session_items(
         let label = if row.starred { "Unstar" } else { "Star" };
         items.push(item("star", label, MenuAction::ToggleStar(s.session_id.clone())));
     }
+    items.push(item("details", "Details", MenuAction::Details(MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() })));
     if deletable {
         items.push(item("delete", "Delete…", MenuAction::Delete(s.clone())));
     }
@@ -246,10 +251,11 @@ mod tests {
 
     #[test]
     fn workspace_menu_follows_its_state() {
-        assert_eq!(keys(&workspace_items(&node(None), false, false, vec![], vec![])), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
+        assert_eq!(keys(&workspace_items(&node(None), false, false, vec![], vec![])), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
         let started = workspace_items(&node(Some(true)), true, false, vec![], vec![]);
-        assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "remove"]);
+        assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
         assert_eq!(started.last().unwrap().action, MenuAction::Remove("demo".into()));
+        assert_eq!(started[7].action, MenuAction::Details(MenuTarget::Workspace("demo".into())));
     }
 
     #[test]
@@ -266,16 +272,16 @@ mod tests {
         assert_eq!(
             keys(&items),
             [
-                "stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "remove",
-                "session-attach", "session-stop", "session-copy-send-name", "session-copy-name", "session-copy-id", "session-show-in-work", "session-star",
-                "relay-attach", "relay-stop", "relay-copy-name", "relay-copy-id", "relay-star",
+                "stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove",
+                "session-attach", "session-stop", "session-copy-send-name", "session-copy-name", "session-copy-id", "session-show-in-work", "session-star", "session-details",
+                "relay-attach", "relay-stop", "relay-copy-name", "relay-copy-id", "relay-star", "relay-details",
             ]
         );
-        assert_eq!(items.len(), 8 + own_n + relay_n, "nothing dropped");
+        assert_eq!(items.len(), 9 + own_n + relay_n, "nothing dropped");
         let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (i.key, c))).collect();
         assert_eq!(captions, [("session-attach", "workspace session · fm-demo-workspace"), ("relay-attach", "relay · fm-demo-relay")]);
-        assert!(matches!(&items[8].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
-        assert_eq!(items[9].label, "Stop", "an fm- session stops without a question");
+        assert!(matches!(&items[9].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
+        assert_eq!(items[10].label, "Stop", "an fm- session stops without a question");
         let keys = keys(&items);
         assert_eq!(keys.iter().collect::<std::collections::HashSet<_>>().len(), keys.len(), "keys unique");
     }
@@ -314,12 +320,16 @@ mod tests {
     fn session_menu_asks_before_stopping_a_session_foreman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
         let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false, None);
-        assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star"]);
+        assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star", "details"]);
         assert_eq!(items[1].label, "Stop…");
         assert_eq!(items[3].action, MenuAction::Copy("aaaa0001".into()));
+        assert_eq!(
+            items[6].action,
+            MenuAction::Details(MenuTarget::Session { workspace: "demo".into(), repo: "Alpha".into(), session_id: "aaaa0001-x".into() })
+        );
 
         let adopt = session_items("demo", "Alpha", &row(live, Health::Running), false, None, None, false, Some("fm-demo-alpha".into()));
-        assert_eq!(keys(&adopt), ["attach", "stop-session", "adopt", "copy-name", "copy-id", "star"]);
+        assert_eq!(keys(&adopt), ["attach", "stop-session", "adopt", "copy-name", "copy-id", "star", "details"]);
         assert_eq!(adopt[2].label, "Adopt…");
         assert!(matches!(&adopt[2].action, MenuAction::Adopt { workspace, folder, session, name } if workspace == "demo" && folder == "Alpha" && session.id == "aaaa0001" && name == "fm-demo-alpha"));
 
@@ -327,11 +337,11 @@ mod tests {
         assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None, None, false, None)[1].label, "Stop");
 
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-x","name":"","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false, None)), ["resume", "copy-id", "star"]);
+        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false, None)), ["resume", "copy-id", "star", "details"]);
 
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
         let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None, false, None);
-        assert_eq!(keys(&items), ["copy-name", "copy-id", "star"], "an interactive session is neither attached nor stopped from here");
+        assert_eq!(keys(&items), ["copy-name", "copy-id", "star", "details"], "an interactive session is neither attached nor stopped from here");
         assert_eq!(items[1].action, MenuAction::Copy("bbbb0005".into()));
         assert_eq!(items[2].action, MenuAction::ToggleStar("bbbb0005-x".into()));
         let mut starred = row(interactive, Health::Idle);
@@ -343,7 +353,7 @@ mod tests {
     fn a_live_session_offers_its_sendmessage_name_beside_name_and_id() {
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"Fix the tree","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
         let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()), false, None);
-        assert_eq!(keys(&items), ["copy-send-name", "copy-name", "copy-id", "star"]);
+        assert_eq!(keys(&items), ["copy-send-name", "copy-name", "copy-id", "star", "details"]);
         assert_eq!(items[0].label, "Copy SendMessage name");
         assert_eq!(items[0].action, MenuAction::Copy("twin [d923d7]".into()));
         assert_eq!(items[1].action, MenuAction::Copy("Fix the tree".into()));
@@ -353,12 +363,12 @@ mod tests {
     fn delete_comes_last_when_offered_and_the_workspace_offers_the_bulk_delete_before_remove() {
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-0000-4000-8000-000000000002","name":"old","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
         let items = session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, true, None);
-        assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "delete"]);
-        assert_eq!(items[4].label, "Delete…");
-        assert!(matches!(&items[4].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
+        assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "details", "delete"]);
+        assert_eq!(items[5].label, "Delete…");
+        assert!(matches!(&items[5].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
         let ws = workspace_items(&node(Some(false)), false, true, vec![], vec![]);
-        assert_eq!(keys(&ws), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "delete-closed", "remove"]);
-        assert_eq!(ws[6].label, "Delete closed background sessions…");
-        assert_eq!(ws[6].action, MenuAction::DeleteClosed("demo".into()));
+        assert_eq!(keys(&ws), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
+        assert_eq!(ws[7].label, "Delete closed background sessions…");
+        assert_eq!(ws[7].action, MenuAction::DeleteClosed("demo".into()));
     }
 }

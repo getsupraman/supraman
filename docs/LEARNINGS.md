@@ -4767,3 +4767,22 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Flakes seen:** step 7t (`Cascadia Code at 14/23px: row 0 has no horizontal stroke: no ink`) failed in several
   runs on master and on this branch alike. One run printed PASS and then hung on exit, so step 8's watchdog fired.
   Selftests from other worktrees share a machine-wide lock and were running at the same time.
+## 2026-10-30 — m5/71 no hover cards on tree rows; Details in the row's menu
+
+- **Asked:** René: the session card in the tree "covers the actions and is very annoying when trying to click
+  something". Workspace and session rows (tree and search results, which share `render_session`) no longer carry a
+  `hover_card::tooltip`. Folder rows never had one. Kept: every icon button's `Tooltip::text`, the relay glyph's,
+  `another Foreman session`, the `adopt failed` tag's, and `clipped`'s full-text tooltip on a cut label.
+- **Details:** `MenuAction::Details(MenuTarget)` sits in the workspace menu (before Delete closed…/Remove) and in
+  every session menu (before Delete…); inside the workspace menu the own and relay sections key it
+  `session-details`/`relay-details`. `FleetView::details` builds the same rows (`row_details::{workspace, session}`,
+  formerly `row_card`), shown through `Confirm::report` in the left panel's notice slot, closed by OK. The rows gain
+  `uuid` (the full session id) for a session and for the workspace's own session. A folder has no Details: its card
+  never existed and its facts are on the row.
+- **Shared component:** `Confirm::report` paints the text as one string; gpui breaks it at `\n`, so the
+  `label  value` lines read as rows. Its tint is the warning one; no Details-specific panel was built (C56).
+- **Test:** selftest step 7b (`selftest_manage::row_details`) rests 1.5 s on a workspace, a folder and a session row
+  and finds no `LAST_CARD`, then hovers each row's icon (`work-`, `terminal-`, `star-`) and sees its tooltip, so the
+  rest was a real hover. Then Details from the workspace's and the session's menu: the report's rows (folders, state,
+  session; name, state, cwd, uuid), no Cancel, OK closes it. Shots `m5-71-details-workspace`, `m5-71-details-session`.
+  Unit tests: `row_details` (moved from `row_card`, with `uuid`), the menu key lists and the Details targets.
