@@ -2,7 +2,7 @@
 
 The design every later `sched` unit builds on. It comes from the analysis René approved (run `sched`, 2026-10-30) and from reading the code at `6546be4`. Binding rules: C100 (only René's action in the window approves), C101 (no real Windows task outside a unit's own probe folder), C102 (unattended runs: profile, caps, stop never rm, token revoked, no secret in any file). Approval follows sched/10's answer **(b)+(c)**.
 
-Each section ends with what it decides for the unit that builds it. Open choices are under [Questions for the controller](#questions-for-the-controller).
+Each section ends with what it decides for the unit that builds it. The choices that were open are settled under [Decisions](#decisions) (René and the controller, 2026-10-30).
 
 ## Where things live
 
@@ -71,6 +71,7 @@ fingerprint = "9f2c…"                # hex sha256, see below
 mac = "41ab…"                        # hex HMAC-SHA256, see below
 approved_at = 1793341200000
 covered = '{"action":…}'             # the canonical covered JSON as approved: what Approve diffs against
+command_sha256 = "c0de…"             # the slash command file's hash at approval; not covered (shown, never refused)
 ```
 
 Rules for `foreman_core::schedule` (sched/2):
@@ -90,7 +91,7 @@ Rules for `foreman_core::schedule` (sched/2):
   "files":{ "<path relative to the folder>": "<sha256 of its bytes>", … } }
 ```
 
-`files` holds the script, the prompt file, and for `prompt = { command = "/x" }` the command file `.claude/commands/x.md` resolved in the folder. A session can change what runs either by editing the TOML or by editing those files, so both are covered. The rest (`name`, `description`, `status`, `created_*`, `approval`) is not.
+`files` holds the script and the prompt file: a session could change what runs by editing them, so their content is covered. A slash command (`prompt = { command = "/x" }`) is covered by its name and its resolved path (`"command":{"name":"/x","path":".claude/commands/x.md"}` in the action), not by its content (Decision 2). `approval.command_sha256` records the file's hash at approval. It is not covered: when the file no longer matches, the row shows "changed since approval" and the schedule still fires. The rest (`name`, `description`, `status`, `created_*`, `approval`) is not covered.
 
 **The MAC.** `mac = HMAC-SHA256(key, "foreman-schedule-v1\n" + workspace + "\n" + id + "\n" + fingerprint)`, as hex.
 
@@ -177,27 +178,28 @@ The task runs `fmw.exe schedule fire --home "<home>" <workspace> <id> --fingerpr
 1. **Start.** Open `fire.log`. Load the registry from `--home` (an Exec action cannot set environment variables, and the task inherits René's environment, not the app's). Find the workspace and load the schedule. An unknown workspace or schedule writes `refused` to `fire.log` and exits 2.
 2. **Approval** (see above): any failure records `refused` and exits 3.
 3. **Catch-up.** With `catch_up = "skip"`, when now is more than 10 minutes after the previous scheduled time (from the trigger), record `skipped` ("missed") and exit 0. Task Scheduler's `StartWhenAvailable` fires a missed start once when the machine is back; it does not tell fm which start it was.
-4. **Overlap**, on `schedules/live/<ws>/<id>.lock`:
+4. **Budget.** While this home's mid-turn `fm-` rows (`foreman_supervisor::working`) fill `max_working`, wait for a free slot, checking once a minute. After 30 minutes, record `skipped` ("busy") and exit 0 (Decision 6).
+5. **Overlap**, on `schedules/live/<ws>/<id>.lock`:
    - **skip**: try the lock; when it is held, record `skipped` and exit 0.
    - **queue**: wait for the lock, at most one waiter (a `.queued` marker; a second waiter records `skipped`).
    - **restart**: write `<id>.restart`. The owner sees it within one poll, ends its run as `interrupted` ("restarted"), stops and revokes, and frees the lock, which the restarter then takes.
 
    `foreman_core::fs::lock_file` blocks, so sched/5 adds a non-blocking `try_lock_file` to `foreman_core::fs`, next to it (C56).
-5. **Live file.** Write `schedules/live/<ws>/<id>.json`: run id, fm pid with its `process::started(pid)`, stage, and later the session and the WorkState session id. Record `started`.
-6. **Script stage**, for `script*` kinds. `script` ends here.
-7. **Session stage** (sched/6):
+6. **Live file.** Write `schedules/live/<ws>/<id>.json`: run id, fm pid with its `process::started(pid)`, stage, and later the session and the WorkState session id. Record `started`.
+7. **Script stage**, for `script*` kinds. `script` ends here.
+8. **Session stage** (sched/6):
    1. Worktree, when `worktree = true`: `git worktree add -b sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD`. It lives inside the folder, so it falls under the folder's existing claude trust; Foreman never changes trust.
    2. Mint (see [fm without the app](#fm-without-the-app-mint-launch-stop)) and write the mcp config.
    3. `Claude::launch` (refuses a taken name), then `find_by_name` for the row's id and uuid, then `Minter::bind`.
-8. **Watch.** Poll `Claude::list_sessions` every 15 s, sleeping in between with no flag polling. Read the session's hook events (`EventReader`) and its transcript's `usage` lines. Check `<id>.restart`. The run ends on the first of:
+9. **Watch.** Poll `Claude::list_sessions` every 15 s, sleeping in between with no flag polling. Read the session's hook events (`EventReader`) and its transcript's `usage` lines. Check `<id>.restart`. The run ends on the first of:
    - **`fm schedule report done`** → `done`.
    - **Idle after work** → `done` ("idle"): the row is `Idle` or state `done` for 2 minutes after a `Stop` event, with no report.
-   - **Blocked** → `needs_you`, recorded at once so the Inbox shows it. Blocked means state `Blocked`, `waiting_for` set, or `fm schedule report needs-you`. The session is left parked so René can attach and answer, and stopped at `max_runtime`.
+   - **Blocked** → `needs_you`, recorded at once so the Inbox shows it. Blocked means state `Blocked`, `waiting_for` set, or `fm schedule report needs-you`. The session stays parked so René can attach and answer, and is stopped at `max_runtime` (Decision 7).
    - **`max_runtime`** → `capped_runtime`.
    - **Token total over `max_tokens`** → `capped_tokens`.
    - **The row gone or dead** for 2 polls, without a report → `failed` ("the session ended").
-9. **End.** `Claude::stop(id)`, never `rm`. Then `Minter::revoke`, delete the mcp config file, record `ended` with the token totals, delete the live file, release the lock. Exit 0 for `done`/`ok`/`nothing_to_do`/`skipped`, otherwise 1, so Task Scheduler's *Last Run Result* agrees.
-10. **Recovery.** fm can die mid-run: sleep, logoff, the task's `ExecutionTimeLimit`, a crash. A live file whose pid is not alive with the recorded start time (`process::alive` + `started`) is a dead run. The next fire of that schedule finds it, and so does the app at start and on each refresh. Whoever finds it stops the session if it is live, revokes the WorkState session id, deletes the config file, records `interrupted`, and removes the live file. Revoking is a call to `/api/agent-sessions`, the same one the supervisor makes; it is not a write to WorkState's work data (C21).
+10. **End.** `Claude::stop(id)`, never `rm`. Then `Minter::revoke`, delete the mcp config file, record `ended` with the token totals, delete the live file, release the lock. Exit 0 for `done`/`ok`/`nothing_to_do`/`skipped`, otherwise 1, so Task Scheduler's *Last Run Result* agrees.
+11. **Recovery.** fm can die mid-run: sleep, logoff, the task's `ExecutionTimeLimit`, a crash. A live file whose pid is not alive with the recorded start time (`process::alive` + `started`) is a dead run. The next fire of that schedule finds it, and so does the app at start and on each refresh. Whoever finds it stops the session if it is live, revokes the WorkState session id, deletes the config file, records `interrupted`, and removes the live file. Revoking is a call to `/api/agent-sessions`, the same one the supervisor makes; it is not a write to WorkState's work data (C21).
 
 ## Task Scheduler registration
 
@@ -242,7 +244,12 @@ COM runs on a background thread in the MTA (`CoInitializeEx(COINIT_MULTITHREADED
 
 **No console window: `fmw.exe`.** `fm.exe` is a console program, and so is `foreman.exe`, which only `FreeConsole`s after it starts (`foreman-app/src/main.rs:139`). An `InteractiveToken` task running a console exe opens a visible console window for the whole run. That breaks the red line, so the probe deliberately did not try it. sched/5 adds a second binary, `fmw`, to `crates/fm`: `src/bin/fmw.rs` with `#![windows_subsystem = "windows"]`, calling the same `schedule` entry point (this means `fm` grows a `lib.rs`). It writes its diagnostics to `schedules/fire.log`. It ships next to `fm.exe` (`docs/RELEASE.md`). The probe is built the same way (`#![windows_subsystem = "windows"]`) and reports `console_window=false`.
 
-**Elevation.** A `LeastPrivilege` task cannot reach a claude background service that an elevated process started (LEARNINGS m5/25). `claude --bg` then gives up after 45 s with "Couldn't reach the background service". fire runs `foreman_claude::daemon_mismatch()` first and records `failed` with the `elevation_mismatch` text, so no launch hangs. Whether the task should use `HighestAvailable` when René runs Foreman as administrator is a question below.
+**Elevation.** A `LeastPrivilege` task cannot reach a claude background service that an elevated process started (LEARNINGS m5/25). `claude --bg` then gives up after 45 s with "Couldn't reach the background service". So the task's run level follows the service (Decision 5):
+- `HighestAvailable` when the service is elevated (the service's pid, from `claude daemon status`, has an elevated token; sched/3 adds that check next to `foreman_claude::is_elevated`); `LeastPrivilege` otherwise.
+- `Registrar::sync` records the run level it registered and re-registers the workspace's tasks when the service's elevation changes. The app checks this at start and with each `DaemonWatch` check.
+- fire still runs `foreman_claude::daemon_mismatch()` first and records `failed` with the `elevation_mismatch` text, so a task registered before a change never hangs a launch.
+
+The `<RunLevel>` above is that value, not a constant.
 
 sched/3 builds `Registrar { sync(workspace, &[Schedule]) }` with `WindowsRegistrar` (COM) and `FakeRegistrar` (keeps the XML per path). It provides the XML builder as a pure function, golden-tested, plus one `#[ignore]`d test that registers a real task under `\ForemanProbe-sched-3\` and removes it.
 
@@ -279,7 +286,7 @@ Name: **`fm-<workspace>-sched-<id>-<yyyymmdd-hhmmss>`**, e.g. `fm-nomos-sched-au
 - **`validate_name`.** The workspace is a valid name, the id passes `validate_name`, and the stamp is digits and a hyphen, so the whole name passes `validate_name` (lowercase, digits, `-`, no leading or trailing `-`). The second-resolution stamp keeps two Run nows in one minute apart; `Claude::launch` refuses a taken name in any case.
 - **Will the supervisor stop it? No.** `reconcile` acts only on names in the desired state's `sessions` or `retired` (crate docs: "Rows whose name is neither wanted nor retired are never touched"; R5, R14). fm never adds a sched name to either.
 - **The supervisor must not revoke its token either.** `Supervisor::revoke_unwanted` (`executor.rs:527`) revokes every name in `supervisor/<ws>.sessions.json` that is not wanted. So fm keeps a run's minted session in the live file and the run record, **never in `MintedSessions`**.
-- **It is not foreign.** It starts with `fm-<workspace>-`, so `is_foreign` is false. The app shows it as this home's own row (attach, resume work as for any row), and **it counts against the shared `max_working` budget** while it is mid-turn (`budget.rs:31`). Fire does not wait for a budget slot; a question below.
+- **It is not foreign.** It starts with `fm-<workspace>-`, so `is_foreign` is false. The app shows it as this home's own row (attach, resume work as for any row), and **it counts against the shared `max_working` budget** while it is mid-turn (`budget.rs:31`). Fire waits up to 30 minutes for a slot, then records `skipped` ("busy") (Decision 6).
 - **A name to reserve.** `repo_session_name(ws, repo)` gives `fm-<ws>-<slug>`, so a repo whose slug starts with `sched-` could take a run's name. sched/2 makes `repo_session_name` return `None` for a slug starting with `sched-`, as it already does for `workspace` and `relay`.
 - **For sched/7.** A row named `fm-<ws>-sched-<id>-…` belongs to that schedule's run; the fleet shows it under the schedule (design B) and with its run record.
 
@@ -289,7 +296,7 @@ A3 is confirmed by reading the code. The supervisor ticks only inside the app (`
 
 - **The bearer.** `Auth::open(home).access_token(configured_origin)`, as `fm work` does (`crates/fm/src/work.rs:36`). It reads the refresh token from the DPAPI `FileStore`, refreshes under `oauth/refresh.lock` (cross-process, so fm and a running app never spend one refresh token twice), and keeps a rotated token. `AppTokens`/`bearer`/`workstate_role` live in `foreman-app/src/tokens.rs`. sched/6 moves them into `foreman-supervisor` (next to `TokenProvider`) so fm uses the same provider instead of a copy (C56). Not signed in → the run launches without WorkState, as the supervisor does, and the record says so.
 - **The mint.** `HttpMinter::mint` with a `MintRequest`:
-  - `name` = the session name; `role` = `orchestrator` (a question below);
+  - `name` = the session name; `role` = `orchestrator` (Decision 4);
   - `launched_by` = `origin` = `foreman/<ws>/schedule/<id>`; `cwd` = the worktree; `external_role` = `schedule`;
   - `replace` false (every run is a new name); `repo` = `git_repo(cwd)`; `claude_session_id` None.
 
@@ -301,7 +308,7 @@ A3 is confirmed by reading the code. The supervisor ticks only inside the app (`
   - `--allowedTools`/`--disallowedTools` from the profile; `--model` when set.
 
   sched/6 pulls the spec building out into one shared function on `LaunchConfig`, used by both.
-- **The stop.** `Claude::stop(id)`, `Minter::revoke(session_id)`, delete `mcp_config_path(mcp, name)`. Never `rm`. The worktree is kept, so a run's branch survives (a question below on cleaning up).
+- **The stop.** `Claude::stop(id)`, `Minter::revoke(session_id)`, delete `mcp_config_path(mcp, name)`. Never `rm`. The worktree is kept, so a run's branch survives. `prune` removes it after the 30-day retention only when it holds no uncommitted and no unpushed work; it lists the rest (Decision 8).
 
 ## Probes (a)–(d): pending, run by René
 
@@ -380,22 +387,24 @@ The scratch session `948719b4` (`probe-sched-1-b51dd4`) was this unit's own. It 
 |---|---|
 | sched/2 | the TOML above; `foreman_core::schedule` with load/edit under `lock_file` + `write_atomic`; the fingerprint (covered tables + file hashes) and `verify`; covered edit → pending; next fire in local time across DST; run records with `append_capped` 1 MiB and `prune` extended; `hmac` 0.12.1 as a direct dependency (already locked); reserve the `sched-` slug in `repo_session_name`; list the module in CLAUDE.md and ARCHITECTURE.md |
 | sched/3 | COM `ITaskService` with XML; `\Foreman\<ws>\<id>` (another home: `\Foreman-<hex8>\…`); the settings above; the fake keeps the XML; sync deletes empty folders; COM on an MTA background thread; one `#[ignore]`d real-task test in the unit's own probe folder |
-| sched/4 | flags as in its intent plus `--profile read\|worktree-edit\|auto`, `--max-tokens` (not `--max-cost`, a question below), `--secret NAME`; refuses `bypassPermissions` and unknown script extensions; dry-run prints the resolved prompt with the preamble, the full `claude` argv, the profile's allow and deny lists, and the next three fires |
+| sched/4 | flags as in its intent plus `--profile read\|worktree-edit\|auto`, `--max-tokens` instead of `--max-cost` (Decision 3), `--secret NAME`; refuses `bypassPermissions` and unknown script extensions; dry-run prints the resolved prompt with the preamble, the full `claude` argv, the profile's allow and deny lists, and the next three fires |
 | sched/5 | `fmw.exe` (GUI subsystem) runs `schedule fire --home … <ws> <id> --fingerprint …`; checks 1–4; `try_lock_file` in `foreman_core::fs`; overlap via the live dir; the script contract above; secrets from `SecretStore` keys `foreman/schedule/<ws>/<id>/<NAME>`, masked in stderr tails |
 | sched/6 | the worktree under `<folder>/.claude/worktrees/`; the bearer through the moved `AppTokens`; the mint as above, kept out of `MintedSessions`; the launch spec shared with `Supervisor::launch`; the watch loop and end conditions; a `usage` reader in `foreman_claude::transcript`; `fm schedule report`; the safe.directory check |
-| sched/7 | `approve()` is the only writer of `[schedule.approval]`, then `Registrar::sync`; Approve diffs `approval.covered` against the current covered JSON; run rows found by the `fm-<ws>-sched-<id>-` prefix; the app recovers dead runs (live file, pid gone) |
+| sched/7 | `approve()` is the only writer of `[schedule.approval]` (with `command_sha256`), then `Registrar::sync`; "changed since approval" when the command file no longer matches; Approve diffs `approval.covered` against the current covered JSON; run rows found by the `fm-<ws>-sched-<id>-` prefix; the app recovers dead runs (live file, pid gone) |
 | sched/8 | the skill runs only `fm schedule add/list/show/pause/resume/dry-run`; it never touches the TOML; it asks before any profile above `read` |
 
-## Questions for the controller
+## Decisions
 
-1. **Is the trigger covered?** sched/2's c2 lists action, script, prompt source, permissions and caps, but not the trigger. This doc also covers `trigger` and `policy` (overlap, catch-up, wake). A session that changes "weekly" to "every 15 minutes" multiplies the cost the caps bound per run, and `wake` wakes the PC. Keep them covered?
-2. **Command-file and prompt-file content in the fingerprint.** Covering `.claude/commands/<x>.md` by hash means any commit that changes that command makes the schedule pending until René approves again. That is the strict reading of C100, but it could be a nuisance for a command that changes often. Keep it?
-3. **A cost cap in tokens.** sched/4's intent says `--max-cost`. This doc caps tokens (`max_tokens`), because a price table per model goes stale. Tokens, or USD with a table?
-4. **The WorkState role** of a scheduled run's token: `orchestrator` (like a repo session; it can create runs and items in the folder's project), or `worker`?
-5. **Elevation.** When René runs Foreman as administrator and the claude service is elevated, a LeastPrivilege task cannot launch. Should `Registrar::sync` register `HighestAvailable` when Settings → Run as administrator is on, or keep LeastPrivilege and record the failure?
-6. **The shared budget.** A run counts against `max_working` but does not wait for a slot. Should fire wait (up to a limit) when the budget is full?
-7. **`needs_you` runs** stay parked until `max_runtime`, so René can attach. Or stop them at once?
-8. **Worktrees of finished runs** are never removed (stop, never rm). Who cleans them up: a retention rule in `prune` for worktrees with no unpushed commits, or René by hand?
+Answered 2026-10-30: questions 2, 4 and 5 by René, the others by the controller. They are folded into the sections above.
+
+1. **The trigger and the policy are covered** (controller). The fingerprint includes `trigger` and `policy` (overlap, catch-up, wake) as well as the action, script, prompt source, permissions and caps. Changing any of them makes the schedule pending.
+2. **A slash command is covered by its name and path, not its content** (René). Its hash at approval (`approval.command_sha256`) only drives the row's "changed since approval"; it never refuses a fire. The script's and the prompt file's content stay covered.
+3. **The cost cap is in tokens** (controller). The cap is `max_tokens`, with `fm schedule add --max-tokens`; there is no price table.
+4. **A run's WorkState role is `orchestrator`** (René).
+5. **The task's run level matches the claude service** (René). It is `HighestAvailable` when the service is elevated and `LeastPrivilege` otherwise; `Registrar::sync` re-registers when that changes (sched/3).
+6. **fire waits up to 30 minutes for a budget slot** (controller). Then it records `skipped` ("busy") (sched/5).
+7. **A `needs_you` run stays parked until `max_runtime`** (controller), with an Inbox notice from the moment it is recorded (sched/6, sched/7).
+8. **Worktrees of finished runs** (controller). `prune` removes one after the 30-day retention only when it has no uncommitted and no unpushed work; the others are listed for René (sched/2 extends `prune`; sched/7 shows the list).
 
 ## Assumptions
 
