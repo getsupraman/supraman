@@ -43,13 +43,15 @@ Work out each part, then ask **once** for everything still open (§2), then add.
    | Profile | The run may | Where it works |
    |---|---|---|
    | `read` | read and search, run `fm`; anything else parks it as needs-you | the folder's checkout |
-   | `worktree-edit` | also edit and write files | its own git worktree, never the checkout |
+   | `worktree-edit` | also edit and write files; `git status/diff/log/add/commit`; push its own run branch | its own git worktree, never the checkout |
    | `auto` | what the auto-mode classifier allows | its own git worktree |
 
    `read` when the command only reads, reports or triages. **Anything more — it edits, fixes, commits, opens a
    branch or a PR, runs a build — needs `worktree-edit` or `auto`, and only the human picks it: ask (§2),
    never choose it yourself.** `bypassPermissions` is never a schedule's mode; `fm` refuses it. Extra rules
-   only when the human names them: `--allow-tools "Bash(dotnet test:*)"`, `--deny-tools <rule>`.
+   only when the human names them: `--allow-tools "Bash(dotnet test:*)"`, `--deny-tools <rule>`. A
+   `worktree-edit` fix that builds or runs tests needs those commands as `--allow-tools` (the profile has
+   git, not the build): say which in §2, e.g. `--allow-tools "Bash(cargo test:*)"`; `dry-run` names it too.
 5. **The caps** (unattended runs end at them): always pass `--max-runtime 1h --max-tokens 3000000`, the
    defaults, unless the human gave others (hard limits 8h and 20000000 tokens).
 6. **The name.** `--name "<Command words>"` (`--name "Autofix prod bugs"`); the id is its slug

@@ -188,7 +188,7 @@ The task runs `fmw.exe schedule fire --home "<home>" <workspace> <id> --fingerpr
 6. **Live file.** Write `schedules/live/<ws>/<id>.json`: run id, fm pid with its `process::started(pid)`, stage, and later the session and the WorkState session id. Record `started`.
 7. **Script stage**, for `script*` kinds. `script` ends here.
 8. **Session stage** (sched/6):
-   1. Worktree, when `worktree = true`: `git worktree add -b sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD`. It lives inside the folder, so it falls under the folder's existing claude trust; Foreman never changes trust.
+   1. Worktree, when `worktree = true`: `git worktree add -b fm-sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD`. It lives inside the folder, so it falls under the folder's existing claude trust; Foreman never changes trust.
    2. Mint (see [fm without the app](#fm-without-the-app-mint-launch-stop)) and write the mcp config.
    3. `Claude::launch` (refuses a taken name), then `find_by_name` for the row's id and uuid, then `Minter::bind`.
 9. **Watch.** Poll `Claude::list_sessions` every 15 s, sleeping in between with no flag polling. Read the session's hook events (`EventReader`) and its transcript's `usage` lines. Check `<id>.restart`. The run ends on the first of:
@@ -261,12 +261,13 @@ The profiles map onto claude's flags. Every profile also gets `LaunchConfig::all
 | Profile | `--permission-mode` | Worktree | `--allowedTools` | Use |
 |---|---|---|---|---|
 | `read` | `default` | no (the main checkout) | `Read Glob Grep` + `allow_tools` | reports, triage; anything else parks → `needs_you` |
-| `worktree-edit` | `acceptEdits` | required | `Read Glob Grep Edit Write` + `allow_tools` | fixes that end in a branch or PR |
+| `worktree-edit` | `acceptEdits` | required | `Read Glob Grep Edit Write`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git add:*)`, `Bash(git commit:*)`, the run's own `Bash(git push -u origin fm-sched/<id>/<stamp>)` + `allow_tools` | fixes that end in a branch or PR |
 | `auto` | `auto` | required | `allow_tools` | the classifier decides, like a workspace session |
 
 - `bypassPermissions` is never a schedule's mode; `fm schedule add` refuses it.
 - **Default deny list** (`--disallowedTools`, always): `Bash(git push --force:*)`, `Bash(claude rm:*)`, `Bash(schtasks:*)`, `PowerShell(Register-ScheduledTask:*)`, `PowerShell(Unregister-ScheduledTask:*)`. A run cannot schedule anything, and cannot rm.
 - **sched/8's skill** asks the human whenever the action needs more than `read`.
+- **`worktree-edit` and git (F-01, the controller's decision).** Inside its worktree a run may look at, stage and commit its work, and push its own run branch: the push rule is generated per run with the exact branch, so no other branch and no `--force` (also denied). Build and test commands stay per schedule (`--allow-tools`); the skill and `dry-run` say which a fix needs. The rules come from the profile, so the fingerprint covers them.
 
 **Caps** (C102), all covered by the fingerprint:
 

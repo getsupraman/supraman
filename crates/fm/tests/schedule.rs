@@ -238,7 +238,9 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     }
     assert!(text.contains(&format!("cwd: {}", f.alpha.join(".claude").join("worktrees").join("fm-sched-fix-bugs-").display())), "{text}");
     assert!(text.contains("permissions: profile worktree-edit (--permission-mode acceptEdits)"), "{text}");
-    assert!(text.contains("  allow: Bash(fm:*)") && text.contains("Read  Glob  Grep  Edit  Write  Bash(dotnet test:*)"), "{text}");
+    assert!(text.contains("  allow: Bash(fm:*)") && text.contains("Read  Glob  Grep  Edit  Write  Bash(git status:*)"), "{text}");
+    assert!(text.contains("Bash(git commit:*)  Bash(git push -u origin fm-sched/fix-bugs/") && text.contains(")  Bash(dotnet test:*)"), "{text}");
+    assert!(text.contains("needs those commands as --allow-tools"), "dry-run says what a fix needs: {text}");
     assert!(text.contains("  deny: Bash(git push --force:*)") && text.contains("WebFetch"), "{text}");
     assert!(text.contains("secrets: SENTRY_TOKEN (names only"), "{text}");
     let fires: Vec<&str> = text.split("next fires:\n").nth(1).unwrap().lines().collect();
