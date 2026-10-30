@@ -1,0 +1,14 @@
+[package]
+name = "scheduler-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone: not a member of the Foreman workspace.
+[workspace]
+
+[dependencies]
+foreman-claude = { path = "../../../crates/foreman-claude" }
+foreman-core = { path = "../../../crates/foreman-core" }
+foreman-workstate = { path = "../../../crates/foreman-workstate", features = ["fake"] }
+windows = { version = "0.62", features = ["Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_System_Threading"] }
