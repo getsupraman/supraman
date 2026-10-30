@@ -24,6 +24,8 @@ pub struct RepoHit {
     pub sessions: Vec<SessionHit>,
     /// A listed folder of the workspace that is not enabled there, nor supervised elsewhere.
     pub disabled: bool,
+    /// The workspace that supervises a listed folder not enabled here; the tree leaves the folder out.
+    pub supervised_in: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +109,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                         name_marks: find_all(&r.name, needle),
                         sessions: hits(&r.sessions),
                         disabled: r.listed && !r.enabled && r.supervised_in.is_none(),
+                        supervised_in: r.supervised_in.clone().filter(|_| r.listed && !r.enabled),
                     };
                     (!repo.name_marks.is_empty() || !repo.sessions.is_empty()).then_some(repo)
                 })

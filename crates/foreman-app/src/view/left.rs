@@ -1459,12 +1459,9 @@ impl FleetView {
             .into_any_element()
     }
 
-    /// `folder` for a plain folder, `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.
+    /// `supervised in <ws>` (a click reveals it there), `also in <ws>, …`.
     fn folder_tags(&self, workspace: &str, repo: &RepoNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
-        if repo.kind == foreman_core::FolderKind::Plain {
-            out.push(tag("folder", cx).into_any_element());
-        }
         if let Some(owner) = &repo.supervised_in {
             let key = format!("supervised-in-{workspace}/{}", repo.name);
             let (owner, path) = (owner.clone(), repo.path.clone());
@@ -1497,7 +1494,7 @@ impl FleetView {
         out
     }
 
-    fn reveal_folder(&mut self, workspace: &str, path: &std::path::Path, cx: &mut Context<Self>) {
+    pub(super) fn reveal_folder(&mut self, workspace: &str, path: &std::path::Path, cx: &mut Context<Self>) {
         let folder = self.workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.folder_at(path)).map(|f| f.name.clone());
         self.reveal(workspace, folder.as_deref(), cx);
     }

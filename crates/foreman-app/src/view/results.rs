@@ -117,16 +117,21 @@ impl FleetView {
                 let label = repo_label(&r.name, &r.path, w.home.as_deref());
                 let shift = label.find(r.name.as_str()).unwrap_or(0);
                 let marks: Vec<Range<usize>> = r.name_marks.iter().map(|m| m.start + shift..m.end + shift).collect();
-                let (wname, rname, disabled) = (w.name.clone(), r.name.clone(), r.disabled);
+                let (wname, rname, disabled, owner, path) = (w.name.clone(), r.name.clone(), r.disabled, r.supervised_in.clone(), r.path.clone());
                 body = body.child(
                     row(format!("result-repo-{}/{}", w.name, r.name), 26., 24.)
                         .text_sm()
                         .when(r.sessions.is_empty(), |d| d.text_color(quiet(cx)))
                         .child(highlighted(format!("result-repo-name-{}/{}", w.name, r.name), label, &marks, cx).flex_1())
                         .when(r.disabled, |d| d.child(super::left::tag("disabled", cx).relative().child(hit_target(&self.hits, format!("result-disabled-{}/{}", w.name, r.name)))))
+                        .when_some(r.supervised_in.as_ref(), |d, owner| {
+                            d.child(super::left::tag(format!("supervised in {owner}"), cx).relative().child(hit_target(&self.hits, format!("result-supervised-in-{}/{}", w.name, r.name))))
+                        })
                         .child(count(r.sessions.len(), cx))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            if disabled {
+                            if let Some(owner) = &owner {
+                                this.reveal_folder(owner, &path, cx);
+                            } else if disabled {
                                 this.clear_search(cx);
                                 this.edit_folders(&wname, window, cx);
                             } else {

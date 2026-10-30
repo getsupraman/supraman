@@ -32,7 +32,7 @@ pub struct RepoNode {
     pub listed: bool,
     /// Another workspace owns the folder's supervised session ([`foreman_core::owners`]).
     pub supervised_in: Option<String>,
-    /// The other workspaces that list this folder.
+    /// The other workspaces that enable this folder, while it is enabled here too.
     pub also_in: Vec<String>,
     pub sessions: Vec<SessionRow>,
     pub more: usize,
@@ -262,12 +262,24 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         None => main_repo(cwd),
     };
     let owner_of = owners(workspaces);
-    let mut members: HashMap<String, Vec<&str>> = HashMap::new();
+    let mut enabled_in: HashMap<String, Vec<&str>> = HashMap::new();
     for w in workspaces {
-        for f in &w.folders {
-            members.entry(path_key(&f.path)).or_default().push(&w.name);
+        for f in w.folders.iter().filter(|f| f.enabled) {
+            enabled_in.entry(path_key(&f.path)).or_default().push(&w.name);
         }
     }
+    let mut placed_in: HashMap<String, Vec<&str>> = HashMap::new();
+    for w in workspaces {
+        let assigned = assign_with(sessions, w, &main_of).by_repo.into_iter().chain(assign_with(&closed, w, &main_of).by_repo);
+        for (folder, held) in assigned {
+            if w.folders.iter().any(|f| f.name == folder && f.enabled) {
+                for s in held {
+                    placed_in.entry(s.session_id).or_default().push(&w.name);
+                }
+            }
+        }
+    }
+    let placed_elsewhere = |s: &Session, here: &str| placed_in.get(&s.session_id).is_some_and(|ws| ws.iter().any(|w| *w != here));
     let wanted_of = |name: &str| match sup.desired.and_then(|d| d.get(name)) {
         Some((started, wanted)) => (Some(*started), wanted.as_slice()),
         None => (None, &[][..]),
@@ -304,7 +316,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
             let mut closed_by_repo = gone.by_repo;
             let key = |path: &Path| path_key(path);
             let others = |path: &Path| -> Vec<String> {
-                members.get(&key(path)).into_iter().flatten().filter(|n| **n != workspace.name).map(|n| n.to_string()).collect()
+                enabled_in.get(&key(path)).into_iter().flatten().filter(|n| **n != workspace.name).map(|n| n.to_string()).collect()
             };
             let mut place = |name: &str, open: Vec<Session>, closed: Vec<Session>, wanted: Vec<SessionRow>| {
                 let mut rows: Vec<SessionRow> = open
@@ -352,7 +364,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                     enabled: folder.enabled,
                     listed: true,
                     supervised_in: supervised_in.clone(),
-                    also_in: others(&folder.path),
+                    also_in: if folder.enabled { others(&folder.path) } else { Vec::new() },
                     sessions,
                     more,
                 };
@@ -362,15 +374,22 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                     closed_by_repo.remove(&folder.name).unwrap_or_default(),
                     first_in.remove(&folder.name).unwrap_or_default(),
                 );
-                if folder.enabled || supervised_in.is_some() {
+                if folder.enabled {
                     repos.push(node(sessions, more));
+                } else if supervised_in.is_some() {
+                    // its sessions show where it is enabled; search still finds the folder
+                    if sup.disabled_folders {
+                        parked.push(node(Vec::new(), 0));
+                    }
                 } else if !sessions.is_empty() || more > 0 || sup.disabled_folders {
                     parked.push(node(sessions, more));
                 }
             }
             if let Some(home) = workspace.home() {
                 let mut groups: BTreeMap<String, (PathBuf, Vec<Session>, Vec<Session>)> = BTreeMap::new();
-                for (s, is_closed) in assigned.in_home.into_iter().map(|s| (s, false)).chain(gone.in_home.into_iter().map(|s| (s, true))) {
+                let open = assigned.in_home.into_iter().map(|s| (s, false));
+                let in_home = open.chain(gone.in_home.into_iter().map(|s| (s, true))).filter(|(s, _)| !placed_elsewhere(s, &workspace.name));
+                for (s, is_closed) in in_home {
                     let (name, path) = home_folder(home, &s.cwd);
                     let group = groups.entry(name).or_insert_with(|| (path, Vec::new(), Vec::new()));
                     if is_closed { group.2.push(s) } else { group.1.push(s) }
@@ -381,7 +400,6 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                         continue;
                     }
                     repos.push(RepoNode {
-                        also_in: others(&path),
                         name,
                         path,
                         kind: FolderKind::Plain,
@@ -389,6 +407,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
                         enabled: false,
                         listed: false,
                         supervised_in: None,
+                        also_in: Vec::new(),
                         sessions,
                         more,
                     });
@@ -812,16 +831,12 @@ mod tests {
         parse(&serde_json::Value::Array(rows).to_string()).unwrap()
     }
 
-    /// gaia: home P:\L\Gaia, folders Gaia (disabled) and the plain NodeApi; larchsys: home P:\L, folders Gaia
-    /// and Skills.
+    /// gaia: home P:\L\Gaia, folders Gaia and the plain NodeApi; larchsys: home P:\L, folders Gaia and Skills.
     fn overlapping() -> Vec<Workspace> {
         let gaia = Workspace::new(
             "gaia",
             r"P:\L\Gaia",
-            vec![
-                Folder { enabled: false, ..Folder::new("Gaia", r"P:\L\Gaia") },
-                Folder { kind: FolderKind::Plain, ..Folder::new("NodeApi", r"P:\L\NodeApi") },
-            ],
+            vec![Folder::new("Gaia", r"P:\L\Gaia"), Folder { kind: FolderKind::Plain, ..Folder::new("NodeApi", r"P:\L\NodeApi") }],
         );
         let larchsys = Workspace::new("larchsys", r"P:\L", vec![Folder::new("Gaia", r"P:\L\Gaia"), Folder::new("Skills", r"P:\L\Skills")]);
         vec![gaia, larchsys]
@@ -831,32 +846,89 @@ mod tests {
         w.rows().find(|r| r.session.name == name).unwrap()
     }
 
+    fn folders(w: &WorkspaceNode) -> Vec<(String, bool, usize)> {
+        w.repos.iter().map(|r| (r.name.clone(), r.listed, r.sessions.len())).collect()
+    }
+
+    fn f(name: &str, listed: bool, n: usize) -> (String, bool, usize) {
+        (name.to_string(), listed, n)
+    }
+
     #[test]
-    fn a_session_shows_under_every_workspace_holding_its_cwd_and_later_occurrences_name_the_first() {
+    fn a_folder_enabled_in_two_workspaces_shows_in_both_and_later_occurrences_name_the_first() {
         let ws = overlapping();
         let sessions = rows(&[("aaaa0101", "node bindings", r"P:\L\NodeApi\src"), ("aaaa0102", "gaia-ui", r"P:\L\Gaia"), ("aaaa0103", "loose", r"P:\L")]);
         let tree = build(&ws, &sessions, NOW, false, &Supervised::default());
         let (gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1]);
-        let folders = |w: &WorkspaceNode| w.repos.iter().map(|r| (r.name.clone(), r.listed, r.sessions.len())).collect::<Vec<_>>();
-        let f = |name: &str, listed, n| (name.to_string(), listed, n);
-        assert_eq!(folders(gaia), [f("Gaia", true, 1), f("NodeApi", true, 1)], "Gaia is supervised in larchsys, so shown with its sessions");
-        assert_eq!(gaia.repos[0].supervised_in.as_deref(), Some("larchsys"));
-        assert_eq!(gaia.repos[0].also_in, ["larchsys"]);
-        assert_eq!((gaia.repos[1].kind, gaia.repos[1].supervised_in.as_deref()), (FolderKind::Plain, None));
+        assert_eq!(folders(gaia), [f("Gaia", true, 1), f("NodeApi", true, 1)]);
+        assert_eq!((gaia.repos[0].supervised_in.as_deref(), gaia.repos[0].also_in.as_slice()), (None, &["larchsys".to_string()][..]));
+        assert_eq!((gaia.repos[1].kind, gaia.repos[1].also_in.len()), (FolderKind::Plain, 0));
         assert_eq!(
             folders(larchsys),
-            [f("Gaia", true, 1), f("Skills", true, 0), f("L", false, 1), f("NodeApi", false, 1)],
-            "the home's folders with sessions follow the listed ones"
+            [f("Gaia", true, 1), f("Skills", true, 0), f("L", false, 1)],
+            "the home's folders with sessions follow the listed ones; NodeApi's session shows only in gaia, which enables it"
         );
         assert_eq!(larchsys.repos[2].path, PathBuf::from(r"P:\L"), "a session in the home itself");
-        assert_eq!(larchsys.repos[3].also_in, ["gaia"], "NodeApi is one of gaia's folders");
-        assert_eq!(larchsys.repos[0].supervised_in, None);
+        assert_eq!(larchsys.repos[0].supervised_in.as_deref(), Some("gaia"));
 
-        assert_eq!(find(gaia, "node bindings").also_in, None, "the first workspace keeps its keys");
-        assert_eq!(find(larchsys, "node bindings").also_in.as_deref(), Some("gaia"));
-        assert_eq!(find(larchsys, "node bindings").scope("larchsys"), "@larchsys");
-        assert_eq!(find(gaia, "node bindings").scope("gaia"), "");
+        assert_eq!(find(gaia, "gaia-ui").also_in, None, "the first workspace keeps its keys");
+        assert_eq!(find(larchsys, "gaia-ui").also_in.as_deref(), Some("gaia"));
+        assert_eq!(find(larchsys, "gaia-ui").scope("larchsys"), "@larchsys");
+        assert_eq!(find(gaia, "gaia-ui").scope("gaia"), "");
+        assert_eq!(find(gaia, "node bindings").also_in, None, "shown once");
         assert_eq!(find(larchsys, "loose").also_in, None, "shown once");
+    }
+
+    /// René's registry: foreman {AutoWork, Skills}, gaia {Gaia, NodeApi, node-api-dotnet}, larchsys a scan of
+    /// P:\L that found AutoWork, Gaia and Skills disabled (supervised elsewhere), plus Healthy and Old (disabled).
+    fn renes() -> Vec<Workspace> {
+        let off = |name: &str| Folder { enabled: false, ..Folder::new(name, format!(r"P:\L\{name}")) };
+        let on = |name: &str| Folder::new(name, format!(r"P:\L\{name}"));
+        let foreman = Workspace { home: None, ..Workspace::new("foreman", r"P:\L\AutoWork", vec![on("AutoWork"), on("Skills")]) };
+        let gaia = Workspace::new("gaia", r"P:\L\Gaia", vec![on("Gaia"), Folder { kind: FolderKind::Plain, ..on("NodeApi") }, on("node-api-dotnet")]);
+        let larchsys = Workspace::new("larchsys", r"P:\L", vec![off("AutoWork"), off("Gaia"), on("Healthy"), off("Old"), off("Quiet"), off("Skills")]);
+        vec![foreman, gaia, larchsys]
+    }
+
+    #[test]
+    fn a_folder_unchecked_here_and_enabled_elsewhere_leaves_this_workspace_with_its_sessions() {
+        let ws = renes();
+        let sessions = rows(&[
+            ("aaaa0301", "aw", r"P:\L\AutoWork"),
+            ("aaaa0302", "aw-unit", r"P:\L\AutoWork.worktrees\m5-64"),
+            ("aaaa0303", "skills", r"P:\L\Skills\src"),
+            ("aaaa0304", "gaia-ui", r"P:\L\Gaia"),
+            ("aaaa0305", "node", r"P:\L\NodeApi"),
+            ("aaaa0306", "healthy", r"P:\L\Healthy"),
+            ("aaaa0307", "old", r"P:\L\Old"),
+            ("aaaa0308", "loose", r"P:\L\Other"),
+        ]);
+        let known = HashMap::from([(PathBuf::from(r"P:\L\AutoWork.worktrees\m5-64"), Some(PathBuf::from(r"P:\L\AutoWork")))]);
+        let sup = Supervised { main_repos: Some(&known), ..Supervised::default() };
+        let tree = build(&ws, &sessions, NOW, false, &sup);
+        let (foreman, gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1], &tree.workspaces[2]);
+        assert_eq!(folders(foreman), [f("AutoWork", true, 2), f("Skills", true, 1)]);
+        assert_eq!(folders(gaia), [f("Gaia", true, 1), f("NodeApi", true, 1), f("node-api-dotnet", true, 0)]);
+        assert_eq!(
+            folders(larchsys),
+            [f("Healthy", true, 1), f("Other", false, 1), f("Old", true, 1)],
+            "AutoWork, Gaia and Skills are enabled elsewhere; Old is disabled and nobody else's, so it shows while it holds a session"
+        );
+        assert!(tree.workspaces.iter().flat_map(|w| w.rows()).all(|r| r.also_in.is_none()), "every session shows once");
+        assert!(tree.workspaces.iter().flat_map(|w| &w.repos).all(|r| r.also_in.is_empty()), "no folder is enabled in two");
+        let old = &larchsys.repos[2];
+        assert_eq!((old.enabled, old.supervised_in.as_deref()), (false, None));
+
+        let all = build(&ws, &sessions, NOW, false, &Supervised { disabled_folders: true, ..sup });
+        let parked: Vec<(&str, Option<&str>, usize)> =
+            all.workspaces[2].repos.iter().filter(|r| !r.enabled && r.listed).map(|r| (r.name.as_str(), r.supervised_in.as_deref(), r.sessions.len())).collect();
+        assert_eq!(parked, [("AutoWork", Some("foreman"), 0), ("Gaia", Some("gaia"), 0), ("Old", None, 1), ("Quiet", None, 0), ("Skills", Some("foreman"), 0)]);
+        let found = crate::search::search(&all, "autowork");
+        let hit = |w: &str| found.workspaces.iter().find(|h| h.name == w).and_then(|h| h.repos.iter().find(|r| r.name == "AutoWork")).map(|r| (r.supervised_in.clone(), r.disabled, r.sessions.len()));
+        assert_eq!(hit("larchsys"), Some((Some("foreman".to_string()), false, 0)), "search finds it in larchsys, labelled with its workspace");
+        assert_eq!(hit("foreman"), Some((None, false, 0)));
+        let quiet = crate::search::search(&all, "quiet");
+        assert!(quiet.workspaces[0].repos[0].disabled && quiet.workspaces[0].repos[0].supervised_in.is_none());
     }
 
     #[test]
