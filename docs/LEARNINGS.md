@@ -4332,3 +4332,8 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Red check** (master's `folders.rs`, reverted by restoring the file, never committed): 7b fails `every Edit
   folders row inside the dialog` with `edit-remove-a-folder-…` at x 759 against the dialog's right edge at 267.
   Before/after shots: `C:\fmbuild\m5-63\shots\{before,after}\m5-63-edit-folders-min.png`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-63\target`): build ok, no warnings; `cargo test --release --workspace` 689
+  passed before and 690 after merging master (m5/64), 0 failed; `--selftest` 5 of 5 PASS before the merge; after it
+  4 of 5, the fifth `FAIL step 7: board load: own work per frame p10 19.21 ms, over the 16 ms budget` beside the
+  other units' selftests, PASS on rerun; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` sessions of this worktree left. No m5-44 audit section names m5/63.
