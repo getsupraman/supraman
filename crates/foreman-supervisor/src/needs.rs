@@ -48,4 +48,7 @@ pub enum Remedy {
     /// The background service runs as administrator and Foreman does not: turn Settings → Run
     /// Foreman as administrator on and restart elevated.
     RestartElevated,
+    /// The copy of an adopted session (`from`, its full uuid) failed: Retry tries it again, Start fresh
+    /// ([`crate::DesiredState::start_fresh`]) launches a new session instead.
+    Adopt { from: String },
 }

@@ -115,9 +115,13 @@ pub fn reconcile(
                 continue;
             }
             let error = a.last_error.as_deref().unwrap_or("unknown error");
+            let (adopting, retry) = match &w.fork_from {
+                Some(from) => (format!("adopting {}: ", from.get(..8).unwrap_or(from)), Remedy::Adopt { from: from.clone() }),
+                None => (String::new(), Remedy::Retry),
+            };
             if a.gave_up {
-                let detail = format!("gave up after {} failures; last: {error}", a.failures);
-                out.push(need(NeedsKind::GaveUp, &w.name, since, detail, Some(Remedy::Retry)));
+                let detail = format!("{adopting}gave up after {} failures; last: {error}", a.failures);
+                out.push(need(NeedsKind::GaveUp, &w.name, since, detail, Some(retry)));
                 continue;
             }
             if let Some(t) = a.started_at
@@ -139,13 +143,13 @@ pub fn reconcile(
                     reason: WaitReason::Backoff,
                 });
                 let detail = format!(
-                    "failure {} of {}: {error}; next try in {} s",
+                    "{adopting}failure {} of {}: {error}; next try in {} s",
                     a.failures,
                     policy.give_up_after,
                     (next - now + SECOND - 1) / SECOND
                 );
                 let since = a.first_failure.unwrap_or(since);
-                out.push(need(NeedsKind::LaunchFailed, &w.name, since, detail, Some(Remedy::Retry)));
+                out.push(need(NeedsKind::LaunchFailed, &w.name, since, detail, Some(retry)));
                 continue;
             }
         }
@@ -231,6 +235,7 @@ mod tests {
             permission_mode: "auto".into(),
             add_dirs: Vec::new(),
             resume_prompt: None,
+            fork_from: None,
         }
     }
 
@@ -646,5 +651,26 @@ mod tests {
         assert_eq!(run(&d, &[stopped("fm-demo-workspace", 1), running("fm-demo-x", 2)]), []);
         let d = desired(false, &[]);
         assert_eq!(run(&d, &[running("fm-demo-x", 2)]), []);
+    }
+
+    // R2 for an adoption (m5/61)
+    #[test]
+    fn an_adopted_session_is_launched_as_a_copy_and_a_failed_copy_offers_retry_or_start_fresh() {
+        let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
+        let mut d = desired(true, &["fm-demo-alpha"]);
+        d.sessions[0].fork_from = Some(from.into());
+        let original = stopped("mine", 1);
+        assert_eq!(run(&d, std::slice::from_ref(&original)), [Action::Launch(d.sessions[0].clone())], "never a resume of the original's row");
+        let p = Policy::default();
+        let mut m = SupervisorMemory::default();
+        m.record_result("fm-demo-alpha", Err(Failure::Other("boom".into())), &p, NOW - 2 * SECOND);
+        match &run_with(&d, &[original], &m)[1] {
+            Action::NeedsYou(n) => {
+                assert_eq!(n.kind, NeedsKind::LaunchFailed);
+                assert_eq!(n.detail, "adopting fc5bf027: failure 1 of 5: boom; next try in 3 s");
+                assert_eq!(n.action, Some(Remedy::Adopt { from: from.into() }));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

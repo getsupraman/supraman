@@ -5,13 +5,13 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
-use foreman_claude::{Claude, Health, LaunchSpec, Removal, Route, Sender, Session, check_supported, list_sessions, now_ms, peer, send_from_human};
+use foreman_claude::{Claude, Health, LaunchSpec, Removal, Route, Sender, Session, SessionState, check_supported, list_sessions, now_ms, peer, send_from_human};
 use foreman_core::{
     DEFAULT_MAX_WORKING, EventReader, RelayDrop, Folder, FolderKind, SENT_DIR, Workspace, Registry, Settings, find_plugin_dir, inbox_dir, outbox_dir, read_answered, read_outbox,
     relay_ready, role_tag,
 };
 use foreman_supervisor::{
-    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session, repo_session, relay_session_name, workspace_session_name,
+    DesiredState, NeedsKind, WORKSPACE_ROLE, Remedy, WantedSession, is_live, mid_turn, relay_session, repo_session, repo_session_name, relay_session_name, workspace_session_name,
     render_role, role_prompt,
 };
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
@@ -121,6 +121,7 @@ pub fn prepare() -> anyhow::Result<()> {
         permission_mode: "default".into(),
         add_dirs: Vec::new(),
         resume_prompt: None,
+        fork_from: None,
     });
     // as a legacy desired state has it: the relay first
     let relay_dir = foreman_core::ensure_relay_dirs(&home, &tb.a.0)?;
@@ -587,6 +588,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     scroll_step(tb, view, cx).await.context("step s")?;
     virtual_step(tb, view, cx).await.context("step v")?;
     edit_step(tb, view, cx).await.context("step x")?;
+    adopt_step(tb, view, cx).await.context("step y")?;
 
     click(view, &format!("stop-{}", tb.a.0), cx).await?;
     let clicked = Instant::now();
@@ -1041,6 +1043,122 @@ async fn edit_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
         tb.a.0,
         secs(live_after),
         secs(stop_at.elapsed()),
+    );
+    Ok(())
+}
+
+/// m5/61, through the window: a background session this run launched itself, unmanaged, in a folder of a started
+/// workspace is adopted from its menu. The question names the copy; the original is stopped (stop, never rm) and
+/// stays listed; `fm-<ws>-<folder>` runs as a copy under a new id whose transcript carries the original's turn,
+/// and the desired state forks no more once that row shows.
+async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let name = format!("{}-y", tb.a.0);
+    let dir = tb.a.1.join("YPlain");
+    std::fs::create_dir_all(&dir)?;
+    let mut ws = Workspace::new(name.as_str(), &dir, Vec::new());
+    ws.home = None;
+    ws.add_folder(&dir);
+    let folder = ws.folders.first().map(|f| f.name.clone()).ok_or_else(|| anyhow!("no folder"))?;
+    Registry::at(&tb.home).save(&ws, true)?;
+    DesiredState::update(&tb.home, &name, |d| d.started = true)?;
+    let supervised = repo_session_name(&name, &folder).ok_or_else(|| anyhow!("no name for {folder}"))?;
+
+    let adoptee = format!("selftest-{}-adoptee", tb.hex);
+    if let Some(scratch) = lock().as_mut() {
+        scratch.session_name = Some(adoptee.clone());
+    }
+    let word = format!("PELICAN{}", tb.hex.to_uppercase());
+    let mut spec = LaunchSpec::new(&adoptee, &dir, format!("This is an automated Foreman selftest. Remember the word {word}. Reply with exactly: OK"));
+    spec.permission_mode = "default".into();
+    spec.strict_mcp_config = true;
+    let launched = Instant::now();
+    Claude::default().launch(&spec).context("launch the unmanaged session")?;
+    let original = wait_for("the unmanaged session's first turn ended", Duration::from_secs(120), cx, |rows| {
+        rows.iter().find(|s| s.name == adoptee && s.pid.is_some() && s.state == Some(SessionState::Done)).cloned()
+    })
+    .await?;
+    let turn_after = launched.elapsed();
+
+    // step v's folder is this checkout, which holds YPlain too: the row under YPlain may be its second occurrence
+    let row_key = crate::selftest::until(view, cx, Duration::from_secs(15), "the unmanaged session under YPlain of the new workspace", |v| {
+        let tree = v.tree();
+        let node = tree.workspaces.iter().find(|n| n.name == name)?;
+        let repo = node.repos.iter().find(|r| r.name == folder)?;
+        let row = repo.sessions.iter().find(|r| r.session.session_id == original.session_id)?;
+        Some(format!("session-row-{}{}", original.session_id, row.scope(&name)))
+    })
+    .await
+    .map_err(|e| {
+        let at = view.read_with(cx, |v, _| {
+            let tree = v.tree();
+            tree.workspaces
+                .iter()
+                .flat_map(|n| n.repos.iter().flat_map(move |r| r.sessions.iter().map(move |s| (n.name.clone(), r.name.clone(), s))))
+                .filter(|(_, _, s)| s.session.session_id == original.session_id)
+                .map(|(w, r, s)| format!("{w}/{r} also_in={:?}", s.also_in))
+                .collect::<Vec<_>>()
+        });
+        e.context(format!("it sits at {at:?}"))
+    })?;
+    crate::selftest_manage::press_painted(view, &row_key, gpui::MouseButton::Right, cx).await?;
+    wait_painted(view, "menu-adopt", Duration::from_secs(10), cx).await?;
+    click(view, "menu-adopt", cx).await?;
+    wait_painted(view, "confirm-yes", Duration::from_secs(10), cx).await?;
+    let question = view.read_with(cx, |v, _| v.confirm.as_ref().map(|c| c.text.clone())).unwrap_or_default();
+    for part in [supervised.as_str(), "stop, never rm", "a copy under a new id", "The original stays stopped and listed"] {
+        if !question.contains(part) {
+            bail!("the Adopt question does not say {part:?}: {question:?}");
+        }
+    }
+    click(view, "confirm-yes", cx).await?;
+    let adopted = Instant::now();
+    let (copy, stopped) = wait_for("the copy live as the supervised name, the original stopped", Duration::from_secs(180), cx, |rows| {
+        let copy = rows.iter().find(|s| s.name == supervised && s.pid.is_some() && s.session_id != original.session_id)?;
+        let stopped = rows.iter().find(|s| s.session_id == original.session_id && s.pid.is_none())?;
+        Some((copy.clone(), stopped.clone()))
+    })
+    .await?;
+    let copy_after = adopted.elapsed();
+    if stopped.name != adoptee || stopped.id != original.id {
+        bail!("the original changed: {} ({}) → {} ({})", original.name, original.id, stopped.name, stopped.id);
+    }
+    crate::selftest::until(view, cx, Duration::from_secs(30), "fork_from cleared once the copy's row shows", |_| {
+        DesiredState::load(&tb.home, &name)
+            .ok()
+            .flatten()
+            .and_then(|d| d.sessions.into_iter().find(|w| w.name == supervised))
+            .filter(|w| w.fork_from.is_none())
+            .map(drop)
+    })
+    .await?;
+    let claude_dir = foreman_core::paths::claude_dir().ok_or_else(|| anyhow!("no claude dir"))?;
+    let carried = crate::selftest::until(view, cx, Duration::from_secs(60), "the copy's transcript carries the original's turn and the adopt prompt", |_| {
+        let path = foreman_claude::find_transcript(&claude_dir, &copy.session_id, Some(&copy.cwd))?;
+        let text = std::fs::read_to_string(&path).ok()?;
+        (text.contains(&word) && text.contains("Foreman adopted this conversation")).then_some(path)
+    })
+    .await?;
+    let no_second = view.read_with(cx, |v, _| {
+        // stopped, its row is hidden unless stopped sessions are shown
+        let session = v.sessions.iter().find(|s| s.session_id == original.session_id)?.clone();
+        let health = session.health(now_ms());
+        v.adoption(&name, &folder, &crate::fleet::SessionRow::new(session, health))
+    });
+    if !matches!(&no_second, Some(crate::fleet::Adoption::No(why)) if why.contains(&supervised)) {
+        bail!("the stopped original still offers Adopt or says nothing: {no_second:?}");
+    }
+    DesiredState::update(&tb.home, &name, |d| d.started = false)?;
+    wait_for("the copy stopped", Duration::from_secs(60), cx, |rows| rows.iter().any(|s| s.name == supervised && s.pid.is_none()).then_some(())).await?;
+    println!(
+        "step y: unmanaged {adoptee} ({}, {}) launched in {folder} of {name}, first turn ended after {} | menu Adopt… asked {question:?} → original stopped and listed [{}] | {supervised} live after {} as a copy {} ({}), fork_from cleared | its transcript {} carries {word} and the adopt prompt | the original's card: {no_second:?}",
+        original.id,
+        original.session_id,
+        secs(turn_after),
+        raw(&stopped),
+        secs(copy_after),
+        copy.id,
+        copy.session_id,
+        carried.display(),
     );
     Ok(())
 }

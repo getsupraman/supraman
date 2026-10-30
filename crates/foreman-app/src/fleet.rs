@@ -526,6 +526,48 @@ impl Open {
     }
 }
 
+/// Adopt on a session row (m5/61).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Adoption {
+    /// It continues as `name`, `fm-<workspace>-<folder>`.
+    Offer { name: String },
+    /// Why there is none, for its hover card.
+    No(String),
+}
+
+/// `None` unless `row` is a background session Foreman did not start, running or stopped, under `folder`
+/// enabled here and supervised by this workspace ([`owners`]). An interactive session runs in someone's
+/// terminal, and a muted row is another Foreman's.
+pub fn adoption(
+    workspaces: &[Workspace],
+    workspace: &str,
+    folder: &str,
+    row: &SessionRow,
+    sessions: &[Session],
+    desired: &BTreeMap<String, (bool, Vec<String>)>,
+) -> Option<Adoption> {
+    let s = &row.session;
+    let unmanaged = s.kind == Kind::Background
+        && !row.foreign
+        && !row.closed
+        && !s.name.starts_with(foreman_core::FM_PREFIX)
+        && !s.id.is_empty()
+        && !s.session_id.is_empty()
+        && matches!(row.health, Health::Running | Health::Idle | Health::Blocked { .. } | Health::Stopped);
+    let f = workspaces.iter().find(|w| w.name == workspace)?.folder(folder)?;
+    if !unmanaged || !f.enabled || owners(workspaces).get(&path_key(&f.path)).map(String::as_str) != Some(workspace) {
+        return None;
+    }
+    let name = repo_session_name(workspace, &f.name)?;
+    if desired.get(workspace).is_some_and(|(_, wanted)| wanted.contains(&name)) {
+        return Some(Adoption::No(format!("none: {name} is wanted already, and a folder has one supervised session")));
+    }
+    if sessions.iter().any(|x| x.name == name) {
+        return Some(Adoption::No(format!("none: {name} exists already; a folder has one supervised session")));
+    }
+    Some(Adoption::Offer { name })
+}
+
 pub fn short_id(session: &Session) -> &str {
     session.id.get(..8).unwrap_or(&session.id)
 }
@@ -1037,5 +1079,50 @@ mod tests {
         assert_eq!(find(larchsys, "mine").also_in.as_deref(), Some("gaia"));
         assert_eq!(tree.workspaces.iter().map(WorkspaceNode::session_count).collect::<Vec<_>>(), [2, 3], "rows under the workspace row");
         assert_eq!(tree.workspaces[1].rows().count(), 5);
+    }
+
+    // m5/61
+    #[test]
+    fn adopt_is_offered_for_an_unmanaged_background_session_of_an_enabled_folder_without_a_supervised_one() {
+        let all = sessions();
+        let ws = [workspace()];
+        let none = BTreeMap::new();
+        let row_of = |name: &str| {
+            let s = all.iter().find(|s| s.name == name).unwrap().clone();
+            let health = s.health(NOW);
+            SessionRow::new(s, health)
+        };
+        let adopt = |folder: &str, row: &SessionRow, sessions: &[Session], desired: &BTreeMap<String, (bool, Vec<String>)>| {
+            adoption(&ws, "demo", folder, row, sessions, desired)
+        };
+        let offer = Some(Adoption::Offer { name: "fm-demo-alpha".into() });
+        assert_eq!(adopt("Alpha", &row_of("busy"), &all, &none), offer);
+        assert_eq!(adopt("Alpha", &row_of("parked"), &all, &none), offer, "blocked: running");
+        assert_eq!(adopt("Beta", &row_of("done"), &all, &none), Some(Adoption::Offer { name: "fm-demo-beta".into() }), "stopped");
+        assert_eq!(adopt("Beta", &row_of("gone"), &all, &none), None, "orphaned: the daemon may still respawn it");
+        assert_eq!(adopt("Beta", &row_of("term"), &all, &none), None, "interactive: it runs in someone's terminal");
+        assert_eq!(adopt("Off", &row_of("off"), &all, &none), None, "disabled folder");
+        assert_eq!(adopt("Nope", &row_of("busy"), &all, &none), None);
+        let mut foreign = row_of("busy");
+        foreign.foreign = true;
+        assert_eq!(adopt("Alpha", &foreign, &all, &none), None, "another Foreman's");
+        let mut closed = row_of("done");
+        closed.closed = true;
+        assert_eq!(adopt("Beta", &closed, &all, &none), None);
+        let mut second = row_of("busy");
+        second.also_in = Some("other".into());
+        assert_eq!(adopt("Alpha", &second, &all, &none), offer, "shown first elsewhere, e.g. under a folder that holds this one");
+        let mut fm = row_of("busy");
+        fm.session.name = "fm-demo-x".into();
+        assert_eq!(adopt("Alpha", &fm, &all, &none), None, "Foreman's own");
+
+        let wanted = BTreeMap::from([("demo".to_string(), (false, vec!["fm-demo-alpha".to_string()]))]);
+        assert!(matches!(adopt("Alpha", &row_of("busy"), &all, &wanted), Some(Adoption::No(why)) if why.contains("fm-demo-alpha is wanted already")));
+        let mut with_row = all.clone();
+        with_row.push(Session { name: "fm-demo-alpha".into(), ..all[3].clone() });
+        assert!(matches!(adopt("Alpha", &row_of("busy"), &with_row, &none), Some(Adoption::No(why)) if why.contains("fm-demo-alpha exists already")));
+
+        let other = Workspace::new("first", r"C:\x", vec![Folder::new("Alpha", r"C:\demo\Alpha")]);
+        assert_eq!(adoption(&[other, workspace()], "demo", "Alpha", &row_of("busy"), &all, &none), None, "another workspace supervises the folder");
     }
 }
