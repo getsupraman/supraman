@@ -122,13 +122,8 @@ impl Default for HttpMinter {
 
 impl HttpMinter {
     fn send(&self, base: &str, req: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<(u16, String), MintError> {
-        let mut res = req.map_err(|e| MintError::Unreachable {
-            base: base.to_string(),
-            reason: e.to_string(),
-        })?;
-        let status = res.status().as_u16();
-        let body = res.body_mut().read_to_string().unwrap_or_default();
-        Ok((status, body))
+        let reply = foreman_workstate::read_reply(req).map_err(|reason| MintError::Unreachable { base: base.to_string(), reason })?;
+        Ok((reply.status, reply.body))
     }
 }
 
@@ -301,70 +296,16 @@ impl MintedSessions {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
-    use std::sync::mpsc;
+
+    use foreman_workstate::fake::{Answer, FakeWorkState};
 
     use super::*;
 
-    /// One request as the fake server read it.
-    #[derive(Debug)]
-    struct Seen {
-        line: String,
-        headers: Vec<(String, String)>,
-        body: String,
-    }
+    const MINT: &str = "POST /api/agent-sessions";
 
-    impl Seen {
-        fn header(&self, name: &str) -> Option<&str> {
-            self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
-        }
-    }
-
-    /// A local HTTP server that answers each request with the next of `answers` and sends what it read.
-    fn fake_server(answers: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<Seen>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            for (status, body) in answers {
-                let (stream, _) = listener.accept().unwrap();
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let mut headers = Vec::new();
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).unwrap();
-                    let h = h.trim_end();
-                    if h.is_empty() {
-                        break;
-                    }
-                    let (k, v) = h.split_once(':').unwrap();
-                    headers.push((k.trim().to_string(), v.trim().to_string()));
-                }
-                let len = headers
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                    .map_or(0, |(_, v)| v.parse().unwrap());
-                let mut buf = vec![0; len];
-                reader.read_exact(&mut buf).unwrap();
-                tx.send(Seen {
-                    line: line.trim_end().to_string(),
-                    headers,
-                    body: String::from_utf8(buf).unwrap(),
-                })
-                .unwrap();
-                let mut stream = stream;
-                write!(
-                    stream,
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            }
-        });
-        (base, rx)
+    fn fake(routes: &[(&str, u16, &str)]) -> FakeWorkState {
+        FakeWorkState::start(routes.iter().map(|(t, status, body)| (t.to_string(), Answer::status(*status, *body))).collect())
     }
 
     fn request() -> MintRequest {
@@ -383,19 +324,20 @@ mod tests {
 
     #[test]
     fn mint_http_client_posts_the_body_with_the_bearer_and_reads_the_201() {
-        let (base, seen) = fake_server(vec![(
+        let ws = fake(&[(
+            MINT,
             201,
             r#"{"sessionId":"7f3c","name":"fm-demo-workspace","role":"controller","token":"wss_fake","expiresAt":"2026-10-29T00:00:00Z"}"#,
         )]);
-        let minted = HttpMinter::default().mint(&base, "fake-static", &request()).unwrap();
+        let minted = HttpMinter::default().mint(ws.base(), "fake-static", &request()).unwrap();
         assert_eq!(minted.session_id, "7f3c");
         assert_eq!(minted.token, "wss_fake");
         assert_eq!(minted.expires_at.as_deref(), Some("2026-10-29T00:00:00Z"));
         assert!(!format!("{minted:?}").contains("wss_fake"), "Debug redacts the token");
-        let s = seen.recv().unwrap();
-        assert_eq!(s.line, "POST /api/agent-sessions HTTP/1.1");
-        assert_eq!(s.header("Authorization"), Some("Bearer fake-static"));
-        assert_eq!(s.header("Content-Type"), Some("application/json"));
+        let s = &ws.seen()[0];
+        assert_eq!((s.method.as_str(), s.target.as_str()), ("POST", "/api/agent-sessions"));
+        assert_eq!(s.authorization.as_deref(), Some("Bearer fake-static"));
+        assert_eq!(s.content_type.as_deref(), Some("application/json"));
         let body: serde_json::Value = serde_json::from_str(&s.body).unwrap();
         assert_eq!(
             body,
@@ -408,29 +350,29 @@ mod tests {
 
     #[test]
     fn mint_http_client_sends_the_repo_of_a_repo_session() {
-        let (base, seen) = fake_server(vec![(201, r#"{"sessionId":"8","token":"wss_fake"}"#), (201, r#"{"sessionId":"9","token":"wss_fake"}"#)]);
+        let ws = fake(&[(MINT, 201, r#"{"sessionId":"8","token":"wss_fake"}"#)]);
         let mut req = request();
         req.external_role = "repo".into();
         req.repo = Some(MintRepo {
             root: "C:/demo/Alpha".into(),
             remote: Some("git@github.com:demo/alpha.git".into()),
         });
-        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
-        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        HttpMinter::default().mint(ws.base(), "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&ws.seen()[0].body).unwrap();
         assert_eq!(body["repo"], serde_json::json!({ "root": "C:/demo/Alpha", "remote": "git@github.com:demo/alpha.git" }));
         req.repo = Some(MintRepo { root: "C:/demo/Beta".into(), remote: None });
-        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
-        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        HttpMinter::default().mint(ws.base(), "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&ws.seen()[1].body).unwrap();
         assert_eq!(body["repo"], serde_json::json!({ "root": "C:/demo/Beta" }), "no origin, no remote");
     }
 
     #[test]
     fn mint_http_client_sends_the_claude_session_id_when_known() {
-        let (base, seen) = fake_server(vec![(201, r#"{"sessionId":"8","token":"wss_fake"}"#)]);
+        let ws = fake(&[(MINT, 201, r#"{"sessionId":"8","token":"wss_fake"}"#)]);
         let mut req = request();
         req.claude_session_id = Some("aaaa0001-0000-4000-8000-000000000001".into());
-        HttpMinter::default().mint(&base, "fake-static", &req).unwrap();
-        let body: serde_json::Value = serde_json::from_str(&seen.recv().unwrap().body).unwrap();
+        HttpMinter::default().mint(ws.base(), "fake-static", &req).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&ws.seen()[0].body).unwrap();
         assert_eq!(body["claudeSessionId"], "aaaa0001-0000-4000-8000-000000000001");
     }
 
@@ -474,26 +416,26 @@ mod tests {
 
     #[test]
     fn mint_http_client_patches_and_deletes_by_session_id() {
-        let (base, seen) = fake_server(vec![(200, "{}"), (204, ""), (404, "")]);
+        let ws = fake(&[("PATCH /api/agent-sessions/42", 200, "{}"), ("DELETE /api/agent-sessions/42", 204, "")]);
         let m = HttpMinter::default();
-        m.bind(&base, "fake-static", "42", "aaaa0001-0000-4000-8000-000000000001").unwrap();
-        m.revoke(&base, "fake-static", "42").unwrap();
-        m.revoke(&base, "fake-static", "a b").unwrap();
-        let patch = seen.recv().unwrap();
-        assert_eq!(patch.line, "PATCH /api/agent-sessions/42 HTTP/1.1");
-        assert_eq!(patch.header("Authorization"), Some("Bearer fake-static"));
-        assert_eq!(patch.body, r#"{"claudeSessionId":"aaaa0001-0000-4000-8000-000000000001"}"#);
-        let delete = seen.recv().unwrap();
-        assert_eq!(delete.line, "DELETE /api/agent-sessions/42 HTTP/1.1");
-        assert_eq!(delete.header("Authorization"), Some("Bearer fake-static"));
-        assert_eq!(seen.recv().unwrap().line, "DELETE /api/agent-sessions/a%20b HTTP/1.1", "404 counts as revoked");
+        m.bind(ws.base(), "fake-static", "42", "aaaa0001-0000-4000-8000-000000000001").unwrap();
+        m.revoke(ws.base(), "fake-static", "42").unwrap();
+        m.revoke(ws.base(), "fake-static", "a b").unwrap();
+        let seen = ws.seen();
+        let line = |i: usize| format!("{} {}", seen[i].method, seen[i].target);
+        assert_eq!(line(0), "PATCH /api/agent-sessions/42");
+        assert_eq!(seen[0].authorization.as_deref(), Some("Bearer fake-static"));
+        assert_eq!(seen[0].body, r#"{"claudeSessionId":"aaaa0001-0000-4000-8000-000000000001"}"#);
+        assert_eq!(line(1), "DELETE /api/agent-sessions/42");
+        assert_eq!(seen[1].authorization.as_deref(), Some("Bearer fake-static"));
+        assert_eq!(line(2), "DELETE /api/agent-sessions/a%20b", "the fake's 404 counts as revoked");
     }
 
     #[test]
     fn mint_http_client_reports_status_and_reason_never_the_bearer() {
-        let (base, _seen) = fake_server(vec![(409, r#"{"error":"a live token exists for fm-demo-workspace"}"#), (201, r#"{"token":"wss_x"}"#)]);
+        let ws = fake(&[(MINT, 409, r#"{"error":"a live token exists for fm-demo-workspace"}"#)]);
         let m = HttpMinter::default();
-        let e = m.mint(&base, "fake-static", &request()).unwrap_err();
+        let e = m.mint(ws.base(), "fake-static", &request()).unwrap_err();
         assert_eq!(
             e,
             MintError::Refused {
@@ -502,7 +444,8 @@ mod tests {
             }
         );
         assert_eq!(e.to_string(), "WorkState answered HTTP 409: a live token exists for fm-demo-workspace");
-        assert_eq!(m.mint(&base, "fake-static", &request()).unwrap_err(), MintError::BadResponse("no sessionId".into()));
+        ws.set(MINT, Answer::status(201, r#"{"token":"wss_x"}"#));
+        assert_eq!(m.mint(ws.base(), "fake-static", &request()).unwrap_err(), MintError::BadResponse("no sessionId".into()));
         // nothing listens on a port just freed
         let free = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         let e = m.mint(&format!("http://{free}"), "fake-static", &request()).unwrap_err();

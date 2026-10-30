@@ -1,4 +1,4 @@
-//! The one HTTP agent every WorkState call uses.
+//! The one HTTP agent every WorkState call uses, and how its answers are read.
 
 use std::time::Duration;
 
@@ -13,6 +13,20 @@ pub fn agent(timeout: Duration) -> ureq::Agent {
         .tls_config(TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build())
         .build()
         .into()
+}
+
+/// An answer read whole.
+pub struct Reply {
+    pub status: u16,
+    pub headers: ureq::http::HeaderMap,
+    pub body: String,
+}
+
+/// The status, headers and body of `res`; `Err` is why sending it or reading its body failed.
+pub fn read(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Reply, String> {
+    let mut res = res.map_err(|e| e.to_string())?;
+    let body = res.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    Ok(Reply { status: res.status().as_u16(), headers: res.headers().clone(), body })
 }
 
 /// RFC 3986 unreserved bytes kept, every other byte `%XX`: a path segment or a query value.

@@ -607,9 +607,8 @@ fn expiry(expires_in: u64) -> Instant {
 }
 
 fn read(origin: &str, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<(u16, String), AuthError> {
-    let mut res = res.map_err(|e| AuthError::Unreachable { origin: origin.to_string(), reason: e.to_string() })?;
-    let status = res.status().as_u16();
-    Ok((status, res.body_mut().read_to_string().unwrap_or_default()))
+    let reply = crate::http::read(res).map_err(|reason| AuthError::Unreachable { origin: origin.to_string(), reason })?;
+    Ok((reply.status, reply.body))
 }
 
 /// The `error` of an OAuth error answer; never a token (the answers carry none).

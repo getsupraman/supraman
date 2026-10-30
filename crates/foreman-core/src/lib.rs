@@ -6,6 +6,7 @@ pub mod fs;
 mod model;
 pub mod paths;
 mod plugin;
+pub mod prune;
 pub mod process;
 mod registry;
 mod relay;

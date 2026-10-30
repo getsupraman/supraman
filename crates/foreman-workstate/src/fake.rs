@@ -19,6 +19,7 @@ pub struct Seen {
     pub method: String,
     pub target: String,
     pub authorization: Option<String>,
+    pub content_type: Option<String>,
     pub body: String,
 }
 
@@ -83,16 +84,22 @@ pub struct FakeWorkState {
 
 /// One request off `stream`: (method, target, Authorization, body).
 pub fn read_request(stream: &TcpStream) -> Option<(String, String, Option<String>, String)> {
+    read_seen(stream).map(|s| (s.method, s.target, s.authorization, s.body))
+}
+
+fn read_seen(stream: &TcpStream) -> Option<Seen> {
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
-    let (mut authorization, mut length) = (None, 0);
+    let (mut authorization, mut content_type, mut length) = (None, None, 0);
     loop {
         let mut h = String::new();
         reader.read_line(&mut h).ok()?;
         let Some((k, v)) = h.trim_end().split_once(':') else { break };
         if k.eq_ignore_ascii_case("authorization") {
             authorization = Some(v.trim().to_string());
+        } else if k.eq_ignore_ascii_case("content-type") {
+            content_type = Some(v.trim().to_string());
         } else if k.eq_ignore_ascii_case("content-length") {
             length = v.trim().parse().unwrap_or(0);
         }
@@ -102,11 +109,12 @@ pub fn read_request(stream: &TcpStream) -> Option<(String, String, Option<String
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("").to_string();
-    Some((method, target, authorization, String::from_utf8_lossy(&body).into_owned()))
+    Some(Seen { method, target, authorization, content_type, body: String::from_utf8_lossy(&body).into_owned() })
 }
 
 impl FakeWorkState {
-    /// `routes`: exact request target (path and query) → answer. Anything else is a v1 404, except
+    /// `routes`: `<METHOD> <target>` or, for any method, the exact target (path and query) → answer.
+    /// Anything else is a v1 404, except
     /// `/api/stream`, which stays open until [`Self::push`] fails on it or [`Self::drop_streams`].
     pub fn start(routes: Vec<(String, Answer)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake WorkState");
@@ -121,9 +129,10 @@ impl FakeWorkState {
                 let Ok(mut stream) = stream else { continue };
                 let (routes, log, open, guard) = (table.clone(), log.clone(), open.clone(), guard.clone());
                 std::thread::spawn(move || {
-                    let Some((method, target, authorization, body)) = read_request(&stream) else { return };
+                    let Some(seen) = read_seen(&stream) else { return };
+                    let (method, target, authorization, body) = (&seen.method, &seen.target, &seen.authorization, &seen.body);
                     let oauth = guard.lock().unwrap().clone();
-                    let mut answer = oauth.as_ref().and_then(|a| a.handle(&method, &target, &body));
+                    let mut answer = oauth.as_ref().and_then(|a| a.handle(method, target, body));
                     if answer.is_none()
                         && let Some(a) = &oauth
                         && target.starts_with("/api/")
@@ -131,10 +140,15 @@ impl FakeWorkState {
                     {
                         answer = Some(a.unauthorized());
                     }
-                    let answer = answer.or_else(|| routes.lock().unwrap().iter().find(|(t, _)| *t == target).map(|(_, a)| a.clone()));
+                    let keyed = format!("{method} {target}");
+                    let answer = answer.or_else(|| {
+                        let routes = routes.lock().unwrap();
+                        let find = |key: &str| routes.iter().find(|(t, _)| t == key).map(|(_, a)| a.clone());
+                        find(&keyed).or_else(|| find(target))
+                    });
                     let stream_open = answer.is_none() && target == STREAM_TARGET;
                     let answer = answer.unwrap_or_else(|| Answer::status(404, format!(r#"{{"error":"no route {target}"}}"#)));
-                    log.lock().unwrap().push(Seen { method, target, authorization, body });
+                    log.lock().unwrap().push(seen);
                     if stream_open {
                         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-WorkState-Api: 1\r\n\r\n: connected\n\n";
                         if stream.write_all(head.as_bytes()).is_ok() {

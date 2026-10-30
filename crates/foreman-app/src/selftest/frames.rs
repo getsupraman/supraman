@@ -1,6 +1,10 @@
-//! A busy machine stretches the frame interval, so it is judged only after a quiet [`baseline`]; own work per frame always.
+//! Another process's load stretches both the frame interval and the window's own work per frame, so the
+//! budgets are judged only on a quiet machine: [`baseline`] waits for one, [`judge`] skips a busy window.
 
-use std::{sync::OnceLock, time::Duration};
+use std::{
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 
 use anyhow::bail;
 use foreman_ui::FrameStats;
@@ -13,9 +17,10 @@ use crate::view::FleetView;
 pub(crate) const OWN_WORK_P10_MS: f64 = 16.0;
 /// Idle at 60 Hz is 16.67 ms; a baseline whose median is above this is not a quiet machine.
 const QUIET_P50_MS: f64 = 18.5;
-/// At 97 % other-process CPU one frame of 58 ms was seen with the UI thread raised.
-const BUSY_CPU: f64 = 0.75;
+/// Own work p10 went over its budget (16.6–19.2 ms) while other units built and ran their selftests (F-94).
+const BUSY_CPU: f64 = 0.35;
 const BASELINE: Duration = Duration::from_secs(1);
+const CALM_WITHIN: Duration = Duration::from_secs(60);
 
 /// A build's rustc threads at normal priority otherwise preempt it mid-frame; the process class stays normal, so the sessions and shells it starts are not raised.
 #[cfg(windows)]
@@ -83,8 +88,33 @@ pub(crate) async fn record(view: &Entity<FleetView>, length: Duration, cx: &mut 
     recording.stop(view, cx)
 }
 
+/// The first quiet second within [`CALM_WITHIN`], else the last one measured.
 pub(crate) async fn baseline(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> Stretch {
-    record(view, BASELINE, cx).await
+    let deadline = Instant::now() + CALM_WITHIN;
+    loop {
+        let stretch = record(view, BASELINE, cx).await;
+        if stretch.busy().is_none() || Instant::now() >= deadline {
+            return stretch;
+        }
+    }
+}
+
+/// `Ok(Some(note))`: the machine was busy, nothing judged; `Err`: own work over its budget on a quiet one.
+fn busy_or_over(phase: &str, before: &Stretch, during: &Stretch) -> Result<Option<String>, String> {
+    let stats = &during.stats;
+    let others = before.others_cpu.max(during.others_cpu);
+    let busy = before.busy().map(|why| format!("baseline {why}")).or_else(|| (during.others_cpu >= BUSY_CPU).then(|| "during the phase".to_string()));
+    if let Some(why) = busy {
+        return Ok(Some(format!("{stats}; machine busy ({:.0} % CPU by others): frame budget not judged ({why})", others * 100.)));
+    }
+    if !(stats.work_p10 <= OWN_WORK_P10_MS) {
+        return Err(format!(
+            "{phase}: own work per frame p10 {:.2} ms, over the {OWN_WORK_P10_MS} ms budget on a quiet machine ({:.0} % CPU by others): {stats}",
+            stats.work_p10,
+            others * 100.
+        ));
+    }
+    Ok(None)
 }
 
 pub(crate) async fn judge(
@@ -95,19 +125,15 @@ pub(crate) async fn judge(
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<String> {
     let stats = &during.stats;
-    if !(stats.work_p10 <= OWN_WORK_P10_MS) {
-        bail!("{phase}: own work per frame p10 {:.2} ms, over the {OWN_WORK_P10_MS} ms budget: {stats}", stats.work_p10);
-    }
-    let busy = before.busy().map(|why| format!("baseline {why}")).or_else(|| {
-        (during.others_cpu >= BUSY_CPU).then(|| format!("other processes {:.0} % CPU during the phase", during.others_cpu * 100.))
-    });
-    if let Some(why) = busy {
-        return Ok(format!("{stats}; interval checks SKIP (machine busy: {why})"));
+    match busy_or_over(phase, before, during) {
+        Ok(Some(note)) => return Ok(note),
+        Err(over) => bail!(over),
+        Ok(None) => {}
     }
     if stats.over_50 > 0 {
-        let after = baseline(view, cx).await;
+        let after = record(view, BASELINE, cx).await;
         if let Some(why) = after.busy() {
-            return Ok(format!("{stats}; interval checks SKIP (machine busy: baseline after the phase {why})"));
+            return Ok(format!("{stats}; machine busy ({:.0} % CPU by others): frame budget not judged (baseline after the phase {why})", after.others_cpu * 100.));
         }
         bail!(
             "{phase}: frames over 50 ms on a quiet machine: {stats} (baseline before: {}; after: {})",
@@ -173,6 +199,17 @@ mod tests {
         assert!(window(21.0, 0, 0.1).busy().is_some(), "p50 over the quiet budget");
         assert!(window(16.67, 1, 0.1).busy().is_some(), "a frame over 50 ms");
         assert!(window(16.67, 0, 0.8).busy().unwrap().contains("80 % CPU"));
+    }
+
+    #[test]
+    fn a_busy_window_is_a_note_and_a_quiet_overrun_fails() {
+        let window = |work_p10, others_cpu| Stretch { stats: FrameStats { work_p10, ..stats(16.67, 0) }, others_cpu };
+        assert_eq!(busy_or_over("p", &window(5., 0.1), &window(12., 0.1)), Ok(None));
+        let over = busy_or_over("p", &window(5., 0.1), &window(19.2, 0.1)).unwrap_err();
+        assert!(over.contains("over the 16 ms budget on a quiet machine"), "{over}");
+        let note = busy_or_over("p", &window(5., 0.1), &window(19.2, 0.5)).unwrap().unwrap();
+        assert!(note.contains("machine busy (50 % CPU by others): frame budget not judged"), "{note}");
+        assert!(busy_or_over("p", &window(5., 0.6), &window(19.2, 0.1)).unwrap().unwrap().contains("60 % CPU by others"), "a busy baseline");
     }
 
     #[test]

@@ -108,8 +108,8 @@ impl Transcript {
             return;
         }
         // A user/assistant line can carry a whole tool result: parse it only while something is missing.
-        let wants_prompt = self.first_prompt.is_none() && contains(line, br#""type":"user""#);
-        let wants_cwd = self.cwd.is_none() && contains(line, br#""cwd":"#);
+        let wants_prompt = self.first_prompt.is_none() && lead.map_or_else(|| line_type(line).as_deref() == Some("user"), |k| k == "user");
+        let wants_cwd = self.cwd.is_none() && contains(line, br#""cwd""#);
         if !wants_prompt && !wants_cwd {
             return;
         }
@@ -119,10 +119,7 @@ impl Transcript {
         if wants_cwd && let Some(cwd) = v.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
             self.cwd = Some(PathBuf::from(cwd));
         }
-        if wants_prompt
-            && v.get("type").and_then(Value::as_str) == Some("user")
-            && let Some(prompt) = prompt_of(&v)
-        {
+        if wants_prompt && let Some(prompt) = prompt_of(&v) {
             self.first_prompt = Some(prompt);
         }
     }
@@ -178,6 +175,16 @@ fn types_in(line: &[u8]) -> impl Iterator<Item = &str> {
         let end = memchr::memchr(b'"', rest)?;
         std::str::from_utf8(&rest[..end]).ok()
     })
+}
+
+/// The line's top-level `type`, whatever its key order and spacing.
+fn line_type(line: &[u8]) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Kind {
+        #[serde(rename = "type")]
+        kind: Option<String>,
+    }
+    serde_json::from_slice::<Kind>(line).ok()?.kind
 }
 
 /// `meta` of a line opening with `{"type":"meta"`.
@@ -483,6 +490,7 @@ impl Transcripts {
         let now = SystemTime::now();
         let prefixes = prefixes(roots);
         let names = self.dir_names(now);
+        self.listed.retain(|dir, _| dir.file_name().is_some_and(|d| names.iter().any(|n| d == n.as_str())));
         let mut wanted = Vec::new();
         for name in names.iter().filter(|n| under(n, &prefixes)) {
             let dir = self.projects.join(name);
@@ -704,6 +712,16 @@ mod tests {
     }
 
     #[test]
+    fn a_spaced_user_line_gives_the_prompt_and_cwd_and_a_nested_user_type_does_not() {
+        let mut t = Transcript::default();
+        t.feed(br#"{"parentUuid": null, "message": {"role": "user", "content": [{"type": "user", "text": "hi"}]}, "type": "assistant"}"#);
+        assert_eq!(t.first_prompt, None, "an assistant line with a nested user type");
+        t.feed(br#"{"parentUuid": null, "type": "user", "message": {"role": "user", "content": "spaced prompt"}, "cwd": "C:\\x"}"#);
+        assert_eq!(t.first_prompt.as_deref(), Some("spaced prompt"));
+        assert_eq!(t.cwd.as_deref(), Some(Path::new(r"C:\x")));
+    }
+
+    #[test]
     fn reads_the_last_title_the_first_cwd_and_the_first_prompt() {
         let dir = tempfile::tempdir().unwrap();
         let t = read(&write(dir.path(), &format!("{ID}.jsonl"), FIXTURE)).unwrap();
@@ -801,6 +819,11 @@ mod tests {
         assert_eq!(kept.len(), 1, "a kept id past the window");
         assert_eq!(kept[0].to_session().name, "renamed");
         assert_eq!(kept[0].to_session().kind, Kind::Interactive);
+
+        assert_eq!(scanner.listed.len(), 2, "gaia and its worktree");
+        std::fs::remove_dir_all(&worktree).unwrap();
+        scanner.scan(&[PathBuf::from(r"C:\demo\Gaia")], 0, &none, &none);
+        assert_eq!(scanner.listed.keys().collect::<Vec<_>>(), [&gaia], "a removed project dir's listing is dropped");
     }
 
     #[test]

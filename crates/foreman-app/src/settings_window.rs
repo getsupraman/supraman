@@ -47,6 +47,7 @@ pub struct SettingsView {
     workstate: WsStatus,
     catalog: Catalog,
     theme_problem: Option<String>,
+    theme_picks: u64,
     /// The terminal font size Appearance last painted, for the selftest (step 7q).
     shown_font_size: std::cell::Cell<Option<Pixels>>,
     /// `None` while they are being found.
@@ -131,6 +132,7 @@ impl SettingsView {
             workstate,
             catalog: Catalog::default(),
             theme_problem: None,
+            theme_picks: 0,
             shown_font_size: Default::default(),
             mono_fonts: MONO_FONTS.get().cloned(),
             font_error: None,
@@ -185,8 +187,21 @@ impl SettingsView {
             }
             Err(e) => self.error = Some(format!("Cannot read settings.toml: {e}")),
         }
-        self.catalog = themes::catalog(Some(&home));
+        self.read_catalog(home.clone(), cx);
         self.read_auth(home, cx);
+    }
+
+    /// The themes folder is listed and its files parsed off the UI thread.
+    fn read_catalog(&mut self, home: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let catalog = cx.background_spawn(async move { themes::catalog(Some(&home)) }).await;
+            this.update(cx, |this, cx| {
+                this.catalog = catalog;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `Auth::status` reads the servers file and decrypts the store: never on the UI thread.
@@ -239,7 +254,20 @@ impl SettingsView {
             },
             cx,
         );
-        self.theme_problem = apply_theme(self.home.as_deref(), cx);
+        self.theme_picks += 1;
+        let (pick, home) = (self.theme_picks, self.home.clone());
+        let resolving = cx.background_spawn(async move { themes::resolve(Some(&name), terminal, home.as_deref()) });
+        cx.spawn(async move |this, cx| {
+            let resolved = resolving.await;
+            this.update(cx, |this, cx| {
+                if this.theme_picks == pick {
+                    this.theme_problem = themes::apply_resolved(cx, resolved).problem;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The fleet window owns and saves the size: one path for Settings, the keys and the wheel.

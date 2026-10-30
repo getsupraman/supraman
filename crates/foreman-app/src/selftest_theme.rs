@@ -13,6 +13,18 @@ use crate::{
     view::FleetView,
 };
 
+/// A pick is resolved off the UI thread: waits up to 5 s for `name` to paint.
+async fn painted_as(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<(String, String, String)> {
+    for _ in 0..100 {
+        let now = painted(cx)?;
+        if now.0 == name {
+            return Ok(now);
+        }
+        sleep(cx, std::time::Duration::from_millis(50)).await;
+    }
+    painted(cx)
+}
+
 fn painted(cx: &mut AsyncWindowContext) -> anyhow::Result<(String, String, String)> {
     cx.update(|_, cx| {
         let theme = theme::ActiveTheme::theme(cx);
@@ -52,7 +64,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
             .map_err(|e| anyhow!("settings window: {e}"))
     };
     switch(FOREMAN_DARK, TerminalColors::Campbell, cx)?;
-    let dark = painted(cx)?;
+    let dark = painted_as(FOREMAN_DARK, cx).await?;
     let campbell_8 = hex(gpui::rgb(CAMPBELL[8]).into());
     if dark.0 != FOREMAN_DARK || dark.2 != campbell_8 || dark.1 == start.1 {
         bail!("after choosing Foreman Dark and Campbell the app paints {dark:?}");
@@ -65,7 +77,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     shot("m5-31-main-foreman-dark", cx).await;
 
     switch(DARK_MODERN, TerminalColors::Theme, cx)?;
-    let back = painted(cx)?;
+    let back = painted_as(DARK_MODERN, cx).await?;
     if back != start {
         bail!("back to VS Code Dark Modern, the app paints {back:?}, at start {start:?}");
     }

@@ -642,7 +642,11 @@ pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>
 
 /// Paints every window with `name` and `terminal` from now on, the terminals' OSC colour answers too.
 pub fn apply(cx: &mut App, name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
-    let resolved = resolve(name, terminal, home);
+    apply_resolved(cx, resolve(name, terminal, home))
+}
+
+/// [`apply`] of a theme [`resolve`]d elsewhere, off the UI thread.
+pub fn apply_resolved(cx: &mut App, resolved: Resolved) -> Resolved {
     for a in &resolved.adjusted {
         log::info!("theme {}: {} {} → {} ({:.2} → {:.2}:1)", resolved.theme.name, a.key, a.old, a.new, a.was, a.now);
     }

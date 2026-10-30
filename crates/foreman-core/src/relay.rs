@@ -283,10 +283,16 @@ pub fn read_answered(home: &Path, workspace: &str) -> Result<BTreeMap<String, St
     }
 }
 
+/// Held around every read-modify-write of `answered.json`.
+pub(crate) fn answered_lock(dir: &Path) -> io::Result<fs::File> {
+    crate::fs::lock_file(&dir.join("answered.lock"))
+}
+
 pub fn mark_answered(home: &Path, workspace: &str, file: &str, answer: &str) -> Result<()> {
+    let dir = ensure_relay_dirs(home, workspace)?;
+    let _lock = answered_lock(&dir).map_err(|e| CoreError::io(&dir, e))?;
     let mut answered = read_answered(home, workspace)?;
     answered.insert(file.to_string(), answer.to_string());
-    let dir = ensure_relay_dirs(home, workspace)?;
     let path = dir.join(ANSWERED_FILE);
     let text = serde_json::to_string_pretty(&answered).map_err(|e| CoreError::io(&path, io::Error::other(e)))?;
     write_atomic(&path, text).map_err(|e| CoreError::io(&path, e))
