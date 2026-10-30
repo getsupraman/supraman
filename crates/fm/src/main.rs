@@ -29,6 +29,18 @@ usage:
   fm tell --file <path>
   fm messages <workspace>              (messages the relay received, newest last)
   fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
+  fm schedule add [<workspace>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
+      [--id <id>] [--folder <folder>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
+      [--profile read|worktree-edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
+      [--secret NAME]... [--model <model>] [--max-runtime 1h] [--max-tokens N] [--overlap skip|queue|restart]
+      [--catch-up once|skip] [--wake] [--description <text>]
+      <when>: 'weekly mon,fri 09:00' | 'daily 09:00' | 'interval 2h [from 08:00]'; a --script alone runs no session
+  fm schedule edit [<workspace>] <id> <add's options>   (a list option replaces the list; --no-script, --no-wake)
+  fm schedule list [<workspace>]  |  fm schedule show [<workspace>] <id>
+  fm schedule pause|resume|remove [<workspace>] <id>
+  fm schedule dry-run [<workspace>] <id>   (the prompt, the claude argv, the permissions, the next three fires)
+      <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
+      pending until Approve in the Foreman window; fm never approves and never registers a task.
   fm work overview <workspace>         (its WorkState project: runs with rollups, who works, the inbox)
   fm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
@@ -47,6 +59,7 @@ mod probe_rm;
 mod probe_session_id;
 mod relay;
 mod repos;
+mod schedule;
 mod work;
 
 enum Failure {
@@ -152,6 +165,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["want", rest @ ..] => repos::want(&registry()?, rest),
         ["unwant", rest @ ..] => repos::unwant(&registry()?, rest),
         ["roster", rest @ ..] => repos::roster_cmd(&registry()?, rest),
+        ["schedule", rest @ ..] => schedule::schedule(&registry()?, rest),
         ["work", rest @ ..] => work::work(registry()?.home(), rest),
         ["probe", "hooks", rest @ ..] => {
             let root = probe_root(rest)?;

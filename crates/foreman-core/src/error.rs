@@ -22,6 +22,9 @@ pub enum CoreError {
     NoSchedule { workspace: String, id: String },
     #[error("schedule '{id}': {why}")]
     InvalidSchedule { id: String, why: String },
+    /// A slash command or prompt file a schedule names is not in its folder.
+    #[error("{0}")]
+    NoPrompt(String),
     #[error("{0}")]
     Secret(String),
     #[error("Task Scheduler: {0}")]
@@ -64,6 +67,7 @@ impl CoreError {
                 | Self::SupervisedElsewhere { .. }
                 | Self::NoSchedule { .. }
                 | Self::InvalidSchedule { .. }
+                | Self::NoPrompt(_)
         )
     }
 

@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 
 pub const HOOK_EXE: &str = "fm.exe";
 
+/// So `fm` never parks: by name on the session's PATH, or by its absolute path.
+pub fn fm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
+    vec!["Bash(fm:*)".into(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(HOOK_EXE)))]
+}
+
 fn is_plugin(dir: &Path) -> bool {
     dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir()
 }

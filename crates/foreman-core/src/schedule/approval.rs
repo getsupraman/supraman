@@ -152,7 +152,7 @@ pub fn covered(workspace: &Workspace, s: &Schedule) -> Result<Covered> {
 
 /// `/a:b` → the folder's `.claude/commands/a/b.md` (shown relative), else the user's `commands/a/b.md` when
 /// it exists (shown absolute), else the folder's path as not found.
-fn command_file(folder: &Path, name: &str) -> (String, std::path::PathBuf) {
+pub fn command_file(folder: &Path, name: &str) -> (String, std::path::PathBuf) {
     let rel = format!(".claude/commands/{}.md", name.trim_start_matches('/').replace(':', "/"));
     let project = folder.join(&rel);
     if !project.is_file()

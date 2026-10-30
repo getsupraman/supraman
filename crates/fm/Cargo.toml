@@ -9,7 +9,7 @@ name = "fm"
 path = "src/main.rs"
 
 [dependencies]
-chrono = { version = "0.4.42", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.42", default-features = false, features = ["alloc", "clock"] }
 foreman-claude = { path = "../foreman-claude" }
 foreman-core = { path = "../foreman-core" }
 foreman-supervisor = { path = "../foreman-supervisor" }

@@ -5,6 +5,7 @@ mod approval;
 mod next;
 mod registrar;
 mod runs;
+mod session;
 mod store;
 #[cfg(windows)]
 mod task_service;
@@ -18,10 +19,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{Workspace, validate_name};
 
-pub use approval::{APPROVAL_KEY, Covered, Refusal, approve, covered, effective_status, mac, verify, verify_approval};
+pub use approval::{APPROVAL_KEY, Covered, Refusal, approve, command_file, covered, effective_status, mac, verify, verify_approval};
 pub use next::{next_fire, next_fire_local, previous_fire};
 pub use registrar::{FMW_EXE, FakeRegistrar, Registrar, SyncTarget, Synced, fmw_exe, sync, task_root, task_root_for};
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};
+pub use session::{DEFAULT_DENY, base_prompt, preamble, run_id, run_stamp, run_worktree, session_name};
 pub use store::{edit, file_path, load, schedules_dir};
 #[cfg(windows)]
 pub use task_service::WindowsRegistrar;
@@ -403,6 +405,16 @@ impl Schedule {
         }
         if self.permissions.profile != Profile::Read && !a.worktree && a.kind != ActionKind::Script {
             return Err("profiles above read run in a worktree".into());
+        }
+        let p = &self.permissions;
+        if let Some(bad) = p.allow_tools.iter().chain(&p.deny_tools).find(|t| t.trim().is_empty() || t.starts_with('-')) {
+            return Err(format!("'{bad}' is not a tool rule"));
+        }
+        if let Some(bad) = p.add_dirs.iter().find(|d| d.trim().is_empty() || d.starts_with('-')) {
+            return Err(format!("'{bad}' is not a directory"));
+        }
+        if !a.model.is_empty() && (a.model.starts_with('-') || a.model.contains(char::is_whitespace)) {
+            return Err(format!("'{}' is not a model", a.model));
         }
         if let Some(bad) = self.permissions.secrets.iter().find(|n| n.is_empty() || !n.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')) {
             return Err(format!("secret name '{bad}' takes A-Z, 0-9 and '_' only"));

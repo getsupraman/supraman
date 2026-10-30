@@ -4827,3 +4827,41 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   rest was a real hover. Then Details from the workspace's and the session's menu: the report's rows (folders, state,
   session; name, state, cwd, uuid), no Cancel, OK closes it. Shots `m5-71-details-workspace`, `m5-71-details-session`.
   Unit tests: `row_details` (moved from `row_card`, with `uuid`), the menu key lists and the Details targets.
+
+## 2026-10-30 — sched/4 the `fm schedule` CLI
+
+`fm schedule add | list | show | edit | pause | resume | remove | dry-run` (`crates/fm/src/schedule.rs`), all through
+`foreman_core::schedule`; tests in `crates/fm/tests/schedule.rs` (temp home, temp `CLAUDE_CONFIG_DIR`, plain folders).
+
+- **fm never approves (C100), shown by a test.** `fm_never_approves_and_never_registers_a_task` reads every file of
+  `crates/fm/src` and refuses `approve(`, `APPROVAL_KEY`, an `Approval {` or `.approval =` write, `Registrar`,
+  `schtasks`, `ScheduledTask`, `ITaskService` and `TaskScheduler`, and fm's manifest names no registrar or `windows`
+  crate. Every write goes through `schedule::edit`, whose rules keep the approval and make a covered change pending;
+  `resume` asks for `active`, which `edit` keeps only while the approval's fingerprint is the current one, so an
+  unapproved or changed schedule stays pending. The test that stands in for the window calls `schedule::approve` itself.
+- **The run's pieces are shared, the argv is `LaunchSpec::argv`.** The names (`session_name`, `run_id`, `run_stamp`,
+  `run_worktree`), the `preamble`, `base_prompt` and the profile flags (`Profile::permission_mode`,
+  `Permissions::allowed`/`denied`, `DEFAULT_DENY`) are in `foreman_core::schedule` (`session.rs`); fm's `run_spec`
+  builds the `LaunchSpec` (with the supervisor's `LaunchConfig::session_settings`, role `repo`, `bgIsolation: none`
+  because the run makes its own worktree), and dry-run prints `spec.argv()`. sched/6 launches that same spec.
+- **`fm_allowed_tools` moved to `foreman_core::plugin`** (C56): fm needs the app's `Bash(fm:*)` rules for a run;
+  `foreman-app`'s `supervise` re-exports it, and its Git-Bash `forward` is now test-only.
+- **The slash command resolves through `command_file`**, the fingerprint's own resolver (made public): the folder's
+  `.claude/commands/<a>/<b>.md`, else the user's. A missing one is `CoreError::NoPrompt`, which names the folder, at add,
+  at edit and at dry-run (and at fire, sched/5). The tests set `CLAUDE_CONFIG_DIR` so the user fallback never reads
+  René's `~/.claude`.
+- **Flag-shaped values are refused in `Schedule::validate`.** `--allowedTools` and `--disallowedTools` are variadic, so
+  an allow rule `--dangerously-skip-permissions` would have reached claude as a flag. A tool rule, an add-dir or a model
+  starting with `-` (or blank) is refused; `--profile bypassPermissions` and `--permission-mode` are refused by name.
+- **The workspace from the cwd** prefers workspaces whose folders contain it over those whose home does (a home can
+  hold many folders); several matches is an error that names them. The folder defaults the same way, else the
+  workspace's only folder. Uses `Registry::load_all`, so one corrupt workspace file does not stop it.
+- **Flags.** `--every` takes one value: `weekly mon,fri 09:00`, `daily 09:00`, `interval 2h [from 08:00]`. List options
+  repeat (`--allow-tools`, `--deny-tools`, `--add-dir`, `--secret`, `--script-arg`) and in `edit` replace the list.
+  `--max-cost` answers "use --max-tokens" (Decision 3). `read` runs in the main checkout, the other profiles in a
+  worktree. `--secret NAME` records the name only.
+- **Git Bash rewrites `/fix` into `C:/Program Files/Git/fix`.** Running `fm schedule add --command /fix` by hand from Git
+  Bash needs `MSYS_NO_PATHCONV=1`; PowerShell and the tests pass it unchanged.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-4\target`): build ok, no warnings; `cargo test --release --workspace`
+  743 passed, 0 failed, 3 ignored; `--selftest` 5/5 PASS (runs 1 and 4 waited for another worktree's selftest);
+  `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.

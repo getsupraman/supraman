@@ -14,6 +14,8 @@ use foreman_supervisor::{
     relay_session, relay_session_name, render_repo_role, role_prompt, tick_all,
 };
 
+pub use foreman_core::fm_allowed_tools;
+
 use crate::tokens::AppTokens;
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
@@ -69,13 +71,9 @@ pub fn setup(home: &Path) -> Setup {
 }
 
 /// The relay's Monitor runs its command under Git Bash (LEARNINGS m0/4).
+#[cfg(test)]
 fn forward(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
-}
-
-/// So `fm` never parks: by name on the session's PATH, or by its absolute path.
-pub fn fm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
-    vec!["Bash(fm:*)".into(), format!("Bash({}:*)", forward(&plugin_dir.join("bin").join(HOOK_EXE)))]
 }
 
 pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow::Result<()> {
