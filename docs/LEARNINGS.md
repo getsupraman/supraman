@@ -4737,3 +4737,33 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-2\target`): build ok; `cargo test --release --workspace` 727 passed,
   0 failed, 3 ignored; `--selftest` 5/5 PASS; `--selftest-supervise` PASS (after the `VGit` fix);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
+## 2026-10-30 — m5/70 tree icons and indents on one grid
+
+- **Cause:** each row picked its own padding. The workspace row had `pl 6`, the folder row `pl 26` with a bare 14 px
+  svg and no slot, and session rows `pl 46` (folder) or `pl 26` (supervised) with a 16 px slot and no disclosure. So
+  a folder's claude icons sat in the git icons' column (46 vs 50) and their labels started 2 px left of the folders'.
+  Search results passed their own 8/26/46.
+- **Grid** (`view/left.rs`, `grid`): `indent(level) = 6 + level × 24`, then a 16 px disclosure slot (empty where
+  there is none), an 8 px gap, a 16 px icon slot (`icon_slot`), an 8 px gap and the label. `STEP` = disclosure + gap,
+  so a child's icon starts where its parent's label does: L0 icon 30, label 54; L1 54/78; L2 78/102. The gaps are
+  px, not `gap_2`, so the grid does not follow the rem size. The levels are workspace 0, folder and supervised
+  session 1, a folder's session 2. Search results use the same levels; a result's workspace row has an empty icon
+  slot, and its folder row now shows the git or folder icon (`RepoHit::kind`). The waiting, hook and "more closed…"
+  lines start at `grid::LABEL`.
+- **Optical size** (`Icon::optical`, `Icon::slotted`): the thin-stroke git and folder icons fill their 16 px slot,
+  and the filled marks (claude) fill 14 of 16. At 14 px the git branch (drawn in 3..13) looked smaller than the
+  claude mark (2..14).
+- **Behaviour:** sessions move one level in, 32 px further right than before. Supervised sessions move 28 px right.
+  Folder labels move 6 px.
+- **Test:** selftest step 7v (`selftest_left::tree_grid`, after 7f) expands all and reads `tree-icon-<key>` and
+  `tree-label-<key>` for every painted row of the gate workspace. It checks one icon slot size, label = icon + 24,
+  one icon x per level, and that a level's icons start under the level above's labels. Step 7k runs the same check
+  (`on_grid`) on the result rows. Unit test `a_childs_icon_starts_under_its_parents_label`.
+- **Red check** (reverted, never committed): a folder's sessions at `indent(1)` → step 7v
+  `level 2 icons at x 54.0, level 1 labels at 78.0: a child's icon does not start under its parent's label`.
+- **Screenshots:** `.claude/briefs/m5-70-before` / `m5-70-after` (150 %) and `m5-70-before-100` / `m5-70-after-100`
+  (100 %, the test window moved to the second monitor by its own pid). Compare `m5-13-bar-tooltip.png` (tree) and
+  `m5-30-search-id.png` (results) in each. Step 7v adds `m5-70-tree.png`.
+- **Flakes seen:** step 7t (`Cascadia Code at 14/23px: row 0 has no horizontal stroke: no ink`) failed in several
+  runs on master and on this branch alike. One run printed PASS and then hung on exit, so step 8's watchdog fired.
+  Selftests from other worktrees share a machine-wide lock and were running at the same time.

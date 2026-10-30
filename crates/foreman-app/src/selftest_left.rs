@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
@@ -505,4 +506,71 @@ pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixe
         TABLE.len(),
         lines.len()
     ))
+}
+
+/// The painted icon slot and label of each `(key, level)` row sit on `view::grid`.
+pub fn on_grid(v: &FleetView, rows: &[(String, usize)]) -> anyhow::Result<String> {
+    use crate::view::grid::{GAP, ICON, STEP};
+    let hits = v.hits.borrow();
+    let mut levels: BTreeMap<usize, (f32, f32)> = BTreeMap::new();
+    let mut slot = None;
+    for (key, level) in rows {
+        let icon = hits.get(&format!("tree-icon-{key}")).ok_or_else(|| anyhow!("{key}: no icon slot painted"))?.bounds;
+        let label = hits.get(&format!("tree-label-{key}")).ok_or_else(|| anyhow!("{key}: no label painted"))?.bounds;
+        let size = (f32::from(icon.size.width), f32::from(icon.size.height));
+        if *slot.get_or_insert(size) != size {
+            bail!("{key}: icon slot {size:?}, another row's {:?}", slot.unwrap());
+        }
+        let (x, at) = (f32::from(icon.left()), f32::from(label.left()));
+        if (at - x - ICON - GAP).abs() > 0.5 {
+            bail!("{key}: label at x {at:.1}, {:.1} px after its icon at {x:.1}, not {}", at - x, ICON + GAP);
+        }
+        let (first, _) = *levels.entry(*level).or_insert((x, at));
+        if (x - first).abs() > 0.5 {
+            bail!("{key}: icon at x {x:.1}, another level-{level} row's at {first:.1}");
+        }
+    }
+    for (level, (x, at)) in &levels {
+        if let Some((child, _)) = levels.get(&(level + 1)) {
+            if (child - at).abs() > 0.5 || (child - x - STEP).abs() > 0.5 {
+                bail!("level {} icons at x {child:.1}, level {level} labels at {at:.1}: a child's icon does not start under its parent's label", level + 1);
+            }
+        }
+    }
+    let xs: Vec<String> = levels.iter().map(|(l, (x, at))| format!("L{l} icon {x:.0} label {at:.0}")).collect();
+    Ok(format!("{} rows on the grid ({})", rows.len(), xs.join(", ")))
+}
+
+/// Every painted row of the gate workspace is laid out on the one grid, levels 0 to 2 at least.
+pub async fn tree_grid(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    view.update(cx, |v, cx| v.collapse_all(false, cx));
+    let rows = until(view, cx, WITHIN, "the gate workspace's rows at three levels", |v| {
+        let rows = tree_rows(v);
+        let levels: std::collections::HashSet<usize> = rows.iter().map(|(_, l)| *l).collect();
+        (levels.len() >= 3).then_some(rows)
+    })
+    .await
+    .map_err(|e| e.context(format!("rows painted {:?}", view.read_with(cx, |v, _| tree_rows(v)))))?;
+    let checked = view.read_with(cx, |v, _| on_grid(v, &rows))?;
+    shot("m5-70-tree", cx).await;
+    Ok(checked)
+}
+
+fn tree_rows(v: &FleetView) -> Vec<(String, usize)> {
+    let hits = v.hits.borrow();
+    let painted = |key: &str| hits.contains_key(&format!("tree-icon-{key}")).then(|| key.to_string());
+    let mut rows = Vec::new();
+    for w in v.tree().workspaces.iter().filter(|w| w.name == WORKSPACE) {
+        rows.extend(painted(&format!("ws-{}", w.name)).map(|k| (k, 0)));
+        for s in &w.supervised {
+            rows.extend(painted(&format!("session-{}{}", s.session.session_id, s.scope(&w.name))).map(|k| (k, 1)));
+        }
+        for r in &w.repos {
+            rows.extend(painted(&format!("repo-{}/{}", w.name, r.name)).map(|k| (k, 1)));
+            for s in &r.sessions {
+                rows.extend(painted(&format!("session-{}{}", s.session.session_id, s.scope(&w.name))).map(|k| (k, 2)));
+            }
+        }
+    }
+    rows
 }
