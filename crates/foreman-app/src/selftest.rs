@@ -808,18 +808,33 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
         bail!("rows shown while loading: {} sessions, {} workspaces", shown.0, shown.1);
     }
     let started = Instant::now();
-    until(view, cx, LISTED_WITHIN, "the loading row gone once the first list is applied", |v| {
-        (v.sessions_read && !painted(v, "loading-sessions")).then_some(())
+    let listed = std::cell::Cell::new(None);
+    let gone = until_with(cx, LISTED_WITHIN, "the loading line gone once every source has loaded", |cx| {
+        view.read_with(cx, |v, cx| {
+            if v.sessions_read && listed.get().is_none() {
+                listed.set(Some(started.elapsed()));
+            }
+            let shown = painted(v, "loading-sessions");
+            if !v.loaded && !shown {
+                return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
+            }
+            (v.loaded && !shown).then(|| {
+                let done = v.sessions_read && v.refreshes > 0 && v.transcripts_read && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
+                if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and WorkState were all done".to_string()) }
+            })
+        })
     })
     .await?;
-    let listed = started.elapsed();
-    until(view, cx, LISTED_WITHIN, "the Refresh icon still once the first poll is applied", |v| {
-        (v.refreshes > 0 && !v.refreshing() && !painted(v, "refresh-turning")).then_some(())
+    gone.map_err(|e| anyhow::anyhow!(e))?;
+    let loaded = started.elapsed();
+    until(view, cx, LISTED_WITHIN, "the Refresh icon still once every source has loaded", |v| {
+        (!v.refreshing() && !painted(v, "refresh-turning")).then_some(())
     })
     .await?;
     Ok(format!(
-        "loading row and turning Refresh icon painted before the first list; rows {} ms later, icon still {} ms later",
-        listed.as_millis(),
+        "loading line and turning Refresh icon painted before the first list; rows {} ms later, every source {} ms later, icon still {} ms later",
+        listed.get().unwrap_or_default().as_millis(),
+        loaded.as_millis(),
         started.elapsed().as_millis()
     ))
 }
@@ -836,6 +851,10 @@ fn startup_timeline() -> anyhow::Result<String> {
     let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
         bail!("no list_sessions and first paint lines in foreman.log: {phases:?}");
     };
+    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workstate status done", "every source done"];
+    if let Some(missing) = sources.iter().find(|s| at(s).is_none()) {
+        bail!("no \"startup {missing}\" line in foreman.log: {phases:?}");
+    }
     if painted - listed > PAINTED_AFTER_LIST {
         bail!("the first list painted {:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {}", painted - listed, phases.join("; "));
     }
@@ -904,6 +923,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let refreshed = step("7j", crate::selftest_refresh::run(view, &home(), cx)).await?;
     println!("step 7j: {refreshed}");
+
+    let started = step("7t", crate::selftest_startup::run(view, &home(), &main_repo_of_gate()?, cx)).await?;
+    println!("step 7t: {started}");
 
     let searched = step("7k", crate::selftest_search::run(view, cx)).await?;
     println!("step 7k: {searched}");

@@ -5,13 +5,13 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use collections::HashMap;
-use futures::FutureExt as _;
+use futures::{FutureExt as _, StreamExt as _};
 use foreman_claude::{ClaudeVersion, Sent, Session, Transcripts, check_supported, list_sessions, main_repo, now_ms, send_from_human};
 use foreman_core::{
     DEFAULT_MAX_WORKING, Event, EventReader, FM_PREFIX, OutboxMessage, Workspace, Registry, Settings, mark_answered,
@@ -79,6 +79,7 @@ pub fn bind_keys(cx: &mut gpui::App) {
 
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
+const TRANSCRIPTS_CACHE: &str = "cache/transcripts.json";
 pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
 /// Ctrl+Z: `claude attach`'s own detach, which leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
@@ -229,6 +230,7 @@ pub struct FleetView {
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
     pub poll_hold: Arc<PollHold>,
+    pub transcripts_hold: Arc<PollHold>,
     pub left_width: Pixels,
     pub term_font_size: Pixels,
     pub term_font_family: SharedString,
@@ -277,8 +279,19 @@ pub struct FleetView {
     poll_nudge: Nudge,
     pub refresh_asks: u64,
     refreshes_answered: u64,
-    /// The first poll's snapshot (or its failure) is applied; until then the tree shows that it is loading.
+    /// The first poll's snapshot (or its failure) is applied.
     pub sessions_read: bool,
+    pub transcripts_read: bool,
+    /// `(read, of)` of the files the running transcript scan reads.
+    pub transcripts_progress: Option<(usize, usize)>,
+    transcripts_answered: u64,
+    /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
+    pub loaded: bool,
+    /// `transcript_scans` when `loaded` was set.
+    pub loaded_at_scan: u64,
+    /// Whether the saved transcript cache held files; `None` until it is read.
+    transcripts_cache: Option<bool>,
+    transcripts_restart: bool,
     pub stars: Stars,
     pub closed_expanded: HashSet<String>,
     pub claude_command: String,
@@ -361,7 +374,7 @@ struct Poller {
     first: bool,
 }
 
-fn timeline(phase: &str, took: Duration) {
+pub(crate) fn timeline(phase: &str, took: Duration) {
     log::info!("startup {phase}: {} ms (at +{:.0} ms)", took.as_millis(), foreman_ui::ms_since_start(Instant::now()));
 }
 
@@ -404,6 +417,7 @@ impl Poller {
             (Ok((workspaces, _)), Some(Ok(sessions))) => Some((workspaces.clone(), sessions.clone())),
             _ => None,
         };
+        let loading_desired = Instant::now();
         let desired = match (&self.home, &workspaces) {
             (Some(home), Ok((workspaces, _))) if self.first => Some(
                 workspaces
@@ -417,9 +431,10 @@ impl Poller {
             _ => None,
         };
         if self.first {
-            timeline("registry", registry_took);
-            timeline(&format!("list_sessions ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
-            timeline("main repos and events", took - registry_took - list_took);
+            timeline("registry done", registry_took);
+            timeline(&format!("list_sessions done ({} rows)", sessions.as_ref().and_then(|s| s.as_ref().ok()).map_or(0, Vec::len)), list_took);
+            timeline("main repos and events done", took - registry_took - list_took);
+            timeline("desired state done", loading_desired.elapsed());
         }
         Refresh {
             registry_writes,
@@ -442,7 +457,7 @@ impl Poller {
         let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
         let report = supervision.tick(&workspaces, &sessions, retries, now_ms());
         if first {
-            timeline("supervisor tick", ticking.elapsed());
+            timeline("supervisor tick done (relays, messages)", ticking.elapsed());
         }
         Some(report)
     }
@@ -492,13 +507,13 @@ impl FleetView {
             let checking = Instant::now();
             let checked = executor.spawn(async move {
                 let checked = check_supported();
-                timeline("version check", checking.elapsed());
+                timeline("version check done", checking.elapsed());
                 checked
             });
             let first = executor.spawn(async move {
                 let setting_up = Instant::now();
                 let setup = poller.setup();
-                timeline("setup", setting_up.elapsed());
+                timeline("setup done", setting_up.elapsed());
                 let refresh = poller.read(true);
                 (poller, setup, refresh)
             });
@@ -563,6 +578,7 @@ impl FleetView {
                     }
                     this.refreshes += 1;
                     this.refreshes_answered = asks;
+                    this.check_loaded(cx);
                     let left = std::mem::take(&mut this.left_pending);
                     this.leave_servers(left, cx);
                     this.resolve_tabs(cx);
@@ -592,13 +608,18 @@ impl FleetView {
         let (workstate_recheck, recheck) = nudge::nudge();
         Self::watch_workstate(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
-        cx.observe(&work_inbox, |_, _, cx| cx.notify()).detach();
+        cx.observe(&work_inbox, |this, _, cx| {
+            this.check_loaded(cx);
+            cx.notify();
+        })
+        .detach();
         let hands = home.as_deref().map(|home| Self::open_hands(home, cx));
         let (stars, stars_notice) = Stars::load(home.as_deref());
         let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(foreman_claude::claude_dir);
-        Self::watch_transcripts(claude_dir.clone(), transcripts_nudged, cx);
+        let transcripts_hold: Arc<PollHold> = Arc::default();
+        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
@@ -642,6 +663,7 @@ impl FleetView {
             injected,
             registry_writes,
             poll_hold,
+            transcripts_hold,
             left_width,
             term_font_size,
             term_font_family,
@@ -691,6 +713,13 @@ impl FleetView {
             refresh_asks: 0,
             refreshes_answered: 0,
             sessions_read: false,
+            transcripts_read: claude_dir.is_none(),
+            transcripts_progress: None,
+            transcripts_answered: 0,
+            loaded: false,
+            loaded_at_scan: 0,
+            transcripts_cache: None,
+            transcripts_restart: false,
             action_error: stars_notice.or(dismissed_notice),
             stars,
             closed_expanded: HashSet::new(),
@@ -709,68 +738,214 @@ impl FleetView {
         }
     }
 
-    fn watch_transcripts(claude_dir: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
+    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, hold: Arc<PollHold>, mut nudged: Nudged, cx: &mut Context<Self>) {
         let Some(claude_dir) = claude_dir else {
             return;
         };
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
-            let mut scanner = Transcripts::in_claude_dir(&claude_dir);
+            let mut scanner: Option<Transcripts> = None;
             let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
+            let (mut from_cache, mut wait) = (false, true);
             loop {
-                let Ok((roots, keep, live)) = this.read_with(cx, |this, _| {
-                    let roots: Vec<PathBuf> = this
-                        .workspaces
-                        .iter()
-                        .flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone()))
-                        .collect();
-                    let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
-                    let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
-                    (roots, keep, live)
+                if scanner.is_none() {
+                    let (claude_dir, cache) = (claude_dir.clone(), cache.clone());
+                    let opened = executor
+                        .spawn(async move {
+                            let s = Transcripts::in_claude_dir(&claude_dir);
+                            match cache {
+                                Some(cache) => s.with_cache(cache),
+                                None => s,
+                            }
+                        })
+                        .await;
+                    from_cache = opened.has_cache();
+                    scanner = Some(opened);
+                    if this
+                        .update(cx, |this, cx| {
+                            this.transcripts_cache = Some(from_cache);
+                            this.check_loaded(cx);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
+                if std::mem::replace(&mut wait, true) {
+                    nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
+                }
+                let Ok(asked) = this.update(cx, |this, _| {
+                    let restart = std::mem::take(&mut this.transcripts_restart);
+                    this.sessions_read.then(|| {
+                        let roots: Vec<PathBuf> = this
+                            .workspaces
+                            .iter()
+                            .flat_map(|w| w.folders.iter().filter(|r| r.enabled).map(|r| r.path.clone()))
+                            .collect();
+                        let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
+                        let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
+                        (roots, keep, live, this.refresh_asks, restart)
+                    })
                 }) else {
                     return;
                 };
+                let Some((roots, keep, live, asks, restart)) = asked else { continue };
+                if restart {
+                    (scanner, wait) = (None, false);
+                    repos.clear();
+                    continue;
+                }
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
                 let scanning = Instant::now();
-                let (back, known, closed) = executor
+                if std::mem::take(&mut from_cache)
+                    && let Some(s) = scanner.take()
+                {
+                    let (roots, keep) = (roots.clone(), keep.clone());
+                    let (back, known, closed) = executor
+                        .spawn(async move {
+                            let mut repos = StdHashMap::new();
+                            let found = s.cached(&roots, since, &keep);
+                            for t in &found {
+                                if let Some(cwd) = &t.cwd {
+                                    repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
+                                }
+                            }
+                            (s, repos, found.iter().map(|t| t.to_session()).collect::<Vec<Session>>())
+                        })
+                        .await;
+                    scanner = Some(back);
+                    repos = known.clone();
+                    if this
+                        .update(cx, |this, cx| {
+                            timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
+                            this.main_repos.extend(known.clone());
+                            this.closed_repos = known;
+                            this.closed = closed;
+                            this.drop_deleted();
+                            this.transcripts_read = true;
+                            this.check_loaded(cx);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                let (progress, mut progressed) = futures::channel::mpsc::unbounded::<(usize, usize)>();
+                let shown = this.clone();
+                let showing = cx.spawn(async move |cx| {
+                    while let Some(at) = progressed.next().await {
+                        if shown
+                            .update(cx, |this, cx| {
+                                this.transcripts_progress = Some(at);
+                                cx.notify();
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+                let Some(mut s) = scanner.take() else { continue };
+                let hold = hold.clone();
+                let (back, known, closed, read) = executor
                     .spawn(async move {
-                        let found = scanner.scan(&roots, since, &keep, &live);
+                        hold.wait();
+                        let read = AtomicUsize::new(0);
+                        let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
+                            read.store(of, Ordering::Relaxed);
+                            if done == of || done % (of / 100).max(1) == 0 {
+                                progress.unbounded_send((done, of)).ok();
+                            }
+                        });
+                        drop(progress);
                         for t in &found {
                             if let Some(cwd) = &t.cwd {
                                 repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
                             }
                         }
                         let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
-                        (scanner, repos, closed)
+                        (s, repos, closed, read.into_inner())
                     })
                     .await;
-                scanner = back;
+                showing.await;
+                scanner = Some(back);
                 repos = known.clone();
                 if this
                     .update(cx, |this, cx| {
                         this.main_repos.extend(known.clone());
                         this.closed_repos = known;
+                        if this.transcript_scans == 0 {
+                            timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
+                        }
+                        this.transcripts_read = true;
                         this.closed = closed;
                         this.drop_deleted();
-                        if this.transcript_scans == 0 {
-                            timeline("transcripts", scanning.elapsed());
-                        }
+                        this.transcripts_progress = None;
+                        this.transcripts_answered = asks;
                         this.transcript_scans += 1;
+                        this.check_loaded(cx);
                         cx.notify();
                     })
                     .is_err()
                 {
                     return;
                 }
-                nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
             }
         })
         .detach();
     }
 
-    /// From the start until the first poll is applied, and from a Refresh until the poll it woke is.
+    /// Until every source has loaded once, and from a Refresh until the poll and the transcript scan it woke are applied.
     pub fn refreshing(&self) -> bool {
-        self.refreshes == 0 || self.refreshes_answered < self.refresh_asks
+        !self.loaded || self.refreshes_answered < self.refresh_asks || (self.claude_dir.is_some() && self.transcripts_answered < self.refresh_asks)
+    }
+
+    /// The sources a fresh start still waits for, as the action bar names them; empty once all have loaded.
+    pub fn loading(&self, cx: &gpui::App) -> Vec<String> {
+        if self.loaded {
+            return Vec::new();
+        }
+        let mut pending = Vec::new();
+        if !self.sessions_read {
+            pending.push("session list".to_string());
+        } else if self.refreshes == 0 {
+            pending.push("supervisor".to_string());
+        }
+        if !self.transcripts_read && self.transcripts_cache != Some(true) {
+            pending.push(match self.transcripts_progress {
+                Some((read, of)) => format!("transcripts {read}/{of}"),
+                None => "transcripts".to_string(),
+            });
+        }
+        let inbox = self.work_inbox.read(cx);
+        if matches!(self.workstate, WsStatus::Checking) {
+            pending.push("WorkState".to_string());
+        } else if inbox.reads > 0 && inbox.applied == 0 {
+            pending.push("WorkState inbox".to_string());
+        }
+        pending
+    }
+
+    fn check_loaded(&mut self, cx: &gpui::App) {
+        if !self.loaded && self.loading(cx).is_empty() {
+            self.loaded = true;
+            self.loaded_at_scan = self.transcript_scans;
+            timeline("every source done", Duration::ZERO);
+        }
+    }
+
+    /// The transcripts as a start reads them, from the saved cache when `warm`; for the selftests.
+    pub fn restart_transcripts(&mut self, warm: bool, cx: &mut Context<Self>) {
+        self.transcripts_restart = true;
+        self.transcripts_read = false;
+        self.closed.clear();
+        self.transcripts_cache = Some(warm);
+        self.loaded = false;
+        self.transcripts_nudge.wake();
+        cx.notify();
     }
 
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
@@ -831,6 +1006,7 @@ impl FleetView {
     fn watch_workstate(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
+            let mut first = Some(Instant::now());
             loop {
                 let home = home.clone();
                 let status = executor
@@ -839,6 +1015,9 @@ impl FleetView {
                         workstate_setup::detect(home.as_deref(), auth.as_deref())
                     })
                     .await;
+                if let Some(started) = first.take() {
+                    timeline("workstate status done", started.elapsed());
+                }
                 let alive = this.update(cx, |this, cx| {
                     if this.workstate != status {
                         if matches!(status, WsStatus::Ready { .. }) {
@@ -853,6 +1032,7 @@ impl FleetView {
                         let url = url.clone();
                         this.sync_server(url, cx);
                     }
+                    this.check_loaded(cx);
                 });
                 if alive.is_err() {
                     return;
@@ -1076,6 +1256,9 @@ impl FleetView {
             }
             Some(Err(error)) => self.sessions_error = Some(error),
             None => {}
+        }
+        if !self.sessions_read {
+            self.transcripts_nudge.wake();
         }
         self.sessions_read = true;
         for event in refresh.events {
