@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context as _, anyhow};
 use foreman_claude::{Claude, Session};
 use foreman_core::{
-    HOOK_EXE, OutboxMessage, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
+    HOOK_EXE, OutboxMessage, Registry, Settings, Workspace, clear_ready, ensure_relay_dirs, find_plugin_dir, install_hook_exe,
     read_answered, read_outbox, relay_demand, relay_ready,
 };
 use foreman_supervisor::{
-    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, fill_paths, is_live,
-    relay_session, relay_session_name, role_prompt, tick_all,
+    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, adopted_session, fill_paths, is_live,
+    relay_session, relay_session_name, render_repo_role, role_prompt, tick_all,
 };
 
 use crate::tokens::AppTokens;
@@ -137,6 +137,19 @@ pub fn sync_relay(home: &Path, workspace: &Workspace, desired: &DesiredState, id
     let relay = demand.then(|| relay_wanted(home, workspace)).transpose()?;
     let (saved, _) = DesiredState::update(home, &workspace.name, |d| d.set_relay(relay.clone()))?;
     Ok(Some(saved))
+}
+
+/// Wants `fm-<workspace>-<folder>` continuing the conversation of `session_id` (a full uuid), with the repo role
+/// [`setup`] wrote for a fresh start; true when the workspace is started, so the supervisor goes at its next tick.
+pub fn adopt(home: &Path, workspace: &str, folder: &str, session_id: &str) -> anyhow::Result<bool> {
+    let ws = Registry::at(home).load(workspace)?;
+    let f = ws.folder(folder).ok_or_else(|| anyhow!("workspace {workspace} has no folder {folder}"))?;
+    let role = home.join("roles").join(format!("{REPO_ROLE}.md"));
+    let template = std::fs::read_to_string(&role).with_context(|| format!("cannot read {}", role.display()))?;
+    let wanted = adopted_session(workspace, &f.name, &f.path, render_repo_role(&template, workspace, &f.name), session_id)
+        .ok_or_else(|| anyhow!("folder {folder} would take a name of the workspace's own sessions"))?;
+    let (desired, _) = DesiredState::update(home, workspace, |d| d.want(wanted.clone()))?;
+    Ok(desired.started)
 }
 
 pub fn stop_workspace(home: &Path, workspace: &str) -> anyhow::Result<()> {
@@ -441,6 +454,23 @@ mod tests {
         assert!(launched.contains("/foreman:workspace-controller") && launched.contains("fm-demo-relay"), "{launched}");
         let repo = foreman_supervisor::render_repo_role(&std::fs::read_to_string(plugin_dir().join("roles").join("repo.md")).unwrap(), "demo", "Alpha");
         assert!(repo.contains("/foreman:repo-controller") && repo.contains("/rlarch:controller"), "{repo}");
+    }
+
+    #[test]
+    fn adopt_wants_the_folders_session_forking_the_uuid_with_the_repo_role() {
+        let home = tempfile::tempdir().unwrap();
+        let alpha = home.path().join("Alpha");
+        std::fs::create_dir_all(&alpha).unwrap();
+        Registry::at(home.path()).save(&Workspace::new("demo", home.path(), vec![foreman_core::Folder::new("Alpha", &alpha)]), true).unwrap();
+        let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
+        assert!(adopt(home.path(), "demo", "Alpha", from).is_err(), "no role written yet");
+        write_role_template(home.path(), &plugin_dir(), REPO_ROLE).unwrap();
+        assert!(!adopt(home.path(), "demo", "Alpha", from).unwrap(), "not started");
+        let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
+        let w = &d.sessions[0];
+        assert_eq!((w.name.as_str(), w.role.as_str(), w.repo.as_deref(), w.cwd.as_path(), w.fork_from.as_deref()), ("fm-demo-alpha", REPO_ROLE, Some("Alpha"), alpha.as_path(), Some(from)));
+        assert!(w.prompt.starts_with("You are the repo controller for Alpha in the Foreman workspace demo"), "{}", w.prompt);
+        assert!(adopt(home.path(), "demo", "Nope", from).is_err());
     }
 
     #[test]

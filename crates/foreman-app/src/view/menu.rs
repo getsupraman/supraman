@@ -25,6 +25,8 @@ pub enum MenuAction {
     Attach { workspace: String, repo: String, session: Session },
     Resume { workspace: String, repo: String, session: Session },
     StopSession(Session),
+    /// `name`: what it continues as ([`fleet::Adoption::Offer`]).
+    Adopt { workspace: String, folder: String, session: Session, name: String },
     Copy(String),
     ShowInWork { workspace: String, item_id: String },
     ToggleStar(String),
@@ -36,6 +38,7 @@ pub enum MenuAction {
 pub enum Confirmed {
     Remove(String),
     StopSession(Session),
+    Adopt { workspace: String, folder: String, session: Session, name: String },
     /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
@@ -161,6 +164,7 @@ pub fn session_items(
     claimed: Option<String>,
     send_name: Option<String>,
     deletable: bool,
+    adopt: Option<String>,
 ) -> Vec<MenuItem> {
     let s = &row.session;
     let (w, r) = (workspace.to_string(), repo.to_string());
@@ -173,6 +177,9 @@ pub fn session_items(
     if fleet::is_alive(&row.health) && s.kind == Kind::Background && !s.id.is_empty() {
         let label = if is_foremans(s) { "Stop" } else { "Stop…" };
         items.push(item("stop-session", label, MenuAction::StopSession(s.clone())));
+    }
+    if let Some(name) = adopt {
+        items.push(item("adopt", "Adopt…", MenuAction::Adopt { workspace: w.clone(), folder: repo.to_string(), session: s.clone(), name }));
     }
     if let Some(name) = send_name {
         items.push(item("copy-send-name", "Copy SendMessage name", MenuAction::Copy(name)));
@@ -253,8 +260,8 @@ mod tests {
         let mut n = node(Some(true));
         n.own = Some(row(own, Health::Running));
         n.relay = Some(row(&relay, Health::Idle));
-        let own_items = session_items("demo", "workspace", n.own.as_ref().unwrap(), false, Some("item-1".into()), Some("ctrl [abc123]".into()), false);
-        let relay_items = session_items("demo", "relay", n.relay.as_ref().unwrap(), false, None, None, false);
+        let own_items = session_items("demo", "workspace", n.own.as_ref().unwrap(), false, Some("item-1".into()), Some("ctrl [abc123]".into()), false, None);
+        let relay_items = session_items("demo", "relay", n.relay.as_ref().unwrap(), false, None, None, false, None);
         let (own_n, relay_n) = (own_items.len(), relay_items.len());
         let items = workspace_items(&n, true, false, own_items, relay_items);
         assert_eq!(
@@ -307,31 +314,36 @@ mod tests {
     #[test]
     fn session_menu_asks_before_stopping_a_session_foreman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
-        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false);
+        let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false, None);
         assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star"]);
         assert_eq!(items[1].label, "Stop…");
         assert_eq!(items[3].action, MenuAction::Copy("aaaa0001".into()));
 
+        let adopt = session_items("demo", "Alpha", &row(live, Health::Running), false, None, None, false, Some("fm-demo-alpha".into()));
+        assert_eq!(keys(&adopt), ["attach", "stop-session", "adopt", "copy-name", "copy-id", "star"]);
+        assert_eq!(adopt[2].label, "Adopt…");
+        assert!(matches!(&adopt[2].action, MenuAction::Adopt { workspace, folder, session, name } if workspace == "demo" && folder == "Alpha" && session.id == "aaaa0001" && name == "fm-demo-alpha"));
+
         let fm = live.replace("\"mine\"", "\"fm-demo-alpha\"");
-        assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None, None, false)[1].label, "Stop");
+        assert_eq!(session_items("demo", "Alpha", &row(&fm, Health::Running), false, None, None, false, None)[1].label, "Stop");
 
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-x","name":"","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false)), ["resume", "copy-id", "star"]);
+        assert_eq!(keys(&session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, false, None)), ["resume", "copy-id", "star"]);
 
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"term","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
-        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None, false);
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Idle), false, None, None, false, None);
         assert_eq!(keys(&items), ["copy-name", "copy-id", "star"], "an interactive session is neither attached nor stopped from here");
         assert_eq!(items[1].action, MenuAction::Copy("bbbb0005".into()));
         assert_eq!(items[2].action, MenuAction::ToggleStar("bbbb0005-x".into()));
         let mut starred = row(interactive, Health::Idle);
         starred.starred = true;
-        assert_eq!(session_items("demo", "Alpha", &starred, false, None, None, false)[2].label, "Unstar");
+        assert_eq!(session_items("demo", "Alpha", &starred, false, None, None, false, None)[2].label, "Unstar");
     }
 
     #[test]
     fn a_live_session_offers_its_sendmessage_name_beside_name_and_id() {
         let interactive = r#"{"sessionId":"bbbb0005-x","name":"Fix the tree","cwd":"C:\\demo","kind":"interactive","startedAt":1,"status":"idle","pid":5}"#;
-        let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()), false);
+        let items = session_items("demo", "Alpha", &row(interactive, Health::Unknown), false, None, Some("twin [d923d7]".into()), false, None);
         assert_eq!(keys(&items), ["copy-send-name", "copy-name", "copy-id", "star"]);
         assert_eq!(items[0].label, "Copy SendMessage name");
         assert_eq!(items[0].action, MenuAction::Copy("twin [d923d7]".into()));
@@ -341,7 +353,7 @@ mod tests {
     #[test]
     fn delete_comes_last_when_offered_and_the_workspace_offers_the_bulk_delete_before_remove() {
         let stopped = r#"{"id":"aaaa0002","sessionId":"aaaa0002-0000-4000-8000-000000000002","name":"old","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"stopped"}"#;
-        let items = session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, true);
+        let items = session_items("demo", "Alpha", &row(stopped, Health::Stopped), true, None, None, true, None);
         assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "delete"]);
         assert_eq!(items[4].label, "Delete…");
         assert!(matches!(&items[4].action, MenuAction::Delete(s) if s.id == "aaaa0002"));

@@ -357,7 +357,15 @@ impl FleetView {
 
     fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &Context<Self>) -> Vec<MenuItem> {
         let claimed = self.claimed_item(workspace, &row.session.name, cx);
-        session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row))
+        let adopt = match self.adoption(workspace, repo, row) {
+            Some(fleet::Adoption::Offer { name }) => Some(name),
+            _ => None,
+        };
+        session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row), adopt)
+    }
+
+    pub(crate) fn adoption(&self, workspace: &str, folder: &str, row: &SessionRow) -> Option<fleet::Adoption> {
+        fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.desired)
     }
 
     pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &Context<Self>) -> Option<String> {
@@ -427,6 +435,19 @@ impl FleetView {
                     Confirmed::StopSession(session),
                 ));
             }
+            MenuAction::Adopt { workspace, folder, session, name } => {
+                let label = if session.name.is_empty() { format!("session {}", session.id) } else { format!("{} ({})", session.name, session.id) };
+                let stop = if fleet::is_alive(&session.health(now_ms())) { "It is stopped (stop, never rm), then its" } else { "Its" };
+                let started = self.desired.get(&workspace).is_some_and(|d| d.0);
+                let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
+                self.confirm = Some(Confirm::ask(
+                    format!(
+                        "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh WorkState token. The original stays stopped and listed.{later}"
+                    ),
+                    "Adopt",
+                    Confirmed::Adopt { workspace, folder, session, name },
+                ));
+            }
             MenuAction::ToggleStar(session_id) => self.toggle_star(&session_id, cx),
             MenuAction::Copy(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -448,6 +469,7 @@ impl FleetView {
             match action {
                 Confirmed::Remove(w) => self.remove_workspace(&w, cx),
                 Confirmed::StopSession(session) => self.stop_session(session, cx),
+                Confirmed::Adopt { workspace, folder, session, name } => self.adopt(workspace, folder, session, name, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
                 Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
@@ -559,6 +581,36 @@ impl FleetView {
                 })
                 .ok();
             }
+        })
+        .detach();
+    }
+
+    /// Stops it first (stop, never rm), and wants the folder's session only once it stopped: a copy of a live
+    /// conversation would go on beside it.
+    fn adopt(&mut self, workspace: String, folder: String, session: Session, name: String, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        let alive = fleet::is_alive(&session.health(now_ms()));
+        let (id, session_id) = (session.id.clone(), session.session_id.clone());
+        let ws = workspace.clone();
+        let task = cx.background_executor().spawn(async move {
+            if alive {
+                Claude::default().stop(&id).map_err(|e| anyhow::anyhow!("cannot stop {id}: {e}"))?;
+            }
+            crate::supervise::adopt(&home, &ws, &folder, &session_id)
+        });
+        cx.spawn(async move |this, cx| {
+            let done = task.await;
+            this.update(cx, |this, cx| {
+                match done {
+                    Ok(true) => this.show_toast(format!("{} stopped; it continues as {name} at the supervisor's next tick.", session.id), cx),
+                    Ok(false) => this.show_toast(format!("{} stopped; it continues as {name} when you Start {workspace}.", session.id), cx),
+                    Err(e) => this.action_error = Some(format!("Cannot adopt {}: {e:#}", session.id)),
+                }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }

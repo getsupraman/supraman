@@ -1533,6 +1533,19 @@ impl FleetView {
         cx.notify();
     }
 
+    /// After a failed Adopt: `name` drops the conversation it forks from and launches as a new session.
+    pub fn start_fresh(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
+        let result = match &self.home {
+            Some(home) => DesiredState::update(home, workspace, |d| d.start_fresh(name)).map(drop).map_err(|e| e.to_string()),
+            None => Err("no Foreman home".into()),
+        };
+        match result {
+            Ok(()) => self.retry(workspace, name, cx),
+            Err(e) => self.action_error = Some(format!("Cannot start {name} fresh: {e}")),
+        }
+        cx.notify();
+    }
+
     pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
         let session = self.sessions.iter().find(|s| s.id == id)?.clone();
         Some(self.attach(workspace, "supervised", &session, window, cx))

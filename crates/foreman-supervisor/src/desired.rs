@@ -43,6 +43,10 @@ pub struct WantedSession {
     /// without one (m2/4), and a relay must re-arm its watcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_prompt: Option<String>,
+    /// The full uuid of an adopted session: its launch passes `--resume <uuid>` with the supervised flags, a copy
+    /// under a new id that carries the conversation (m5/61). Cleared once its row shows ([`DesiredState::forked`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_from: Option<String>,
 }
 
 impl WantedSession {
@@ -100,6 +104,7 @@ pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl I
         permission_mode: default_permission_mode(),
         add_dirs: vec![relay_dir.into()],
         resume_prompt: Some(RELAY_RESUME_PROMPT.into()),
+        fork_from: None,
     }
 }
 
@@ -122,7 +127,28 @@ pub fn repo_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, prompt
         permission_mode: default_permission_mode(),
         add_dirs: Vec::new(),
         resume_prompt: None,
+        fork_from: None,
     })
+}
+
+/// [`repo_session`] that continues the conversation of `session_id` (a full uuid) instead of starting one.
+pub fn adopted_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, prompt: impl Into<String>, session_id: &str) -> Option<WantedSession> {
+    Some(WantedSession {
+        fork_from: Some(session_id.to_string()),
+        ..repo_session(workspace, repo, cwd, prompt)?
+    })
+}
+
+/// What the copy of an adopted session is told: the role itself comes with its start (`fm hook`'s FOREMAN-ROLE).
+pub fn adopt_prompt(workspace: &str, w: &WantedSession) -> String {
+    let what = match &w.repo {
+        Some(repo) => format!("the {} session for {repo} in the Foreman workspace {workspace}", w.role),
+        None => format!("the {} session of the Foreman workspace {workspace}", w.role),
+    };
+    format!(
+        "Foreman adopted this conversation: from now on you are {}, {what}, supervised by Foreman. Follow the FOREMAN-ROLE instructions of this session's start as after a resume.",
+        w.name
+    )
 }
 
 /// What [`DesiredState::want`] did.
@@ -189,6 +215,23 @@ impl DesiredState {
         }
     }
 
+    /// The copy of `name`'s adoption shows as a row of `session_id`: its `fork_from` goes, so it is resumed as
+    /// itself from now on. False when `name` was not forking from another session.
+    pub fn forked(&mut self, name: &str, session_id: &str) -> bool {
+        match self.sessions.iter_mut().find(|w| w.name == name) {
+            Some(w) if w.fork_from.as_deref().is_some_and(|from| from != session_id) => {
+                w.fork_from = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Start fresh after a failed adoption: `name` launches as a new session. False when it was not adopting.
+    pub fn start_fresh(&mut self, name: &str) -> bool {
+        self.sessions.iter_mut().find(|w| w.name == name).and_then(|w| w.fork_from.take()).is_some()
+    }
+
     pub fn wants_relay(&self) -> bool {
         let name = relay_session_name(&self.workspace);
         self.sessions.iter().any(|w| w.name == name)
@@ -206,6 +249,7 @@ impl DesiredState {
                 permission_mode: default_permission_mode(),
                 add_dirs: Vec::new(),
                 resume_prompt: None,
+                fork_from: None,
             }],
             ..Self::new(workspace)
         }
@@ -344,6 +388,7 @@ mod tests {
             permission_mode: "default".into(),
             add_dirs: Vec::new(),
             resume_prompt: None,
+            fork_from: None,
         });
         desired.sessions.insert(0, relay_session("demo", r"C:\demo", r"C:\fm\relay\demo", "relay"));
         let path = desired.save(home.path()).unwrap();
@@ -540,5 +585,27 @@ mod tests {
         assert!(prompt.starts_with("You are the workspace controller for nomos"), "{prompt}");
         assert!(!prompt.contains("{workspace}"));
         assert!(role_prompt(&plugin_dir(), "nope", "nomos").is_err());
+    }
+
+    #[test]
+    fn an_adopted_session_forks_until_its_own_row_shows_and_start_fresh_drops_the_fork() {
+        let home = tempfile::tempdir().unwrap();
+        let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
+        let adopted = adopted_session("demo", "Alpha", r"C:\demo\Alpha", "p", from).unwrap();
+        assert_eq!((adopted.name.as_str(), adopted.role.as_str(), adopted.fork_from.as_deref()), ("fm-demo-alpha", REPO_ROLE, Some(from)));
+        let prompt = adopt_prompt("demo", &adopted);
+        assert!(prompt.contains("fm-demo-alpha") && prompt.contains("Alpha") && prompt.contains("FOREMAN-ROLE"), "{prompt}");
+        let (saved, _) = DesiredState::update(home.path(), "demo", |d| d.want(adopted.clone())).unwrap();
+        assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(saved.clone()));
+        let mut d = saved;
+        assert!(!d.forked("fm-demo-alpha", from), "the row still shows the original's uuid");
+        assert!(!d.forked("fm-demo-beta", "other"), "not wanted");
+        assert!(d.forked("fm-demo-alpha", "f050c443-6aa7-47b2-a9e4-63a5b6e9d04d"));
+        assert_eq!(d.sessions[0].fork_from, None);
+        assert!(!d.forked("fm-demo-alpha", "f050c443-6aa7-47b2-a9e4-63a5b6e9d04d"), "once");
+        d.want(adopted);
+        assert!(d.start_fresh("fm-demo-alpha"));
+        assert!(!d.start_fresh("fm-demo-alpha"));
+        assert_eq!(d.sessions[0].fork_from, None);
     }
 }
