@@ -837,6 +837,7 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
     ws.home = None;
     ws.add_folder(&git_dir);
     ws.add_folder(&plain_dir);
+    ws.folders[0].name = "VGit".into();
     let kinds: Vec<FolderKind> = ws.folders.iter().map(|f| f.kind).collect();
     if kinds != [FolderKind::Git, FolderKind::Plain] || ws.folders[0].branch.is_none() || ws.folders[1].branch.is_some() {
         bail!("the folders read as {:?}", ws.folders);

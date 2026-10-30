@@ -4621,3 +4621,43 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   - The task and its folder are gone.
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-1\target`): build ok; `cargo test --release --workspace` 705 passed,
   0 failed, 3 ignored; selftests skipped (docs-only unit).
+
+## 2026-10-30 — sched/2 the schedule model: `foreman_core::schedule`
+
+- **Module.** `crates/foreman-core/src/schedule/` (`mod.rs` types and `validate`, `store.rs` load/edit, `approval.rs`
+  fingerprint, MAC and `approve`, `next.rs` next fire, `runs.rs` run records and the schedules' part of `prune`).
+  The file is `<home>/schedules/<ws>.toml`, edited only through `schedule::edit(home, &Workspace, closure)` under
+  `schedules/<ws>.lock` + `write_atomic`: a closure, not an `Edit` enum, since a schedule has many fields.
+- **What `edit` enforces (C100).** It puts back `[schedule.approval]` as it was, whatever the closure did; a change of
+  any covered field sets `pending`; `active` holds only when the stored approval's fingerprint equals the current one
+  (so resuming a paused, still-approved schedule works, and nothing else activates). A covered edit stays `pending`
+  even when it restores the approved value: only Approve moves it back.
+- **One covered struct.** The edit's "covered changed" check and the fingerprint share one serde struct
+  (`CoveredJson`), the edit's copy without files or the command path, so a field cannot be covered by one and not the
+  other. A slash command is covered by `{"name","path"}` (the folder's `.claude/commands/<a>/<b>.md` for `/a:b`, else
+  the user's when that exists); its content hash goes to `approval.command_sha256`, not to the fingerprint.
+- **`approve` is in core**, as the brief asks (the doc lists it under sched/7): it creates the key under
+  `schedules/approval.lock` on the first approval (`getrandom` 0.3, 32 bytes, hex, `APPROVAL_KEY`), writes the approval
+  and sets `active`. Only the window's Approve may call it. `verify_approval` is checks 2 and 3 of a fire;
+  `effective_status` reads an `active` one that does not verify as `pending`.
+- **No new package.** `hmac` 0.12.1 and `getrandom` 0.3 are new direct dependencies of `foreman-core`, both already in
+  `Cargo.lock`; chrono gains the `clock` feature `foreman-ui` already enables.
+- **Time zones without `chrono-tz`.** `next_fire`/`previous_fire` are generic over `chrono::TimeZone`; the app passes
+  `Local` (`next_fire_local`). The DST tests use a test-only Europe/Berlin zone with the EU rule (last Sunday of March
+  and October, 01:00 UTC), so they do not depend on the machine. An interval steps in wall-clock time from `at` while
+  under 24 h, and restarts at `at` each day; a gap collapses its fires into the first minute after it.
+- **`git rev-list --exclude` with `--branches` takes the name below `refs/heads/`.** `--exclude=refs/heads/x` matched
+  nothing, so a worktree's own branch counted as "elsewhere" and a worktree with a commit only it had was removed. The
+  prune test caught it; `--exclude=<branch>` is right.
+- **Prune (Decision 8).** The run worktrees are found on disk (`<folder>/.claude/worktrees/fm-sched-*` of every
+  registered folder), not from run records, which age out themselves. One is removed (`git worktree remove`, no
+  `--force`, then `branch -D`) only when `status --porcelain` is empty and `rev-list HEAD --not --exclude=<branch>
+  --branches --remotes --tags` counts 0; the rest stay, listed by `run_worktrees` for sched/7. The state dir of a
+  removed schedule goes at once; a workspace whose schedule file does not parse keeps all of its state.
+- **The `sched-` slug.** `repo_session_name` returns `None` for a slug starting with `SCHED_SLUG_PREFIX`.
+- **A checkout named `sched-…` hit the reservation.** `--selftest-supervise` step v named its git folder after the
+  checkout, so in worktree `sched-2` it failed "no name for sched-2". The step now names that folder `VGit`
+  (like its `VPlain`), so the selftest no longer depends on where it is checked out.
+- **Gate** (`CARGO_TARGET_DIR=C:mbuild\sched-2	arget`): build ok; `cargo test --release --workspace` 727 passed,
+  0 failed, 3 ignored; `--selftest` 5/5 PASS; `--selftest-supervise` PASS (after the `VGit` fix);
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
