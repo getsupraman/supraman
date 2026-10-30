@@ -4401,3 +4401,55 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   over the 16 ms budget; 8–13 ms in every other run) and `--selftest-supervise` once at step c ("the stopped pid …
   is still running") while another unit's rustc and foreman were busy; each passed on rerun. Before the m5/63 merge
   all passed. No m5-44 audit section names m5/62.
+
+## 2026-10-30 — m5/67 session rows: claude icon, `kind · state`, one open action that double-click also runs
+
+- **Row** (`view/left.rs` `render_session`): the claude mark (`Icon::Claude`, Zed's `ai_claude.svg`, monochrome) in the
+  health colour (`health_color`: running green, idle blue, blocked amber, stopped/interrupted/closed grey) · name ·
+  `kind · state` (the state word in its colour, for colour-blind reading) · `also in` · star · one 20 px action slot.
+  The hex id is off the row; the hover card keeps it, Copy id keeps it, search still matches it and, while a search
+  matched the id, the result row shows the short id with the mark (`session-id-<id>`, hit key; never in the tree).
+  Blocked keeps its amber tint and `waiting for:` line. Keys kept: `session-row-`, `attach-`, `resume-`, `tab-link-`,
+  `star-`, `marked-`, `session-name-`, `foreign-` (now on the name).
+- **`interrupted`** replaces `process gone` (`fleet::health_label` for `Health::Orphaned`); the card adds "the process
+  ended while the session was working" (or `blocked`, from `last_state`). `fm roster` keeps `orphaned (…)`: the
+  workspace-controller skill documents that output.
+- **One open action** (`fleet::Open::of`, unit-tested per case; `FleetView::open_of`/`open_row`), shown in the slot
+  and run by a double-click on the row (`click_count() == 2`; a single click still does nothing in the tree):
+  another Foreman's → nothing; open in the tab shown now → nothing; open in another tab → switch (Tab icon, shown
+  without hover); live background → Attach; `offers_resume` → Resume (full UUID, unchanged); a live interactive
+  session outside our tabs → nothing (resuming would start a second claude on its transcript); a stopped `fm-`
+  session → nothing, "Start the workspace from its menu". The two refusals show a `show_why` toast and an `open`
+  line in the hover card says what a double-click does or why not. Search results: a single click runs only
+  Tab/Attach (as before), the row's own double-click does the rest; the outer click ignores `click_count() > 1`, so
+  nothing runs twice. The m5/54 row drag is unchanged (no movement, no drag).
+- **Another Foreman's session**: no badge, no action, no double-click; the row is muted (opacity, no strikethrough,
+  c8) and the name's tooltip says "another Foreman session".
+- **Own selftest run** (controller's decision D): `FleetView::own_prefix` (→ `fleet::Supervised::own_prefix`, the
+  4th argument of `fleet::is_foreign`) names `fm-<prefix>` and `fm-<prefix>-…` this Foreman's own; only the
+  selftest sets it (`selftest::start`: the supervise testbed's `name_prefix`, else `fm-selftest-<run_hex()>`; the
+  main session and 7l's `-mark` share `run_hex`). Without it the selftest's own `fm-selftest-<hex>` row is foreign
+  (`foreman_supervisor::is_foreign`, unchanged) and loses its Attach. Step e2's injected row is now another run's
+  `fm-selftest-<reversed hex>x-park`, still foreign.
+- **Selftests**: step 4 attaches by double-clicking the row, then a second double-click with its tab shown opens
+  nothing; 7h resumes the closed session by double-click (exactly one tab); 7l: a double-click on the row brings
+  its tab back; 7k: the id mark painted on the result row, no `session-id-` in the tree after Esc; supervise step v:
+  a double-click on the stopped `fm-` row opens no tab and toasts the Start hint; e2: the foreign row paints no
+  action and a double-click changes neither tabs nor toast. Not driven live: the "interactive live elsewhere" case
+  (unit test only).
+- **Red checks** (reverted with `git checkout`, never committed): the foreign arm of `Open::of` off →
+  `a_rows_one_open_action_follows_tab_then_attach_then_resume_and_refuses_the_rest` fails; the own-prefix check off
+  → `another_homes_fm_rows_are_foreign_shown_and_never_ranked_blocked` fails; `process gone` back → `labels` and
+  `an_interrupted_session_says_its_process_ended_and_another_foremans_says_whose` fail. Before decision D the first
+  `--selftest` failed at step 3 (the selftest's own row foreign, no `attach-`).
+- **Before/after** (`FOREMAN_SHOTS`, `C:\fmbuild\m5-67\shots\{before,after}`; before = master ae3713f in this worktree,
+  detached): `m5-31-tree-tabs`/`m5-14-terminal-tab` (dot · state column · name · `kind · id`, the `another Foreman`
+  badge → claude mark · name · `kind · state` · star), `m5-30-search-id` (the id mark now on its own chip),
+  `m5-10-another-foreman` (after only: muted, tooltip, no badge, no action).
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-67\target`, master 44c235a merged): build ok, no warnings; `cargo test
+  --release --workspace` 694 passed, 0 failed; `--selftest` 8 runs, 5 PASS (2, 4, 6, 7, 8), 3 FAIL (1, 3, 5) all at
+  step 7's frame budget (own work p10 16.7–19.2 ms over 16 ms) while other units built and ran selftests; master
+  ae3713f failed the same check twice on this machine the same hour (step 7 p10 16.6 ms, step 8 p10 18.6 ms), and
+  the passing runs' step 7 own work (p10 11.7–13.1 ms) matches master's (12.1–13.1 ms). `--selftest-supervise` PASS;
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` session from this worktree left. No m5-44 audit section names
+  m5/67.
