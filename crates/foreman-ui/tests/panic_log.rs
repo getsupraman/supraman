@@ -13,4 +13,6 @@ fn a_panic_is_in_the_log_with_its_location_and_backtrace() {
     assert!(log.contains(&format!("panic_log.rs:{line}:")), "{log}");
     assert!(log.contains("m5/68 probe"), "{log}");
     assert!(log.contains("backtrace:\n   0: ") && log.contains("core::panicking::panic_fmt"), "{log}");
+    let frame = format!("panic_log.rs:{line}");
+    assert!(log.lines().any(|l| l.trim_start().starts_with("at ") && l.ends_with(&frame)), "no frame at {frame}: {log}");
 }
