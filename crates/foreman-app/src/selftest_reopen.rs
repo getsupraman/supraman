@@ -10,7 +10,7 @@ use crate::{
     saved_tabs::{self, SavedTab, SavedTabs},
     selftest::{WORKSPACE, click, hex6, remove_dir_retrying, sleep, until, until_app, wait_for_tab_terminal},
     selftest_closed::{RECENT, fake_claude, seen_file},
-    view::{FleetView, TabKind},
+    view::{Detach, FleetView, TabKind},
 };
 
 const WITHIN: Duration = Duration::from_secs(15);
@@ -21,17 +21,46 @@ pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &m
     let saved = view.update(cx, |v, _| std::mem::replace(&mut v.claude_command, format!("& '{}'", fake_claude(home).display())));
     let gone = std::env::temp_dir().join(format!("fm-selftest-reopen-{}", hex6()));
     let result = check(view, home, own, &gone, cx).await;
+    let closed = close_all(view, false, cx).await;
     view.update(cx, |v, cx| {
-        let ids: Vec<u64> = v.tabs.iter().map(|t| t.id).collect();
-        ids.into_iter().for_each(|id| v.close_tab(id, cx));
         v.claude_command = saved;
         v.tab_notices.clear();
         cx.notify();
     });
-    until(view, cx, CLOSED_WITHIN, "the step's tabs closed", |v| v.tabs.is_empty().then_some(())).await?;
-    foreman_core::Settings::update(home, |s| s.sessions.resume_tabs_on_click = false).map_err(|e| anyhow!("settings.toml: {e}"))?;
+    let reset = foreman_core::Settings::update(home, |s| s.sessions.resume_tabs_on_click = false).map_err(|e| anyhow!("settings.toml: {e}"));
     std::fs::remove_dir_all(&gone).ok();
-    result
+    let result = result?;
+    closed?;
+    reset?;
+    Ok(result)
+}
+
+/// An attach tab is closed once its `claude attach` runs, so its Ctrl+Z detach is not typed before it reads keys; a failed detach is retried.
+async fn close_all(view: &Entity<FleetView>, unsaved: bool, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let ids: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().filter(|t| matches!(t.kind, TabKind::Attach { .. })).map(|t| t.id).collect());
+    for id in ids {
+        if let Ok(terminal) = wait_for_tab_terminal(view, id, WITHIN, cx).await {
+            let started = Instant::now();
+            while terminal.read_with(cx, |t, _| t.get_content()).trim().is_empty() && started.elapsed() < WITHIN {
+                sleep(cx, Duration::from_millis(50)).await;
+            }
+        }
+    }
+    if unsaved {
+        view.update(cx, |v, cx| v.close_tabs_unsaved(cx));
+    }
+    let started = Instant::now();
+    loop {
+        let open: Vec<(u64, bool)> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| (t.id, matches!(t.detach, Detach::None | Detach::Failed))).collect());
+        if open.is_empty() {
+            return Ok(());
+        }
+        if started.elapsed() > CLOSED_WITHIN {
+            bail!("tabs {open:?} still open {} s after their close", CLOSED_WITHIN.as_secs());
+        }
+        view.update(cx, |v, cx| open.iter().filter(|(_, closable)| *closable).for_each(|(id, _)| v.close_tab(*id, cx)));
+        sleep(cx, Duration::from_millis(250)).await;
+    }
 }
 
 fn kinds(saved: &SavedTabs) -> Vec<&'static str> {
@@ -69,8 +98,7 @@ async fn fake_ran(home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<St
 /// `gone` is deleted once its shell has closed.
 async fn restart(view: &Entity<FleetView>, home: &Path, expected: usize, gone: Option<&Path>, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
     let on_disk = saved_tabs::load(home).0;
-    view.update(cx, |v, cx| v.close_tabs_unsaved(cx));
-    until(view, cx, CLOSED_WITHIN, "every tab closed as a quit closes them", |v| v.tabs.is_empty().then_some(())).await?;
+    close_all(view, true, cx).await.context("every tab closed as a quit closes them")?;
     if saved_tabs::load(home).0 != on_disk {
         bail!("closing the tabs for the restart changed {}", saved_tabs::path(home).display());
     }
@@ -85,9 +113,7 @@ async fn restart(view: &Entity<FleetView>, home: &Path, expected: usize, gone: O
 }
 
 async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let before: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
-    view.update(cx, |v, cx| before.into_iter().for_each(|id| v.close_tab(id, cx)));
-    until(view, cx, CLOSED_WITHIN, "the earlier tabs closed", |v| v.tabs.is_empty().then_some(())).await?;
+    close_all(view, false, cx).await.context("the earlier tabs closed")?;
     std::fs::create_dir_all(gone).context("the folder that goes away")?;
     std::fs::remove_file(seen_file(home)).ok();
 
