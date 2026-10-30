@@ -24,6 +24,8 @@ pub enum CoreError {
     InvalidSchedule { id: String, why: String },
     #[error("{0}")]
     Secret(String),
+    #[error("Task Scheduler: {0}")]
+    Tasks(String),
     #[error("cannot locate the Foreman home: set FOREMAN_HOME or APPDATA")]
     NoHome,
     #[error("{}: {source}", path.display())]

@@ -96,6 +96,56 @@ pub fn is_elevated() -> bool {
     true
 }
 
+/// The service's pid from `<claude_dir>/daemon/roster.json` (`supervisorPid`), when it runs. Read from the
+/// file because `claude daemon status` reads `NotRunning` from an unelevated process facing an elevated
+/// service (docs/research/scheduler.md, probe (a)).
+pub fn service_pid() -> Option<u32> {
+    let roster = foreman_core::paths::claude_dir()?.join("daemon").join("roster.json");
+    service_pid_in(&std::fs::read_to_string(roster).ok()?).filter(|pid| process::alive(*pid))
+}
+
+fn service_pid_in(roster: &str) -> Option<u32> {
+    let v: serde_json::Value = serde_json::from_str(roster).ok()?;
+    v.get("supervisorPid")?.as_u64().and_then(|p| u32::try_from(p).ok())
+}
+
+/// Whether the running service has an elevated token; `None` when none runs or its token cannot be read.
+pub fn service_elevated() -> Option<bool> {
+    pid_elevated(service_pid()?)
+}
+
+/// A scheduled task's run level: `HighestAvailable` while the service is elevated (Decision 5 of
+/// docs/research/scheduler.md); with no service the task's own `claude --bg` starts one at its level.
+pub fn task_run_level() -> foreman_core::schedule::RunLevel {
+    foreman_core::schedule::RunLevel::for_service(service_elevated().unwrap_or(false))
+}
+
+#[cfg(windows)]
+pub fn pid_elevated(pid: u32) -> Option<bool> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation};
+    use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+    // SAFETY: plain Win32 calls on handles this function opens and closes.
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(process);
+        opened.ok()?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        let read = GetTokenInformation(token, TokenElevation, Some(&mut elevation as *mut _ as *mut _), size_of::<TOKEN_ELEVATION>() as u32, &mut len);
+        let _ = CloseHandle(token);
+        read.ok()?;
+        Some(elevation.TokenIsElevated != 0)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn pid_elevated(_pid: u32) -> Option<bool> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::{Command, Stdio};
@@ -114,6 +164,20 @@ mod tests {
         assert_eq!(parse_daemon_status(REFUSED), DaemonReach::Unreachable { pid: 58604 });
         assert_eq!(parse_daemon_status("daemon: not running\n"), DaemonReach::NotRunning);
         assert_eq!(parse_daemon_status("something else"), DaemonReach::Unknown);
+    }
+
+    #[test]
+    fn the_service_pid_is_the_rosters_supervisor_pid() {
+        assert_eq!(service_pid_in(r#"{"proto":1,"supervisorPid":49204,"workers":{}}"#), Some(49204));
+        assert_eq!(service_pid_in(r#"{"proto":1,"workers":{}}"#), None);
+        assert_eq!(service_pid_in("not json"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn this_process_reads_as_elevated_exactly_when_is_elevated_says_so() {
+        assert_eq!(pid_elevated(std::process::id()), Some(is_elevated()));
+        assert_eq!(pid_elevated(u32::MAX - 1), None);
     }
 
     #[test]

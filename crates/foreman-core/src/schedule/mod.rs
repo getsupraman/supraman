@@ -3,8 +3,12 @@
 
 mod approval;
 mod next;
+mod registrar;
 mod runs;
 mod store;
+#[cfg(windows)]
+mod task_service;
+mod task_xml;
 
 use std::fmt;
 use std::path::{Component, Path};
@@ -16,8 +20,12 @@ use crate::{Workspace, validate_name};
 
 pub use approval::{APPROVAL_KEY, Covered, Refusal, approve, covered, effective_status, mac, verify, verify_approval};
 pub use next::{next_fire, next_fire_local, previous_fire};
+pub use registrar::{FMW_EXE, FakeRegistrar, Registrar, SyncTarget, Synced, fmw_exe, sync, task_root, task_root_for};
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};
 pub use store::{edit, file_path, load, schedules_dir};
+#[cfg(windows)]
+pub use task_service::WindowsRegistrar;
+pub use task_xml::{RunLevel, TaskSpec, definition_digest, task_xml, version_of};
 pub(crate) use runs::prune as prune_schedules;
 pub use runs::run_worktrees;
 

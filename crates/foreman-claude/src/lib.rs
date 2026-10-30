@@ -64,7 +64,10 @@ pub use cli::{
     ClaudeVersion, LIST_TIMEOUT, MIN_VERSION, TESTED_VERSION, check_supported, check_version, cli_version,
     list_sessions, parse_version,
 };
-pub use daemon::{DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, is_elevated, parse_daemon_status};
+pub use daemon::{
+    DaemonReach, UNREACHABLE, daemon_mismatch, daemon_status, elevation_mismatch, is_elevated, parse_daemon_status, pid_elevated, service_elevated, service_pid,
+    task_run_level,
+};
 pub use error::{ClaudeError, Result};
 pub use foreman_core::process::Output;
 pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_session_id};

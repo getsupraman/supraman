@@ -671,3 +671,5 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
     assert!(wt("ahead").exists(), "a commit only it has stays");
     assert_eq!(run_worktrees(&f.home).len(), 2, "listed for René");
 }
+
+mod registrar;
