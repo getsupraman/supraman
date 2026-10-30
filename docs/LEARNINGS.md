@@ -4453,3 +4453,56 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   the passing runs' step 7 own work (p10 11.7–13.1 ms) matches master's (12.1–13.1 ms). `--selftest-supervise` PASS;
   `--selftest-detach-shutdown` PASS; no `fm-selftest` session from this worktree left. No m5-44 audit section names
   m5/67.
+
+## 2026-10-30 — m5/65 remember last tabs: the tabs open at close come back on the next start
+
+- **File** `<home>/tabs.json` (`saved_tabs.rs`: `SavedTabs { tabs, active }`, `load` through `load_json_or_notice`,
+  `save` through `write_atomic`). Each tab is one of `shell {title, cwd}`, `claude {title, cwd, session_id, name}`
+  (a hand tab), `attach {title, cwd, id, session_id, name}`, `work {title, workspace}`; exited tabs are left out.
+  A hand tab's `session_id` is the claude resolved under its shell (`Tab::claude`, so a `/clear` is followed), else
+  the uuid it was launched with (`Tab::launched_session`: the resumed uuid, or the `+` tab's `new_session` from
+  m5/40); `name` is the tree's name for that uuid, else the one it was launched with, so the resume mints under it (m5/35).
+- **When it is written:** `persist_tabs` runs on every render and sends the snapshot to one writer task only when
+  it changed (the writer keeps only the newest pending snapshot). That catches every change without a hook per
+  path: open, close, drag (m5/53), activate, a claude resolved under a shell. Nothing is written until the start's
+  reopen is done (it would write an empty list over the file), nor once Quit is asked (`quit_asked`: the quit detaches
+  and removes the attach tabs, which must not reach the file), nor while the selftest closes tabs for its restart.
+  A failed write is one notice (`Notice::Tabs`), cleared by the next good write.
+- **On start** (`view/reopen.rs` `reopen_tabs`): after the first session list is applied **and** the last run's hand
+  tokens are released (`hands_ready`, set after `Hands::release_all`; a reopened hand tab minted before it would be
+  revoked by it). The plan (`saved_tabs::plan`, pure, unit-tested) runs in the background (it reads the folders and
+  looks for transcripts with `find_transcript`): shells start a new pwsh in their cwd; Work tabs open if the
+  workspace is still registered; an attach tab re-attaches when its session is alive, else becomes a placeholder
+  with Resume (nothing restarts unasked); a stopped `fm-` session is dropped (the supervisor starts it); a claude
+  tab resumes with `claude --resume <full uuid>` and a fresh mint (`hand_claude` → `launch_for(cwd, name, uuid)`),
+  or becomes a placeholder when `resume_tabs_on_click` is set. Dropped, with one notice naming each and why: a
+  folder gone, a workspace gone, a session with no transcript (deleted, or a `+` tab never prompted), a short or
+  missing id (never resumed: a short id starts a new session), a claude session already running in another
+  terminal (a resume would run it twice). Reopened tabs come first in the saved order, then any the user opened
+  while they loaded; the saved active tab is active unless the user had one open before.
+- **Placeholder** `TabKind::Saved(SavedTab)`: no terminal, a text and a Resume button (`resume-tab-<id>`). Resume
+  attaches when the session runs again by then, else resumes (`claude --bg --resume` then attach for a background
+  session, the hand resume for a claude tab), refuses with a toast when a claude session runs elsewhere, and puts
+  the new tab in the placeholder's place. It is saved as the tab it stands for, and `tab_runs` counts it as its
+  session's tab, so the tree row's open action (m5/67 `Open::Tab`) shows it instead of opening a second tab.
+  `open_row` itself is not used for the reopen: it needs a tree `SessionRow` and titles the tab `workspace · repo ·
+  name`, while a reopened tab keeps its saved title.
+- **Settings → Sessions** (`[sessions]`): `reopen_tabs` "Reopen last tabs on start" (default on, saved as unset) and
+  `resume_tabs_on_click` "Resume reopened claude tabs" At once / On a click (default at once, René's decision).
+- **Selftest 7x** (`selftest_reopen.rs`, before 7p while the run's own session lives): Work, shell, claude
+  (resume of the fake transcript `RECENT` through the fake claude), attach (the run's own session), and a shell in
+  a temp folder; Work dragged first, claude active; `tabs.json` must equal the snapshot. Restart in-process
+  (`close_tabs_unsaved` closes every tab as a quit does, file unchanged, the folder deleted; `restart_tabs` reopens
+  as a start does): 4 tabs in the same order with the same active tab, the fake claude ran `--resume <uuid>`, the
+  attach tab re-attached, one notice names the dropped shell. Then with `resume_tabs_on_click`: the claude tab is a
+  placeholder, nothing runs for 1 s, its Resume resumes it in place. An attach tab is closed only once `claude
+  attach` has painted (a Ctrl+Z typed before it reads keys leaves `Detach::Failed`); a failed detach is retried.
+- **Red checks** (reverted, never committed): the attach plan without the liveness filter →
+  `an_attached_session_reattaches_only_while_it_runs_and_never_restarts_unasked` fails; `persist_tabs` never writing →
+  7x "the five tabs in tabs.json: not within 15s"; the saved active tab ignored → 7x "after the restart … active:
+  Some(0) … expected … active: Some(2)".
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-65\target`, master 590fdcc with m5/67 merged): build ok, no warnings;
+  `cargo test --release --workspace` 698 passed, 0 failed; `--selftest` 5 of 5 PASS in a row (7x: 4 tabs back in
+  30–37 ms) after one run failed step 7's frame budget (F-94, own work p10 17.6 ms while other units' Foremans ran);
+  `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session left. No m5-44 audit
+  section names m5/65.
