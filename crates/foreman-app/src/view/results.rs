@@ -7,7 +7,7 @@ use theme::ActiveTheme as _;
 
 use super::left::{home_text, quiet, repo_label, secondary};
 use super::{FleetView, hit_target};
-use crate::fleet::{Supervised, Tree};
+use crate::fleet::{Open, Supervised, Tree};
 use crate::search::{self, Results, SessionHit};
 
 impl FleetView {
@@ -22,6 +22,7 @@ impl FleetView {
             starred: Some(self.stars.ids()),
             expanded: Some(&all),
             disabled_folders: true,
+            own_prefix: self.own_prefix.as_deref(),
         };
         crate::fleet::build(&self.workspaces, &self.sessions, now_ms(), true, &sup)
     }
@@ -50,15 +51,10 @@ impl FleetView {
         self.clear_search(cx);
     }
 
-    /// The row's own attach pill runs first, so the tab it opened is the one brought forward.
+    /// A click opens what needs no new claude; the row's own double-click also resumes.
     fn open_result(&mut self, workspace: &str, repo: &str, hit: &SessionHit, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        let s = &hit.row.session;
-        match self.session_tab(s) {
-            Some(id) => self.activate_tab(id, cx),
-            None if hit.row.attachable => {
-                self.attach(workspace, repo, s, window, cx);
-            }
-            None => {}
+        if matches!(self.open_of(&hit.row), Open::Tab(_) | Open::Attach) {
+            self.open_row(workspace, repo, &hit.row, window, cx);
         }
     }
 
@@ -154,7 +150,11 @@ impl FleetView {
             .flex_none()
             .cursor_pointer()
             .child(self.render_session(workspace, repo, &hit.row, px(indent), cx))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_result(&w, &r, &h, window, cx)))
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                if e.click_count() == 1 {
+                    this.open_result(&w, &r, &h, window, cx);
+                }
+            }))
             .into_any_element()
     }
 }

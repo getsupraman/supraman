@@ -165,6 +165,8 @@ pub struct Supervised<'a> {
     pub expanded: Option<&'a HashSet<String>>,
     /// Keeps a disabled folder that holds no session (search); the tree leaves it out.
     pub disabled_folders: bool,
+    /// A selftest's run prefix: its `fm-selftest-<hex>` sessions are this Foreman's own.
+    pub own_prefix: Option<&'a str>,
 }
 
 /// Filled once per poll, off the UI thread, because [`build`] runs on every frame.
@@ -210,7 +212,10 @@ pub fn is_alive(health: &Health) -> bool {
     matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
 }
 
-pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) -> bool {
+pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>, own_prefix: Option<&str>) -> bool {
+    if own_prefix.is_some_and(|p| name.strip_prefix(p).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))) {
+        return false;
+    }
     let wanted = desired.into_iter().flat_map(|d| d.values()).flat_map(|(_, wanted)| wanted.iter().map(String::as_str));
     foreman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()), wanted)
 }
@@ -242,7 +247,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         let hook = sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
         let health = with_hook(session.supervised_health(now_ms), hook.as_ref(), sup.polled_at);
         SessionRow {
-            foreign: is_foreign(&session.name, workspaces, sup.desired),
+            foreign: is_foreign(&session.name, workspaces, sup.desired, sup.own_prefix),
             starred: starred(&session.session_id),
             hook,
             ..SessionRow::new(session, health)
@@ -472,9 +477,52 @@ fn mark_second_occurrences(nodes: &mut [WorkspaceNode], desired: Option<&BTreeMa
 
 pub fn health_label(health: &Health) -> String {
     match health {
-        Health::Orphaned { .. } => "process gone".to_string(),
+        Health::Orphaned { .. } => "interrupted".to_string(),
         Health::Blocked { .. } => "blocked".to_string(),
         other => other.to_string(),
+    }
+}
+
+/// What a session row's action slot and its double-click do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Open {
+    Tab(u64),
+    Shown,
+    Attach,
+    Resume,
+    Foreign,
+    Elsewhere,
+    Supervised,
+    Nothing,
+}
+
+impl Open {
+    /// `tab`: the tab running it, `active`: the tab shown now, `resumable`: [`crate::view::offers_resume`].
+    pub fn of(row: &SessionRow, tab: Option<u64>, active: Option<u64>, resumable: bool) -> Self {
+        let s = &row.session;
+        match tab {
+            _ if row.foreign => Self::Foreign,
+            Some(id) if active == Some(id) => Self::Shown,
+            Some(id) => Self::Tab(id),
+            None if row.attachable => Self::Attach,
+            None if resumable => Self::Resume,
+            None if is_alive(&row.health) && s.kind != Kind::Background => Self::Elsewhere,
+            None if !is_alive(&row.health) && s.name.starts_with(foreman_core::FM_PREFIX) => Self::Supervised,
+            None => Self::Nothing,
+        }
+    }
+
+    pub fn hint(self) -> Option<&'static str> {
+        match self {
+            Self::Tab(_) => Some("Show its tab"),
+            Self::Shown => Some("shown now"),
+            Self::Attach => Some("Attach in a new tab"),
+            Self::Resume => Some("Resume in a new tab"),
+            Self::Foreign => Some("another Foreman session"),
+            Self::Elsewhere => Some("runs in another terminal: resuming here would start a second claude on it"),
+            Self::Supervised => Some("the supervisor runs it while it is wanted: Start the workspace from its menu"),
+            Self::Nothing => None,
+        }
     }
 }
 
@@ -628,10 +676,35 @@ mod tests {
     }
 
     #[test]
+    fn a_rows_one_open_action_follows_tab_then_attach_then_resume_and_refuses_the_rest() {
+        let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
+        let row = |name: &str| tree.workspaces[0].rows().find(|r| r.session.name == name).unwrap().clone();
+        let (busy, term, done, gone) = (row("busy"), row("term"), row("done"), row("gone"));
+        assert_eq!(Open::of(&busy, None, None, false), Open::Attach);
+        assert_eq!(Open::of(&busy, Some(3), Some(1), false), Open::Tab(3), "open in a tab beats attach");
+        assert_eq!(Open::of(&busy, Some(3), Some(3), false), Open::Shown);
+        assert_eq!(Open::of(&done, None, None, true), Open::Resume);
+        assert_eq!(Open::of(&gone, None, None, true), Open::Resume, "interrupted resumes");
+        assert_eq!(Open::of(&done, None, None, false), Open::Nothing);
+        assert_eq!(Open::of(&term, None, None, false), Open::Elsewhere, "live interactive outside a tab");
+        assert_eq!(Open::of(&term, Some(2), None, false), Open::Tab(2));
+
+        let mut fm = done.clone();
+        fm.session.name = "fm-demo-alpha".into();
+        assert_eq!(Open::of(&fm, None, None, false), Open::Supervised);
+        let mut foreign = busy.clone();
+        foreign.foreign = true;
+        assert_eq!(Open::of(&foreign, None, None, true), Open::Foreign);
+        assert_eq!(Open::of(&foreign, Some(3), None, true), Open::Foreign, "nothing for another Foreman's, even in a tab");
+        assert_eq!(Open::Nothing.hint(), None);
+        assert_eq!(Open::Foreign.hint(), Some("another Foreman session"));
+    }
+
+    #[test]
     fn labels() {
         let tree = build(&[workspace()], &sessions(), NOW, true, &Supervised::default());
         let beta = &tree.workspaces[0].repos[1];
-        assert_eq!(health_label(&beta.sessions[1].health), "process gone");
+        assert_eq!(health_label(&beta.sessions[1].health), "interrupted");
         let alpha = &tree.workspaces[0].repos[0];
         assert_eq!(health_label(&alpha.sessions[0].health), "blocked");
         assert_eq!(
@@ -675,13 +748,17 @@ mod tests {
         let mut desired = BTreeMap::new();
         desired.insert("demo".to_string(), (true, vec!["fm-demo-workspace".to_string(), "fm-x-workspace".to_string()]));
         let ws = [workspace()];
-        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired));
+        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired), None);
         assert!(foreign("fm-selftest-abc123-park"), "a selftest's session");
         assert!(foreign("fm-other-workspace"), "another home's workspace");
         assert!(!foreign("fm-demo-workspace"), "wanted here");
         assert!(!foreign("fm-x-workspace"), "wanted here, whatever its name");
         assert!(!foreign("fm-demo-alpha"), "named after a workspace of this home: retired, or wanted before the first tick");
-        assert!(!is_foreign("fm-demo-alpha", &ws, None));
+        assert!(!is_foreign("fm-demo-alpha", &ws, None, None));
+        let run = |name: &str| is_foreign(name, &ws, Some(&desired), Some("fm-selftest-abc123"));
+        assert!(!run("fm-selftest-abc123") && !run("fm-selftest-abc123-park"), "this selftest run's own");
+        assert!(run("fm-selftest-def456-park"), "another selftest run's");
+        assert!(run("fm-selftest-abc1234"), "a longer hex is another run");
         assert!(!foreign("mine"), "the user's own session");
 
         let old = NOW - 3_600_000;

@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
-    selftest::{click, sleep, until},
+    selftest::{click, double_click, sleep, until},
     stars::Stars,
     view::FleetView,
 };
@@ -118,8 +118,13 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     .await?;
 
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
-    click(view, &format!("resume-{}", &RECENT[..8]), cx).await?;
-    until(view, cx, WITHIN, "resume opens a tab", |v| (v.tabs.len() > tabs).then_some(())).await?;
+    double_click(view, &format!("session-row-{RECENT}"), cx).await?;
+    until(view, cx, WITHIN, "a double-click on its row resumes it in a tab", |v| (v.tabs.len() > tabs).then_some(())).await?;
+    sleep(cx, Duration::from_millis(500)).await;
+    let opened = view.read_with(cx, |v, _| v.tabs.len()) - tabs;
+    if opened != 1 {
+        bail!("a double-click on {RECENT}'s row opened {opened} tabs, expected 1");
+    }
     let seen = seen_file(home);
     let deadline = Instant::now() + WITHIN;
     let text = loop {
@@ -171,7 +176,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     Ok(format!(
         "starred 20-day-old {OLD} shown with stopped hidden {} ms in; {RECENT} only with stopped shown, as \"{RECENT_TITLE}\"; \
-         resume ran the fake claude `{args}` in {cwd} ({}); star kept it with stopped hidden, in starred.json, after a reload; unstar hid it",
+         a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden, in starred.json, after a reload; unstar hid it",
         first.as_millis(),
         if minted { "with its own token config" } else { "plain: no WorkState token to mint" }
     ))

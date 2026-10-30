@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{WORKSPACE, click, log_offset, sleep, teardown_errors_since, until, until_with},
+    selftest::{WORKSPACE, click, double_click, log_offset, sleep, teardown_errors_since, until, until_with},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -162,7 +162,8 @@ pub async fn foreign_row(
     hex: &str,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<String> {
-    let name = format!("fm-elsewhere-{hex}-park");
+    let other: String = hex.chars().rev().collect();
+    let name = format!("fm-selftest-{other}x-park");
     let session_id = format!("ffff{hex}-foreign");
     let json = serde_json::json!([{
         "id": format!("ffff{hex}"),
@@ -215,6 +216,18 @@ async fn check_foreign(
     }
     let label = format!("foreign-{session_id}");
     crate::selftest::scrolled_into_view(view, &label, cx).await?;
+    let short = &row.session.id;
+    let actions = [format!("attach-{short}"), format!("resume-{short}"), format!("tab-link-{short}")];
+    if let Some(key) = view.read_with(cx, |v, _| actions.iter().find(|k| v.hits.borrow().contains_key(*k)).cloned()) {
+        bail!("{name}, another Foreman's, paints the action {key}");
+    }
+    let (tabs, toast) = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
+    double_click(view, &format!("session-row-{session_id}"), cx).await?;
+    sleep(cx, Duration::from_millis(500)).await;
+    let after = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
+    if after != (tabs, toast.clone()) {
+        bail!("a double-click on {name}, another Foreman's, did something: tabs {tabs} → {}, toast {toast:?} → {:?}", after.0, after.1);
+    }
     let (needs, own) = view.read_with(cx, |v, _| {
         (
             v.needs.iter().filter(|n| n.name == name).count(),
@@ -229,7 +242,7 @@ async fn check_foreign(
     }
     shot("m5-10-another-foreman", cx).await;
     Ok(format!(
-        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Foreman's, \"another Foreman\" painted, \
+        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Foreman's (its name muted under foreign-<id>, no action, a double-click opens nothing), \
          0 Inbox rows for it over {} ticks; this home's {own_park} still Blocked in the Inbox",
         view.read_with(cx, |v, _| v.ticks) - ticks
     ))

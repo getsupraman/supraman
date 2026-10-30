@@ -200,6 +200,8 @@ pub struct FleetView {
     pub last_refresh_took: Option<Duration>,
     pub refreshes: u64,
     pub show_stopped: bool,
+    /// Set only by a selftest: see [`fleet::Supervised::own_prefix`].
+    pub own_prefix: Option<String>,
     collapsed: HashSet<String>,
     pub tabs: Vec<Tab>,
     pub active: Option<u64>,
@@ -635,6 +637,7 @@ impl FleetView {
             last_refresh_took: None,
             refreshes: 0,
             show_stopped: false,
+            own_prefix: None,
             collapsed: HashSet::new(),
             tabs: Vec::new(),
             active: None,
@@ -1273,8 +1276,8 @@ impl FleetView {
     fn apply_report(&mut self, report: Report) {
         self.desired = report.desired;
         self.needs = report.needs;
-        let (workspaces, desired) = (&self.workspaces, &self.desired);
-        self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired)));
+        let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
+        self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
         self.max_working = report.max_working;
         self.supervise_errors = report.errors;
         foreman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
@@ -1305,6 +1308,7 @@ impl FleetView {
             starred: Some(self.stars.ids()),
             expanded: Some(&self.closed_expanded),
             disabled_folders: false,
+            own_prefix: self.own_prefix.as_deref(),
         };
         fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
     }

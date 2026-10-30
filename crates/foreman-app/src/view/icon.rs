@@ -21,6 +21,7 @@ pub enum Icon {
     StarFilled,
     Warning,
     Attach,
+    Claude,
     Folder,
     GitBranch,
     Play,
@@ -36,7 +37,7 @@ pub enum Icon {
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 27] = [
+    const ALL: [Icon; 28] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -53,6 +54,7 @@ impl Icon {
         Icon::StarFilled,
         Icon::Warning,
         Icon::Attach,
+        Icon::Claude,
         Icon::Folder,
         Icon::GitBranch,
         Icon::Play,
@@ -84,6 +86,7 @@ impl Icon {
             Icon::StarFilled => include_bytes!("../../assets/icons/star_filled.svg"),
             Icon::Warning => include_bytes!("../../assets/icons/warning.svg"),
             Icon::Attach => include_bytes!("../../assets/icons/maximize.svg"),
+            Icon::Claude => include_bytes!("../../assets/icons/claude.svg"),
             Icon::Folder => include_bytes!("../../assets/icons/folder.svg"),
             Icon::GitBranch => include_bytes!("../../assets/icons/git_branch.svg"),
             Icon::Play => include_bytes!("../../assets/icons/play_outlined.svg"),
