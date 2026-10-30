@@ -924,8 +924,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let refreshed = step("7j", crate::selftest_refresh::run(view, &home(), cx)).await?;
     println!("step 7j: {refreshed}");
 
-    let started = step("7t", crate::selftest_startup::run(view, &home(), &main_repo_of_gate()?, cx)).await?;
-    println!("step 7t: {started}");
+    let started = step("7w", crate::selftest_startup::run(view, &home(), &main_repo_of_gate()?, cx)).await?;
+    println!("step 7w: {started}");
 
     let searched = step("7k", crate::selftest_search::run(view, cx)).await?;
     println!("step 7k: {searched}");
