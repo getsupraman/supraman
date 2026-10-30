@@ -290,12 +290,19 @@ fn fm_never_approves_and_never_registers_a_task() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let forbidden = ["approve(", "APPROVAL_KEY", "Approval {", "approval = Some", ".approval =", "Registrar", "schtasks", "ScheduledTask", "ITaskService", "TaskScheduler"];
     let mut files = 0;
-    for entry in fs::read_dir(&src).unwrap() {
-        let path = entry.unwrap().path();
-        let text = fs::read_to_string(&path).unwrap();
-        files += 1;
-        for word in forbidden {
-            assert!(!text.contains(word), "{} names {word}", path.display());
+    let mut dirs = vec![src.clone()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            let text = fs::read_to_string(&path).unwrap();
+            files += 1;
+            for word in forbidden {
+                assert!(!text.contains(word), "{} names {word}", path.display());
+            }
         }
     }
     assert!(files > 5, "read the sources at {}", src.display());

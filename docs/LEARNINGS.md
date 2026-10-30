@@ -4894,3 +4894,54 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `command = "/autofix-prod-bugs"`. The skill listing named `foreman:foreman-scheduler`.
 - **Open (for the profile design, not this unit):** the proof session noted that `worktree-edit` allows no `git`
   or build command, so a fixing command that commits parks as needs-you unless `--allow-tools` adds them.
+## 2026-10-30 — sched/5 `fm schedule fire`, the script stage
+
+`fm schedule fire --home … <ws> <id> --fingerprint …` (the task's line, run as `fmw.exe`) and `fm schedule run <ws> <id>`
+(Run now) both call `fm::fire::fire` (`crates/fm/src/fire.rs`); tests in `crates/fm/tests/fire.rs` (temp home,
+`MemoryStore`, fake `.cmd` scripts, held locks, a test `Host`).
+
+- **`fm` is a lib with two bins.** `src/lib.rs` (the old `main.rs`) has `cli` and `fmw`; `src/main.rs` and
+  `src/bin/fmw.rs` (`#![windows_subsystem = "windows"]`, PE subsystem 2) call them. `fmw` takes `schedule fire` alone and
+  writes nothing to stdout or stderr: every fire, from either exe, appends one line to `schedules/fire.log`
+  (`append_capped`, `FIRE_LOG_CAP`). `scripts/release.ps1` and `docs/RELEASE.md` ship `fmw.exe` beside `fm.exe`;
+  `schedule::fmw_exe()` already looked there. The C100 source scan now walks `src/` recursively, `src/bin/` included.
+- **Order of a fire**: load (unknown → `fire.log` only, exit 2); `active`, `verify_approval`, then the task's
+  `--fingerprint` against the current one (each refusal recorded `refused`, exit 3); catch-up (`catch_up = skip`, a task
+  start more than 10 minutes after the previous scheduled time → `skipped` "missed"); budget; overlap lock; live file;
+  `started`; script; session seam; `ended`; live file removed. Exit 0 for `Outcome::succeeded`, else 1.
+- **The budget is not waited for by a `script` action**: it launches no session, so a full `max_working` would only
+  delay it. `script_then_session` waits before its script, as the doc's order has it. `Host::busy` counts this home's
+  non-foreign mid-turn `fm-` rows with `foreman_supervisor::working`; a listing error is logged and the fire goes on.
+- **Overlap.** `foreman_core::fs::try_lock_file` (new, C56) on `live/<ws>/<id>.lock`. Queue: the one waiter holds
+  `<id>.queued` with `try_lock_file` too, so a dead waiter frees it; a second waiter records `skipped`. Restart: write
+  `<id>.restart`, then block on the lock; the owner's script stage polls the file every 250 ms through
+  `process::run_watched`'s `stop`, kills the tree and ends `interrupted` ("restarted"). Whoever takes the lock removes
+  `.restart`. A live file found under a free lock is a dead run: recorded `interrupted` and removed (the session part of
+  recovery is sched/6/7's).
+- **`process::run_watched`** (new, C56): `run` with a `stop` predicate, returning `Ended::{Exited, TimedOut, Stopped}`
+  and the output a killed child wrote by then. The drain threads now append into a shared buffer, so a timeout keeps the
+  stderr tail without joining a pipe a surviving grandchild holds open (waits at most 1 s for the drains). `run` is
+  `run_watched` with no stop; its behaviour is unchanged except that a timeout now waits up to 1 s for the pipes.
+- **The script contract.** `.ps1` → `pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File`, `powershell` when
+  `pwsh` is not found; `.cmd`/`.bat` → `cmd /d /s /c ""<script>" "<arg>"…"` through `raw_arg` (MSVC quoting is not
+  cmd's); `.exe` direct. cwd is the folder's checkout. The env is the doc's list plus each secret; `FOREMAN_LAST_RUN` /
+  `FOREMAN_LAST_OUTCOME` come from the schedule's latest started run. 0 → `nothing_to_do` (`ok` for `script`), 10 →
+  `Host::session` with stdout (`ok` for `script`), else or timeout → `failed` with the stage's 2 KiB stderr tail.
+- **Secrets.** `fm schedule secret set [<ws>] <id> <NAME>` reads one line from stdin into `default_store(home)` under
+  `schedule::secret_key` (`foreman/schedule/<ws>/<id>/<NAME>`), refusing a name the schedule does not list and an empty
+  value. Fire reads them only for a script stage; a missing one fails the run naming the command to set it.
+  `schedule::masked_tail` masks every value (as `***`) before the 2 KiB cut, in the stderr tail and in the stdout handed
+  to the session stage. The test greps every file of the temp home, UTF-8 and UTF-16, for the value: none.
+- **The seam.** `Host::session(ctx, gate)` is sched/6's: `RealHost` records `skipped` "launch pending (sched/6)", so a
+  Run now of a session schedule today ends with exit 0 and a visible reason, never a fake launch.
+- **Run ids** are `<id>-<yyyymmdd-hhmmss>` with `-2`, `-3`… when a run of the schedule already has that id (read from
+  the records and the live file), so a refusal or skip in the same second as a running run does not fold into it.
+- **`cargo fmt` reformats the whole crate**: the repo is hand-formatted wide (no `rustfmt.toml`); running it touched
+  every file of `fm` and `foreman-core`. Format only new files, e.g. `rustfmt --config max_width=160,use_small_heuristics=Max <file>`.
+- **Red checks** (each reverted with `git checkout`): stderr unmasked → `fire_passes_secrets…` fails; the task's
+  fingerprint ignored → `fire_refuses…` fails; the owner never sees `.restart` → `fire_restart_interrupts…` fails (29 s
+  instead of < 15 s); a timeout taken as exit 0 → `fire_exit_1_and_a_timeout…` fails; the budget wait without its
+  minute → `fire_waits_for_a_budget…` fails.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-5\target`): build ok, no warnings; `cargo test --release --workspace`
+  778 passed, 0 failed, 4 ignored; `--selftest` 5/5 PASS (runs 2 and 3 waited for other worktrees' selftests);
+  `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.

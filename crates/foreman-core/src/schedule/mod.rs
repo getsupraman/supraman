@@ -2,6 +2,7 @@
 //! records; the contract is `docs/research/scheduler.md`.
 
 mod approval;
+mod live;
 mod next;
 mod registrar;
 mod runs;
@@ -20,6 +21,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::{Workspace, validate_name};
 
 pub use approval::{APPROVAL_KEY, Covered, Refusal, approve, command_file, covered, effective_status, mac, verify, verify_approval};
+pub use live::{FIRE_LOG_CAP, Live, MASK, STDERR_TAIL, fire_log, live_dir, masked_tail, secret_key, state_dir};
 pub use next::{next_fire, next_fire_local, previous_fire};
 pub use registrar::{FMW_EXE, FakeRegistrar, Registrar, SyncTarget, Synced, fmw_exe, sync, task_root, task_root_for};
 pub use runs::{Fired, Outcome, RUNS_CAP, Run, RunEvent, RunRecord, Stage, Tokens, append_run, read_runs, runs, runs_path};

@@ -26,7 +26,9 @@ pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         ["resume", rest @ ..] => set_status(registry, Status::Active, rest),
         ["remove", rest @ ..] => remove(registry, rest),
         ["dry-run", rest @ ..] => dry_run(registry, rest),
-        _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove or dry-run".into())),
+        ["run", rest @ ..] => run_now(registry, rest),
+        ["secret", "set", rest @ ..] => secret_set(registry, rest, &mut std::io::stdin().lock()),
+        _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove, dry-run, run or secret set".into())),
     }
 }
 
@@ -661,6 +663,44 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     for f in &fires {
         println!("  {}", local_text(f));
     }
+    Ok(())
+}
+
+/// Run now: the task's path without its fingerprint (checks 1 to 3 still hold).
+fn run_now(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
+    let (w, id) = target(registry, args, "run")?;
+    let req = crate::fire::Request { home: registry.home(), workspace: &w.name, id, trigger: schedule::Fired::RunNow, fingerprint: None };
+    let report = crate::fire::fire(&req, &mut crate::fire::RealHost::new(registry.home()));
+    crate::fire::print_report(&report);
+    match report.exit {
+        0 => Ok(()),
+        code => Err(Failure::Exit(code)),
+    }
+}
+
+/// `[<workspace>] <id> <NAME>`, the value on stdin (one line, its line end dropped), into the secret store.
+fn secret_set(registry: &Registry, args: &[&str], stdin: &mut dyn std::io::BufRead) -> Result<(), Failure> {
+    let (positional, name) = match args.split_last() {
+        Some((name, rest)) if !rest.is_empty() => (rest, *name),
+        _ => return Err(Failure::Usage("schedule secret set needs [<workspace>] <id> <NAME>, the value on stdin".into())),
+    };
+    let (w, id) = target(registry, positional, "secret set")?;
+    let s = load_one(registry, &w, id)?;
+    if !s.permissions.secrets.iter().any(|n| n == name) {
+        return Err(Failure::Refused(format!(
+            "error: schedule {id} has no secret {name}; its secrets are {} (fm schedule edit … --secret {name})",
+            joined(&s.permissions.secrets)
+        )));
+    }
+    let mut value = String::new();
+    stdin.read_line(&mut value).map_err(|e| Failure::Usage(format!("cannot read the value from stdin: {e}")))?;
+    let value = value.trim_end_matches(['\r', '\n']);
+    if value.is_empty() {
+        return Err(Failure::Refused("error: the value on stdin is empty".into()));
+    }
+    let store = foreman_core::secret::default_store(registry.home());
+    store.set(&schedule::secret_key(&w.name, id, name), value).map_err(|e| Failure::Refused(format!("error: {e}")))?;
+    println!("secret {name} of schedule {id} in workspace {} is set; fire passes it to the script's environment", w.name);
     Ok(())
 }
 

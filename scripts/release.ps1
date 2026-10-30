@@ -34,7 +34,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo build --release --workspace failed ($LASTEXITCODE)" }
 
     $built = Join-Path $target 'release'
-    foreach ($exe in 'foreman.exe', 'foreman.pdb', 'fm.exe') {
+    foreach ($exe in 'foreman.exe', 'foreman.pdb', 'fm.exe', 'fmw.exe') {
         if (-not (Test-Path (Join-Path $built $exe))) { throw "$exe is missing from $built" }
     }
 
@@ -47,7 +47,7 @@ try {
     }
     $plugin = Join-Path $OutDir 'plugins\foreman'
     New-Item -ItemType Directory -Force $plugin | Out-Null
-    Copy-Item (Join-Path $built 'foreman.exe'), (Join-Path $built 'foreman.pdb'), (Join-Path $built 'fm.exe') $OutDir
+    Copy-Item (Join-Path $built 'foreman.exe'), (Join-Path $built 'foreman.pdb'), (Join-Path $built 'fm.exe'), (Join-Path $built 'fmw.exe') $OutDir
     # bin/ is the dev tree's own hooks copy (git-ignored); the release gets a fresh one below.
     Get-ChildItem (Join-Path $repo 'plugins\foreman') | Where-Object Name -ne 'bin' |
         Copy-Item -Destination $plugin -Recurse

@@ -5,6 +5,7 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -60,33 +61,54 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     command
 }
 
+/// How [`run_watched`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    Exited,
+    TimedOut,
+    /// Its `stop` returned true.
+    Stopped,
+}
+
 /// Runs `cmd` with stdin closed and both pipes captured, killing it (per `kill`) once `timeout` passes.
 pub fn run(cmd: &mut Command, timeout: Duration, kill: Kill) -> Result<Output, RunError> {
+    match run_watched(cmd, timeout, kill, &mut || false).map_err(RunError::Spawn)? {
+        (Ended::Exited, out) => Ok(out),
+        _ => Err(RunError::Timeout(timeout)),
+    }
+}
+
+/// [`run`] that also kills the child once `stop` returns true (asked every 20 ms). A killed child's output is
+/// what it wrote until then, and `code` is `None`.
+pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, Output)> {
     no_window(cmd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(RunError::Spawn)?;
+    let mut child = cmd.spawn()?;
     let tree = (kill == Kill::Tree).then(|| Job::adopt(&child)).flatten();
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let deadline = Instant::now() + timeout;
-    let status = loop {
+    let (ended, code) = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                terminate(&mut child, tree.as_ref());
-                return Err(RunError::Timeout(timeout));
-            }
+            Ok(Some(status)) => break (Ended::Exited, status.code()),
+            Ok(None) if Instant::now() >= deadline => break (Ended::TimedOut, None),
+            Ok(None) if stop() => break (Ended::Stopped, None),
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(e) => {
                 terminate(&mut child, tree.as_ref());
-                return Err(RunError::Spawn(e));
+                return Err(e);
             }
         }
     };
-    Ok(Output {
-        code: status.code(),
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
-    })
+    if ended == Ended::Exited {
+        return Ok((ended, Output { code, stdout: stdout.joined(), stderr: stderr.joined() }));
+    }
+    terminate(&mut child, tree.as_ref());
+    // A grandchild that survives a `Kill::Child` keeps the pipes open: take what was read by then.
+    let until = Instant::now() + Duration::from_secs(1);
+    while !(stdout.0.is_finished() && stderr.0.is_finished()) && Instant::now() < until {
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok((ended, Output { code, stdout: stdout.taken(), stderr: stderr.taken() }))
 }
 
 /// `git -C <dir> <args>` within [`GIT_TIMEOUT`].
@@ -101,14 +123,36 @@ fn terminate(child: &mut Child, tree: Option<&Job>) {
     let _ = child.wait();
 }
 
-fn drain(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut buf);
+/// A pipe read on its own thread into a buffer that can be taken before the pipe closes.
+struct Drain(thread::JoinHandle<()>, Arc<Mutex<Vec<u8>>>);
+
+impl Drain {
+    fn joined(self) -> String {
+        let Drain(handle, buf) = self;
+        let _ = handle.join();
+        Drain::text(&buf)
+    }
+
+    fn taken(&self) -> String {
+        Drain::text(&self.1)
+    }
+
+    fn text(buf: &Mutex<Vec<u8>>) -> String {
+        String::from_utf8_lossy(&buf.lock().unwrap_or_else(|e| e.into_inner())).into_owned()
+    }
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> Drain {
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let into = Arc::clone(&buf);
+    let handle = thread::spawn(move || {
+        let Some(mut pipe) = pipe else { return };
+        let mut chunk = [0u8; 8192];
+        while let Ok(n @ 1..) = pipe.read(&mut chunk) {
+            into.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&chunk[..n]);
         }
-        String::from_utf8_lossy(&buf).into_owned()
-    })
+    });
+    Drain(handle, buf)
 }
 
 /// A job object holding one child's tree; closing it leaves the tree running.
@@ -292,6 +336,21 @@ mod tests {
                 let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
             }
         }
+    }
+
+    #[test]
+    fn a_watched_run_keeps_what_a_killed_child_wrote_and_stops_when_asked() {
+        let script = "[Console]::Error.Write('partial'); [Console]::Error.Flush(); Start-Sleep 60";
+        let (ended, out) = run_watched(&mut powershell(script), Duration::from_secs(8), Kill::Tree, &mut || false).unwrap();
+        assert_eq!((ended, out.code, out.stderr.as_str()), (Ended::TimedOut, None, "partial"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("stop");
+        let script = format!("[Console]::Error.Write('partial'); [Console]::Error.Flush(); Set-Content -LiteralPath '{}' x; Start-Sleep 60", flag.display());
+        let started_at = Instant::now();
+        let (ended, out) = run_watched(&mut powershell(&script), Duration::from_secs(60), Kill::Tree, &mut || flag.exists()).unwrap();
+        assert_eq!((ended, out.stderr.as_str()), (Ended::Stopped, "partial"));
+        assert!(started_at.elapsed() < Duration::from_secs(30), "{:?}", started_at.elapsed());
     }
 
     #[test]

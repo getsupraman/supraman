@@ -23,6 +23,7 @@ Foreman\
   foreman.exe
   foreman.pdb                  symbols and line tables: file:line of each frame of a panic's backtrace in foreman.log
   fm.exe                       the CLI controllers and users run
+  fmw.exe                      fm with no console window: a schedule's task runs `fmw.exe schedule fire …`
   VERSION                      version, commit, build time (UTC), claude tested / minimum
   plugins\foreman\
     hooks\hooks.json           the exec-form hooks, run from ${CLAUDE_PLUGIN_ROOT}\bin\fm.exe
