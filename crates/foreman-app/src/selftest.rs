@@ -948,6 +948,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let clipped = step("7f", crate::selftest_left::tree_clip(view, cx)).await?;
     println!("step 7f: {clipped}");
 
+    let grid = step("7v", crate::selftest_left::tree_grid(view, cx)).await?;
+    println!("step 7v: {grid}");
+
     let shell = step("7g", crate::selftest_shell::run(view, cx)).await?;
     println!("step 7g: {shell}");
 

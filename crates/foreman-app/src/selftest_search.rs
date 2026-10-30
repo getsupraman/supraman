@@ -102,6 +102,19 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let id_key = format!("session-id-{}", &RECENT[..8]);
     until_app(view, cx, WITHIN, "the matched id shown on the result row", |v, _| v.hits.borrow().contains_key(&id_key).then_some(())).await?;
     shot("m5-30-search-id", cx).await;
+    let grid = view.read_with(cx, |v, cx| {
+        let mut rows = Vec::new();
+        for w in v.search_results(cx).workspaces {
+            rows.push((format!("result-ws-{}", w.name), 0));
+            rows.extend(w.supervised.iter().map(|h| (format!("session-{}{}", h.row.session.session_id, h.row.scope(&w.name)), 1)));
+            for r in &w.repos {
+                rows.push((format!("result-repo-{}/{}", w.name, r.name), 1));
+                rows.extend(r.sessions.iter().map(|h| (format!("session-{}{}", h.row.session.session_id, h.row.scope(&w.name)), 2)));
+            }
+        }
+        crate::selftest_left::on_grid(v, &rows)
+    })?;
+    out.push(format!("results: {grid}"));
     out.push(text_inset(view, cx)?);
 
     select_all(view, cx)?;

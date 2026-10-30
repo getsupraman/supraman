@@ -20,6 +20,7 @@ pub struct SessionHit {
 pub struct RepoHit {
     pub name: String,
     pub path: std::path::PathBuf,
+    pub kind: foreman_core::FolderKind,
     pub name_marks: Vec<Range<usize>>,
     pub sessions: Vec<SessionHit>,
     /// A listed folder of the workspace that is not enabled there, nor supervised elsewhere.
@@ -106,6 +107,7 @@ pub fn search(tree: &Tree, query: &str) -> Results {
                     let repo = RepoHit {
                         name: r.name.clone(),
                         path: r.path.clone(),
+                        kind: r.kind,
                         name_marks: find_all(&r.name, needle),
                         sessions: hits(&r.sessions),
                         disabled: r.listed && !r.enabled && r.supervised_in.is_none(),

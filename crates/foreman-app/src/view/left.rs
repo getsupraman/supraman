@@ -140,12 +140,52 @@ fn slot() -> AnyElement {
     div().flex_none().size(px(SLOT)).into_any_element()
 }
 
-fn disclosure(open: Option<bool>, color: Hsla) -> Div {
-    let slot = div().flex().flex_none().items_center().justify_center().size(px(16.));
+/// Every tree row, the search results' too: `indent(level)`, a disclosure slot, an icon slot, the label;
+/// a child's icon starts where its parent's label does.
+pub(crate) mod grid {
+    use gpui::{Pixels, px};
+
+    pub const DISCLOSURE: f32 = 16.;
+    pub const ICON: f32 = 16.;
+    pub const GAP: f32 = 8.;
+    const BASE: f32 = 6.;
+    pub const STEP: f32 = DISCLOSURE + GAP;
+    /// The label's x from the row's indent.
+    pub const LABEL: f32 = DISCLOSURE + GAP + ICON + GAP;
+
+    pub fn indent(level: usize) -> Pixels {
+        px(BASE + level as f32 * STEP)
+    }
+
+    pub fn gap() -> Pixels {
+        px(GAP)
+    }
+}
+
+pub(super) fn disclosure(open: Option<bool>, color: Hsla) -> Div {
+    let slot = div().flex().flex_none().items_center().justify_center().size(px(grid::DISCLOSURE));
     match open {
         Some(open) => slot.child(if open { Icon::ChevronDown } else { Icon::ChevronRight }.svg(14., color)),
         None => slot,
     }
+}
+
+/// A row's icon slot, painted under `tree-icon-<key>`.
+pub(super) fn icon_slot(hits: &HitTargets, key: &str, icon: Option<AnyElement>) -> Div {
+    div()
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(grid::ICON))
+        .children(icon)
+        .child(hit_target(hits, format!("tree-icon-{key}")))
+}
+
+/// A row's label, painted under `tree-label-<key>`.
+pub(super) fn tree_label<E: Styled + ParentElement>(hits: &HitTargets, key: &str, label: E) -> E {
+    label.relative().child(hit_target(hits, format!("tree-label-{key}")))
 }
 
 fn glyph_button(hits: &HitTargets, key: String, icon: Icon, tip: impl Into<SharedString>, cx: &gpui::App) -> Stateful<Div> {
@@ -401,7 +441,7 @@ impl FleetView {
                 continue;
             }
             for row in &workspace.supervised {
-                body = body.child(self.render_session(&workspace.name, "supervised", row, px(26.), cx));
+                body = body.child(self.render_session(&workspace.name, "supervised", row, grid::indent(1), cx));
             }
             for repo in &workspace.repos {
                 let rkey = format!("repo:{}/{}", workspace.name, repo.name);
@@ -411,7 +451,7 @@ impl FleetView {
                     continue;
                 }
                 for row in &repo.sessions {
-                    body = body.child(self.render_session(&workspace.name, &repo.name, row, px(46.), cx));
+                    body = body.child(self.render_session(&workspace.name, &repo.name, row, grid::indent(2), cx));
                 }
                 if repo.more > 0 {
                     let key = format!("{}/{}", workspace.name, repo.name);
@@ -424,7 +464,7 @@ impl FleetView {
                             .flex_none()
                             .items_center()
                             .h(px(SESSION_LINE))
-                            .pl(px(46. + 24.))
+                            .pl(grid::indent(2) + px(grid::LABEL))
                             .text_xs()
                             .text_color(secondary(cx))
                             .cursor_pointer()
@@ -1168,11 +1208,11 @@ impl FleetView {
         let line = div()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(grid::gap())
             .h(px(WORKSPACE_ROW))
             .child(disclosure(Some(open), colors.text_muted))
-            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(dot))
-            .child(div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone())))
+            .child(icon_slot(&self.hits, &format!("ws-{w}"), Some(dot.into_any_element())))
+            .child(tree_label(&self.hits, &format!("ws-{w}"), div().flex_none().font_weight(FontWeight::BOLD).whitespace_nowrap().child(SharedString::from(w.clone()))))
             .child(clipped(format!("ws-root-{w}"), home_text(workspace.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
             .child(
                 div()
@@ -1201,7 +1241,7 @@ impl FleetView {
             .flex()
             .flex_col()
             .flex_none()
-            .pl(px(6.))
+            .pl(grid::indent(0))
             .pr_2()
             .mt_2()
             .cursor_pointer()
@@ -1210,7 +1250,7 @@ impl FleetView {
             .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
             .child(line)
             .when_some(waiting, |d, why| {
-                d.child(clipped(format!("ws-waiting-{w}"), why, false).pl(px(48.)).pb(px(4.)).text_xs().text_color(status.warning))
+                d.child(clipped(format!("ws-waiting-{w}"), why, false).pl(px(grid::LABEL)).pb(px(4.)).text_xs().text_color(status.warning))
             })
             .child(hit_target(&self.hits, format!("ws-row-{w}")))
             .tooltip(hover_card::tooltip(move || row_card::workspace_card(&facts, now_ms())))
@@ -1229,6 +1269,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let w = &workspace.name;
         let rkey = format!("repo:{w}/{}", repo.name);
+        let tree_key = format!("repo-{w}/{}", repo.name);
         let group = SharedString::from(format!("repo-group-{w}/{}", repo.name));
         let empty = repo.sessions.is_empty();
         let git = repo.kind == foreman_core::FolderKind::Git;
@@ -1260,9 +1301,9 @@ impl FleetView {
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
+            .gap(grid::gap())
             .h(px(REPO_ROW))
-            .pl(px(26.))
+            .pl(grid::indent(1))
             .pr_2()
             .text_sm()
             .cursor_pointer()
@@ -1271,8 +1312,8 @@ impl FleetView {
             .when(empty, |d| d.text_color(quiet(cx)))
             .when(parked, |d| d.opacity(DIMMED))
             .child(disclosure((!empty).then_some(open), secondary(cx)))
-            .child(if git { Icon::GitBranch } else { Icon::Folder }.svg(14., secondary(cx)))
-            .child(div().flex_none().whitespace_nowrap().child(SharedString::from(folder_label(&repo.name, &repo.path, workspace.home.as_deref()))))
+            .child(icon_slot(&self.hits, &tree_key, Some(if git { Icon::GitBranch } else { Icon::Folder }.slotted(grid::ICON, secondary(cx)).into_any_element())))
+            .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child(SharedString::from(folder_label(&repo.name, &repo.path, workspace.home.as_deref())))))
             .child(clipped(format!("branch-{w}/{}", repo.name), branch, false).text_xs().text_color(secondary(cx)))
             .when(!empty, |d| {
                 d.child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(repo.sessions.len().to_string())))
@@ -1323,6 +1364,7 @@ impl FleetView {
             .map(|h| format!("hook: {}", h.label(now_ms())));
         let shown = self.is_marked(s);
         let group = SharedString::from(format!("session-group-{}{at}", s.session_id));
+        let tree_key = format!("session-{}{at}", s.session_id);
 
         let star = {
             let session_id = s.session_id.clone();
@@ -1388,10 +1430,11 @@ impl FleetView {
         let line = div()
             .flex()
             .items_center()
-            .gap_2()
+            .gap(grid::gap())
             .h(px(SESSION_LINE))
-            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(Icon::Claude.svg(14., dot)))
-            .child(name_el)
+            .child(disclosure(None, dot))
+            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Claude.slotted(grid::ICON, dot).into_any_element())))
+            .child(tree_label(&self.hits, &tree_key, name_el))
             .when_some(marks.and_then(|m| m.id.clone()), |d, id| {
                 let key = format!("session-id-{}{at}", s.id);
                 d.child(
@@ -1459,13 +1502,13 @@ impl FleetView {
             .when_some(waiting_for, |d, w| {
                 d.child(
                     clipped(format!("waiting-{}{at}", s.id), w, false)
-                        .pl(px(24.))
+                        .pl(px(grid::LABEL))
                         .text_xs()
                         .text_color(if foreign { secondary(cx) } else { status.warning }),
                 )
             })
             .when_some(hook, |d, h| {
-                d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(24.)).text_xs().text_color(secondary(cx)))
+                d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(grid::LABEL)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
             .tooltip(card)
@@ -1754,6 +1797,13 @@ pub(crate) fn segments(lines: &[&str]) -> Vec<Segment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_childs_icon_starts_under_its_parents_label() {
+        for level in 0..3 {
+            assert_eq!(grid::indent(level + 1) + px(grid::DISCLOSURE + grid::GAP), grid::indent(level) + px(grid::LABEL));
+        }
+    }
 
     #[test]
     fn folder_labels_name_the_home_and_relay_labels_shorten_to_a_state_word() {

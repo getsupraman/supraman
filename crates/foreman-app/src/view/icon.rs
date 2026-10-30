@@ -104,6 +104,19 @@ impl Icon {
     pub fn svg(self, size: f32, color: Hsla) -> Svg {
         svg().data(self.bytes()).size(px(size)).flex_none().text_color(color)
     }
+
+    /// The share of a slot the icon fills so that thin outlines and filled marks look one size.
+    fn optical(self) -> f32 {
+        match self {
+            Icon::GitBranch | Icon::Folder => 1.0,
+            _ => 0.875,
+        }
+    }
+
+    /// The icon at its optical size for a square slot of `slot` px.
+    pub fn slotted(self, slot: f32, color: Hsla) -> Svg {
+        self.svg(slot * self.optical(), color)
+    }
 }
 
 pub struct Tooltip(SharedString);

@@ -60,6 +60,7 @@ mod reopen;
 mod results;
 mod term;
 
+pub(crate) use left::grid;
 pub use manage::{AddDraft, Removing};
 pub use menu::{Confirm, ContextMenu, MenuAction, MenuTarget};
 
