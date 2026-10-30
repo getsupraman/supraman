@@ -4660,7 +4660,7 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   its last check looked the stopped original up in the tree, which hides stopped rows.
 - **Not covered:** a failed copy is not driven in the selftest (Retry, Start fresh and the folder's `adopt failed`
   tag have unit tests for their logic only). The live-original refusal is unit-tested.
-- **Gate** (`CARGO_TARGET_DIR=C:mbuild\m5-61	arget`): build ok, no warnings; `cargo test --release --workspace`
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-61\target`): build ok, no warnings; `cargo test --release --workspace`
   711 passed, 0 failed, 3 ignored; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (step y included);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` or adoptee session left. No m5-44 audit section names m5/61,
   so no audit finding was in scope.
