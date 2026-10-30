@@ -4306,6 +4306,38 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   René's screenshot; the home filter off → both overlap tests fail (`NodeApi` unlisted under larchsys); the search
   label off → the new test fails at "search finds it in larchsys, labelled with its workspace".
 
+## 2026-10-30 — m5/63 the Edit folders dialog fits its box
+
+- **Cause**: each folder row was one flex line whose name, kind (`git (<branch>)`), Home and Remove were `flex_none`;
+  only the path shrank. A long name or branch pushed Home/Remove past the dialog's right edge, and the
+  `supervised in <ws>` tag in place of the ☑ shifted the rest of its row.
+- **Row now** (`view/folders.rs`): a two-line details block (`flex_1`, `min_w_0`) and a `flex_none` button column at
+  the row's right end. Line 1: a fixed 16 px state column (☑/☐, `edit-enable-<f>`), the name (`edit-name-<f>`), the
+  git-branch or folder icon and the branch (`edit-branch-<f>`, shrinks 8× faster than the name). Line 2: the path
+  (`edit-folder-path-<f>`, middle ellipsis), starting under the name; for a folder supervised elsewhere the
+  `supervised in <ws>` tag (`edit-elsewhere-<f>`) starts line 2 at the state column's x, so no row shifts. Every
+  label goes through `crate::clipped::clipped`, so a cut one has its full text as a tooltip. Home and the `home`
+  tag sit in a 48 px `justify_end` slot, so Remove sits at the same x in every row. The title, home line and scan
+  rows are clipped too; the dialog and its lists take `min_w_0`. The dialog scrolls with the notices area
+  (`overflow_y_scroll`), which already held it.
+- **Selftest** (7b, `selftest_manage::edit_folders_fit`): with the second registration of `selftest-add` (alpha
+  `supervised in selftest-added`, beta), it sets `left_width` to `MIN_LEFT_WIDTH` (now `pub(crate)`), opens Edit
+  folders…, adds `target/selftest-edit-long/a-folder-with-a-rather-long-name-for-edit-folders` on branch
+  `copilot/fix-the-edit-folders-dialog-overflowing-its-box` through the picker hook, and waits until every row's
+  state cell, Home and Remove lie inside `edit-folders` with Remove's right edge equal in all rows; then the path
+  and branch must be painted cut (`clipped::cut_at`). Shot `m5-63-edit-folders-min` (also taken when the check fails).
+- **Scaling**: gpui lays out in logical pixels, so 125 % and 150 % change only the device pixels; the selftest ran at
+  this machine's 150 %. At the minimum width a long branch can shrink to nothing next to its icon; the name keeps
+  room first.
+- **Red check** (master's `folders.rs`, reverted by restoring the file, never committed): 7b fails `every Edit
+  folders row inside the dialog` with `edit-remove-a-folder-…` at x 759 against the dialog's right edge at 267.
+  Before/after shots: `C:\fmbuild\m5-63\shots\{before,after}\m5-63-edit-folders-min.png`.
+- Gate (`CARGO_TARGET_DIR=C:\fmbuild\m5-63\target`): build ok, no warnings; `cargo test --release --workspace` 689
+  passed before and 690 after merging master (m5/64), 0 failed; `--selftest` 5 of 5 PASS before the merge; after it
+  4 of 5, the fifth `FAIL step 7: board load: own work per frame p10 19.21 ms, over the 16 ms budget` beside the
+  other units' selftests, PASS on rerun; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
+  `fm-selftest` sessions of this worktree left. No m5-44 audit section names m5/63.
+
 ## 2026-10-30 — m5/62 startup: transcripts read head and tail from a persisted cache; a loading line until every source has loaded
 
 - **The slow source was the transcript scan.** René's log showed the first paint with sessions at +858 ms, but the

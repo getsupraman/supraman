@@ -92,7 +92,7 @@ const HAND_EXIT_FALLBACK: Duration = Duration::from_secs(30);
 /// Zed's `terminal.scroll_multiplier` default; one Windows wheel notch is already 3 lines.
 const SCROLL_MULTIPLIER: f32 = 1.0;
 const DEFAULT_LEFT_WIDTH: Pixels = px(460.);
-const MIN_LEFT_WIDTH: Pixels = px(280.);
+pub(crate) const MIN_LEFT_WIDTH: Pixels = px(280.);
 const MIN_RIGHT_WIDTH: Pixels = px(320.);
 /// The daemon may respawn a background session by itself (~12 s after a death mid-turn); a second resume would run a second process.
 const RESUME_GRACE_MS: i64 = 30_000;
