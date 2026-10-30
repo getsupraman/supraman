@@ -4337,3 +4337,67 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   4 of 5, the fifth `FAIL step 7: board load: own work per frame p10 19.21 ms, over the 16 ms budget` beside the
   other units' selftests, PASS on rerun; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
   `fm-selftest` sessions of this worktree left. No m5-44 audit section names m5/63.
+
+## 2026-10-30 — m5/62 startup: transcripts read head and tail from a persisted cache; a loading line until every source has loaded
+
+- **The slow source was the transcript scan.** René's log showed the first paint with sessions at +858 ms, but the
+  closed sessions came from the first scan after that, and it read every in-root transcript **whole**. The first
+  scan also ran before the registry was applied, with no roots, and logged its 0 ms as "transcripts", so the log
+  never showed the real cost. `~/.claude/projects` on this machine (René's): 2,871 files, 3.1 GB, 14-day window
+  ~2,720 listable. Measured with `cargo test --release -p foreman-claude -- --ignored --nocapture`:
+  - **Before** (whole-file read, naive `windows().any` byte search 5× per short line, one thread): the real dir
+    (every project dir) **17.0–17.9 s**; the generated fixture (400 transcripts, 426 MB, `scan_timing_on_four_hundred_transcripts`)
+    **1.9–3.1 s**, warm OS cache.
+  - **memmem alone** (`memchr` was already in the tree via serde_json; one `"type":"` pass instead of five
+    `format!`ed needles), one thread: fixture **110–155 ms**. The byte search, not IO, was most of the 2.8 s.
+  - **+ 8 parallel readers** (`read_all`, largest file first): fixture **35–66 ms**.
+  - **+ head and tail** (`read_head_and_tail`): fixture with two 60 MB files (540 MB) **73–95 ms**; the real dir
+    **350–385 ms reading 340 MB of 3.1 GB** (was every byte). The time left there is listing all 1,237 project dirs
+    (~250 ms; the app lists only its roots' dirs).
+  - **Restart from the cache** (`<home>/cache/transcripts.json`, 4 MB for the real dir): **0 bytes of transcripts
+    read**, 165–182 ms in the benchmark (listing plus JSON); the app shows the cached rows before even that scan.
+- **Head and tail** (`foreman-claude/src/transcript.rs`): over every real file's meta lines, the last
+  `custom-title`/`agent-name`/`ai-title`/`last-prompt` sits within 34 KB of the end (claude appends them again
+  near the end), 2,692 of 2,730 files have a `custom-title`, none has a `summary`, and the first user line is within
+  35 KB of the start. So a file over 256 KB is read from the start to its cwd and first prompt, then from the end in
+  64 KB blocks (×4 each time, aligned to a whole line) until the tail holds a `custom-title`, the name that outranks
+  the rest; a tail without one grows until it meets the head, which is the whole read. The latest-wins rule holds
+  for what the tail read. `title`, `cwd`, `first_prompt` and `listable` come out as the whole read gives them:
+  `the_head_and_tail_read_names_each_session_as_the_whole_read_does` (generated: no custom title, latest near the
+  end, one only early, a command before the prompt, a half-written last line) and, over the real dir,
+  `a_real_claude_dir_names_as_the_whole_read_does` (`FM_BENCH_CLAUDE_DIR`, ignored): 2,722 transcripts, 0 differ.
+  `agent_name`/`ai_title`/`last_prompt` may be older than a whole read's when a `custom-title` decided early; nothing
+  outside `transcript.rs` reads them. A grown file is still read from its cached offset.
+- **The cache** (`Transcripts::with_cache`, `cached`, `has_cache`): the file entries (path, length, mtime in ns,
+  offset, transcript) with `CACHE_VERSION` (bump when `Transcript::feed` reads something new), written with
+  `write_atomic` at once after a file was read from its start, otherwise at most every 5 min; entries of files gone or
+  out of the window are dropped. An unreadable or older cache is ignored.
+- **René's decision (warm start):** the watcher loads the cache in the background beside the first poll; when it
+  holds files, its rows are shown at once (`startup transcripts from the cache done`) and the scan rereads only
+  changed, new and deleted files quietly and updates the rows in place. The loading line names the transcripts
+  (`transcripts n/N`, from `scan_with`'s progress) only when there is no cache.
+- **Every source logs `startup <source> done: N ms (at +T)`**: version check, setup, registry, list_sessions, main repos
+  and events, desired state, supervisor tick (relays, messages), transcripts (files read, listed), transcripts from
+  the cache, workstate status, workstate inbox, and `every source done`. Step 3s fails when one is missing.
+- **Loading state** (`FleetView::loading`, `loaded`): the slim line `Loading sessions… session list, transcripts
+  120/400, WorkState` under the action bar (hit key `loading-sessions`), the tree shown under it, until the first poll
+  and tick are applied, the transcripts are read or cached, WorkState's status is known and its first inbox read
+  (when one started) is applied; then latched off. The Refresh icon turns until then, and after a click until both
+  the poll and the transcript scan that started after it are applied (`transcripts_answered`).
+- **Selftests:** 3a checks the line is painted before the first list, never gone while a source is pending, and gone
+  only once all are done. 7w (`selftest_startup.rs`): a new transcript is listed and saved in the cache; one appended
+  line later, a warm `restart_transcripts` with the scan held (`transcripts_hold`, a `PollHold`) shows the cached
+  name, every source loaded, no loading line; released, the background scan renames the row; then with the cache
+  deleted, a cold restart paints the line naming the transcripts while the scan is held and loses it after.
+- **Red checks** (reverted with `git checkout`, never committed): tail never grown → the head-and-tail test fails
+  (`"prompt 6"` against `"title 6.100"`); `with_cache` ignoring the file → the cache test fails ("only the grown file
+  is read", 2 against 1); `loading` never naming transcripts → `--selftest` FAIL at 7w ("a cold start: the loading
+  line naming the transcripts while the scan is held: not within 15s").
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-62\target`, master ae3713f merged, m5/63 and m5/64 in): build ok, no
+  warnings; `cargo test --release --workspace` 692 passed, 0 failed; `--selftest` 5 of 5 PASS in a row (3a: every
+  source done 523–617 ms after the loading line; 7w warm row 28–52 ms, background rename 63–85 ms);
+  `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session from this worktree left.
+  The first gate run on the merged tree failed `--selftest` 3 of 5 at step 7 (board load own work p10 19.5–20 ms
+  over the 16 ms budget; 8–13 ms in every other run) and `--selftest-supervise` once at step c ("the stopped pid …
+  is still running") while another unit's rustc and foreman were busy; each passed on rerun. Before the m5/63 merge
+  all passed. No m5-44 audit section names m5/62.

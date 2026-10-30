@@ -95,7 +95,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `daemon_status`, `daemon_mismatch`, `is_elevated` (`daemon.rs`) — whether this process can reach claude's background service.
 - `peer` — writing into a session's own message pipe (`docs/peer-messaging.md`); `human::send_from_human` picks the pipe or the relay.
 - `proc_tree` — which claude session runs under a tab's shell.
-- `transcript` (`Transcripts`, `first_prompt`) — closed sessions from the transcript files, read only.
+- `transcript` (`Transcripts`: `scan_with` with progress, `with_cache`, `cached`; `first_prompt`) — closed sessions from the transcript files, read only: head and tail of a new file, the grown part of a known one, on parallel readers; the file cache persists at `<home>/cache/transcripts.json` so a start shows its rows before any file is read.
 - `forget::forget_transcript` — the one write under the claude dir (see delete confinement).
 - `assign` — mapping sessions onto a workspace's folders (deepest folder, then a worktree's main checkout), then its home.
 

@@ -134,6 +134,7 @@ pub struct WorkInbox {
     pub failures: HashMap<String, String>,
     pub notice: Option<String>,
     pub reads: u64,
+    pub applied: u64,
 }
 
 struct GlobalInbox(Entity<WorkInbox>);
@@ -162,6 +163,7 @@ impl WorkInbox {
                 failures: HashMap::new(),
                 notice,
                 reads: 0,
+                applied: 0,
             }
         });
         cx.set_global(GlobalInbox(inbox.clone()));
@@ -285,9 +287,17 @@ impl WorkInbox {
         }
         let client = client.clone();
         self.reads += 1;
+        let began = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
             let (overview, outcomes) = cx.background_executor().spawn(async move { read(&client, asks, overview) }).await;
-            this.update(cx, |this, cx| this.apply(overview, outcomes, cx)).ok();
+            this.update(cx, |this, cx| {
+                if this.applied == 0 {
+                    crate::view::timeline("workstate inbox done", began.elapsed());
+                }
+                this.applied += 1;
+                this.apply(overview, outcomes, cx);
+            })
+            .ok();
         })
         .detach();
     }

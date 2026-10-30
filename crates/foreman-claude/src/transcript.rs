@@ -6,8 +6,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use memchr::memmem;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use foreman_core::time::epoch_ms;
@@ -15,7 +19,7 @@ use foreman_core::time::epoch_ms;
 use crate::session::{Kind, Session, SessionState};
 
 /// What a transcript says about its session.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transcript {
     pub session_id: String,
     /// The first `cwd` of its lines: where it ran, and where `claude --resume` finds it again.
@@ -80,7 +84,7 @@ impl Transcript {
         let lead = leading_type(line);
         let meta = match lead {
             Some(kind) => META.contains(&kind),
-            None => line.len() <= SHORT_LINE && META.iter().any(|m| contains(line, format!(r#""type":"{m}""#).as_bytes())),
+            None => line.len() <= SHORT_LINE && types_in(line).any(|t| META.contains(&t)),
         };
         if meta {
             let Ok(v) = serde_json::from_slice::<Value>(line) else {
@@ -163,7 +167,17 @@ fn trim(line: &[u8]) -> &[u8] {
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+    memmem::find(hay, needle).is_some()
+}
+
+/// Every `x` of a `"type":"x"` in the line.
+fn types_in(line: &[u8]) -> impl Iterator<Item = &str> {
+    const KEY: &[u8] = br#""type":""#;
+    memmem::find_iter(line, KEY).filter_map(move |at| {
+        let rest = &line[at + KEY.len()..];
+        let end = memchr::memchr(b'"', rest)?;
+        std::str::from_utf8(&rest[..end]).ok()
+    })
 }
 
 /// `meta` of a line opening with `{"type":"meta"`.
@@ -186,19 +200,75 @@ pub fn read(path: &Path) -> std::io::Result<Transcript> {
 /// Feeds every complete line from byte `offset` on; returns the offset after the last one fed (a line
 /// still being written is left for the next read).
 fn feed_from(path: &Path, offset: u64, t: &mut Transcript) -> std::io::Result<u64> {
+    feed_lines(path, offset, false, t, |_| false)
+}
+
+/// [`feed_from`] until `enough`; with `mid_line`, `offset` may fall inside a line, which is skipped.
+fn feed_lines(path: &Path, offset: u64, mid_line: bool, t: &mut Transcript, enough: impl Fn(&Transcript) -> bool) -> std::io::Result<u64> {
     let mut file = File::open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
     let mut at = offset;
     let mut line = Vec::new();
-    loop {
+    let mut reader = if mid_line && offset > 0 {
+        file.seek(SeekFrom::Start(offset - 1))?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let n = reader.read_until(b'\n', &mut line)?;
+        if line.last() != Some(&b'\n') {
+            return Ok(offset);
+        }
+        at = offset - 1 + n as u64;
+        reader
+    } else {
+        file.seek(SeekFrom::Start(offset))?;
+        BufReader::with_capacity(64 * 1024, file)
+    };
+    while !enough(t) {
         line.clear();
         let n = reader.read_until(b'\n', &mut line)?;
         if n == 0 || line.last() != Some(&b'\n') {
-            return Ok(at);
+            break;
         }
         at += n as u64;
         t.feed(&line);
+    }
+    #[cfg(test)]
+    tests::READ_BYTES.fetch_add(at - offset, Ordering::Relaxed);
+    Ok(at)
+}
+
+/// A file this small is read whole.
+const WHOLE_UNDER: u64 = 256 * 1024;
+/// The first tail read; each next one is four times longer.
+const TAIL_BLOCK: u64 = 64 * 1024;
+
+/// What a whole read of the file gives for [`Transcript::title`], `cwd`, `first_prompt` and
+/// [`Transcript::listable`], reading only its head (to the cwd and first prompt) and its tail: claude appends
+/// the meta lines again near the end, so the tail holds the latest `custom-title`, the name that outranks
+/// the rest. A tail without one grows until it meets the head. Returns the offset after the last line fed.
+fn read_head_and_tail(path: &Path, len: u64, t: &mut Transcript) -> std::io::Result<u64> {
+    if len <= WHOLE_UNDER {
+        return feed_from(path, 0, t);
+    }
+    let head = feed_lines(path, 0, false, t, |t| t.cwd.is_some() && t.first_prompt.is_some())?;
+    let mut block = TAIL_BLOCK;
+    loop {
+        let start = len.saturating_sub(block).max(head);
+        let mut tail = Transcript { cwd: t.cwd.clone(), first_prompt: t.first_prompt.clone(), ..Transcript::default() };
+        let end = feed_lines(path, start, start > head, &mut tail, |_| false)?;
+        if tail.custom_title.is_some() || start == head {
+            for (later, slot) in [
+                (tail.custom_title, &mut t.custom_title),
+                (tail.agent_name, &mut t.agent_name),
+                (tail.ai_title, &mut t.ai_title),
+                (tail.summary, &mut t.summary),
+                (tail.last_prompt, &mut t.last_prompt),
+            ] {
+                if later.is_some() {
+                    *slot = later;
+                }
+            }
+            return Ok(end.max(head));
+        }
+        block *= 4;
     }
 }
 
@@ -287,13 +357,38 @@ pub fn slug(path: &Path) -> String {
 
 pub use foreman_core::paths::claude_dir;
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Cached {
     len: u64,
+    #[serde(with = "nanos")]
     modified: SystemTime,
     /// Where the next read starts.
     offset: u64,
     transcript: Transcript,
 }
+
+mod nanos {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S: serde::Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64))
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
+        Ok(UNIX_EPOCH + Duration::from_nanos(serde::Deserialize::deserialize(d)?))
+    }
+}
+
+/// The on-disk form of [`Transcripts`]' file cache.
+#[derive(Serialize, Deserialize)]
+struct CacheFile {
+    version: u32,
+    projects: PathBuf,
+    files: Vec<(PathBuf, Cached)>,
+}
+
+/// Bump whenever [`Transcript::feed`] reads something a cached transcript lacks.
+const CACHE_VERSION: u32 = 1;
 
 struct Listed {
     modified: Option<SystemTime>,
@@ -302,18 +397,26 @@ struct Listed {
     files: Vec<(PathBuf, u64, SystemTime)>,
 }
 
+type Job = (PathBuf, u64, SystemTime, Option<Cached>);
+
 /// The transcripts under one `projects` dir, cached: the dir list by its mtime, each project dir's
 /// listing by its mtime (re-read anyway every [`Self::RELIST_EVERY`], or while it holds a recent, kept or
 /// live session), each file by its length (an appended file is read from where the last read stopped).
+/// With [`Self::with_cache`] the file cache outlives the process.
 pub struct Transcripts {
     projects: PathBuf,
     dirs: Option<(Option<SystemTime>, SystemTime, Vec<String>)>,
     listed: HashMap<PathBuf, Listed>,
     files: HashMap<PathBuf, Cached>,
+    cache: Option<PathBuf>,
+    unsaved: bool,
+    saved_at: Option<Instant>,
 }
 
 impl Transcripts {
     pub const RELIST_EVERY: Duration = Duration::from_secs(300);
+    /// A cache that only grew is saved at most this often; one holding a file read from its start, at once.
+    pub const SAVE_EVERY: Duration = Duration::from_secs(300);
 
     pub fn new(projects: PathBuf) -> Self {
         Self {
@@ -321,6 +424,9 @@ impl Transcripts {
             dirs: None,
             listed: HashMap::new(),
             files: HashMap::new(),
+            cache: None,
+            unsaved: false,
+            saved_at: None,
         }
     }
 
@@ -329,36 +435,111 @@ impl Transcripts {
         Self::new(claude_dir.join("projects"))
     }
 
+    /// Starts from the file cache saved at `file` (an unreadable or older one is ignored) and saves it there.
+    pub fn with_cache(mut self, file: PathBuf) -> Self {
+        let loaded = std::fs::read(&file).ok().and_then(|bytes| serde_json::from_slice::<CacheFile>(&bytes).ok());
+        if let Some(c) = loaded.filter(|c| c.version == CACHE_VERSION && c.projects == self.projects) {
+            self.files = c.files.into_iter().collect();
+        }
+        self.cache = Some(file);
+        self
+    }
+
+    /// A cache was loaded by [`Self::with_cache`] and holds files.
+    pub fn has_cache(&self) -> bool {
+        !self.files.is_empty()
+    }
+
+    /// What [`Self::scan`] gave when the cache was saved, reading no transcript: the cached ones it would
+    /// list now, whether or not their files changed since.
+    pub fn cached(&self, roots: &[PathBuf], since_ms: i64, keep: &HashSet<String>) -> Vec<Transcript> {
+        let prefixes = prefixes(roots);
+        self.files
+            .iter()
+            .filter(|(path, _)| path.parent().and_then(Path::file_name).is_some_and(|d| under(&d.to_string_lossy(), &prefixes)))
+            .map(|(_, c)| &c.transcript)
+            .filter(|t| (t.modified_ms >= since_ms || keep.contains(&t.session_id)) && t.listable())
+            .cloned()
+            .collect()
+    }
+
+    pub fn scan(&mut self, roots: &[PathBuf], since_ms: i64, keep: &HashSet<String>, live: &HashSet<String>) -> Vec<Transcript> {
+        self.scan_with(roots, since_ms, keep, live, &|_, _| {})
+    }
+
     /// The [`Transcript::listable`] transcripts of the project dirs whose name starts with the [`slug`]
     /// of one of `roots` (case-insensitive), modified since `since_ms` or with an id in `keep`. `live`
     /// (ids `claude agents` lists running) keeps their dirs re-listed: an old file resumed grows
-    /// without touching its dir's mtime.
-    pub fn scan(&mut self, roots: &[PathBuf], since_ms: i64, keep: &HashSet<String>, live: &HashSet<String>) -> Vec<Transcript> {
+    /// without touching its dir's mtime. The files not cached are read in parallel; `progress(read, of)`
+    /// is called as each is done.
+    pub fn scan_with(
+        &mut self,
+        roots: &[PathBuf],
+        since_ms: i64,
+        keep: &HashSet<String>,
+        live: &HashSet<String>,
+        progress: &(dyn Fn(usize, usize) + Sync),
+    ) -> Vec<Transcript> {
         let now = SystemTime::now();
-        let prefixes: Vec<String> = roots.iter().map(|r| slug(r).to_ascii_lowercase()).collect();
+        let prefixes = prefixes(roots);
         let names = self.dir_names(now);
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        for name in names.iter().filter(|n| {
-            let lower = n.to_ascii_lowercase();
-            prefixes.iter().any(|p| lower.starts_with(p.as_str()))
-        }) {
+        let mut wanted = Vec::new();
+        for name in names.iter().filter(|n| under(n, &prefixes)) {
             let dir = self.projects.join(name);
             for (path, len, modified) in self.list(&dir, now, since_ms, keep, live) {
                 let Some(id) = session_id_of(&path) else { continue };
                 if epoch_ms(modified) < since_ms && !keep.contains(&id) {
                     continue;
                 }
-                seen.insert(path.clone());
-                if let Some(t) = self.read_cached(&path, len, modified)
-                    && t.listable()
-                {
-                    out.push(t);
-                }
+                wanted.push((path, len, modified));
             }
         }
+        let seen: HashSet<&PathBuf> = wanted.iter().map(|(p, _, _)| p).collect();
+        let before = self.files.len();
         self.files.retain(|p, _| seen.contains(p));
-        out
+        let mut unsaved = self.files.len() != before;
+        let mut jobs: Vec<Job> = wanted
+            .iter()
+            .filter_map(|(path, len, modified)| match self.files.get(path) {
+                Some(c) if c.len == *len && c.modified == *modified => None,
+                Some(c) if *len > c.len => Some((path.clone(), *len, *modified, Some(c.clone()))),
+                _ => Some((path.clone(), *len, *modified, None)),
+            })
+            .collect();
+        let fresh = jobs.iter().any(|j| j.3.is_none());
+        jobs.sort_by(|a, b| b.1.cmp(&a.1));
+        for (path, read) in read_all(jobs, progress) {
+            match read {
+                Some(c) => self.files.insert(path, c),
+                None => self.files.remove(&path),
+            };
+            unsaved = true;
+        }
+        self.unsaved |= unsaved;
+        if self.unsaved && (fresh || self.saved_at.is_none_or(|at| at.elapsed() >= Self::SAVE_EVERY)) {
+            self.save();
+        }
+        wanted
+            .iter()
+            .filter_map(|(path, _, _)| self.files.get(path))
+            .map(|c| &c.transcript)
+            .filter(|t| t.listable())
+            .cloned()
+            .collect()
+    }
+
+    fn save(&mut self) {
+        let Some(file) = &self.cache else { return };
+        let snapshot = CacheFile {
+            version: CACHE_VERSION,
+            projects: self.projects.clone(),
+            files: self.files.iter().map(|(p, c)| (p.clone(), c.clone())).collect(),
+        };
+        let Ok(json) = serde_json::to_vec(&snapshot) else { return };
+        if foreman_core::fs::write_atomic(file, json).is_ok() {
+            self.unsaved = false;
+            self.saved_at = Some(Instant::now());
+        }
     }
 
     fn dir_names(&mut self, now: SystemTime) -> Vec<String> {
@@ -408,35 +589,73 @@ impl Transcripts {
         self.listed.insert(dir.to_path_buf(), Listed { modified, at: now, files: files.clone() });
         files
     }
-
-    fn read_cached(&mut self, path: &Path, len: u64, modified: SystemTime) -> Option<Transcript> {
-        if let Some(c) = self.files.get_mut(path) {
-            if c.len == len && c.modified == modified {
-                return Some(c.transcript.clone());
-            }
-            if len > c.len {
-                c.offset = feed_from(path, c.offset, &mut c.transcript).ok()?;
-                c.len = len;
-                c.modified = modified;
-                c.transcript.modified_ms = epoch_ms(modified);
-                return Some(c.transcript.clone());
-            }
-        }
-        let mut transcript = Transcript {
-            session_id: session_id_of(path)?,
-            modified_ms: epoch_ms(modified),
-            ..Transcript::default()
-        };
-        let offset = feed_from(path, 0, &mut transcript).ok()?;
-        self.files.insert(path.to_path_buf(), Cached { len, modified, offset, transcript: transcript.clone() });
-        Some(transcript)
-    }
 }
+
+fn prefixes(roots: &[PathBuf]) -> Vec<String> {
+    roots.iter().map(|r| slug(r).to_ascii_lowercase()).collect()
+}
+
+/// A project dir named for one of the roots or a folder below it.
+fn under(dir: &str, prefixes: &[String]) -> bool {
+    let lower = dir.to_ascii_lowercase();
+    prefixes.iter().any(|p| lower.starts_with(p.as_str()))
+}
+
+/// One file: from where `cached` stopped when it grew, else from its start. `None` when it cannot be read.
+fn read_one(path: &Path, len: u64, modified: SystemTime, cached: Option<Cached>) -> Option<Cached> {
+    let mut c = match cached {
+        Some(mut c) => {
+            c.offset = feed_from(path, c.offset, &mut c.transcript).ok()?;
+            c
+        }
+        None => {
+            let mut transcript = Transcript { session_id: session_id_of(path)?, ..Transcript::default() };
+            let offset = read_head_and_tail(path, len, &mut transcript).ok()?;
+            Cached { len, modified, offset, transcript }
+        }
+    };
+    c.len = len;
+    c.modified = modified;
+    c.transcript.modified_ms = epoch_ms(modified);
+    Some(c)
+}
+
+/// [`read_one`] each job, on up to [`READERS`] threads that each take the next job when done with one.
+fn read_all(jobs: Vec<Job>, progress: &(dyn Fn(usize, usize) + Sync)) -> Vec<(PathBuf, Option<Cached>)> {
+    let total = jobs.len();
+    if total == 0 {
+        return Vec::new();
+    }
+    let jobs: Vec<Mutex<Option<Job>>> = jobs.into_iter().map(|j| Mutex::new(Some(j))).collect();
+    let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, READERS).min(total);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out = Vec::new();
+                    while let Some(slot) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        let Some((path, len, modified, cached)) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() else { continue };
+                        let read = read_one(&path, len, modified, cached);
+                        out.push((path, read));
+                        progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+                    }
+                    out
+                })
+            })
+            .collect();
+        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+    })
+}
+
+const READERS: usize = 8;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    pub(super) static READ_BYTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     /// Sanitised from a real transcript (claude 2.1.306): its line shapes, none of its text.
     const FIXTURE: &str = include_str!("../tests/fixtures/transcript.jsonl");
@@ -582,5 +801,197 @@ mod tests {
         assert_eq!(kept.len(), 1, "a kept id past the window");
         assert_eq!(kept[0].to_session().name, "renamed");
         assert_eq!(kept[0].to_session().kind, Kind::Interactive);
+    }
+
+    #[test]
+    #[ignore = "a timing over a real claude dir, read only: FM_BENCH_CLAUDE_DIR=<dir> cargo test --release -p foreman-claude scan_timing_on_a -- --ignored --nocapture"]
+    fn scan_timing_on_a_real_claude_dir() {
+        let Some(claude) = std::env::var_os("FM_BENCH_CLAUDE_DIR").map(PathBuf::from) else { return };
+        let since = epoch_ms(SystemTime::now()) - 14 * 24 * 3_600_000;
+        let none = HashSet::new();
+        let cache = tempfile::tempdir().unwrap().keep().join("transcripts.json");
+        READ_BYTES.store(0, Ordering::Relaxed);
+        let started = std::time::Instant::now();
+        let found = Transcripts::in_claude_dir(&claude).with_cache(cache.clone()).scan(&[PathBuf::new()], since, &none, &none);
+        let (cold, cold_bytes) = (started.elapsed(), READ_BYTES.swap(0, Ordering::Relaxed));
+        let restarted = std::time::Instant::now();
+        Transcripts::in_claude_dir(&claude).with_cache(cache.clone()).scan(&[PathBuf::new()], since, &none, &none);
+        println!(
+            "{} listable transcripts of the last 14 days: {} ms reading {} MB; restart from the cache ({} MB) {} ms reading {} MB",
+            found.len(),
+            cold.as_millis(),
+            cold_bytes / 1_000_000,
+            std::fs::metadata(&cache).map_or(0, |m| m.len()) / 1_000_000,
+            restarted.elapsed().as_millis(),
+            READ_BYTES.load(Ordering::Relaxed) / 1_000_000
+        );
+        let _ = std::fs::remove_file(&cache);
+    }
+
+    /// Transcripts shaped like claude's (type-first meta lines among message lines, long tool results), sized
+    /// by `size(i)`. Their names vary: no custom title, the latest one near the end, or one only early; some
+    /// open with a command before the first prompt, some end in a half-written line.
+    fn transcripts(projects: &Path, count: usize, size: impl Fn(usize) -> usize) -> Vec<PathBuf> {
+        let dir = projects.join("C--bench-Repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        let filler = "x".repeat(2000);
+        let tool = "y".repeat(60_000);
+        let meta = |kind: &str, key: &str, value: String| format!("{}\n", serde_json::json!({"type":kind,key:value,"sessionId":"s"}));
+        let user = |content: String| {
+            format!("{}\n", serde_json::json!({"parentUuid":"u","isSidechain":false,"type":"user","message":{"role":"user","content":content},"cwd":r"C:\bench\Repo","uuid":"u"}))
+        };
+        (0..count)
+            .map(|i| {
+                let target = size(i);
+                let mut body = String::with_capacity(target + 100_000);
+                body.push_str(&meta("mode", "mode", "normal".into()));
+                if i % 4 == 0 {
+                    body.push_str(&user("<command-name>/model</command-name>".into()));
+                }
+                body.push_str(&user(format!("prompt {i}")));
+                let mut n = 0;
+                while body.len() < target {
+                    n += 1;
+                    let line = if n % 7 == 0 {
+                        serde_json::json!({"parentUuid":"u","isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":tool}]},"toolUseResult":{"stdout":"z"},"cwd":r"C:\bench\Repo","uuid":"u"})
+                    } else {
+                        serde_json::json!({"parentUuid":"u","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":filler}]},"type":"assistant","cwd":r"C:\bench\Repo","uuid":"a"})
+                    };
+                    body.push_str(&format!("{line}\n"));
+                    if n % 50 == 0 {
+                        body.push_str(&meta("ai-title", "aiTitle", format!("title {i}.{n}")));
+                        body.push_str(&meta("last-prompt", "lastPrompt", format!("asked {i}.{n}")));
+                        if i % 3 == 1 || (i % 3 == 2 && n == 50) {
+                            body.push_str(&meta("custom-title", "customTitle", format!("named {i}.{n}")));
+                            body.push_str(&meta("agent-name", "agentName", format!("named {i}.{n}")));
+                        }
+                    }
+                }
+                if i % 3 == 1 {
+                    body.push_str(&meta("custom-title", "customTitle", format!("renamed {i}")));
+                }
+                if i % 5 == 4 {
+                    body.push_str(r#"{"type":"custom-title","customTitle":"half"#);
+                }
+                write(&dir, &format!("{i:08x}-0000-0000-0000-000000000000.jsonl"), &body)
+            })
+            .collect()
+    }
+
+    fn named(t: &Transcript) -> (String, Option<PathBuf>, Option<String>, bool) {
+        (t.title(), t.cwd.clone(), t.first_prompt.clone(), t.listable())
+    }
+
+    #[test]
+    fn the_head_and_tail_read_names_each_session_as_the_whole_read_does() {
+        let claude = tempfile::tempdir().unwrap();
+        let files = transcripts(&claude.path().join("projects"), 24, |i| [100_000, 400_000, 1_500_000][(i / 3) % 3]);
+        let found = Transcripts::in_claude_dir(claude.path()).scan(&[PathBuf::from(r"C:\bench\Repo")], 0, &HashSet::new(), &HashSet::new());
+        assert_eq!(found.len(), files.len());
+        for path in &files {
+            let whole = read(path).unwrap();
+            let t = found.iter().find(|t| t.session_id == whole.session_id).unwrap();
+            assert_eq!(named(t), named(&whole), "{}", path.display());
+        }
+    }
+
+    #[test]
+    #[ignore = "a check over a real claude dir, read only: FM_BENCH_CLAUDE_DIR=<dir> cargo test --release -p foreman-claude names_as_the_whole_read -- --ignored --nocapture"]
+    fn a_real_claude_dir_names_as_the_whole_read_does() {
+        let Some(claude) = std::env::var_os("FM_BENCH_CLAUDE_DIR").map(PathBuf::from) else { return };
+        let since = epoch_ms(SystemTime::now()) - 14 * 24 * 3_600_000;
+        let none = HashSet::new();
+        let found = Transcripts::in_claude_dir(&claude).scan(&[PathBuf::new()], since, &none, &none);
+        let mut differ = 0;
+        for t in &found {
+            let path = std::fs::read_dir(claude.join("projects"))
+                .unwrap()
+                .flatten()
+                .map(|d| d.path().join(format!("{}.jsonl", t.session_id)))
+                .find(|p| p.is_file())
+                .unwrap();
+            if named(&read(&path).unwrap()) != named(t) {
+                differ += 1;
+                println!("differs: {}", path.display());
+            }
+        }
+        println!("{} transcripts, {differ} named differently", found.len());
+        assert_eq!(differ, 0);
+    }
+
+    #[test]
+    #[ignore = "a timing, not a check: cargo test --release -p foreman-claude scan_timing -- --ignored --nocapture"]
+    fn scan_timing_on_four_hundred_transcripts() {
+        let claude = tempfile::tempdir().unwrap();
+        let files = transcripts(&claude.path().join("projects"), 400, |i| match i % 10 {
+            _ if i < 2 => 60_000_000,
+            0 => 5_000_000,
+            1..=4 => 1_000_000,
+            _ => 300_000,
+        });
+        let bytes: u64 = files.iter().map(|f| std::fs::metadata(f).unwrap().len()).sum();
+        let roots = [PathBuf::from(r"C:\bench\Repo")];
+        let none = HashSet::new();
+        for run in 0..3 {
+            let cache = claude.path().join(format!("cache-{run}.json"));
+            let mut scanner = Transcripts::in_claude_dir(claude.path()).with_cache(cache.clone());
+            let started = std::time::Instant::now();
+            let found = scanner.scan(&roots, 0, &none, &none);
+            let first = started.elapsed();
+            let again = std::time::Instant::now();
+            scanner.scan(&roots, 0, &none, &none);
+            let second = again.elapsed();
+            let restarted = std::time::Instant::now();
+            let mut scanner = Transcripts::in_claude_dir(claude.path()).with_cache(cache);
+            assert_eq!(scanner.scan(&roots, 0, &none, &none).len(), found.len());
+            println!(
+                "run {run}: {} transcripts, {} MB: first scan {} ms, second {} ms, restart from the cache {} ms",
+                found.len(),
+                bytes / 1_000_000,
+                first.as_millis(),
+                second.as_millis(),
+                restarted.elapsed().as_millis()
+            );
+        }
+    }
+
+    #[test]
+    fn the_file_cache_outlives_the_scanner_and_a_grown_file_is_read_from_where_it_stopped() {
+        let claude = tempfile::tempdir().unwrap();
+        let dir = claude.path().join("projects").join("C--demo-Gaia");
+        std::fs::create_dir_all(&dir).unwrap();
+        let line = |text: &str| format!("{}\n", serde_json::json!({"type":"user","message":{"role":"user","content":text},"cwd":r"C:\demo\Gaia"}));
+        let a = write(&dir, "aaaaaaaa-0000-0000-0000-000000000001.jsonl", &line("first"));
+        write(&dir, "bbbbbbbb-0000-0000-0000-000000000002.jsonl", &line("other"));
+        let cache = claude.path().join("cache").join("transcripts.json");
+        let roots = [PathBuf::from(r"C:\demo\Gaia")];
+        let none = HashSet::new();
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        let count = |_: usize, _: usize| {
+            reads.fetch_add(1, Ordering::Relaxed);
+        };
+        assert_eq!(Transcripts::in_claude_dir(claude.path()).with_cache(cache.clone()).scan_with(&roots, 0, &none, &none, &count).len(), 2);
+        assert_eq!(reads.swap(0, Ordering::Relaxed), 2);
+        assert!(cache.is_file(), "saved after reading files from their start");
+
+        let mut f = std::fs::OpenOptions::new().append(true).open(&a).unwrap();
+        writeln!(f, "{}", serde_json::json!({"type":"custom-title","customTitle":"renamed"})).unwrap();
+        drop(f);
+        let mut again = Transcripts::in_claude_dir(claude.path()).with_cache(cache.clone());
+        let found = again.scan_with(&roots, 0, &none, &none, &count);
+        assert_eq!(reads.swap(0, Ordering::Relaxed), 1, "only the grown file is read");
+        let a_now = found.iter().find(|t| t.session_id.starts_with("aaaaaaaa")).unwrap();
+        assert_eq!((a_now.title(), a_now.first_prompt.as_deref()), ("renamed".to_string(), Some("first")));
+
+        let shown = Transcripts::in_claude_dir(claude.path()).with_cache(cache.clone());
+        assert!(shown.has_cache());
+        let mut cached: Vec<String> = shown.cached(&roots, 0, &none).iter().map(Transcript::title).collect();
+        cached.sort();
+        assert_eq!(cached, ["other", "renamed"], "as the last scan saved them");
+        assert!(shown.cached(&[PathBuf::from(r"C:\demo\Other")], 0, &none).is_empty(), "another root's");
+
+        std::fs::write(&cache, "not json").unwrap();
+        assert_eq!(Transcripts::in_claude_dir(claude.path()).with_cache(cache).scan_with(&roots, 0, &none, &none, &count).len(), 2);
+        assert_eq!(reads.load(Ordering::Relaxed), 2, "an unreadable cache is read again from the files");
     }
 }

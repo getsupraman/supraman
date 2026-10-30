@@ -24,6 +24,7 @@ mod selftest_notices;
 mod selftest_refresh;
 mod selftest_search;
 mod selftest_shell;
+mod selftest_startup;
 mod selftest_supervise;
 mod selftest_tabs;
 mod selftest_title;

@@ -390,18 +390,6 @@ impl FleetView {
             .overflow_y_scroll()
             .pb_4();
         self.search_marks.clear();
-        if !self.sessions_read && !matches!(self.cli, Cli::Failed(_)) {
-            body = body.child(
-                div()
-                    .relative()
-                    .px_3()
-                    .py_2()
-                    .text_sm()
-                    .text_color(secondary(cx))
-                    .child(hit_target(&self.hits, "loading-sessions".into()))
-                    .child("Loading sessions…"),
-            );
-        }
         for workspace in tree.workspaces.iter().filter(|_| query.is_empty()) {
             let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);
@@ -473,6 +461,7 @@ impl FleetView {
                 }
             }))
             .child(header)
+            .children(self.render_loading(cx))
             .children(self.render_inbox(cx))
             .children(self.render_messages(cx))
             .when(!notices.is_empty(), |d| {
@@ -496,6 +485,27 @@ impl FleetView {
             .child(body)
             .children(toast)
             .into_any_element()
+    }
+
+    fn render_loading(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pending = self.loading(cx);
+        if pending.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .relative()
+                .flex_none()
+                .px_3()
+                .py(px(2.))
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .text_xs()
+                .text_color(secondary(cx))
+                .child(hit_target(&self.hits, "loading-sessions".into()))
+                .child(SharedString::from(format!("Loading sessions… {}", pending.join(", "))))
+                .into_any_element(),
+        )
     }
 
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
