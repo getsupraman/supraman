@@ -16,7 +16,7 @@ pub struct WorkspaceFacts {
     pub project: Option<String>,
 }
 
-pub fn workspace_card(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
+pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
     let mut rows = Vec::new();
     rows.extend(facts.home.clone().filter(|h| !h.is_empty()).map(|h| ("home", h)));
     rows.push(("folders", if facts.folders.is_empty() { "none".to_string() } else { facts.folders.join(", ") }));
@@ -29,6 +29,7 @@ pub fn workspace_card(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
     match &facts.own {
         Some(own) => {
             rows.push(("session", format!("{} · {} · {}", own.session.name, fleet::health_label(&own.health), fleet::short_id(&own.session))));
+            rows.extend(Some(own.session.session_id.clone()).filter(|u| !u.is_empty()).map(|u| ("uuid", u)));
             rows.extend(waiting_for(own).map(|w| ("waiting", w)));
             rows.extend(own.hook.as_ref().map(|h| ("hook", h.label(now_ms))));
         }
@@ -40,7 +41,7 @@ pub fn workspace_card(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
 }
 
 /// `adopt`: why its menu has no Adopt ([`fleet::Adoption::No`]).
-pub fn session_card(row: &SessionRow, claimed: Option<String>, open: Open, adopt: Option<String>, now_ms: i64) -> HoverCard {
+pub fn session(row: &SessionRow, claimed: Option<String>, open: Open, adopt: Option<String>, now_ms: i64) -> HoverCard {
     let s = &row.session;
     let title = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
     let state = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
@@ -52,6 +53,9 @@ pub fn session_card(row: &SessionRow, claimed: Option<String>, open: Open, adopt
     rows.extend(open.hint().map(|h| ("open", h.to_string())));
     let id = if s.id.is_empty() { &s.session_id } else { &s.id };
     rows.push(("id", format!("{} · {id}", s.kind.as_str())));
+    if !s.session_id.is_empty() && s.session_id != *id {
+        rows.push(("uuid", s.session_id.clone()));
+    }
     rows.push(("cwd", s.cwd.display().to_string()));
     rows.extend(worktree(&s.cwd).map(|w| ("worktree", w)));
     rows.extend(foreman_core::branch_at(&s.cwd).map(|b| ("branch", b)));
@@ -95,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn the_workspace_card_names_home_folders_state_its_session_relay_and_project() {
+    fn the_workspace_details_name_home_folders_state_its_session_relay_and_project() {
         let mut own = row(Health::Blocked { waiting_for: Some("permission prompt".into()) });
         own.hook = Some(HookSignal {
             last: foreman_core::Event::from_payload("Stop", r#"{"session_id":"77aa88bb-x"}"#, NOW - 12_000).unwrap(),
@@ -111,35 +115,35 @@ mod tests {
             project: Some("autowork".into()),
         };
         assert_eq!(
-            workspace_card(&facts, NOW).text(),
-            "demo\nhome  C:\\nowhere\\demo\nfolders  Alpha, Beta\nstate  started\nsession  fm-demo-workspace · blocked · 77aa88bb\n\
+            workspace(&facts, NOW).text(),
+            "demo\nhome  C:\\nowhere\\demo\nfolders  Alpha, Beta\nstate  started\nsession  fm-demo-workspace · blocked · 77aa88bb\nuuid  77aa88bb-x\n\
              waiting  permission prompt\nhook  turn ended 12 s ago\nrelay  relay ready\nWorkState  autowork"
         );
         let bare = WorkspaceFacts { name: "gaia".into(), ..Default::default() };
-        assert_eq!(workspace_card(&bare, NOW).text(), "gaia\nfolders  none\nstate  never started\nsession  not wanted\nrelay  stopped");
+        assert_eq!(workspace(&bare, NOW).text(), "gaia\nfolders  none\nstate  never started\nsession  not wanted\nrelay  stopped");
     }
 
     #[test]
-    fn the_session_card_names_state_id_cwd_hook_claim_and_the_owner() {
+    fn the_session_details_name_state_id_uuid_cwd_hook_claim_and_the_owner() {
         let mut r = row(Health::Running);
         r.also_in = Some("larchsys".into());
         assert_eq!(
-            session_card(&r, Some("m5/59".into()), Open::Attach, None, NOW).text(),
-            "fm-demo-workspace\nstate  running\nopen  Attach in a new tab\nid  background · 77aa88bb\ncwd  C:\\nowhere\\demo\nclaimed  m5/59\nalso in  larchsys"
+            session(&r, Some("m5/59".into()), Open::Attach, None, NOW).text(),
+            "fm-demo-workspace\nstate  running\nopen  Attach in a new tab\nid  background · 77aa88bb\nuuid  77aa88bb-x\ncwd  C:\\nowhere\\demo\nclaimed  m5/59\nalso in  larchsys"
         );
         let why = "none: fm-demo-alpha exists already; a folder has one supervised session".to_string();
-        assert!(session_card(&r, None, Open::Attach, Some(why.clone()), NOW).text().ends_with(&format!("
+        assert!(session(&r, None, Open::Attach, Some(why.clone()), NOW).text().ends_with(&format!("
 also in  larchsys
 adopt  {why}")));
         r.closed = true;
         r.session.name.clear();
-        assert!(session_card(&r, None, Open::Nothing, None, NOW).text().starts_with("(unnamed)\nstate  closed\nid  "));
+        assert!(session(&r, None, Open::Nothing, None, NOW).text().starts_with("(unnamed)\nstate  closed\nid  "));
     }
 
     #[test]
     fn an_interrupted_session_says_its_process_ended_and_another_foremans_says_whose() {
         let gone = row(Health::Orphaned { last_state: foreman_claude::SessionState::Working });
-        let text = session_card(&gone, None, Open::Supervised, None, NOW).text();
+        let text = session(&gone, None, Open::Supervised, None, NOW).text();
         assert!(
             text.starts_with(
                 "fm-demo-workspace\nstate  interrupted\n  the process ended while the session was working\n\
@@ -149,6 +153,6 @@ adopt  {why}")));
         );
         let mut foreign = row(Health::Running);
         foreign.foreign = true;
-        assert!(session_card(&foreign, None, Open::Foreign, None, NOW).text().contains("\nopen  another Foreman session\n"));
+        assert!(session(&foreign, None, Open::Foreign, None, NOW).text().contains("\nopen  another Foreman session\n"));
     }
 }

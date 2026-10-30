@@ -11,6 +11,7 @@ use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subsc
 use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, session_items, workspace_items};
 use crate::fleet::{self, SessionRow};
+use crate::row_details;
 use foreman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
@@ -364,6 +365,42 @@ impl FleetView {
         session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row), adopt)
     }
 
+    pub(super) fn details(&self, target: &MenuTarget, cx: &Context<Self>) -> Option<foreman_ui::hover_card::HoverCard> {
+        let tree = self.tree();
+        match target {
+            MenuTarget::Workspace(w) => {
+                let node = tree.workspaces.iter().find(|n| &n.name == w)?;
+                let facts = row_details::WorkspaceFacts {
+                    name: w.clone(),
+                    home: node.home.as_ref().map(|h| h.display().to_string()),
+                    folders: self
+                        .workspaces
+                        .iter()
+                        .find(|r| &r.name == w)
+                        .map(|r| r.folders.iter().map(|f| if f.enabled { f.name.clone() } else { format!("{} (disabled)", f.name) }).collect())
+                        .unwrap_or_default(),
+                    started: node.started,
+                    own: node.own.clone(),
+                    relay: self.relays.get(w).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
+                    project: self.tabs.iter().find_map(|t| match &t.kind {
+                        super::TabKind::Work(view) if &view.read(cx).workspace == w => view.read(cx).project().map(|p| p.qualified_ref.clone()),
+                        _ => None,
+                    }),
+                };
+                Some(row_details::workspace(&facts, now_ms()))
+            }
+            MenuTarget::Session { workspace, repo, session_id } => {
+                let row = tree.workspaces.iter().find(|n| &n.name == workspace)?.rows().find(|r| &r.session.session_id == session_id)?;
+                let adopt = match self.adoption(workspace, repo, row) {
+                    Some(fleet::Adoption::No(why)) => Some(why),
+                    _ => None,
+                };
+                Some(row_details::session(row, self.claimed_item(workspace, &row.session.name, cx), self.open_of(row), adopt, now_ms()))
+            }
+            MenuTarget::Repo { .. } => None,
+        }
+    }
+
     pub(crate) fn adoption(&self, workspace: &str, folder: &str, row: &SessionRow) -> Option<fleet::Adoption> {
         fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.desired)
     }
@@ -458,6 +495,11 @@ impl FleetView {
             }
             MenuAction::Delete(session) => self.ask_delete(session),
             MenuAction::DeleteClosed(workspace) => self.ask_delete_closed(workspace, cx),
+            MenuAction::Details(target) => {
+                if let Some(details) = self.details(&target, cx) {
+                    self.confirm = Some(Confirm::report(details.text()));
+                }
+            }
         }
         cx.notify();
     }

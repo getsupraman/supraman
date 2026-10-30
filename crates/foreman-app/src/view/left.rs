@@ -10,7 +10,6 @@ use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, 
 use foreman_ui::banner;
 use foreman_ui::button;
 use foreman_ui::hit::{HitTargets, hit_target};
-use foreman_ui::hover_card;
 use foreman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
@@ -19,7 +18,6 @@ use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LI
 use crate::clipped::clipped;
 use crate::settings_window::page;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
-use crate::row_card;
 use crate::work_view;
 
 const TREE_MIN_SHARE: f32 = 0.3;
@@ -1119,7 +1117,7 @@ impl FleetView {
             None => div().size(px(8.)).rounded_full().border_1().border_color(colors.text_disabled),
         };
         let relay = self.relays.get(&w).and_then(|r| r.label(now_ms()));
-        let relay_glyph = relay.clone().and_then(|(text, _)| {
+        let relay_glyph = relay.and_then(|(text, _)| {
             let (icon, color) = match relay_word(&text) {
                 "direct" => return None,
                 "ready" => (Icon::RelayReady, status.success),
@@ -1196,22 +1194,6 @@ impl FleetView {
             }))
         };
 
-        let registered = self.workspaces.iter().find(|r| r.name == w);
-        let facts = row_card::WorkspaceFacts {
-            name: w.clone(),
-            home: workspace.home.as_ref().map(|h| h.display().to_string()),
-            folders: registered
-                .map(|r| r.folders.iter().map(|f| if f.enabled { f.name.clone() } else { format!("{} (disabled)", f.name) }).collect())
-                .unwrap_or_default(),
-            started: workspace.started,
-            own: own.cloned(),
-            relay: relay.map(|(text, _)| text),
-            project: self.tabs.iter().find_map(|t| match &t.kind {
-                TabKind::Work(view) if view.read(cx).workspace == w => view.read(cx).project().map(|p| p.qualified_ref.clone()),
-                _ => None,
-            }),
-        };
-
         let line = div()
             .flex()
             .items_center()
@@ -1260,7 +1242,6 @@ impl FleetView {
                 d.child(clipped(format!("ws-waiting-{w}"), why, false).pl(px(grid::LABEL)).pb(px(4.)).text_xs().text_color(status.warning))
             })
             .child(hit_target(&self.hits, format!("ws-row-{w}")))
-            .tooltip(hover_card::tooltip(move || row_card::workspace_card(&facts, now_ms())))
             .on_mouse_down(MouseButton::Right, {
                 let w = w.clone();
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {
@@ -1484,14 +1465,6 @@ impl FleetView {
                     .child(action.map_or_else(slot, IntoElement::into_any_element)),
             );
 
-        let card = {
-            let (row, claimed) = (row.clone(), self.claimed_item(workspace, &s.name, cx));
-            let adopt = match self.adoption(workspace, repo, &row) {
-                Some(crate::fleet::Adoption::No(why)) => Some(why),
-                _ => None,
-            };
-            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), open, adopt.clone(), now_ms()))
-        };
         let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
         div()
@@ -1522,7 +1495,6 @@ impl FleetView {
                 d.child(clipped(format!("hook-{}{at}", s.id), h, false).pl(px(grid::LABEL)).text_xs().text_color(secondary(cx)))
             })
             .child(hit_target(&self.hits, format!("session-row-{}{at}", s.session_id)))
-            .tooltip(card)
             .on_drag(DraggedSession { session_id: s.session_id.clone(), title: fleet::display_name(s).to_string().into() }, |row, _, _, cx| {
                 cx.new(|_| row.clone())
             })
