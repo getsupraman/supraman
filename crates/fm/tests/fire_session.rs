@@ -355,7 +355,7 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert_eq!(spec.cwd, worktree);
     assert_eq!(git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]), format!("fm-sched/fix/{stamp}"), "a fresh worktree on the run's branch");
     assert_eq!(spec.permission_mode, "acceptEdits");
-    assert!(spec.prompt.starts_with(&schedule::preamble(&run)) && spec.prompt.ends_with("Fix the bugs."), "{}", spec.prompt);
+    assert!(spec.prompt.starts_with(&schedule::preamble(&run, "fm")) && spec.prompt.ends_with("Fix the bugs."), "{}", spec.prompt);
     let allowed = flag(&spec, "--allowedTools");
     for rule in ["Bash(fm:*)", "Edit", "Bash(git commit:*)", &format!("Bash(git push -u origin fm-sched/fix/{stamp})")] {
         assert!(allowed.contains(&rule), "{rule} in {allowed:?}");
@@ -571,4 +571,33 @@ fn fire_session_of_a_dead_fm_is_stopped_and_revoked_by_the_next_fire() {
     assert_eq!(host.calls()[0], "stop dead0001");
     assert!(f.api("DELETE").len() >= 2, "the dead run's token and the new run's");
     assert_eq!(ended(&f.records("crash-20261101-090000"))[0].0, Outcome::Interrupted);
+}
+
+/// c4's scratch home under `target/sched6-real/`, approved by this fixture standing in for the window (the
+/// controller's grant); no task is registered. Then, by hand: `FOREMAN_HOME=<it>/home fm schedule run real reply-ok`.
+#[test]
+#[ignore = "sets up the real run's scratch home; run once by hand"]
+fn fire_session_real_run_scratch_home() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().join("target").join("sched6-real");
+    let (home, repo) = (root.join("home"), root.join("repo"));
+    assert!(!root.exists(), "{} exists; remove it first", root.display());
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&repo).unwrap();
+    // a plain folder: a nested git repo is a trust root of its own, which claude --bg refuses until trusted
+    fs::write(repo.join("README.md"), "scratch folder of sched/6's real run\n").unwrap();
+    let w = Workspace::new("real", &root, vec![Folder::new("repo", &repo)]);
+    Registry::at(&home).save(&w, false).unwrap();
+    let mut s = session_schedule("reply-ok", ActionKind::Session, Profile::Read);
+    s.folder = "repo".into();
+    s.action.prompt = Some(Prompt::Text("reply OK".into()));
+    s.caps.max_runtime = Span(5 * 60);
+    schedule::edit(&home, &w, |all| {
+        all.push(s);
+        Ok(())
+    })
+    .unwrap();
+    let store = foreman_core::secret::default_store(&home);
+    let approved = schedule::approve(&home, &*store, &w, "reply-ok", T0).unwrap();
+    assert_eq!(schedule::effective_status(&*store, &w, &approved), Sched::Active);
+    println!("home: {}", home.display());
 }

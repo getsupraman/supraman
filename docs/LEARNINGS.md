@@ -4945,3 +4945,52 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-5\target`): build ok, no warnings; `cargo test --release --workspace`
   778 passed, 0 failed, 4 ignored; `--selftest` 5/5 PASS (runs 2 and 3 waited for other worktrees' selftests);
   `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
+
+## 2026-10-30 — sched/6 `fm schedule fire`, the session stage
+
+`Host::session` is `fm::run::session_stage` (`crates/fm/src/run.rs`) on the real host; tests in
+`crates/fm/tests/fire_session.rs` (a fake `claude` with scripted rows and a clock that moves only when fire sleeps,
+`FakeWorkState` with OAuth, a temp home, a temp git repo).
+
+- **One spec for dry-run and fire.** `LaunchConfig::launch_spec(workspace, &WantedSession, env)` (new, C56) builds a
+  supervised `--bg` (name, cwd, prompt, mode, `--strict-mcp-config`, plugin dirs, add-dirs, `--settings` env,
+  `--allowedTools`); `Supervisor::launch` adds the adopt's `--resume`, `fm`'s `schedule::run_spec` adds
+  `FOREMAN_SCHEDULE`/`FOREMAN_RUN`, `--disallowedTools` and `--model`. Fire launches `run_spec`'s spec with the gate
+  output appended (cut at 32 KiB, marked) and its `--mcp-config` replaced by the minted one, or dropped when not signed in.
+- **`AppTokens`, `bearer`, `workstate_role` live in `foreman-supervisor` (`tokens.rs`)**; the app's `tokens.rs` keeps
+  only its tests and the `signed_in` helper (`#[cfg(test)]`). fm's `RealHost` holds `AppTokens { Auth::open(home) }`.
+- **The mint**: role from `workstate_role("repo")` = `orchestrator` (Decision 4), `launchedBy` = `origin` =
+  `foreman/<ws>/schedule/<id>`, `externalRole` `schedule`, `replace` false, `repo` from `git_repo(cwd)`. It is never in
+  `MintedSessions`: the live file keeps the WorkState session id and its origin (`LiveSession`), the run record the
+  session id; the token is only in `mcp/workstate-<name>.json`, deleted at the end. `Minter::bind` once the row shows.
+- **Worktree**: `git rev-parse --git-dir` first; "dubious ownership" fails the run with
+  `git config --global --add safe.directory <folder>` (fm never runs it). Then `git worktree add -b
+  fm-sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD` (`schedule::run_branch`). A `read` run
+  needs no repo.
+- **The watch** (every 15 s): `fm schedule report` (`<id>.report` in the live dir, written by
+  `fm schedule report <run> done|needs-you <line>`, found by the live file whose `run` matches), `.restart`, the token
+  cap (`foreman_claude::transcript::Usage`, new, C56: each message id once with its last line's usage, read on from the
+  last offset; input + output + cache creation capped, cache reads recorded), `max_runtime`, the row's `health()`.
+  `Blocked` (or a needs-you report) records `ended needs_you` at once and parks until `max_runtime`, the row gone or a
+  done report (a later done adds a second `ended`; `runs()` keeps the last). `Idle` for 2 min after a `Running` look or
+  a `Stop` hook event → `done` "idle after its work". No live row for 2 polls → `failed` "the session ended without a
+  report". The end: `claude stop` (never rm), revoke, delete the config; `ended` carries the tokens.
+- **Recovery**: a dead fm's live file with a `session` gets `Host::end_dead_session` (stop, revoke on its recorded
+  origin, delete the config) from the next fire of that schedule, then `interrupted`.
+- **F-01**: `worktree-edit` adds `Bash(git status|diff|log|add|commit:*)` and, per run, the exact
+  `Bash(git push -u origin fm-sched/<id>/<stamp>)` (`Permissions::allowed(always, branch)`); dry-run and the skill say a
+  fix's build and test commands go in `--allow-tools`.
+- **A nested git repo is its own claude trust root.** The real run's first try used a scratch git repo under
+  `target/`: `claude --bg` refused it ("workspace … is not trusted"), and fire recorded `failed` with that text. A
+  plain folder under the worktree inherits its trust; the real run used one (`read` needs no repo). A `worktree-edit`
+  schedule's folder must be trusted itself; its run worktree under `<folder>/.claude/worktrees/` inherits that.
+- **`git checkout -- <file>` after a red check also drops uncommitted work in that file.** It took the `Usage` reader
+  once; commit a WIP before red checks.
+- **The real run's approval** came from an `#[ignore]`d fixture (`fire_session_real_run_scratch_home`) calling
+  `schedule::approve` in a scratch home under `target/sched6-real/` with its own DPAPI store (the controller's grant
+  under C100); no task was registered, and no fm path approves (the C100 scan passes).
+- **A run reports through Bash, by the allowed path.** The second real run's session ran `fm schedule report` with
+  the PowerShell tool; `Bash(fm:*)` does not cover it (m3/2), so it parked at a permission prompt and the run became
+  `needs_you`, parked to `max_runtime` and stopped (as designed). `fm` was not on its PATH either. The preamble now
+  names the plugin's `fm.exe` by the path `fm_allowed_tools` allows (`fm` when no plugin is found) and says to run it
+  with the Bash tool exactly as written; the third run reported `done: OK` in 19 s.

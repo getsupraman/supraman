@@ -230,7 +230,8 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--deny-tools", "WebFetch", "--secret", "SENTRY_TOKEN", "--model", "opus"]);
     let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
     assert!(text.contains("nothing launched, nothing written"), "{text}");
-    assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains("fm schedule report fix-bugs-"), "{text}");
+    assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains(" schedule report fix-bugs-"), "{text}");
+    assert!(text.contains("` with the Bash tool, exactly as written"), "a PowerShell `fm` parks the run: {text}");
     assert!(text.contains("\n  /fix\n"), "the base prompt follows the preamble: {text}");
     let argv = text.split("argv:\n").nth(1).unwrap();
     for arg in ["  claude\n", "  --bg\n", "  --name\n  fm-demo-sched-fix-bugs-", "  --permission-mode\n  acceptEdits\n", "  --strict-mcp-config\n", "  --allowedTools\n", "  Bash(fm:*)\n", "  Edit\n", "  \"Bash(dotnet test:*)\"\n", "  --disallowedTools\n", "  \"Bash(git push --force:*)\"\n", "  Bash(schtasks:*)\n", "  WebFetch\n", "  --model\n  opus\n", "  --\n"] {

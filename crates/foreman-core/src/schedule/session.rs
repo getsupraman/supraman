@@ -118,12 +118,14 @@ pub fn run_worktree(folder: &Path, id: &str, stamp: &str) -> PathBuf {
     folder.join(".claude").join("worktrees").join(format!("{}{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX))
 }
 
-/// What a run tells its session in front of the base prompt.
-pub fn preamble(run: &str) -> String {
+/// What a run tells its session in front of the base prompt; `fm` is the command its `--allowedTools` lets run
+/// (`fm_allowed_tools`).
+pub fn preamble(run: &str, fm: &str) -> String {
     format!(
         "This is an unattended scheduled run `{run}`; nobody watches it. When you are finished, run \
-         `fm schedule report {run} done \"<one line>\"`. If you cannot go on without the human, run \
-         `fm schedule report {run} needs-you \"<why>\"`."
+         `{fm} schedule report {run} done \"<one line>\"`. If you cannot go on without the human, run \
+         `{fm} schedule report {run} needs-you \"<why>\"`. Run `{fm}` with the Bash tool, exactly as written: \
+         only that is allowed without a prompt."
     )
 }
 

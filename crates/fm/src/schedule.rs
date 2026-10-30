@@ -605,7 +605,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         role: RUN_ROLE.into(),
         cwd: if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() },
         repo: Some(folder.name.clone()),
-        prompt: format!("{}\n\n{}", schedule::preamble(&run), schedule::base_prompt(&folder.path, prompt)?),
+        prompt: format!("{}\n\n{}", schedule::preamble(&run, &fm_command(plugin_dir)), schedule::base_prompt(&folder.path, prompt)?),
         permission_mode: s.permissions.profile.permission_mode().into(),
         add_dirs: s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect(),
         resume_prompt: None,
@@ -627,6 +627,15 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         spec.extra_args.extend(["--model".to_string(), s.action.model.clone()]);
     }
     Ok(spec)
+}
+
+/// The plugin's `fm.exe` by the path its `--allowedTools` rule names, else `fm` on the session's PATH.
+fn fm_command(plugin_dir: Option<&Path>) -> String {
+    plugin_dir
+        .map(|d| d.join("bin").join(foreman_core::HOOK_EXE))
+        .filter(|exe| exe.is_file())
+        .map(|exe| paths::normalize(&exe))
+        .unwrap_or_else(|| "fm".into())
 }
 
 /// What a profile leaves to `--allow-tools`, said where the permissions are shown.
