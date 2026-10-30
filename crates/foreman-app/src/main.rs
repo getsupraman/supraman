@@ -25,6 +25,7 @@ mod selftest_messages;
 mod selftest_notices;
 mod selftest_refresh;
 mod selftest_reopen;
+mod selftest_schedules;
 mod selftest_search;
 mod selftest_shell;
 mod selftest_startup;

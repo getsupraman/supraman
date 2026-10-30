@@ -139,11 +139,12 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let work = target.join("selftest-work");
     let add = target.join(crate::selftest_manage::FOLDER);
     let single = target.join(crate::selftest_manage::SINGLE);
-    for dir in [&home, &cwd, &work, &add, &single] {
+    let sched = crate::selftest_schedules::folder();
+    for dir in [&home, &cwd, &work, &add, &single, &sched] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single],
+        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single, sched],
         session_name: None,
         name_prefix: None,
         kill: Vec::new(),
@@ -378,7 +379,10 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
     window
         .spawn(cx, async move |cx| {
             let own = lock().as_ref().and_then(|s| s.name_prefix.clone()).unwrap_or_else(|| format!("fm-selftest-{}", run_hex()));
-            view.update(cx, |v, _| v.own_prefix = Some(own));
+            view.update(cx, |v, _| {
+                v.own_prefix = Some(own);
+                v.registrar = crate::selftest_schedules::registrar();
+            });
             let result = match mode {
                 Mode::Selftest => gate(&view, cx).await,
                 Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
@@ -1005,6 +1009,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let reordered = step("7u", crate::selftest_tabs::reorder(view, cx)).await?;
     println!("step 7u: {reordered}");
+
+    let scheduled = step("7y", crate::selftest_schedules::run(view, &home(), cx)).await?;
+    println!("step 7y: {scheduled}");
 
     set_step("8");
     let (idle_private, idle_ws) = memory();
