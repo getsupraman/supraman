@@ -686,7 +686,16 @@ fn a_runs_session_name_is_a_valid_name_and_profiles_map_onto_claudes_flags() {
     assert_eq!("worktree-edit".parse::<Profile>().unwrap().permission_mode(), "acceptEdits");
     assert!("bypassPermissions".parse::<Profile>().unwrap_err().contains("never a schedule's mode"));
     let p = Permissions { profile: Profile::Read, allow_tools: vec!["Read".into(), "Bash(ls:*)".into()], deny_tools: vec!["WebFetch".into()], ..Permissions::default() };
-    assert_eq!(p.allowed(&["Bash(fm:*)".into()]), ["Bash(fm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
+    assert_eq!(p.allowed(&["Bash(fm:*)".into()], "fm-sched/x/1"), ["Bash(fm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
+    let edit = Permissions { profile: Profile::WorktreeEdit, ..Permissions::default() };
+    let branch = run_branch("fix", &stamp);
+    assert_eq!(branch, "fm-sched/fix/20261102-090000");
+    let allowed = edit.allowed(&[], &branch);
+    for rule in ["Edit", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)"] {
+        assert!(allowed.contains(&rule.to_string()), "{rule} in {allowed:?}");
+    }
+    assert_eq!(allowed.iter().filter(|r| r.contains("push")).collect::<Vec<_>>(), ["Bash(git push -u origin fm-sched/fix/20261102-090000)"], "its own branch only");
+    assert!(!Permissions { profile: Profile::Auto, ..Permissions::default() }.allowed(&[], &branch).iter().any(|r| r.contains("push")));
     assert_eq!(p.denied().len(), DEFAULT_DENY.len() + 1);
 }
 

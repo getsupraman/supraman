@@ -35,7 +35,18 @@ impl Profile {
     pub fn tools(self) -> &'static [&'static str] {
         match self {
             Self::Read => &["Read", "Glob", "Grep"],
-            Self::WorktreeEdit => &["Read", "Glob", "Grep", "Edit", "Write"],
+            Self::WorktreeEdit => &[
+                "Read",
+                "Glob",
+                "Grep",
+                "Edit",
+                "Write",
+                "Bash(git status:*)",
+                "Bash(git diff:*)",
+                "Bash(git log:*)",
+                "Bash(git add:*)",
+                "Bash(git commit:*)",
+            ],
             Self::Auto => &[],
         }
     }
@@ -56,10 +67,12 @@ impl std::str::FromStr for Profile {
 }
 
 impl Permissions {
-    /// `--allowedTools`: `always` (Foreman's own, `fm_allowed_tools`), the profile's, then the schedule's.
-    pub fn allowed(&self, always: &[String]) -> Vec<String> {
+    /// `--allowedTools`: `always` (Foreman's own, `fm_allowed_tools`), the profile's, then the schedule's. A
+    /// `worktree-edit` run may push its own `branch` and no other.
+    pub fn allowed(&self, always: &[String], branch: &str) -> Vec<String> {
         let profile = self.profile.tools().iter().map(|t| t.to_string());
-        dedup(always.iter().cloned().chain(profile).chain(self.allow_tools.iter().cloned()))
+        let push = (self.profile == Profile::WorktreeEdit).then(|| format!("Bash(git push -u origin {branch})"));
+        dedup(always.iter().cloned().chain(profile).chain(push).chain(self.allow_tools.iter().cloned()))
     }
 
     /// `--disallowedTools`: [`DEFAULT_DENY`], then the schedule's.
@@ -95,17 +108,24 @@ pub fn session_name(workspace: &str, id: &str, stamp: &str) -> String {
     format!("{}{workspace}-{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX)
 }
 
+/// `fm-sched/<id>/<stamp>`: the branch of a run's worktree.
+pub fn run_branch(id: &str, stamp: &str) -> String {
+    format!("{}sched/{id}/{stamp}", crate::FM_PREFIX)
+}
+
 /// `<folder>/.claude/worktrees/fm-sched-<id>-<stamp>`.
 pub fn run_worktree(folder: &Path, id: &str, stamp: &str) -> PathBuf {
     folder.join(".claude").join("worktrees").join(format!("{}{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX))
 }
 
-/// What a run tells its session in front of the base prompt.
-pub fn preamble(run: &str) -> String {
+/// What a run tells its session in front of the base prompt; `fm` is the command its `--allowedTools` lets run
+/// (`fm_allowed_tools`).
+pub fn preamble(run: &str, fm: &str) -> String {
     format!(
         "This is an unattended scheduled run `{run}`; nobody watches it. When you are finished, run \
-         `fm schedule report {run} done \"<one line>\"`. If you cannot go on without the human, run \
-         `fm schedule report {run} needs-you \"<why>\"`."
+         `{fm} schedule report {run} done \"<one line>\"`. If you cannot go on without the human, run \
+         `{fm} schedule report {run} needs-you \"<why>\"`. Run `{fm}` with the Bash tool, exactly as written: \
+         only that is allowed without a prompt."
     )
 }
 

@@ -10,7 +10,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 | Crate | Owns | Depends on |
 |---|---|---|
 | `crates/foreman-app` | The `foreman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
-| `crates/fm` | The `fm` CLI (`lib.rs`, shared by `fm.exe` and the console-less `fmw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run` and `secret set`, `fire.rs`), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor. | claude, core, supervisor, workstate |
+| `crates/fm` | The `fm` CLI (`lib.rs`, shared by `fm.exe` and the console-less `fmw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop, revoke). | claude, core, supervisor, workstate |
 | `crates/foreman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workstate |
 | `crates/foreman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
 | `crates/foreman-workstate` | Every WorkState read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
@@ -98,7 +98,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `daemon_status`, `daemon_mismatch`, `is_elevated` (`daemon.rs`) — whether this process can reach claude's background service. `service_pid` (the roster's `supervisorPid`, since `claude daemon status` reads `NotRunning` from an unelevated process facing an elevated service), `pid_elevated`, `service_elevated` and `task_run_level` give a scheduled task's run level.
 - `peer` — writing into a session's own message pipe (`docs/peer-messaging.md`); `human::send_from_human` picks the pipe or the relay.
 - `proc_tree` — which claude session runs under a tab's shell.
-- `transcript` (`Transcripts`: `scan_with` with progress, `with_cache`, `cached`; `first_prompt`) — closed sessions from the transcript files, read only: head and tail of a new file, the grown part of a known one, on parallel readers; the file cache persists at `<home>/cache/transcripts.json` so a start shows its rows before any file is read.
+- `transcript` (`Transcripts`: `scan_with` with progress, `with_cache`, `cached`; `first_prompt`; `Usage`, a session's input/output/cache tokens, each message once) — closed sessions from the transcript files, read only: head and tail of a new file, the grown part of a known one, on parallel readers; the file cache persists at `<home>/cache/transcripts.json` so a start shows its rows before any file is read.
 - `forget::forget_transcript` — the one write under the claude dir (see delete confinement).
 - `assign` — mapping sessions onto a workspace's folders (deepest folder, then a worktree's main checkout), then its home.
 
@@ -107,6 +107,8 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `DesiredState` (`desired.rs`) — `<home>/supervisor/<workspace>.toml`; change it only through `update` (locked read-modify-write); `release` unwants the repo sessions of folders taken away, so the supervisor stops them.
 - `Supervisor`, `tick_all`, `Budget` — one tick per snapshot; the rule table is the crate docs in `lib.rs`.
 - `HttpMinter`, `Minter`, `MintedSessions` (`mint.rs`) — per-session WorkState tokens.
+- `AppTokens`, `bearer`, `workstate_role` (`tokens.rs`) — the `TokenProvider` of the app and of `fm`: Foreman's OAuth sign-in as the mint's bearer.
+- `LaunchConfig::launch_spec` (`executor.rs`) — a wanted session's `claude --bg` spec before its token; `Supervisor::launch` and a scheduled run (`fm`'s `schedule::run_spec`) both build theirs with it.
 
 ## Shared vs app-only
 
@@ -116,7 +118,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `FleetView` (`crates/foreman-app/src/view.rs`, `crates/foreman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_details.rs` the rows of a row's Details), tabs, menus, delete flow; `crates/foreman-app/src/work_view.rs` and `crates/foreman-app/src/work_view/` — the Work tab and Inbox.
 - The tab lifecycle: open, attach, resume, and detach on close or quit (`view.rs` `close_tab`, `start_detach`, `quit_step`).
 - The supervisor policy and its driver: `supervise.rs`, the poll loop (`view.rs` `Poller`), `foreman-supervisor` itself.
-- Hand sessions (`hand.rs`), tokens (`tokens.rs`), sign-in wiring (`signin.rs`), WorkState setup wording (`workstate_setup.rs`).
+- Hand sessions (`hand.rs`), sign-in wiring (`signin.rs`), WorkState setup wording (`workstate_setup.rs`).
 - The tray (`tray.rs`), the single instance (`instance.rs`), elevation (`elevate.rs`), the titlebar, stars, dismissals, the selftests.
 
 ## Key flows
@@ -140,7 +142,7 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 
 ### Minting and re-minting
 - The supervisor mints for `fm-` sessions (`executor.rs` `Supervisor::mint`, from `launch`, and `remint` before every Resume); hands mint for tab sessions (`hand.rs` `Hands::launch_for`).
-- `crates/foreman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/foreman-app/src/tokens.rs` `AppTokens`, role from `workstate_role`).
+- `crates/foreman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/foreman-supervisor/src/tokens.rs` `AppTokens`, role from `workstate_role`). A scheduled run mints its own token the same way (`crates/fm/src/run.rs`), keeps it out of `MintedSessions`, and revokes it when the run ends.
 - Only the minted `wss_` token reaches a session, in the file `mcp_config_path` names (`crates/foreman-claude/src/launch.rs` `write_mcp_config`, owner-only ACL, `--strict-mcp-config` for supervised sessions).
 - Records: `<home>/supervisor/<workspace>.sessions.json` (`MintedSessions`) and `<home>/supervisor/hands.json`.
 - Re-mint: every Resume; the Re-mint remedy on a `TokenExpired` or `OtherServer` row (`Supervisor::retry` → `stop_for_remint`, then resume); a server change (`Supervisor::server_changed`). Unwanted tokens are revoked by `revoke_unwanted` and `Hands::release_all`.

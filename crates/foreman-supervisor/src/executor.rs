@@ -75,8 +75,30 @@ pub struct LaunchConfig {
 }
 
 impl LaunchConfig {
+    /// The `claude --bg` of `w` in `workspace`, before its WorkState token: what the supervisor launches and
+    /// what a schedule's run launches (`fm schedule fire`). `env` adds to the session's `FOREMAN_*` env.
+    pub fn launch_spec(&self, workspace: &str, w: &WantedSession, env: &[(&str, &str)]) -> LaunchSpec {
+        let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
+        spec.permission_mode = w.permission_mode.clone();
+        spec.strict_mcp_config = true;
+        spec.plugin_dirs = self.plugin_dirs.clone();
+        spec.add_dirs = w.add_dirs.clone();
+        if let Some(settings) = self.settings_with(workspace, &w.name, &w.role, w.repo.as_deref(), env) {
+            spec.extra_args = vec!["--settings".into(), settings];
+        }
+        if !self.allowed_tools.is_empty() {
+            spec.extra_args.push("--allowedTools".into());
+            spec.extra_args.extend(self.allowed_tools.iter().cloned());
+        }
+        spec
+    }
+
     /// The `--settings` JSON for one session, `None` when there is nothing to set.
     pub fn session_settings(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>) -> Option<String> {
+        self.settings_with(workspace, name, role, repo, &[])
+    }
+
+    fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
         let mut settings = serde_json::Map::new();
         if let Some(home) = &self.foreman_home {
             let mut env = serde_json::json!({
@@ -87,6 +109,9 @@ impl LaunchConfig {
             });
             if let Some(repo) = repo {
                 env["FOREMAN_REPO"] = repo.into();
+            }
+            for (k, v) in extra {
+                env[*k] = (*v).into();
             }
             settings.insert("env".into(), env);
         }
@@ -413,7 +438,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     fn launch(&mut self, w: &WantedSession, observed: &[Session], now: Millis) -> Result<String, Failure> {
-        let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
+        let mut spec = self.config.launch_spec(&self.desired.workspace, w, &[]);
         if let Some(from) = &w.fork_from {
             // a copy of a live conversation would leave two sessions going on from one history
             if let Some(s) = observed.iter().find(|s| &s.session_id == from && is_live(s, now)) {
@@ -421,17 +446,6 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             }
             spec.resume = Some(from.clone());
             spec.prompt = adopt_prompt(&self.desired.workspace, w);
-        }
-        spec.permission_mode = w.permission_mode.clone();
-        spec.strict_mcp_config = true;
-        spec.plugin_dirs = self.config.plugin_dirs.clone();
-        spec.add_dirs = w.add_dirs.clone();
-        if let Some(settings) = self.config.session_settings(&self.desired.workspace, &w.name, &w.role, w.repo.as_deref()) {
-            spec.extra_args = vec!["--settings".into(), settings];
-        }
-        if !self.config.allowed_tools.is_empty() {
-            spec.extra_args.push("--allowedTools".into());
-            spec.extra_args.extend(self.config.allowed_tools.iter().cloned());
         }
         if let Some((url, token)) = self.mint(w, None, now)? {
             spec = spec

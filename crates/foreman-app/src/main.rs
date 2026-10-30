@@ -40,6 +40,7 @@ mod supervise;
 mod tab_card;
 mod titlebar;
 mod signin;
+#[cfg(test)]
 mod tokens;
 mod tray;
 mod view;

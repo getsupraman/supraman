@@ -16,7 +16,7 @@ use foreman_supervisor::{
 
 pub use foreman_core::fm_allowed_tools;
 
-use crate::tokens::AppTokens;
+use foreman_supervisor::AppTokens;
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);

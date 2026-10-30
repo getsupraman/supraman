@@ -22,6 +22,30 @@ pub struct Live {
     pub fm_started: Option<u64>,
     pub started_at: i64,
     pub stage: String,
+    /// The run's claude session, once launched: what recovery stops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<LiveSession>,
+}
+
+/// A run's launched session as its live file keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveSession {
+    pub name: String,
+    pub id: String,
+    /// The minted WorkState session id, with the origin its revoke goes to; never the token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workstate_session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// What `fm schedule report` hands the run's owner at `schedules/live/<ws>/<id>.report`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reported {
+    pub run: String,
+    pub outcome: super::Outcome,
+    #[serde(default)]
+    pub why: String,
 }
 
 /// `schedules/live/<ws>/`: each schedule's live file, overlap lock, `.queued` and `.restart`.

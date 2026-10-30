@@ -1,6 +1,6 @@
 //! `fm schedule fire` (what a schedule's task runs) and `fm schedule run` (Run now): the checks, the overlap
 //! lock and the script stage of docs/research/scheduler.md, "The life of `fm schedule fire`". The session
-//! stage is [`Host::session`].
+//! stage is [`Host::session`], [`crate::run`] on the real host.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,9 +10,13 @@ use std::time::{Duration, Instant};
 
 use chrono::{Local, TimeZone};
 use foreman_core::process::{self, Ended, Kill};
-use foreman_core::schedule::{self, ActionKind, CatchUp, Fired, Live, Outcome, Overlap, RunEvent, RunRecord, Schedule, Stage, Status};
+use foreman_claude::Claude;
+use foreman_core::schedule::{self, ActionKind, CatchUp, Fired, Live, LiveSession, Outcome, Overlap, RunEvent, RunRecord, Schedule, Stage, Status, Tokens};
 use foreman_core::secret::SecretStore;
 use foreman_core::{Registry, Settings, Workspace};
+use foreman_supervisor::{AppTokens, HttpMinter, Minter, TokenProvider};
+
+use crate::run::{Agents, RunLog, SessionEnd, SessionHost};
 
 pub const EXIT_OK: u8 = 0;
 pub const EXIT_FAILED: u8 = 1;
@@ -26,8 +30,6 @@ const CATCH_UP_GRACE_MS: i64 = 10 * 60 * 1000;
 const RESTART_POLL: Duration = Duration::from_millis(250);
 /// The script's exit code that hands its stdout to the session stage.
 pub const GATE_EXIT: i32 = 10;
-/// What [`RealHost::session`] records until sched/6 launches the session.
-pub const LAUNCH_PENDING: &str = "launch pending (sched/6)";
 
 pub struct Request<'a> {
     pub home: &'a Path,
@@ -54,6 +56,7 @@ pub struct RunCtx<'a> {
     pub schedule: &'a Schedule,
     pub run: &'a str,
     pub stamp: &'a str,
+    pub fired_ms: i64,
 }
 
 /// What fire takes from the machine, so tests can stand in for it.
@@ -64,17 +67,74 @@ pub trait Host {
     fn sleep(&mut self, d: Duration);
     fn now_ms(&mut self) -> i64;
     /// The session stage; `gate` is the script's stdout when it exited [`GATE_EXIT`], `None` for a session action.
-    fn session(&mut self, ctx: &RunCtx, gate: Option<&str>) -> (Outcome, String);
+    fn session(&mut self, ctx: &RunCtx, gate: Option<&str>, log: &mut dyn RunLog) -> SessionEnd;
+    /// The session of a run whose fm died: stopped (never rm'd), its token revoked, its config deleted.
+    fn end_dead_session(&mut self, home: &Path, session: &LiveSession) -> Result<(), String>;
 }
 
 pub struct RealHost {
     store: Arc<dyn SecretStore>,
+    claude: Claude,
+    tokens: AppTokens,
+    minter: HttpMinter,
 }
 
 impl RealHost {
     pub fn new(home: &Path) -> Self {
-        Self { store: foreman_core::secret::default_store(home) }
+        Self {
+            store: foreman_core::secret::default_store(home),
+            claude: Claude::default(),
+            tokens: AppTokens { auth: foreman_workstate::Auth::open(home) },
+            minter: HttpMinter::default(),
+        }
     }
+}
+
+impl SessionHost for RealHost {
+    fn claude(&self) -> &dyn Agents {
+        &self.claude
+    }
+
+    fn tokens(&self) -> &dyn TokenProvider {
+        &self.tokens
+    }
+
+    fn minter(&self) -> &dyn Minter {
+        &self.minter
+    }
+
+    fn claude_dir(&self) -> Option<PathBuf> {
+        foreman_core::paths::claude_dir()
+    }
+
+    fn plugin_dir(&self) -> Option<PathBuf> {
+        std::env::current_exe().ok().and_then(|exe| foreman_core::find_plugin_dir(&exe).ok())
+    }
+
+    fn now_ms(&mut self) -> i64 {
+        foreman_core::time::now_ms()
+    }
+
+    fn sleep(&mut self, d: Duration) {
+        std::thread::sleep(d);
+    }
+}
+
+/// [`Host::end_dead_session`] with `host`'s claude and WorkState.
+pub fn end_dead_session(host: &dyn SessionHost, home: &Path, session: &LiveSession) -> Result<(), String> {
+    let mut failed = Vec::new();
+    if let Err(e) = host.claude().stop(&session.id) {
+        failed.push(format!("claude stop {}: {e}", session.id));
+    }
+    if let (Some(id), Some(base)) = (&session.workstate_session, &session.origin)
+        && let Err(e) = crate::run::revoke(host.tokens(), host.minter(), base, id)
+    {
+        failed.push(e);
+    }
+    if let Err(e) = crate::run::remove_config(&home.join("mcp"), &session.name) {
+        failed.push(e);
+    }
+    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
 }
 
 impl Host for RealHost {
@@ -99,8 +159,12 @@ impl Host for RealHost {
         foreman_core::time::now_ms()
     }
 
-    fn session(&mut self, _ctx: &RunCtx, _gate: Option<&str>) -> (Outcome, String) {
-        (Outcome::Skipped, LAUNCH_PENDING.into())
+    fn session(&mut self, ctx: &RunCtx, gate: Option<&str>, log: &mut dyn RunLog) -> SessionEnd {
+        crate::run::session_stage(ctx, gate, self, log)
+    }
+
+    fn end_dead_session(&mut self, home: &Path, session: &LiveSession) -> Result<(), String> {
+        end_dead_session(self, home, session)
     }
 }
 
@@ -168,7 +232,7 @@ pub fn fire(req: &Request, host: &mut dyn Host) -> Report {
     report
 }
 
-fn log(home: &Path, line: &str) {
+pub(crate) fn log(home: &Path, line: &str) {
     let path = schedule::fire_log(home);
     let line = format!("{} {line}\n", Local::now().format("%Y-%m-%dT%H:%M:%S%:z"));
     if let Some(dir) = path.parent() {
@@ -211,16 +275,57 @@ impl Recorder<'_> {
     }
 
     fn end(&mut self, ts: i64, outcome: Outcome, why: impl Into<String>, exit: u8) -> Report {
+        self.end_with(ts, outcome, why.into(), None, exit)
+    }
+
+    fn end_with(&mut self, ts: i64, outcome: Outcome, why: String, tokens: Option<Tokens>, exit: u8) -> Report {
         self.start(ts);
-        let why = why.into();
         let ms = u64::try_from(ts - self.fired_ms).unwrap_or(0);
-        self.append(ts, RunEvent::Ended { outcome, why: why.clone(), tokens: None, ms });
+        self.append(ts, RunEvent::Ended { outcome, why: why.clone(), tokens, ms });
         Report { run: Some(self.run.clone()), outcome: Some(outcome), why, exit }
     }
 
     fn ended(&mut self, ts: i64, outcome: Outcome, why: impl Into<String>) -> Report {
-        let exit = if outcome.succeeded() { EXIT_OK } else { EXIT_FAILED };
-        self.end(ts, outcome, why, exit)
+        self.end_with(ts, outcome, why.into(), None, exit_of(outcome))
+    }
+}
+
+fn exit_of(outcome: Outcome) -> u8 {
+    if outcome.succeeded() { EXIT_OK } else { EXIT_FAILED }
+}
+
+/// The live file of the run in flight: `schedules/live/<ws>/<id>.json`.
+struct LiveFile {
+    path: PathBuf,
+    body: Live,
+}
+
+impl LiveFile {
+    fn write(&self) {
+        let _ = foreman_core::fs::write_atomic(&self.path, serde_json::to_vec(&self.body).expect("plain data serializes"));
+    }
+
+    fn stage(&mut self, stage: &str) {
+        self.body.stage = stage.into();
+        self.write();
+    }
+}
+
+/// What the session stage writes through: the run records and the live file.
+struct SessionLog<'r, 'a> {
+    rec: &'r mut Recorder<'a>,
+    live: &'r mut LiveFile,
+}
+
+impl RunLog for SessionLog<'_, '_> {
+    fn event(&mut self, ts: i64, event: RunEvent) {
+        self.rec.start(ts);
+        self.rec.append(ts, event);
+    }
+
+    fn session(&mut self, session: &LiveSession) {
+        self.live.body.session = Some(session.clone());
+        self.live.write();
     }
 }
 
@@ -308,24 +413,26 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
         Err(Overlapped::Io(why)) => return rec.ended(host.now_ms(), Outcome::Failed, why),
     };
     let _ = fs::remove_file(&live.restart);
-    recover_dead_run(home, &w.name, &s.id, &live, host.now_ms());
+    let now = host.now_ms();
+    recover_dead_run(home, &w.name, &s.id, &live, now, host);
 
     let last = last_run(home, &w.name, &s.id);
     let started_ms = host.now_ms();
     let run = rec.run.clone();
-    let write_live = |stage: &str| {
-        let pid = std::process::id();
-        let body = Live { run: run.clone(), fm_pid: pid, fm_started: process::started(pid), started_at: started_ms, stage: stage.into() };
-        let _ = foreman_core::fs::write_atomic(&live.json, serde_json::to_vec(&body).expect("plain data serializes"));
+    let pid = std::process::id();
+    let mut live_file = LiveFile {
+        path: live.json.clone(),
+        body: Live { run: run.clone(), fm_pid: pid, fm_started: process::started(pid), started_at: started_ms, stage: String::new(), session: None },
     };
-    write_live(if s.action.kind == ActionKind::Session { "session" } else { "script" });
+    live_file.stage(if s.action.kind == ActionKind::Session { "session" } else { "script" });
     rec.start(started_ms);
 
-    let ctx = RunCtx { home, workspace: &w, schedule: &s, run: &run, stamp: &stamp };
-    let (outcome, why) = match s.action.kind {
-        ActionKind::Session => host.session(&ctx, None),
+    let ctx = RunCtx { home, workspace: &w, schedule: &s, run: &run, stamp: &stamp, fired_ms };
+    let plain = |outcome, why: String| SessionEnd { outcome, why, tokens: None, recorded: false };
+    let end = match s.action.kind {
+        ActionKind::Session => host.session(&ctx, None, &mut SessionLog { rec: &mut rec, live: &mut live_file }),
         kind => match secrets(host.store(), &w.name, &s) {
-            Err(why) => (Outcome::Failed, why),
+            Err(why) => plain(Outcome::Failed, why),
             Ok(secrets) => {
                 let env = ScriptEnv { home, workspace: &w.name, id: &s.id, run: &run, folder: &folder, last };
                 let (end, stage) = script_stage(&env, &s, &secrets, &live.restart, host);
@@ -333,19 +440,23 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
                     rec.stage(host.now_ms(), stage);
                 }
                 match end {
-                    ScriptEnd::Gate(_) | ScriptEnd::Nothing if kind == ActionKind::Script => (Outcome::Ok, String::new()),
+                    ScriptEnd::Gate(_) | ScriptEnd::Nothing if kind == ActionKind::Script => plain(Outcome::Ok, String::new()),
                     ScriptEnd::Gate(stdout) => {
-                        write_live("session");
-                        host.session(&ctx, Some(&stdout))
+                        live_file.stage("session");
+                        host.session(&ctx, Some(&stdout), &mut SessionLog { rec: &mut rec, live: &mut live_file })
                     }
-                    ScriptEnd::Nothing => (Outcome::NothingToDo, String::new()),
-                    ScriptEnd::Failed(why) => (Outcome::Failed, why),
-                    ScriptEnd::Restarted => (Outcome::Interrupted, "restarted".into()),
+                    ScriptEnd::Nothing => plain(Outcome::NothingToDo, String::new()),
+                    ScriptEnd::Failed(why) => plain(Outcome::Failed, why),
+                    ScriptEnd::Restarted => plain(Outcome::Interrupted, "restarted".into()),
                 }
             }
         },
     };
-    let report = rec.ended(host.now_ms(), outcome, why);
+    let report = if end.recorded {
+        Report { run: Some(rec.run.clone()), outcome: Some(end.outcome), why: end.why, exit: exit_of(end.outcome) }
+    } else {
+        rec.end_with(host.now_ms(), end.outcome, end.why, end.tokens, exit_of(end.outcome))
+    };
     let _ = fs::remove_file(&live.json);
     report
 }
@@ -399,15 +510,22 @@ fn overlap(live: &Paths, policy: Overlap) -> Result<fs::File, Overlapped> {
     }
 }
 
-/// A live file left under a free lock is a run whose fm died: it ends as `interrupted`.
-fn recover_dead_run(home: &Path, workspace: &str, id: &str, live: &Paths, now: i64) {
+/// A live file left under a free lock is a run whose fm died: its session is stopped and its token revoked, and it
+/// ends as `interrupted` unless it ended before.
+fn recover_dead_run(home: &Path, workspace: &str, id: &str, live: &Paths, now: i64, host: &mut dyn Host) {
     let Ok(bytes) = fs::read(&live.json) else {
         return;
     };
     if let Ok(dead) = serde_json::from_slice::<Live>(&bytes) {
+        let mut why = format!("fm (pid {}) ended without finishing the run", dead.fm_pid);
+        if let Some(session) = &dead.session
+            && let Err(e) = host.end_dead_session(home, session)
+        {
+            log(home, &format!("{workspace}/{id} {}: {e}", dead.run));
+            why.push_str(&format!("; {e}"));
+        }
         let ended = schedule::runs(home, workspace).is_ok_and(|runs| runs.iter().any(|r| r.run == dead.run && r.ended.is_some()));
         if !ended {
-            let why = format!("fm (pid {}) ended without finishing the run", dead.fm_pid);
             let ms = u64::try_from(now - dead.started_at).unwrap_or(0);
             let record =
                 RunRecord { ts: now, run: dead.run, schedule: id.to_string(), event: RunEvent::Ended { outcome: Outcome::Interrupted, why, tokens: None, ms } };

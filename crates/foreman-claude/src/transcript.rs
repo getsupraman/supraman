@@ -299,6 +299,90 @@ pub fn first_prompt(path: &Path) -> std::io::Result<Option<String>> {
 
 const FIRST_PROMPT_WITHIN: u64 = 8 * 1024 * 1024;
 
+/// A session's tokens from its transcript's assistant `usage` lines, read on from where the last
+/// [`Usage::read`] stopped. claude repeats a message's usage on each of its content-block lines, so each
+/// message id counts once, with its last line's numbers.
+#[derive(Debug, Clone, Default)]
+pub struct Usage {
+    offset: u64,
+    by_message: HashMap<String, Tokens>,
+    unnamed: Tokens,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tokens {
+    pub input: u64,
+    pub output: u64,
+    pub cache_creation: u64,
+    pub cache_read: u64,
+}
+
+impl Tokens {
+    fn add(&mut self, o: &Tokens) {
+        self.input += o.input;
+        self.output += o.output;
+        self.cache_creation += o.cache_creation;
+        self.cache_read += o.cache_read;
+    }
+}
+
+impl Usage {
+    /// Reads the complete lines appended to `path` since the last call.
+    pub fn read(&mut self, path: &Path) -> std::io::Result<()> {
+        let mut file = File::open(path)?;
+        if file.metadata()?.len() < self.offset {
+            *self = Self::default();
+        }
+        file.seek(SeekFrom::Start(self.offset))?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let n = reader.read_until(b'\n', &mut line)?;
+            if n == 0 || line.last() != Some(&b'\n') {
+                return Ok(());
+            }
+            self.offset += n as u64;
+            self.feed(trim(&line));
+        }
+    }
+
+    fn feed(&mut self, line: &[u8]) {
+        if !contains(line, br#""usage""#) {
+            return;
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if v.get("type").and_then(Value::as_str) != Some("assistant") {
+            return;
+        }
+        let Some(message) = v.get("message") else { return };
+        let Some(u) = message.get("usage") else { return };
+        let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+        let tokens = Tokens {
+            input: n("input_tokens"),
+            output: n("output_tokens"),
+            cache_creation: n("cache_creation_input_tokens"),
+            cache_read: n("cache_read_input_tokens"),
+        };
+        match message.get("id").and_then(Value::as_str) {
+            Some(id) => {
+                self.by_message.insert(id.to_string(), tokens);
+            }
+            None => self.unnamed.add(&tokens),
+        }
+    }
+
+    pub fn total(&self) -> Tokens {
+        let mut sum = self.unnamed;
+        for t in self.by_message.values() {
+            sum.add(t);
+        }
+        sum
+    }
+}
+
 /// How rlarch's nested-claude opens every brief (`header.mjs` `protocolHeader`).
 pub const CONTROLLER_HEADER: &str = "Your controller is the Claude Code session '";
 
@@ -1016,5 +1100,29 @@ mod tests {
         std::fs::write(&cache, "not json").unwrap();
         assert_eq!(Transcripts::in_claude_dir(claude.path()).with_cache(cache).scan_with(&roots, 0, &none, &none, &count).len(), 2);
         assert_eq!(reads.load(Ordering::Relaxed), 2, "an unreadable cache is read again from the files");
+    }
+
+    #[test]
+    fn usage_counts_each_message_once_and_reads_on_from_where_it_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let line = |id: &str, out: u64| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"{id}","usage":{{"input_tokens":10,"output_tokens":{out},"cache_creation_input_tokens":100,"cache_read_input_tokens":1000}}}}}}"#
+            )
+        };
+        let user = r#"{"type":"user","message":{"content":"say \"usage\""}}"#;
+        std::fs::write(&path, format!("{}\n{}\n{user}\n", line("m1", 1), line("m1", 5))).unwrap();
+        let mut u = Usage::default();
+        u.read(&path).unwrap();
+        assert_eq!(u.total(), Tokens { input: 10, output: 5, cache_creation: 100, cache_read: 1000 }, "m1 once, its last line");
+
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut f, format!("{}\n{}", line("m2", 7), line("m3", 9)).as_bytes()).unwrap();
+        u.read(&path).unwrap();
+        assert_eq!(u.total().output, 12, "m2 added; m3 is still being written");
+        std::io::Write::write_all(&mut f, b"\n").unwrap();
+        u.read(&path).unwrap();
+        assert_eq!(u.total(), Tokens { input: 30, output: 21, cache_creation: 300, cache_read: 3000 });
     }
 }

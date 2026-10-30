@@ -9,12 +9,12 @@ use foreman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
 };
 use foreman_core::{CoreError, Registry, Workspace, find_plugin_dir, fm_allowed_tools, paths, slugify};
-use foreman_supervisor::LaunchConfig;
+use foreman_supervisor::{LaunchConfig, WantedSession};
 
 use crate::{Failure, value};
 
 /// The `FOREMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
-const RUN_ROLE: &str = "repo";
+pub(crate) const RUN_ROLE: &str = "repo";
 
 pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     match args {
@@ -28,7 +28,8 @@ pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         ["dry-run", rest @ ..] => dry_run(registry, rest),
         ["run", rest @ ..] => run_now(registry, rest),
         ["secret", "set", rest @ ..] => secret_set(registry, rest, &mut std::io::stdin().lock()),
-        _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove, dry-run, run or secret set".into())),
+        ["report", rest @ ..] => report(registry, rest),
+        _ => Err(Failure::Usage("schedule needs add, list, show, edit, pause, resume, remove, dry-run, run, report or secret set".into())),
     }
 }
 
@@ -592,32 +593,60 @@ fn local_text(t: &DateTime<Local>) -> String {
     t.format("%a %Y-%m-%d %H:%M %:z").to_string()
 }
 
-/// The `claude --bg` a run of `s` stamped `stamp` launches; `plugin_dir` is Foreman's plugin, when found.
+/// The `claude --bg` a run of `s` stamped `stamp` launches, before its WorkState token; `plugin_dir` is
+/// Foreman's plugin, when found. Dry-run prints it and fire launches it.
 pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;
     let run = schedule::run_id(&s.id, stamp);
     let name = schedule::session_name(&w.name, &s.id, stamp);
-    let cwd = if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() };
-    let mut spec = LaunchSpec::new(&name, cwd, format!("{}\n\n{}", schedule::preamble(&run), schedule::base_prompt(&folder.path, prompt)?));
-    spec.permission_mode = s.permissions.profile.permission_mode().into();
-    spec.mcp_config = Some(mcp_config_path(&home.join("mcp"), &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
-    spec.strict_mcp_config = true;
-    spec.plugin_dirs = plugin_dir.map(Path::to_path_buf).into_iter().collect();
-    spec.add_dirs = s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect();
-    let config = LaunchConfig { foreman_home: Some(home.to_path_buf()), bg_isolation_none: true, ..LaunchConfig::default() };
-    if let Some(settings) = config.session_settings(&w.name, &name, RUN_ROLE, Some(&folder.name)) {
-        spec.extra_args.extend(["--settings".to_string(), settings]);
-    }
+    let wanted = WantedSession {
+        name: name.clone(),
+        role: RUN_ROLE.into(),
+        cwd: if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() },
+        repo: Some(folder.name.clone()),
+        prompt: format!("{}\n\n{}", schedule::preamble(&run, &fm_command(plugin_dir)), schedule::base_prompt(&folder.path, prompt)?),
+        permission_mode: s.permissions.profile.permission_mode().into(),
+        add_dirs: s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect(),
+        resume_prompt: None,
+        fork_from: None,
+    };
     let always = plugin_dir.map(fm_allowed_tools).unwrap_or_else(|| vec!["Bash(fm:*)".into()]);
-    spec.extra_args.push("--allowedTools".into());
-    spec.extra_args.extend(s.permissions.allowed(&always));
+    let config = LaunchConfig {
+        mcp_dir: home.join("mcp"),
+        plugin_dirs: plugin_dir.map(Path::to_path_buf).into_iter().collect(),
+        foreman_home: Some(home.to_path_buf()),
+        bg_isolation_none: true,
+        allowed_tools: s.permissions.allowed(&always, &schedule::run_branch(&s.id, stamp)),
+    };
+    let mut spec = config.launch_spec(&w.name, &wanted, &[("FOREMAN_SCHEDULE", &s.id), ("FOREMAN_RUN", &run)]);
+    spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
     spec.extra_args.push("--disallowedTools".into());
     spec.extra_args.extend(s.permissions.denied());
     if !s.action.model.is_empty() {
         spec.extra_args.extend(["--model".to_string(), s.action.model.clone()]);
     }
     Ok(spec)
+}
+
+/// The plugin's `fm.exe` by the path its `--allowedTools` rule names, else `fm` on the session's PATH.
+fn fm_command(plugin_dir: Option<&Path>) -> String {
+    plugin_dir
+        .map(|d| d.join("bin").join(foreman_core::HOOK_EXE))
+        .filter(|exe| exe.is_file())
+        .map(|exe| paths::normalize(&exe))
+        .unwrap_or_else(|| "fm".into())
+}
+
+/// What a profile leaves to `--allow-tools`, said where the permissions are shown.
+fn tools_hint(profile: Profile) -> Option<&'static str> {
+    match profile {
+        Profile::Read => None,
+        Profile::WorktreeEdit => Some(
+            "a fix that builds or tests needs those commands as --allow-tools (e.g. --allow-tools \"Bash(cargo test:*)\"); git status/diff/log/add/commit and the push of the run's own branch are allowed",
+        ),
+        Profile::Auto => Some("the classifier decides; --allow-tools pre-approves what it would ask about"),
+    }
 }
 
 fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
@@ -653,8 +682,11 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         println!("mcp config: written at fire with the run's minted token; absent when Foreman is not signed in");
         let always = plugin_dir.as_deref().map(fm_allowed_tools).unwrap_or_else(|| vec!["Bash(fm:*)".into()]);
         println!("permissions: profile {} (--permission-mode {})", s.permissions.profile.as_str(), s.permissions.profile.permission_mode());
-        println!("  allow: {}", s.permissions.allowed(&always).join("  "));
+        println!("  allow: {}", s.permissions.allowed(&always, &schedule::run_branch(&s.id, &stamp)).join("  "));
         println!("  deny: {}", s.permissions.denied().join("  "));
+        if let Some(needs) = tools_hint(s.permissions.profile) {
+            println!("  {needs}");
+        }
     }
     if !s.permissions.secrets.is_empty() {
         println!("secrets: {} (names only; values from the secret store at fire)", s.permissions.secrets.join(" "));
@@ -676,6 +708,47 @@ fn run_now(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         0 => Ok(()),
         code => Err(Failure::Exit(code)),
     }
+}
+
+/// `<run> done|needs-you "<one line>"`, from inside the run's session: the outcome, left in the live dir for the
+/// fm that owns the run, which ends it (scheduler.md, step 9).
+fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
+    let usage = || Failure::Usage("schedule report needs <run> done|needs-you \"<one line>\"".into());
+    let (run, outcome, why) = match args {
+        [run, outcome, why @ ..] => (*run, *outcome, why.join(" ")),
+        _ => return Err(usage()),
+    };
+    let outcome = match outcome {
+        "done" => schedule::Outcome::Done,
+        "needs-you" | "needs_you" => schedule::Outcome::NeedsYou,
+        _ => return Err(usage()),
+    };
+    let (all, _) = registry.load_all()?;
+    let preferred = std::env::var("FOREMAN_WORKSPACE").ok();
+    let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
+    order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
+    for w in order {
+        let Ok(dir) = schedule::live_dir(registry.home(), &w.name) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(live) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<schedule::Live>(&b).ok()) else { continue };
+            if live.run != run {
+                continue;
+            }
+            let id = path.file_stem().and_then(|x| x.to_str()).unwrap_or_default();
+            let body = schedule::Reported { run: run.to_string(), outcome, why: why.clone() };
+            let file = crate::run::report_path(&dir, id);
+            foreman_core::fs::write_atomic(&file, serde_json::to_vec(&body).expect("plain data serializes"))
+                .map_err(|e| Failure::Refused(format!("error: cannot write {}: {e}", file.display())))?;
+            println!("reported run {run}: {}; fm ends the run", if outcome == schedule::Outcome::Done { "done" } else { "needs you" });
+            return Ok(());
+        }
+    }
+    Err(Failure::Refused(format!("error: no run {run} is in flight")))
 }
 
 /// `[<workspace>] <id> <NAME>`, the value on stdin (one line, its line end dropped), into the secret store.

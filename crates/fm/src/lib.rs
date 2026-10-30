@@ -41,6 +41,7 @@ usage:
   fm schedule dry-run [<workspace>] <id>   (the prompt, the claude argv, the permissions, the next three fires)
   fm schedule run [<workspace>] <id>       (Run now: an active, approved schedule fires at once)
   fm schedule secret set [<workspace>] <id> <NAME>   (the value on stdin; the script gets it as $NAME)
+  fm schedule report <run> done|needs-you <one line>   (inside a scheduled run: its outcome, to the run's owner)
   fm schedule fire --home <home> <workspace> <id> --fingerprint <hex>   (what the schedule's task runs, as fmw.exe)
       <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
       pending until Approve in the Foreman window; fm never approves and never registers a task.
@@ -63,6 +64,7 @@ mod probe_rm;
 mod probe_session_id;
 mod relay;
 mod repos;
+pub mod run;
 mod schedule;
 mod work;
 
@@ -96,6 +98,19 @@ impl From<CoreError> for Failure {
 impl From<ClaudeError> for Failure {
     fn from(e: ClaudeError) -> Self {
         Self::Claude(e)
+    }
+}
+
+/// A failure as one line, for a run record.
+fn failure_text(f: Failure) -> String {
+    match f {
+        Failure::Usage(m) => m,
+        Failure::Core(e) => e.to_string(),
+        Failure::Claude(e) => e.to_string(),
+        Failure::Supervisor(e) => e.to_string(),
+        Failure::Probe(what) => what.to_string(),
+        Failure::Refused(line) => line.trim_start_matches("error: ").to_string(),
+        Failure::Exit(code) => format!("exit {code}"),
     }
 }
 

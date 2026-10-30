@@ -230,7 +230,8 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--deny-tools", "WebFetch", "--secret", "SENTRY_TOKEN", "--model", "opus"]);
     let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
     assert!(text.contains("nothing launched, nothing written"), "{text}");
-    assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains("fm schedule report fix-bugs-"), "{text}");
+    assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains(" schedule report fix-bugs-"), "{text}");
+    assert!(text.contains("` with the Bash tool, exactly as written"), "a PowerShell `fm` parks the run: {text}");
     assert!(text.contains("\n  /fix\n"), "the base prompt follows the preamble: {text}");
     let argv = text.split("argv:\n").nth(1).unwrap();
     for arg in ["  claude\n", "  --bg\n", "  --name\n  fm-demo-sched-fix-bugs-", "  --permission-mode\n  acceptEdits\n", "  --strict-mcp-config\n", "  --allowedTools\n", "  Bash(fm:*)\n", "  Edit\n", "  \"Bash(dotnet test:*)\"\n", "  --disallowedTools\n", "  \"Bash(git push --force:*)\"\n", "  Bash(schtasks:*)\n", "  WebFetch\n", "  --model\n  opus\n", "  --\n"] {
@@ -238,7 +239,9 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     }
     assert!(text.contains(&format!("cwd: {}", f.alpha.join(".claude").join("worktrees").join("fm-sched-fix-bugs-").display())), "{text}");
     assert!(text.contains("permissions: profile worktree-edit (--permission-mode acceptEdits)"), "{text}");
-    assert!(text.contains("  allow: Bash(fm:*)") && text.contains("Read  Glob  Grep  Edit  Write  Bash(dotnet test:*)"), "{text}");
+    assert!(text.contains("  allow: Bash(fm:*)") && text.contains("Read  Glob  Grep  Edit  Write  Bash(git status:*)"), "{text}");
+    assert!(text.contains("Bash(git commit:*)  Bash(git push -u origin fm-sched/fix-bugs/") && text.contains(")  Bash(dotnet test:*)"), "{text}");
+    assert!(text.contains("needs those commands as --allow-tools"), "dry-run says what a fix needs: {text}");
     assert!(text.contains("  deny: Bash(git push --force:*)") && text.contains("WebFetch"), "{text}");
     assert!(text.contains("secrets: SENTRY_TOKEN (names only"), "{text}");
     let fires: Vec<&str> = text.split("next fires:\n").nth(1).unwrap().lines().collect();
