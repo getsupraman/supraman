@@ -244,10 +244,11 @@ COM runs on a background thread in the MTA (`CoInitializeEx(COINIT_MULTITHREADED
 
 **No console window: `fmw.exe`.** `fm.exe` is a console program, and so is `foreman.exe`, which only `FreeConsole`s after it starts (`foreman-app/src/main.rs:139`). An `InteractiveToken` task running a console exe opens a visible console window for the whole run. That breaks the red line, so the probe deliberately did not try it. sched/5 adds a second binary, `fmw`, to `crates/fm`: `src/bin/fmw.rs` with `#![windows_subsystem = "windows"]`, calling the same `schedule` entry point (this means `fm` grows a `lib.rs`). It writes its diagnostics to `schedules/fire.log`. It ships next to `fm.exe` (`docs/RELEASE.md`). The probe is built the same way (`#![windows_subsystem = "windows"]`) and reports `console_window=false`.
 
-**Elevation.** A `LeastPrivilege` task cannot reach a claude background service that an elevated process started (LEARNINGS m5/25). `claude --bg` then gives up after 45 s with "Couldn't reach the background service". So the task's run level follows the service (Decision 5):
+**Elevation.** LEARNINGS m5/25 (2.1.311) found that an elevated service refuses unelevated clients, and `claude --bg` then gives up after 45 s with "Couldn't reach the background service". Probe (a) on 2.1.314 contradicts that: a LeastPrivilege task reached an elevated service, launched a session and stopped it. The run level still follows the service (Decision 5), as insurance against the m5/25 behaviour:
 - `HighestAvailable` when the service is elevated (the service's pid, from `claude daemon status`, has an elevated token; sched/3 adds that check next to `foreman_claude::is_elevated`); `LeastPrivilege` otherwise.
 - `Registrar::sync` records the run level it registered and re-registers the workspace's tasks when the service's elevation changes. The app checks this at start and with each `DaemonWatch` check.
-- fire still runs `foreman_claude::daemon_mismatch()` first and records `failed` with the `elevation_mismatch` text, so a task registered before a change never hangs a launch.
+- fire still runs `foreman_claude::daemon_mismatch()` first. From an unelevated process facing an elevated service, `claude daemon status` reads as `NotRunning` (probe (a)), so this check never fires there. A launch that does fail with `Couldn't reach the background service` is recorded as `failed` with the `elevation_mismatch` text.
+- A session the elevated service spawns most likely runs elevated, whatever the task's level (inferred, not probed). fm's own git calls run at the task's level, so the `safe.directory` fix is needed either way.
 
 The `<RunLevel>` above is that value, not a constant.
 
@@ -310,76 +311,97 @@ A3 is confirmed by reading the code. The supervisor ticks only inside the app (`
   sched/6 pulls the spec building out into one shared function on `LaunchConfig`, used by both.
 - **The stop.** `Claude::stop(id)`, `Minter::revoke(session_id)`, delete `mcp_config_path(mcp, name)`. Never `rm`. The worktree is kept, so a run's branch survives. `prune` removes it after the 30-day retention only when it holds no uncommitted and no unpushed work; it lists the rest (Decision 8).
 
-## Probes (a)–(d): pending, run by René
+## Probes (a)–(d): run by the controller under René's grant, 2026-10-30
 
-The unit's own attempt to register its probe task was refused by Claude Code's auto-mode classifier ("Unauthorized Persistence"). The controller decided the probes are run by René. Everything they need is ready:
+The unit's own attempt to register its probe task was refused by Claude Code's auto-mode classifier ("Unauthorized Persistence"). René then granted the permission, and the controller ran `register-probe.ps1` at 16:59 from an elevated pwsh 7.6.9. The task itself ran with limited rights.
 
-- `docs/research/scheduler-probe/` holds the probe (`src/main.rs`, a standalone crate; `#![windows_subsystem = "windows"]`) and `register-probe.ps1`. The script:
-  1. starts the probe's `serve` step interactively: a fake WorkState with OAuth on 127.0.0.1, signed in once through a scratch home's DPAPI `FileStore`;
-  2. registers `\ForemanProbe-sched-1\probe` (InteractiveToken, LeastPrivilege, StartWhenAvailable, WakeToRun, a trigger an hour ahead) and reads it back;
-  3. prints `powercfg /waketimers` and the Allow-wake-timers setting;
-  4. starts the task, waits for the probe's log and prints it;
-  5. unregisters the task, deletes the folder through COM, and shows both are gone.
-- Everything it prints goes to `<worktree>\.probe-run\register-probe-output.txt`.
+**The kit.** `docs/research/scheduler-probe/` holds the probe (`src/main.rs`, a standalone crate; `#![windows_subsystem = "windows"]`) and `register-probe.ps1`. The script:
+1. starts the probe's `serve` step interactively: a fake WorkState with OAuth on 127.0.0.1, signed in once through a scratch home's DPAPI `FileStore`;
+2. registers `\ForemanProbe-sched-1\probe` (InteractiveToken, LeastPrivilege, StartWhenAvailable, WakeToRun, a trigger an hour ahead) and reads it back;
+3. prints `powercfg /waketimers` and the Allow-wake-timers setting;
+4. starts the task, waits for the probe's log and prints it;
+5. unregisters the task, deletes the folder through COM, and shows both are gone.
 
-**The probe is already built** at `C:\fmbuild\sched-1\probe-target\release\scheduler-probe.exe`. To rebuild it:
-
-```powershell
-Copy-Item P:\Projects\LarchSys\AutoWork.worktrees\sched-1\Cargo.lock P:\Projects\LarchSys\AutoWork.worktrees\sched-1\docs\research\scheduler-probe\
-$env:CARGO_TARGET_DIR='C:\fmbuild\sched-1\probe-target'; cargo build --release --manifest-path P:\Projects\LarchSys\AutoWork.worktrees\sched-1\docs\research\scheduler-probe\Cargo.toml
-```
-
-**To run the probes** (from an elevated shell or not; the task is LeastPrivilege either way):
+To run it again (the probe is built at `C:\fmbuild\sched-1\probe-target\release\scheduler-probe.exe`; to rebuild, copy the workspace's `Cargo.lock` next to the probe's `Cargo.toml` and run `cargo build --release --manifest-path …\scheduler-probe\Cargo.toml`):
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File P:\Projects\LarchSys\AutoWork.worktrees\sched-1\docs\research\scheduler-probe\register-probe.ps1
 ```
 
-| Probe | What the task's log shows | Result |
-|---|---|---|
-| (a) | `elevated=false console_window=false`; `claude --version`; `claude daemon status: Reachable`; `claude agents --json --all: ok, N rows`; `claude --bg --name probe-sched-1-…` and its row; `claude stop <id>` and the row after it | pending: run by René |
-| (b) | `FileStore get: refresh token read, N chars`; `access_token: token obtained, N chars` | pending: run by René |
-| (c) | `git --no-optional-locks status`: exit and output in `P:\Projects\LarchSys\AutoWork`; whether `safe.directory` lists it | pending: run by René |
-| (d) | the task's `WakeToRun=True StartWhenAvailable=True` read back; `powercfg /waketimers` with the task armed; Allow wake timers AC/DC | pending: run by René |
+The output goes to `<worktree>\.probe-run\register-probe-output.txt` (not committed).
 
-**Preliminary, not from a task.** The same probe binary was run by this unit interactively, from an elevated shell (Administrators token), against the scratch home. It shows the probe works. It does not answer A1 or A2, which are about a non-elevated task:
+### Setup and (d), from the transcript
+
+```
+== elevated shell: True
+== owner of P:\Projects\LarchSys\AutoWork: BUILTIN\Administrators; of .git: PCRENE\renel
+== serve (interactive): http://127.0.0.1:64944 sign_in=Ok(SignedIn { who: Some("Fake Operator"), unsaved: None }) secret_files=1
+== (d) registered, read back: LogonType=Interactive RunLevel=Limited WakeToRun=True StartWhenAvailable=True trigger=2026-10-30T17:59:02
+== (d) powercfg /waketimers
+
+== (d) powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE (Allow wake timers: 0 Disable, 1 Enable, 2 Important only)
+Power Scheme GUID: 9935e61f-1661-40c5-ae2f-8495027d5d5d  (AMD Ryzen™ High Performance)
+    Current AC Power Setting Index: 0x00000001
+    Current DC Power Setting Index: 0x00000001
+== (a)(b)(c) Start-ScheduledTask
+== task result: LastRunTime=10/30/2026 16:59:05 LastTaskResult=0
+```
+
+### (a), (b), (c): the task's own log
 
 ```
 == context
-user=renel session=1 elevated=true console_window=false
+user=renel session=1 elevated=false console_window=false
+cwd=P:\Projects\LarchSys\AutoWork.worktrees\sched-1\.probe-run
 PATH has .local\bin: true
 user_home=Some("C:\\Users\\renel") claude_dir=Some("C:\\Users\\renel\\.claude")
 == (a) claude
 claude --version: 2.1.314 (Claude Code)
-claude daemon status: Reachable
+claude daemon status: NotRunning
 claude agents --json --all: ok, 428 rows
-claude --bg --name probe-sched-1-b51dd4: backgrounded · 948719b4 · probe-sched-1-b51dd4
-row: id=948719b4 sessionId=948719b4-291b-4bdb-aaad-3247d82640f9 pid=None state=Some(Working) status=None cwd=P:\Projects\LarchSys\AutoWork.worktrees\sched-1\.probe\scratch
-claude stop 948719b4: stopped 948719b4
+claude --bg --name probe-sched-1-2e02e0: backgrounded · 4668f1b7 · probe-sched-1-2e02e0
+row: id=4668f1b7 sessionId=4668f1b7-e623-45f5-bb7a-dff0d0e06073 pid=None state=Some(Working) status=None cwd=P:\Projects\LarchSys\AutoWork.worktrees\sched-1\.probe-run\scratch
+claude stop 4668f1b7: stopped 4668f1b7
 after stop: pid=None state=Some(Done) status=None
 == (b) DPAPI FileStore and OAuth refresh
-configured origin: http://127.0.0.1:51257
+configured origin: http://127.0.0.1:64944
 FileStore get: refresh token read, 24 chars
 access_token: token obtained, 152 chars
 == (c) git status in P:\Projects\LarchSys\AutoWork
-git --no-optional-locks status --short --branch: exit Some(0)
-  stdout: ## master
+safe.directory: 32 entries, this repo (or *) listed: false
+git --no-optional-locks status --short --branch: exit Some(128)
+  stderr: fatal: detected dubious ownership in repository at 'P:/Projects/LarchSys/AutoWork' | 'P:/Projects/LarchSys/AutoWork' is owned by: | BUILTIN/Administrators (S-1-5-32-544) | but the current user is:
 ```
 
-The scratch session `948719b4` (`probe-sched-1-b51dd4`) was this unit's own. It was stopped (`claude stop`), and `claude agents` afterwards lists it as `done` with no pid. It was not rm'd.
+### Cleanup, from the transcript
 
-**Read-only facts gathered now**, which the probes will add to:
-- `powercfg /waketimers`: "There are no active wake timers in the system." That is expected: no task with WakeToRun was registered.
-- `powercfg /query SCHEME_CURRENT SUB_SLEEP RTCWAKE`: plan "AMD Ryzen™ High Performance", Allow wake timers: `Current AC Power Setting Index: 0x00000001`, `Current DC Power Setting Index: 0x00000001` (1 = Enable). Wake timers are allowed on AC and DC.
-- **The repo's owner.** `P:\Projects\LarchSys\AutoWork` is owned by `BUILTIN\Administrators`; its `.git` by `PCRENE\renel`. A non-elevated token holds Administrators only as deny-only, so git's ownership check sees the worktree as someone else's ("detected dubious ownership"). That is A2, seen 2026-10-29. Elevated, git accepts it, as the run above shows.
-- **The fix that needs no change to workspace trust**, done once by René:
+```
+== cleanup
+task under \ForemanProbe-sched-1\: 0
+folder: gone
+```
 
-  ```
-  git config --global --add safe.directory P:/Projects/LarchSys/AutoWork
-  ```
+### What each probe shows
 
-  It writes `~/.gitconfig` only. Claude's trust in `~/.claude.json` and the folder's ACL stay as they are. Each workspace folder owned by Administrators needs its own entry. Taking ownership (`icacls … /setowner`) would also work, but it changes the ACL.
-- **fm's own git calls hit the same refusal:** `git_repo` for the mint returns `None` silently, and `git worktree add` fails. So sched/6 checks first and records `failed` with this exact command as the fix, instead of minting a token with no repo binding.
+- **(a) The task reaches claude; there is no console window.** Inside the task the process is not elevated (`elevated=false`), runs in René's session 1, and has no console window. `claude` is on the task's PATH (2.1.314). `claude agents --json --all` lists the same 428 rows as an elevated shell. The task's `claude --bg` started `4668f1b7`, and the task stopped it (`state=Done`, no pid). It was the probe's own session and was not rm'd.
+- **(a) The service was elevated, and the unelevated `claude --bg` worked anyway.**
+  - The service at 16:59 was pid 49204 (`claude daemon status` from an elevated shell afterwards: uptime 2803 s, "started on-demand by `claude --bg` (pid 57272) in …\AutoWork\target\selftest-cc1a94"). Its token is **elevated** (read with `OpenProcessToken`/`TokenElevation` from this unit's shell).
+  - `daemon.log` shows that service spawning and settling the probe's session: `[2026-10-30T15:59:08.126Z] [bg] bg spawned 4668f1b7 (shell)` … `[15:59:26.189Z] [bg] bg settled 4668f1b7 (killed)`. No second service started.
+  - So on 2.1.314 **an unelevated client reached an elevated service** for `--bg`, `agents` and `stop`. That is contrary to LEARNINGS m5/25 (2.1.311).
+  - From the unelevated side, `claude daemon status` reads as **`NotRunning`**: it does not see the elevated service. So `foreman_claude::daemon_mismatch()` returns `None` there, which is right this time but no guard.
+- **(b) DPAPI and refresh work from the task.** The task opened the scratch home's DPAPI `FileStore` (`refresh token read, 24 chars`) and got an access token through `Auth::access_token`'s refresh against the fake server (`token obtained, 152 chars`). OAuth refresh needs nothing more from a task context than an `InteractiveToken` principal (for the DPAPI user key) and the loopback or network access any user process has. The real server was not contacted.
+- **(c) git refuses the repo from the task.** Exit 128, "detected dubious ownership in repository at 'P:/Projects/LarchSys/AutoWork' … owned by: BUILTIN/Administrators (S-1-5-32-544)". There are 32 `safe.directory` entries; neither this repo nor `*` is among them.
+  - **The fix that needs no change to workspace trust**, done once by René:
+
+    ```
+    git config --global --add safe.directory P:/Projects/LarchSys/AutoWork
+    ```
+
+    It writes `~/.gitconfig` only. Claude's trust in `~/.claude.json` and the folder's ACL stay as they are. Each workspace folder owned by Administrators needs its own entry. Taking ownership (`icacls … /setowner`) would also work, but it changes the ACL.
+  - **fm's own git calls hit the same refusal:** `git_repo` for the mint returns `None` silently, and `git worktree add` fails. So sched/6 checks first and records `failed` with this exact command as the fix, instead of minting a token with no repo binding.
+- **(d) The settings are confirmed; the wake itself is untested.** The task reads back as `Interactive`, `Limited`, `WakeToRun=True`, `StartWhenAvailable=True`. Wake timers are allowed on AC and DC (index 1). `powercfg /waketimers` listed none even with the task registered and its trigger an hour ahead. Task Scheduler apparently does not arm the timer while the machine is awake, so that the wake happens is not shown. Per the brief, the PC was never put to sleep. Confirming a real wake needs a run that sleeps the machine, which this unit is not allowed to do.
+
+The earlier interactive, elevated run of the same probe (session `948719b4`, stopped, not rm'd) gave the same (a) and (b), plus `git status` exit 0: elevated, git accepts the repo.
 
 ## Decisions for the later units
 
@@ -408,6 +430,6 @@ Answered 2026-10-30: questions 2, 4 and 5 by René, the others by the controller
 
 ## Assumptions
 
-- **A1** (task can reach claude, DPAPI and refresh): open until René runs the probes. Code reading and the interactive run support it. The `InteractiveToken` principal is what makes DPAPI available, and the elevated-service case is the known exception (m5/25).
-- **A2** (git refuses Administrators-owned repos non-elevated): consistent with the owners above, to be confirmed by probe (c). The fix is the per-repo `safe.directory` above.
+- **A1** (task can reach claude, DPAPI and refresh): **confirmed** by probes (a) and (b). A non-elevated `InteractiveToken` task with no console ran `claude --version`, `agents --json --all`, `--bg` and `stop`, read the DPAPI `FileStore` and refreshed an access token. The service at the time was elevated, and the unelevated client reached it anyway. So for the elevation rule (Decision 5): `HighestAvailable` is not needed on 2.1.314 to reach an elevated service. It stays as insurance should a claude build refuse again (m5/25 on 2.1.311). `claude daemon status` cannot see an elevated service from an unelevated process (it reads `NotRunning`), so neither fm's pre-check nor the app's elevation check can rely on that output from the unelevated side; the app reads the service pid's token. Whether a new claude build drifts on this belongs with the cross-session protocol watch.
+- **A2** (git refuses Administrators-owned repos non-elevated): **confirmed** by probe (c): exit 128, "detected dubious ownership … owned by BUILTIN/Administrators", repo not in `safe.directory`. The fix needs no change to trust: René runs `git config --global --add safe.directory P:/Projects/LarchSys/AutoWork` once. sched/6 records the refusal with that command as the fix.
 - **A3** (fm owns the run without the app): confirmed by reading the code; see [fm without the app](#fm-without-the-app-mint-launch-stop).

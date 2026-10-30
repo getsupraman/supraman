@@ -4608,10 +4608,16 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **git ownership.** `P:\Projects\LarchSys\AutoWork` is owned by `BUILTIN\Administrators`, its `.git` by René. The
   non-elevated fix is `git config --global --add safe.directory P:/Projects/LarchSys/AutoWork`, set once by René. Until
   then `git_repo()` returns `None` silently, so a mint carries no repo binding.
-- **Probes pending.** Claude Code's auto-mode classifier refused the unit's `schtasks /create` ("Unauthorized
-  Persistence"), so the real-task probes (a)–(d) are René's to run:
-  `pwsh -NoProfile -ExecutionPolicy Bypass -File docs\research\scheduler-probe\register-probe.ps1`, with output in
-  `.probe-run\register-probe-output.txt`. An interactive, elevated run of the same probe: `claude --bg` started and
-  was stopped (`948719b4`, not rm'd), and the FileStore read plus the fake OAuth refresh gave a token (152 chars).
+- **Probes**, run by the controller under René's grant at 16:59 (`register-probe.ps1`; the unit's own `schtasks /create`
+  had been refused by the auto-mode classifier):
+  - **(a)** The task ran unelevated, with no console window. `claude --bg`, `agents --json --all` and `stop` worked.
+    The service at the time (pid 49204) was **elevated**, yet the unelevated client reached it on 2.1.314; this
+    contradicts m5/25 (2.1.311). From the unelevated side `claude daemon status` reads `NotRunning`, so
+    `daemon_mismatch()` cannot detect the elevated service there.
+  - **(b)** DPAPI `FileStore` read and an OAuth refresh (against a fake server) worked from the task.
+  - **(c)** git exited 128, "dubious ownership" (A2 confirmed).
+  - **(d)** WakeToRun and StartWhenAvailable were read back; wake timers are enabled; `powercfg /waketimers` showed
+    none while the machine was awake. The wake itself was not tested.
+  - The task and its folder are gone.
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-1\target`): build ok; `cargo test --release --workspace` 705 passed,
   0 failed, 3 ignored; selftests skipped (docs-only unit).
