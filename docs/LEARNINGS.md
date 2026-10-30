@@ -4587,3 +4587,37 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-68\target`): build ok; `cargo test --release --workspace` 705 passed,
   0 failed, 3 ignored; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS;
   no `fm-selftest` session left (`claude agents --json --all`).
+
+## 2026-10-30 — sched/1 scheduler design and probes
+
+- **Doc.** `docs/research/scheduler.md`: the schedule TOML, the approval (fingerprint + HMAC-SHA256 with key
+  `foreman/schedule-approval/v1` in the DPAPI `FileStore`), the script contract, the run record, the life of
+  `fm schedule fire`, Task Scheduler registration (COM `ITaskService` with XML), profiles and caps, and eight
+  questions for the controller.
+- **No new crate for the HMAC.** `hmac` 0.12.1 is already in `Cargo.lock` (through `hkdf`) and its `digest` 0.10
+  matches the `sha2` 0.10.9 that `foreman-core` uses.
+- **The supervisor never touches `fm-<ws>-sched-…`**: `reconcile` acts only on wanted or retired names. But
+  `revoke_unwanted` revokes every name in `supervisor/<ws>.sessions.json` that is not wanted, so a scheduled run's
+  minted session must stay out of `MintedSessions`. Such a run is not foreign, so it counts against `max_working`.
+- **Console.** `fm.exe` and `foreman.exe` are console programs (the app `FreeConsole`s after it starts). A task
+  running one shows a console window, so the task runs a GUI-subsystem `fmw.exe`.
+- **Task folders.** `schtasks` and `Unregister-ScheduledTask` leave the folder behind; only COM
+  `ITaskFolder::DeleteFolder` removes it.
+- **DPAPI needs a logged-on token.** "Run whether logged on or not" without a stored password (S4U) has no DPAPI
+  user key, so a schedule's task must be `InteractiveToken`.
+- **git ownership.** `P:\Projects\LarchSys\AutoWork` is owned by `BUILTIN\Administrators`, its `.git` by René. The
+  non-elevated fix is `git config --global --add safe.directory P:/Projects/LarchSys/AutoWork`, set once by René. Until
+  then `git_repo()` returns `None` silently, so a mint carries no repo binding.
+- **Probes**, run by the controller under René's grant at 16:59 (`register-probe.ps1`; the unit's own `schtasks /create`
+  had been refused by the auto-mode classifier):
+  - **(a)** The task ran unelevated, with no console window. `claude --bg`, `agents --json --all` and `stop` worked.
+    The service at the time (pid 49204) was **elevated**, yet the unelevated client reached it on 2.1.314; this
+    contradicts m5/25 (2.1.311). From the unelevated side `claude daemon status` reads `NotRunning`, so
+    `daemon_mismatch()` cannot detect the elevated service there.
+  - **(b)** DPAPI `FileStore` read and an OAuth refresh (against a fake server) worked from the task.
+  - **(c)** git exited 128, "dubious ownership" (A2 confirmed).
+  - **(d)** WakeToRun and StartWhenAvailable were read back; wake timers are enabled; `powercfg /waketimers` showed
+    none while the machine was awake. The wake itself was not tested.
+  - The task and its folder are gone.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-1\target`): build ok; `cargo test --release --workspace` 705 passed,
+  0 failed, 3 ignored; selftests skipped (docs-only unit).
