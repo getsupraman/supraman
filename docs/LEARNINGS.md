@@ -4551,3 +4551,39 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-66\target`): build ok, no warnings; `cargo test --release --workspace`
   704 passed, 0 failed; `--selftest` 5 of 5 PASS (run 5 step 7: `machine busy (58 % CPU by others): frame budget
   not judged`); `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session left.
+
+## 2026-10-30 — m5/68 Open folder crashed Foreman: ShellExecuteW off the UI thread, panics logged
+
+- **Cause, reproduced.** Open folder called `ShellExecuteW` inside the click's handler, on the UI thread. For a
+  folder, shell32 calls into Explorer over COM and pumps the thread's messages while it waits. gpui's window
+  procedure then runs queued foreground tasks (`WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD`), and a task that borrows the
+  App panics (`RefCell already borrowed … async_context.rs:83`): the click's dispatch holds the App mutably. A panic
+  inside an `extern "system"` window procedure cannot unwind, so the process aborts with `0xc0000409`, WER's BEX64
+  subcode 7, as René saw. Stack: `ShellExecuteW` → `RealShellExecuteA` → `CallWindowProcW` → gpui's window procedure
+  → a foreground task → `AppCell::borrow_failed`. A foreground task arriving within the pump is what a working
+  Foreman always has (refresh, streams, terminals); the repro makes it certain with a 1 ms foreground loop.
+  `ShellExecuteW` on a missing path or on a windowless exe (`rundll32.exe`) returns without pumping, so neither
+  reproduces it.
+- **Fix.** `FleetView::open_folder` runs the open on the background executor and puts a refusal into the action
+  error (`Cannot open <path>: ShellExecuteW returned <code>`), as before. gpui's `open_with_system` also spawns, but
+  only logs a failure. Sign-in already opened the browser on the background executor (`sign_in_to`). Elevate's
+  `runas` runs in `main` before `application().run`, so no window exists to re-enter. Neither changed.
+- **Seam.** `FleetView::open_with` (default `shell_execute("open", …)`). Selftest step 7b swaps in `pumping_open`,
+  which pumps its calling thread's messages for 300 ms the way shell32 does and then calls the real `shell_execute`
+  on a missing folder. So no Explorer window opens, and the step checks that the call ran off the UI thread, that
+  the app stayed alive with foreground tasks running, and that the refusal reads as the action error.
+- **Panic hook.** `foreman_ui::log_panics` (after `init_logger`, app and selftests) logs `thread '<name>' panicked at
+  <file:line:col>:\n<message>\nbacktrace:\n…` as `[ERROR foreman::panic]`, then runs the hook that was set. In a
+  release build the message and location are exact. The backtrace names the frames from `foreman.pdb`: std's frames
+  carry file:line, ours only the nearest public symbol, sometimes wrong (no debuginfo in the release profile). Without
+  the pdb beside the exe, our frames are bare addresses. `scripts/release.ps1` now ships `foreman.pdb`. A
+  non-unwinding panic runs the hooks before it aborts, so its line is written first. Test
+  `foreman-ui/tests/panic_log.rs`.
+- **Red check.** `open_folder` calling the opener on the UI thread → selftest step 7b aborts with `0xc0000409`,
+  `RefCell already borrowed`, stack `pumping_open` → `FleetView::run_action`.
+- **Explorer tabs.** On Windows 11, a folder opened by ShellExecute can become a tab in an Explorer window that is
+  already open. `WM_CLOSE` to the window titled with that folder then closes the whole window and its other tabs.
+  Tests should not open Explorer at all.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-68\target`): build ok; `cargo test --release --workspace` 705 passed,
+  0 failed, 3 ignored; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS;
+  no `fm-selftest` session left (`claude agents --json --all`).

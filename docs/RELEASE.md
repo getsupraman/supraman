@@ -21,6 +21,7 @@ exes may get a SmartScreen prompt on first start from a downloaded zip (unblock 
 ```
 Foreman\
   foreman.exe
+  foreman.pdb                  symbols: names the frames of a panic's backtrace in foreman.log
   fm.exe                       the CLI controllers and users run
   VERSION                      version, commit, build time (UTC), claude tested / minimum
   plugins\foreman\

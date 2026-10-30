@@ -174,6 +174,7 @@ fn main() {
     };
     if mode == Mode::App {
         foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
+        foreman_ui::log_panics();
     }
     // The old instance holds the home until it quits.
     if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
@@ -230,6 +231,7 @@ fn main() {
     // After `prepare` cleared the selftest's home.
     if mode != Mode::App {
         foreman_ui::init_logger(Some(&selftest::log_dir()));
+        foreman_ui::log_panics();
     }
 
     let (commands, mut received) = futures::channel::mpsc::unbounded::<Command>();

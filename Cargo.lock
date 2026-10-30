@@ -1802,6 +1802,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "tempfile",
  "theme",
  "unicode-segmentation",
  "windows 0.62.2",
