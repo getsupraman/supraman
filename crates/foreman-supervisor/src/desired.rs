@@ -61,6 +61,8 @@ pub const REPO_ROLE: &str = "repo";
 pub const RELAY_RESUME_PROMPT: &str =
     "You were restarted and your Monitor is gone. Re-arm it now exactly as your instructions say (rewrite ready.json), then wait.";
 pub const DEFAULT_PERMISSION_MODE: &str = "auto";
+/// The newest retired names kept; an older one is no longer stopped when live.
+pub const RETIRED_KEPT: usize = 100;
 
 fn default_permission_mode() -> String {
     DEFAULT_PERMISSION_MODE.into()
@@ -164,6 +166,7 @@ impl DesiredState {
         self.sessions.retain(|s| s.name != name);
         if !self.retired.iter().any(|n| n == name) {
             self.retired.push(name.to_string());
+            self.retired.drain(..self.retired.len().saturating_sub(RETIRED_KEPT));
         }
         self.sessions.len() != before
     }
@@ -394,6 +397,17 @@ mod tests {
         assert_eq!(d.sessions.len(), 1, "the workspace session stays");
         assert!(d.set_relay(Some(relay)));
         assert!(d.retired.is_empty(), "wanted again: no longer retired");
+    }
+
+    #[test]
+    fn retired_keeps_the_newest_names_only() {
+        let mut d = DesiredState::workspace_controller("demo", r"C:\demo", "p");
+        for i in 0..RETIRED_KEPT + 5 {
+            d.unwant(&format!("fm-demo-r{i}"));
+        }
+        assert_eq!(d.retired.len(), RETIRED_KEPT);
+        assert_eq!(d.retired[0], "fm-demo-r5");
+        assert_eq!(d.retired.last().map(String::as_str), Some(format!("fm-demo-r{}", RETIRED_KEPT + 4).as_str()));
     }
 
     #[test]

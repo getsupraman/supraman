@@ -238,9 +238,11 @@ pub struct Supervision {
     notices: Vec<String>,
     pub daemon: DaemonWatch,
     daemon_logged: Option<String>,
+    pruned_at: Option<Millis>,
 }
 
 pub const NOTICES_KEPT: usize = 5;
+pub const PRUNE_EVERY: Millis = 60 * 60 * 1000;
 
 pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBuf> {
     plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.sessions.extra_plugin_dirs.iter().cloned()).collect()
@@ -263,6 +265,7 @@ impl Supervision {
             notices: Vec::new(),
             daemon: DaemonWatch::new(foreman_claude::daemon_mismatch),
             daemon_logged: None,
+            pruned_at: None,
         }
     }
 
@@ -273,6 +276,10 @@ impl Supervision {
             Settings::default()
         });
         report.max_working = settings.sessions.max_working;
+        if self.pruned_at.is_none_or(|at| now - at >= PRUNE_EVERY) {
+            self.pruned_at = Some(now);
+            report.errors.extend(foreman_core::prune::prune(&self.home, foreman_core::time::now_ms(), foreman_core::prune::KEEP_MS));
+        }
         self.config.plugin_dirs = plugin_dirs(self.plugin_dir.as_deref(), &settings);
         self.supervisors.retain(|name, _| workspaces.iter().any(|p| &p.name == name));
         for p in workspaces {

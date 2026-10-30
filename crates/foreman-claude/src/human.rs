@@ -97,6 +97,14 @@ fn save(path: &Path, ledger: &Ledger) {
     }
 }
 
+/// Adds one send under the ledger's lock: a second Foreman's sends between our load and save stay.
+fn record(path: &Path, entry: LedgerEntry) {
+    let _lock = foreman_core::fs::lock_file(&path.with_extension("lock"));
+    let mut ledger = load(path, now_ms());
+    ledger.sent.push(entry);
+    save(path, &ledger);
+}
+
 /// The receiver's bucket for us after `sent` (oldest first), at `now`.
 pub fn tokens_left(sent_at: &[i64], now: i64) -> f64 {
     let mut tokens = BURST;
@@ -166,7 +174,7 @@ impl<L: Liveness> Sender<L> {
         let dir = self.sessions.as_deref().ok_or("no home directory to find ~/.claude/sessions in")?;
         let target = find_session(dir, to, &self.live).map_err(|e| e.to_string())?;
         let path = ledger_path(home, workspace).map_err(|e| e.to_string())?;
-        let mut ledger = load(&path, now_ms());
+        let ledger = load(&path, now_ms());
         let to_them = |l: &Ledger| -> Vec<i64> { l.sent.iter().filter(|e| e.to == to).map(|e| e.at).collect() };
         let wait = wait_for_token(&to_them(&ledger), now_ms());
         if wait > self.max_wait {
@@ -177,8 +185,7 @@ impl<L: Liveness> Sender<L> {
         }
         let id = new_id();
         deliver(&target, &wrap(&framed(workspace, body, &id))).map_err(|e: PeerError| e.to_string())?;
-        ledger.sent.push(LedgerEntry { to: to.into(), id: id.clone(), at: now_ms() });
-        save(&path, &ledger);
+        record(&path, LedgerEntry { to: to.into(), id: id.clone(), at: now_ms() });
         Ok(id)
     }
 }
@@ -269,6 +276,24 @@ mod tests {
         let refused = Sender { no_relay: Some("demo is stopped".into()), ..sender };
         let err = refused.send(home.path(), "demo", "fm-demo-workspace", Some("auto"), "z").unwrap_err();
         assert_eq!(err.relay, "demo is stopped");
+    }
+
+    #[test]
+    fn two_writers_lose_no_ledger_entry() {
+        let home = tempfile::tempdir().unwrap();
+        let path = ledger_path(home.path(), "demo").unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::thread::scope(|s| {
+            for w in 0..2 {
+                let path = &path;
+                s.spawn(move || {
+                    for i in 0..40 {
+                        record(path, LedgerEntry { to: "x".into(), id: format!("m-{w}-{i}"), at: now_ms() });
+                    }
+                });
+            }
+        });
+        assert_eq!(load(&path, now_ms()).sent.len(), 80);
     }
 
     #[test]

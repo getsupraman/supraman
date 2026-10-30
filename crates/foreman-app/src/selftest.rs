@@ -110,13 +110,7 @@ pub(crate) fn run_hex() -> &'static str {
     RUN.get_or_init(hex6)
 }
 
-pub(crate) fn hex6() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    format!("{:06x}", (nanos as u64 ^ (std::process::id() as u64) << 20) & 0xff_ffff)
-}
+pub(crate) use foreman_core::time::hex6;
 
 pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
     // A just-stopped session can hold a handle in its cwd for a few seconds (LEARNINGS m0/2 run).

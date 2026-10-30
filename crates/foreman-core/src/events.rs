@@ -148,6 +148,7 @@ impl EventReader {
             Err(_) => Vec::new(),
         };
         ids.sort();
+        self.cursors.retain(|id, _| ids.binary_search(id).is_ok());
         ids.into_iter().flat_map(|id| self.poll_session(&id)).collect()
     }
 
@@ -319,6 +320,18 @@ mod tests {
         append(home.path(), &ev(8), size).unwrap();
         assert_eq!(reader.poll().iter().map(|e| e.ts).collect::<Vec<_>>(), [8]);
         assert!(reader.poll().is_empty());
+    }
+
+    #[test]
+    fn reader_drops_the_cursor_of_a_removed_log() {
+        let home = tempfile::tempdir().unwrap();
+        let mut reader = EventReader::new(home.path());
+        let path = append(home.path(), &ev(1), ROTATE_AT).unwrap();
+        assert_eq!(reader.poll().len(), 1);
+        assert_eq!(reader.cursors.len(), 1);
+        fs::remove_file(&path).unwrap();
+        assert!(reader.poll().is_empty());
+        assert!(reader.cursors.is_empty());
     }
 
     #[test]

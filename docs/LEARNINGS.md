@@ -4506,3 +4506,48 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   30–37 ms) after one run failed step 7's frame budget (F-94, own work p10 17.6 ms while other units' Foremans ran);
   `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session left. No m5-44 audit
   section names m5/65.
+
+## 2026-10-30 — m5/66 refactor leftovers (F-14, F-18, F-48, F-49, F-50, F-54, F-66, F-87) and F-94
+
+- **F-14 (A-05):** `foreman_workstate::read_reply` (`http.rs`) reads an answer whole (status, headers, body); the
+  read API client, OAuth's `read` and the mint's `HttpMinter::send` all use it. A body that cannot be read is now a
+  transport failure (`Unreachable`/`Transport`) in all three; OAuth and the mint used to take it as an empty body.
+  Request bytes are unchanged. The mint's tests run on `FakeWorkState`, which now routes by `<METHOD> <target>`
+  before the bare target and records `content_type`; the mint's private HTTP server is gone. `pct_encode` and
+  `server_reason` were already shared (m5/44 U3).
+- **F-18 (A-09):** `selftest::hex6` is `foreman_core::time::hex6`; no copy is left.
+- **F-48 (A-42):** the Settings window lists `<home>\themes` (`themes::catalog`) and resolves a picked theme
+  (`themes::resolve`) on the background executor; `themes::apply_resolved` paints on the UI thread. A pick counter
+  drops a resolve that a later pick overtook. Step 7m waits up to 5 s for the pick to paint. The startup
+  `apply_theme` stays synchronous: no window is shown yet.
+- **F-49 (A-43):** `foreman_core::prune::prune(home, now, KEEP_MS)`, 30 days unmodified: `events/*.jsonl` and
+  `.jsonl.1`, each workspace's `outbox/*.json` (never `ready.json`), `inbox/sent`, `inbox/rejected`, then the
+  `answered.json` entries of gone outbox files. A drop still waiting in the inbox is never removed. The supervision
+  runs it once an hour on the poller thread, against the real clock (its tests tick with a 2027 clock).
+  `answered.json` writes now hold `answered.lock` (`mark_answered` and the prune). `EventReader::poll` drops the
+  cursor of a log that is gone.
+- **F-50 (A-44, the parts named in m5/66):** `Transcripts::listed` keeps only the project dirs still present;
+  `DesiredState::retired` keeps the newest `RETIRED_KEPT` (100) names. The other A-44 parts belong to earlier units.
+- **F-54 (A-48 `transcript.rs`):** a user line is found by its top-level `type` read with serde (`line_type`), so a
+  spaced or reordered line counts and a nested `"type":"user"` does not; the serde read runs only while the first
+  prompt is missing. The `"cwd"` prefilter no longer needs the colon. claude writes compact JSON, so
+  `CACHE_VERSION` stays (no cached transcript reads differently).
+- **F-66 (A-60 ledger):** two writers lost entries: `direct()` loaded `direct.json`, slept, delivered and saved
+  the whole file. `record` now appends under `direct.lock` (load, push, save); the pacing read stays unlocked.
+  Test `two_writers_lose_no_ledger_entry` (2 threads × 40): 80 kept; without the lock 40.
+- **F-87 (A-81): kept, partial.** `HitTargets` already lives in `foreman_ui::hit` (m5/44 U9). Settings reads and
+  calls `FleetView` for the WorkState status, the sign-in flow, the CLI probe, fonts and the terminal font size,
+  because the main window shows and saves the same state; moving each to its own entity touches ~30 sites in
+  `view.rs` and the selftests for no behaviour change. Recorded as staying until a feature needs one of them apart.
+- **F-94:** `selftest/frames.rs`. `baseline` waits up to 60 s for a second with other processes under 35 % CPU
+  (`BUSY_CPU`, was 75 %). `judge`: other processes at 35 % or more (baseline or phase) → PASS with `machine busy (X %
+  CPU by others): frame budget not judged`; otherwise own work p10 over 16 ms FAILs as before, and the interval
+  checks skip on a slow baseline as before. A slow-frame baseline alone (p50 36–43 ms at 15–22 % CPU, seen in every
+  step 8 here) still judges own work. Test `a_busy_window_is_a_note_and_a_quiet_overrun_fails`.
+- **Red checks** (reverted with `git checkout`, never committed): ledger without the lock → 40 of 80; the old byte
+  match → the spaced-line test gets no prompt; no `listed` retain → the removed worktree dir stays; no cursor retain
+  → 1 cursor left; prune without the `ready.json` exception → the prune test fails; no `retired` cap → 105 names;
+  the own-work budget only when busy → the quiet-overrun test fails.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-66\target`): build ok, no warnings; `cargo test --release --workspace`
+  704 passed, 0 failed; `--selftest` 5 of 5 PASS (run 5 step 7: `machine busy (58 % CPU by others): frame budget
+  not judged`); `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session left.

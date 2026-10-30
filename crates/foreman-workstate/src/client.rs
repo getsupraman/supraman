@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use crate::http::{pct_encode, server_reason};
+use crate::http::{Reply, pct_encode, read, server_reason};
 use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Resolved, Sessions};
 
 pub const API_HEADER: &str = "X-WorkState-Api";
@@ -192,21 +192,12 @@ impl Client {
     }
 
     fn get_with(&self, path: &str, token: &str) -> Result<String> {
-        let mut res = self
-            .agent
-            .get(format!("{}{path}", self.base))
-            .header("Authorization", format!("Bearer {token}"))
-            .call()
-            .map_err(|e| Error::Transport {
-                base: self.base.clone(),
-                reason: scrub(token, &e.to_string()),
-            })?;
-        let status = res.status().as_u16();
-        let api = res.headers().get(API_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string);
-        let body = res.body_mut().read_to_string().map_err(|e| Error::Transport {
+        let res = self.agent.get(format!("{}{path}", self.base)).header("Authorization", format!("Bearer {token}")).call();
+        let Reply { status, headers, body } = read(res).map_err(|e| Error::Transport {
             base: self.base.clone(),
-            reason: scrub(token, &e.to_string()),
+            reason: scrub(token, &e),
         })?;
+        let api = headers.get(API_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string);
         if !(200..300).contains(&status) {
             return Err(Error::Http {
                 status,
