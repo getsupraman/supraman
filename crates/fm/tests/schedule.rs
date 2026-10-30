@@ -249,6 +249,33 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
 }
 
 #[test]
+fn show_lists_the_schedules_last_runs_newest_first() {
+    use schedule::{Fired, Outcome, RunEvent, RunRecord};
+    let f = fixture();
+    add_fix(&f, &[]);
+    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).ends_with("last runs: none\n"));
+    let record = |run: &str, schedule: &str, ts: i64, event: RunEvent| RunRecord { ts, run: run.into(), schedule: schedule.into(), event };
+    let started = |ts, run: &str, schedule: &str| record(run, schedule, ts, RunEvent::Started { trigger: Fired::Task, fingerprint: "f".into(), fm_pid: 1 });
+    let ended = |ts, run: &str, outcome, why: &str| record(run, "fix-bugs", ts, RunEvent::Ended { outcome, why: why.into(), tokens: None, ms: 1 });
+    for r in [
+        started(1_000, "fix-bugs-1", "fix-bugs"),
+        ended(2_000, "fix-bugs-1", Outcome::Done, ""),
+        started(3_000, "other-1", "other"),
+        started(4_000, "fix-bugs-2", "fix-bugs"),
+        ended(5_000, "fix-bugs-2", Outcome::CappedTokens, "3000001 tokens"),
+        started(6_000, "fix-bugs-3", "fix-bugs"),
+    ] {
+        schedule::append_run(&f.home, "demo", &r).unwrap();
+    }
+    let text = f.ok(&["schedule", "show", "demo", "fix-bugs"]);
+    let runs: Vec<&str> = text.split("last runs (newest first):\n").nth(1).expect(&text).lines().collect();
+    assert_eq!(runs.len(), 3, "{text}");
+    assert!(runs[0].starts_with("  fix-bugs-3  ") && runs[0].ends_with("  task  running"), "{runs:?}");
+    assert!(runs[1].starts_with("  fix-bugs-2  ") && runs[1].ends_with("  task  capped_tokens: 3000001 tokens"), "{runs:?}");
+    assert!(runs[2].starts_with("  fix-bugs-1  ") && runs[2].ends_with("  task  done"), "{runs:?}");
+}
+
+#[test]
 fn read_runs_in_the_main_checkout_with_the_default_mode() {
     let f = fixture();
     add_fix(&f, &[]);

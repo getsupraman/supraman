@@ -4865,3 +4865,32 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-4\target`): build ok, no warnings; `cargo test --release --workspace`
   743 passed, 0 failed, 3 ignored; `--selftest` 5/5 PASS (runs 1 and 4 waited for another worktree's selftest);
   `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
+
+## 2026-10-30 — sched/8 the foreman-scheduler skill
+
+`plugins/foreman/skills/foreman-scheduler/SKILL.md` (`/foreman:foreman-scheduler`); `roles/workspace.md` and
+`roles/repo.md` point at it in one line each. `fm schedule show` now ends with the schedule's last runs.
+
+- **The skill runs six verbs only**: `fm schedule add | list | show | pause | resume | dry-run`, and its header's
+  `allowed-tools` is exactly those six. `crates/fm/tests/skills.rs`
+  `the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs` reads every `fm schedule <verb>` outside the Never
+  table and refuses any other (red check: adding `fm schedule edit` to the body fails it). Edit and remove go to the
+  human, approval to the Foreman window (C100).
+- **It asks before any profile above `read`**, once, with the time when none was given (proposed 09:00) and the
+  caps; "defaults" settles time and caps, never the profile. It reads the command file to judge what the run needs.
+- **Git Bash rewrites `--command /fix`** (sched/4); measured: `--command //fix` reaches fm as `/fix`. The skill
+  writes two slashes on the Bash tool.
+- **`fm schedule show` lists the last 5 runs, newest first** (`<run>  <start>  <fired>  <outcome>[: why]`, or
+  `running`), through `schedule::runs`; `last runs: none` when there are none. The skill explains them from there,
+  so it never reads a run record itself. Test `show_lists_the_schedules_last_runs_newest_first`.
+- **Proof** (claude 2.1.314): `claude -p` in a temp folder `ProdApp` with `.claude/commands/autofix-prod-bugs.md`,
+  `FOREMAN_HOME` a temp home with workspace `prodws`, `--plugin-dir plugins/foreman --strict-mcp-config
+  --allowedTools "Bash(fm:*)"`. In `--permission-mode default` the Skill call itself is a permission prompt and -p
+  denies it ("Execute skill: …"); in `auto`, as Foreman launches, it loads. Turn 1 asked time and profile and added
+  nothing; turn 2 (`--resume`, "09:00 is fine. worktree-edit. Default limits.") ran exactly `fm schedule add --name
+  "Autofix prod bugs" --every "weekly mon 09:00" --command //autofix-prod-bugs --profile worktree-edit
+  --max-runtime 1h --max-tokens 3000000` and `fm schedule dry-run autofix-prod-bugs`, and reported the three next
+  Mondays 09:00 and the pending state. The TOML: `status = "pending"`, `days = ["mon"]`, `at = "09:00"`,
+  `command = "/autofix-prod-bugs"`. The skill listing named `foreman:foreman-scheduler`.
+- **Open (for the profile design, not this unit):** the proof session noted that `worktree-edit` allows no `git`
+  or build command, so a fixing command that commits parks as needs-you unless `--allow-tools` adds them.
