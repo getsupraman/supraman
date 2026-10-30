@@ -827,8 +827,8 @@ const PROMPT_OK: &str = "This is an automated Foreman selftest. Reply with the s
 
 /// A workspace of this checkout (a git folder: claude asks trust for any folder holding a `.git`, so a git
 /// folder made here could not launch) and a plain folder in the testbed's home: each folder's wanted session
-/// runs and sits first under its folder, the plain one's shows again under the testbed with keys scoped
-/// `@<testbed>`; then both stop.
+/// runs and sits first under its folder, and the plain one's not under the testbed, whose home holds it but
+/// which does not enable it; then both stop.
 async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = format!("{}-v", tb.a.0);
     let (git_dir, plain_dir) = (cargo_root(), tb.a.1.join("VPlain"));
@@ -873,11 +873,11 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
                 .iter()
                 .map(|r| (r.name.as_str(), r.kind, r.sessions.first().map(|s| s.session.name.as_str()), r.sessions.first().and_then(|s| s.also_in.as_deref())))
                 .collect();
-            let in_a = |n: &str| a.repos.iter().filter(|r| !r.listed).flat_map(|r| &r.sessions).any(|s| s.session.name == n && s.also_in.as_deref() == Some(&name));
+            let in_a = |n: &str| a.rows().any(|s| s.session.name == n);
             firsts == [
                 (folders[0].as_str(), FolderKind::Git, Some(names[0].as_str()), None),
                 (folders[1].as_str(), FolderKind::Plain, Some(names[1].as_str()), None),
-            ] && in_a(&names[1])
+            ] && !in_a(&names[1])
         };
         if ok(&tree) {
             break;
@@ -890,7 +890,10 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
     for s in &live {
         wait_painted(view, &format!("session-row-{}", s.session_id), Duration::from_secs(10), cx).await?;
     }
-    wait_painted(view, &format!("session-row-{}@{}", live[1].session_id, tb.a.0), Duration::from_secs(10), cx).await?;
+    let scoped = format!("session-row-{}@{}", live[1].session_id, tb.a.0);
+    if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&scoped)) {
+        bail!("{scoped} painted: {} enables {}, so its session shows only there", name, folders[1]);
+    }
     DesiredState::update(&tb.home, &name, |d| d.started = false)?;
     let stop_at = Instant::now();
     let stopped = wait_for("both stopped", Duration::from_secs(60), cx, |rows| {
@@ -899,7 +902,7 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
     })
     .await?;
     println!(
-        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, the plain one's also under {} as a home folder with keys session-row-<id>@{} | not started → stopped (still listed) after {}: {}",
+        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, neither under {} (no session-row-<id>@{}) | not started → stopped (still listed) after {}: {}",
         folders[0],
         folders[1],
         tb.a.0,
