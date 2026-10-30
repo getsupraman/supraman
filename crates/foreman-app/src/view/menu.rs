@@ -25,7 +25,6 @@ pub enum MenuAction {
     Attach { workspace: String, repo: String, session: Session },
     Resume { workspace: String, repo: String, session: Session },
     StopSession(Session),
-    /// `name`: what it continues as ([`fleet::Adoption::Offer`]).
     Adopt { workspace: String, folder: String, session: Session, name: String },
     Copy(String),
     ShowInWork { workspace: String, item_id: String },

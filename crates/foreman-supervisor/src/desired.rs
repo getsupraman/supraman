@@ -215,8 +215,7 @@ impl DesiredState {
         }
     }
 
-    /// The copy of `name`'s adoption shows as a row of `session_id`: its `fork_from` goes, so it is resumed as
-    /// itself from now on. False when `name` was not forking from another session.
+    /// `name`'s row shows `session_id`, not the one it forks from: from now on it resumes as itself.
     pub fn forked(&mut self, name: &str, session_id: &str) -> bool {
         match self.sessions.iter_mut().find(|w| w.name == name) {
             Some(w) if w.fork_from.as_deref().is_some_and(|from| from != session_id) => {

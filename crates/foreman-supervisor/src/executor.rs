@@ -495,8 +495,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         Ok(())
     }
 
-    /// An adopted session whose own row shows (a sessionId other than the one it forks from) forks no more:
-    /// its `fork_from` goes, in the file too when there is one, so its next start resumes it as itself.
+    /// [`DesiredState::forked`] for each adopted session whose own row shows, in the file too.
     fn settle_forks(&mut self, observed: &[Session]) {
         let landed: Vec<(String, String)> = self
             .desired

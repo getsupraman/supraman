@@ -1079,7 +1079,27 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
     .await?;
     let turn_after = launched.elapsed();
 
-    let row_key = format!("session-row-{}", original.session_id);
+    // step v's folder is this checkout, which holds YPlain too: the row under YPlain may be its second occurrence
+    let row_key = crate::selftest::until(view, cx, Duration::from_secs(15), "the unmanaged session under YPlain of the new workspace", |v| {
+        let tree = v.tree();
+        let node = tree.workspaces.iter().find(|n| n.name == name)?;
+        let repo = node.repos.iter().find(|r| r.name == folder)?;
+        let row = repo.sessions.iter().find(|r| r.session.session_id == original.session_id)?;
+        Some(format!("session-row-{}{}", original.session_id, row.scope(&name)))
+    })
+    .await
+    .map_err(|e| {
+        let at = view.read_with(cx, |v, _| {
+            let tree = v.tree();
+            tree.workspaces
+                .iter()
+                .flat_map(|n| n.repos.iter().flat_map(move |r| r.sessions.iter().map(move |s| (n.name.clone(), r.name.clone(), s))))
+                .filter(|(_, _, s)| s.session.session_id == original.session_id)
+                .map(|(w, r, s)| format!("{w}/{r} also_in={:?}", s.also_in))
+                .collect::<Vec<_>>()
+        });
+        e.context(format!("it sits at {at:?}"))
+    })?;
     crate::selftest_manage::press_painted(view, &row_key, gpui::MouseButton::Right, cx).await?;
     wait_painted(view, "menu-adopt", Duration::from_secs(10), cx).await?;
     click(view, "menu-adopt", cx).await?;
@@ -1119,9 +1139,10 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
     })
     .await?;
     let no_second = view.read_with(cx, |v, _| {
-        let tree = v.tree();
-        let row = tree.workspaces.iter().flat_map(|w| w.rows()).find(|r| r.session.session_id == original.session_id)?.clone();
-        v.adoption(&name, &folder, &row)
+        // stopped, its row is hidden unless stopped sessions are shown
+        let session = v.sessions.iter().find(|s| s.session_id == original.session_id)?.clone();
+        let health = session.health(now_ms());
+        v.adoption(&name, &folder, &crate::fleet::SessionRow::new(session, health))
     });
     if !matches!(&no_second, Some(crate::fleet::Adoption::No(why)) if why.contains(&supervised)) {
         bail!("the stopped original still offers Adopt or says nothing: {no_second:?}");

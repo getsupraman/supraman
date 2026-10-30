@@ -585,8 +585,7 @@ impl FleetView {
         .detach();
     }
 
-    /// Stops it first (stop, never rm), and wants the folder's session only once it stopped: a copy of a live
-    /// conversation would go on beside it.
+    /// The folder's session is wanted only once the original stopped: a copy of a live conversation goes on beside it.
     fn adopt(&mut self, workspace: String, folder: String, session: Session, name: String, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;

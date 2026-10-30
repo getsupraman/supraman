@@ -550,7 +550,6 @@ pub fn adoption(
     let unmanaged = s.kind == Kind::Background
         && !row.foreign
         && !row.closed
-        && row.also_in.is_none()
         && !s.name.starts_with(foreman_core::FM_PREFIX)
         && !s.id.is_empty()
         && !s.session_id.is_empty()
@@ -1112,7 +1111,7 @@ mod tests {
         assert_eq!(adopt("Beta", &closed, &all, &none), None);
         let mut second = row_of("busy");
         second.also_in = Some("other".into());
-        assert_eq!(adopt("Alpha", &second, &all, &none), None, "only the first occurrence");
+        assert_eq!(adopt("Alpha", &second, &all, &none), offer, "shown first elsewhere, e.g. under a folder that holds this one");
         let mut fm = row_of("busy");
         fm.session.name = "fm-demo-x".into();
         assert_eq!(adopt("Alpha", &fm, &all, &none), None, "Foreman's own");
