@@ -25,7 +25,7 @@ pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
 };
 pub use model::{Folder, FolderKind, Scan, Workspace, owners};
-pub use plugin::{HOOK_EXE, find_plugin_dir, install_hook_exe};
+pub use plugin::{HOOK_EXE, find_plugin_dir, fm_allowed_tools, install_hook_exe};
 pub use registry::{Registry, home_from};
 pub use relay::{
     ANSWERED_FILE, Ask, AskState, DEFAULT_RELAY_IDLE_MS, InboxWatcher, LAST_DROP_FILE, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop,

@@ -671,3 +671,19 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
     assert!(wt("ahead").exists(), "a commit only it has stays");
     assert_eq!(run_worktrees(&f.home).len(), 2, "listed for René");
 }
+
+#[test]
+fn a_runs_session_name_is_a_valid_name_and_profiles_map_onto_claudes_flags() {
+    let stamp = run_stamp(&chrono::Utc.with_ymd_and_hms(2026, 11, 2, 9, 0, 0).unwrap());
+    assert_eq!(stamp, "20261102-090000");
+    let name = session_name("nomos", "autofix-prod-bugs", &stamp);
+    assert_eq!(name, "fm-nomos-sched-autofix-prod-bugs-20261102-090000");
+    crate::validate_name(&name).unwrap();
+    assert_eq!(run_id("autofix-prod-bugs", &stamp), "autofix-prod-bugs-20261102-090000");
+
+    assert_eq!("worktree-edit".parse::<Profile>().unwrap().permission_mode(), "acceptEdits");
+    assert!("bypassPermissions".parse::<Profile>().unwrap_err().contains("never a schedule's mode"));
+    let p = Permissions { profile: Profile::Read, allow_tools: vec!["Read".into(), "Bash(ls:*)".into()], deny_tools: vec!["WebFetch".into()], ..Permissions::default() };
+    assert_eq!(p.allowed(&["Bash(fm:*)".into()]), ["Bash(fm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
+    assert_eq!(p.denied().len(), DEFAULT_DENY.len() + 1);
+}
