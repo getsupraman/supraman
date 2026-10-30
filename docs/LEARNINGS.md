@@ -4775,3 +4775,6 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Not probed: an unelevated registrant asking for HighestAvailable.** This shell is elevated, and running the test
   at Medium IL (`runas /trustlevel`) would open a console. If Task Scheduler refuses an unelevated Foreman a
   HighestAvailable task, `sync` returns `CoreError::Tasks` with the HRESULT; sched/7 has to show that error.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-3\target`): build ok; `cargo test --release --workspace` 746 passed,
+  0 failed, 4 ignored (the real-task test among them); `--selftest` 5/5 PASS; `--selftest-supervise` PASS;
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left. No F-05/F-06 flake this time.
