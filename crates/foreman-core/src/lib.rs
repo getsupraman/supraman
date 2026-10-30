@@ -11,6 +11,7 @@ pub mod process;
 mod registry;
 mod relay;
 mod scan;
+pub mod schedule;
 pub mod secret;
 mod settings;
 mod slug;

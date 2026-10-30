@@ -12,12 +12,14 @@ pub const KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// Removes the files not modified for `keep_ms` before `now`: `events/*.jsonl` and their `.1`, and per
 /// workspace `outbox/*.json` (never `ready.json`), `inbox/sent` and `inbox/rejected`, then the
-/// `answered.json` entries of outbox files that are gone. A drop still waiting in the inbox stays.
+/// `answered.json` entries of outbox files that are gone. A drop still waiting in the inbox stays. Then the
+/// schedules': `runs/*.jsonl.1`, the state of removed schedules, and spent run worktrees.
 /// Returns what could not be removed.
 pub fn prune(home: &Path, now: i64, keep_ms: i64) -> Vec<String> {
     let cutoff = now - keep_ms;
     let mut errors = Vec::new();
     remove_older(&events_dir(home), cutoff, |n| n.ends_with(".jsonl") || n.ends_with(".jsonl.1"), &mut errors);
+    crate::schedule::prune_schedules(home, cutoff, &mut errors);
     let Ok(workspaces) = fs::read_dir(home.join("relay")) else { return errors };
     for dir in workspaces.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()) {
         let outbox = dir.join("outbox");
@@ -32,7 +34,7 @@ pub fn prune(home: &Path, now: i64, keep_ms: i64) -> Vec<String> {
     errors
 }
 
-fn remove_older(dir: &Path, cutoff: i64, matches: impl Fn(&str) -> bool, errors: &mut Vec<String>) {
+pub(crate) fn remove_older(dir: &Path, cutoff: i64, matches: impl Fn(&str) -> bool, errors: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
