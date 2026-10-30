@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeZone};
 use foreman_claude::{LaunchSpec, mcp_config_path};
 use foreman_core::schedule::{
     self, Action, ActionKind, CatchUp, Clock, Day, Overlap, Profile, Prompt, Schedule, Span, Status, Trigger,
@@ -475,7 +475,36 @@ fn list(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
 fn show(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     let (w, id) = target(registry, args, "show")?;
     print_schedule(registry, &w, &load_one(registry, &w, id)?);
+    let runs: Vec<schedule::Run> = schedule::runs(registry.home(), &w.name)?.into_iter().filter(|r| r.schedule == id).collect();
+    if runs.is_empty() {
+        println!("last runs: none");
+        return Ok(());
+    }
+    println!("last runs (newest first):");
+    for r in runs.iter().rev().take(SHOWN_RUNS) {
+        println!("  {}", run_text(r));
+    }
     Ok(())
+}
+
+const SHOWN_RUNS: usize = 5;
+
+/// `<run>  <started>  <fired>  <outcome>[: why]`; a run with no end is `running`.
+fn run_text(r: &schedule::Run) -> String {
+    let snake = |v: serde_json::Result<serde_json::Value>| v.ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "?".into());
+    let (started, fired) = match r.started {
+        Some((ts, how)) => (
+            Local.timestamp_millis_opt(ts).single().map(|t| local_text(&t)).unwrap_or_else(|| ts.to_string()),
+            snake(serde_json::to_value(how)),
+        ),
+        None => ("-".into(), "-".into()),
+    };
+    let ended = match &r.ended {
+        Some((_, outcome, why)) if why.is_empty() => snake(serde_json::to_value(outcome)),
+        Some((_, outcome, why)) => format!("{}: {why}", snake(serde_json::to_value(outcome))),
+        None => "running".into(),
+    };
+    format!("{}  {started}  {fired}  {ended}", r.run)
 }
 
 fn print_schedule(registry: &Registry, w: &Workspace, s: &Schedule) {
