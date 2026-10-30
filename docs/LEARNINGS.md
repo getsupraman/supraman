@@ -4587,3 +4587,80 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\m5-68\target`): build ok; `cargo test --release --workspace` 705 passed,
   0 failed, 3 ignored; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS;
   no `fm-selftest` session left (`claude agents --json --all`).
+
+## 2026-10-30 — m5/61 Adopt: an unmanaged background session continues as `fm-<ws>-<folder>`
+
+- **claude 2.1.314 cannot rename a session, so Adopt makes a copy under a new id.** Probed on own sessions in
+  `target/m5-61-probe`. `claude --bg --resume <uuid>` with no other flag wakes the same uuid "with its saved
+  options": its old `--name`, its old `--mcp-config`, and no `FOREMAN_*` env. So it gets neither the supervised name
+  nor a mint. `claude --bg --name fm-x --permission-mode … --resume <uuid> -- <prompt>` printed `note: background
+  session fc5bf027 keeps its own saved options, so the flags you passed started a copy as f050c443`. The copy has a
+  new `sessionId`, its transcript is written under the new name (`custom-title`/`agent-name`), and it carries the
+  whole conversation: asked, it answered the word the original was told to remember. The original row stays (`done`,
+  no pid). The CLI has no rename command, and the daemon's roster is not Foreman's to write. The brief's "same UUID
+  runs as fm-…" therefore became "the conversation continues as fm-…, a copy under a new id" (controller decision A,
+  2026-10-30; René can veto).
+- **Flow.** The session menu's `Adopt…` (`menu-adopt`) asks first (`Confirm::ask`): "Adopt <name> (<id>) into <ws>?
+  It is stopped (stop, never rm), then its conversation continues as fm-<ws>-<folder>, supervised: a copy under a new
+  id with a fresh WorkState token. The original stays stopped and listed." When the workspace is not started, it
+  adds that the copy starts on Start. Yes stops it (`claude stop`, off the UI thread). Only then does
+  `supervise::adopt` want `fm-<ws>-<folder>` through `DesiredState::update`, as `adopted_session`: the repo
+  session with `fork_from = <full uuid>` and the rendered repo role as its prompt for a later fresh launch. The
+  supervisor's launch of a wanted session with `fork_from` is `LaunchSpec { resume: Some(uuid) }` (argv `--bg --name
+  <n> --resume <uuid> …`), with every supervised flag, a fresh mint, and the adopt prompt. A live row of that uuid
+  fails the launch ("runs again: stop it, then Retry"), so two sessions never go on from one history.
+  `Supervisor::settle_forks` clears `fork_from` (`DesiredState::forked`, in the file too) once the name's row shows
+  another uuid. From then on it is an ordinary wanted session, resumed by its own uuid. The original is never rm'd.
+- **The prompt sent into the copy** (`adopt_prompt`): "Foreman adopted this conversation: from now on you are
+  fm-<ws>-<folder>, the repo session for <folder> in the Foreman workspace <ws>, supervised by Foreman. Follow the
+  FOREMAN-ROLE instructions of this session's start as after a resume." The role text itself is not sent: `fm hook`
+  injects it at SessionStart (`FOREMAN_ROLE=repo` comes in the copy's `--settings` env), and `repo.md` already says
+  what to do after a resume. Sending the launch prompt as well would put the role in twice.
+- **When there is no Adopt** (`fleet::adoption`): it is offered for a background session (not `fm-`, not muted,
+  not closed) that is running, idle, blocked or stopped, under a folder enabled here that this workspace supervises
+  (`owners`). This holds on any occurrence of the row, not only the first. In the selftest, YPlain lies inside step
+  v's folder (this checkout, git, by then disabled), so the session shows first under v's checkout, because a
+  disabled folder stays in the tree while it holds a session (m5/56 c5). Its YPlain row is the `@<ws>` occurrence.
+  Only the folder the row sits in decides. An orphaned row is excluded because the daemon may still respawn it. If
+  `fm-<ws>-<folder>` is wanted or has a row, the menu has no Adopt and the session's hover card says why (`adopt
+  none: fm-… is wanted already, and a folder has one supervised session`). Replacing it was not chosen: it would
+  stop a supervised session, which needs its own question. Muted rows (another Foreman's) have no Adopt.
+- **An interactive session has no Adopt.** Its `claude agents --json` row has no `id`, and `claude stop <sessionId>`
+  answers `No job matching '<id>'. Run 'claude agents' to list running sessions.` (exit 1). `stop` addresses only
+  background jobs, so Foreman cannot stop a session that runs in someone's terminal. (Measured with an unknown uuid;
+  no interactive session was started, because that needs a console.)
+- **A failed copy**: reconcile's `LaunchFailed`/`GaveUp` for a wanted session with `fork_from` carry
+  `Remedy::Adopt { from }`, and the detail starts with `adopting <id8>: `. The Inbox row shows Retry
+  (`inbox-retry-<name>`, as before) and Start fresh (`inbox-fresh-<name>`: `DesiredState::start_fresh` drops
+  `fork_from`, then Retry). The folder's row shows a warning tag `adopt failed` (`adopt-failed-<ws>/<folder>`) with
+  the reason and "Retry or Start fresh in the Inbox". The original stays stopped. The session row's primary action
+  (`fleet::Open::of`, also the double-click) is unchanged: Adopt stops a session, so it belongs behind a menu item
+  and a question, not behind a double-click.
+- **Tests:** `desired::an_adopted_session_forks_until_its_own_row_shows_and_start_fresh_drops_the_fork`,
+  `reconcile::an_adopted_session_is_launched_as_a_copy_and_a_failed_copy_offers_retry_or_start_fresh`,
+  `executor::an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once` (no copy while
+  the original is live; `--resume <uuid>` right after `--name`, the mint, the adopt prompt, never a Resume of the
+  original's row; `fork_from` kept while the row shows the original's uuid and cleared in memory and file once it
+  shows its own; later resumed as itself), `launch::a_launch_that_resumes_names_the_session_right_after_its_own_name`,
+  `fleet::adopt_is_offered_for_an_unmanaged_background_session_of_an_enabled_folder_without_a_supervised_one`,
+  `supervise::adopt_wants_the_folders_session_forking_the_uuid_with_the_repo_role`, the menu and card tests.
+- **Selftest step y** (`selftest_supervise::adopt_step`, after x): workspace `<testbed>-y` with the plain folder
+  `YPlain` (inside the testbed), started, wanting nothing. The run launches its own unmanaged `selftest-<hex>-adoptee` there (default
+  mode, no MCP), which is told a word to remember, and waits for its first turn to end. Then, through the window:
+  right-click its row under YPlain (`session-row-<sid>@<ws>`, see above) → `menu-adopt` → the question (checked for the name, "stop, never rm", "a copy under a new id",
+  "The original stays stopped and listed") → `confirm-yes`. It checks that `fm-<testbed>-y-yplain` is live with
+  another sessionId, the original is stopped with its id and name, `fork_from` is cleared in the file, and the copy's
+  transcript carries the word and the adopt prompt. It also checks that the original's card now says why there is
+  no Adopt. Cleanup removes the adoptee through `Scratch::session_name` and the copy by the run's prefix.
+- **Red checks** (each reverted, never committed): the fork launch without `spec.resume` →
+  `an_adopted_session_launches_a_copy_…` fails; `settle_forks` not called → the same test fails (`fork_from` never
+  clears); a failed copy offering `Remedy::Retry` → the reconcile and executor tests fail; `adoption` without the
+  "wanted already" check → `adopt_is_offered_…` fails. Step y itself failed twice before passing. First, Adopt
+  required the first occurrence and the row under YPlain was a second one ("nothing painted under menu-adopt"). Then
+  its last check looked the stopped original up in the tree, which hides stopped rows.
+- **Not covered:** a failed copy is not driven in the selftest (Retry, Start fresh and the folder's `adopt failed`
+  tag have unit tests for their logic only). The live-original refusal is unit-tested.
+- **Gate** (`CARGO_TARGET_DIR=C:mbuild\m5-61	arget`): build ok, no warnings; `cargo test --release --workspace`
+  711 passed, 0 failed, 3 ignored; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS (step y included);
+  `--selftest-detach-shutdown` PASS; no `fm-selftest` or adoptee session left. No m5-44 audit section names m5/61,
+  so no audit finding was in scope.
