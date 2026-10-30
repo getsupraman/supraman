@@ -1849,7 +1849,8 @@ impl FleetView {
         match &tab.kind {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
-            TabKind::Work(_) | TabKind::Saved(_) => false,
+            TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
+            TabKind::Work(_) => false,
         }
     }
 
@@ -2658,6 +2659,13 @@ mod tests {
         assert!(!FleetView::tab_runs(&tab(TabKind::Attach { session_id: "ffff0001".into() }, None), &session));
         assert!(FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-0000")), &session));
         assert!(!FleetView::tab_runs(&tab(TabKind::Shell, Some("abcd0001-ffff")), &session), "/clear gave the tab a new session");
+        let placeholder = |sid: &str| {
+            let saved = crate::saved_tabs::SavedTab::Claude { title: "c".into(), cwd: r"C:\demo".into(), session_id: Some(sid.into()), name: "s".into() };
+            tab(TabKind::Saved(saved), None)
+        };
+        let full = Session { session_id: "abcd0001-0000-4000-8000-000000000001".into(), ..session.clone() };
+        assert!(FleetView::tab_runs(&placeholder(&full.session_id), &full), "the row opens its placeholder, not a second tab");
+        assert!(!FleetView::tab_runs(&placeholder("abcd0001-0000-4000-8000-000000000002"), &full));
         assert!(!FleetView::tab_runs(&tab(TabKind::Shell, None), &session), "a shell without claude runs nothing");
     }
 
