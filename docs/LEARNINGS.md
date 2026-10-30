@@ -4658,6 +4658,6 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **A checkout named `sched-…` hit the reservation.** `--selftest-supervise` step v named its git folder after the
   checkout, so in worktree `sched-2` it failed "no name for sched-2". The step now names that folder `VGit`
   (like its `VPlain`), so the selftest no longer depends on where it is checked out.
-- **Gate** (`CARGO_TARGET_DIR=C:mbuild\sched-2	arget`): build ok; `cargo test --release --workspace` 727 passed,
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched-2\target`): build ok; `cargo test --release --workspace` 727 passed,
   0 failed, 3 ignored; `--selftest` 5/5 PASS; `--selftest-supervise` PASS (after the `VGit` fix);
   `--selftest-detach-shutdown` PASS; no `fm-selftest` session of this worktree left.
