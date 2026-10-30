@@ -17,7 +17,7 @@ use foreman_supervisor::{
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, PlatformInput, px, size};
 
 use crate::selftest::{
-    Scratch, click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
+    Scratch, click, double_click, hex6, install_guards, lock, raw, remove_dir_retrying, scrolled_into_view, sleep,
     wait_for_tab_terminal, cargo_root,
 };
 use crate::view::FleetView;
@@ -901,8 +901,9 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
         (ours.len() == names.len() && ours.iter().all(|s| s.pid.is_none())).then(|| ours.iter().map(|s| format!("{} [{}]", s.name, raw(s))).collect::<Vec<_>>())
     })
     .await?;
+    let refused = unwanted_double_click(view, &live[0], cx).await?;
     println!(
-        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, neither under {} (no session-row-<id>@{}) | not started → stopped (still listed) after {}: {}",
+        "step v: workspace {name} = {} (git, this checkout) + {} (plain, inside {}), home the first folder | wanted {} live after {} | each first under its folder in {name}, neither under {} (no session-row-<id>@{}) | not started → stopped (still listed) after {}: {} | {refused}",
         folders[0],
         folders[1],
         tb.a.0,
@@ -914,6 +915,44 @@ async fn virtual_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWind
         stopped.join(", ")
     );
     Ok(())
+}
+
+/// A stopped `fm-` session is the supervisor's to run: a double-click on its row opens nothing and says so.
+async fn unwanted_double_click(view: &Entity<FleetView>, session: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let shown = view.update(cx, |v, cx| {
+        cx.notify();
+        std::mem::replace(&mut v.show_stopped, true)
+    });
+    let result = async {
+        let key = format!("session-row-{}", session.session_id);
+        let started = Instant::now();
+        while !view.read_with(cx, |v, _| {
+            v.hits.borrow().contains_key(&key) && v.tree().workspaces.iter().flat_map(|w| w.rows()).any(|r| r.session.session_id == session.session_id && !crate::fleet::is_alive(&r.health))
+        }) {
+            if started.elapsed() > Duration::from_secs(20) {
+                bail!("{key} not painted as stopped within 20 s");
+            }
+            sleep(cx, Duration::from_millis(100)).await;
+        }
+        let tabs = view.read_with(cx, |v, _| v.tabs.len());
+        double_click(view, &key, cx).await?;
+        sleep(cx, Duration::from_millis(500)).await;
+        let (after, toast) = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
+        if after != tabs {
+            bail!("a double-click on stopped {}'s row opened {} tab(s)", session.name, after - tabs);
+        }
+        let toast = toast.unwrap_or_default();
+        if !toast.contains("Start the workspace from its menu") {
+            bail!("a double-click on stopped {}'s row showed no hint to Start the workspace: toast {toast:?}", session.name);
+        }
+        Ok(format!("a double-click on stopped {} opens nothing, toast \"{toast}\"", session.name))
+    }
+    .await;
+    view.update(cx, |v, cx| {
+        v.show_stopped = shown;
+        cx.notify();
+    });
+    result
 }
 
 /// Through the window: Add workspace → Empty, two sibling folders of the testbed added by Edit folders… (a git
