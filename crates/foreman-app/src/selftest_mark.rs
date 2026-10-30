@@ -5,7 +5,7 @@ use foreman_claude::peer;
 use gpui::{AsyncWindowContext, Bounds, Entity, MouseButton, Pixels};
 
 use crate::{
-    selftest::{CLIPBOARD_TRIES, cargo_root, click, hex6, lock, press, read_own, sleep, until, wait_for_tab_terminal},
+    selftest::{CLIPBOARD_TRIES, cargo_root, click, double_click, hex6, lock, press, read_own, sleep, until, wait_for_tab_terminal},
     view::{FleetView, REFRESH_EVERY},
 };
 
@@ -102,6 +102,14 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     click(view, &link, cx).await?;
     until(view, cx, WITHIN, "the claude tab active again from the row's tab link", |v| (v.active == Some(tab)).then_some(())).await?;
     until(view, cx, WITHIN, "the mark back on the row", |v| marked(v).contains(&sid).then_some(())).await?;
+    view.update(cx, |v, cx| v.activate_tab(plain, cx));
+    until(view, cx, WITHIN, "the plain tab active again", |v| (v.active == Some(plain) && marked(v).is_empty()).then_some(())).await?;
+    let tabs = view.read_with(cx, |v, _| v.tabs.len());
+    double_click(view, &format!("session-row-{sid}"), cx).await?;
+    until(view, cx, WITHIN, "the claude tab active again from a double-click on its row", |v| (v.active == Some(tab)).then_some(())).await?;
+    if view.read_with(cx, |v, _| v.tabs.len()) != tabs {
+        bail!("a double-click on the row of a session open in a tab opened another tab");
+    }
 
     let copied = copy_send_name(view, &sid, name, cx).await.context("Copy SendMessage name")?;
     let dropped = crate::selftest_drop::run(view, [tab, plain], &sid, name, &cwd, cx).await.context("drop on a terminal")?;
@@ -124,7 +132,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     }
     Ok(format!(
         "{name} typed in a shell tab: registered after {} ms, row marked after {} ms; a plain tab marks nothing and its \
-         tab link brings the claude tab back; {copied}; /exit cleared the mark after {} ms",
+         tab link and a double-click on its row each bring the claude tab back; {copied}; /exit cleared the mark after {} ms",
         registered.as_millis(),
         to_mark.as_millis(),
         cleared.as_millis()

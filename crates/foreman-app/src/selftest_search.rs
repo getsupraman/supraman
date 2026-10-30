@@ -98,7 +98,9 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("{prefix:?} found {OLD}, whose id only holds it further in: {rows:?}");
     }
     let summary = view.read_with(cx, |v, cx| v.search_results(cx).summary());
-    out.push(format!("{prefix:?} typed by posted keys: {rows:?} ({summary}) in {} ms, stopped sessions hidden in the tree", started.elapsed().as_millis()));
+    out.push(format!("{prefix:?} typed by posted keys: {rows:?} ({summary}) in {} ms, its id marked on the row, stopped sessions hidden in the tree", started.elapsed().as_millis()));
+    let id_key = format!("session-id-{}", &RECENT[..8]);
+    until_app(view, cx, WITHIN, "the matched id shown on the result row", |v, _| v.hits.borrow().contains_key(&id_key).then_some(())).await?;
     shot("m5-30-search-id", cx).await;
     out.push(text_inset(view, cx)?);
 
@@ -140,7 +142,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     })
     .await
     .map_err(|e| e.context(format!("box {:?}", view.read_with(cx, |v, cx| query(v, cx)))))?;
-    out.push("Esc clears it, the tree is back".into());
+    if let Some(k) = view.read_with(cx, |v, _| v.hits.borrow().keys().find(|k| k.starts_with("session-id-")).cloned()) {
+        bail!("{k} painted in the tree: a row shows its id only while a search matched it");
+    }
+    out.push("Esc clears it, the tree is back, no row shows its id".into());
     post_keys(&["escape"], cx).await?;
     until_focused(view, false, "a second Esc on the empty box giving the keys back to the window", cx).await?;
     out.push("a second Esc gives the keys back".into());

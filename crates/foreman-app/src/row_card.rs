@@ -2,7 +2,7 @@ use std::path::Path;
 
 use foreman_ui::hover_card::HoverCard;
 
-use crate::fleet::{self, SessionRow};
+use crate::fleet::{self, Open, SessionRow};
 
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceFacts {
@@ -39,12 +39,16 @@ pub fn workspace_card(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
     HoverCard { title: facts.name.clone(), rows }
 }
 
-pub fn session_card(row: &SessionRow, claimed: Option<String>, now_ms: i64) -> HoverCard {
+pub fn session_card(row: &SessionRow, claimed: Option<String>, open: Open, now_ms: i64) -> HoverCard {
     let s = &row.session;
     let title = if s.name.is_empty() { "(unnamed)".to_string() } else { s.name.clone() };
     let state = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
     let mut rows = vec![("state", state)];
+    if let foreman_claude::Health::Orphaned { last_state } = &row.health {
+        rows.push(("", format!("the process ended while the session was {}", last_state.as_str())));
+    }
     rows.extend(waiting_for(row).map(|w| ("waiting", w)));
+    rows.extend(open.hint().map(|h| ("open", h.to_string())));
     let id = if s.id.is_empty() { &s.session_id } else { &s.id };
     rows.push(("id", format!("{} · {id}", s.kind.as_str())));
     rows.push(("cwd", s.cwd.display().to_string()));
@@ -118,11 +122,27 @@ mod tests {
         let mut r = row(Health::Running);
         r.also_in = Some("larchsys".into());
         assert_eq!(
-            session_card(&r, Some("m5/59".into()), NOW).text(),
-            "fm-demo-workspace\nstate  running\nid  background · 77aa88bb\ncwd  C:\\nowhere\\demo\nclaimed  m5/59\nalso in  larchsys"
+            session_card(&r, Some("m5/59".into()), Open::Attach, NOW).text(),
+            "fm-demo-workspace\nstate  running\nopen  Attach in a new tab\nid  background · 77aa88bb\ncwd  C:\\nowhere\\demo\nclaimed  m5/59\nalso in  larchsys"
         );
         r.closed = true;
         r.session.name.clear();
-        assert!(session_card(&r, None, NOW).text().starts_with("(unnamed)\nstate  closed\n"));
+        assert!(session_card(&r, None, Open::Nothing, NOW).text().starts_with("(unnamed)\nstate  closed\nid  "));
+    }
+
+    #[test]
+    fn an_interrupted_session_says_its_process_ended_and_another_foremans_says_whose() {
+        let gone = row(Health::Orphaned { last_state: foreman_claude::SessionState::Working });
+        let text = session_card(&gone, None, Open::Supervised, NOW).text();
+        assert!(
+            text.starts_with(
+                "fm-demo-workspace\nstate  interrupted\n  the process ended while the session was working\n\
+                 open  the supervisor runs it while it is wanted: Start the workspace from its menu\n"
+            ),
+            "{text}"
+        );
+        let mut foreign = row(Health::Running);
+        foreign.foreign = true;
+        assert!(session_card(&foreign, None, Open::Foreign, NOW).text().contains("\nopen  another Foreman session\n"));
     }
 }

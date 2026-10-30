@@ -18,7 +18,7 @@ use super::icon::{Icon, Tooltip};
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::page;
-use crate::fleet::{self, RepoNode, SessionRow, WorkspaceNode};
+use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 use crate::row_card;
 use crate::work_view;
 
@@ -1009,6 +1009,30 @@ impl FleetView {
         button::revealed(&self.hits, key, icon.svg(14., cx.theme().colors().text_muted), px(SLOT), group.clone(), shown, cx).tooltip(Tooltip::text(tip))
     }
 
+    pub(super) fn open_of(&self, row: &SessionRow) -> Open {
+        Open::of(row, self.session_tab(&row.session), self.active, self.resumable(row))
+    }
+
+    /// The row's one open action, as its slot runs it; a refusal shows why.
+    pub(super) fn open_row(&mut self, workspace: &str, repo: &str, row: &SessionRow, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let s = &row.session;
+        let open = self.open_of(row);
+        match open {
+            Open::Tab(id) => self.activate_tab(id, cx),
+            Open::Attach => {
+                self.attach(workspace, repo, s, window, cx);
+            }
+            Open::Resume => {
+                self.resume(workspace, repo, s, window, cx);
+            }
+            Open::Elsewhere | Open::Supervised => {
+                let text = format!("{}: {}", fleet::display_name(s), open.hint().unwrap_or_default());
+                self.toast.show_why(text, |this: &mut Self| &mut this.toast, cx);
+            }
+            Open::Shown | Open::Foreign | Open::Nothing => {}
+        }
+    }
+
     fn workspace_selected(&self, workspace: &WorkspaceNode, cx: &gpui::App) -> bool {
         let Some(tab) = self.active.and_then(|id| self.tab(id)) else { return false };
         match &tab.kind {
@@ -1304,67 +1328,80 @@ impl FleetView {
                     this.toggle_star(&session_id, cx);
                 }))
         };
-        let reach = if row.attachable {
+        let open = self.open_of(row);
+        let action = {
             let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-            Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, "Attach", &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.attach(&workspace, &repo, &session, window, cx);
-                },
-            )))
-        } else if self.resumable(row) {
-            let (workspace, repo, session) = (workspace.to_string(), repo.to_string(), s.clone());
-            Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, "Resume", &group, shown, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.resume(&workspace, &repo, &session, window, cx);
-                },
-            )))
-        } else {
-            None
+            let tip = open.hint().unwrap_or_default();
+            match open {
+                // open in a tab not shown now: a state, so it shows without a hover
+                Open::Tab(tab) => Some(self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, tip, &group, true, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.activate_tab(tab, cx);
+                    },
+                ))),
+                Open::Attach => Some(self.hover_icon(format!("attach-{}{at}", s.id), Icon::Attach, tip, &group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.attach(&workspace, &repo, &session, window, cx);
+                    },
+                ))),
+                Open::Resume => Some(self.hover_icon(format!("resume-{}{at}", s.id), Icon::Resume, tip, &group, shown, cx).on_click(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.resume(&workspace, &repo, &session, window, cx);
+                    },
+                ))),
+                _ => None,
+            }
         };
-        // open in a tab not shown now: a state, so it shows without a hover
-        let tab = self.session_tab(s).filter(|&id| self.active != Some(id)).map(|tab| {
-            self.hover_icon(format!("tab-link-{}{at}", s.id), Icon::Tab, "Show its tab", &group, true, cx).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    cx.stop_propagation();
-                    this.activate_tab(tab, cx);
-                },
-            ))
-        });
+        let state_word = if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) };
+        let name_el = match marks {
+            Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx),
+            _ => clipped(format!("session-name-{}{at}", s.id), name, false),
+        };
+        let name_el = if foreign {
+            let key = format!("foreign-{}{at}", s.session_id);
+            div()
+                .id(SharedString::from(key.clone()))
+                .relative()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .child(name_el)
+                .child(hit_target(&self.hits, key))
+                .tooltip(Tooltip::text("another Foreman session"))
+        } else {
+            name_el.flex_1()
+        };
 
         let line = div()
             .flex()
             .items_center()
             .gap_2()
             .h(px(SESSION_LINE))
-            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(div().size(px(8.)).rounded_full().bg(dot)))
-            .child(
-                div()
-                    .w(px(78.))
-                    .flex_none()
-                    .text_xs()
-                    .text_color(state)
-                    .child(SharedString::from(if row.closed { "closed".to_string() } else { fleet::health_label(&row.health) })),
-            )
-            .child(match marks {
-                Some(m) if !s.name.is_empty() => foreman_ui::matcher::highlighted(format!("session-name-{}{at}", s.id), name, &m.name, cx).flex_1(),
-                _ => clipped(format!("session-name-{}{at}", s.id), name, false).flex_1(),
+            .child(div().flex().flex_none().items_center().justify_center().size(px(16.)).child(Icon::Claude.svg(14., dot)))
+            .child(name_el)
+            .when_some(marks.and_then(|m| m.id.clone()), |d, id| {
+                let key = format!("session-id-{}{at}", s.id);
+                d.child(
+                    foreman_ui::matcher::highlighted(key.clone(), fleet::short_id(s).to_string(), &[id], cx)
+                        .relative()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(secondary(cx))
+                        .child(hit_target(&self.hits, key)),
+                )
             })
             .child(
                 div()
+                    .flex()
                     .flex_none()
                     .whitespace_nowrap()
                     .text_xs()
                     .text_color(secondary(cx))
-                    .child(match marks.and_then(|m| m.id.clone()) {
-                        Some(id) => {
-                            let kind = format!("{} · ", s.kind.as_str());
-                            let id_at = id.start + kind.len()..id.end + kind.len();
-                            foreman_ui::matcher::highlighted(format!("session-id-{}{at}", s.id), format!("{kind}{}", fleet::short_id(s)), &[id_at], cx).into_any_element()
-                        }
-                        None => SharedString::from(format!("{} · {}", s.kind.as_str(), fleet::short_id(s))).into_any_element(),
-                    }),
+                    .child(SharedString::from(format!("{} · ", s.kind.as_str())))
+                    .child(div().text_color(state).child(SharedString::from(state_word))),
             )
             .when_some(row.also_in.clone(), |d, owner| {
                 d.child(
@@ -1384,14 +1421,14 @@ impl FleetView {
                     .items_center()
                     .gap(px(2.))
                     .child(star)
-                    .child(reach.map_or_else(slot, IntoElement::into_any_element))
-                    .child(tab.map_or_else(slot, IntoElement::into_any_element)),
+                    .child(action.map_or_else(slot, IntoElement::into_any_element)),
             );
 
         let card = {
             let (row, claimed) = (row.clone(), self.claimed_item(workspace, &s.name, cx));
-            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), now_ms()))
+            hover_card::tooltip(move || row_card::session_card(&row, claimed.clone(), open, now_ms()))
         };
+        let (w, r, clicked) = (workspace.to_string(), repo.to_string(), row.clone());
         let target = MenuTarget::Session { workspace: workspace.to_string(), repo: repo.to_string(), session_id: s.session_id.clone() };
         div()
             .id(SharedString::from(format!("session-{}{at}", s.id)))
@@ -1409,29 +1446,6 @@ impl FleetView {
             .when(blocked, |d| d.bg(status.warning.opacity(0.12)).hover(|s| s.bg(status.warning.opacity(0.18))))
             .when(dimmed, |d| d.opacity(DIMMED))
             .child(line)
-            .when(foreign, |d| {
-                let key = format!("foreign-{}{at}", s.session_id);
-                d.child(
-                    div()
-                        .id(SharedString::from(key.clone()))
-                        .relative()
-                        .self_start()
-                        .mb(px(2.))
-                        .ml(px(24.))
-                        .px_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(colors.border_variant)
-                        .text_xs()
-                        .text_color(secondary(cx))
-                        .child("another Foreman")
-                        .child(hit_target(&self.hits, key))
-                        .tooltip(Tooltip::text(
-                            "An fm- session this Foreman does not supervise (another FOREMAN_HOME, e.g. a selftest): \
-                             it never raises an Inbox row here. Leave its prompts to whoever runs it.",
-                        )),
-                )
-            })
             .when_some(waiting_for, |d, w| {
                 d.child(
                     clipped(format!("waiting-{}{at}", s.id), w, false)
@@ -1449,6 +1463,11 @@ impl FleetView {
                 cx.new(|_| row.clone())
             })
             .when(shown, |d| d.child(hit_target(&self.hits, format!("marked-{}{at}", s.session_id))))
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                if e.click_count() == 2 {
+                    this.open_row(&w, &r, &clicked, window, cx);
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, _, cx| {

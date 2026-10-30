@@ -369,7 +369,7 @@ mod tests {
         let done = row(bg("aaaa0002", "x", "done", None), false);
         assert!(offers_delete(&done, false, false));
         let gone = row(bg("aaaa0003", "x", "working", None), false);
-        assert!(matches!(gone.health, Health::Orphaned { .. }) && offers_delete(&gone, false, false), "process gone");
+        assert!(matches!(gone.health, Health::Orphaned { .. }) && offers_delete(&gone, false, false), "interrupted");
         assert!(!offers_delete(&row(bg("aaaa0004", "x", "done", Some(7)), false), false, false), "a live process");
         let mut no_uuid = bg("aaaa0005", "x", "stopped", None);
         no_uuid.session_id = "aaaa0005-x".into();

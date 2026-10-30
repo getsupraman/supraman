@@ -475,6 +475,15 @@ pub(crate) async fn click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWin
 }
 
 pub(crate) async fn press(view: &Entity<FleetView>, key: &str, button: MouseButton, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    presses(view, key, button, 1, cx).await
+}
+
+/// Two clicks as the platform reports a double-click: the second carries `click_count: 2`.
+pub(crate) async fn double_click(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    presses(view, key, MouseButton::Left, 2, cx).await
+}
+
+async fn presses(view: &Entity<FleetView>, key: &str, button: MouseButton, count: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let position = scrolled_into_view(view, key, cx).await?.center();
     let modifiers = Modifiers::default();
     cx.update(|window, cx| {
@@ -486,25 +495,27 @@ pub(crate) async fn press(view: &Entity<FleetView>, key: &str, button: MouseButt
             }),
             cx,
         );
-        window.dispatch_event(
-            PlatformInput::MouseDown(MouseDownEvent {
-                button,
-                position,
-                modifiers,
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseUp(MouseUpEvent {
-                button,
-                position,
-                modifiers,
-                click_count: 1,
-            }),
-            cx,
-        );
+        for click_count in 1..=count {
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                }),
+                cx,
+            );
+        }
     })?;
     Ok(())
 }
@@ -694,9 +705,18 @@ pub(crate) struct Attached {
 }
 
 pub(crate) async fn open_attach(view: &Entity<FleetView>, key: &str, id: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
+    open_attach_by(view, key, id, false, cx).await
+}
+
+/// `double`: a double-click on `key` (a session row) in place of a click.
+async fn open_attach_by(view: &Entity<FleetView>, key: &str, id: &str, double: bool, cx: &mut AsyncWindowContext) -> anyhow::Result<Attached> {
     let before = view.read_with(cx, |v, _| v.tabs.len());
     let clicked = Instant::now();
-    click(view, key, cx).await?;
+    if double {
+        double_click(view, key, cx).await?;
+    } else {
+        click(view, key, cx).await?;
+    }
     let (tab, title) = view
         .read_with(cx, |v, _| {
             v.tabs.iter().find_map(|t| match &t.kind {
@@ -743,6 +763,18 @@ pub(crate) async fn open_attach(view: &Entity<FleetView>, key: &str, id: &str, c
 async fn session_now(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Session> {
     let name = name.to_string();
     cx.background_executor().spawn(async move { session_alive_in_cli(&name) }).await
+}
+
+/// A double-click on the row of the session the active tab runs opens nothing.
+async fn double_click_shown(view: &Entity<FleetView>, session_id: &str, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let before = view.read_with(cx, |v, _| v.tabs.len());
+    double_click(view, &format!("session-row-{session_id}"), cx).await?;
+    sleep(cx, Duration::from_millis(500)).await;
+    let (tabs, active) = view.read_with(cx, |v, _| (v.tabs.len(), v.active));
+    if tabs != before || active != Some(tab) {
+        bail!("a double-click on the row of the tab shown now changed the tabs: {before} → {tabs}, active {active:?}, expected {tab}");
+    }
+    Ok(format!("the row double-clicked again with its tab shown: still {tabs} tab(s), tab {tab} active"))
 }
 
 pub(crate) async fn close_attach(
@@ -857,9 +889,10 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     );
     println!("step 3s: {}", step("3s", async { startup_timeline() }).await?);
 
-    let attached = step("4", open_attach(view, &format!("attach-{id}"), &id, cx)).await?;
+    let attached = step("4", open_attach_by(view, &format!("session-row-{}", row.session.session_id), &id, true, cx)).await?;
+    let again = step("4", double_click_shown(view, &row.session.session_id, attached.tab, cx)).await?;
     println!(
-        "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the click; first line: {}",
+        "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the double-click on its row; first line: {}",
         attached.title,
         attached.pid,
         attached.rendered,
@@ -867,6 +900,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         attached.after.as_millis(),
         attached.first_line
     );
+    println!("step 4: {again}");
     crate::selftest_manage::shot("m5-14-terminal-tab", cx).await;
 
     let closed = step("5", close_attach(view, &attached, &name, cx)).await?;
