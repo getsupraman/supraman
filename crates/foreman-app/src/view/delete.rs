@@ -152,7 +152,7 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired)) { " It is another Foreman's session." } else { "" };
+        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired), self.own_prefix.as_deref()) { " It is another Foreman's session." } else { "" };
         self.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",

@@ -5,7 +5,7 @@ use foreman_claude::peer;
 use gpui::{AsyncWindowContext, Bounds, Entity, MouseButton, Pixels};
 
 use crate::{
-    selftest::{CLIPBOARD_TRIES, cargo_root, click, double_click, hex6, lock, press, read_own, sleep, until, wait_for_tab_terminal},
+    selftest::{CLIPBOARD_TRIES, cargo_root, click, double_click, lock, press, read_own, run_hex, sleep, until, wait_for_tab_terminal},
     view::{FleetView, REFRESH_EVERY},
 };
 
@@ -37,7 +37,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     view.update(cx, |v, cx| earlier.into_iter().for_each(|id| v.close_tab(id, cx)));
     let _clipboard = crate::selftest_clipboard::borrow("7l", cx).await?;
     let saved = crate::selftest_clipboard::Snapshot::take()?;
-    let name = format!("fm-selftest-{}-mark", hex6());
+    let name = format!("fm-selftest-{}-mark", run_hex());
     let shell = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
     let result = check(view, &name, cx).await;
     view.update(cx, |v, _| v.shell_args = shell);

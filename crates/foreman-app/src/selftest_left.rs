@@ -162,7 +162,8 @@ pub async fn foreign_row(
     hex: &str,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<String> {
-    let name = format!("fm-elsewhere-{hex}-park");
+    let other: String = hex.chars().rev().collect();
+    let name = format!("fm-selftest-{other}x-park");
     let session_id = format!("ffff{hex}-foreign");
     let json = serde_json::json!([{
         "id": format!("ffff{hex}"),

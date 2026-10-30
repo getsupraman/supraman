@@ -165,6 +165,8 @@ pub struct Supervised<'a> {
     pub expanded: Option<&'a HashSet<String>>,
     /// Keeps a disabled folder that holds no session (search); the tree leaves it out.
     pub disabled_folders: bool,
+    /// A selftest's run prefix: its `fm-selftest-<hex>` sessions are this Foreman's own.
+    pub own_prefix: Option<&'a str>,
 }
 
 /// Filled once per poll, off the UI thread, because [`build`] runs on every frame.
@@ -210,7 +212,10 @@ pub fn is_alive(health: &Health) -> bool {
     matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
 }
 
-pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>) -> bool {
+pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>, own_prefix: Option<&str>) -> bool {
+    if own_prefix.is_some_and(|p| name.strip_prefix(p).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))) {
+        return false;
+    }
     let wanted = desired.into_iter().flat_map(|d| d.values()).flat_map(|(_, wanted)| wanted.iter().map(String::as_str));
     foreman_supervisor::is_foreign(name, workspaces.iter().map(|w| w.name.as_str()), wanted)
 }
@@ -242,7 +247,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         let hook = sup.hooks.and_then(|h| h.get(&session.session_id)).cloned();
         let health = with_hook(session.supervised_health(now_ms), hook.as_ref(), sup.polled_at);
         SessionRow {
-            foreign: is_foreign(&session.name, workspaces, sup.desired),
+            foreign: is_foreign(&session.name, workspaces, sup.desired, sup.own_prefix),
             starred: starred(&session.session_id),
             hook,
             ..SessionRow::new(session, health)
@@ -743,13 +748,17 @@ mod tests {
         let mut desired = BTreeMap::new();
         desired.insert("demo".to_string(), (true, vec!["fm-demo-workspace".to_string(), "fm-x-workspace".to_string()]));
         let ws = [workspace()];
-        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired));
+        let foreign = |name: &str| is_foreign(name, &ws, Some(&desired), None);
         assert!(foreign("fm-selftest-abc123-park"), "a selftest's session");
         assert!(foreign("fm-other-workspace"), "another home's workspace");
         assert!(!foreign("fm-demo-workspace"), "wanted here");
         assert!(!foreign("fm-x-workspace"), "wanted here, whatever its name");
         assert!(!foreign("fm-demo-alpha"), "named after a workspace of this home: retired, or wanted before the first tick");
-        assert!(!is_foreign("fm-demo-alpha", &ws, None));
+        assert!(!is_foreign("fm-demo-alpha", &ws, None, None));
+        let run = |name: &str| is_foreign(name, &ws, Some(&desired), Some("fm-selftest-abc123"));
+        assert!(!run("fm-selftest-abc123") && !run("fm-selftest-abc123-park"), "this selftest run's own");
+        assert!(run("fm-selftest-def456-park"), "another selftest run's");
+        assert!(run("fm-selftest-abc1234"), "a longer hex is another run");
         assert!(!foreign("mine"), "the user's own session");
 
         let old = NOW - 3_600_000;

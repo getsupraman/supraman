@@ -22,6 +22,7 @@ impl FleetView {
             starred: Some(self.stars.ids()),
             expanded: Some(&all),
             disabled_folders: true,
+            own_prefix: self.own_prefix.as_deref(),
         };
         crate::fleet::build(&self.workspaces, &self.sessions, now_ms(), true, &sup)
     }

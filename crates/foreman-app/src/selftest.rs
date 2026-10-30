@@ -104,6 +104,12 @@ pub(crate) fn main_repo_of_gate() -> anyhow::Result<PathBuf> {
     find_main_repo(cargo_root())
 }
 
+/// This run's `<hex>`: its sessions are `fm-selftest-<hex>` and `fm-selftest-<hex>-…`.
+pub(crate) fn run_hex() -> &'static str {
+    static RUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    RUN.get_or_init(hex6)
+}
+
 pub(crate) fn hex6() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -196,7 +202,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         if let Some(warning) = version.untested() {
             println!("WARNING {warning}");
         }
-        let name = format!("fm-selftest-{}", hex6());
+        let name = format!("fm-selftest-{}", run_hex());
         // Recorded before launching, so cleanup looks for it even if the launch half-succeeds.
         if let Some(scratch) = lock().as_mut() {
             scratch.session_name = Some(name.clone());
@@ -377,6 +383,8 @@ fn run_cleanup(guard: &mut Option<Scratch>) {
 pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut App) {
     window
         .spawn(cx, async move |cx| {
+            let own = lock().as_ref().and_then(|s| s.name_prefix.clone()).unwrap_or_else(|| format!("fm-selftest-{}", run_hex()));
+            view.update(cx, |v, _| v.own_prefix = Some(own));
             let result = match mode {
                 Mode::Selftest => gate(&view, cx).await,
                 Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
