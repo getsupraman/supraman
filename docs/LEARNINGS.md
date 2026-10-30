@@ -4274,6 +4274,38 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   passed, 0 failed; `--selftest` 5 of 5 PASS; `--selftest-supervise` PASS; `--selftest-detach-shutdown` PASS; no
   `fm-selftest` sessions left. No m5-44 audit section names m5/59, so no audit finding was in scope.
 
+## 2026-10-30 — m5/64 a folder unchecked here and enabled elsewhere leaves this workspace; no folder badge
+
+- **Rule** (`fleet::build`): a folder disabled in a workspace and enabled in another (so `supervised_in` is set,
+  `owners`) is not in that workspace's tree, and neither are its sessions; they show where the folder is enabled.
+  Before, such a folder stayed with a `supervised in <ws>` tag and its sessions (m5/55 design A), and a session
+  under it was a second occurrence keyed `@<ws>`. A disabled folder no other workspace enables keeps m5/56's rule
+  (in the tree while it holds a session). `RepoNode::also_in` lists only the other workspaces that *enable* the
+  folder, and only while it is enabled here; `supervised in <ws>` stays for a folder enabled in both.
+- **Home folders too:** a session in the home that another workspace places in one of its enabled folders
+  (`placed_in`: `assign_with` over every workspace, open and closed sessions, enabled folders only; a linked
+  worktree counts through `main_of`) no longer makes an unlisted home-folder row. Without it, René's larchsys
+  (scan of `P:\Projects\LarchSys`, which finds only git folders) would still show gaia's plain `NodeApi` as an
+  unlisted row with `also in gaia`. Unlisted rows carry no `also in`. This goes past the item's wording (it names
+  disabled folders) and follows its "sessions show only where the folder is enabled"; the controller may narrow it.
+- **Search** (`search_tree`, `disabled_folders: true`): the hidden folder stays, without sessions, and its result
+  carries `supervised in <ws>` (`RepoHit::supervised_in`, key `result-supervised-in-<ws>/<f>`); a click reveals the
+  folder in that workspace (`reveal_folder`). The `disabled` result tag is unchanged.
+- **Badge:** the `folder` tag of a plain folder row is gone (`folder_tags`); the kind icon says it. m5/59's notes
+  said so already, but the tag was still painted.
+- **Tests:** `a_folder_unchecked_here_and_enabled_elsewhere_leaves_this_workspace_with_its_sessions` (René's shape:
+  foreman {AutoWork, Skills}, gaia {Gaia, NodeApi plain, node-api-dotnet}, larchsys home `P:\L` with AutoWork, Gaia,
+  Skills disabled plus Healthy, Old, Quiet; a worktree session of AutoWork; search for `autowork` and `quiet`).
+  `overlapping()` now enables Gaia in both, so the second-occurrence tests keep a folder enabled in two.
+- **Selftests:** 7b no longer waits for `supervised-in-<again>/alpha`; alpha is out of the second workspace's tree
+  (beta painted), and a search for `alpha` paints `result-supervised-in-<again>/alpha`. Step v: the plain folder's
+  session is not under the testbed and `session-row-<id>@<testbed>` is not painted (the testbed's home holds VPlain,
+  `-v` enables it).
+- **Red checks** (reverted with `git checkout`, never committed): the folder supervised elsewhere kept in the tree
+  (master's branch) → the new test fails with larchsys `[AutoWork 2, Gaia 1, Healthy 1, Skills 1, Other, Old]`,
+  René's screenshot; the home filter off → both overlap tests fail (`NodeApi` unlisted under larchsys); the search
+  label off → the new test fails at "search finds it in larchsys, labelled with its workspace".
+
 ## 2026-10-30 — m5/63 the Edit folders dialog fits its box
 
 - **Cause**: each folder row was one flex line whose name, kind (`git (<branch>)`), Home and Remove were `flex_none`;
