@@ -401,7 +401,7 @@ impl FleetView {
                     Confirmed::Remove(w),
                 ));
             }
-            MenuAction::OpenFolder(path) => self.open_folder(&path),
+            MenuAction::OpenFolder(path) => self.open_folder(path, cx),
             MenuAction::OpenTerminal { cwd, title } => {
                 self.open_shell_in(cwd, title, window, cx);
             }
@@ -547,10 +547,20 @@ impl FleetView {
         }
     }
 
-    fn open_folder(&mut self, path: &Path) {
-        if let Err(code) = foreman_core::process::shell_execute("open", path.as_os_str(), None, None) {
-            self.action_error = Some(format!("Cannot open {}: ShellExecuteW returned {code}", path.display()));
-        }
+    fn open_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // ShellExecuteW pumps its thread's messages: on the UI thread gpui re-enters inside the click's App borrow (m5/68).
+        let open = self.open_with;
+        let task = cx.background_executor().spawn(async move { open(&path).map_err(|code| (path, code)) });
+        cx.spawn(async move |this, cx| {
+            if let Err((path, code)) = task.await {
+                this.update(cx, |this, cx| {
+                    this.action_error = Some(format!("Cannot open {}: ShellExecuteW returned {code}", path.display()));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     fn stop_session(&mut self, session: Session, cx: &mut Context<Self>) {

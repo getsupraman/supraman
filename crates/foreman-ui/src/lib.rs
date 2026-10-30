@@ -101,6 +101,18 @@ pub fn init_logger(dir: Option<&Path>) {
     log::set_max_level(log::LevelFilter::Info);
 }
 
+/// Every panic goes to the log (message, location, backtrace) before the hook that was set runs; a panic that
+/// cannot unwind (one in a window procedure) aborts right after the hooks, so this is its only trace.
+pub fn log_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let thread = std::thread::current();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!(target: "foreman::panic", "thread '{}' {info}\nbacktrace:\n{backtrace}", thread.name().unwrap_or("<unnamed>"));
+        previous(info);
+    }));
+}
+
 /// (private bytes, working set) of this process.
 #[cfg(windows)]
 pub fn memory() -> (usize, usize) {

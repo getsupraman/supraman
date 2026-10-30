@@ -61,7 +61,7 @@ mod results;
 mod term;
 
 pub use manage::{AddDraft, Removing};
-pub use menu::{Confirm, ContextMenu, MenuTarget};
+pub use menu::{Confirm, ContextMenu, MenuAction, MenuTarget};
 
 gpui::actions!(foreman, [NextTab, PreviousTab, FocusSearch]);
 
@@ -268,6 +268,7 @@ pub struct FleetView {
     pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
+    pub open_with: fn(&Path) -> Result<(), isize>,
     pub workstate: WsStatus,
     workstate_dismissed: Option<String>,
     workstate_recheck: Nudge,
@@ -712,6 +713,7 @@ impl FleetView {
             editing: None,
             removing: BTreeMap::new(),
             pick_folder: None,
+            open_with: |path| foreman_core::process::shell_execute("open", path.as_os_str(), None, None),
             workstate: WsStatus::Checking,
             workstate_dismissed: None,
             workstate_recheck,

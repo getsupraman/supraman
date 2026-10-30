@@ -1,8 +1,11 @@
 //! `--selftest` step 7b: managing workspaces through the window.
 
 use std::{
+    cell::Cell,
     path::{Path, PathBuf},
-    sync::atomic::Ordering,
+    rc::Rc,
+    sync::{Mutex, atomic::Ordering},
+    thread::ThreadId,
     time::{Duration, Instant},
 };
 
@@ -16,7 +19,7 @@ use gpui::{
 
 use crate::{
     selftest::{cargo_root, click, press, sleep, until, until_app},
-    view::FleetView,
+    view::{FleetView, MenuAction},
 };
 
 pub const FOLDER: &str = "selftest-add";
@@ -414,6 +417,79 @@ pub(crate) async fn press_painted(view: &Entity<FleetView>, key: &str, button: M
     press(view, key, button, cx).await
 }
 
+static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
+
+/// As ShellExecuteW does while Explorer answers a folder's open (m5/68: shell32, then gpui's window procedure
+/// running a foreground task): the calling thread's messages are dispatched. Then the real call.
+fn pumping_open(path: &Path) -> Result<(), isize> {
+    use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
+    *OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
+    let until = Instant::now() + Duration::from_millis(300);
+    let mut msg = MSG::default();
+    while Instant::now() < until {
+        // SAFETY: a plain message loop on this thread's own queue.
+        unsafe {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    foreman_core::process::shell_execute("open", path.as_os_str(), None, None)
+}
+
+/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Foreman; the
+/// folder does not exist, so no Explorer opens and the refusal must come back as the action error.
+async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let missing = cargo_root().join("target").join("selftest-open-folder-missing");
+    let _ = std::fs::remove_dir_all(&missing);
+    press_painted(view, ws_key, MouseButton::Right, cx).await?;
+    menu_open(view, ADDED, cx).await?;
+    let real = view.update(cx, |v, cx| {
+        for item in v.menu.iter_mut().flat_map(|m| m.items.iter_mut()).filter(|i| i.key == "open-folder") {
+            item.action = MenuAction::OpenFolder(missing.clone());
+        }
+        v.action_error = None;
+        cx.notify();
+        std::mem::replace(&mut v.open_with, pumping_open)
+    });
+    // the click reaches the closures of the next frame
+    sleep(cx, Duration::from_millis(200)).await;
+
+    let (ticks, stop) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(false)));
+    let busy = (view.clone(), ticks.clone(), stop.clone());
+    let foreground = cx.spawn(async move |cx| {
+        while !busy.2.get() {
+            cx.background_executor().timer(Duration::from_millis(1)).await;
+            busy.0.read_with(cx, |_, _| ());
+            busy.1.set(busy.1.get() + 1);
+        }
+    });
+    post_click(view, "menu-open-folder", 4., cx).await?;
+    let want = format!("Cannot open {}: ShellExecuteW returned 2", missing.display());
+    let error = until(view, cx, WITHIN, "Open folder's refusal as the action error", |v| v.action_error.clone()).await;
+    stop.set(true);
+    foreground.await;
+    let error = error?;
+    view.update(cx, |v, _| {
+        v.open_with = real;
+        v.action_error = None;
+    });
+    if error != want {
+        bail!("Open folder of a missing folder reads {error:?}, expected {want:?}");
+    }
+    let opened_on = OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let ui = std::thread::current().id();
+    if opened_on.is_none_or(|t| t == ui) {
+        bail!("Open folder ran its ShellExecuteW on {opened_on:?}, the UI thread is {ui:?}");
+    }
+    Ok(format!(
+        "Open folder in the workspace menu, its ShellExecuteW pumping messages off the UI thread ({opened_on:?}, UI {ui:?}) with {} foreground tasks run meanwhile: alive, \"{error}\"",
+        ticks.get()
+    ))
+}
+
 pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let root = cargo_root().join("target").join(FOLDER);
     fake_repo(&root, "alpha")?;
@@ -543,6 +619,8 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     click(view, "edit-done", cx).await?;
     until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
     out.push("beta enabled in Edit folders…, then in the tree with its +".into());
+
+    out.push(open_folder(view, &ws_key, cx).await?);
 
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     menu_open(view, ADDED, cx).await?;
