@@ -4994,3 +4994,55 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `needs_you`, parked to `max_runtime` and stopped (as designed). `fm` was not on its PATH either. The preamble now
   names the plugin's `fm.exe` by the path `fm_allowed_tools` allows (`fm` when no plugin is found) and says to run it
   with the Bash tool exactly as written; the third run reported `done: OK` in 19 s.
+
+## 2026-10-31 — sched/7 the scheduler in the Foreman window
+
+- **Schedules group** (design B, on the grid): under each workspace with schedules, `Schedules` at level 1, one row
+  per schedule at level 2 (clock icon in the last result's colour: done success, nothing to do info, failed error,
+  needs you warning, skipped hint; the name; `pending`/`active`/`paused`/`changed since approval` or `running` from the
+  live file; `next <local time>` while active; one action, also on double-click: Approve when pending, Run now
+  otherwise). The rest is in its menu: Edit…, Dry run, Pause/Resume, History, Details, Remove…. No hover card (m5/71).
+  A run's session (`fm-<ws>-sched-<id>-…`, `schedule::schedule_of_session`) is taken out of its folder by
+  `fleet::build` into `WorkspaceNode::scheduled` and drawn under the schedule at level 3 as the ordinary session row
+  (attach, resume, menu); stopped ones hide with the other stopped rows; one whose schedule is gone stays under the
+  workspace. Search finds them.
+- **Reading** happens in the poller each 2 s (`schedules::read`): the TOML, the runs (newest first, 30 kept), the live
+  file, `verify_approval` once per active schedule with one `default_store(home)`. An active schedule whose approval
+  does not verify shows `pending` (effective status); active with a different `command_sha256` shows `changed since
+  approval` and still runs (Q2). Before reading, `schedules::recover` hands each live file to
+  `fm::fire::recover_if_dead`: fm pid not alive with its recorded start time and the overlap lock free → the same
+  `recover_dead_run` fire uses (stop never rm, revoke, `interrupted`). The app now depends on the `fm` lib for this
+  (one recovery, C56).
+- **Approve** is the only `schedule::approve` call in the app (C100): it re-reads the schedule, validates it, and
+  asks with `Confirm::ask`: "Never approved. The approval covers:" with every covered leaf, or "Changed since the
+  approval of …" with `field: before → after` (hashes cut to 12 hex), plus the slash command's file when its hash
+  moved. The question carries the fingerprint it showed; a schedule changed while the question was open is refused
+  ("Approve again"). Then `approve`, then `sync` with `task_run_level()` off the UI thread.
+- **Pause, Resume, Remove** (Remove through `Confirm::ask`) and the Edit dialog's Save each run `sync` after the edit.
+  A failed `sync` is kept by `<ws>/<id>` on the row (red line) and in the Inbox ("Task not synced") until a sync of
+  that workspace succeeds or it is dismissed; an edit's own failure is the action error. Remove takes the TOML entry
+  and (through `sync`) the task and the empty task folder; run records stay; no folder is touched.
+- **Run now** starts `fmw.exe schedule run --home <home> <ws> <id>` through the new `process::spawn_detached` from a
+  background task (m5/68). `fmw` gained `schedule run` (`fire::run_now_cmd`, trigger `run_now`, a `--fingerprint` is
+  ignored). Dry run runs `fm schedule dry-run` and shows its output in a report; History is a report of the runs:
+  outcome, start, duration, capped tokens (`Run::tokens`, new, from the `ended` line), the session, the why.
+- **Edit** is a dialog of `text_input` (name, at, interval, max runtime, max tokens) and `button::choice` (every,
+  days, profile, overlap); `Form::apply` is all-or-nothing and names the field that does not parse;
+  `schedule::edit` validates and makes a covered change pending. Other fields stay `fm schedule edit`'s.
+- **Inbox and tray**: a schedule's latest ended run with `needs_attention()` is an Inbox entry (History, Dismiss;
+  dismissals in `schedules/dismissed.json` via `DismissedMessages::load_at`); a later good run clears it. The tray
+  icon's tooltip says "Foreman · N scheduled run(s) need you" (`Tray::set_tooltip`, observed from main). tray-icon
+  0.26 has no balloon notification, so the tray shows a count, not a popup.
+- **Shared, new**: `schedule::{covered_fields, covered_diff, Change, schedule_of_session, Day::{ALL, as_str}}`,
+  `Display for Trigger` (fm's `trigger_text` and `day_name` are gone), `process::spawn_detached`,
+  `fm::fire::{recover_if_dead, fm_alive, run_now_cmd}`.
+- **Selftest 7y** (fake registrar in every selftest window from `selftest::start`): fm adds a pending
+  `script_then_session` schedule in a scratch plain folder `target/selftest-sched`; Approve shows the covered fields and
+  the fake gets `\Foreman-<hex8>\selftest-sched\gate`; `fm schedule edit --every "daily 10:00"` makes it pending
+  without any registrar write, and Approve (by double-click) shows only `trigger.at: 09:00 → 10:00`; Pause removes
+  the task, Resume brings it back; Run now ends `nothing to do` (trigger `run_now`), first in History; Dry run reports
+  the next fires; a failed record shows in the Inbox and the tray and is dismissed; the Edit dialog makes it weekly
+  mon,fri (pending, task removed); Remove empties the TOML, the task and its folder, and leaves `gate.cmd`.
+- **Gotcha**: `FOREMAN_SHOTS` runs take ~50 extra captures and pass the 210 s `--selftest` watchdog in step 8 after
+  7y passed; the gate runs without it (163 s). A `Confirm` sits after the notices and can be scrolled out of view:
+  `scrolled_into_view("confirm-yes")` before a shot.

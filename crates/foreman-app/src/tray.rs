@@ -64,7 +64,20 @@ fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
 const ICON: &[u8] = include_bytes!("../assets/tray.ico");
 
 #[cfg(windows)]
-pub struct Tray(#[allow(dead_code)] tray_icon::TrayIcon);
+pub struct Tray(tray_icon::TrayIcon, std::cell::RefCell<String>);
+
+#[cfg(windows)]
+impl Tray {
+    /// The icon's tooltip: the scheduled runs that need René (`FleetView::tray_tooltip`).
+    pub fn set_tooltip(&self, text: &str) {
+        if *self.1.borrow() != text {
+            if let Err(e) = self.0.set_tooltip(Some(text)) {
+                log::warn!("cannot set the tray tooltip: {e}");
+            }
+            *self.1.borrow_mut() = text.to_string();
+        }
+    }
+}
 
 #[cfg(windows)]
 pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
@@ -103,11 +116,16 @@ pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .build()?;
-    Ok(Tray(tray))
+    Ok(Tray(tray, std::cell::RefCell::new("Foreman".into())))
 }
 
 #[cfg(not(windows))]
 pub struct Tray;
+
+#[cfg(not(windows))]
+impl Tray {
+    pub fn set_tooltip(&self, _text: &str) {}
+}
 
 #[cfg(not(windows))]
 pub fn install(_commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {

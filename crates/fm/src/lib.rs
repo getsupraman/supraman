@@ -154,11 +154,12 @@ pub fn cli(args: Vec<String>) -> ExitCode {
     }
 }
 
-/// `fmw.exe`: `schedule fire` alone, with no console; what it has to say goes to `schedules/fire.log`.
+/// `fmw.exe`: `schedule fire` and the window's Run now (`schedule run --home`), with no console; what it has to say goes to `schedules/fire.log`.
 pub fn fmw(args: Vec<String>) -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["schedule", "fire", rest @ ..] => ExitCode::from(fire::fire_cmd(rest, false)),
+        ["schedule", "run", rest @ ..] => ExitCode::from(fire::run_now_cmd(rest)),
         _ => ExitCode::from(fire::EXIT_UNKNOWN),
     }
 }

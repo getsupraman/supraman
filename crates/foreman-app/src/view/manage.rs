@@ -9,7 +9,7 @@ use foreman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
-use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, session_items, workspace_items};
+use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, schedule_items, session_items, workspace_items};
 use crate::fleet::{self, SessionRow};
 use crate::row_details;
 use foreman_ui::text_input::{InputEvent, TextInput};
@@ -301,7 +301,7 @@ impl FleetView {
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
             MenuTarget::Workspace(w) => self.tree().workspaces.into_iter().find(|n| &n.name == w).and_then(|n| n.own).map(|r| r.session.session_id),
-            MenuTarget::Repo { .. } => None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } => None,
         };
         let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
             return;
@@ -353,6 +353,9 @@ impl FleetView {
                     .find(|r| &r.session.session_id == session_id)
                     .map(|row| (fleet::display_name(&row.session).to_string(), self.session_menu(workspace, repo, row, send_name, cx)))
             }
+            MenuTarget::Schedule { workspace, id } => {
+                self.schedule_row(workspace, id).map(|row| (format!("{workspace} · {}", row.title()), schedule_items(row)))
+            }
         }
     }
 
@@ -397,6 +400,7 @@ impl FleetView {
                 };
                 Some(row_details::session(row, self.claimed_item(workspace, &row.session.name, cx), self.open_of(row), adopt, now_ms()))
             }
+            MenuTarget::Schedule { workspace, id } => Some(crate::schedules::details(self.schedule_row(workspace, id)?, now_ms())),
             MenuTarget::Repo { .. } => None,
         }
     }
@@ -500,6 +504,13 @@ impl FleetView {
                     self.confirm = Some(Confirm::report(details.text()));
                 }
             }
+            MenuAction::Approve { workspace, id } => self.ask_approve(&workspace, &id, cx),
+            MenuAction::RunNow { workspace, id } => self.run_schedule_now(&workspace, &id, cx),
+            MenuAction::EditSchedule { workspace, id } => self.open_schedule_edit(&workspace, &id, window, cx),
+            MenuAction::DryRun { workspace, id } => self.dry_run_schedule(&workspace, &id, cx),
+            MenuAction::SetPaused { workspace, id, paused } => self.set_schedule_paused(workspace, id, paused, cx),
+            MenuAction::History { workspace, id } => self.schedule_history(&workspace, &id, cx),
+            MenuAction::RemoveSchedule { workspace, id } => self.ask_remove_schedule(&workspace, &id, cx),
         }
         cx.notify();
     }
@@ -515,6 +526,8 @@ impl FleetView {
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
                 Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
+                Confirmed::ApproveSchedule { workspace, id, fingerprint } => self.approve_schedule(workspace, id, fingerprint, cx),
+                Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
             }
         }
         cx.notify();

@@ -24,10 +24,15 @@ impl DismissedMessages {
     }
 
     pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
-        let Some(path) = home.map(Self::path) else {
+        Self::load_at(home.map(Self::path), "every message shows")
+    }
+
+    /// The same per-workspace keys in another file; `lost` says what a lost file means.
+    pub fn load_at(path: Option<PathBuf>, lost: &str) -> (Self, Option<String>) {
+        let Some(path) = path else {
             return (Self::default(), None);
         };
-        let (file, notice) = load_json_or_notice::<File>(&path, "every message shows");
+        let (file, notice) = load_json_or_notice::<File>(&path, lost);
         (Self { path: Some(path), files: file.workspaces }, notice)
     }
 

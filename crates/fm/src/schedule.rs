@@ -205,12 +205,7 @@ fn parse_every(raw: &str) -> Result<Trigger, Failure> {
 }
 
 fn parse_day(d: &str) -> Option<Day> {
-    use Day::*;
-    [Mon, Tue, Wed, Thu, Fri, Sat, Sun].into_iter().find(|day| d.eq_ignore_ascii_case(day_name(*day)))
-}
-
-fn day_name(d: Day) -> &'static str {
-    ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][d as usize]
+    Day::ALL.into_iter().find(|day| d.eq_ignore_ascii_case(day.as_str()))
 }
 
 /// `path` as the folder-relative path the TOML keeps; it must lie in the folder and exist.
@@ -468,7 +463,7 @@ fn list(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
             s.id,
             status_text(schedule::effective_status(&*store, &w, s)),
             s.folder,
-            trigger_text(&s.trigger),
+            s.trigger,
             s.name
         );
     }
@@ -522,7 +517,7 @@ fn print_schedule(registry: &Registry, w: &Workspace, s: &Schedule) {
     }
     println!("status: {}{}", status_text(shown), if changed { " (changed since approval)" } else { "" });
     println!("folder: {}", s.folder);
-    println!("every: {}", trigger_text(&s.trigger));
+    println!("every: {}", s.trigger);
     let a = &s.action;
     println!("action: {}", match a.kind {
         ActionKind::Session => "session",
@@ -569,14 +564,6 @@ fn print_schedule(registry: &Registry, w: &Workspace, s: &Schedule) {
 
 fn joined(list: &[String]) -> String {
     if list.is_empty() { "-".into() } else { list.join(" ") }
-}
-
-fn trigger_text(t: &Trigger) -> String {
-    match t {
-        Trigger::Weekly { days, at } => format!("weekly {} {at}", days.iter().map(|d| day_name(*d)).collect::<Vec<_>>().join(",")),
-        Trigger::Daily { at } => format!("daily {at}"),
-        Trigger::Interval { at, every } => format!("interval {every} from {at}"),
-    }
 }
 
 fn next_fires(t: &Trigger, mut after: DateTime<Local>, n: usize) -> Vec<DateTime<Local>> {

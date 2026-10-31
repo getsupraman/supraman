@@ -108,6 +108,18 @@ pub fn session_name(workspace: &str, id: &str, stamp: &str) -> String {
     format!("{}{workspace}-{}{id}-{stamp}", crate::FM_PREFIX, super::SCHED_SLUG_PREFIX)
 }
 
+/// The schedule id of a run's session in `workspace`: the `<id>` of [`session_name`], whose stamp may carry
+/// a `-<n>` suffix.
+pub fn schedule_of_session<'a>(workspace: &str, name: &'a str) -> Option<&'a str> {
+    let rest = name.strip_prefix(crate::FM_PREFIX)?.strip_prefix(workspace)?.strip_prefix('-')?.strip_prefix(super::SCHED_SLUG_PREFIX)?;
+    let is_stamp = |s: &str| {
+        let mut parts = s.split('-');
+        let digits = |p: Option<&str>, n: usize| p.is_some_and(|p| p.len() == n && p.bytes().all(|b| b.is_ascii_digit()));
+        digits(parts.next(), 8) && digits(parts.next(), 6) && parts.next().is_none_or(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) && parts.next().is_none()
+    };
+    rest.match_indices('-').map(|(i, _)| i).find(|&i| i > 0 && is_stamp(&rest[i + 1..])).map(|i| &rest[..i])
+}
+
 /// `fm-sched/<id>/<stamp>`: the branch of a run's worktree.
 pub fn run_branch(id: &str, stamp: &str) -> String {
     format!("{}sched/{id}/{stamp}", crate::FM_PREFIX)
