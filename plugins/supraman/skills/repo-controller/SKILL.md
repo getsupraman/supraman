@@ -1,6 +1,6 @@
 ---
 name: repo-controller
-description: Be the repo-controller of one repo in a Supraman workspace — the session `fm-<w>-<repo-slug>` that Supraman starts when the workspace controller runs `fm want`. Runs the WorkState run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Supraman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /supraman:workspace-controller), a repo session Supraman did not start, or doing the units yourself.
+description: Be the repo-controller of one repo in a Supraman workspace — the session `fm-<w>-<repo-slug>` that Supraman starts when the workspace controller runs `sm want`. Runs the WorkState run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Supraman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /supraman:workspace-controller), a repo session Supraman did not start, or doing the units yourself.
 ---
 
 # Repo controller
@@ -11,7 +11,7 @@ mechanics; this skill does not restate them. It says only what is different beca
 Supraman: who handed you the work, who you answer to, and what you never do.
 
 `<w>` is your workspace, `<repo>` your repo, `<slug>` its slug; your role text names them, and your
-session is `fm-<w>-<slug>`. Your workspace controller is **`fm-<w>-workspace`**. `fm roster <w>` (Bash
+session is `fm-<w>-<slug>`. Your workspace controller is **`fm-<w>-workspace`**. `sm roster <w>` (Bash
 tool, bare) lists every session if you need another name; never guess one.
 
 ## 1. What a task is
@@ -74,7 +74,7 @@ as the controller skill's §3 requires: *the unit item is the repo controller's;
 
 ## 3. Escalate to the workspace controller, not to the relay
 
-You never message `fm-<w>-relay` and never run `fm tell`: the human is the workspace controller's to reach. Escalate to
+You never message `fm-<w>-relay` and never run `sm tell`: the human is the workspace controller's to reach. Escalate to
 `fm-<w>-workspace` whatever is not yours to decide — **a migration, a deploy, production data, a new
 dependency, a public contract (an API surface, a wire format, a published key), an undecided question,
 `git push`, a scope change** — and everything the controller skill's §8 lists. Mark the unit
@@ -123,8 +123,8 @@ bringing you back: continue the run if it is open, else wait.
 | Never | Instead |
 |---|---|
 | write the unit's code yourself | a nested agent does; controller skill §9 for finishing a parked one |
-| message `fm-<w>-relay`, run `fm tell` (it reaches the human) or `fm send` (it speaks as the human) | `SendMessage` to `fm-<w>-workspace` |
-| `fm want`/`fm unwant`; `claude stop`/`rm`/`respawn` of a session you did not launch | ask `fm-<w>-workspace`; stop only your own nested agents (nested-claude §6) |
+| message `fm-<w>-relay`, run `sm tell` (it reaches the human) or `sm send` (it speaks as the human) | `SendMessage` to `fm-<w>-workspace` |
+| `sm want`/`sm unwant`; `claude stop`/`rm`/`respawn` of a session you did not launch | ask `fm-<w>-workspace`; stop only your own nested agents (nested-claude §6) |
 | decide a migration, deploy, prod data, dependency or public contract | §3 |
 | let a nested agent close, verify or report its own unit | §2, after step 5 |
 | `git push`, or edit outside the repo and `../<repo>.worktrees/` | escalate |

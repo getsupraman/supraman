@@ -1,4 +1,4 @@
-// term-spike: one gpui window running one crates/foreman-term terminal (alacritty_terminal + ConPTY).
+// term-spike: one gpui window running one crates/supraman-term terminal (alacritty_terminal + ConPTY).
 //   term-spike                       interactive pwsh
 //   term-spike --attach <id>         runs `claude attach <id>`
 //   term-spike --selftest            nonce round-trip, then frame times + private bytes under CPU load
@@ -16,7 +16,7 @@ use std::{
 };
 
 use collections::HashMap;
-use foreman_term as terminal;
+use supraman_term as terminal;
 use gpui::{
     App, AppContext as _, AsyncWindowContext, Bounds, Context, Entity, FocusHandle, KeyDownEvent,
     Render, WeakEntity, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
@@ -78,7 +78,7 @@ fn shell_for(mode: &Mode) -> util::shell::Shell {
     }
 }
 
-use foreman_ui::{FrameProbe, init_globals, memory, mib, ms_since_start, percentile, term_element};
+use supraman_ui::{FrameProbe, init_globals, memory, mib, ms_since_start, percentile, term_element};
 
 struct SpikeView {
     terminal: Option<Entity<Terminal>>,
@@ -173,10 +173,10 @@ fn kill_tree(child: &mut Child) {
 }
 
 fn main() {
-    foreman_ui::process_start();
+    supraman_ui::process_start();
     let mode = parse_args();
-    foreman_ui::init_logger(None);
-    println!("terminal: foreman-term");
+    supraman_ui::init_logger(None);
+    println!("terminal: supraman-term");
 
     if matches!(mode, Mode::Selftest(Load::External)) {
         // Before the clock starts: wipe the previous load build so this one compiles from scratch.

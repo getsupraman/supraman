@@ -1,0 +1,19 @@
+[package]
+name = "supraman-supervisor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+supraman-claude = { path = "../supraman-claude" }
+supraman-core = { path = "../supraman-core" }
+supraman-workstate = { path = "../supraman-workstate" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.12"
+toml = "0.9.8"
+ureq = { version = "3", default-features = false }
+
+[dev-dependencies]
+supraman-workstate = { path = "../supraman-workstate", features = ["fake"] }
+tempfile = "3.27.0"

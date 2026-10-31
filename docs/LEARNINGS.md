@@ -5117,3 +5117,24 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   junction `C:\fmbuild\<unit>\plugins\supraman` to the worktree's.
 - **Not handled**: sessions launched by Foreman keep `FOREMAN_HOME=%APPDATA%\Foreman` until they restart; their hook
   events and `fm tell` outbox land in the old home, which Supraman does not read.
+
+## 2026-10-31 — ren/3 crates supraman-*, the CLI sm/smw
+
+- **Names**: `crates/supraman-{core,ui,term,claude,supervisor,workstate,app}` (packages and `supraman_*` paths) and
+  `crates/sm` (package `sm`, bins `sm` and `smw`, `src/bin/smw.rs`); `git mv`, so `git log --follow` reaches the old
+  history. `spikes/term-spike`, `probes/` and `docs/research/scheduler-probe` keep their folder names (only their
+  dependency paths changed). Identifiers follow the CLI: `sm_allowed_tools`, `smw_exe`/`SMW_EXE`, `SyncTarget::smw`,
+  the role placeholder `{sm}`. Kept on purpose, because they are on disk or on the wire: `fm-`/`FM_PREFIX`, the live
+  file's and run records' `fm_pid`/`fm_started`, `created_by = "fm"` (`CreatedBy::Fm`), `foreman.log` and its
+  `foreman::panic` target, `FOREMAN_BLESS`, `FOREMAN_*` session vars, `from-name="foreman"`, `launchedBy` `foreman/…`.
+- **Compatibility for one release** (docs/RELEASE.md, "The fm name"): `install_hook_exe` puts the same bytes at
+  `bin/sm.exe` and `bin/fm.exe` (`COMPAT_HOOK_EXE`), each swapped in by renames on its own; `sm_allowed_tools` is
+  `Bash(sm:*)`, `Bash(<bin>/sm.exe:*)`, `Bash(fm:*)`, `Bash(<bin>/fm.exe:*)`; `release.ps1` ships `fm.exe`/`fmw.exe`
+  as copies beside `sm.exe`/`smw.exe`. A task registered earlier calls `fmw.exe` until the workspace's next `sync`:
+  the command is in `definition_digest`, so every task's `<Version>` changed and is registered again with `smw.exe`.
+  The copy runs the same code under either name: nothing reads `argv[0]`; `find_plugin_dir` goes by the `bin` folder.
+- **Logger**: info lines are kept for targets starting `gpui` or `supraman`; with the crates renamed no `foreman*`
+  target is left, so that prefix is gone from the list.
+- **Gotcha, shell escapes**: the Bash tool here turned a doubled backslash into one, and `\f` into a form feed, inside heredocs and
+  `sed` scripts; a backslash path written that way lost characters (`bin\fm.exe` → `bin<FF>m.exe`). Scripts that
+  write Windows paths go through the Write tool or `chr(92)`.

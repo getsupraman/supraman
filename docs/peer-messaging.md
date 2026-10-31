@@ -1,13 +1,13 @@
 # Peer messaging: writing into a Claude Code session's pipe
 
 Measured 2026-10-26 by autowork-36 against claude 2.1.308–2.1.310 (bundled JS), with live 2.1.304–2.1.310
-sessions; used by Supraman since m5/4 (`crates/foreman-claude/src/peer.rs`, `human.rs`), checked on 2.1.310.
+sessions; used by Supraman since m5/4 (`crates/supraman-claude/src/peer.rs`, `human.rs`), checked on 2.1.310.
 Labels: **[measured]** = seen in the registry or a live test; **[code]** = read in the bundled source; **[guess]** = inference.
 No token values appear anywhere in this file.
 
 ## How Supraman uses it (m5/4)
 
-- Human → session: `foreman_claude::human::Sender::send` (the task box, Approve/Reply, `fm send`) resolves the
+- Human → session: `supraman_claude::human::Sender::send` (the task box, Approve/Reply, `sm send`) resolves the
   session by its exact name in `~/.claude/sessions` (read only: pid alive with the same `procStart`, newest
   start wins, `peerProtocol == 1`), reads the `.key`'s `peerToken` and drops it after writing one connection:
   the `auth` line, then a `user` line with no `from` and no `from-mode`. Content:
@@ -18,14 +18,14 @@ No token values appear anywhere in this file.
 - **`sent direct` means written into the pipe, not confirmed**: no receipt comes back (no inbox), so a rate,
   duplicate or queue drop would be silent. The selftest proves delivery by the receiver's answers.
 - Any failure (no entry, stale entry, unknown protocol, no key, pipe error, 5 s timeout, the burst budget)
-  falls back to the relay inbox, and the app/`fm send` say which: `sent direct` / `sent via relay (<why>)`.
+  falls back to the relay inbox, and the app/`sm send` say which: `sent direct` / `sent via relay (<why>)`.
 - The relay runs only on demand (m5/32): no `fm-<w>-relay` until a send falls back. The drop waits in the inbox,
   the supervisor launches (or resumes) the relay, and it sends the drop once armed (~18 s in the selftest); it is
   retired `relay_idle_secs` (default 10 min) after the last drop. The workspace row shows `direct`,
   `relay starting` or `relay ready`.
 - Limits respected through `relay/<w>/direct.json` (direct sends of the last minute): keep ≥ 10 of the
   receiver's 30-token burst (refill 0.5/s), else the relay.
-- Session → human: `fm tell "<body>"` / `fm tell --file <path>` writes the workspace outbox
+- Session → human: `sm tell "<body>"` / `sm tell --file <path>` writes the workspace outbox
   (`{from, from_name, body}`, `from` = the session name from `FOREMAN_SESSION`). No reply path over the pipe:
   Supraman never registers an inbox.
 - Under `cfg(test)`, `peer::deliver` refuses every pipe outside `\.\pipe\LOCAL\cc-msg-foremantest-*`.

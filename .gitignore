@@ -4,7 +4,7 @@ target/
 target-load/
 target-bin/
 spikes/term-spike/commit-msg.txt
-crates/fm/commit-msg.txt
-crates/foreman-supervisor/commit-msg.txt
+crates/sm/commit-msg.txt
+crates/supraman-supervisor/commit-msg.txt
 plugins/supraman/bin/
-crates/foreman-app/commit-msg.txt
+crates/supraman-app/commit-msg.txt

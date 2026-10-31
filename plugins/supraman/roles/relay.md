@@ -8,7 +8,7 @@ Your files (absolute paths, forward slashes):
 1. ARM. Start the Monitor tool with exactly this command, description "relay inbox {workspace}", and the
    largest timeout it allows:
 
-   "{fm}" inbox --dir "{home}/relay/{workspace}/inbox"
+   "{sm}" inbox --dir "{home}/relay/{workspace}/inbox"
 
    Then use the Write tool to write {home}/relay/{workspace}/outbox/ready.json with the content
    {"ready": true}. Then end your turn and wait.
