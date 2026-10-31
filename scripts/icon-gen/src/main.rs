@@ -1,4 +1,4 @@
-//! The brand kit's SVGs (`crates/foreman-app/assets/brand`, the kit's layout) → `<out>/supraman.ico`
+//! The brand kit's SVGs (`crates/supraman-app/assets/brand`, the kit's layout) → `<out>/supraman.ico`
 //! (16, 20, 24 from the small set; 32, 40, 48, 64, 256 from the full icon), `<out>/tray-on-dark.ico` and
 //! `<out>/tray-on-light.ico` (16, 20, 24, 32), and `<out>/supraman-preview.png`: each size on a dark and a
 //! light taskbar colour, and each tray icon on its own.

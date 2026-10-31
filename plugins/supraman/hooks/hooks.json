@@ -1,19 +1,19 @@
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/fm.exe", "args": ["hook", "SessionStart"], "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/sm.exe", "args": ["hook", "SessionStart"], "timeout": 10 }] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/fm.exe", "args": ["hook", "UserPromptSubmit"], "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/sm.exe", "args": ["hook", "UserPromptSubmit"], "timeout": 10 }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/fm.exe", "args": ["hook", "Notification"], "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/sm.exe", "args": ["hook", "Notification"], "timeout": 10 }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/fm.exe", "args": ["hook", "Stop"], "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/sm.exe", "args": ["hook", "Stop"], "timeout": 10 }] }
     ],
     "PreCompact": [
-      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/fm.exe", "args": ["hook", "PreCompact"], "timeout": 10 }] }
+      { "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/bin/sm.exe", "args": ["hook", "PreCompact"], "timeout": 10 }] }
     ]
   }
 }

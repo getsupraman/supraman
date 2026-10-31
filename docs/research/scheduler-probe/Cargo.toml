@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
-foreman-claude = { path = "../../../crates/foreman-claude" }
-foreman-core = { path = "../../../crates/foreman-core" }
-foreman-workstate = { path = "../../../crates/foreman-workstate", features = ["fake"] }
+supraman-claude = { path = "../../../crates/supraman-claude" }
+supraman-core = { path = "../../../crates/supraman-core" }
+supraman-workstate = { path = "../../../crates/supraman-workstate", features = ["fake"] }
 windows = { version = "0.62", features = ["Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_System_Threading"] }

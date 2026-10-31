@@ -1,0 +1,43 @@
+# Zed's crates/terminal @ 03efd49220ba06703d04f9c4732fdf814f9c523c, vendored without
+# settings / theme / theme_settings / task / release_channel. Versions are Zed's workspace ones.
+[package]
+name = "supraman-term"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/terminal.rs"
+doctest = false
+
+[dependencies]
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
+anyhow = "1.0.86"
+collections = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
+futures = "0.3.34"
+futures-lite = "2"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }
+itertools = "0.14.0"
+libc = "0.2"
+log = { version = "0.4", default-features = false, features = ["std"] }
+parking_lot = "0.12.1"
+regex = { version = "1.5", default-features = false, features = ["std", "perf"] }
+serde = { version = "1.0", features = ["rc"] }
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+thiserror = "2.0.12"
+url = "2.2"
+util = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
+vte = { version = "0.15.0", features = ["ansi"] }
+
+[dev-dependencies]
+# Both from Zed's crates/terminal dev-dependencies.
+gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

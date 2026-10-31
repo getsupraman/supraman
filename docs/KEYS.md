@@ -1,8 +1,8 @@
 # Keys and mouse
 
 Supraman's terminal tabs act like Windows Terminal with its defaults (René's settings: copy on Ctrl+C,
-paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code: `crates/foreman-app/src/view/term.rs`
-(`chord`), `crates/foreman-ui/src/term_element.rs` (mouse), `crates/foreman-term` (selection, cursor, colours).
+paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code: `crates/supraman-app/src/view/term.rs`
+(`chord`), `crates/supraman-ui/src/term_element.rs` (mouse), `crates/supraman-term` (selection, cursor, colours).
 
 ## Window
 
@@ -16,7 +16,7 @@ paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code
 
 ## Text inputs (search box, Add workspace name, find bar, task box)
 
-One input (`crates/foreman-app/src/text_input.rs`), the keys of a Windows edit box. The task box (Task…, Reply…)
+One input (`crates/supraman-app/src/text_input.rs`), the keys of a Windows edit box. The task box (Task…, Reply…)
 is its multi-line kind: lines wrap, it grows to 8 rows and then scrolls (the wheel too). Characters, dead keys
 (`^` `´` `` ` ``) and IME compositions come from Windows' own text input, so German and Italian layouts type
 as anywhere else.

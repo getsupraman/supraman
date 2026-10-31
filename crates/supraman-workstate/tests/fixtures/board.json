@@ -1,0 +1,203 @@
+{
+  "asOf": "2026-10-26T10:05:00+00:00",
+  "seq": 1234,
+  "addedLater": {
+    "x": 1
+  },
+  "run": {
+    "id": "22222222-0000-4000-8000-000000000004",
+    "ref": "m4",
+    "qualifiedRef": "m4",
+    "kind": "run",
+    "title": "The work browser",
+    "status": "in_progress"
+  },
+  "project": {
+    "id": "11111111-0000-4000-8000-000000000001",
+    "ref": "autowork",
+    "qualifiedRef": "autowork",
+    "kind": "project",
+    "title": "Foreman",
+    "status": "in_progress"
+  },
+  "intent": "Browse the work from Foreman",
+  "branch": "m4/1-workstate-client",
+  "worktree": null,
+  "rollup": {
+    "total": 3,
+    "done": 1,
+    "inProgress": 1,
+    "review": 0,
+    "blocked": 1,
+    "open": 0,
+    "cancelled": 0,
+    "superseded": 0
+  },
+  "rows": [
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000001",
+        "ref": "1",
+        "qualifiedRef": "m4/1",
+        "kind": "task",
+        "title": "supraman-workstate: read API v1 client",
+        "status": "in_progress",
+        "addedLater": "x"
+      },
+      "parentId": "22222222-0000-4000-8000-000000000004",
+      "depth": 1,
+      "seq": "1",
+      "hasChildren": true,
+      "resolution": null,
+      "priority": 0,
+      "severity": null,
+      "criteria": {
+        "checked": 1,
+        "total": 4
+      },
+      "rollup": {
+        "total": 1,
+        "done": 1,
+        "inProgress": 0,
+        "review": 0,
+        "blocked": 0,
+        "open": 0,
+        "cancelled": 0,
+        "superseded": 0
+      },
+      "claim": {
+        "item": {
+          "id": "33333333-0000-4000-8000-000000000001",
+          "ref": "1",
+          "qualifiedRef": "m4/1",
+          "kind": "task",
+          "title": "supraman-workstate: read API v1 client",
+          "status": "in_progress",
+          "addedLater": "x"
+        },
+        "run": {
+          "id": "22222222-0000-4000-8000-000000000004",
+          "ref": "m4",
+          "qualifiedRef": "m4",
+          "kind": "run",
+          "title": "The work browser",
+          "status": "in_progress"
+        },
+        "session": {
+          "id": "44444444-0000-4000-8000-000000000001",
+          "name": "aw-m4-1",
+          "role": "worker",
+          "externalRole": "repo",
+          "origin": "foreman/autowork/AutoWork",
+          "launchedBy": "autowork-7c",
+          "claudeSessionId": null,
+          "cwd": "P:/w/m4-1",
+          "tree": null,
+          "client": "claude-code 2.x",
+          "firstSeenAt": "2026-10-26T09:00:00+00:00",
+          "lastSeenAt": "2026-10-26T10:00:00+00:00",
+          "addedLater": 1
+        },
+        "agent": "controller",
+        "role": "worker",
+        "tree": "P:/w/m4-1",
+        "acquiredAt": "2026-10-26T09:00:00+00:00",
+        "heartbeatAt": "2026-10-26T10:00:00+00:00",
+        "expiresAt": "2026-10-26T11:00:00+00:00",
+        "expired": false,
+        "addedLater": true
+      },
+      "commit": null,
+      "verification": null,
+      "blockedBy": [],
+      "flags": [
+        "unconsumed_notes"
+      ],
+      "openedAt": "2026-10-26T08:00:00+00:00",
+      "startedAt": "2026-10-26T09:00:00+00:00",
+      "closedAt": null,
+      "addedLater": 5
+    },
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000011",
+        "ref": "1.1",
+        "qualifiedRef": "m4/1.1",
+        "kind": "subtask",
+        "title": "SSE parser",
+        "status": "done"
+      },
+      "parentId": "33333333-0000-4000-8000-000000000001",
+      "depth": 2,
+      "seq": "1.1",
+      "hasChildren": false,
+      "resolution": "accepted",
+      "priority": 0,
+      "severity": null,
+      "criteria": {
+        "checked": 2,
+        "total": 2
+      },
+      "rollup": null,
+      "claim": null,
+      "commit": "a439808",
+      "verification": {
+        "passed": true,
+        "runBy": "orchestrator",
+        "at": "2026-10-26T09:30:00+00:00"
+      },
+      "blockedBy": [],
+      "flags": [],
+      "openedAt": "2026-10-26T08:00:00+00:00",
+      "startedAt": "2026-10-26T09:10:00+00:00",
+      "closedAt": "2026-10-26T09:31:00+00:00"
+    },
+    {
+      "item": {
+        "id": "33333333-0000-4000-8000-000000000002",
+        "ref": "2",
+        "qualifiedRef": "m4/2",
+        "kind": "task",
+        "title": "The board view",
+        "status": "blocked"
+      },
+      "parentId": "22222222-0000-4000-8000-000000000004",
+      "depth": 1,
+      "seq": "2",
+      "hasChildren": false,
+      "resolution": "a_future_resolution",
+      "priority": 1,
+      "severity": "blocker",
+      "criteria": {
+        "checked": 0,
+        "total": 3
+      },
+      "rollup": null,
+      "claim": null,
+      "commit": null,
+      "verification": {
+        "passed": false,
+        "runBy": "worker",
+        "at": "2026-10-26T09:40:00+00:00"
+      },
+      "blockedBy": [
+        {
+          "id": "33333333-0000-4000-8000-000000000001",
+          "ref": "1",
+          "qualifiedRef": "m4/1",
+          "kind": "task",
+          "title": "supraman-workstate: read API v1 client",
+          "status": "in_progress",
+          "addedLater": "x"
+        }
+      ],
+      "flags": [
+        "done_unverified",
+        "a_future_flag"
+      ],
+      "openedAt": "2026-10-26T08:00:00+00:00",
+      "startedAt": null,
+      "closedAt": null
+    }
+  ]
+}

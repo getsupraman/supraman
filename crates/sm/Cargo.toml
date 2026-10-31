@@ -1,0 +1,28 @@
+[package]
+name = "sm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "sm"
+path = "src/main.rs"
+
+[[bin]]
+name = "smw"
+path = "src/bin/smw.rs"
+
+[dependencies]
+chrono = { version = "0.4.42", default-features = false, features = ["alloc", "clock"] }
+supraman-claude = { path = "../supraman-claude" }
+supraman-core = { path = "../supraman-core" }
+supraman-supervisor = { path = "../supraman-supervisor" }
+supraman-workstate = { path = "../supraman-workstate" }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+supraman-workstate = { path = "../supraman-workstate", features = ["fake"] }
+tempfile = "3.27.0"

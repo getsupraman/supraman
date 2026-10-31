@@ -1577,19 +1577,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fm"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "foreman-claude",
- "foreman-core",
- "foreman-supervisor",
- "foreman-workstate",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1689,147 +1676,6 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
-name = "foreman-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "collections",
- "embed-resource",
- "fm",
- "foreman-claude",
- "foreman-core",
- "foreman-supervisor",
- "foreman-term",
- "foreman-ui",
- "foreman-workstate",
- "futures",
- "gpui",
- "gpui_platform",
- "image",
- "log",
- "raw-window-handle",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "theme",
- "toml 0.9.8",
- "tray-icon",
- "util",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "foreman-claude"
-version = "0.1.0"
-dependencies = [
- "foreman-core",
- "memchr",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.17",
- "uuid",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "foreman-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "getrandom 0.3.4",
- "hmac",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.17",
- "toml 0.9.8",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "foreman-supervisor"
-version = "0.1.0"
-dependencies = [
- "foreman-claude",
- "foreman-core",
- "foreman-workstate",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.17",
- "toml 0.9.8",
- "ureq",
-]
-
-[[package]]
-name = "foreman-term"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "collections",
- "futures",
- "futures-lite",
- "gpui",
- "itertools",
- "libc",
- "log",
- "parking_lot",
- "rand 0.9.4",
- "regex",
- "serde",
- "sysinfo 0.39.6",
- "thiserror 2.0.17",
- "url",
- "util",
- "vte",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "foreman-ui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "foreman-core",
- "foreman-term",
- "futures",
- "gpui",
- "itertools",
- "log",
- "serde",
- "serde_json",
- "tempfile",
- "theme",
- "unicode-segmentation",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "foreman-workstate"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "base64 0.22.1",
- "foreman-core",
- "foreman-workstate",
- "getrandom 0.3.4",
- "native-tls",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.17",
- "ureq",
-]
 
 [[package]]
 name = "form_urlencoded"
@@ -5225,6 +5071,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sm"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "supraman-claude",
+ "supraman-core",
+ "supraman-supervisor",
+ "supraman-workstate",
+ "tempfile",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5340,6 +5199,147 @@ dependencies = [
  "rayon",
  "tracing",
  "ztracing",
+]
+
+[[package]]
+name = "supraman-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "collections",
+ "embed-resource",
+ "futures",
+ "gpui",
+ "gpui_platform",
+ "image",
+ "log",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sm",
+ "supraman-claude",
+ "supraman-core",
+ "supraman-supervisor",
+ "supraman-term",
+ "supraman-ui",
+ "supraman-workstate",
+ "tempfile",
+ "theme",
+ "toml 0.9.8",
+ "tray-icon",
+ "util",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-claude"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "serde",
+ "serde_json",
+ "sha2",
+ "supraman-core",
+ "tempfile",
+ "thiserror 2.0.17",
+ "uuid",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml 0.9.8",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-supervisor"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "supraman-claude",
+ "supraman-core",
+ "supraman-workstate",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml 0.9.8",
+ "ureq",
+]
+
+[[package]]
+name = "supraman-term"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "collections",
+ "futures",
+ "futures-lite",
+ "gpui",
+ "itertools",
+ "libc",
+ "log",
+ "parking_lot",
+ "rand 0.9.4",
+ "regex",
+ "serde",
+ "sysinfo 0.39.6",
+ "thiserror 2.0.17",
+ "url",
+ "util",
+ "vte",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-ui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "gpui",
+ "itertools",
+ "log",
+ "serde",
+ "serde_json",
+ "supraman-core",
+ "supraman-term",
+ "tempfile",
+ "theme",
+ "unicode-segmentation",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "supraman-workstate"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "native-tls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "supraman-core",
+ "supraman-workstate",
+ "tempfile",
+ "thiserror 2.0.17",
+ "ureq",
 ]
 
 [[package]]
@@ -5509,10 +5509,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "foreman-term",
- "foreman-ui",
  "gpui",
  "gpui_platform",
+ "supraman-term",
+ "supraman-ui",
  "theme",
  "util",
 ]

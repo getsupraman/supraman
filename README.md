@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="crates/foreman-app/assets/brand/lockups/supraman-lockup-on-dark.svg">
-  <img alt="Supraman" src="crates/foreman-app/assets/brand/lockups/supraman-lockup-on-light.svg" height="48">
+  <source media="(prefers-color-scheme: dark)" srcset="crates/supraman-app/assets/brand/lockups/supraman-lockup-on-dark.svg">
+  <img alt="Supraman" src="crates/supraman-app/assets/brand/lockups/supraman-lockup-on-light.svg" height="48">
 </picture>
 
 **Supraman** is a desktop app that supervises workspaces of Claude Code sessions: it launches, resumes and
@@ -30,11 +30,11 @@ cargo build --release --workspace
 target\release\supraman.exe
 ```
 
-The crates and the CLI still carry their earlier name (`foreman-*`, `fm.exe`). The app keeps its state in
+The crates are `supraman-*` and the CLI is `sm.exe` (`smw.exe` without a console). The app keeps its state in
 `%APPDATA%\Supraman`, or in `SUPRAMAN_HOME` when set (`FOREMAN_HOME` is still read); a first start copies an
 earlier `%APPDATA%\Foreman` there. `docs/RELEASE.md` describes a release folder, and
 `docs/ARCHITECTURE.md` the crates and how they fit together.
 
 ## Brand
 
-The marks under `crates/foreman-app/assets/brand` are copied from the Supraman brand kit; see its `NOTICE.md`.
+The marks under `crates/supraman-app/assets/brand` are copied from the Supraman brand kit; see its `NOTICE.md`.
