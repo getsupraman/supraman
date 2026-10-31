@@ -137,15 +137,18 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<usize> {
         let (src, dst) = (entry.path(), to.join(entry.file_name()));
         let kind = entry.file_type()?;
         let ext = src.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
-        if kind.is_dir() {
-            files += copy_tree(&src, &dst)?;
-        } else if ext.as_deref() == Some("tmp") {
-        } else if ext.as_deref() == Some("lock") {
-            fs::write(&dst, b"")?;
-            files += 1;
-        } else if kind.is_file() {
-            fs::copy(&src, &dst)?;
-            files += 1;
+        match ext.as_deref() {
+            _ if kind.is_dir() => files += copy_tree(&src, &dst)?,
+            Some("tmp") => {}
+            Some("lock") => {
+                fs::write(&dst, b"")?;
+                files += 1;
+            }
+            _ if kind.is_file() => {
+                fs::copy(&src, &dst)?;
+                files += 1;
+            }
+            _ => {}
         }
     }
     Ok(files)
