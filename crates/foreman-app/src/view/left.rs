@@ -6,7 +6,7 @@ use std::{
 use foreman_claude::{Health, now_ms};
 use foreman_core::{Ask, AskState, OutboxMessage, ask_states};
 use foreman_supervisor::{NeedsKind, NeedsYou, Remedy, repo_session_name, workspace_session_name};
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative};
+use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, SharedString, Stateful, div, prelude::*, px, relative, rems};
 use foreman_ui::banner;
 use foreman_ui::button;
 use foreman_ui::hit::{HitTargets, hit_target};
@@ -203,7 +203,7 @@ impl FleetView {
         };
         let n = self.max_working;
         let busy_tip: SharedString = format!(
-            "At most {n} session(s) of this Foreman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Foreman's sessions are not counted."
+            "At most {n} session(s) of this Supraman working at once, across its workspaces; launches wait while it is reached. 0 pauses them all. Another Supraman's sessions are not counted."
         )
         .into();
         let warning = match &self.cli {
@@ -710,7 +710,10 @@ impl FleetView {
             .relative()
             .mx_3()
             .my_2()
-            .child(banner::dismissable(SharedString::from(problem), dismiss))
+            .child(banner::dismissable(
+                div().flex().items_start().gap_2().child(crate::brand::workman(rems(1.), color).mt(px(2.))).child(SharedString::from(problem)),
+                dismiss,
+            ))
             .children(self.workstate.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
             .children(self.signing_in.as_ref().map(|url| {
                 div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
@@ -730,7 +733,7 @@ impl FleetView {
         let (open_ws, item) = (workspace.to_string(), row.item.id.clone());
         let (dismiss_ws, row_id) = (workspace.to_string(), row.key.clone());
         let inbox = self.work_inbox.clone();
-        let dismiss = glyph_button(&self.hits, dismiss_key, Icon::Close, "Dismiss here (WorkState is not changed)", cx)
+        let dismiss = glyph_button(&self.hits, dismiss_key, Icon::Close, "Dismiss here (Workman is not changed)", cx)
             .on_click(move |_: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 inbox.update(cx, |inbox, cx| inbox.dismiss(&dismiss_ws, &row_id, cx));
@@ -749,6 +752,7 @@ impl FleetView {
             .bg(color.opacity(0.06))
             .cursor_pointer()
             .hover(|s| s.bg(color.opacity(0.14)))
+            .child(crate::brand::workman(rems(1.), color).mt(px(2.)))
             .child(
                 div()
                     .flex()
@@ -763,7 +767,7 @@ impl FleetView {
                             .gap_2()
                             .text_sm()
                             .child(div().font_weight(FontWeight::BOLD).text_color(color).child(SharedString::from(format!(
-                                "WorkState · {}",
+                                "Workman · {}",
                                 work_view::kind_label(&row.kind)
                             ))))
                             .child(SharedString::from(format!("{workspace} · {}", row.item.qualified_ref)))
@@ -1146,7 +1150,7 @@ impl FleetView {
 
         let work = {
             let w = w.clone();
-            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's WorkState board", &group, shown, cx).on_click(cx.listener(
+            self.hover_icon(format!("work-{w}"), Icon::Work, "Work: the workspace's Workman board", &group, shown, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.open_work(&w, cx);
@@ -1415,7 +1419,7 @@ impl FleetView {
                 .min_w_0()
                 .child(name_el)
                 .child(hit_target(&self.hits, key))
-                .tooltip(Tooltip::text("another Foreman session"))
+                .tooltip(Tooltip::text("another Supraman session"))
         } else {
             name_el.flex_1()
         };

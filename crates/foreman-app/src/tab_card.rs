@@ -51,7 +51,7 @@ impl Card {
         put("branch", self.branch.clone());
         put("session", self.session.clone());
         put("kind", self.kind.map(|k| k.label().to_string()));
-        put("WorkState", self.workstate.clone());
+        put("Workman", self.workstate.clone());
         put("started", self.started.and_then(local_time));
         rows
     }
@@ -99,10 +99,10 @@ mod tests {
         let hand = Card {
             title: "✳ mw-workflow".into(),
             kind: Some(Kind::Hand),
-            workstate: Some("Foreman token · orchestrator · mw-workflow".into()),
+            workstate: Some("Supraman token · orchestrator · mw-workflow".into()),
             ..Card::default()
         };
-        assert_eq!(hand.hover_card().text(), "✳ mw-workflow\nkind  hand\nWorkState  Foreman token · orchestrator · mw-workflow");
+        assert_eq!(hand.hover_card().text(), "✳ mw-workflow\nkind  hand\nWorkman  Supraman token · orchestrator · mw-workflow");
     }
 
     #[test]

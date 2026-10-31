@@ -1,4 +1,4 @@
-# Releasing Foreman
+# Releasing Supraman
 
 ## Build a release
 
@@ -32,7 +32,7 @@ Foreman\
     bin\fm.exe                 the hooks' copy (fm plugin install; the app refreshes it at start)
 ```
 
-The folder is self-contained: it runs from any path, no junction to a repo. Foreman's state stays in
+The folder is self-contained: it runs from any path, no junction to a repo. Supraman's state stays in
 `%APPDATA%\Foreman` (or `FOREMAN_HOME`), not in this folder.
 
 ## How the exes find the plugin
@@ -53,7 +53,7 @@ every folder above it (a dev build): sessions cannot be started from this build.
 
 `foreman_claude::{MIN_VERSION, TESTED_VERSION}` in `crates/foreman-claude/src/cli.rs`; `check_version` applies it.
 
-| claude CLI                   | Foreman                                                        |
+| claude CLI                   | Supraman                                                       |
 |------------------------------|----------------------------------------------------------------|
 | below `MIN_VERSION` (2.1.308) | refuses, naming the minimum and why: "update claude"          |
 | 2.1.308 … `TESTED_VERSION` (2.1.310) | runs                                                    |
@@ -61,7 +61,7 @@ every folder above it (a dev build): sessions cannot be started from this build.
 | a newer minor or major (2.2.0, 3.0.0) | runs; the toolbar ⚠ (its tooltip says why), `fm` stderr, selftest line; no Inbox notice |
 
 Never block a newer claude (decision 2026-10-26): the CLI auto-updates, and blocking would stop every user on the
-day of a release. The minimum is the oldest version every CLI fact Foreman relies on was measured on
+day of a release. The minimum is the oldest version every CLI fact Supraman relies on was measured on
 (docs/LEARNINGS.md, docs/peer-messaging.md):
 
 - `claude --bg` (`--name`, `--permission-mode`, `--mcp-config`, `--plugin-dir`, `--add-dir`, `--resume`) — m0/2, m2;
@@ -71,7 +71,7 @@ day of a release. The minimum is the oldest version every CLI fact Foreman relie
   a change there degrades, it does not break).
 
 When a release passes the gate on a newer claude, raise `TESTED_VERSION` in the same commit. Raise `MIN_VERSION`
-only when Foreman starts depending on something an older CLI lacks, and say what in its doc comment.
+only when Supraman starts depending on something an older CLI lacks, and say what in its doc comment.
 
 ## Release gate
 

@@ -56,7 +56,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if page != page::APPEARANCE {
         bail!("open_settings_at(Appearance) left the settings window on {page:?}");
     }
-    shot_window("m5-31-settings-appearance", Some("Foreman Settings"), cx).await;
+    shot_window("m5-31-settings-appearance", Some("Supraman Settings"), cx).await;
 
     let switch = |name: &str, terminal: TerminalColors, cx: &mut AsyncWindowContext| {
         handle
@@ -67,13 +67,13 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let dark = painted_as(FOREMAN_DARK, cx).await?;
     let campbell_8 = hex(gpui::rgb(CAMPBELL[8]).into());
     if dark.0 != FOREMAN_DARK || dark.2 != campbell_8 || dark.1 == start.1 {
-        bail!("after choosing Foreman Dark and Campbell the app paints {dark:?}");
+        bail!("after choosing Supraman Dark and Campbell the app paints {dark:?}");
     }
     let saved = Settings::load(home)?;
     if saved.appearance.theme.as_deref() != Some(FOREMAN_DARK) || saved.appearance.terminal_colors.as_deref() != Some("campbell") {
         bail!("settings.toml has theme {:?}, terminal_colors {:?}", saved.appearance.theme, saved.appearance.terminal_colors);
     }
-    shot_window("m5-31-settings-foreman-dark", Some("Foreman Settings"), cx).await;
+    shot_window("m5-31-settings-foreman-dark", Some("Supraman Settings"), cx).await;
     shot("m5-31-main-foreman-dark", cx).await;
 
     switch(DARK_MODERN, TerminalColors::Theme, cx)?;

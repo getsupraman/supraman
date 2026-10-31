@@ -79,7 +79,7 @@ pub fn bulk_plan(candidates: Vec<Candidate>, live: &HashSet<String>) -> (Vec<Ses
         let why = if c.starred {
             Some("★ starred".to_string())
         } else if c.foreign {
-            Some("another Foreman's session".to_string())
+            Some("another Supraman's session".to_string())
         } else if c.wanted {
             Some("this workspace's own session (Start resumes it)".to_string())
         } else if c.in_tab {
@@ -152,7 +152,7 @@ impl FleetView {
             _ => "Its transcript and its tool files under the claude dir are deleted, so it can no longer be resumed",
         };
         let kind = if session.kind == Kind::Background { "background session" } else { "closed session" };
-        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired), self.own_prefix.as_deref()) { " It is another Foreman's session." } else { "" };
+        let foreign = if fleet::is_foreign(&session.name, &self.workspaces, Some(&self.desired), self.own_prefix.as_deref()) { " It is another Supraman's session." } else { "" };
         self.confirm = Some(Confirm::ask(
             format!("Delete {kind} {}? {what}. This cannot be undone.{foreign}", label(&session)),
             "Delete",
@@ -365,7 +365,7 @@ mod tests {
         assert!(offers_delete(&stopped, false, false));
         assert!(!offers_delete(&stopped, true, false), "the supervisor wants it");
         assert!(!offers_delete(&stopped, false, true), "open in a tab");
-        assert!(offers_delete(&SessionRow { foreign: true, ..stopped.clone() }, false, false), "another Foreman's: the question says so");
+        assert!(offers_delete(&SessionRow { foreign: true, ..stopped.clone() }, false, false), "another Supraman's: the question says so");
         let done = row(bg("aaaa0002", "x", "done", None), false);
         assert!(offers_delete(&done, false, false));
         let gone = row(bg("aaaa0003", "x", "working", None), false);
@@ -419,7 +419,7 @@ mod tests {
                 ("aw-old (aaaa0004)".into(), "launched by controller old-ctl [aaaaaa]".into()),
                 ("briefed (aaaa0005)".into(), r"launched from the brief C:\r\.claude\briefs\brief-x.txt".into()),
                 ("lost (aaaa0006)".into(), "no transcript found, so who launched it is unknown".into()),
-                ("fm-selftest-x (aaaa0007)".into(), "another Foreman's session".into()),
+                ("fm-selftest-x (aaaa0007)".into(), "another Supraman's session".into()),
                 ("fm-demo-alpha (aaaa0008)".into(), "this workspace's own session (Start resumes it)".into()),
                 ("tabbed (aaaa0009)".into(), "open in a tab".into()),
             ]

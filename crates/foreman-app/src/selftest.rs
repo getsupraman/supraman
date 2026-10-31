@@ -221,6 +221,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
+        Mode::Selftest if std::env::var_os("FOREMAN_SHOTS").is_some() => Duration::from_secs(360),
         Mode::Selftest => Duration::from_secs(210),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(900),
@@ -858,7 +859,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
             }
             (v.loaded && !shown).then(|| {
                 let done = v.sessions_read && v.refreshes > 0 && v.transcripts_read && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
-                if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and WorkState were all done".to_string()) }
+                if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })
     })
@@ -1012,6 +1013,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let scheduled = step("7y", crate::selftest_schedules::run(view, &home(), cx)).await?;
     println!("step 7y: {scheduled}");
+
+    let branded = step("7z", crate::selftest_brand::run(view, cx)).await?;
+    println!("step 7z: {branded}");
 
     set_step("8");
     let (idle_private, idle_ws) = memory();

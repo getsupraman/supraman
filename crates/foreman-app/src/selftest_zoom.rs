@@ -126,7 +126,7 @@ async fn settings_page(
     };
     let result: anyhow::Result<String> = async {
         shown(size, cx).await?;
-        crate::selftest_manage::shot_window("m5-41-settings-font-size", Some("Foreman Settings"), cx).await;
+        crate::selftest_manage::shot_window("m5-41-settings-font-size", Some("Supraman Settings"), cx).await;
         handle.update(cx, |s, _, cx| s.set_term_font_size(size + px(1.), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
         let plus = size + px(1.);
         let now = view.read_with(cx, |v, _| v.term_font_size);

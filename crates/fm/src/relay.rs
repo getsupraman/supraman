@@ -57,7 +57,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
 pub fn refuse_inside_foreman() -> Result<(), Failure> {
     match std::env::var_os("FOREMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
-            "fm send speaks as the human through the relay and is refused inside a Foreman session (FOREMAN_ROLE={}); use SendMessage to reach a session, fm tell to reach the human",
+            "fm send speaks as the human through the relay and is refused inside a Supraman session (FOREMAN_ROLE={}); use SendMessage to reach a session, fm tell to reach the human",
             role.to_string_lossy()
         ))),
         _ => Ok(()),
@@ -89,7 +89,7 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
             println!("dropped {} (via relay: {reason})", drop.display());
             if relay_ready(home, workspace).is_none() {
                 eprintln!(
-                    "notice: the relay of {workspace} is not ready; Foreman starts it for this message (while the workspace is started), and it sends it once armed"
+                    "notice: the relay of {workspace} is not ready; Supraman starts it for this message (while the workspace is started), and it sends it once armed"
                 );
             }
         }
@@ -103,7 +103,7 @@ pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let (Some(home), Some(workspace)) = (var("FOREMAN_HOME"), var("FOREMAN_WORKSPACE")) else {
         return Err(Failure::Refused(
-            "fm tell runs inside a Foreman session (FOREMAN_HOME and FOREMAN_WORKSPACE are not set); the human reads Foreman's Messages".into(),
+            "fm tell runs inside a Supraman session (FOREMAN_HOME and FOREMAN_WORKSPACE are not set); the human reads Supraman's Messages".into(),
         ));
     };
     let from = var("FOREMAN_SESSION")

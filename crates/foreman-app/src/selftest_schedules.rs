@@ -168,11 +168,11 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let dismiss = format!("inbox-sched-dismiss-{failed}");
     until(view, cx, WITHIN, "the failed run in the Inbox", |v| painted(v, &dismiss).then_some(())).await?;
     let tip = view.read_with(cx, |v, _| v.tray_tooltip());
-    if tip != "Foreman · 1 scheduled run needs you" {
+    if tip != "Supraman · 1 scheduled run needs you" {
         bail!("the tray says {tip:?}");
     }
     click(view, &dismiss, cx).await?;
-    until(view, cx, WITHIN, "the dismissed notice gone", |v| (!painted(v, &dismiss) && v.tray_tooltip() == "Foreman").then_some(())).await?;
+    until(view, cx, WITHIN, "the dismissed notice gone", |v| (!painted(v, &dismiss) && v.tray_tooltip() == "Supraman").then_some(())).await?;
     out.push("6 a failed run in the Inbox and the tray, dismissed".into());
 
     from_menu(view, "edit-schedule", cx).await?;

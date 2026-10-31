@@ -1,5 +1,5 @@
 //! Themes: Zed theme JSON (`https://zed.dev/schema/themes/v0.2.0.json`) read tolerantly over a
-//! base theme, the bundled VS Code Dark Modern (the default) and Foreman Dark (One Dark with Campbell's
+//! base theme, the bundled VS Code Dark Modern (the default) and Supraman Dark (One Dark with Campbell's
 //! ANSI colours), files in `<FOREMAN_HOME>\themes\*.json`, and the terminal colours
 //! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
 
@@ -19,7 +19,9 @@ use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
-pub const FOREMAN_DARK: &str = "Foreman Dark";
+pub const FOREMAN_DARK: &str = "Supraman Dark";
+/// The name an older `settings.toml` may hold for [`FOREMAN_DARK`].
+pub const FOREMAN_DARK_LEGACY: &str = "Foreman Dark";
 pub const DEFAULT_THEME: &str = DARK_MODERN;
 
 /// kevcamel/vscode_dark_modern.zed (MIT, © 2024 Kevin Camellini), `themes/vscode-dark-modern.json` as of
@@ -198,7 +200,7 @@ pub fn one_dark() -> Theme {
     (*theme).clone()
 }
 
-/// Foreman Dark: One Dark with Campbell's ANSI colours; only the backgrounds of the
+/// Supraman Dark: One Dark with Campbell's ANSI colours; only the backgrounds of the
 /// marked row and the search matches are faded to [`BACKGROUND_FLOORS`].
 pub fn foreman_dark() -> Loaded {
     let mut theme = one_dark();
@@ -612,9 +614,14 @@ pub struct Resolved {
     pub problem: Option<String>,
 }
 
+/// A saved theme name as the catalog lists it.
+pub fn canonical(name: &str) -> &str {
+    if name == FOREMAN_DARK_LEGACY { FOREMAN_DARK } else { name }
+}
+
 /// `name` (None: [`DEFAULT_THEME`]) from the bundled themes or `<home>\themes`, with `terminal`'s ANSI.
 pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
-    let name = name.unwrap_or(DEFAULT_THEME);
+    let name = canonical(name.unwrap_or(DEFAULT_THEME));
     let (theme, adjusted, problem) = if name == FOREMAN_DARK {
         let loaded = foreman_dark();
         (loaded.theme, loaded.adjusted, None)
@@ -720,7 +727,14 @@ mod tests {
         let c = palette(&campbell_theme);
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
-        assert_eq!(palette(&foreman_dark().theme).ansi, campbell(), "Foreman Dark is One Dark with Campbell, as before m5/31");
+        assert_eq!(palette(&foreman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
+    }
+
+    #[test]
+    fn the_legacy_name_resolves_to_supraman_dark() {
+        let resolved = resolve(Some(FOREMAN_DARK_LEGACY), TerminalColors::Theme, None);
+        assert_eq!((resolved.theme.name.as_ref(), resolved.problem), (FOREMAN_DARK, None));
+        assert_eq!(canonical(FOREMAN_DARK_LEGACY), FOREMAN_DARK);
     }
 
     #[test]

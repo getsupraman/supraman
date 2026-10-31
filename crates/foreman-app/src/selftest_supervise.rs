@@ -23,7 +23,7 @@ use crate::selftest::{
 use crate::view::FleetView;
 use crate::{Mode, supervise};
 
-const PROMPT_TARGET: &str = "This is an automated Foreman selftest. Messages will arrive that contain nonces like \
+const PROMPT_TARGET: &str = "This is an automated Supraman selftest. Messages will arrive that contain nonces like \
 FOREMAN-DIRECT-1a2b3c01 or FOREMAN-RELAY-1a2b3c. Each time you get one or more of them, run exactly one Bash command: \
 fm tell \"<every nonce you got since your last reply, space-separated>\" and then wait for more. Never use SendMessage. \
 Do nothing else.";
@@ -32,7 +32,7 @@ const DIRECT_SENDS: usize = 30;
 const REPO: &str = "Repo";
 /// Long enough for the relay to launch, arm and send.
 const RELAY_IDLE_SECS: u64 = 60;
-const PROMPT_PARK: &str = "This is an automated Foreman selftest. Run exactly this one Bash command and nothing \
+const PROMPT_PARK: &str = "This is an automated Supraman selftest. Run exactly this one Bash command and nothing \
 else: `echo parked > parked.txt`. Then stop.";
 
 struct Testbed {
@@ -825,7 +825,7 @@ async fn lowest_row_scrolled_into_view(tb: &Testbed, view: &Entity<FleetView>, c
     ))
 }
 
-const PROMPT_OK: &str = "This is an automated Foreman selftest. Reply with the single word ok, use no tool, and stop.";
+const PROMPT_OK: &str = "This is an automated Supraman selftest. Reply with the single word ok, use no tool, and stop.";
 
 /// A workspace of this checkout (a git folder: claude asks trust for any folder holding a `.git`, so a git
 /// folder made here could not launch) and a plain folder in the testbed's home: each folder's wanted session
@@ -1069,7 +1069,7 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
         scratch.session_name = Some(adoptee.clone());
     }
     let word = format!("PELICAN{}", tb.hex.to_uppercase());
-    let mut spec = LaunchSpec::new(&adoptee, &dir, format!("This is an automated Foreman selftest. Remember the word {word}. Reply with exactly: OK"));
+    let mut spec = LaunchSpec::new(&adoptee, &dir, format!("This is an automated Supraman selftest. Remember the word {word}. Reply with exactly: OK"));
     spec.permission_mode = "default".into();
     spec.strict_mcp_config = true;
     let launched = Instant::now();
@@ -1743,7 +1743,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
     let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
     // the workspace session reads this as the human's: it must not start work
-    let first = format!("{nonce} Automated Foreman selftest of the task box. This is not a task.");
+    let first = format!("{nonce} Automated Supraman selftest of the task box. This is not a task.");
     let task = format!("{first}\nDo nothing and send nothing.");
     let typed = format!("{first}\nDo nothing and send WRONG.");
     type_text(cx, &typed)?;

@@ -1,7 +1,7 @@
 //! A settings window's pages: each registers by id with a title, an icon and its rows, and the window
 //! paints the page list and the open page's rows. The settings themselves are `foreman_core::Settings`.
 
-use gpui::{AnyElement, App, ClickEvent, Context, FontWeight, IntoElement, ParentElement as _, SharedString, Styled as _, div, prelude::*};
+use gpui::{AnyElement, App, ClickEvent, Context, FontWeight, Hsla, IntoElement, ParentElement as _, SharedString, Styled as _, div, prelude::*};
 use theme::ActiveTheme as _;
 
 pub struct SettingsPage<V: 'static> {
@@ -9,6 +9,8 @@ pub struct SettingsPage<V: 'static> {
     pub title: &'static str,
     /// A glyph of [`crate::fonts::icons`].
     pub icon: &'static str,
+    /// Painted in place of `icon`: a product's own mark, in the colour the glyph would have.
+    pub mark: Option<fn(Hsla) -> AnyElement>,
     pub render: fn(&V, &mut Context<V>) -> Vec<AnyElement>,
 }
 
@@ -66,7 +68,10 @@ impl<V: 'static> SettingsPages<V> {
                     .when(!on, |d| d.text_color(colors.text_muted))
                     .hover(|s| s.bg(colors.ghost_element_hover))
                     .active(|s| s.bg(colors.ghost_element_active))
-                    .child(div().w_4().font_family(crate::fonts::icons()).text_xs().child(page.icon))
+                    .child(match page.mark {
+                        Some(mark) => div().w_4().flex().items_center().child(mark(if on { colors.text } else { colors.text_muted })),
+                        None => div().w_4().font_family(crate::fonts::icons()).text_xs().child(page.icon),
+                    })
                     .child(page.title)
                     .on_click(cx.listener(move |view, _: &ClickEvent, _, cx| select(view, id, cx)))
                     .into_any_element()
@@ -108,7 +113,7 @@ mod tests {
     struct View;
 
     fn page(id: &'static str) -> SettingsPage<View> {
-        SettingsPage { id, title: id, icon: "", render: |_, _| Vec::new() }
+        SettingsPage { id, title: id, icon: "", mark: None, render: |_, _| Vec::new() }
     }
 
     #[test]

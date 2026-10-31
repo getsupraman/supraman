@@ -1,6 +1,6 @@
 # Keys and mouse
 
-Foreman's terminal tabs act like Windows Terminal with its defaults (René's settings: copy on Ctrl+C,
+Supraman's terminal tabs act like Windows Terminal with its defaults (René's settings: copy on Ctrl+C,
 paste on Ctrl+V, find on Ctrl+Shift+F, no copy on select, plain-text copy). Code: `crates/foreman-app/src/view/term.rs`
 (`chord`), `crates/foreman-ui/src/term_element.rs` (mouse), `crates/foreman-term` (selection, cursor, colours).
 
@@ -78,4 +78,4 @@ When the program turned mouse reporting on, clicks and drags go to it; hold Shif
 
 The cursor is a bar that blinks every 530 ms and stays lit while you type or it moves; a program that sets
 its own shape (DECSCUSR) wins. ANSI colours 0–15 are Windows Terminal's Campbell scheme; the foreground,
-background and selection come from the Foreman theme.
+background and selection come from the Supraman theme.

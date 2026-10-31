@@ -30,15 +30,15 @@ mod tests {
         let oauth = fake.enable_oauth();
         Settings { workstate: foreman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
         let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(foreman_workstate::MemoryStore::default()))) };
-        assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no WorkState");
+        assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no Workman");
 
         oauth.set_access_ttl(60);
         let tokens = AppTokens { auth: signed_in(&home, fake.base()) };
         let t = tokens.token("workspace").unwrap().unwrap();
         assert_eq!((t.url.as_str(), t.role.as_str()), (format!("{}/mcp", fake.base()).as_str(), "controller"));
         assert!(t.token.starts_with("eyJ"));
-        assert_eq!(tokens.token("repo").unwrap().unwrap().role, "orchestrator", "minted as the WorkState role it acts as");
-        assert_eq!(tokens.token("relay"), Ok(None), "the relay has no WorkState");
+        assert_eq!(tokens.token("repo").unwrap().unwrap().role, "orchestrator", "minted as the Workman role it acts as");
+        assert_eq!(tokens.token("relay"), Ok(None), "the relay has no Workman");
         assert_eq!(tokens.token("worker"), Ok(None));
 
         oauth.fail_refresh(true);

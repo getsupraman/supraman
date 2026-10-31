@@ -327,7 +327,7 @@ impl Supervision {
             let stale = s.server_changed(server.as_deref());
             if !stale.is_empty() {
                 let names: Vec<&str> = stale.iter().map(|(n, _)| n.as_str()).collect();
-                log::info!("{name}: WorkState is {}; restarting {} with tokens minted there", server.as_deref().unwrap_or_default(), names.join(", "));
+                log::info!("{name}: Workman is {}; restarting {} with tokens minted there", server.as_deref().unwrap_or_default(), names.join(", "));
             }
             for origin in stale.into_iter().filter_map(|(_, o)| o) {
                 if !report.left_servers.contains(&origin) {

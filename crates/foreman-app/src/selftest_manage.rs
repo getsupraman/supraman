@@ -425,7 +425,17 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
 
 /// A PNG of this process's main window, or its window titled `title`, as it is on screen.
 pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
-    let title = title.map(str::to_string);
+    let args: Vec<String> = title.iter().flat_map(|t| ["-Title".to_string(), t.to_string()]).collect();
+    shot_ps1(out, args, cx).await
+}
+
+/// A PNG of the screen area `[x, y, width, height]` in physical pixels.
+pub(crate) async fn capture_screen(out: PathBuf, area: [i32; 4], cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
+    let [x, y, w, h] = area;
+    shot_ps1(out, vec!["-Screen".into(), format!("{x},{y},{w},{h}")], cx).await
+}
+
+async fn shot_ps1(out: PathBuf, args: Vec<String>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
     let script = cargo_root().join("scripts").join("shot.ps1");
     let pid = std::process::id().to_string();
     cx.background_executor()
@@ -439,7 +449,7 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
                     .arg(&script)
                     .args(["-ProcessId", &pid, "-Out"])
                     .arg(&out)
-                    .args(title.iter().flat_map(|t| ["-Title", t.as_str()])),
+                    .args(&args),
                 Duration::from_secs(60),
                 foreman_core::process::Kill::Tree,
             )?;
@@ -557,7 +567,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let root = cargo_root().join("target").join(FOLDER);
     fake_repo(&root, "alpha")?;
     fake_repo(&root, "beta")?;
-    let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Foreman home"))?;
+    let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?;
     let registry = Registry::at(&home);
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));

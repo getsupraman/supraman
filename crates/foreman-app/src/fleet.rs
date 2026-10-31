@@ -543,7 +543,7 @@ impl Open {
             Self::Shown => Some("shown now"),
             Self::Attach => Some("Attach in a new tab"),
             Self::Resume => Some("Resume in a new tab"),
-            Self::Foreign => Some("another Foreman session"),
+            Self::Foreign => Some("another Supraman session"),
             Self::Elsewhere => Some("runs in another terminal: resuming here would start a second claude on it"),
             Self::Supervised => Some("the supervisor runs it while it is wanted: Start the workspace from its menu"),
             Self::Nothing => None,
@@ -762,9 +762,9 @@ mod tests {
         let mut foreign = busy.clone();
         foreign.foreign = true;
         assert_eq!(Open::of(&foreign, None, None, true), Open::Foreign);
-        assert_eq!(Open::of(&foreign, Some(3), None, true), Open::Foreign, "nothing for another Foreman's, even in a tab");
+        assert_eq!(Open::of(&foreign, Some(3), None, true), Open::Foreign, "nothing for another Supraman's, even in a tab");
         assert_eq!(Open::Nothing.hint(), None);
-        assert_eq!(Open::Foreign.hint(), Some("another Foreman session"));
+        assert_eq!(Open::Foreign.hint(), Some("another Supraman session"));
     }
 
     #[test]
@@ -1153,7 +1153,7 @@ mod tests {
         assert_eq!(adopt("Nope", &row_of("busy"), &all, &none), None);
         let mut foreign = row_of("busy");
         foreign.foreign = true;
-        assert_eq!(adopt("Alpha", &foreign, &all, &none), None, "another Foreman's");
+        assert_eq!(adopt("Alpha", &foreign, &all, &none), None, "another Supraman's");
         let mut closed = row_of("done");
         closed.closed = true;
         assert_eq!(adopt("Beta", &closed, &all, &none), None);
@@ -1162,7 +1162,7 @@ mod tests {
         assert_eq!(adopt("Alpha", &second, &all, &none), offer, "shown first elsewhere, e.g. under a folder that holds this one");
         let mut fm = row_of("busy");
         fm.session.name = "fm-demo-x".into();
-        assert_eq!(adopt("Alpha", &fm, &all, &none), None, "Foreman's own");
+        assert_eq!(adopt("Alpha", &fm, &all, &none), None, "Supraman's own");
 
         let wanted = BTreeMap::from([("demo".to_string(), (false, vec!["fm-demo-alpha".to_string()]))]);
         assert!(matches!(adopt("Alpha", &row_of("busy"), &all, &wanted), Some(Adoption::No(why)) if why.contains("fm-demo-alpha is wanted already")));

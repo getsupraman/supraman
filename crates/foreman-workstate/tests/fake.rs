@@ -40,13 +40,13 @@ fn a_stream_answer_without_the_v1_header_is_refused() {
     let (stream, rx) = Stream::subscribe_with(&client, config);
     assert_eq!(
         next(&rx),
-        StreamSignal::Lost("the stream answered without X-WorkState-Api: not a WorkState read API v1".into())
+        StreamSignal::Lost("the stream answered without X-WorkState-Api: not a Workman read API v1".into())
     );
     stream.stop();
 
     fake.set("/api/stream", Answer::text(": connected\n\n").api(Some("2")));
     let (stream, rx) = Stream::subscribe_with(&client, config);
-    assert_eq!(next(&rx), StreamSignal::Lost("the stream speaks read API 2, Foreman reads v1".into()));
+    assert_eq!(next(&rx), StreamSignal::Lost("the stream speaks read API 2, Supraman reads v1".into()));
     stream.stop();
 }
 

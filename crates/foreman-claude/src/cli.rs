@@ -29,7 +29,7 @@ impl ClaudeVersion {
         let (major, minor, _) = TESTED_VERSION;
         ((self.major, self.minor) > (major, minor)).then(|| {
             format!(
-                "claude CLI {} is newer than {major}.{minor}, the newest Foreman was tested on ({}): everything stays enabled; if something misbehaves, report it with this version.",
+                "claude CLI {} is newer than {major}.{minor}, the newest Supraman was tested on ({}): everything stays enabled; if something misbehaves, report it with this version.",
                 self.raw,
                 dotted(TESTED_VERSION)
             )
@@ -102,7 +102,7 @@ mod tests {
             assert_eq!(
                 err.to_string(),
                 format!(
-                    "claude CLI {} is too old: Foreman needs 2.1.308 or newer (`--bg`, `agents --json --all`, `--plugin-dir` and peerProtocol 1 as measured there); update claude",
+                    "claude CLI {} is too old: Supraman needs 2.1.308 or newer (`--bg`, `agents --json --all`, `--plugin-dir` and peerProtocol 1 as measured there); update claude",
                     text
                 )
             );
@@ -133,7 +133,7 @@ mod tests {
             let v = parse_version(text).unwrap();
             assert!(check_version(&v).is_ok(), "never block a newer claude: {text}");
             let warning = v.untested().expect(text);
-            assert!(warning.contains(text) && warning.contains("newer than 2.1, the newest Foreman was tested on (2.1.310)"), "{warning}");
+            assert!(warning.contains(text) && warning.contains("newer than 2.1, the newest Supraman was tested on (2.1.310)"), "{warning}");
         }
     }
 

@@ -220,7 +220,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let what = match saved {
             SavedTab::Attach { .. } => "This background session is stopped.",
-            _ => "This claude session was open when Foreman closed.",
+            _ => "This claude session was open when Supraman closed.",
         };
         div()
             .size_full()

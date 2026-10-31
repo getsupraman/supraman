@@ -48,11 +48,11 @@ impl WsStatus {
     pub fn problem(&self) -> Option<String> {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
-            WsStatus::NotSignedIn { url } => Some(format!("Not signed in to WorkState at {url}, so sessions run without WorkState.")),
+            WsStatus::NotSignedIn { url } => Some(format!("Not signed in to Workman at {url}, so sessions run without Workman.")),
             WsStatus::SignInAgain { url, why } => {
-                Some(format!("Sign in to WorkState at {url} again ({why}); until then sessions with WorkState cannot start."))
+                Some(format!("Sign in to Workman at {url} again ({why}); until then sessions with Workman cannot start."))
             }
-            WsStatus::Unreachable { url, error } => Some(format!("WorkState at {url} is unreachable ({error}).")),
+            WsStatus::Unreachable { url, error } => Some(format!("Workman at {url} is unreachable ({error}).")),
         }
     }
 
@@ -60,10 +60,10 @@ impl WsStatus {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
             WsStatus::NotSignedIn { .. } | WsStatus::SignInAgain { .. } => {
-                Some("Sign in: your browser opens WorkState's sign-in page, and Foreman keeps the grant in the Foreman home, encrypted for your Windows account.".into())
+                Some("Sign in: your browser opens Workman's sign-in page, and Supraman keeps the grant in the Supraman home, encrypted for your Windows account.".into())
             }
             WsStatus::Unreachable { .. } => Some(format!(
-                "Check the server URL in Settings → WorkState. Checked again every {} s.",
+                "Check the server URL in Settings → Workman. Checked again every {} s.",
                 RECHECK_EVERY.as_secs()
             )),
         }
@@ -85,10 +85,10 @@ impl WsStatus {
         match self {
             WsStatus::Checking | WsStatus::Ready { .. } => None,
             WsStatus::Unreachable { url, .. } => {
-                Some(format!("Started {workspace}; WorkState at {url} is unreachable, so its sessions cannot start with it."))
+                Some(format!("Started {workspace}; Workman at {url} is unreachable, so its sessions cannot start with it."))
             }
-            WsStatus::SignInAgain { .. } => Some(format!("Started {workspace}; its sessions wait for a WorkState sign-in.")),
-            WsStatus::NotSignedIn { .. } => Some(format!("Started {workspace} without WorkState: its sessions can talk, not plan.")),
+            WsStatus::SignInAgain { .. } => Some(format!("Started {workspace}; its sessions wait for a Workman sign-in.")),
+            WsStatus::NotSignedIn { .. } => Some(format!("Started {workspace} without Workman: its sessions can talk, not plan.")),
         }
     }
 }
@@ -115,7 +115,7 @@ mod tests {
         let out = detect(Some(&home), Some(&fresh));
         assert_eq!(out, WsStatus::NotSignedIn { url: url.clone() });
         assert!(out.signed_out() && out.problem().unwrap().contains("Not signed in") && out.fix().unwrap().contains("Sign in"));
-        assert!(out.start_warning("demo").unwrap().contains("without WorkState"));
+        assert!(out.start_warning("demo").unwrap().contains("without Workman"));
 
         oauth.set_access_ttl(60);
         let auth = crate::tokens::signed_in(&home, fake.base());
@@ -141,7 +141,7 @@ mod tests {
         let down = detect(Some(dir.path()), None);
         assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
         assert!(down.problem().unwrap().contains(&closed));
-        assert!(down.fix().unwrap().contains("Settings → WorkState"));
+        assert!(down.fix().unwrap().contains("Settings → Workman"));
         assert!(down.start_warning("demo").unwrap().contains("unreachable"));
         assert_eq!(WsStatus::Ready { url: closed, who: None }.start_warning("demo"), None);
     }

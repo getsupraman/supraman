@@ -178,6 +178,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         "starred 20-day-old {OLD} shown with stopped hidden {} ms in; {RECENT} only with stopped shown, as \"{RECENT_TITLE}\"; \
          a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden, in starred.json, after a reload; unstar hid it",
         first.as_millis(),
-        if minted { "with its own token config" } else { "plain: no WorkState token to mint" }
+        if minted { "with its own token config" } else { "plain: no Workman token to mint" }
     ))
 }

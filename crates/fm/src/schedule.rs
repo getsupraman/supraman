@@ -427,13 +427,13 @@ fn remove(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         all.retain(|s| s.id != id);
         Ok(())
     })?;
-    println!("removed schedule {id} from workspace {}; the Foreman window removes its task", w.name);
+    println!("removed schedule {id} from workspace {}; the Supraman window removes its task", w.name);
     Ok(())
 }
 
 fn print_pending(s: &Schedule) {
     if s.status == Status::Pending {
-        println!("pending: it runs only after Approve in the Foreman window (fm never approves)");
+        println!("pending: it runs only after Approve in the Supraman window (fm never approves)");
     }
 }
 
@@ -666,7 +666,7 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         for arg in spec.argv() {
             println!("  {}", quoted(&arg.to_string_lossy()));
         }
-        println!("mcp config: written at fire with the run's minted token; absent when Foreman is not signed in");
+        println!("mcp config: written at fire with the run's minted token; absent when Supraman is not signed in");
         let always = plugin_dir.as_deref().map(fm_allowed_tools).unwrap_or_else(|| vec!["Bash(fm:*)".into()]);
         println!("permissions: profile {} (--permission-mode {})", s.permissions.profile.as_str(), s.permissions.profile.permission_mode());
         println!("  allow: {}", s.permissions.allowed(&always, &schedule::run_branch(&s.id, &stamp)).join("  "));

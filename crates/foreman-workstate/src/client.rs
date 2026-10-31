@@ -15,17 +15,17 @@ pub const API_VERSION: &str = "1";
 /// Never carries the token: the bearer is part of no message, and a server reason is cut short.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("WorkState answered HTTP {status}{}", reason_suffix(.reason))]
+    #[error("Workman answered HTTP {status}{}", reason_suffix(.reason))]
     Http { status: u16, reason: String },
     /// No bearer: not signed in, or the sign-in must be done again.
     #[error("{0}")]
     Auth(String),
-    #[error("WorkState at {base} is unreachable ({reason})")]
+    #[error("Workman at {base} is unreachable ({reason})")]
     Transport { base: String, reason: String },
     /// A 2xx without `X-WorkState-Api: 1`: not a v1 server (or not WorkState).
     #[error("{0}")]
     Api(String),
-    #[error("WorkState's answer was not understood: {0}")]
+    #[error("Workman's answer was not understood: {0}")]
     Decode(String),
 }
 
@@ -206,8 +206,8 @@ impl Client {
         }
         match api.as_deref().map(str::trim) {
             Some(API_VERSION) => Ok(body),
-            Some(v) => Err(Error::Api(format!("{} speaks read API {}, Foreman reads v{API_VERSION}", self.base, scrub(token, v)))),
-            None => Err(Error::Api(format!("{} answered without {API_HEADER}: not a WorkState read API v{API_VERSION}", self.base))),
+            Some(v) => Err(Error::Api(format!("{} speaks read API {}, Supraman reads v{API_VERSION}", self.base, scrub(token, v)))),
+            None => Err(Error::Api(format!("{} answered without {API_HEADER}: not a Workman read API v{API_VERSION}", self.base))),
         }
     }
 }

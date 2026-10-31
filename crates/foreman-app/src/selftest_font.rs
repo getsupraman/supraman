@@ -63,7 +63,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     let handle = open_appearance(view, cx).await?;
     let mono = mono_fonts(&handle, cx).await?;
-    shot_window("m5-47-settings-terminal-font", Some("Foreman Settings"), cx).await;
+    shot_window("m5-47-settings-terminal-font", Some("Supraman Settings"), cx).await;
     for want in ["Consolas", default] {
         if !mono.iter().any(|f| f == want) {
             bail!("Appearance does not offer {want} among {} monospace fonts", mono.len());

@@ -32,11 +32,11 @@ const REVOKE_TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AuthError {
-    #[error("not signed in to WorkState at {origin}")]
+    #[error("not signed in to Workman at {origin}")]
     NotSignedIn { origin: String },
-    #[error("sign in to WorkState at {origin} again: {why}")]
+    #[error("sign in to Workman at {origin} again: {why}")]
     SignInAgain { origin: String, why: String },
-    #[error("WorkState at {origin} is unreachable ({reason})")]
+    #[error("Workman at {origin} is unreachable ({reason})")]
     Unreachable { origin: String, reason: String },
     #[error("{what} was refused: HTTP {status}{}", suffix(.error))]
     Refused { what: &'static str, status: u16, error: String },
@@ -431,7 +431,7 @@ impl Auth {
         let meta = &known.servers[&origin];
         match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
             (None, _, _) => Ok(()),
-            (Some(_), None, _) => Err(format!("WorkState at {origin} names no revocation endpoint; the grant lapses after 30 days")),
+            (Some(_), None, _) => Err(format!("Workman at {origin} names no revocation endpoint; the grant lapses after 30 days")),
             (Some(rt), Some(endpoint), client) => {
                 let mut form = vec![("token", rt.as_str()), ("token_type_hint", "refresh_token")];
                 if let Some(client) = client {
@@ -445,7 +445,7 @@ impl Auth {
                     .send(form_encode(&form).as_str());
                 match read(&origin, res) {
                     Ok((status, _)) if (200..300).contains(&status) => Ok(()),
-                    Ok((status, body)) => Err(format!("WorkState at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
+                    Ok((status, body)) => Err(format!("Workman at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
                     Err(e) => Err(format!("{e}; the grant lapses after 30 days")),
                 }
             }
@@ -490,7 +490,7 @@ impl Auth {
             return Err(AuthError::BadResponse(format!("{} offers no client registration", meta.issuer)));
         };
         let body = serde_json::json!({
-            "client_name": "Foreman",
+            "client_name": "Supraman",
             "redirect_uris": [REGISTERED_REDIRECT],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -573,15 +573,15 @@ impl Auth {
                 continue;
             }
             if params.get("state").map(String::as_str) != Some(state) {
-                answer(stream, "400 Bad Request", "Foreman did not sign in: this answer is not for the sign-in it started. You can close this tab.");
+                answer(stream, "400 Bad Request", "Supraman did not sign in: this answer is not for the sign-in it started. You can close this tab.");
                 return Err(AuthError::StateMismatch);
             }
             if let Some(error) = params.get("error") {
                 let why = params.get("error_description").map_or(error.clone(), |d| format!("{error}: {d}"));
-                answer(stream, "200 OK", &format!("Foreman did not sign in ({}). You can close this tab.", html(&why)));
+                answer(stream, "200 OK", &format!("Supraman did not sign in ({}). You can close this tab.", html(&why)));
                 return Err(AuthError::Denied(why));
             }
-            answer(stream, "200 OK", "Foreman is signed in to WorkState. You can close this tab.");
+            answer(stream, "200 OK", "Supraman is signed in to Workman. You can close this tab.");
             return Ok(params);
         }
     }
@@ -695,7 +695,7 @@ fn read_request(stream: &TcpStream) -> Option<(String, BTreeMap<String, String>)
 
 fn answer(mut stream: TcpStream, status: &str, text: &str) {
     let page = format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Foreman</title></head><body style=\"font-family:sans-serif;margin:3em\"><p>{text}</p></body></html>"
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Supraman</title></head><body style=\"font-family:sans-serif;margin:3em\"><p>{text}</p></body></html>"
     );
     let _ = write!(
         stream,

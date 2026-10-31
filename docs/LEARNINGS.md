@@ -5046,3 +5046,35 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gotcha**: `FOREMAN_SHOTS` runs take ~50 extra captures and pass the 210 s `--selftest` watchdog in step 8 after
   7y passed; the gate runs without it (163 s). A `Confirm` sits after the notices and can be scrolled out of view:
   `scrolled_into_view("confirm-yes")` before a shot.
+
+## 2026-10-31 — ren/1 the public face of the Supraman rename
+
+- **Product name**: every string a user reads says Supraman (window and Settings titles, titlebar, tray tooltip and
+  menu, About, toasts, notices, confirms, `fm` messages, the OAuth callback page); every name of the server says
+  Workman (Settings page, Inbox `Workman · <kind>`, the Work tab, sign-in prompts, errors). Code identifiers, paths,
+  env names, `fm-`, the plugin, the home and the Task Scheduler folder stay (ren/2, ren/3). Left on purpose: the
+  text sessions read (`From the human (via Foreman …)`, the adopt and role prompts) and the task XML's
+  `Source`/`Description`, which go with the plugin and the task folder in ren/2; `secret::ENTROPY`, which would
+  orphan every stored refresh token.
+- **OAuth `client_name`** is `Supraman`. It is sent only by `register`, which `sign_in` runs afresh each time; a
+  refresh carries the stored `client_id` and never the name. A signed-in user keeps refreshing on the old
+  registration (named Foreman on the server) until the next sign-in registers a Supraman one. No migration.
+- **Theme**: "Foreman Dark" is now "Supraman Dark"; `themes::canonical` maps the old name a `settings.toml` holds.
+- **Brand files** (`crates/foreman-app/assets/brand`, the kit's paths, `NOTICE.md`): `brand.rs` paints the marks as
+  SVG images sized for their slot (the small set up to 24 px), the text mark by theme (amber only on dark).
+  Only the files the app uses are copied. `brand_kit_copies_match_the_kit` compares sha256 with the kit at `P:\Projects\LarchSys\getsupraman\brand` and
+  skips when it is absent. `supraman.ico` (16/20/24 from the small set, 32–256 from the full icon) and the two tray
+  `.ico`s come from `scripts/icon-gen` (resvg, its own lockfile, not a workspace member); the rc embeds all three,
+  the tray loads resource 2 or 3 by `SystemUsesLightTheme` at the system small-icon size and reloads when it flips.
+- **Workman is one colour everywhere** (René: it fits the terminal shell): `brand::workman(size, color)` paints
+  `small/workman-16-mono.svg` with `svg().data(..)` like `view/icon.rs`, 1 rem square so it scales with the text
+  beside it, in that text's colour: the Inbox entry's status colour, the setup notice's banner colour, the Work tab's
+  text or muted text, the Settings page list's. gpui's `svg` takes its colour from its own style, not the parent's.
+  The tiled `workman.svg`/`workman-16.svg` are not in the app. The UI keeps its fonts and themes: kit colours appear
+  only inside the kit's image files (René, 2026-10-31).
+- **Selftest 7z**: Windows OCR (`Media_Ocr` features of the `windows` crate, no new dependency) of the main window,
+  of it again at rem 24 px, and of every Settings page; it needs "Supraman" (main, About) and "Workman" (its page)
+  and fails on the word Foreman (a path such as `...\Foreman\` is a name on disk and passes). With `FOREMAN_SHOTS`
+  it keeps `ren-1-*.png` and a screen shot of the tray icon (`shot.ps1 -Screen`).
+- **Gotcha**: 150 % here is the window's rem size, not Windows' display scale, which the selftest does not change.
+  A `FOREMAN_SHOTS` run gets a 360 s watchdog (the gate's stays 210 s): its ~60 captures outlast 210 s.

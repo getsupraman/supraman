@@ -40,7 +40,7 @@ pub fn parse_daemon_status(text: &str) -> DaemonReach {
 pub fn elevation_mismatch(elevated: bool, reach: &DaemonReach) -> Option<String> {
     match reach {
         DaemonReach::Unreachable { pid } if !elevated => Some(format!(
-            "The claude background service (pid {pid}) runs as administrator and Foreman does not, so Windows keeps Foreman's claude sessions from reaching it. Turn on Settings → Run Foreman as administrator, or start Foreman from an elevated shell, or let the service end (close the elevated claude --bg sessions) so the next one starts unelevated; then Retry."
+            "The claude background service (pid {pid}) runs as administrator and Supraman does not, so Windows keeps Supraman's claude sessions from reaching it. Turn on Settings → Run Supraman as administrator, or start Supraman from an elevated shell, or let the service end (close the elevated claude --bg sessions) so the next one starts unelevated; then Retry."
         )),
         _ => None,
     }

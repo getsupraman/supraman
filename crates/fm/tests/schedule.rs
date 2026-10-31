@@ -97,7 +97,7 @@ fn add_saves_a_pending_schedule_through_the_store() {
     let text = add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--secret", "SENTRY_TOKEN", "--max-tokens", "500000", "--overlap", "queue", "--wake"]);
     assert!(text.contains("added schedule fix-bugs to workspace demo"), "{text}");
     assert!(text.contains("status: pending\n"), "{text}");
-    assert!(text.contains("pending: it runs only after Approve in the Foreman window"), "{text}");
+    assert!(text.contains("pending: it runs only after Approve in the Supraman window"), "{text}");
 
     let saved = f.stored("fix-bugs");
     assert_eq!(saved.status, Status::Pending);

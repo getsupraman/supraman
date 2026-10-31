@@ -1,3 +1,4 @@
+mod brand;
 mod clipped;
 mod compose;
 mod dismissed_messages;
@@ -11,6 +12,7 @@ mod schedules;
 mod search;
 mod selftest;
 mod selftest_box;
+mod selftest_brand;
 mod selftest_clipboard;
 mod selftest_closed;
 mod selftest_delete;
@@ -64,6 +66,17 @@ use crate::view::FleetView;
 thread_local! {
     /// Dropped after the event loop, so the icon leaves the notification area with the process.
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
+}
+
+/// The tray icon's screen rect and whether it shows the light-taskbar mark.
+#[cfg(windows)]
+pub(crate) fn tray_state() -> Option<(tray_icon::Rect, bool)> {
+    TRAY.with(|t| t.borrow().as_ref().and_then(|t| Some((t.rect()?, t.light()))))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn tray_state() -> Option<((), bool)> {
+    None
 }
 
 pub static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
@@ -199,7 +212,7 @@ fn main() {
             elevate::Start::Exit => std::process::exit(0),
             elevate::Start::Run { declined } => {
                 if let Some(why) = declined {
-                    log::warn!("Run as administrator is on, but Foreman runs unelevated: {why}");
+                    log::warn!("Run as administrator is on, but Supraman runs unelevated: {why}");
                 }
                 if acquired.is_none() {
                     acquired = Some(instance::acquire(home));
@@ -212,10 +225,10 @@ fn main() {
         Some(Ok(Acquired::Running)) => {
             let home = home.unwrap_or_default();
             if mode == Mode::App {
-                println!("Foreman is already running for {}: asked it to show its window.", home.display());
+                println!("Supraman is already running for {}: asked it to show its window.", home.display());
                 std::process::exit(0);
             }
-            println!("FAIL setup: another Foreman runs on {}", home.display());
+            println!("FAIL setup: another Supraman runs on {}", home.display());
             std::process::exit(1);
         }
         Some(Err(error)) => {
@@ -267,7 +280,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("Foreman")),
+                    title: Some(SharedString::from("Supraman")),
                     appears_transparent: true,
                     traffic_light_position: None,
                 }),
@@ -290,7 +303,12 @@ fn main() {
         let fleet = handle.update(cx, |_, _, cx| cx.entity()).expect("the window just opened");
         cx.observe(&fleet, |fleet, cx| {
             let tip = fleet.read(cx).tray_tooltip();
-            TRAY.with(|t| t.borrow().as_ref().map(|t| t.set_tooltip(&tip)));
+            TRAY.with(|t| {
+                if let Some(t) = t.borrow().as_ref() {
+                    t.set_tooltip(&tip);
+                    t.follow_taskbar();
+                }
+            });
         })
         .detach();
         let window = AnyWindowHandle::from(handle);

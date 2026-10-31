@@ -45,8 +45,8 @@ fn project(client: &Client, workspace: &str) -> Result<ItemRef, Failure> {
     let mut found: Vec<ItemRef> = client.resolve(workspace).map_err(refused)?.matches.into_iter().filter(|m| m.kind == "project").collect();
     match found.len() {
         1 => Ok(found.remove(0)),
-        0 => Err(refused(format!("WorkState has no project '{workspace}'"))),
-        n => Err(refused(format!("'{workspace}' names {n} WorkState projects"))),
+        0 => Err(refused(format!("Workman has no project '{workspace}'"))),
+        n => Err(refused(format!("'{workspace}' names {n} Workman projects"))),
     }
 }
 
@@ -59,7 +59,7 @@ fn board(client: &Client, project: &ItemRef, workspace: &str, run: &str) -> Resu
             return Ok(board);
         }
     }
-    Err(refused(format!("WorkState project '{workspace}' has no run '{run}'")))
+    Err(refused(format!("Workman project '{workspace}' has no run '{run}'")))
 }
 
 /// `10/13 done, 1 in progress, 1 blocked` — the denominator leaves out cancelled and superseded.
@@ -78,7 +78,7 @@ fn render_overview(o: &Overview, project: &ItemRef) -> Result<String, Failure> {
         .projects
         .iter()
         .find(|p| p.item.id == project.id)
-        .ok_or_else(|| refused(format!("WorkState's overview has no project '{}'", project.ref_)))?;
+        .ok_or_else(|| refused(format!("Workman's overview has no project '{}'", project.ref_)))?;
     let mut out = String::new();
     let _ = writeln!(out, "{}  {}  {}  (seq {}, as of {})", p.item.ref_, p.item.title, rollup_text(&p.rollup), o.seq, o.as_of);
     for r in &p.runs {

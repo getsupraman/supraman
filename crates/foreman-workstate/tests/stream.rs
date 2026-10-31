@@ -104,7 +104,7 @@ fn stream_delivers_frames_and_reconnects_after_a_drop_and_a_refusal() {
     assert_eq!(next(&rx), event(1235, "transition"));
     assert_eq!(next(&rx), event(1236, "note"), "data lines join with \\n");
     assert!(matches!(next(&rx), StreamSignal::Lost(r) if r == "the stream closed"), "dropped mid-stream");
-    assert!(matches!(next(&rx), StreamSignal::Lost(r) if r == "WorkState answered HTTP 401"));
+    assert!(matches!(next(&rx), StreamSignal::Lost(r) if r == "Workman answered HTTP 401"));
     assert_eq!(next(&rx), StreamSignal::Connected);
     assert_eq!(next(&rx), event(1240, "claim"));
 

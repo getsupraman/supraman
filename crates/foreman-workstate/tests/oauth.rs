@@ -204,7 +204,7 @@ fn a_refused_refresh_is_sign_in_again_without_retrying() {
     }
     assert_eq!(refreshes(), before, "no endless retry");
     let client = Client::with_source(fake.base(), auth.bearer_for(fake.base()));
-    assert!(client.overview().unwrap_err().to_string().contains("sign in to WorkState"));
+    assert!(client.overview().unwrap_err().to_string().contains("sign in to Workman"));
 
     oauth.fail_refresh(false);
     auth.sign_in(fake.base(), &http_browser()).unwrap();

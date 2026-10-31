@@ -13,7 +13,7 @@ pub const ROLE: &str = "orchestrator";
 const MAX_NAME: usize = 64;
 const LAUNCHED_BY: &str = "foreman/hand";
 /// Quoted for a pwsh '…' string.
-const STALE: &str = "This tab''s WorkState token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
+const STALE: &str = "This tab''s Workman token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
@@ -73,7 +73,7 @@ pub struct Hands {
 pub fn restart_notice(n: usize, to: &str) -> Option<String> {
     (n > 0).then(|| {
         let (tabs, them) = if n == 1 { ("tab", "it") } else { ("tabs", "them") };
-        format!("{n} open claude {tabs} still use another WorkState server: restart {them} to use {to}.")
+        format!("{n} open claude {tabs} still use another Workman server: restart {them} to use {to}.")
     })
 }
 
@@ -137,7 +137,7 @@ impl Hands {
 
     fn save(&self) -> Option<String> {
         let path = Self::path(&self.home);
-        self.minted.save().err().map(|e| format!("Cannot save {} ({e}): a hand token minted here is not revoked if Foreman ends without Quit", path.display()))
+        self.minted.save().err().map(|e| format!("Cannot save {} ({e}): a hand token minted here is not revoked if Supraman ends without Quit", path.display()))
     }
 
     fn bearer(&self) -> Result<Option<(String, String)>, String> {
@@ -163,7 +163,7 @@ impl Hands {
         let (url, bearer) = match self.bearer() {
             Ok(Some(b)) => b,
             Ok(None) => return Launch::Plain,
-            Err(e) => return Launch::Unminted(format!("This claude session runs without its own WorkState token: {e}")),
+            Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: {e}")),
         };
         let new_session = claude_session.is_none().then(foreman_claude::new_session_id);
         let claude_session = claude_session
@@ -187,13 +187,13 @@ impl Hands {
         let mut notice = None;
         // `replace` would take the token of another tab's session of that name
         if self.sessions.values().any(|s| *s == request.name) {
-            notice = Some(format!("WorkState session {name}, not {}: another tab holds that name", request.name));
+            notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
         }
         let minted = match self.minter.mint(&base, &bearer, &request) {
             // `replace` covers a live token, so a 409 is another launcher's name (doc 14 §2)
             Err(MintError::Refused { status: 409, reason }) if request.name != name => {
-                notice = Some(format!("WorkState session {name}, not {}: {reason}", request.name));
+                notice = Some(format!("Workman session {name}, not {}: {reason}", request.name));
                 request.name = name.clone();
                 self.minter.mint(&base, &bearer, &request)
             }
@@ -201,7 +201,7 @@ impl Hands {
         };
         let minted = match minted {
             Ok(m) => m,
-            Err(e) => return Launch::Unminted(format!("This claude session runs without its own WorkState token: cannot mint an {ROLE} one ({e})")),
+            Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")),
         };
         self.minted.insert(
             &name,
@@ -222,7 +222,7 @@ impl Hands {
             Err(e) => {
                 let revoked = self.release(&name);
                 Launch::Unminted(format!(
-                    "This claude session runs without its own WorkState token: cannot write its mcp config ({e}){}",
+                    "This claude session runs without its own Workman token: cannot write its mcp config ({e}){}",
                     revoked.map(|r| format!("; {r}")).unwrap_or_default()
                 ))
             }
@@ -252,12 +252,12 @@ impl Hands {
         let result = match bearer {
             Ok(Some(_)) if other.is_some() => Ok(()),
             Ok(Some((url, token))) => self.minter.revoke(&api_base(&url), &token, &m.session_id).map_err(|e| e.to_string()),
-            Ok(None) => Err("not signed in to WorkState any more".into()),
+            Ok(None) => Err("not signed in to Workman any more".into()),
             Err(e) => Err(e),
         };
         let revoke = result
             .err()
-            .map(|e| format!("Cannot revoke the WorkState token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id));
+            .map(|e| format!("Cannot revoke the Workman token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id));
         match (revoke, self.save()) {
             (Some(r), Some(s)) => Some(format!("{r}; {s}")),
             (r, s) => r.or(s),
@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);
         assert_eq!(
             restart_notice(1, &b).as_deref(),
-            Some(format!("1 open claude tab still use another WorkState server: restart it to use {b}.").as_str())
+            Some(format!("1 open claude tab still use another Workman server: restart it to use {b}.").as_str())
         );
         assert_eq!(restart_notice(0, &b), None);
 
@@ -670,7 +670,7 @@ mod tests {
         oauth.fail_refresh(true);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
-        assert!(notice.contains("sign in to WorkState") && notice.contains("again"), "{notice}");
+        assert!(notice.contains("sign in to Workman") && notice.contains("again"), "{notice}");
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no mint");
     }
 
@@ -684,7 +684,7 @@ mod tests {
         assert_eq!(
             launch,
             Launch::Unminted(
-                "This claude session runs without its own WorkState token: cannot mint an orchestrator one (WorkState answered HTTP 409: name held by another launcher)".into()
+                "This claude session runs without its own Workman token: cannot mint an orchestrator one (Workman answered HTTP 409: name held by another launcher)".into()
             )
         );
         assert_eq!(launch.script(), "claude");
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!((name.as_str(), session.as_str(), notice), ("hand-alpha-1", "mw-workflow", None));
         assert_eq!(new_session, None, "a resume starts no new session");
         assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid));
-        assert!(config.ends_with("workstate-hand-alpha-1.json"), "the file keeps Foreman's key: {config:?}");
+        assert!(config.ends_with("workstate-hand-alpha-1.json"), "the file keeps Supraman's key: {config:?}");
         let (_, bearer, body) = seen.recv_timeout(WAIT).unwrap();
         assert!(oauth(&bearer));
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -747,7 +747,7 @@ mod tests {
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
         assert_eq!((name.as_str(), session.as_str()), ("hand-alpha-1", "hand-alpha-1"));
-        assert!(notice.unwrap().starts_with("WorkState session hand-alpha-1, not nomos-0c: "));
+        assert!(notice.unwrap().starts_with("Workman session hand-alpha-1, not nomos-0c: "));
         let names: Vec<String> = (0..2)
             .map(|_| serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["name"].as_str().unwrap().to_string())
             .collect();
@@ -761,7 +761,7 @@ mod tests {
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow")) else { panic!() };
-        assert!(notice.contains("cannot mint an orchestrator one (WorkState answered HTTP 403"), "{notice}");
+        assert!(notice.contains("cannot mint an orchestrator one (Workman answered HTTP 403"), "{notice}");
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body["role"].as_str(), Some("orchestrator"));
         assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no second mint");
@@ -816,7 +816,7 @@ mod tests {
         let out = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
         let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();
         assert_eq!(runs, [format!("[--mcp-config {}]", config.display()), "[]".to_string()]);
-        assert!(String::from_utf8_lossy(&out.stdout).contains("WorkState token was revoked"), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Workman token was revoked"), "{out:?}");
         assert!(!config.exists());
     }
 }

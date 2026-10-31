@@ -20,7 +20,7 @@ pub struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
 impl Dismissed {
     pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
         let Some(home) = home else { return (Self::default(), None) };
-        let (dismissed, notice) = load_json_or_notice(&home.join(DISMISSED_FILE), "every WorkState inbox row shows");
+        let (dismissed, notice) = load_json_or_notice(&home.join(DISMISSED_FILE), "every Workman inbox row shows");
         (Dismissed(dismissed), notice)
     }
 
