@@ -60,7 +60,7 @@ pub const LOG_CAP: u64 = 1024 * 1024;
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Warn
-            || (metadata.level() <= log::Level::Info && (metadata.target().starts_with("gpui") || metadata.target().starts_with("foreman")))
+            || (metadata.level() <= log::Level::Info && ["gpui", "foreman", "supraman"].iter().any(|t| metadata.target().starts_with(t)))
     }
 
     fn log(&self, record: &log::Record) {
@@ -284,6 +284,15 @@ pub fn percentile(sorted: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::is_vsync_race;
+
+    #[test]
+    fn the_app_binarys_info_lines_are_kept() {
+        use log::Log;
+        let logger = super::Logger { file: None, write: std::sync::Mutex::new(()) };
+        let info = |target: &str| logger.enabled(&log::Metadata::builder().level(log::Level::Info).target(target).build());
+        assert!(info("supraman") && info("supraman::selftest") && info("foreman_core::home") && info("gpui_windows"));
+        assert!(!info("ureq::unit"));
+    }
 
     #[test]
     fn only_the_vsync_race_line_is_silenced() {

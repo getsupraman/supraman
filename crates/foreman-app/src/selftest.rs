@@ -153,7 +153,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     install_guards(mode);
 
     // Still single-threaded apart from the watchdog, which never reads the environment.
-    unsafe { std::env::set_var("FOREMAN_HOME", &home) };
+    unsafe { std::env::set_var(foreman_core::HOME_VAR, &home) };
     std::fs::create_dir_all(&cwd)?;
     let main = find_main_repo(cargo_root())?;
     let workspace_root = main
@@ -173,7 +173,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let count = repos.len();
     let saved = registry.save(&Workspace::new(WORKSPACE, workspace_root, repos), true)?;
     println!(
-        "step 1: FOREMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} repos, read-only scan) registered at {}",
+        "step 1: SUPRAMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} repos, read-only scan) registered at {}",
         home.display(),
         workspace_root.display(),
         saved.display()

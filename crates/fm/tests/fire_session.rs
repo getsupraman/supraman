@@ -314,7 +314,7 @@ fn fm_report(home: &Path, args: &[&str]) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(["schedule", "report"])
         .args(args)
-        .env("FOREMAN_HOME", home)
+        .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
         .env_remove("FOREMAN_WORKSPACE")
         .output()

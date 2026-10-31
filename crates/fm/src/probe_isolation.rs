@@ -51,7 +51,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, repo: Option<PathBuf>, hex: &str) -
         None => main_checkout(&linked)?,
     };
     println!("main checkout {} | this build's checkout {}", main.display(), linked.display());
-    let plugin = linked.join("plugins").join("foreman");
+    let plugin = linked.join("plugins").join("supraman");
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     foreman_core::install_hook_exe(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
     let home = mkdir(&linked.join("target").join(format!("aw-m2-probe-{hex}")), "home")?;
@@ -59,7 +59,7 @@ fn probe(claude: &Claude, fleet: &mut Fleet, repo: Option<PathBuf>, hex: &str) -
     let spec = |label: &str, repo: &Path, settings: serde_json::Value| -> Result<LaunchSpec, String> {
         let cwd = mkdir(&repo.join("target").join(format!("aw-m2-probe-{hex}")), &format!("iso-{label}"))?;
         let mut settings = settings;
-        settings["env"] = serde_json::json!({ "FOREMAN_HOME": home.display().to_string() });
+        settings["env"] = serde_json::json!({ "SUPRAMAN_HOME": home.display().to_string() });
         let mut spec = LaunchSpec::new(format!("aw-m2-probe-{hex}-iso-{label}"), cwd, prompt(label));
         spec.strict_mcp_config = true;
         spec.plugin_dirs = vec![plugin.clone()];

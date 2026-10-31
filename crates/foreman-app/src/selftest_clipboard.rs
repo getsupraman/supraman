@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 use gpui::{AsyncWindowContext, ClipboardItem};
 
 const HELD_WITHIN: Duration = Duration::from_secs(60);
-const MUTEX: &str = r"Local\Foreman-selftest-clipboard";
-const MACHINE: &str = r"Local\Foreman-selftest";
+/// The Foreman names too: a selftest of an older build shares the machine and the clipboard.
+const MUTEX: &[&str] = &[r"Local\Supraman-selftest-clipboard", r"Local\Foreman-selftest-clipboard"];
+const MACHINE: &[&str] = &[r"Local\Supraman-selftest", r"Local\Foreman-selftest"];
 const MACHINE_WITHIN: Duration = Duration::from_secs(20 * 60);
 
 /// Held for a whole `--selftest`, `--selftest-supervise` or `--selftest-detach-shutdown`: two runs at once break each other's windows.
 pub(crate) fn hold_machine() -> anyhow::Result<Held> {
-    let pid_file = std::env::temp_dir().join("Foreman-selftest.pid");
+    let pid_file = std::env::temp_dir().join("Supraman-selftest.pid");
     let tell = |pid: Option<u32>, waited: Duration| {
         let pid = pid.map_or_else(|| "unknown".to_string(), |p| p.to_string());
         println!("setup: waiting for another selftest (pid {pid}), {} s so far", waited.as_secs());
@@ -26,13 +27,13 @@ pub(crate) fn hold_machine() -> anyhow::Result<Held> {
 
 /// `None` once `within` ran out; `tell` gets the last holder's pid every `every`.
 fn wait_for(
-    name: &str,
+    names: &[&str],
     pid_file: &std::path::Path,
     within: Duration,
     every: Duration,
     mut tell: impl FnMut(Option<u32>, Duration),
 ) -> anyhow::Result<Option<Held>> {
-    let held = Held::open(name)?;
+    let held = Held::open(names)?;
     let started = Instant::now();
     let mut told: Option<Instant> = None;
     loop {
@@ -52,7 +53,7 @@ fn wait_for(
     }
 }
 
-/// Every `--selftest` on the machine borrows it through the one named mutex; released on drop, on the UI thread that owns it.
+/// Every `--selftest` on the machine borrows it through the named mutexes; released on drop, on the UI thread that owns it.
 pub(crate) async fn borrow(step: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Held> {
     let held = Held::open(MUTEX)?;
     let started = Instant::now();
@@ -137,37 +138,50 @@ mod win {
         }
     }
 
+    /// Named mutexes taken all or none.
     pub(crate) struct Held {
-        mutex: HANDLE,
+        mutexes: Vec<HANDLE>,
         owned: std::cell::Cell<bool>,
     }
 
     impl Held {
-        pub(crate) fn open(name: &str) -> windows::core::Result<Self> {
-            let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
-            let mutex = unsafe { CreateMutexW(None, false, PCWSTR(wide.as_ptr())) }?;
-            Ok(Held { mutex, owned: std::cell::Cell::new(false) })
+        pub(crate) fn open(names: &[&str]) -> windows::core::Result<Self> {
+            let mut held = Held { mutexes: Vec::new(), owned: std::cell::Cell::new(false) };
+            for name in names {
+                let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+                held.mutexes.push(unsafe { CreateMutexW(None, false, PCWSTR(wide.as_ptr())) }?);
+            }
+            Ok(held)
         }
 
         pub(crate) fn try_take(&self) -> windows::core::Result<bool> {
-            match unsafe { WaitForSingleObject(self.mutex, 0) } {
-                WAIT_OBJECT_0 | WAIT_ABANDONED => {
-                    self.owned.set(true);
-                    Ok(true)
+            for (i, mutex) in self.mutexes.iter().enumerate() {
+                let taken = match unsafe { WaitForSingleObject(*mutex, 0) } {
+                    WAIT_OBJECT_0 | WAIT_ABANDONED => true,
+                    WAIT_TIMEOUT => false,
+                    _ => Err(windows::core::Error::from_thread())?,
+                };
+                if !taken {
+                    for earlier in &self.mutexes[..i] {
+                        unsafe { ReleaseMutex(*earlier) }.ok();
+                    }
+                    return Ok(false);
                 }
-                WAIT_TIMEOUT => Ok(false),
-                _ => Err(windows::core::Error::from_thread()),
             }
+            self.owned.set(true);
+            Ok(true)
         }
     }
 
     impl Drop for Held {
         fn drop(&mut self) {
-            unsafe {
-                if self.owned.get() {
-                    ReleaseMutex(self.mutex).ok();
+            for mutex in &self.mutexes {
+                unsafe {
+                    if self.owned.get() {
+                        ReleaseMutex(*mutex).ok();
+                    }
+                    CloseHandle(*mutex).ok();
                 }
-                CloseHandle(self.mutex).ok();
             }
         }
     }
@@ -245,7 +259,7 @@ mod win {
     pub(crate) struct Held;
 
     impl Held {
-        pub(crate) fn open(_name: &str) -> anyhow::Result<Self> {
+        pub(crate) fn open(_names: &[&str]) -> anyhow::Result<Self> {
             Ok(Held)
         }
         pub(crate) fn try_take(&self) -> anyhow::Result<bool> {
@@ -281,9 +295,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_clipboard_is_one_holders_until_dropped() {
-        let name = format!(r"Local\Foreman-selftest-clipboard-test-{}", crate::selftest::hex6());
-        let take = |name: String| std::thread::spawn(move || super::Held::open(&name).unwrap().try_take().unwrap()).join().unwrap();
-        let first = super::Held::open(&name).unwrap();
+        let name = format!(r"Local\Supraman-selftest-clipboard-test-{}", crate::selftest::hex6());
+        let take = |name: String| std::thread::spawn(move || super::Held::open(&[&name]).unwrap().try_take().unwrap()).join().unwrap();
+        let first = super::Held::open(&[&name]).unwrap();
         assert!(first.try_take().unwrap());
         let second = take(name.clone());
         assert!(!second, "a second holder took the clipboard while the first held it");
@@ -294,28 +308,52 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn an_older_build_holding_only_the_foreman_name_keeps_a_new_selftest_out() {
+        let hex = crate::selftest::hex6();
+        let (new, old) = (format!(r"Local\Supraman-selftest-pair-test-{hex}"), format!(r"Local\Foreman-selftest-pair-test-{hex}"));
+        let take_both = |new: String, old: String| {
+            std::thread::spawn(move || {
+                let both = super::Held::open(&[&new, &old]).unwrap();
+                let taken = both.try_take().unwrap();
+                let new_free = std::thread::spawn(move || super::Held::open(&[&new]).unwrap().try_take().unwrap()).join().unwrap();
+                (taken, new_free)
+            })
+            .join()
+            .unwrap()
+        };
+        let older = super::Held::open(&[&old]).unwrap();
+        assert!(older.try_take().unwrap());
+        let (taken, new_free) = take_both(new.clone(), old.clone());
+        assert!(!taken, "took the pair while an older build held its name");
+        assert!(new_free, "a failed take left the Supraman name held");
+        drop(older);
+        assert_eq!(take_both(new, old), (true, false), "the pair is taken once the older build is gone, and held while taken");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn a_selftest_waits_for_the_machine_and_names_the_holder() {
         use std::time::Duration;
         let hex = crate::selftest::hex6();
-        let name = format!(r"Local\Foreman-selftest-machine-test-{hex}");
-        let pid_file = std::env::temp_dir().join(format!("Foreman-selftest-test-{hex}.pid"));
+        let name = format!(r"Local\Supraman-selftest-machine-test-{hex}");
+        let pid_file = std::env::temp_dir().join(format!("Supraman-selftest-test-{hex}.pid"));
         let (taken_tx, taken) = std::sync::mpsc::channel();
         let (release_tx, release) = std::sync::mpsc::channel::<()>();
         let (n, f) = (name.clone(), pid_file.clone());
         let holder = std::thread::spawn(move || {
-            let held = super::wait_for(&n, &f, Duration::from_secs(5), Duration::from_secs(5), |_, _| {}).unwrap();
+            let held = super::wait_for(&[&n], &f, Duration::from_secs(5), Duration::from_secs(5), |_, _| {}).unwrap();
             assert!(held.is_some());
             taken_tx.send(()).unwrap();
             release.recv().unwrap();
         });
         taken.recv().unwrap();
         let mut told = Vec::new();
-        let waited = super::wait_for(&name, &pid_file, Duration::from_millis(600), Duration::from_millis(200), |pid, _| told.push(pid)).unwrap();
+        let waited = super::wait_for(&[&name], &pid_file, Duration::from_millis(600), Duration::from_millis(200), |pid, _| told.push(pid)).unwrap();
         assert!(waited.is_none(), "took the machine while another run held it");
         assert!(told.len() >= 2 && told.iter().all(|p| *p == Some(std::process::id())), "{told:?}");
         release_tx.send(()).unwrap();
         holder.join().unwrap();
-        let after = super::wait_for(&name, &pid_file, Duration::from_secs(2), Duration::from_secs(5), |_, _| {}).unwrap();
+        let after = super::wait_for(&[&name], &pid_file, Duration::from_secs(2), Duration::from_secs(5), |_, _| {}).unwrap();
         assert!(after.is_some(), "the machine stayed held after its holder ended");
         std::fs::remove_file(&pid_file).ok();
     }

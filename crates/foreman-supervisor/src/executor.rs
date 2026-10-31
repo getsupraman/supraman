@@ -62,7 +62,7 @@ pub struct LaunchConfig {
     /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its
+    /// Passed to the session as `SUPRAMAN_HOME` and `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its
     /// name, what `fm tell` signs with) and `FOREMAN_REPO` for a repo session, through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
     pub foreman_home: Option<PathBuf>,
@@ -102,11 +102,13 @@ impl LaunchConfig {
         let mut settings = serde_json::Map::new();
         if let Some(home) = &self.foreman_home {
             let mut env = serde_json::json!({
-                "FOREMAN_HOME": home.display().to_string(),
                 "FOREMAN_ROLE": role,
                 "FOREMAN_WORKSPACE": workspace,
                 "FOREMAN_SESSION": name,
             });
+            for (k, v) in foreman_core::home::home_env(home) {
+                env[k] = v.into();
+            }
             if let Some(repo) = repo {
                 env["FOREMAN_REPO"] = repo.into();
             }
@@ -990,7 +992,7 @@ mod tests {
         desired.started = started;
         let config = LaunchConfig {
             mcp_dir: mcp_dir.into(),
-            plugin_dirs: vec![r"C:\fm\plugins\foreman".into()],
+            plugin_dirs: vec![r"C:\fm\plugins\supraman".into()],
             ..LaunchConfig::default()
         };
         Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens, None))
@@ -1056,7 +1058,7 @@ mod tests {
                 let argv = argv.join(" ");
                 assert!(argv.contains("--strict-mcp-config"), "{argv}");
                 assert!(argv.contains("workstate-fm-demo-workspace.json"), "{argv}");
-                assert!(argv.contains(r"--plugin-dir C:\fm\plugins\foreman"), "{argv}");
+                assert!(argv.contains(r"--plugin-dir C:\fm\plugins\supraman"), "{argv}");
                 assert!(argv.ends_with("-- be the controller"), "{argv}");
                 assert!(!argv.contains(STATIC) && !argv.contains("wss_"), "no token in argv: {argv}");
             }
@@ -1551,7 +1553,7 @@ mod tests {
             settings,
             serde_json::json!({
                 "env": {
-                    "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "workspace", "FOREMAN_WORKSPACE": "demo",
+                    "SUPRAMAN_HOME": r"C:\fm\home", "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "workspace", "FOREMAN_WORKSPACE": "demo",
                     "FOREMAN_SESSION": "fm-demo-workspace",
                 },
                 "worktree": { "bgIsolation": "none" }

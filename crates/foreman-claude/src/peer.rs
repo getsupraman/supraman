@@ -482,14 +482,14 @@ mod tests {
         let key_file = dir.path().join(key_file_name(10, &pipe));
         fs::write(&key_file, r#"{"peerToken":"fixturetoken0001","procStartFt":"1"}"#).unwrap();
         let t = PeerTarget { name: "a".into(), pid: 10, cwd: None, pipe: pipe.clone(), key_file };
-        deliver(&t, &wrap("From the human (via Foreman, workspace w):\nhi")).unwrap();
+        deliver(&t, &wrap("From the human (via Supraman, workspace w):\nhi")).unwrap();
         let text = String::from_utf8(server.join().unwrap()).unwrap();
         let lines: Vec<serde_json::Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(lines.len(), 2, "{text}");
         assert_eq!(lines[0], serde_json::json!({"type": "auth", "token": "fixturetoken0001"}));
         assert_eq!(lines[1]["type"], "user");
         assert!(lines[1].get("from").is_none() && !text.contains("from-mode"), "{text}");
-        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"foreman\">\nFrom the human (via Foreman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(text.ends_with('\n'));
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn the_wire_has_no_from_and_no_mode_and_the_token_never_shows() {
-        let line = user_line(&wrap("From the human (via Foreman, workspace w):\nhi"), "id-1");
+        let line = user_line(&wrap("From the human (via Supraman, workspace w):\nhi"), "id-1");
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["type"], "user");
         assert_eq!(v["priority"], "next");
@@ -514,7 +514,7 @@ mod tests {
         assert!(v.get("from").is_none());
         assert_eq!(v["message"]["role"], "user");
         let content = v["message"]["content"].as_str().unwrap();
-        assert_eq!(content, "<cross-session-message from-name=\"foreman\">\nFrom the human (via Foreman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(content, "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(!line.contains("from-mode") && !line.contains("from=\""), "{line}");
         let token = Token("abc123secret".into());
         assert_eq!(format!("{token:?}"), "Token(<redacted>)");

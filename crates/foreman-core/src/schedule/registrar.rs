@@ -10,7 +10,7 @@ use super::{Schedule, Status, Trigger, next_fire, verify_approval};
 use crate::secret::SecretStore;
 use crate::{CoreError, Result, Workspace};
 
-/// The windowless fire binary (sched/5); it ships next to `fm.exe` and `foreman.exe`.
+/// The windowless fire binary (sched/5); it ships next to `fm.exe` and `supraman.exe`.
 pub const FMW_EXE: &str = "fmw.exe";
 
 /// `fmw.exe` next to the running exe.
@@ -19,20 +19,35 @@ pub fn fmw_exe() -> PathBuf {
     dir.join(FMW_EXE)
 }
 
-/// `\Foreman` for the default home (`%APPDATA%\Foreman`), `\Foreman-<hex8>` for any other.
+/// `\Supraman` for the default home (`%APPDATA%\Supraman`), `\Supraman-<hex8>` for any other.
 pub fn task_root(home: &Path) -> String {
-    task_root_for(home, crate::home_from(None, std::env::var_os("APPDATA")).as_deref())
+    task_root_for(home, crate::home::default_home(std::env::var_os("APPDATA")).as_deref())
 }
 
 pub fn task_root_for(home: &Path, default_home: Option<&Path>) -> String {
-    let key = crate::paths::path_key(home);
-    if default_home.is_some_and(|d| crate::paths::path_key(d) == key) {
-        return r"\Foreman".to_string();
-    }
-    format!(r"\Foreman-{}", &super::approval::hex(&Sha256::digest(key.as_bytes()))[..8])
+    root_named("Supraman", home, &[default_home])
 }
 
-/// Task Scheduler as [`sync`] sees it. Folders are `\`-separated paths from the root, such as `\Foreman\demo`.
+/// Where an older build registered this home's tasks: `\Foreman` for the default home (either name),
+/// `\Foreman-<hex8>` for any other. [`sync`] empties it.
+pub fn legacy_task_root(home: &Path) -> String {
+    let appdata = || std::env::var_os("APPDATA");
+    legacy_task_root_for(home, crate::home::default_home(appdata()).as_deref(), crate::home::legacy_default_home(appdata()).as_deref())
+}
+
+pub fn legacy_task_root_for(home: &Path, default_home: Option<&Path>, legacy_default_home: Option<&Path>) -> String {
+    root_named("Foreman", home, &[default_home, legacy_default_home])
+}
+
+fn root_named(name: &str, home: &Path, defaults: &[Option<&Path>]) -> String {
+    let key = crate::paths::path_key(home);
+    if defaults.iter().flatten().any(|d| crate::paths::path_key(d) == key) {
+        return format!(r"\{name}");
+    }
+    format!(r"\{name}-{}", &super::approval::hex(&Sha256::digest(key.as_bytes()))[..8])
+}
+
+/// Task Scheduler as [`sync`] sees it. Folders are `\`-separated paths from the root, such as `\Supraman\demo`.
 pub trait Registrar {
     /// The SID every task runs as: the current user.
     fn user(&self) -> Result<String>;
@@ -63,18 +78,29 @@ pub struct Synced {
     pub updated: Vec<String>,
     pub removed: Vec<String>,
     pub folder_deleted: bool,
+    /// This home's tasks deleted from [`legacy_task_root`]`\<workspace>`.
+    pub legacy_removed: Vec<String>,
 }
 
 /// Makes `<task_root>\<workspace>` hold one task per schedule whose approval verifies and whose status is
 /// active, and nothing else. A task whose [`definition_digest`] matches stays; a changed definition, run
-/// level included, is registered again. No task outside that folder is read or written.
+/// level included, is registered again. Every task in [`legacy_task_root`]`\<workspace>` is deleted, and that folder
+/// and its root when they are left empty. No other task is read or written.
 pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspace, schedules: &[Schedule]) -> Result<Synced> {
     let root = task_root(target.home);
     let folder = format!(r"{root}\{}", workspace.name);
     let existing: BTreeMap<String, String> = registrar.tasks(&folder)?.into_iter().collect();
     let user = registrar.user()?;
     let now = Local.timestamp_millis_opt(target.now_ms).single().ok_or_else(|| CoreError::Tasks(format!("no local time for {}", target.now_ms)))?;
-    let mut out = Synced { folder: folder.clone(), level: target.level, registered: vec![], updated: vec![], removed: vec![], folder_deleted: false };
+    let mut out = Synced {
+        folder: folder.clone(),
+        level: target.level,
+        registered: vec![],
+        updated: vec![],
+        removed: vec![],
+        folder_deleted: false,
+        legacy_removed: vec![],
+    };
     let mut wanted = BTreeSet::new();
     for s in schedules.iter().filter(|s| s.status == Status::Active) {
         let Ok(covered) = verify_approval(target.store, workspace, s) else { continue };
@@ -107,6 +133,15 @@ pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspac
         if out.folder_deleted {
             registrar.delete_empty_folder(&root)?;
         }
+    }
+    let legacy_root = legacy_task_root(target.home);
+    let legacy = format!(r"{legacy_root}\{}", workspace.name);
+    for (name, _) in registrar.tasks(&legacy)? {
+        registrar.delete(&legacy, &name)?;
+        out.legacy_removed.push(name);
+    }
+    if registrar.delete_empty_folder(&legacy)? {
+        registrar.delete_empty_folder(&legacy_root)?;
     }
     Ok(out)
 }

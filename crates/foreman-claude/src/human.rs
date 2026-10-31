@@ -130,7 +130,7 @@ pub fn wait_for_token(sent_at: &[i64], now: i64) -> Duration {
 
 /// The first line every direct message starts with: the receiver sees a peer's message, this says whose.
 pub fn framed(workspace: &str, body: &str, id: &str) -> String {
-    format!("From the human (via Foreman, workspace {workspace}) [{id}]:\n{body}")
+    format!("From the human (via Supraman, workspace {workspace}) [{id}]:\n{body}")
 }
 
 pub struct Sender<L = System> {
@@ -154,7 +154,7 @@ impl<L: Liveness> Sender<L> {
     pub fn send(&self, home: &Path, workspace: &str, to: &str, mode: Option<&str>, body: &str) -> Result<Sent, SendError> {
         let direct = match mode {
             Some(m) if accepts_unmoded(m) => self.direct(home, workspace, to, body),
-            Some(m) => Err(format!("{to} runs in {m} mode, which holds Foreman's messages")),
+            Some(m) => Err(format!("{to} runs in {m} mode, which holds Supraman's messages")),
             None => Err(format!("{to}'s launch mode is not known")),
         };
         let reason = match direct {
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn every_direct_message_has_its_own_id_in_the_first_line() {
-        assert_eq!(framed("demo", "approve", "m-0123abcd"), "From the human (via Foreman, workspace demo) [m-0123abcd]:\napprove");
+        assert_eq!(framed("demo", "approve", "m-0123abcd"), "From the human (via Supraman, workspace demo) [m-0123abcd]:\napprove");
         let (a, b) = (new_id(), new_id());
         assert_ne!(a, b);
         assert!(a.starts_with("m-") && a.len() == 10 && a[2..].chars().all(|c| c.is_ascii_hexdigit()), "{a}");
@@ -246,7 +246,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let sender = Sender { sessions: None, live: NoneAlive, max_wait: Duration::ZERO, no_relay: None };
         let held = sender.send(home.path(), "demo", "fm-demo-x", Some("bypassPermissions"), "hi").unwrap();
-        assert!(matches!(&held.route, Route::Relay { reason, .. } if reason == "fm-demo-x runs in bypassPermissions mode, which holds Foreman's messages"), "{held:?}");
+        assert!(matches!(&held.route, Route::Relay { reason, .. } if reason == "fm-demo-x runs in bypassPermissions mode, which holds Supraman's messages"), "{held:?}");
         let unknown = sender.send(home.path(), "demo", "fm-demo-x", None, "hi").unwrap();
         assert!(matches!(&unknown.route, Route::Relay { reason, .. } if reason == "fm-demo-x's launch mode is not known"), "{unknown:?}");
         assert_eq!(unknown.id, None);

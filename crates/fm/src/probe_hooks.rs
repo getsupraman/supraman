@@ -85,7 +85,7 @@ impl Setup {
 
     fn spec(&self, name: String, cwd: &Path, prompt: &str, extra_env: &[(&str, &str)]) -> LaunchSpec {
         let mut env = serde_json::Map::new();
-        env.insert("FOREMAN_HOME".into(), self.home.display().to_string().into());
+        env.insert(foreman_core::HOME_VAR.into(), self.home.display().to_string().into());
         env.insert("FOREMAN_ROLE".into(), ROLE.into());
         for (k, v) in extra_env {
             env.insert((*k).into(), (*v).into());
@@ -100,7 +100,7 @@ impl Setup {
 }
 
 fn probe(claude: &Claude, fleet: &mut Fleet, root: &Path, hex: &str) -> Result<bool, String> {
-    let plugin = cargo_root().join("plugins").join("foreman");
+    let plugin = cargo_root().join("plugins").join("supraman");
     let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
     let (_, copied) = foreman_core::install_hook_exe(&plugin, &exe).map_err(|e| format!("plugin install: {e}"))?;
     println!("plugin {} (fm.exe {})", plugin.display(), if copied { "installed" } else { "up to date" });

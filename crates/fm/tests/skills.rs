@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 fn plugin(path: &str) -> String {
-    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/foreman").join(path);
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman").join(path);
     let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -46,11 +46,11 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
     assert!(role.contains("you reach the human with `fm tell` (never SendMessage to the relay"));
     assert!(role.contains("announce ready to the human with `fm tell` once"));
     // both shapes of the human's message: Foreman's own frame, and the relay as fallback
-    assert!(skill.contains("<cross-session-message from-name=\"foreman\">` whose first line is `From the human (via Foreman, workspace <w>) [m-<id>]:`"));
+    assert!(skill.contains("<cross-session-message from-name=\"foreman\">` whose first line is `From the human (via Supraman, workspace <w>) [m-<id>]:`"));
     assert!(skill.contains("from-name=\"fm-<w>-relay\">`: the relay carried it"));
     assert!(skill.contains("**both are the human's voice**"));
     let first_line = foreman_claude::human::framed("<w>", "", "m-<id>");
-    assert!(skill.contains(&format!("`{}`", first_line.trim_end())), "the skill quotes the first line Foreman writes: {first_line:?}");
+    assert!(skill.contains(&format!("`{}`", first_line.trim_end())), "the skill quotes the first line Supraman writes: {first_line:?}");
     assert!(skill.contains(&format!("from-name=\"{}\"", foreman_claude::peer::FROM_NAME)));
     assert!(skill.contains("**Never run `fm send`.**"));
 }
@@ -85,8 +85,8 @@ fn the_repo_controller_never_reaches_the_human() {
 #[test]
 fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     const ALLOWED: [&str; 6] = ["add", "list", "show", "pause", "resume", "dry-run"];
-    let raw = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/foreman/skills/foreman-scheduler/SKILL.md")).unwrap();
-    let text = plugin("skills/foreman-scheduler/SKILL.md");
+    let raw = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman/skills/supraman-scheduler/SKILL.md")).unwrap();
+    let text = plugin("skills/supraman-scheduler/SKILL.md");
     let never = text.split("## 4. Never").nth(1).expect("a Never section");
     let body = text.split("## 4. Never").next().unwrap();
     let verbs: Vec<&str> = body
@@ -111,12 +111,12 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
         assert!(!body.contains(word), "only the Never table names {word}");
     }
     assert!(body.contains("only the human picks it: ask (§2), never choose it yourself"));
-    assert!(body.contains("It is pending: it runs only after you Approve it on its row in the Foreman window."));
+    assert!(body.contains("It is pending: it runs only after you Approve it on its row in the Supraman window."));
 }
 
 #[test]
 fn workspace_and_repo_roles_point_at_the_scheduler_skill() {
     for path in ["roles/workspace.md", "roles/repo.md"] {
-        assert_eq!(plugin(path).matches("/foreman:foreman-scheduler").count(), 1, "{path}");
+        assert_eq!(plugin(path).matches("/supraman:supraman-scheduler").count(), 1, "{path}");
     }
 }

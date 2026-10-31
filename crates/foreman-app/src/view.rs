@@ -421,7 +421,7 @@ impl Poller {
         let Some(home) = self.home.clone() else {
             return supervise::Setup {
                 plugin_dir: None,
-                notices: vec!["No Supraman home (set FOREMAN_HOME or APPDATA): nothing can be started.".into()],
+                notices: vec!["No Supraman home (set SUPRAMAN_HOME or APPDATA): nothing can be started.".into()],
             };
         };
         let setup = supervise::setup(&home);

@@ -54,7 +54,6 @@ mod workstate_setup;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use foreman_core::Registry;
 use foreman_ui::text_input;
 use futures::StreamExt as _;
 use gpui::{AnyWindowHandle, App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size};
@@ -98,14 +97,14 @@ impl Mode {
 }
 
 const USAGE: &str =
-    "usage: foreman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
+    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
 
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     if let Some(relaunched) = elevate::parse_relaunch(&args) {
         // SAFETY: no other thread exists yet.
-        unsafe { std::env::set_var("FOREMAN_HOME", &relaunched.home) };
+        unsafe { std::env::set_var(foreman_core::HOME_VAR, &relaunched.home) };
         return (Mode::App, Some(relaunched));
     }
     let mode = match args.as_slice() {
@@ -164,6 +163,19 @@ fn release_own_console() {
 #[cfg(not(windows))]
 fn release_own_console() {}
 
+/// Before any window exists: the one way a refused start reaches someone who double-clicked the exe.
+#[cfg(windows)]
+fn alert(text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
+    use windows::core::HSTRING;
+    unsafe {
+        let _ = MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("Supraman"), MB_OK | MB_ICONWARNING);
+    }
+}
+
+#[cfg(not(windows))]
+fn alert(_text: &str) {}
+
 fn main() {
     foreman_ui::process_start();
     for name in env_scrub(|name| std::env::var(name).ok()) {
@@ -185,19 +197,47 @@ fn main() {
         _ => None,
     };
     let home = match mode {
-        Mode::App => Registry::from_env().ok().map(|r| r.home().to_path_buf()),
+        Mode::App => foreman_core::home_from_env(),
         _ => Some(selftest::home()),
+    };
+    let copied_from = match mode {
+        Mode::App if foreman_core::env_home().is_none() => foreman_core::home::legacy_default_home(std::env::var_os("APPDATA")),
+        _ => None,
+    };
+    // The old instance holds the home until it quits.
+    if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
+        elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
+    }
+    // Before `prepare`, which clears a home a running selftest may use, before any UAC prompt, and before the copy.
+    let mut acquired = home.as_deref().map(|h| instance::acquire(h, copied_from.as_deref()));
+    if let Some(Ok(Acquired::Legacy(at))) = &acquired {
+        let why = format!("Foreman is running on {}. Quit it (tray, Quit) before starting Supraman.", at.display());
+        println!("{why}");
+        if mode == Mode::App {
+            alert(&why);
+            std::process::exit(0);
+        }
+        std::process::exit(1);
+    }
+    let migrated = match mode {
+        Mode::App if !matches!(acquired, Some(Ok(Acquired::Running))) => match foreman_core::home::migrate_default_home() {
+            Ok(migrated) => migrated,
+            Err(error) => {
+                let why = format!("Supraman could not copy your Foreman home to its own folder, and did not start: {error}");
+                println!("{why}");
+                alert(&why);
+                std::process::exit(1);
+            }
+        },
+        _ => None,
     };
     if mode == Mode::App {
         foreman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
         foreman_ui::log_panics();
     }
-    // The old instance holds the home until it quits.
-    if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
-        elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
+    if let Some(m) = migrated {
+        log::info!("copied {} files of {} to {}", m.files, m.from.display(), m.to.display());
     }
-    // Before `prepare`, which clears a home a running selftest may use, and before any UAC prompt.
-    let mut acquired = home.as_deref().map(instance::acquire);
     if let Some(home) = home.as_deref()
         && matches!(acquired, Some(Ok(Acquired::First(_))))
     {
@@ -215,14 +255,14 @@ fn main() {
                     log::warn!("Run as administrator is on, but Supraman runs unelevated: {why}");
                 }
                 if acquired.is_none() {
-                    acquired = Some(instance::acquire(home));
+                    acquired = Some(instance::acquire(home, copied_from.as_deref()));
                 }
             }
         }
     }
     let instance = match acquired {
         Some(Ok(Acquired::First(instance))) => Some(instance),
-        Some(Ok(Acquired::Running)) => {
+        Some(Ok(Acquired::Running | Acquired::Legacy(_))) => {
             let home = home.unwrap_or_default();
             if mode == Mode::App {
                 println!("Supraman is already running for {}: asked it to show its window.", home.display());
@@ -263,7 +303,7 @@ fn main() {
 
     gpui_platform::application().run(move |cx: &mut App| {
         foreman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
-        let home = foreman_core::home_from(std::env::var_os("FOREMAN_HOME"), std::env::var_os("APPDATA"));
+        let home = foreman_core::home_from_env();
         if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
             log::warn!("{problem}");
         }

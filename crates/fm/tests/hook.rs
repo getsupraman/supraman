@@ -14,12 +14,13 @@ fn hook(home: Option<&Path>, role: Option<&str>, args: &[&str], stdin: &str) -> 
 fn hook_env(home: Option<&Path>, role: Option<&str>, env: &[(&str, &str)], args: &[&str], stdin: &str) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_fm"));
     cmd.arg("hook").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    cmd.env_remove("FOREMAN_HOME")
+    cmd.env_remove("SUPRAMAN_HOME")
+        .env_remove("FOREMAN_HOME")
         .env_remove("FOREMAN_ROLE")
         .env_remove("FOREMAN_WORKSPACE")
         .env_remove("FOREMAN_PLATFORM");
     if let Some(home) = home {
-        cmd.env("FOREMAN_HOME", home);
+        cmd.env("SUPRAMAN_HOME", home);
     }
     if let Some(role) = role {
         cmd.env("FOREMAN_ROLE", role);
@@ -100,10 +101,29 @@ fn the_workspace_role_text_names_foreman_workspace_and_nothing_else() {
 }
 
 #[test]
+fn a_session_of_an_older_build_with_only_foreman_home_still_logs_and_gets_its_role() {
+    let (home, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    fs::create_dir_all(home.path().join("roles")).unwrap();
+    fs::write(home.path().join("roles").join("worker.md"), "You are the worker.
+").unwrap();
+    let legacy = [("FOREMAN_HOME", home.path().to_str().unwrap())];
+    let start = hook_env(None, Some("worker"), &legacy, &["SessionStart"], &payload("SessionStart", ""));
+    assert_eq!(String::from_utf8_lossy(&start.stdout), format!("{}
+You are the worker.
+", role_tag("worker", "You are the worker.")));
+    assert_eq!(EventReader::new(home.path()).poll().len(), 1, "logged under FOREMAN_HOME");
+
+    let both = [("FOREMAN_HOME", other.path().to_str().unwrap())];
+    silent_success(&hook_env(Some(home.path()), None, &both, &["Stop"], &payload("Stop", "")));
+    assert_eq!(EventReader::new(home.path()).poll().len(), 2, "SUPRAMAN_HOME wins");
+    assert!(fs::read_dir(other.path()).unwrap().next().is_none(), "nothing under the losing FOREMAN_HOME");
+}
+
+#[test]
 fn never_fails_and_stays_silent_on_bad_input() {
     let home = tempfile::tempdir().unwrap();
     let h = Some(home.path());
-    // no FOREMAN_HOME
+    // no home
     silent_success(&hook(None, Some("worker"), &["SessionStart"], &payload("SessionStart", "")));
     // no role file, no role name
     silent_success(&hook(h, Some("worker"), &["SessionStart"], &payload("SessionStart", "")));
@@ -114,7 +134,7 @@ fn never_fails_and_stays_silent_on_bad_input() {
     silent_success(&hook(h, None, &["Stop"], r#"{"session_id":"..\\..\\evil"}"#));
     silent_success(&hook(h, None, &[], &payload("Stop", "")));
     silent_success(&hook(h, None, &["Stop", "extra"], &payload("Stop", "")));
-    // FOREMAN_HOME pointing at a file: cannot write, still exit 0
+    // the home a file: cannot write, still exit 0
     let file = home.path().join("not-a-dir");
     fs::write(&file, "x").unwrap();
     silent_success(&hook(Some(&file), None, &["Stop"], &payload("Stop", "")));

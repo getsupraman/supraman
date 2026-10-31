@@ -66,14 +66,23 @@ fn the_digest_ignores_the_start_date_and_follows_everything_else() {
 }
 
 #[test]
-fn the_default_home_has_the_foreman_folder_and_any_other_home_its_own() {
-    let default = Path::new(r"C:\Users\rene\AppData\Roaming\Foreman");
-    assert_eq!(task_root_for(default, Some(default)), r"\Foreman");
-    assert_eq!(task_root_for(Path::new(r"c:/users/rene/appdata/roaming/foreman/"), Some(default)), r"\Foreman", "compared by path_key");
+fn the_default_home_has_the_supraman_folder_and_any_other_home_its_own() {
+    let default = Path::new(r"C:\Users\rene\AppData\Roaming\Supraman");
+    assert_eq!(task_root_for(default, Some(default)), r"\Supraman");
+    assert_eq!(task_root_for(Path::new(r"c:/users/rene/appdata/roaming/supraman/"), Some(default)), r"\Supraman", "compared by path_key");
     let dev = task_root_for(Path::new(r"D:\dev-home"), Some(default));
-    assert!(dev.starts_with(r"\Foreman-") && dev.len() == r"\Foreman-".len() + 8, "{dev}");
+    assert!(dev.starts_with(r"\Supraman-") && dev.len() == r"\Supraman-".len() + 8, "{dev}");
     assert_eq!(dev, task_root_for(Path::new(r"D:\dev-home"), None));
     assert_ne!(dev, task_root_for(Path::new(r"D:\other-home"), Some(default)));
+}
+
+#[test]
+fn the_legacy_folder_is_the_one_an_older_build_gave_the_same_home() {
+    let (default, legacy) = (Path::new(r"C:\Users\rene\AppData\Roaming\Supraman"), Path::new(r"C:\Users\rene\AppData\Roaming\Foreman"));
+    assert_eq!(legacy_task_root_for(default, Some(default), Some(legacy)), r"\Foreman", "the default home was copied from the Foreman one");
+    assert_eq!(legacy_task_root_for(legacy, Some(default), Some(legacy)), r"\Foreman", "FOREMAN_HOME at the old default");
+    let dev = legacy_task_root_for(Path::new(r"D:\dev-home"), Some(default), Some(legacy));
+    assert_eq!(dev, task_root_for(Path::new(r"D:\dev-home"), Some(default)).replace(r"\Supraman-", r"\Foreman-"), "the same hash under the old name");
 }
 
 fn target<'a>(f: &'a Fixture, store: &'a MemoryStore, level: RunLevel) -> SyncTarget<'a> {
@@ -121,6 +130,39 @@ fn sync_writes_only_its_own_folder_and_leaves_every_other_task_alone() {
     assert!(fake.has_folder(&root), "the root still holds another workspace's folder");
     let writes = fake.writes();
     assert!(writes.iter().all(|w| w.ends_with(&format!(r"{mine}\{ID}")) || w == &format!("rmdir {mine}")), "{writes:?}");
+}
+
+#[test]
+fn sync_moves_this_homes_tasks_out_of_the_foreman_folder() {
+    let f = fixture();
+    let store = MemoryStore::default();
+    approved(&f, &store);
+    let (legacy_root, root) = (legacy_task_root(&f.home), task_root(&f.home));
+    assert!(legacy_root.starts_with(r"\Foreman-"), "{legacy_root}");
+    let legacy = format!(r"{legacy_root}\demo");
+    let fake = FakeRegistrar::default();
+    fake.plant(&legacy, ID, "<Task>registered by Foreman</Task>");
+    fake.plant(&legacy, "retired", "<Task>registered by Foreman</Task>");
+    fake.plant(&format!(r"{legacy_root}\gaia"), "nightly", "<Task>another workspace's</Task>");
+    fake.plant(r"\Foreman\demo", ID, "<Task>the default home's</Task>");
+
+    let done = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    assert_eq!(done.registered, [ID]);
+    assert_eq!(done.legacy_removed, [ID, "retired"]);
+    assert!(fake.xml(&format!(r"{root}\demo\{ID}")).is_some());
+    assert!(!fake.has_folder(&legacy), "the emptied folder is deleted");
+    assert!(fake.has_folder(&legacy_root), "the root still holds gaia's folder");
+    assert_eq!(fake.xml(&format!(r"{legacy_root}\gaia\nightly")).as_deref(), Some("<Task>another workspace's</Task>"));
+    assert_eq!(fake.xml(&format!(r"\Foreman\demo\{ID}")).as_deref(), Some("<Task>the default home's</Task>"), "another home's tasks stay");
+    let writes = fake.writes();
+    assert_eq!(writes[0], format!(r"register {root}\demo\{ID}"), "the new task is in place before the old one goes: {writes:?}");
+
+    let again = sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    assert!(again.legacy_removed.is_empty() && again.registered.is_empty());
+
+    fake.delete(&format!(r"{legacy_root}\gaia"), "nightly").unwrap();
+    sync(&fake, &target(&f, &store, RunLevel::LeastPrivilege), &f.ws, &load(&f.home, "demo").unwrap()).unwrap();
+    assert!(fake.has_folder(&format!(r"{legacy_root}\gaia")), "a folder of another workspace is not this sync's");
 }
 
 #[test]

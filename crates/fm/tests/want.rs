@@ -7,7 +7,7 @@ use foreman_supervisor::DesiredState;
 fn fm(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(args)
-        .env("FOREMAN_HOME", home)
+        .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
         .output()
         .unwrap()
@@ -47,7 +47,7 @@ fn want_adds_a_repo_session_once_and_unwant_retires_it() {
     assert_eq!((w.name.as_str(), w.role.as_str(), w.repo.as_deref()), ("fm-demo-nomos-pdf", "repo", Some("Nomos.Pdf")));
     assert_eq!(w.cwd, ws.path().join("demo").join("Nomos.Pdf"));
     assert_eq!(w.permission_mode, "auto");
-    assert!(w.prompt.starts_with("You are the repo controller for Nomos.Pdf in the Foreman workspace demo"), "{}", w.prompt);
+    assert!(w.prompt.starts_with("You are the repo controller for Nomos.Pdf in the Supraman workspace demo"), "{}", w.prompt);
     assert!(w.prompt.ends_with("First task:\nImplement unit 3."), "{}", w.prompt);
     assert!(!w.prompt.contains('{'), "{}", w.prompt);
 

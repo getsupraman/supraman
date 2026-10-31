@@ -9,7 +9,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 
 | Crate | Owns | Depends on |
 |---|---|---|
-| `crates/foreman-app` | The `foreman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
+| `crates/foreman-app` | The `supraman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
 | `crates/fm` | The `fm` CLI (`lib.rs`, shared by `fm.exe` and the console-less `fmw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop, revoke). | claude, core, supervisor, workstate |
 | `crates/foreman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workstate |
 | `crates/foreman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
@@ -23,7 +23,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 - Only `foreman-workstate` talks HTTP to WorkState (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Supraman writes WorkState items; the MCP tools are the agents' write path (C21).
 - `foreman-supervisor` takes a snapshot and returns actions; it never polls, never paints, and is ticked by the app.
 - `foreman-core` and `foreman-term` have no Supraman crate dependencies; `foreman-ui` has no `claude` or WorkState knowledge.
-- `plugins/foreman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Supraman launches — `plugins/foreman/hooks/hooks.json` (exec-form `fm.exe hook <event>`), `plugins/foreman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/foreman/README.md`.
+- `plugins/supraman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Supraman launches — `plugins/supraman/hooks/hooks.json` (exec-form `fm.exe hook <event>`), `plugins/supraman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/supraman/README.md`.
 - `spikes/term-spike` is not product: the m0/5 terminal spike, kept building against `foreman-term` and `foreman-ui`. Nothing depends on it.
 - `probes/` holds the m0 measurement scripts; `scripts/` holds `scripts/release.ps1`, `scripts/shot.ps1` and `scripts/icon-gen/`.
 
@@ -182,8 +182,8 @@ Change these only deliberately, with the owner's say and a LEARNINGS entry.
 
 - **cargo:** `cargo test --workspace`. Unit tests sit beside the code; integration tests in each crate's `tests/`. Fakes: `FakeWorkState` (`crates/foreman-workstate/src/fake.rs`), a fake claude (`crates/foreman-claude/tests/fake_claude.rs`), `MemoryStore` for secrets.
 - **Selftests** drive the real app on a home under `target/` (`crates/foreman-app/src/main.rs` `parse_args`, `crates/foreman-app/src/selftest.rs` `start`):
-  - `foreman.exe --selftest` — the gate's UI run (`selftest.rs` `gate`, steps in `selftest_*.rs`), clicking through `HitTargets`.
+  - `supraman.exe --selftest` — the gate's UI run (`selftest.rs` `gate`, steps in `selftest_*.rs`), clicking through `HitTargets`.
   - `--selftest-supervise` — the supervisor against real `claude --bg` sessions (`crates/foreman-app/src/selftest_supervise.rs`).
   - `--selftest-detach-shutdown` — attach tabs detach on quit (`detach_on_shutdown`); `--selftest-detach <n>` and `--selftest-perf` are measurement runs.
-- **The clipboard mutex:** `crates/foreman-app/src/selftest_clipboard.rs` holds the named mutex `Local\Foreman-selftest-clipboard` while a selftest uses the clipboard, so parallel selftests on one machine do not clobber each other.
+- **The clipboard mutex:** `crates/foreman-app/src/selftest_clipboard.rs` holds the named mutexes `Local\Supraman-selftest-clipboard` and `Local\Foreman-selftest-clipboard` (an older build's) while a selftest uses the clipboard, so parallel selftests on one machine do not clobber each other.
 - **The gate**, run before every merge: `cargo build --release --workspace`, `cargo test --workspace`, `--selftest`, `--selftest-supervise`, `--selftest-detach-shutdown`, and 0 leftover `fm-selftest` sessions afterwards (`claude agents --json --all`).

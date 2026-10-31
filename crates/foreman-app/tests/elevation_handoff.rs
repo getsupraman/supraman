@@ -20,11 +20,11 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
         eprintln!("skipped: needs an elevated test process");
         return;
     }
-    let exe = env!("CARGO_BIN_EXE_foreman");
+    let exe = env!("CARGO_BIN_EXE_supraman");
     let home = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let mut first = Command::new(exe)
-        .env("FOREMAN_HOME", home.path())
+        .env("SUPRAMAN_HOME", home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -41,7 +41,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
     std::fs::write(
         &script,
         format!(
-            "@set FOREMAN_HOME={}\r\n@\"{exe}\" > \"{out}\" 2>&1\r\n@echo exit %errorlevel% >> \"{out}\"\r\n",
+            "@set SUPRAMAN_HOME={}\r\n@\"{exe}\" > \"{out}\" 2>&1\r\n@echo exit %errorlevel% >> \"{out}\"\r\n",
             home.path().display(),
             out = out.display()
         ),

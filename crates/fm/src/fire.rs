@@ -645,7 +645,7 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
     for pwsh in [true, false] {
         let mut cmd = script_command(env.folder, script, &s.action.script_args, pwsh);
         cmd.current_dir(env.folder)
-            .env("FOREMAN_HOME", env.home)
+            .envs(foreman_core::home::home_env(env.home))
             .env("FOREMAN_WORKSPACE", env.workspace)
             .env("FOREMAN_SCHEDULE", env.id)
             .env("FOREMAN_RUN", env.run)

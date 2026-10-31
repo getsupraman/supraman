@@ -217,7 +217,7 @@ pub fn clear_ready(home: &Path, workspace: &str) -> Result<()> {
 }
 
 /// What a workspace session's message asks of the human, by its first word (the skills' formats:
-/// `plugins/foreman/skills/workspace-controller/SKILL.md`).
+/// `plugins/supraman/skills/workspace-controller/SKILL.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ask {
     /// `APPROVE? …`: a plan waiting for the human's approval.

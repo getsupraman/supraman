@@ -6,5 +6,5 @@ target-bin/
 spikes/term-spike/commit-msg.txt
 crates/fm/commit-msg.txt
 crates/foreman-supervisor/commit-msg.txt
-plugins/foreman/bin/
+plugins/supraman/bin/
 crates/foreman-app/commit-msg.txt

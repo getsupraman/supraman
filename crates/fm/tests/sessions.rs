@@ -3,7 +3,7 @@ use std::process::Command;
 fn fm(home: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(args)
-        .env("FOREMAN_HOME", home)
+        .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
         .output()
         .unwrap()

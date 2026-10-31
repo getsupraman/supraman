@@ -1,6 +1,6 @@
 ---
 name: repo-controller
-description: Be the repo-controller of one repo in a Foreman workspace — the session `fm-<w>-<repo-slug>` that Foreman starts when the workspace controller runs `fm want`. Runs the WorkState run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Foreman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /foreman:workspace-controller), a repo session Foreman did not start, or doing the units yourself.
+description: Be the repo-controller of one repo in a Supraman workspace — the session `fm-<w>-<repo-slug>` that Supraman starts when the workspace controller runs `fm want`. Runs the WorkState run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Supraman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /supraman:workspace-controller), a repo session Supraman did not start, or doing the units yourself.
 ---
 
 # Repo controller
@@ -8,7 +8,7 @@ description: Be the repo-controller of one repo in a Foreman workspace — the s
 You own one repo for the run you are handed. **Run it with `/rlarch:controller`, verbatim** — that skill
 is the discipline (sequencing, briefs, verification, landing, the record) and `/rlarch:nested-claude` the
 mechanics; this skill does not restate them. It says only what is different because you sit inside
-Foreman: who handed you the work, who you answer to, and what you never do.
+Supraman: who handed you the work, who you answer to, and what you never do.
 
 `<w>` is your workspace, `<repo>` your repo, `<slug>` its slug; your role text names them, and your
 session is `fm-<w>-<slug>`. Your workspace controller is **`fm-<w>-workspace`**. `fm roster <w>` (Bash
@@ -29,7 +29,7 @@ ends `done: waiting on <who> for <what>` (`done: waiting on fm-<w>-workspace for
 BLOCKED in the `done:` line, which Claude Code reads as blocked; the `BLOCKED` message itself goes by
 `SendMessage` as §3 says. Nobody reads your reply text otherwise, and Claude Code reads the turn's end: one that asks something
 leaves your row `state=blocked` ("needs input"), one that reads as waiting leaves `state=working` —
-Foreman cannot tell either from a parked or a busy session. Every question goes
+Supraman cannot tell either from a parked or a busy session. Every question goes
 by `SendMessage` to `fm-<w>-workspace` (§3).
 
 ## 2. Run it — `/rlarch:controller` on your run
@@ -40,14 +40,14 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
    parse was). Only a failed Skill call is a blocker →
    `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (the rlarch plugin is not
    installed for this user)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the same, naming
-   WorkState (Foreman is not signed in to it).
+   WorkState (Supraman is not signed in to it).
 2. **The run and its units already exist**: the workspace controller made them, and the human approved
    them. Skip the controller skill's §1 creation and its "one approval" step — **your first task is the
    authorization**; do not ask again. You may split a unit, add a `followup`, add a unit's own binding
    rules, and order units inside your run with `blocks`; a cross-run link, a new unit outside the approved
    scope, or a changed criterion is the workspace controller's (§3).
 3. **Nested agents, one at a time**, launched with the nested-claude skill's `agent_launch` tool:
-   - `name: "fm-<w>-<slug>-<unit>"` (unit = the unit ref made a slug: `2.3` → `2-3`), so Foreman shows it
+   - `name: "fm-<w>-<slug>-<unit>"` (unit = the unit ref made a slug: `2.3` → `2-3`), so Supraman shows it
      under your workspace;
    - `repo_root` = the absolute path of `../<repo>.worktrees/<unit>`, a worktree **you** create next to
      the repo (`git worktree add ../<repo>.worktrees/<unit> -b <branch>`), never inside it;
@@ -108,14 +108,14 @@ Gate on <branch>: <cmd> → <result line>
 Pushed: no
 ```
 
-Then end your turn and wait for more work: a new run ref by message is a new task (§2). Foreman stops you
+Then end your turn and wait for more work: a new run ref by message is a new task (§2). Supraman stops you
 when you are no longer wanted; you never stop yourself.
 
 ## 5. After a compaction or a resume
 
 Your role text arrives again: invoke this skill again, `work_brief(scope: "<run ref>")` for the run you
 own (`work_search(q: "<repo slug>")` if the summary lost the ref), and continue from its NEXT line —
-`/rlarch:nested-claude` §8 for nested agents that were running. A resume with no message is Foreman
+`/rlarch:nested-claude` §8 for nested agents that were running. A resume with no message is Supraman
 bringing you back: continue the run if it is open, else wait.
 
 ## 6. Never

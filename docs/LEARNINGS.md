@@ -5078,3 +5078,42 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   it keeps `ren-1-*.png` and a screen shot of the tray icon (`shot.ps1 -Screen`).
 - **Gotcha**: 150 % here is the window's rem size, not Windows' display scale, which the selftest does not change.
   A `FOREMAN_SHOTS` run gets a 360 s watchdog (the gate's stays 210 s): its ~60 captures outlast 210 s.
+
+## 2026-10-31 — ren/2 Supraman on disk, with migrations
+
+- **Names on disk**: the app is `supraman.exe` (bin `supraman`; `CARGO_BIN_EXE_supraman`), the release folder
+  `Supraman\` and `Supraman-<version>.zip`, the install `C:\Tools\supraman`, the plugin `plugins/supraman` (manifest
+  name `supraman`, so `/supraman:workspace-controller`, `/supraman:repo-controller`, `/supraman:supraman-scheduler`).
+  The crates, `fm`/`fmw`, `fm-`, `FOREMAN-ROLE`, `foreman.log` and peer `from-name="foreman"` stay.
+- **Home** (`foreman_core::home`): `SUPRAMAN_HOME`, else `FOREMAN_HOME`, else `%APPDATA%\Supraman`. With neither var
+  set, the app's start copies `%APPDATA%\Foreman` whole into `%APPDATA%\Supraman.migrating` and renames it to
+  `%APPDATA%\Supraman`, so the new home appears whole or not at all; the old one is only read. A lock in `%TEMP%`
+  (`supraman-migrate-<hash>.lock`, never in `%APPDATA%` or the old home) plus a re-check under it make concurrent
+  starts copy once. `*.tmp` is skipped; a `*.lock` arrives empty (its holder's byte-range lock may refuse the read).
+  `migrated-from.toml` records the source; `migration-notice.txt` is the one-time notice the app's setup notices take.
+  Until the copy exists, `Registry::from_env` returns `NotMigrated`, so `fm` never starts an empty home beside the
+  old one. The copy runs after the single-instance lock and before the logger (which would create `logs\`).
+- **Env decision**: only the home var is renamed. `SUPRAMAN_HOME` wins; `FOREMAN_HOME` is read as the fallback; a
+  session's `--settings` env and a schedule script's env carry both (an older `fm` on PATH or a script written
+  against `%FOREMAN_HOME%` still works). `FOREMAN_ROLE/WORKSPACE/SESSION/REPO/SCHEDULE/RUN` and a script's
+  `FOREMAN_*` keep their names: running sessions send them and scripts read them; nobody sees them in the UI.
+  Children the app starts get `SUPRAMAN_HOME` (`HOME_VAR`); never set `FOREMAN_HOME` alone, an inherited
+  `SUPRAMAN_HOME` would win over it.
+- **Single instance**: `Local\Supraman-<key>`. The new build first opens (never creates) `Local\Foreman-<key>` of its
+  home and, for the default home, of `%APPDATA%\Foreman`: when one exists an old Foreman runs there and would
+  supervise the same sessions, so the new build signals its `-open` event (its window comes forward), says why in a
+  message box and exits. The key is the same FNV-1a of the home path as before.
+- **Selftest mutexes**: `Held` takes a list all or none: `Local\Supraman-selftest(-clipboard)` and the `Foreman-`
+  names, so a selftest of an older build in another worktree still excludes this one (and the clipboard is borrowed
+  by one run at a time across builds).
+- **Task Scheduler**: `\Supraman\<ws>` (another home `\Supraman-<hex8>`, the same hash). `legacy_task_root` is
+  `\Foreman` for the default home under either name, else `\Foreman-<hex8>`; `sync` registers the new tasks first,
+  then deletes every task in `<legacy root>\<ws>`, that folder and the root when empty. Source/Description say
+  Supraman, so every definition digest changed: the first sync after the update re-registers every task anyway.
+- **Gotcha, the logger**: `foreman_ui::Logger` keeps info lines only from `gpui*`/`foreman*` targets; the bin's
+  module path is now `supraman`, so every `log::info!` in `foreman-app` vanished silently until `supraman` joined
+  the list. The elevation hand-off test (it runs only in an elevated shell) caught it by its missing log line.
+- **Dev build**: a `CARGO_TARGET_DIR` outside the repo needs `plugins\supraman` above it (`find_plugin_dir`), e.g. a
+  junction `C:\fmbuild\<unit>\plugins\supraman` to the worktree's.
+- **Not handled**: sessions launched by Foreman keep `FOREMAN_HOME=%APPDATA%\Foreman` until they restart; their hook
+  events and `fm tell` outbox land in the old home, which Supraman does not read.

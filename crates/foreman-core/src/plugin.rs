@@ -1,5 +1,5 @@
 //! `fm plugin install <dir>` and the app's start: put `fm.exe` at `<dir>/bin/fm.exe`, where the exec-form
-//! hooks in `plugins/foreman/hooks/hooks.json` find it via `${CLAUDE_PLUGIN_ROOT}`.
+//! hooks in `plugins/supraman/hooks/hooks.json` find it via `${CLAUDE_PLUGIN_ROOT}`.
 
 use std::fs;
 use std::io;
@@ -16,17 +16,17 @@ fn is_plugin(dir: &Path) -> bool {
     dir.join("hooks").join("hooks.json").is_file() && dir.join("roles").is_dir()
 }
 
-/// The Foreman plugin for `exe` (`foreman.exe` or `fm.exe`), in this order (docs/RELEASE.md):
-/// 1. `<exe dir>/plugins/foreman`, the release layout;
+/// The Supraman plugin for `exe` (`supraman.exe` or `fm.exe`), in this order (docs/RELEASE.md):
+/// 1. `<exe dir>/plugins/supraman`, the release layout;
 /// 2. the plugin the exe sits in, for the hooks' copy at `<plugin>/bin/fm.exe`;
-/// 3. `plugins/foreman` in any folder above, a dev build at `<repo>/target/<profile>/`.
+/// 3. `plugins/supraman` in any folder above, a dev build at `<repo>/target/<profile>/`.
 ///
 /// The error names every place it looked.
 pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
     let Some(exe_dir) = exe.parent() else {
-        return Err(format!("{} has no folder to look for plugins/foreman in", exe.display()));
+        return Err(format!("{} has no folder to look for plugins/supraman in", exe.display()));
     };
-    let beside = exe_dir.join("plugins").join("foreman");
+    let beside = exe_dir.join("plugins").join("supraman");
     if is_plugin(&beside) {
         return Ok(beside);
     }
@@ -38,11 +38,11 @@ pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
     exe_dir
         .ancestors()
         .skip(1)
-        .map(|dir| dir.join("plugins").join("foreman"))
+        .map(|dir| dir.join("plugins").join("supraman"))
         .find(|dir| is_plugin(dir))
         .ok_or_else(|| {
             format!(
-                r"No Foreman plugin for {}: looked next to it at {} (a release) and for plugins\foreman in every folder above it (a dev build)",
+                r"No Supraman plugin for {}: looked next to it at {} (a release) and for plugins\supraman in every folder above it (a dev build)",
                 exe.display(),
                 beside.display()
             )
@@ -90,13 +90,13 @@ mod tests {
     #[test]
     fn finds_the_plugin_beside_the_exe_first_then_its_own_then_above() {
         let root = tempfile::tempdir().unwrap();
-        let repo_plugin = root.path().join("plugins").join("foreman");
+        let repo_plugin = root.path().join("plugins").join("supraman");
         plugin_at(&repo_plugin);
-        let release = root.path().join("target").join("dist").join("Foreman");
-        let exe = release.join("foreman.exe");
+        let release = root.path().join("target").join("dist").join("Supraman");
+        let exe = release.join("supraman.exe");
         assert_eq!(find_plugin_dir(&exe).unwrap(), repo_plugin, "a dev build walks up");
 
-        let beside = release.join("plugins").join("foreman");
+        let beside = release.join("plugins").join("supraman");
         plugin_at(&beside);
         assert_eq!(find_plugin_dir(&exe).unwrap(), beside, "beside the exe wins over the walk");
         assert_eq!(find_plugin_dir(&beside.join("bin").join(HOOK_EXE)).unwrap(), beside, "the hooks' copy");
@@ -105,11 +105,25 @@ mod tests {
     #[test]
     fn a_missing_plugin_names_both_places() {
         let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join("plugins").join("foreman").join("hooks")).unwrap();
-        let exe = root.path().join("Foreman").join("foreman.exe");
+        fs::create_dir_all(root.path().join("plugins").join("supraman").join("hooks")).unwrap();
+        let exe = root.path().join("Supraman").join("supraman.exe");
         let err = find_plugin_dir(&exe).unwrap_err();
-        assert!(err.contains(&root.path().join("Foreman").join("plugins").join("foreman").display().to_string()), "{err}");
+        assert!(err.starts_with("No Supraman plugin for "), "{err}");
+        assert!(err.contains(&root.path().join("Supraman").join("plugins").join("supraman").display().to_string()), "{err}");
         assert!(err.contains("every folder above"), "{err}");
+    }
+
+    #[test]
+    fn the_old_plugin_name_is_never_loaded() {
+        let root = tempfile::tempdir().unwrap();
+        let install = root.path().join("Tools").join("supraman");
+        plugin_at(&install.join("plugins").join("foreman"));
+        plugin_at(&root.path().join("plugins").join("foreman"));
+        assert!(find_plugin_dir(&install.join("supraman.exe")).is_err(), "an old install's plugins/foreman is the old sessions'");
+        let new = install.join("plugins").join("supraman");
+        plugin_at(&new);
+        assert_eq!(find_plugin_dir(&install.join("supraman.exe")).unwrap(), new);
+        assert_eq!(find_plugin_dir(&install.join("fm.exe")).unwrap(), new);
     }
 
     #[test]

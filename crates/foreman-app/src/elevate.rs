@@ -22,7 +22,7 @@ pub fn parse_relaunch(args: &[&str]) -> Option<Relaunched> {
     }
 }
 
-/// UAC's fresh environment may lack `FOREMAN_HOME`; a trailing backslash would escape the closing quote.
+/// UAC's fresh environment may lack `SUPRAMAN_HOME`; a trailing backslash would escape the closing quote.
 pub fn arguments(home: &Path, after: Option<u32>) -> String {
     let home = home.display().to_string();
     let mut args = format!("--elevated --home \"{}\"", home.trim_end_matches('\\'));

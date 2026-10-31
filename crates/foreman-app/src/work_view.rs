@@ -181,7 +181,7 @@ impl WorkHub {
 
 /// No network call: the bearer is asked for at each read.
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
-    let home = home.ok_or_else(|| "No Supraman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
+    let home = home.ok_or_else(|| "No Supraman home (set SUPRAMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
     let auth = crate::signin::auth(&home);
     let url = auth.configured_origin();
     match auth.status(&url) {

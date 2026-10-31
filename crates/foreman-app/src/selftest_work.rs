@@ -141,7 +141,7 @@ fn task1_page(seq: i64, claimed_by: &Session, all_checked: bool) -> String {
     json!({
         "asOf": "2026-10-26T12:02:00+00:00", "seq": seq, "item": task1, "path": [project(), live_run()],
         "intent": "The Work tab lists a project's runs, each expandable into its board.",
-        "verifyCmd": "target/release/foreman.exe --selftest", "riskTags": [], "priority": 0,
+        "verifyCmd": "target/release/supraman.exe --selftest", "riskTags": [], "priority": 0,
         "openedAt": "2026-10-26T10:00:00+00:00", "startedAt": "2026-10-26T10:05:00+00:00", "closedAt": "2026-10-26T12:01:00+00:00",
         "criteria": [
             { "id": "c1", "text": "runs render in overview order", "checked": true, "evidence": "step 7 painted sw2, sw1", "checkedAt": "2026-10-26T11:00:00+00:00" },
@@ -152,9 +152,9 @@ fn task1_page(seq: i64, claimed_by: &Session, all_checked: bool) -> String {
                    "tree": "P:/w/sw2-1", "acquiredAt": "2026-10-26T10:05:00+00:00", "heartbeatAt": "2026-10-26T12:00:00+00:00",
                    "expiresAt": "2026-10-26T13:00:00+00:00", "expired": false },
         "reports": [{ "attempt": 1, "session": session, "agent": claimed_by.name, "status": "done",
-                      "files": ["crates/foreman-app/src/work_view.rs"], "verify": "foreman.exe --selftest: PASS", "redCheck": "board_to_reload forced to None: step 7 FAIL",
+                      "files": ["crates/foreman-app/src/work_view.rs"], "verify": "supraman.exe --selftest: PASS", "redCheck": "board_to_reload forced to None: step 7 FAIL",
                       "deviations": null, "risks": "frame budget", "notDone": "nothing", "at": "2026-10-26T11:58:00+00:00" }],
-        "verifications": [{ "command": "target/release/foreman.exe --selftest", "resultLine": "PASS (8 steps)", "passed": true,
+        "verifications": [{ "command": "target/release/supraman.exe --selftest", "resultLine": "PASS (8 steps)", "passed": true,
                             "counts": null, "runBy": "controller", "session": null, "redCheck": null, "at": "2026-10-26T12:01:00+00:00" }],
         "artifacts": [{ "kind": "commit", "value": "c0ffee1234567890", "at": "2026-10-26T12:00:30+00:00" }],
         "children": [], "findings": [],

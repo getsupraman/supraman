@@ -53,7 +53,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     }
 }
 
-/// `fm send` speaks as the human; every Foreman-launched session carries `FOREMAN_ROLE` (`foreman_supervisor` `session_settings`).
+/// `fm send` speaks as the human; every Supraman-launched session carries `FOREMAN_ROLE` (`foreman_supervisor` `session_settings`).
 pub fn refuse_inside_foreman() -> Result<(), Failure> {
     match std::env::var_os("FOREMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
@@ -97,18 +97,18 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Run by a Foreman session to reach the human: an outbox message in its workspace (`FOREMAN_HOME`, `FOREMAN_WORKSPACE`).
+/// Run by a Supraman session to reach the human: an outbox message in its workspace (its home, `FOREMAN_WORKSPACE`).
 pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     let body = body_arg(args).ok_or_else(|| Failure::Usage("tell needs <body> or --file <path>".into()))??;
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let (Some(home), Some(workspace)) = (var("FOREMAN_HOME"), var("FOREMAN_WORKSPACE")) else {
+    let (Some(home), Some(workspace)) = (foreman_core::env_home(), var("FOREMAN_WORKSPACE")) else {
         return Err(Failure::Refused(
-            "fm tell runs inside a Supraman session (FOREMAN_HOME and FOREMAN_WORKSPACE are not set); the human reads Supraman's Messages".into(),
+            "fm tell runs inside a Supraman session (SUPRAMAN_HOME or FOREMAN_HOME, and FOREMAN_WORKSPACE, are not set); the human reads Supraman's Messages".into(),
         ));
     };
     let from = var("FOREMAN_SESSION")
         .ok_or_else(|| Failure::Refused("fm tell cannot tell which session this is: FOREMAN_SESSION is not set".into()))?;
-    let path = tell(Path::new(&home), &workspace, &from, &body)?;
+    let path = tell(&home, &workspace, &from, &body)?;
     println!("told the human ({workspace}): {}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     Ok(())
 }

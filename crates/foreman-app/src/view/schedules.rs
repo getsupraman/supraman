@@ -317,7 +317,7 @@ impl FleetView {
         let task = cx.background_executor().spawn(async move {
             let fm = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(foreman_core::HOOK_EXE);
             let out = process::run(
-                process::command(&fm).args(["schedule", "dry-run", &args.0, &args.1]).env("FOREMAN_HOME", &home),
+                process::command(&fm).args(["schedule", "dry-run", &args.0, &args.1]).env(foreman_core::HOME_VAR, &home),
                 DRY_RUN_WITHIN,
                 process::Kill::Tree,
             )
