@@ -1,13 +1,13 @@
 ---
-name: foreman-scheduler
-description: Set up, list, pause, resume and explain Foreman's scheduled runs of a workspace with `fm schedule` — e.g. "call /autofix-prod-bugs every monday using foreman's scheduler" becomes one `fm schedule add` (trigger, slash command, permission profile, caps), then `fm schedule dry-run` to show the next three fires and the command line; the schedule then waits for the human's Approve in the Foreman window. USE FOR - a request to run a slash command or a prompt on a schedule through Foreman; "what is scheduled", "why did the run fail", "pause/resume that schedule". DO NOT USE FOR - approving a schedule, editing or removing one, registering a Windows task, or running a schedule now (all of them are the human's, in the Foreman window).
+name: supraman-scheduler
+description: Set up, list, pause, resume and explain Supraman's scheduled runs of a workspace with `fm schedule` — e.g. "call /autofix-prod-bugs every monday using foreman's scheduler" becomes one `fm schedule add` (trigger, slash command, permission profile, caps), then `fm schedule dry-run` to show the next three fires and the command line; the schedule then waits for the human's Approve in the Supraman window. USE FOR - a request to run a slash command or a prompt on a schedule through Supraman; "what is scheduled", "why did the run fail", "pause/resume that schedule". DO NOT USE FOR - approving a schedule, editing or removing one, registering a Windows task, or running a schedule now (all of them are the human's, in the Supraman window).
 allowed-tools: Bash(fm schedule add:*), Bash(fm schedule list:*), Bash(fm schedule show:*), Bash(fm schedule pause:*), Bash(fm schedule resume:*), Bash(fm schedule dry-run:*)
 ---
 
-# Foreman scheduler
+# Supraman scheduler
 
-A schedule runs a slash command (or a prompt) in one folder of a Foreman workspace, unattended, at the times
-its trigger says. You write it with `fm`; **only the human's Approve on its row in the Foreman window makes it
+A schedule runs a slash command (or a prompt) in one folder of a Supraman workspace, unattended, at the times
+its trigger says. You write it with `fm`; **only the human's Approve on its row in the Supraman window makes it
 run**. Until then it is `pending`, and every change to what it runs makes it pending again.
 
 **You run exactly these, with the Bash tool, bare `fm`:**
@@ -21,7 +21,7 @@ run**. Until then it is `pending`, and every change to what it runs makes it pen
 | `fm schedule pause [<w>] <id>` | stop it firing; nothing else changes |
 | `fm schedule resume [<w>] <id>` | let it fire again; it stays `pending` unless its approval still matches |
 
-`<w>` is the workspace. Your role text names it when you are a Foreman session; otherwise leave it out and
+`<w>` is the workspace. Your role text names it when you are a Supraman session; otherwise leave it out and
 `fm` takes the workspace whose folders hold the current folder (it names the candidates when that is
 ambiguous; then name one). No other verb (§4).
 
@@ -77,7 +77,7 @@ fm schedule dry-run <id>
 - the schedule: id, workspace, folder, trigger, command, profile, caps;
 - the **next three fires**, exactly as `next fires:` printed them;
 - the **command line**: the whole `claude` argv as printed, in one code block, and the working folder (`cwd:`);
-- **"It is pending: it runs only after you Approve it on its row in the Foreman window."**
+- **"It is pending: it runs only after you Approve it on its row in the Supraman window."**
 
 ## 2. Asking
 
@@ -103,7 +103,7 @@ Nothing is open (time given, the command only reads) → add without asking.
   next fire, name.
 - **"Explain <id>" / "how did its last runs go?"** `fm schedule show [<w>] <id>`. Say in words when it fires,
   what it runs, with which profile and caps, and its status:
-  - `pending` — waiting for Approve in the Foreman window, or changed since its approval
+  - `pending` — waiting for Approve in the Supraman window, or changed since its approval
     (`(changed since approval)`): it does not fire until approved again;
   - `active` — approved, fires on its trigger;
   - `paused` — kept, does not fire.
@@ -115,21 +115,21 @@ Nothing is open (time given, the command only reads) → add without asking.
   | `done`, `ok` | the run finished its work |
   | `nothing_to_do` | its gate script found nothing, no session ran |
   | `skipped` | not run: an earlier run was still going, or no session slot was free |
-  | `needs_you` | the run stopped to ask; it is in Foreman's inbox |
+  | `needs_you` | the run stopped to ask; it is in Supraman's inbox |
   | `failed`, `refused` | it could not run or start; the text after the colon says why |
   | `capped_runtime`, `capped_tokens` | stopped at its cap |
   | `interrupted` | fm died mid-run (sleep, logoff, crash); the next fire cleaned it up |
   | `running` | started, not ended yet |
 - **"Pause <id>."** `fm schedule pause [<w>] <id>`. **"Resume <id>."** `fm schedule resume [<w>] <id>`; when it
-  answers `pending`, tell the human it needs Approve in the Foreman window before it fires again.
+  answers `pending`, tell the human it needs Approve in the Supraman window before it fires again.
 
 ## 4. Never
 
 | Never | Instead |
 |---|---|
-| approve a schedule, or say it is approved before `list`/`show` says `active` | the human's Approve in the Foreman window |
+| approve a schedule, or say it is approved before `list`/`show` says `active` | the human's Approve in the Supraman window |
 | edit, write or delete a schedule's TOML (`<home>/schedules/<w>.toml`) or a run record | `fm schedule …` only |
-| `fm schedule edit` or `fm schedule remove` | tell the human: the Foreman window (or they run `fm schedule edit`/`remove` themselves) |
-| `schtasks`, `Register-ScheduledTask`, Task Scheduler, any Windows task | Foreman registers the task after Approve |
+| `fm schedule edit` or `fm schedule remove` | tell the human: the Supraman window (or they run `fm schedule edit`/`remove` themselves) |
+| `schtasks`, `Register-ScheduledTask`, Task Scheduler, any Windows task | Supraman registers the task after Approve |
 | choose `worktree-edit` or `auto` without the human's answer | §2 |
 | run a scheduled command now to try it | `fm schedule dry-run` |

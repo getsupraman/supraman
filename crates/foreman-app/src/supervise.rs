@@ -33,11 +33,11 @@ pub struct Setup {
 }
 
 pub fn setup(home: &Path) -> Setup {
-    let mut notices = Vec::new();
+    let mut notices: Vec<String> = foreman_core::home::take_migration_notice(home).into_iter().collect();
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            notices.push(format!("Cannot locate foreman.exe ({e}); Start is unavailable."));
+            notices.push(format!("Cannot locate supraman.exe ({e}); Start is unavailable."));
             return Setup { plugin_dir: None, notices };
         }
     };
@@ -94,7 +94,7 @@ pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow
 
 /// The relay is not wanted here: [`sync_relay`] wants it on demand.
 pub fn start_workspace(home: &Path, plugin_dir: Option<&Path>, workspace: &Workspace) -> anyhow::Result<DesiredState> {
-    let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/foreman found for this build"))?;
+    let plugin_dir = plugin_dir.ok_or_else(|| anyhow!("no plugins/supraman found for this build"))?;
     let prompt = role_prompt(plugin_dir, WORKSPACE_ROLE, &workspace.name)?;
     let relay = relay_wanted(home, workspace)?;
     clear_ready(home, &workspace.name)?;
@@ -410,25 +410,25 @@ mod tests {
     use super::*;
 
     fn plugin_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/foreman")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman")
     }
 
     #[test]
     fn finds_the_plugin_above_the_exe() {
-        let exe = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/foreman.exe");
+        let exe = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/release/supraman.exe");
         let found = find_plugin_dir(&exe).unwrap();
         assert!(found.join("roles").join("workspace.md").is_file(), "{}", found.display());
-        assert!(find_plugin_dir(Path::new(r"C:\nowhere\foreman.exe")).is_err());
+        assert!(find_plugin_dir(Path::new(r"C:\nowhere\supraman.exe")).is_err());
     }
 
     #[test]
     fn launches_get_extra_plugin_dirs_after_foremans_and_the_fm_rules() {
         let mut settings = Settings::default();
         settings.sessions.extra_plugin_dirs = vec![r"C:\skills\plugins\rlarch".into()];
-        let own = Path::new(r"C:\fm\plugins\foreman");
+        let own = Path::new(r"C:\fm\plugins\supraman");
         assert_eq!(plugin_dirs(Some(own), &settings), [own.to_path_buf(), r"C:\skills\plugins\rlarch".into()]);
         assert_eq!(plugin_dirs(None, &Settings::default()), Vec::<PathBuf>::new());
-        assert_eq!(fm_allowed_tools(own), ["Bash(fm:*)", "Bash(C:/fm/plugins/foreman/bin/fm.exe:*)"]);
+        assert_eq!(fm_allowed_tools(own), ["Bash(fm:*)", "Bash(C:/fm/plugins/supraman/bin/fm.exe:*)"]);
     }
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
         for (role, skill, repo) in [(WORKSPACE_ROLE, "workspace-controller", None), (REPO_ROLE, "repo-controller", Some("Nomos.Pdf"))] {
             write_role_template(home.path(), &plugin_dir(), role).unwrap();
             let injected = foreman_core::role_injection_for(home.path(), role, Some("demo"), repo).unwrap();
-            assert!(injected.contains(&format!("/foreman:{skill}")), "{injected}");
+            assert!(injected.contains(&format!("/supraman:{skill}")), "{injected}");
             assert!(injected.contains("work_brief"), "after a compaction the role says how to resume: {injected}");
             assert!(injected.contains("fm-demo-workspace"), "{injected}");
             assert!(!injected.contains('{'), "every placeholder filled: {injected}");
@@ -449,9 +449,9 @@ mod tests {
             assert!(description.contains("USE FOR") && description.contains("DO NOT USE FOR"), "{skill}: {description}");
         }
         let launched = role_prompt(&plugin_dir(), WORKSPACE_ROLE, "demo").unwrap();
-        assert!(launched.contains("/foreman:workspace-controller") && launched.contains("fm-demo-relay"), "{launched}");
+        assert!(launched.contains("/supraman:workspace-controller") && launched.contains("fm-demo-relay"), "{launched}");
         let repo = foreman_supervisor::render_repo_role(&std::fs::read_to_string(plugin_dir().join("roles").join("repo.md")).unwrap(), "demo", "Alpha");
-        assert!(repo.contains("/foreman:repo-controller") && repo.contains("/rlarch:controller"), "{repo}");
+        assert!(repo.contains("/supraman:repo-controller") && repo.contains("/rlarch:controller"), "{repo}");
     }
 
     #[test]
@@ -467,7 +467,7 @@ mod tests {
         let d = DesiredState::load(home.path(), "demo").unwrap().unwrap();
         let w = &d.sessions[0];
         assert_eq!((w.name.as_str(), w.role.as_str(), w.repo.as_deref(), w.cwd.as_path(), w.fork_from.as_deref()), ("fm-demo-alpha", REPO_ROLE, Some("Alpha"), alpha.as_path(), Some(from)));
-        assert!(w.prompt.starts_with("You are the repo controller for Alpha in the Foreman workspace demo"), "{}", w.prompt);
+        assert!(w.prompt.starts_with("You are the repo controller for Alpha in the Supraman workspace demo"), "{}", w.prompt);
         assert!(adopt(home.path(), "demo", "Nope", from).is_err());
     }
 

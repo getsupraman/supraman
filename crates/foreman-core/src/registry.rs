@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -11,23 +10,18 @@ pub struct Registry {
     home: PathBuf,
 }
 
-/// `FOREMAN_HOME` when set and non-empty, else `%APPDATA%\Foreman`.
-pub fn home_from(foreman_home: Option<OsString>, appdata: Option<OsString>) -> Option<PathBuf> {
-    let non_empty = |v: Option<OsString>| v.filter(|v| !v.is_empty());
-    non_empty(foreman_home)
-        .map(PathBuf::from)
-        .or_else(|| non_empty(appdata).map(|a| PathBuf::from(a).join("Foreman")))
-}
-
 impl Registry {
     pub fn at(home: impl Into<PathBuf>) -> Self {
         Self { home: home.into() }
     }
 
+    /// Refused while the Foreman home is still to be copied ([`crate::home::migrate_default_home`]), so nothing
+    /// starts the new home empty beside it.
     pub fn from_env() -> Result<Self> {
-        home_from(std::env::var_os("FOREMAN_HOME"), std::env::var_os("APPDATA"))
-            .map(Self::at)
-            .ok_or(CoreError::NoHome)
+        if let Some((old, new)) = crate::home::pending_migration() {
+            return Err(CoreError::NotMigrated { old, new });
+        }
+        crate::home::home_from_env().map(Self::at).ok_or(CoreError::NoHome)
     }
 
     pub fn home(&self) -> &Path {
@@ -210,23 +204,5 @@ mod tests {
         assert_eq!(loaded.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha", "zeta"]);
         assert_eq!(failed.len(), 1);
         assert!(matches!(&failed[0], CoreError::Parse { path, .. } if path.ends_with("broken.toml")), "{failed:?}");
-    }
-
-    #[test]
-    fn foreman_home_overrides_appdata() {
-        let appdata = Some(OsString::from(r"C:\Users\x\AppData\Roaming"));
-        assert_eq!(
-            home_from(Some(OsString::from(r"D:\fm")), appdata.clone()),
-            Some(PathBuf::from(r"D:\fm"))
-        );
-        assert_eq!(
-            home_from(Some(OsString::new()), appdata.clone()),
-            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming").join("Foreman"))
-        );
-        assert_eq!(
-            home_from(None, appdata),
-            Some(PathBuf::from(r"C:\Users\x\AppData\Roaming").join("Foreman"))
-        );
-        assert_eq!(home_from(None, None), None);
     }
 }

@@ -27,11 +27,12 @@ Supraman runs on Windows. It is a native Rust app built on [gpui](https://github
 
 ```powershell
 cargo build --release --workspace
-target\release\foreman.exe
+target\release\supraman.exe
 ```
 
-The crates and binaries still carry their earlier name (`foreman.exe`, `fm.exe`). The app keeps its state in
-`%APPDATA%\Foreman`, or in `FOREMAN_HOME` when set. `docs/RELEASE.md` describes a release folder, and
+The crates and the CLI still carry their earlier name (`foreman-*`, `fm.exe`). The app keeps its state in
+`%APPDATA%\Supraman`, or in `SUPRAMAN_HOME` when set (`FOREMAN_HOME` is still read); a first start copies an
+earlier `%APPDATA%\Foreman` there. `docs/RELEASE.md` describes a release folder, and
 `docs/ARCHITECTURE.md` the crates and how they fit together.
 
 ## Brand

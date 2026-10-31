@@ -29,7 +29,7 @@ url = '{url}'
 fn fm(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(args)
-        .env("FOREMAN_HOME", home)
+        .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
         .output()
         .unwrap()
@@ -188,7 +188,7 @@ fn work_errors_are_one_line_without_the_token() {
     let none = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_fm"))
         .args(["work", "overview", "autowork"])
-        .env("FOREMAN_HOME", none.path())
+        .env("SUPRAMAN_HOME", none.path())
         .env_remove("APPDATA")
         .output()
         .unwrap();

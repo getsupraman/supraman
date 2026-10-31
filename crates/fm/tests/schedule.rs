@@ -46,7 +46,7 @@ impl Fixture {
         Command::new(env!("CARGO_BIN_EXE_fm"))
             .args(args)
             .current_dir(cwd)
-            .env("FOREMAN_HOME", &self.home)
+            .env("SUPRAMAN_HOME", &self.home)
             .env("CLAUDE_CONFIG_DIR", &self.claude)
             .env_remove("APPDATA")
             .env_remove("FOREMAN_ROLE")

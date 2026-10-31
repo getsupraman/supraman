@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 fn fm_cmd(home: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_fm"));
     cmd.args(args)
-        .env("FOREMAN_HOME", home)
+        .env("SUPRAMAN_HOME", home)
         .env("USERPROFILE", home)
         .env("HOME", home)
         .env_remove("CLAUDE_CONFIG_DIR")

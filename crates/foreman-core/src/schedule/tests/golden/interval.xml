@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Source>Foreman</Source>
-    <Version>25440d26f4adb336</Version>
-    <Description>Foreman schedule demo/autofix-prod-bugs; Foreman rewrites this task.</Description>
+    <Source>Supraman</Source>
+    <Version>3fed361ad543e6be</Version>
+    <Description>Supraman schedule demo/autofix-prod-bugs; Supraman rewrites this task.</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>

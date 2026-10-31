@@ -1,5 +1,5 @@
 // Resource 1 is the icon gpui's Windows platform loads for its window class (gpui_windows load_icon)
-// and the one Explorer shows for foreman.exe; 2 and 3 are the tray's by taskbar theme (tray.rs).
+// and the one Explorer shows for supraman.exe; 2 and 3 are the tray's by taskbar theme (tray.rs).
 1 ICON "supraman.ico"
 2 ICON "tray-on-dark.ico"
 3 ICON "tray-on-light.ico"

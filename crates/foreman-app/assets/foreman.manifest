@@ -21,7 +21,7 @@
             <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
             <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
             <heapType xmlns="http://schemas.microsoft.com/SMI/2020/WindowsSettings">SegmentHeap</heapType>
-            <!-- Windows 11 24H2+: no console is made for foreman.exe; one it is started from is shared. -->
+            <!-- Windows 11 24H2+: no console is made for supraman.exe; one it is started from is shared. -->
             <consoleAllocationPolicy xmlns="http://schemas.microsoft.com/SMI/2024/WindowsSettings">detached</consoleAllocationPolicy>
         </windowsSettings>
     </application>

@@ -176,7 +176,7 @@ impl SettingsView {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
-            self.error = Some("No Supraman home (set FOREMAN_HOME or APPDATA): settings cannot be saved.".into());
+            self.error = Some("No Supraman home (set SUPRAMAN_HOME or APPDATA): settings cannot be saved.".into());
             return;
         };
         match Settings::load_with_notices(&home) {
@@ -613,7 +613,7 @@ impl SettingsView {
             ),
             row(
                 "Supraman home",
-                "FOREMAN_HOME, else %APPDATA%\\Foreman: workspaces, desired state, settings.toml, hook events.",
+                "SUPRAMAN_HOME, else FOREMAN_HOME, else %APPDATA%\\Supraman: workspaces, desired state, settings.toml, hook events.",
                 div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
                 cx,

@@ -52,7 +52,7 @@ usage:
   fm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
   fm probe session-id                  (does --bg --session-id <uuid> keep the uuid, and --bg --resume)
   fm plugin install <plugin-dir>  (copies this fm.exe to <plugin-dir>/bin, where the hooks run it)
-  fm hook <event>                 (run by plugins/foreman; reads the hook payload on stdin)";
+  fm hook <event>                 (run by plugins/supraman; reads the hook payload on stdin)";
 
 mod edit;
 pub mod fire;

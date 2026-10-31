@@ -72,9 +72,9 @@ fn render(spec: &TaskSpec, version: &str, start: NaiveDate) -> String {
     x.push_str("<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n");
     x.push_str("<Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n");
     x.push_str("  <RegistrationInfo>\n");
-    x.push_str("    <Source>Foreman</Source>\n");
+    x.push_str("    <Source>Supraman</Source>\n");
     let _ = writeln!(x, "    <Version>{}</Version>", esc(version));
-    let _ = writeln!(x, "    <Description>{}</Description>", esc(&format!("Foreman schedule {}/{}; Foreman rewrites this task.", spec.workspace, s.id)));
+    let _ = writeln!(x, "    <Description>{}</Description>", esc(&format!("Supraman schedule {}/{}; Supraman rewrites this task.", spec.workspace, s.id)));
     x.push_str("  </RegistrationInfo>\n");
     x.push_str("  <Triggers>\n    <CalendarTrigger>\n");
     let at = match &s.trigger {

@@ -143,11 +143,11 @@ pub fn adopted_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, pro
 /// What the copy of an adopted session is told: the role itself comes with its start (`fm hook`'s FOREMAN-ROLE).
 pub fn adopt_prompt(workspace: &str, w: &WantedSession) -> String {
     let what = match &w.repo {
-        Some(repo) => format!("the {} session for {repo} in the Foreman workspace {workspace}", w.role),
-        None => format!("the {} session of the Foreman workspace {workspace}", w.role),
+        Some(repo) => format!("the {} session for {repo} in the Supraman workspace {workspace}", w.role),
+        None => format!("the {} session of the Supraman workspace {workspace}", w.role),
     };
     format!(
-        "Foreman adopted this conversation: from now on you are {}, {what}, supervised by Foreman. Follow the FOREMAN-ROLE instructions of this session's start as after a resume.",
+        "Supraman adopted this conversation: from now on you are {}, {what}, supervised by Supraman. Follow the FOREMAN-ROLE instructions of this session's start as after a resume.",
         w.name
     )
 }
@@ -356,7 +356,7 @@ mod tests {
     use super::*;
 
     fn plugin_dir() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/foreman")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman")
     }
 
     #[test]

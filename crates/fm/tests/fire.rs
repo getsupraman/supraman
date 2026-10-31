@@ -561,7 +561,7 @@ fn fm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
     };
     let mut child = Command::new(exe)
         .args(args)
-        .env("FOREMAN_HOME", &f.home)
+        .env("SUPRAMAN_HOME", &f.home)
         .env_remove("APPDATA")
         .env_remove("FOREMAN_ROLE")
         .stdin(Stdio::piped())

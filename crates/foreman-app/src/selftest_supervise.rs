@@ -89,7 +89,7 @@ pub fn prepare() -> anyhow::Result<()> {
     });
     install_guards(Mode::SelftestSupervise);
     // Still single-threaded apart from the watchdog, which never reads the environment.
-    unsafe { std::env::set_var("FOREMAN_HOME", &home) };
+    unsafe { std::env::set_var(foreman_core::HOME_VAR, &home) };
 
     let version = check_supported()?;
     for root in roots {
@@ -134,7 +134,7 @@ pub fn prepare() -> anyhow::Result<()> {
     settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
     settings.save(&home)?;
     println!(
-        "step a: claude {} | FOREMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
+        "step a: claude {} | SUPRAMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",
         version.raw,
         home.display(),
         tb.a.0,
@@ -243,7 +243,7 @@ async fn wait_painted(view: &Entity<FleetView>, key: &str, within: Duration, cx:
     Ok(())
 }
 
-/// In a release folder that is its own `plugins/foreman`, not the repo's.
+/// In a release folder that is its own `plugins/supraman`, not the repo's.
 fn plugin_dir() -> anyhow::Result<PathBuf> {
     find_plugin_dir(&std::env::current_exe()?).map_err(anyhow::Error::msg)
 }
@@ -1136,7 +1136,7 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
     let carried = crate::selftest::until(view, cx, Duration::from_secs(60), "the copy's transcript carries the original's turn and the adopt prompt", |_| {
         let path = foreman_claude::find_transcript(&claude_dir, &copy.session_id, Some(&copy.cwd))?;
         let text = std::fs::read_to_string(&path).ok()?;
-        (text.contains(&word) && text.contains("Foreman adopted this conversation")).then_some(path)
+        (text.contains(&word) && text.contains("Supraman adopted this conversation")).then_some(path)
     })
     .await?;
     let no_second = view.read_with(cx, |v, _| {
@@ -1182,7 +1182,7 @@ async fn saved(registry: &Registry, name: &str, what: &str, ok: impl Fn(&Workspa
 
 const FM_WITHIN: Duration = Duration::from_secs(60);
 
-/// `fm.exe` built beside this `foreman.exe`, run with this process's `FOREMAN_HOME` (the testbed's).
+/// `fm.exe` built beside this `supraman.exe`, run with this process's home (the testbed's).
 fn fm(args: &[&str]) -> anyhow::Result<String> {
     let exe = std::env::current_exe()?.with_file_name(foreman_core::HOOK_EXE);
     let out = foreman_core::process::run(foreman_core::process::command(&exe).args(args), FM_WITHIN, foreman_core::process::Kill::Tree)
@@ -1269,8 +1269,8 @@ async fn want_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     Ok(())
 }
 
-const WORKSPACE_SKILL: &str = "foreman:workspace-controller";
-const REPO_SKILL: &str = "foreman:repo-controller";
+const WORKSPACE_SKILL: &str = "supraman:workspace-controller";
+const REPO_SKILL: &str = "supraman:repo-controller";
 
 /// `attachment.names`, else the `- <name>: <description>` lines of `attachment.content` (CLI 2.1.309 writes both).
 fn skills_listed(transcript: &str) -> Vec<String> {
@@ -1289,7 +1289,7 @@ fn skills_listed(transcript: &str) -> Vec<String> {
                 .collect(),
         };
         for name in names {
-            if name.starts_with("foreman:") && !out.contains(&name) {
+            if name.starts_with("supraman:") && !out.contains(&name) {
                 out.push(name);
             }
         }
@@ -1364,7 +1364,7 @@ async fn relay_step(
     spec.strict_mcp_config = true;
     spec.plugin_dirs = vec![plugin.clone()];
     let env = serde_json::json!({
-        "env": { "FOREMAN_HOME": tb.home.display().to_string(), "FOREMAN_WORKSPACE": w, "FOREMAN_SESSION": target },
+        "env": { "SUPRAMAN_HOME": tb.home.display().to_string(), "FOREMAN_WORKSPACE": w, "FOREMAN_SESSION": target },
         "worktree": { "bgIsolation": "none" },
     });
     spec.extra_args = vec!["--settings".into(), env.to_string(), "--allowedTools".into()];
@@ -1887,11 +1887,11 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_foreman_skills_of_a_skill_listing() {
+    fn reads_the_supraman_skills_of_a_skill_listing() {
         // shape of a CLI 2.1.309 transcript line, shortened
-        let names = r#"{"attachment":{"type":"skill_listing","content":"- x: y\n","names":["graphify","foreman:workspace-controller","rlarch:orchestrate","foreman:repo-controller"]},"type":"attachment"}"#;
-        let content = r#"{"attachment":{"type":"skill_listing","content":"- graphify (graphify-windows): Use for: x\n- foreman:repo-controller: Be the repo-controller: of one repo\n"},"type":"attachment"}"#;
-        let other = r#"{"type":"user","message":{"content":"- foreman:fake: not a listing"}}"#;
+        let names = r#"{"attachment":{"type":"skill_listing","content":"- x: y\n","names":["graphify","supraman:workspace-controller","rlarch:orchestrate","supraman:repo-controller"]},"type":"attachment"}"#;
+        let content = r#"{"attachment":{"type":"skill_listing","content":"- graphify (graphify-windows): Use for: x\n- supraman:repo-controller: Be the repo-controller: of one repo\n"},"type":"attachment"}"#;
+        let other = r#"{"type":"user","message":{"content":"- supraman:fake: not a listing"}}"#;
         assert_eq!(skills_listed(&format!("{other}\n{names}\n")), [REPO_SKILL, WORKSPACE_SKILL]);
         assert_eq!(skills_listed(content), [REPO_SKILL]);
         assert!(skills_listed(other).is_empty());
