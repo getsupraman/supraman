@@ -97,3 +97,7 @@ the zip to `C:\Tools\supraman` and start `supraman.exe`.
 - **Env.** `SUPRAMAN_HOME` wins over `FOREMAN_HOME`; sessions and schedule scripts get both. The other session
   variables (`FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION`, `FOREMAN_REPO`, `FOREMAN_SCHEDULE`, `FOREMAN_RUN`,
   a script's `FOREMAN_*`) keep their names: running sessions and scripts written against them keep working.
+- **Sessions.** A session Foreman started keeps its saved `--settings`, so `FOREMAN_HOME=%APPDATA%\Foreman` stays with it
+  through every resume: its hook events, relay messages and `fm tell` go to the old home, which Supraman does not read.
+  After switching, stop each such session and start it fresh from Supraman (a new conversation, not a resume); until
+  then it shows no status or messages in Supraman.
