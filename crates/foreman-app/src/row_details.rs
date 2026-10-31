@@ -36,7 +36,7 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> HoverCard {
         None => rows.push(("session", "not wanted".to_string())),
     }
     rows.push(("relay", facts.relay.clone().unwrap_or_else(|| "stopped".to_string())));
-    rows.extend(facts.project.clone().map(|p| ("WorkState", p)));
+    rows.extend(facts.project.clone().map(|p| ("Workman", p)));
     HoverCard { title: facts.name.clone(), rows }
 }
 
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(
             workspace(&facts, NOW).text(),
             "demo\nhome  C:\\nowhere\\demo\nfolders  Alpha, Beta\nstate  started\nsession  fm-demo-workspace · blocked · 77aa88bb\nuuid  77aa88bb-x\n\
-             waiting  permission prompt\nhook  turn ended 12 s ago\nrelay  relay ready\nWorkState  autowork"
+             waiting  permission prompt\nhook  turn ended 12 s ago\nrelay  relay ready\nWorkman  autowork"
         );
         let bare = WorkspaceFacts { name: "gaia".into(), ..Default::default() };
         assert_eq!(workspace(&bare, NOW).text(), "gaia\nfolders  none\nstate  never started\nsession  not wanted\nrelay  stopped");
@@ -153,6 +153,6 @@ adopt  {why}")));
         );
         let mut foreign = row(Health::Running);
         foreign.foreign = true;
-        assert!(session(&foreign, None, Open::Foreign, None, NOW).text().contains("\nopen  another Foreman session\n"));
+        assert!(session(&foreign, None, Open::Foreign, None, NOW).text().contains("\nopen  another Supraman session\n"));
     }
 }

@@ -120,7 +120,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
                 return Ok(Reopen::Attach { title: title.clone(), session: live.clone() });
             }
             if name.starts_with(FM_PREFIX) {
-                return Err("it is stopped and Foreman's supervisor starts it".into());
+                return Err("it is stopped and Supraman's supervisor starts it".into());
             }
             resumable(saved.session())?;
             Ok(Reopen::Placeholder(saved.clone()))

@@ -385,7 +385,7 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
         }
     }
     if req.fingerprint.is_some_and(|f| f != rec.fingerprint) {
-        let why = "the task's fingerprint is not the approved one; the task is out of date until the Foreman window syncs it";
+        let why = "the task's fingerprint is not the approved one; the task is out of date until the Supraman window syncs it";
         return rec.end(host.now_ms(), Outcome::Refused, why, EXIT_REFUSED);
     }
 

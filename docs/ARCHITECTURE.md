@@ -1,6 +1,6 @@
-# Foreman architecture
+# Supraman architecture
 
-For whoever is about to change Foreman, or to build another gpui tool (GitMan, FileMan) on its crates. What was
+For whoever is about to change Supraman, or to build another gpui tool (GitMan, FileMan) on its crates. What was
 measured and why is in `docs/LEARNINGS.md`; the plan is `docs/PLAN.md`; the keys are `docs/KEYS.md`.
 
 ## Crates
@@ -14,16 +14,16 @@ Dependencies point down this list only; nothing below depends on anything above 
 | `crates/foreman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workstate |
 | `crates/foreman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
 | `crates/foreman-workstate` | Every WorkState read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
-| `crates/foreman-ui` | The gpui widgets and painters every Foreman binary shares: text input, buttons, banners, menu, confirm, toast, notices, tabs, hover card, split pane, matcher, settings pages, themes, the terminal grid painter, hit targets, logger, frame probes. | core, term |
-| `crates/foreman-term` | The terminal model: Zed's `terminal` crate vendored onto alacritty (PTY, grid, input, mouse, links, scroll, search). No gpui views, no Foreman knowledge. | — |
+| `crates/foreman-ui` | The gpui widgets and painters every Supraman binary shares: text input, buttons, banners, menu, confirm, toast, notices, tabs, hover card, split pane, matcher, settings pages, themes, the terminal grid painter, hit targets, logger, frame probes. | core, term |
+| `crates/foreman-term` | The terminal model: Zed's `terminal` crate vendored onto alacritty (PTY, grid, input, mouse, links, scroll, search). No gpui views, no Supraman knowledge. | — |
 | `crates/foreman-core` | Plain Rust shared by all: the workspace registry, settings, files written safely, paths, time, process spawning, secrets at rest, the relay's files, hook events, names. No gpui, no claude, no HTTP. | — |
 
 **Boundaries.**
 - Only `foreman-claude` runs `claude` outside a terminal tab or parses its output; a tab runs `claude` in its PTY (`hand.rs`, `view.rs` `attach`).
-- Only `foreman-workstate` talks HTTP to WorkState (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Foreman writes WorkState items; the MCP tools are the agents' write path (C21).
+- Only `foreman-workstate` talks HTTP to WorkState (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Supraman writes WorkState items; the MCP tools are the agents' write path (C21).
 - `foreman-supervisor` takes a snapshot and returns actions; it never polls, never paints, and is ticked by the app.
-- `foreman-core` and `foreman-term` have no Foreman crate dependencies; `foreman-ui` has no `claude` or WorkState knowledge.
-- `plugins/foreman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Foreman launches — `plugins/foreman/hooks/hooks.json` (exec-form `fm.exe hook <event>`), `plugins/foreman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/foreman/README.md`.
+- `foreman-core` and `foreman-term` have no Supraman crate dependencies; `foreman-ui` has no `claude` or WorkState knowledge.
+- `plugins/foreman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Supraman launches — `plugins/foreman/hooks/hooks.json` (exec-form `fm.exe hook <event>`), `plugins/foreman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/foreman/README.md`.
 - `spikes/term-spike` is not product: the m0/5 terminal spike, kept building against `foreman-term` and `foreman-ui`. Nothing depends on it.
 - `probes/` holds the m0 measurement scripts; `scripts/` holds `scripts/release.ps1`, `scripts/shot.ps1` and `scripts/icon-gen/`.
 
@@ -44,7 +44,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `url::origin` (re-exported as `url_origin`; `foreman_workstate::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
 - `process::{command, run, run_watched, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. `run_watched` also kills the child when its `stop` returns true and returns what a killed child wrote (`Ended::{Exited, TimedOut, Stopped}`). Never `Command::new(..).output()` by hand.
 - `secret::{SecretStore, FileStore, MemoryStore, default_store}` — every secret at rest: one DPAPI-encrypted file per key under `<home>/oauth/secrets`; `MemoryStore` in tests.
-- `slug::{slugify, validate_name, FM_PREFIX}` — a repo or workspace name as a session-name part; every Foreman session name starts with `fm-`.
+- `slug::{slugify, validate_name, FM_PREFIX}` — a repo or workspace name as a session-name part; every Supraman session name starts with `fm-`.
 - `Settings::update` — every change to `settings.toml`: load, edit, save, retried against other writers. `Settings::load_with_notices` when a bad key should be shown.
 - `Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`) — a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `Registry` (`load_all`, `list`, `home_from`) — the workspaces at `<home>/workspaces/<name>.toml`; `load_all` where one corrupt file must not hide the rest (the supervisor), `list` where it should stop the caller.
@@ -107,7 +107,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `DesiredState` (`desired.rs`) — `<home>/supervisor/<workspace>.toml`; change it only through `update` (locked read-modify-write); `release` unwants the repo sessions of folders taken away, so the supervisor stops them.
 - `Supervisor`, `tick_all`, `Budget` — one tick per snapshot; the rule table is the crate docs in `lib.rs`.
 - `HttpMinter`, `Minter`, `MintedSessions` (`mint.rs`) — per-session WorkState tokens.
-- `AppTokens`, `bearer`, `workstate_role` (`tokens.rs`) — the `TokenProvider` of the app and of `fm`: Foreman's OAuth sign-in as the mint's bearer.
+- `AppTokens`, `bearer`, `workstate_role` (`tokens.rs`) — the `TokenProvider` of the app and of `fm`: Supraman's OAuth sign-in as the mint's bearer.
 - `LaunchConfig::launch_spec` (`executor.rs`) — a wanted session's `claude --bg` spec before its token; `Supervisor::launch` and a scheduled run (`fm`'s `schedule::run_spec`) both build theirs with it.
 
 ## Shared vs app-only

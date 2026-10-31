@@ -55,7 +55,7 @@ fn rollup(total: u32, done: u32, in_progress: u32, open: u32, cancelled: u32) ->
 }
 
 fn project() -> Value {
-    item(PROJECT, WORKSPACE, "project", "Foreman selftest project", "in_progress")
+    item(PROJECT, WORKSPACE, "project", "Supraman selftest project", "in_progress")
 }
 
 fn live_run() -> Value {
@@ -293,14 +293,14 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     let mut settings = Settings::load(home)?;
     settings.workstate.url = Some(fake.base().to_string());
     settings.save(home)?;
-    crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake WorkState: {e}"))?;
+    crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "step 1w: workspace {WORKSPACE} = {}; fake WorkState at {} (project {WORKSPACE}, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        "step 1w: workspace {WORKSPACE} = {}; fake Workman at {} (project {WORKSPACE}, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),
         fake.base()
     );
     OAUTH.set(oauth).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
-    FAKE.set(fake).map_err(|_| anyhow!("the fake WorkState was started twice"))
+    FAKE.set(fake).map_err(|_| anyhow!("the fake Workman was started twice"))
 }
 
 async fn painted(view: &Entity<FleetView>, keys: &[&str], within: Duration, what: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
@@ -341,13 +341,13 @@ fn escape(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
 }
 
 pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let fake = FAKE.get().ok_or_else(|| anyhow!("no fake WorkState (prepare did not run)"))?;
+    let fake = FAKE.get().ok_or_else(|| anyhow!("no fake Workman (prepare did not run)"))?;
     let mut lines = Vec::new();
 
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
-    let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the WorkState rows in the Inbox", cx).await?;
+    let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the Workman rows in the Inbox", cx).await?;
     crate::selftest_manage::shot("m5-14-inbox", cx).await;
-    lines.push(format!("Inbox painted the fake's 2 WorkState rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
+    lines.push(format!("Inbox painted the fake's 2 Workman rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
     let before = frames::baseline(view, cx).await;
     let recording = frames::start(view, cx);
@@ -595,7 +595,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     if work.read_with(cx, |w, _| w.item.as_ref().map(|o| o.id.clone())).as_deref() != Some(TASK_2) {
         bail!("the × click reached the row under it: the item page left sw2/2");
     }
-    let file = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Foreman home"))?.join(DISMISSED_FILE);
+    let file = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?.join(DISMISSED_FILE);
     let deadline = Instant::now() + LIVE_WITHIN;
     loop {
         let text = std::fs::read_to_string(&file).unwrap_or_default();

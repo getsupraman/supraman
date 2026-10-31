@@ -1714,6 +1714,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "theme",
  "toml 0.9.8",

@@ -125,7 +125,7 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
                 return SessionEnd::failed(why);
             }
         },
-        None => without_workstate = Some("Foreman is not signed in to WorkState: the run has no WorkState".to_string()),
+        None => without_workstate = Some("Supraman is not signed in to Workman: the run has no Workman".to_string()),
     }
 
     if let Err(e) = host.claude().launch(&spec) {
@@ -164,7 +164,7 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         && api_base(&t.url) == api_base(&m.url)
         && let Err(e) = host.minter().bind(&api_base(&t.url), &t.token, &m.session_id, &row.session_id)
     {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: cannot tell WorkState the claude session: {e}", w.name, s.id, ctx.run));
+        crate::fire::log(ctx.home, &format!("{}/{} {}: cannot tell Workman the claude session: {e}", w.name, s.id, ctx.run));
     }
 
     let mut end = watch(ctx, &spec, &row, &report, host, log);
@@ -231,7 +231,7 @@ struct Mint {
 
 /// The run's own token, minted with the signed-in bearer as the supervisor mints; `None` when not signed in.
 fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<Option<Mint>, String> {
-    let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a WorkState token for {}: {e}", spec.name))? else {
+    let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))? else {
         return Ok(None);
     };
     let origin = format!("foreman/{}/schedule/{}", ctx.workspace.name, ctx.schedule.id);
@@ -246,7 +246,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         repo: foreman_supervisor::git_repo(&spec.cwd),
         claude_session_id: None,
     };
-    let minted = host.minter().mint(&api_base(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a WorkState token for {}: {e}", spec.name))?;
+    let minted = host.minter().mint(&api_base(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
     Ok(Some(Mint { url: t.url, token: minted.token, session_id: minted.session_id }))
 }
 
@@ -268,15 +268,15 @@ fn end_mint(host: &mut dyn SessionHost, mcp_dir: &Path, name: &str, mint: Option
 /// `DELETE /api/agent-sessions/<session_id>` on `base`, with the bearer of the server Foreman is signed in to.
 pub(crate) fn revoke(tokens: &dyn TokenProvider, minter: &dyn Minter, base: &str, session_id: &str) -> Result<(), String> {
     match tokens.token(crate::schedule::RUN_ROLE) {
-        Ok(Some(t)) if api_base(&t.url) == base => minter.revoke(base, &t.token, session_id).map_err(|e| format!("cannot revoke WorkState session {session_id}: {e}")),
-        Ok(Some(_)) => Err(format!("cannot revoke WorkState session {session_id}: Foreman is signed in to another server now")),
-        Ok(None) => Err(format!("cannot revoke WorkState session {session_id}: Foreman is not signed in")),
-        Err(e) => Err(format!("cannot revoke WorkState session {session_id}: {e}")),
+        Ok(Some(t)) if api_base(&t.url) == base => minter.revoke(base, &t.token, session_id).map_err(|e| format!("cannot revoke Workman session {session_id}: {e}")),
+        Ok(Some(_)) => Err(format!("cannot revoke Workman session {session_id}: Supraman is signed in to another server now")),
+        Ok(None) => Err(format!("cannot revoke Workman session {session_id}: Supraman is not signed in")),
+        Err(e) => Err(format!("cannot revoke Workman session {session_id}: {e}")),
     }
 }
 
 pub(crate) fn remove_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
-    let file = foreman_claude::mcp_config_path(mcp_dir, name).map_err(|e| format!("cannot delete the WorkState config of {name}: {e}"))?;
+    let file = foreman_claude::mcp_config_path(mcp_dir, name).map_err(|e| format!("cannot delete the Workman config of {name}: {e}"))?;
     match fs::remove_file(&file) {
         Err(e) if e.kind() != ErrorKind::NotFound => Err(format!("cannot delete {}: {e}", file.display())),
         _ => Ok(()),

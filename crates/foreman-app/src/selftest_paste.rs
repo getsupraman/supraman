@@ -66,11 +66,11 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
         restored.map_err(|e| anyhow!("restoring the clipboard: {e}"))?;
         if exit != "0" && written {
             bail!(
-                "claude's image check in a Foreman tab exited {exit}, but another process wrote the clipboard between the put-back and the check (the clipboard is system-wide: another selftest running at the same time takes it)"
+                "claude's image check in a Supraman tab exited {exit}, but another process wrote the clipboard between the put-back and the check (the clipboard is system-wide: another selftest running at the same time takes it)"
             );
         }
         if exit != "0" {
-            bail!("claude's image check in a Foreman tab exited {exit} with the test image borrowed and put back on the clipboard, which nothing wrote since");
+            bail!("claude's image check in a Supraman tab exited {exit} with the test image borrowed and put back on the clipboard, which nothing wrote since");
         }
         Ok(format!(
             "test image on the clipboard, borrowed and put back; claude's image check in tab {id} exited 0; the user's {} clipboard formats back after {} ms",

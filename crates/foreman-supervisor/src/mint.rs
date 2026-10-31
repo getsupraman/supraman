@@ -84,11 +84,11 @@ impl fmt::Debug for Minted {
 /// Never carries a token: the bearer is not part of any message, and a server reason is cut short.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MintError {
-    #[error("WorkState at {base} is unreachable ({reason})")]
+    #[error("Workman at {base} is unreachable ({reason})")]
     Unreachable { base: String, reason: String },
-    #[error("WorkState answered HTTP {status}{}", reason_suffix(.reason))]
+    #[error("Workman answered HTTP {status}{}", reason_suffix(.reason))]
     Refused { status: u16, reason: String },
-    #[error("WorkState's answer was not understood: {0}")]
+    #[error("Workman's answer was not understood: {0}")]
     BadResponse(String),
 }
 
@@ -443,7 +443,7 @@ mod tests {
                 reason: "a live token exists for fm-demo-workspace".into()
             }
         );
-        assert_eq!(e.to_string(), "WorkState answered HTTP 409: a live token exists for fm-demo-workspace");
+        assert_eq!(e.to_string(), "Workman answered HTTP 409: a live token exists for fm-demo-workspace");
         ws.set(MINT, Answer::status(201, r#"{"token":"wss_x"}"#));
         assert_eq!(m.mint(ws.base(), "fake-static", &request()).unwrap_err(), MintError::BadResponse("no sessionId".into()));
         // nothing listens on a port just freed

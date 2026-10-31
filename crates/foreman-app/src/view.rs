@@ -421,7 +421,7 @@ impl Poller {
         let Some(home) = self.home.clone() else {
             return supervise::Setup {
                 plugin_dir: None,
-                notices: vec!["No Foreman home (set FOREMAN_HOME or APPDATA): nothing can be started.".into()],
+                notices: vec!["No Supraman home (set FOREMAN_HOME or APPDATA): nothing can be started.".into()],
             };
         };
         let setup = supervise::setup(&home);
@@ -996,9 +996,9 @@ impl FleetView {
         }
         let inbox = self.work_inbox.read(cx);
         if matches!(self.workstate, WsStatus::Checking) {
-            pending.push("WorkState".to_string());
+            pending.push("Workman".to_string());
         } else if inbox.reads > 0 && inbox.applied == 0 {
-            pending.push("WorkState inbox".to_string());
+            pending.push("Workman inbox".to_string());
         }
         pending
     }
@@ -1200,7 +1200,7 @@ impl FleetView {
     }
 
     pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
-        let home = self.home.clone().ok_or("No Foreman home: settings cannot be saved.")?;
+        let home = self.home.clone().ok_or("No Supraman home: settings cannot be saved.")?;
         let origin = foreman_core::validate_workstate_url(text)?;
         let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workstate.origin();
         if origin == current {
@@ -1396,7 +1396,7 @@ impl FleetView {
             (Some(home), Some(workspace)) => {
                 DesiredWrite::Start { home: home.clone(), plugin_dir: self.plugin_dir.clone(), workspace: workspace.clone() }
             }
-            (None, _) => return self.desired_failed(format!("Cannot start {name}: no Foreman home"), cx),
+            (None, _) => return self.desired_failed(format!("Cannot start {name}: no Supraman home"), cx),
             (_, None) => return self.desired_failed(format!("Cannot start {name}: not registered"), cx),
         };
         self.desired_writes.unbounded_send(write).ok();
@@ -1404,7 +1404,7 @@ impl FleetView {
 
     pub fn stop_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
-            return self.desired_failed(format!("Cannot stop {name}: no Foreman home"), cx);
+            return self.desired_failed(format!("Cannot stop {name}: no Supraman home"), cx);
         };
         self.desired_writes.unbounded_send(DesiredWrite::Stop { home, name: name.to_string() }).ok();
     }
@@ -1462,7 +1462,7 @@ impl FleetView {
 
     pub fn relay_refusal(&self, workspace: &str) -> Option<String> {
         if self.home.is_none() {
-            return Some("no Foreman home".into());
+            return Some("no Supraman home".into());
         }
         match self.relays.get(workspace) {
             Some(r) if r.started => None,
@@ -1529,7 +1529,7 @@ impl FleetView {
     }
 
     fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<Sent, String> {
-        let home = self.home.as_deref().ok_or("Not sent: no Foreman home.")?;
+        let home = self.home.as_deref().ok_or("Not sent: no Supraman home.")?;
         let to = workspace_session_name(workspace);
         let mode = DesiredState::launch_mode(home, workspace, &to);
         send_from_human(home, workspace, &to, mode.as_deref(), text, self.relay_refusal(workspace))
@@ -1561,7 +1561,7 @@ impl FleetView {
         let max_working = max_working.min(MAX_WORKING_LIMIT);
         let result = match &self.home {
             Some(home) => supervise::set_max_working(home, max_working),
-            None => Err(anyhow::anyhow!("no Foreman home")),
+            None => Err(anyhow::anyhow!("no Supraman home")),
         };
         match result {
             Ok(()) => {
@@ -1586,7 +1586,7 @@ impl FleetView {
     pub fn start_fresh(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
         let result = match &self.home {
             Some(home) => DesiredState::update(home, workspace, |d| d.start_fresh(name)).map(drop).map_err(|e| e.to_string()),
-            None => Err("no Foreman home".into()),
+            None => Err("no Supraman home".into()),
         };
         match result {
             Ok(()) => self.retry(workspace, name, cx),
@@ -1758,7 +1758,7 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
                     if let Some(tab) = this.tab_mut(id) {
-                        tab.workstate = Some(format!("Foreman token · {} · {session}", crate::hand::ROLE));
+                        tab.workstate = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
                         tab.hand_key = Some(name.clone());
                         if new_session.is_some() {
                             tab.launched_session = new_session.clone();
@@ -2280,14 +2280,14 @@ impl FleetView {
             return;
         };
         if let Err(e) = Settings::update(&home, |settings| settings.sessions.run_as_admin = true) {
-            self.action_error = Some(format!("Cannot save Run Foreman as administrator: {e}"));
+            self.action_error = Some(format!("Cannot save Run Supraman as administrator: {e}"));
             cx.notify();
             return;
         }
         match crate::elevate::relaunch(&home, Some(std::process::id())) {
             Ok(()) => self.quit(window, cx),
             Err(e) => {
-                self.action_error = Some(format!("Foreman stays unelevated: {e:#}"));
+                self.action_error = Some(format!("Supraman stays unelevated: {e:#}"));
                 cx.notify();
             }
         }
@@ -2485,9 +2485,13 @@ impl FleetView {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
                 let cwd = tab.cwd.clone();
+                let clipped = crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
                 TabHeader {
                     id: tab.id,
-                    label: crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.)).into_any_element(),
+                    label: match tab.kind {
+                        TabKind::Work(_) => div().flex().items_center().gap_1p5().child(crate::brand::workman(gpui::rems(1.), if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
+                        _ => clipped.into_any_element(),
+                    },
                     title: title.into(),
                     tooltip: Some(Box::new(hover_card::tooltip(move || {
                         tab_card::Card { branch: cwd.as_deref().and_then(foreman_core::branch_at), ..card.clone() }.hover_card()
@@ -2637,7 +2641,7 @@ impl Render for FleetView {
             )
             .flex_col()
             .child(crate::titlebar::render(
-                "Foreman",
+                "Supraman",
                 Some(
                     crate::titlebar::icon_button("open-settings", "\u{e713}", cx)
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx)))
@@ -2744,7 +2748,7 @@ mod tests {
         assert_eq!(workspaces.iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["alpha"]);
         assert_eq!(skipped.len(), 1);
         assert!(skipped[0].contains("beta"), "{skipped:?}");
-        assert_eq!(load_registry(Err("no Foreman home".into())), Err("no Foreman home".to_string()));
+        assert_eq!(load_registry(Err("no Supraman home".into())), Err("no Supraman home".to_string()));
     }
 
     #[test]

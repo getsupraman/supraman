@@ -177,13 +177,13 @@ fn work_errors_are_one_line_without_the_token() {
             assert!(!stderr.contains(&t) && !text(&out.stdout).contains(&t));
         }
     };
-    one_line(&["work", "overview", "nope"], "error: WorkState answered HTTP 404: no route /api/v1/resolve?ref=nope");
-    one_line(&["work", "overview", "locked"], "error: WorkState answered HTTP 403: insufficient_scope");
-    one_line(&["work", "board", "autowork", "backlog"], "error: WorkState project 'autowork' has no run 'backlog'");
+    one_line(&["work", "overview", "nope"], "error: Workman answered HTTP 404: no route /api/v1/resolve?ref=nope");
+    one_line(&["work", "overview", "locked"], "error: Workman answered HTTP 403: insufficient_scope");
+    one_line(&["work", "board", "autowork", "backlog"], "error: Workman project 'autowork' has no run 'backlog'");
 
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let out = fm(self::home(&format!("http://{free}"), None).path(), &["work", "overview", "autowork"]);
-    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to WorkState at http://{free}"));
+    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at http://{free}"));
 
     let none = tempfile::tempdir().unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_fm"))
@@ -192,7 +192,7 @@ fn work_errors_are_one_line_without_the_token() {
         .env_remove("APPDATA")
         .output()
         .unwrap();
-    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to WorkState at https://workstate.dikaia.ai");
+    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to Workman at https://workstate.dikaia.ai");
 }
 
 #[test]

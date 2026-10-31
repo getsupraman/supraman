@@ -1,9 +1,11 @@
 # A PNG of one process's main window, drawn by the window itself (PrintWindow), so another window over
-# it does not end up in the picture (the selftest's FOREMAN_SHOTS). -Title picks another of its top-level windows.
+# it does not end up in the picture (the selftest's FOREMAN_SHOTS). -Title picks another of its top-level windows;
+# -Screen 'x,y,w,h' copies that screen area instead (the process's tray icon on the taskbar).
 param(
     [Parameter(Mandatory)][int]$ProcessId,
     [Parameter(Mandatory)][string]$Out,
-    [string]$Title
+    [string]$Title,
+    [string]$Screen
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -20,6 +22,16 @@ public static class ShotWin32 {
 }
 '@
 [ShotWin32]::SetProcessDPIAware() | Out-Null
+if ($Screen) {
+    $x, $y, $w, $h = $Screen.Split(',') | ForEach-Object { [int]$_ }
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($x, $y, 0, 0, $bmp.Size)
+    $g.Dispose()
+    $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+    exit 0
+}
 $hwnd = (Get-Process -Id $ProcessId).MainWindowHandle
 if ($Title) {
     $hwnd = [IntPtr]::Zero

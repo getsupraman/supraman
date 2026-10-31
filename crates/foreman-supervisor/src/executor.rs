@@ -164,11 +164,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let mut notices = Vec::new();
         let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
             let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
-            notices.push(format!("Cannot read {shown} ({e}): the WorkState sessions minted before are forgotten"));
+            notices.push(format!("Cannot read {shown} ({e}): the Workman sessions minted before are forgotten"));
             MintedSessions::empty(path)
         });
         if let Err(e) = minted.adopt_origins(&config.mcp_dir) {
-            notices.push(format!("Cannot save the minted WorkState sessions of {}: {e}", desired.workspace));
+            notices.push(format!("Cannot save the minted Workman sessions of {}: {e}", desired.workspace));
         }
         Self {
             desired,
@@ -466,7 +466,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let Some(t) = self
             .tokens
             .token(&w.role)
-            .map_err(|e| Failure::Other(format!("cannot mint a WorkState token for {}: {e}", w.name)))?
+            .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?
         else {
             return Ok(None);
         };
@@ -485,7 +485,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let minted = self
             .minter
             .mint(&api_base(&t.url), &t.token, &request)
-            .map_err(|e| Failure::Other(format!("cannot mint a WorkState token for {}: {e}", w.name)))?;
+            .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?;
         self.minted.insert(
             &w.name,
             MintedSession {
@@ -556,11 +556,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             let result = match self.tokens.token(&role) {
                 Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
                 Ok(Some(t)) => self.minter.bind(&api_base(&t.url), &t.token, &session_id, &claude_session_id).map_err(|e| e.to_string()),
-                Ok(None) => Err(format!("role {role} has no WorkState token any more")),
+                Ok(None) => Err(format!("role {role} has no Workman token any more")),
                 Err(e) => Err(e),
             };
             if let Err(e) = result {
-                self.notices.push(format!("Cannot tell WorkState the claude session of {name} (session {session_id}): {e}"));
+                self.notices.push(format!("Cannot tell Workman the claude session of {name} (session {session_id}): {e}"));
             }
             self.save_minted();
         }
@@ -583,12 +583,12 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             let result = match self.tokens.token(&m.role) {
                 Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
                 Ok(Some(t)) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
-                Ok(None) => Err(format!("role {} has no WorkState token any more", m.role)),
+                Ok(None) => Err(format!("role {} has no Workman token any more", m.role)),
                 Err(e) => Err(e),
             };
             if let Err(e) = result {
                 self.notices.push(format!(
-                    "Cannot revoke the WorkState token of {name} (session {}): {e}; unused, it lapses after its idle window",
+                    "Cannot revoke the Workman token of {name} (session {}): {e}; unused, it lapses after its idle window",
                     m.session_id
                 ));
             }
@@ -597,7 +597,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     Err(e) if e.kind() != ErrorKind::NotFound => self.notices.push(format!("Cannot delete {}: {e}", file.display())),
                     _ => {}
                 },
-                Err(e) => self.notices.push(format!("Cannot delete the WorkState config of {name}: {e}")),
+                Err(e) => self.notices.push(format!("Cannot delete the Workman config of {name}: {e}")),
             }
             self.save_minted();
         }
@@ -726,7 +726,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 name: w.name.clone(),
                 since: last + window,
                 detail: format!(
-                    "no turn for {} h: its WorkState token lapsed after {} h idle, so its next WorkState call gets HTTP 401; \
+                    "no turn for {} h: its Workman token lapsed after {} h idle, so its next Workman call gets HTTP 401; \
                      Re-mint stops it and resumes it with a fresh token",
                     (now - last) / (3_600 * SECOND),
                     window / (3_600 * SECOND)
@@ -759,7 +759,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                 name,
                 since: now,
                 detail: format!(
-                    "its WorkState token is from {from}, and Foreman uses {origin}; Re-mint stops it and resumes it with a token from {origin}"
+                    "its Workman token is from {from}, and Supraman uses {origin}; Re-mint stops it and resumes it with a token from {origin}"
                 ),
                 action: Some(Remedy::Remint { id: row.id.clone() }),
             });
@@ -769,7 +769,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     fn save_minted(&mut self) {
         if let Err(e) = self.minted.save() {
-            self.notices.push(format!("Cannot save the minted WorkState sessions of {}: {e}", self.desired.workspace));
+            self.notices.push(format!("Cannot save the minted Workman sessions of {}: {e}", self.desired.workspace));
         }
     }
 }
@@ -1166,7 +1166,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0", "same WorkState row");
+        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0", "same Workman row");
         let text = config_text(&mcp, "fm-demo-workspace");
         assert!(text.contains("wss_fake2") && !text.contains("wss_fake1") && !text.contains(STATIC), "{text}");
     }
@@ -1290,12 +1290,12 @@ mod tests {
     fn mint_without_a_bearer_now_fails_the_launch_with_why() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
-        sup.tokens_mut().1 = Some("sign in to WorkState at http://127.0.0.1:5290 again: the server refused the refresh (invalid_grant)".into());
+        sup.tokens_mut().1 = Some("sign in to Workman at http://127.0.0.1:5290 again: the server refused the refresh (invalid_grant)".into());
         let needs = sup.tick(&[], &mut free(), NOW);
-        assert!(sup.launcher().take().is_empty(), "nothing launched without WorkState");
+        assert!(sup.launcher().take().is_empty(), "nothing launched without Workman");
         assert!(minter.take().is_empty());
         assert!(
-            needs.iter().any(|n| n.kind == NeedsKind::LaunchFailed && n.detail.contains("sign in to WorkState") && n.detail.contains("again")),
+            needs.iter().any(|n| n.kind == NeedsKind::LaunchFailed && n.detail.contains("sign in to Workman") && n.detail.contains("again")),
             "{needs:?}"
         );
     }
@@ -1389,7 +1389,7 @@ mod tests {
         assert_eq!(needs[0].kind, NeedsKind::LaunchFailed);
         assert_eq!(needs[0].action, Some(Remedy::Retry));
         assert!(
-            needs[0].detail.contains("cannot mint a WorkState token for fm-demo-workspace: WorkState answered HTTP 401: unknown token"),
+            needs[0].detail.contains("cannot mint a Workman token for fm-demo-workspace: Workman answered HTTP 401: unknown token"),
             "{}",
             needs[0].detail
         );
@@ -1412,7 +1412,7 @@ mod tests {
         sup.tick(&[], &mut free(), NOW + SECOND);
         let notices = sup.take_notices();
         assert_eq!(notices.len(), 1, "{notices:?}");
-        assert!(notices[0].starts_with("Cannot revoke the WorkState token of fm-demo-workspace (session ws-0)"), "{}", notices[0]);
+        assert!(notices[0].starts_with("Cannot revoke the Workman token of fm-demo-workspace (session ws-0)"), "{}", notices[0]);
         assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
     }
 
@@ -1460,7 +1460,7 @@ mod tests {
         assert_eq!(needs[0].kind, NeedsKind::TokenExpired);
         assert_eq!(needs[0].since, NOW + 122 * HOUR);
         assert_eq!(needs[0].action, Some(Remedy::Remint { id: "aaaa0001".into() }));
-        assert!(needs[0].detail.contains("next WorkState call gets HTTP 401"), "{}", needs[0].detail);
+        assert!(needs[0].detail.contains("next Workman call gets HTTP 401"), "{}", needs[0].detail);
         // a turn after the lapse does not renew it: the row stays, its since kept
         let needs = sup.tick(std::slice::from_ref(&busy), &mut free(), NOW + 130 * HOUR);
         assert_eq!((needs.len(), needs[0].since), (1, NOW + 122 * HOUR));

@@ -67,7 +67,7 @@ impl Stream {
         let thread = std::thread::Builder::new()
             .name("workstate-stream".into())
             .spawn(move || worker.run())
-            .expect("spawn the WorkState stream thread");
+            .expect("spawn the Workman stream thread");
         (Self { stop, thread: Some(thread) }, rx)
     }
 
@@ -315,8 +315,8 @@ impl HttpReader {
             self.status = status;
             match status {
                 Some(200) => {}
-                Some(status) => return Err(format!("WorkState answered HTTP {status}")),
-                None => return Err("WorkState's answer was not HTTP".into()),
+                Some(status) => return Err(format!("Workman answered HTTP {status}")),
+                None => return Err("Workman's answer was not HTTP".into()),
             }
             let mut body = Body::Close;
             let mut api = None;
@@ -333,8 +333,8 @@ impl HttpReader {
             }
             match api.as_deref() {
                 Some(API_VERSION) => {}
-                Some(v) => return Err(format!("the stream speaks read API {v}, Foreman reads v{API_VERSION}")),
-                None => return Err(format!("the stream answered without {API_HEADER}: not a WorkState read API v{API_VERSION}")),
+                Some(v) => return Err(format!("the stream speaks read API {v}, Supraman reads v{API_VERSION}")),
+                None => return Err(format!("the stream answered without {API_HEADER}: not a Workman read API v{API_VERSION}")),
             }
             let tail = self.head.split_off(end + 4);
             self.head.clear();
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn http_reader_refuses_a_non_200() {
         let mut r = HttpReader::default();
-        assert_eq!(r.feed(b"HTTP/1.1 401 Unauthorized\r\n\r\n").unwrap_err(), "WorkState answered HTTP 401");
+        assert_eq!(r.feed(b"HTTP/1.1 401 Unauthorized\r\n\r\n").unwrap_err(), "Workman answered HTTP 401");
     }
 
     #[test]

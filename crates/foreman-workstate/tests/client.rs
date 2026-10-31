@@ -157,7 +157,7 @@ fn client_maps_errors_and_never_says_the_token() {
     assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("speaks read API 2")));
     assert!(matches!(c.backlog("x").unwrap_err(), Error::Decode(_)));
     assert_eq!(c.sessions(&SessionsQuery::default()).unwrap_err(), Error::Http { status: 500, reason: String::new() });
-    assert_eq!(e.to_string(), "WorkState answered HTTP 401: bad token <redacted>");
+    assert_eq!(e.to_string(), "Workman answered HTTP 401: bad token <redacted>");
 
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     let dead = Client::new(format!("http://{free}"), TOKEN);

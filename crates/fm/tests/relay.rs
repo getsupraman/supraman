@@ -32,7 +32,7 @@ fn send_is_refused_inside_a_foreman_session_before_touching_the_home() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
-        "fm send speaks as the human through the relay and is refused inside a Foreman session \
+        "fm send speaks as the human through the relay and is refused inside a Supraman session \
          (FOREMAN_ROLE=workspace); use SendMessage to reach a session, fm tell to reach the human\n"
     );
     assert!(out.stdout.is_empty(), "{out:?}");
@@ -115,7 +115,7 @@ fn tell_writes_the_outbox_as_the_session_and_is_refused_outside_one() {
     let home = tempfile::tempdir().unwrap();
     let out = fm(home.path(), &["tell", "hello"]);
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stderr).starts_with("fm tell runs inside a Foreman session"), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("fm tell runs inside a Supraman session"), "{out:?}");
     assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0);
 
     let tell = |args: &[&str], env: &[(&str, &str)]| {

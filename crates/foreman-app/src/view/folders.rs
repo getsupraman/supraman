@@ -179,7 +179,7 @@ impl FleetView {
 
     pub fn apply_edit(&mut self, w: &str, edit: Edit, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
-            return self.edit_failed("no Foreman home".into(), cx);
+            return self.edit_failed("no Supraman home".into(), cx);
         };
         let disabling = match &edit {
             Edit::SetEnabled { folder, enabled: false } => Some(folder.clone()),

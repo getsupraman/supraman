@@ -39,7 +39,7 @@ pub fn want(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
     };
     println!("{}: {what}; repo {}, cwd {}", session.name, repo.name, repo.path.display());
     if desired.started {
-        println!("the supervisor launches it at its next tick while Foreman runs");
+        println!("the supervisor launches it at its next tick while Supraman runs");
     } else {
         println!("notice: workspace {w} is not started; it launches on Start");
     }
@@ -89,7 +89,7 @@ fn repo_template(home: &Path) -> Result<String, Failure> {
     }
     let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate fm.exe: {e}")))?;
     let plugin = find_plugin_dir(&exe)
-        .map_err(|e| Failure::Usage(format!("no {}, and {e}: start Foreman once", home.join("roles").join(&file).display())))?;
+        .map_err(|e| Failure::Usage(format!("no {}, and {e}: start Supraman once", home.join("roles").join(&file).display())))?;
     let template = std::fs::read_to_string(plugin.join("roles").join(&file))
         .map_err(|e| Failure::Usage(format!("{}: {e}", plugin.join("roles").join(&file).display())))?;
     Ok(fill_paths(&template, &plugin.join("bin").join(HOOK_EXE), home))

@@ -39,11 +39,11 @@ fn quit(fleet: &Entity<FleetView>, window: &mut Window, cx: &mut App) {
         return;
     }
     let detail = format!(
-        "{} started ({}): nothing restarts or delivers for them until Foreman runs again. Their sessions keep running.",
+        "{} started ({}): nothing restarts or delivers for them until Supraman runs again. Their sessions keep running.",
         if started.len() == 1 { "1 workspace is".to_string() } else { format!("{} workspaces are", started.len()) },
         started.join(", ")
     );
-    let answer = window.prompt(PromptLevel::Warning, "Quit Foreman and stop supervising?", Some(&detail), &["Quit", "Cancel"], cx);
+    let answer = window.prompt(PromptLevel::Warning, "Quit Supraman and stop supervising?", Some(&detail), &["Quit", "Cancel"], cx);
     let fleet = fleet.clone();
     window
         .spawn(cx, async move |cx| {
@@ -60,14 +60,67 @@ fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
     fleet.read(cx).desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
 }
 
+/// The tray icon's resource in `assets/foreman.rc`: the kit's on-dark or on-light tray mark.
 #[cfg(windows)]
-const ICON: &[u8] = include_bytes!("../assets/tray.ico");
+fn icon_resource(light_taskbar: bool) -> u16 {
+    if light_taskbar { 3 } else { 2 }
+}
+
+/// Windows' "Choose your default Windows mode", which colours the taskbar: true when it is Light.
+#[cfg(windows)]
+pub fn light_taskbar() -> bool {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    use windows::core::w;
+    let mut value = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let read = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
+            w!("SystemUsesLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+    read.is_ok() && value == 1
+}
 
 #[cfg(windows)]
-pub struct Tray(tray_icon::TrayIcon, std::cell::RefCell<String>);
+fn load_icon(light_taskbar: bool) -> anyhow::Result<tray_icon::Icon> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
+    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as u32;
+    Ok(tray_icon::Icon::from_resource(icon_resource(light_taskbar), Some((size, size)))?)
+}
+
+#[cfg(windows)]
+pub struct Tray(tray_icon::TrayIcon, std::cell::RefCell<String>, std::cell::Cell<bool>);
 
 #[cfg(windows)]
 impl Tray {
+    /// The icon for the taskbar's colour, reloaded when it changed.
+    pub fn follow_taskbar(&self) {
+        let light = light_taskbar();
+        if self.2.get() != light {
+            match load_icon(light) {
+                Ok(icon) => match self.0.set_icon(Some(icon)) {
+                    Ok(()) => self.2.set(light),
+                    Err(e) => log::warn!("cannot set the tray icon: {e}"),
+                },
+                Err(e) => log::warn!("cannot load the tray icon: {e:#}"),
+            }
+        }
+    }
+
+    pub fn rect(&self) -> Option<tray_icon::Rect> {
+        self.0.rect()
+    }
+
+    pub fn light(&self) -> bool {
+        self.2.get()
+    }
+
     /// The icon's tooltip: the scheduled runs that need René (`FleetView::tray_tooltip`).
     pub fn set_tooltip(&self, text: &str) {
         if *self.1.borrow() != text {
@@ -86,11 +139,11 @@ pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
 
     let menu = Menu::new();
     menu.append_items(&[
-        &MenuItem::with_id("open", "Open Foreman", true, None),
+        &MenuItem::with_id("open", "Open Supraman", true, None),
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id("stop-all", "Stop all workspaces", true, None),
         &PredefinedMenuItem::separator(),
-        &MenuItem::with_id("quit", "Quit Foreman", true, None),
+        &MenuItem::with_id("quit", "Quit Supraman", true, None),
     ])?;
     let menu_commands = commands.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -107,16 +160,14 @@ pub fn install(commands: UnboundedSender<Command>) -> anyhow::Result<Tray> {
             commands.unbounded_send(Command::Open).ok();
         }
     }));
-    let decoded = image::load_from_memory_with_format(ICON, image::ImageFormat::Ico)?.into_rgba8();
-    let (width, height) = decoded.dimensions();
-    let icon = tray_icon::Icon::from_rgba(decoded.into_raw(), width, height)?;
+    let light = light_taskbar();
     let tray = TrayIconBuilder::new()
-        .with_tooltip("Foreman")
-        .with_icon(icon)
+        .with_tooltip("Supraman")
+        .with_icon(load_icon(light)?)
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .build()?;
-    Ok(Tray(tray, std::cell::RefCell::new("Foreman".into())))
+    Ok(Tray(tray, std::cell::RefCell::new("Supraman".into()), std::cell::Cell::new(light)))
 }
 
 #[cfg(not(windows))]
@@ -125,6 +176,7 @@ pub struct Tray;
 #[cfg(not(windows))]
 impl Tray {
     pub fn set_tooltip(&self, _text: &str) {}
+    pub fn follow_taskbar(&self) {}
 }
 
 #[cfg(not(windows))]

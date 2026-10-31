@@ -79,7 +79,7 @@ impl fmt::Display for Refusal {
             Self::NotApproved => f.write_str("the schedule was never approved"),
             Self::Changed => f.write_str("the schedule changed since its approval"),
             Self::BadMac => f.write_str("the approval does not verify"),
-            Self::NoKey => f.write_str("no approval key: nothing was approved in this Foreman home"),
+            Self::NoKey => f.write_str("no approval key: nothing was approved in this Supraman home"),
             Self::Key(e) => write!(f, "cannot read the approval key: {e}"),
             Self::Unreadable(e) => write!(f, "cannot compute the fingerprint: {e}"),
         }

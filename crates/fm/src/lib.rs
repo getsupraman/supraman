@@ -25,7 +25,7 @@ usage:
   fm roster <workspace> [--json]       (the workspace's sessions: name, role, health, id, cwd)
   fm send <workspace> <to> <body>      (drop a message for the workspace's relay to send)
   fm send <workspace> <to> --file <path>  (into the session's pipe, else through the relay)
-  fm tell <body>                       (inside a Foreman session: a message to the human)
+  fm tell <body>                       (inside a Supraman session: a message to the human)
   fm tell --file <path>
   fm messages <workspace>              (messages the relay received, newest last)
   fm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
@@ -44,8 +44,8 @@ usage:
   fm schedule report <run> done|needs-you <one line>   (inside a scheduled run: its outcome, to the run's owner)
   fm schedule fire --home <home> <workspace> <id> --fingerprint <hex>   (what the schedule's task runs, as fmw.exe)
       <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
-      pending until Approve in the Foreman window; fm never approves and never registers a task.
-  fm work overview <workspace>         (its WorkState project: runs with rollups, who works, the inbox)
+      pending until Approve in the Supraman window; fm never approves and never registers a task.
+  fm work overview <workspace>         (its Workman project: runs with rollups, who works, the inbox)
   fm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
   fm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
   fm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)

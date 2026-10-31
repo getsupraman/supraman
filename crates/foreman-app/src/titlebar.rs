@@ -20,9 +20,13 @@ pub fn render(title: &'static str, actions: Option<AnyElement>, window: &Window,
         .window_control_area(WindowControlArea::Drag)
         .child(
             div()
+                .flex()
+                .items_center()
+                .gap_2()
                 .pl_3()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
+                .child(crate::brand::supraman(16.))
                 .child(title),
         )
         .child(

@@ -26,10 +26,11 @@ pub mod page {
 }
 
 fn pages() -> SettingsPages<SettingsView> {
-    let page = |id, title, icon, render| SettingsPage { id, title, icon, render };
+    let page = |id, title, icon, render| SettingsPage { id, title, icon, mark: None, render };
+    let workman = |color| crate::brand::workman(gpui::rems(1.), color).into_any_element();
     SettingsPages::default()
         .register(page(page::SESSIONS, "Sessions", "\u{E7C4}", SettingsView::render_sessions))
-        .register(page(page::WORKSTATE, "WorkState", "\u{E753}", SettingsView::render_workstate))
+        .register(SettingsPage { mark: Some(workman), ..page(page::WORKSTATE, "Workman", "\u{E753}", SettingsView::render_workstate) })
         .register(page(page::PLUGINS, "Plugins", "\u{EA86}", SettingsView::render_plugins))
         .register(page(page::APPEARANCE, "Appearance", "\u{E790}", SettingsView::render_appearance))
         .register(page(page::ABOUT, "About", "\u{E946}", SettingsView::render_about))
@@ -74,7 +75,7 @@ pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&s
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
-                title: Some(SharedString::from("Foreman Settings")),
+                title: Some(SharedString::from("Supraman Settings")),
                 appears_transparent: true,
                 traffic_light_position: None,
             }),
@@ -175,7 +176,7 @@ impl SettingsView {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
-            self.error = Some("No Foreman home (set FOREMAN_HOME or APPDATA): settings cannot be saved.".into());
+            self.error = Some("No Supraman home (set FOREMAN_HOME or APPDATA): settings cannot be saved.".into());
             return;
         };
         match Settings::load_with_notices(&home) {
@@ -371,9 +372,9 @@ impl SettingsView {
         let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.run_as_admin = !admin, cx)));
         let now: SharedString = if foreman_claude::is_elevated() {
-            "Foreman runs as administrator now.".into()
+            "Supraman runs as administrator now.".into()
         } else {
-            "Foreman runs unelevated now.".into()
+            "Supraman runs unelevated now.".into()
         };
         let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
         let reopen = self.settings.sessions.reopen_tabs;
@@ -385,32 +386,32 @@ impl SettingsView {
         vec![
             row(
                 "Busy sessions at most",
-                "How many sessions of this Foreman may be working (mid-turn) at the same time, counted across \
+                "How many sessions of this Supraman may be working (mid-turn) at the same time, counted across \
                  its workspaces. Launches and resumes wait while the limit is reached. 0 pauses them all. \
-                 Your own sessions and another Foreman's are not counted.",
+                 Your own sessions and another Supraman's are not counted.",
                 stepper.into_any_element(),
                 None,
                 cx,
             ),
             row(
-                "Run Foreman as administrator",
+                "Run Supraman as administrator",
                 "Turn this on when your terminals run as administrator: the claude background service they \
-                 start then refuses an unelevated Foreman, and its sessions cannot launch or resume. Each \
-                 start asks Windows (UAC) once. Takes effect the next time Foreman starts.",
+                 start then refuses an unelevated Supraman, and its sessions cannot launch or resume. Each \
+                 start asks Windows (UAC) once. Takes effect the next time Supraman starts.",
                 toggle.into_any_element(),
                 Some(now),
                 cx,
             ),
             row(
                 "Reopen last tabs on start",
-                "Foreman keeps the open tabs, in their order, and reopens them when it starts again: shells in                  their folder, attached background sessions attached again while they run (a stopped one waits for                  Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh WorkState                  token. A tab whose folder or session is gone is left out with one notice.",
+                "Supraman keeps the open tabs, in their order, and reopens them when it starts again: shells in                  their folder, attached background sessions attached again while they run (a stopped one waits for                  Resume; nothing is restarted unasked), Work tabs, and claude tabs resumed with a fresh Workman                  token. A tab whose folder or session is gone is left out with one notice.",
                 reopen_toggle.into_any_element(),
                 None,
                 cx,
             ),
             row(
                 "Resume reopened claude tabs",
-                "At once: each claude tab of the last run resumes its conversation when Foreman starts. On a click:                  it opens with a Resume button and nothing runs until you click it.",
+                "At once: each claude tab of the last run resumes its conversation when Supraman starts. On a click:                  it opens with a Resume button and nothing runs until you click it.",
                 resume_toggle.into_any_element(),
                 None,
                 cx,
@@ -442,8 +443,8 @@ impl SettingsView {
             self.render_workstate_status(cx),
             row(
                 "Server URL",
-                "The WorkState server Foreman signs in to, e.g. https://workstate.dikaia.ai (http only for this \
-                 machine). While signed in, a new server is used only once you have signed in there: Foreman then \
+                "The Workman server Supraman signs in to, e.g. https://workstate.dikaia.ai (http only for this \
+                 machine). While signed in, a new server is used only once you have signed in there: Supraman then \
                  restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
                  the old one.",
                 field.into_any_element(),
@@ -510,8 +511,8 @@ impl SettingsView {
         row(
             "Status",
             format!(
-                "Foreman signs in to WorkState in your browser (OAuth). The grant is kept in the Foreman home, \
-                 encrypted for your Windows account; Foreman uses it to read WorkState and to give each session it \
+                "Supraman signs in to Workman in your browser (OAuth). The grant is kept in the Supraman home, \
+                 encrypted for your Windows account; Supraman uses it to read Workman and to give each session it \
                  starts a token of its own. Sign out revokes the grant, and with it every session token minted \
                  under it. Checked every {} s and after every change here.",
                 RECHECK_EVERY.as_secs()
@@ -577,10 +578,21 @@ impl SettingsView {
         let value = |id: &'static str, text: String| div().id(id).text_sm().child(SharedString::from(text)).into_any_element();
         let home = self.home.as_ref().map_or("not set".to_string(), |h| h.display().to_string());
         vec![
-            row("Foreman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
+            div()
+                .id("about-mark")
+                .flex()
+                .items_center()
+                .gap_3()
+                .py_3()
+                .border_b_1()
+                .border_color(colors.border_variant)
+                .child(crate::brand::supraman(40.))
+                .child(crate::brand::wordmark(22., cx))
+                .into_any_element(),
+            row("Supraman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
             row(
                 "claude CLI",
-                "The Claude Code CLI Foreman lists, launches and attaches sessions with (`claude --version`).",
+                "The Claude Code CLI Supraman lists, launches and attaches sessions with (`claude --version`).",
                 value("about-cli", cli),
                 warning.map(|(text, color)| {
                     banner::tinted(color)
@@ -600,7 +612,7 @@ impl SettingsView {
                 cx,
             ),
             row(
-                "Foreman home",
+                "Supraman home",
                 "FOREMAN_HOME, else %APPDATA%\\Foreman: workspaces, desired state, settings.toml, hook events.",
                 div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
@@ -612,7 +624,7 @@ impl SettingsView {
     fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let current = self.settings.appearance.theme.clone().unwrap_or_else(|| themes::DEFAULT_THEME.into());
+        let current = themes::canonical(self.settings.appearance.theme.as_deref().unwrap_or(themes::DEFAULT_THEME)).to_string();
         let terminal = TerminalColors::from_setting(self.settings.appearance.terminal_colors.as_deref());
         let mut list = div().flex().flex_col().gap_1().pt_2();
         for (ix, entry) in self.catalog.entries.iter().enumerate() {
@@ -726,8 +738,8 @@ impl SettingsView {
         vec![
             row(
                 "Theme",
-                "The colours of every Foreman window. Zed theme files (*.json) in the themes folder of the \
-                 Foreman home are listed too; a key a file leaves out keeps One Dark's. Applied at once.",
+                "The colours of every Supraman window. Zed theme files (*.json) in the themes folder of the \
+                 Supraman home are listed too; a key a file leaves out keeps One Dark's. Applied at once.",
                 folder.into_any_element(),
                 Some(list.into_any_element()),
                 cx,
@@ -795,7 +807,7 @@ impl SettingsView {
         };
         vec![row(
             "Extra plugin dirs",
-            "Passed as --plugin-dir to every session Foreman launches, after Foreman's own plugin. A plugin \
+            "Passed as --plugin-dir to every session Supraman launches, after Supraman's own plugin. A plugin \
              installed for your user, such as rlarch, loads without being listed here. Change them in \
              settings.toml ([sessions] extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
             div().into_any_element(),

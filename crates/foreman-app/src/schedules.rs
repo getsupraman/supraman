@@ -343,9 +343,9 @@ pub fn attention(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Attention> {
 /// The tray's tooltip: Foreman, and how many runs need René.
 pub fn tray_tooltip(attention: usize) -> String {
     match attention {
-        0 => "Foreman".into(),
-        1 => "Foreman · 1 scheduled run needs you".into(),
-        n => format!("Foreman · {n} scheduled runs need you"),
+        0 => "Supraman".into(),
+        1 => "Supraman · 1 scheduled run needs you".into(),
+        n => format!("Supraman · {n} scheduled runs need you"),
     }
 }
 
@@ -463,7 +463,7 @@ mod tests {
         assert!(attention(&rows).is_empty(), "a later good run clears it");
         rows.get_mut("demo").unwrap()[0].runs.insert(0, run("r4", NOW + 2, Some(Outcome::NeedsYou), "a prompt"));
         assert_eq!(attention(&rows)[0].outcome, Outcome::NeedsYou);
-        assert_eq!(tray_tooltip(0), "Foreman");
-        assert_eq!(tray_tooltip(2), "Foreman · 2 scheduled runs need you");
+        assert_eq!(tray_tooltip(0), "Supraman");
+        assert_eq!(tray_tooltip(2), "Supraman · 2 scheduled runs need you");
     }
 }

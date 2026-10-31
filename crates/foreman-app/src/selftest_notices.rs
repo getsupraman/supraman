@@ -11,7 +11,7 @@ use crate::{
     view::{FleetView, notices::Notice},
 };
 
-const FIRST: &str = "fm-selftest: WorkState session hand-selftest-1, not fm-selftest-x: replace does not override that";
+const FIRST: &str = "fm-selftest: Workman session hand-selftest-1, not fm-selftest-x: replace does not override that";
 const SECOND: &str = "fm-selftest: a second hand notice";
 const ACTION: &str = "fm-selftest: Cannot do the thing";
 const WITHIN: Duration = Duration::from_secs(10);

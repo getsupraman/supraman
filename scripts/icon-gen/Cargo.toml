@@ -1,5 +1,5 @@
-# Renders the app icon's SVG into PNG previews and the .ico (m5/14). Not a workspace member:
-#   cargo run --release --manifest-path scripts/icon-gen/Cargo.toml -- <icon.svg> <out dir>
+# Renders the brand kit's SVGs into the app and tray .ico files and a preview. Not a workspace member:
+#   cargo run --release --manifest-path scripts/icon-gen/Cargo.toml -- crates/foreman-app/assets/brand crates/foreman-app/assets
 [package]
 name = "icon-gen"
 version = "0.1.0"

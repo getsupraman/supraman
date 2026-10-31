@@ -32,7 +32,7 @@ fn painted(v: &FleetView, key: &str) -> bool {
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let home = crate::selftest::home();
     let saved = Settings::load(&home)?;
-    let (fake, oauth) = crate::selftest_work::fake().ok_or_else(|| anyhow!("step 1w started no fake WorkState"))?;
+    let (fake, oauth) = crate::selftest_work::fake().ok_or_else(|| anyhow!("step 1w started no fake Workman"))?;
     let base = fake.base().to_string();
     let auth = crate::signin::auth(&home);
     let mut lines = Vec::new();
@@ -43,7 +43,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     })
     .await?;
     view.update(cx, |v, cx| v.open_settings_at(Some(page::WORKSTATE), cx));
-    let handle = until(view, cx, "Settings opens on WorkState", |v| v.settings_window).await?;
+    let handle = until(view, cx, "Settings opens on Workman", |v| v.settings_window).await?;
     let started = Instant::now();
     loop {
         let (page, shown) = handle.read_with(cx, |s, _| (s.page(), s.workstate().clone())).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -56,8 +56,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    shot_window("m5-43-settings-signed-in", Some("Foreman Settings"), cx).await;
-    lines.push(format!("Settings → WorkState: signed in on {base} as {who}"));
+    shot_window("m5-43-settings-signed-in", Some("Supraman Settings"), cx).await;
+    lines.push(format!("Settings → Workman: signed in on {base} as {who}"));
 
     let revoked = oauth.revoked();
     view.update(cx, |v, cx| v.sign_out(cx));
@@ -87,7 +87,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         bail!("Sign in issued no token");
     }
     let rows = crate::selftest_work::inbox_keys();
-    until(view, cx, "the tree's WorkState rows", |v| rows.iter().all(|k| painted(v, k)).then_some(())).await?;
+    until(view, cx, "the tree's Workman rows", |v| rows.iter().all(|k| painted(v, k)).then_some(())).await?;
     let read = || {
         fake.seen().iter().any(|s| {
             s.target.starts_with("/api/v1/") && s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| fresh.iter().any(|f| f == t))
@@ -100,7 +100,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} WorkState rows read with them", fresh.len(), rows.len()));
+    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} Workman rows read with them", fresh.len(), rows.len()));
 
     let other = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
@@ -134,7 +134,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if !error.contains(&closed) || Settings::load(&home)?.workstate.origin() != other.base() {
         bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workstate.origin());
     }
-    shot_window("m5-43-settings-switch-failed", Some("Foreman Settings"), cx).await;
+    shot_window("m5-43-settings-switch-failed", Some("Supraman Settings"), cx).await;
     lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
     let bad = handle.update(cx, |s, _, cx| {
         s.set_url_text("http://workstate.example", cx);
@@ -171,6 +171,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         v.recheck_workstate();
         crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
     });
-    until(view, cx, "the gate's fake WorkState Ready again", |v| matches!(v.workstate, WsStatus::Ready { .. }).then_some(())).await?;
+    until(view, cx, "the gate's fake Workman Ready again", |v| matches!(v.workstate, WsStatus::Ready { .. }).then_some(())).await?;
     Ok(lines.join("; "))
 }

@@ -83,7 +83,7 @@ pub(super) fn send_name_of(session_id: &str) -> Option<String> {
 }
 
 fn registry(home: Option<&Path>) -> Result<Registry, String> {
-    home.map(Registry::at).ok_or_else(|| "no Foreman home".to_string())
+    home.map(Registry::at).ok_or_else(|| "no Supraman home".to_string())
 }
 
 fn add_error(e: &CoreError) -> String {
@@ -127,7 +127,7 @@ impl FleetView {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Add as a Foreman workspace".into()),
+            prompt: Some("Add as a Supraman workspace".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -444,7 +444,7 @@ impl FleetView {
                 let stop = if started { "Its supervision stops first (Stop), then " } else { "" };
                 self.confirm = Some(Confirm::ask(
                     format!(
-                        "Remove workspace {w} from Foreman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
+                        "Remove workspace {w} from Supraman? {stop}its registry entry and desired state go. No files are deleted, and no session is stopped beyond what Stop does."
                     ),
                     "Remove",
                     Confirmed::Remove(w),
@@ -468,7 +468,7 @@ impl FleetView {
             MenuAction::StopSession(session) => {
                 self.confirm = Some(Confirm::ask(
                     format!(
-                        "{} ({}) was not launched by Foreman. Stop it? Its transcript stays and it can be resumed.",
+                        "{} ({}) was not launched by Supraman. Stop it? Its transcript stays and it can be resumed.",
                         if session.name.is_empty() { "This session" } else { &session.name },
                         session.id
                     ),
@@ -483,7 +483,7 @@ impl FleetView {
                 let later = if started { String::new() } else { format!(" Workspace {workspace} is not started: the copy starts when you Start it.") };
                 self.confirm = Some(Confirm::ask(
                     format!(
-                        "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh WorkState token. The original stays stopped and listed.{later}"
+                        "Adopt {label} into {workspace}? {stop} conversation continues as {name}, supervised: a copy under a new id with a fresh Workman token. The original stays stopped and listed.{later}"
                     ),
                     "Adopt",
                     Confirmed::Adopt { workspace, folder, session, name },
@@ -558,7 +558,7 @@ impl FleetView {
         for name in ready {
             self.removing.remove(&name);
             let result = (|| -> Result<(), String> {
-                let home = self.home.as_deref().ok_or("no Foreman home")?;
+                let home = self.home.as_deref().ok_or("no Supraman home")?;
                 let desired = DesiredState::path(home, &name).map_err(|e| e.to_string())?;
                 match std::fs::remove_file(&desired) {
                     Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {e}", desired.display())),

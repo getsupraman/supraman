@@ -34,7 +34,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
     let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
     // the app logs its tick errors or nothing, so give it time to take the lock
     std::thread::sleep(Duration::from_secs(5));
-    assert!(first.try_wait().unwrap().is_none(), "the elevated Foreman exited: {}", read_log());
+    assert!(first.try_wait().unwrap().is_none(), "the elevated Supraman exited: {}", read_log());
 
     let out = scratch.path().join("second.txt");
     let script = scratch.path().join("second.cmd");
@@ -61,8 +61,8 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
     let still_first = first.try_wait().unwrap().is_none();
     let _ = first.kill();
     let _ = first.wait();
-    assert!(exited, "the unelevated second launch did not exit within 30 s (a second Foreman?): {:?}", second());
-    assert!(second().contains("Foreman is already running") && second().contains("exit 0"), "{}", second());
-    assert!(asked, "the elevated Foreman was not asked for its window: {}", read_log());
+    assert!(exited, "the unelevated second launch did not exit within 30 s (a second Supraman?): {:?}", second());
+    assert!(second().contains("Supraman is already running") && second().contains("exit 0"), "{}", second());
+    assert!(asked, "the elevated Supraman was not asked for its window: {}", read_log());
     assert!(still_first);
 }

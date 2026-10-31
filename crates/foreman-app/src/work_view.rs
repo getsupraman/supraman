@@ -181,7 +181,7 @@ impl WorkHub {
 
 /// No network call: the bearer is asked for at each read.
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
-    let home = home.ok_or_else(|| "No Foreman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
+    let home = home.ok_or_else(|| "No Supraman home (set FOREMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
     let auth = crate::signin::auth(&home);
     let url = auth.configured_origin();
     match auth.status(&url) {
@@ -194,8 +194,8 @@ fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
 fn read_failed(e: foreman_workstate::Error) -> String {
     match e {
         foreman_workstate::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
-        foreman_workstate::Error::Auth(why) => format!("{why}. Sign in again in Settings → WorkState."),
-        e => format!("Cannot read WorkState: {e}"),
+        foreman_workstate::Error::Auth(why) => format!("{why}. Sign in again in Settings → Workman."),
+        e => format!("Cannot read Workman: {e}"),
     }
 }
 
@@ -442,7 +442,7 @@ fn read_overview(client: &Client, workspace: &str, project: Option<ItemRef>) -> 
 }
 
 fn no_project(workspace: &str) -> String {
-    format!("WorkState has no project with ref '{workspace}', so there is no work to show for this workspace.")
+    format!("Workman has no project with ref '{workspace}', so there is no work to show for this workspace.")
 }
 
 pub fn pick_project(resolved: Resolved, workspace: &str) -> Result<ItemRef, String> {
@@ -450,7 +450,7 @@ pub fn pick_project(resolved: Resolved, workspace: &str) -> Result<ItemRef, Stri
     match found.len() {
         1 => Ok(found.remove(0)),
         0 => Err(no_project(workspace)),
-        n => Err(format!("'{workspace}' names {n} WorkState projects; Foreman cannot tell which is this workspace's.")),
+        n => Err(format!("'{workspace}' names {n} Workman projects; Supraman cannot tell which is this workspace's.")),
     }
 }
 
@@ -716,7 +716,7 @@ impl WorkView {
         let overview = match &self.shown {
             Shown::Runs(overview) => overview,
             Shown::Loading => {
-                return root.child(div().p_4().text_color(colors.text_muted).child("Reading WorkState…")).into_any_element();
+                return root.child(div().p_4().text_color(colors.text_muted).child("Reading Workman…")).into_any_element();
             }
             Shown::Message(message) => {
                 return root.child(div().p_4().text_color(colors.text_muted).child(SharedString::from(message.clone()))).into_any_element();
@@ -766,7 +766,7 @@ mod tests {
         let none = pick_project(resolved(vec![item("r", "run", "w")]), "w").unwrap_err();
         assert!(none.contains("no project with ref 'w'"), "{none}");
         let two = pick_project(resolved(vec![item("a", "project", "w"), item("b", "project", "w")]), "w").unwrap_err();
-        assert!(two.contains("names 2 WorkState projects"), "{two}");
+        assert!(two.contains("names 2 Workman projects"), "{two}");
     }
 
     #[test]

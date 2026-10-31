@@ -80,7 +80,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         bail!("open_settings_at(About) left the settings window on {page:?}");
     }
     shown_and_painted(handle, cx).await?;
-    shot_window("m5-13-settings-about", Some("Foreman Settings"), cx).await;
+    shot_window("m5-13-settings-about", Some("Supraman Settings"), cx).await;
     let closing = log_offset();
     view.update(cx, |v, cx| v.close_settings(cx));
     sleep(cx, Duration::from_millis(1000)).await;
@@ -100,7 +100,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
 }
 
 /// Closing a window before Windows has shown, activated and painted it races those messages (F-06b).
-async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn shown_and_painted(handle: WindowHandle<SettingsView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     until_with(cx, WITHIN, "the settings window shown", |cx| {
         handle.update(cx, |_, window, _| crate::tray::is_shown(window)).ok().filter(|shown| *shown).map(|_| ())
     })
@@ -213,21 +213,21 @@ async fn check_foreign(
     };
     let (repo, row) = row;
     if !row.foreign {
-        bail!("{name} under {workspace}/{repo} is not marked as another Foreman's: {:?}", row.health);
+        bail!("{name} under {workspace}/{repo} is not marked as another Supraman's: {:?}", row.health);
     }
     let label = format!("foreign-{session_id}");
     crate::selftest::scrolled_into_view(view, &label, cx).await?;
     let short = &row.session.id;
     let actions = [format!("attach-{short}"), format!("resume-{short}"), format!("tab-link-{short}")];
     if let Some(key) = view.read_with(cx, |v, _| actions.iter().find(|k| v.hits.borrow().contains_key(*k)).cloned()) {
-        bail!("{name}, another Foreman's, paints the action {key}");
+        bail!("{name}, another Supraman's, paints the action {key}");
     }
     let (tabs, toast) = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
     double_click(view, &format!("session-row-{session_id}"), cx).await?;
     sleep(cx, Duration::from_millis(500)).await;
     let after = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
     if after != (tabs, toast.clone()) {
-        bail!("a double-click on {name}, another Foreman's, did something: tabs {tabs} → {}, toast {toast:?} → {:?}", after.0, after.1);
+        bail!("a double-click on {name}, another Supraman's, did something: tabs {tabs} → {}, toast {toast:?} → {:?}", after.0, after.1);
     }
     let (needs, own) = view.read_with(cx, |v, _| {
         (
@@ -236,14 +236,14 @@ async fn check_foreign(
         )
     });
     if needs != 0 {
-        bail!("{name}, another Foreman's, raised {needs} Inbox row(s)");
+        bail!("{name}, another Supraman's, raised {needs} Inbox row(s)");
     }
     if !own {
         bail!("this home's own {own_park} is no longer Blocked in the Inbox");
     }
     shot("m5-10-another-foreman", cx).await;
     Ok(format!(
-        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Foreman's (its name muted under foreign-<id>, no action, a double-click opens nothing), \
+        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Supraman's (its name muted under foreign-<id>, no action, a double-click opens nothing), \
          0 Inbox rows for it over {} ticks; this home's {own_park} still Blocked in the Inbox",
         view.read_with(cx, |v, _| v.ticks) - ticks
     ))
