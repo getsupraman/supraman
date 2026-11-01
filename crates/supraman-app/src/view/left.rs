@@ -406,6 +406,9 @@ impl FleetView {
                 banner::plain(cx),
             ));
         }
+        if let Some(e) = &self.other_scan_error {
+            notices.push(notice(e.clone(), banner::tinted(status.warning)));
+        }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.render_add(cx));
         notices.extend(self.render_edit_folders(cx));
@@ -479,7 +482,9 @@ impl FleetView {
                 }
             }
         }
-        if !query.is_empty() {
+        if query.is_empty() {
+            body = body.children(self.render_unowned_others(cx));
+        } else {
             body = self.render_results(body, &query, cx);
         }
 

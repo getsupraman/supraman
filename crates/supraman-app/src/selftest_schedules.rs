@@ -2,17 +2,19 @@
 //! Scheduler (C101). `sm` adds and changes the schedule; only the page's Approve approves it (C100).
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use supraman_core::schedule::{self, FakeRegistrar, Fired, Outcome, RunEvent, RunRecord, Status};
+use supraman_core::schedule::{self, FakeRegistrar, Fired, Outcome, RunEvent, RunRecord, Status, TaskState};
 use supraman_core::{Folder, FolderKind, Registry, Workspace};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
 
 use crate::selftest::{cargo_root, click, double_click, until};
 use crate::selftest_manage::{menu_open, press_painted, shot};
+use crate::schedules;
 use crate::view::FleetView;
+use crate::view::MenuAction;
 
 pub const FOLDER: &str = "selftest-sched";
 const WS: &str = "selftest-sched";
@@ -83,7 +85,100 @@ pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowCo
     std::fs::remove_file(dir.join("selftest-light.json")).ok();
 }
 
-const LIGHT: &str = r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
+static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn recording_open(path: &Path) -> Result<(), isize> {
+    *OPENED.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_path_buf());
+    Ok(())
+}
+
+fn other_task(folder: &str, name: &str, exec: &str, now: i64) -> TaskState {
+    TaskState {
+        folder: folder.into(),
+        name: name.into(),
+        xml: format!(
+            r#"<?xml version="1.0" encoding="UTF-16"?><Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><CalendarTrigger><StartBoundary>2026-11-01T07:00:00</StartBoundary><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger></Triggers><Actions>{exec}</Actions></Task>"#
+        ),
+        enabled: true,
+        last_run_ms: Some(now - 3_600_000),
+        last_result: 0,
+        next_run_ms: Some(now + 3_600_000),
+    }
+}
+
+/// sched2/7: Task Scheduler's tasks that run claude outside Supraman, under the workspace holding their working
+/// directory or at the top, read only: a menu of Open in Task Scheduler and Copy action, and no write.
+async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const FOLDER: &str = r"\SelftestOther";
+    let now = supraman_core::time::now_ms();
+    let owned = format!(r"{FOLDER}\Nightly claude");
+    let loose = format!(r"{FOLDER}\Loose claude");
+    let planted = [
+        other_task(FOLDER, "Nightly claude", &format!("<Exec><Command>claude.exe</Command><Arguments>-p review</Arguments><WorkingDirectory>{}</WorkingDirectory></Exec>", dir.display()), now),
+        other_task(FOLDER, "Loose claude", r"<Exec><Command>pwsh.exe</Command><Arguments>-c claude -p hi</Arguments><WorkingDirectory>C:\selftest-nowhere</WorkingDirectory></Exec>", now),
+        other_task(FOLDER, "Backup", r"<Exec><Command>robocopy.exe</Command><Arguments>C:\a D:\a</Arguments></Exec>", now),
+        other_task(r"\Foreman-selftest\x", "own", "<Exec><Command>claude.exe</Command></Exec>", now),
+    ];
+    let paths: Vec<String> = planted.iter().map(|t| format!(r"{}\{}", t.folder, t.name)).collect();
+    for t in planted {
+        fake.plant_task(t);
+    }
+    let writes = fake.writes().len();
+    let (group, owned_row, top, loose_row) = (format!("others-row-{WS}"), format!("other-row-{owned}"), "others-row".to_string(), format!("other-row-{loose}"));
+    view.update(cx, |v, cx| v.scan_other_schedules(cx));
+    until(view, cx, WITHIN, "the other schedules painted", |v| [&group, &owned_row, &top, &loose_row].iter().all(|k| painted(v, k)).then_some(())).await.map_err(|e| {
+        let state = view.read_with(cx, |v, _| {
+            let mut keys: Vec<String> = v.hits.borrow().keys().filter(|k| k.contains("other") || k.starts_with("schedules-row")).cloned().collect();
+            keys.sort();
+            let found = v.other_schedules.as_ref().map(|f| f.tasks.iter().map(|t| t.path()).collect::<Vec<_>>());
+            format!("painted {keys:?}; scanned {found:?}, error {:?}; under {WS} {:?}", v.other_scan_error, v.others().of_workspace(WS).len())
+        });
+        e.context(state)
+    })?;
+    let (summary, stray) = view.read_with(cx, |v, _| {
+        let others = v.others();
+        let stray: Vec<String> = v.hits.borrow().keys().filter(|k| k.starts_with("other-row-") && (k.contains("Backup") || k.contains("Foreman-selftest"))).cloned().collect();
+        (others.of_workspace(WS).first().map(|t| schedules::other_summary(t, now)), stray)
+    });
+    if !stray.is_empty() {
+        bail!("rows for tasks that are not other schedules: {stray:?}");
+    }
+    let summary = summary.ok_or_else(|| anyhow!("no other schedule under {WS}"))?;
+    if !summary.starts_with("daily at 07:00 · next ") || !summary.ends_with("last OK") {
+        bail!("the row reads {summary:?}");
+    }
+
+    press_painted(view, &owned_row, MouseButton::Right, cx).await?;
+    let keys = menu_open(view, &owned, cx).await?;
+    if keys != ["open-task-scheduler", "copy-action"] {
+        bail!("the other schedule's menu is {keys:?}");
+    }
+    let copies = view.read_with(cx, |v, _| v.menu.as_ref().and_then(|m| m.items.iter().find(|i| i.key == "copy-action")).map(|i| i.action.clone()));
+    if copies != Some(MenuAction::Copy("claude.exe -p review".into())) {
+        bail!("Copy action copies {copies:?}");
+    }
+    *OPENED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let real = view.update(cx, |v, _| std::mem::replace(&mut v.open_with, recording_open));
+    let clicked = click(view, "menu-open-task-scheduler", cx).await;
+    let opened = until(view, cx, WITHIN, "taskschd.msc opened", |_| OPENED.lock().unwrap_or_else(|e| e.into_inner()).clone()).await;
+    view.update(cx, |v, _| v.open_with = real);
+    clicked?;
+    if opened? != Path::new("taskschd.msc") {
+        bail!("Open in Task Scheduler opened something else");
+    }
+    if fake.writes().len() != writes {
+        bail!("reading other schedules wrote to Task Scheduler: {:?}", fake.writes());
+    }
+
+    for p in &paths {
+        fake.unplant(p);
+    }
+    view.update(cx, |v, cx| v.scan_other_schedules(cx));
+    until(view, cx, WITHIN, "the other schedules gone", |v| (!painted(v, &group) && !painted(v, &top)).then_some(())).await?;
+    Ok("9 other schedules: one under the workspace, one at the top, the rest left out; Open in Task Scheduler and Copy action, no write".into())
+}
+
+const LIGHT: &str =r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
 "background":"#F3F3F3","editor.background":"#FFFFFF","panel.background":"#F3F3F3","surface.background":"#F3F3F3","elevated_surface.background":"#FFFFFF",
 "element.background":"#F0F0F0","element.hover":"#E4E4E4","element.active":"#D8D8D8","element.selected":"#DDE8F5",
 "ghost_element.hover":"#E8E8E8","ghost_element.active":"#DCDCDC","ghost_element.selected":"#DDE8F5",
@@ -267,6 +362,8 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if let Some(tab) = view.read_with(cx, |v, _| v.schedule_page(WS, ID).map(|(t, _)| t)) {
         view.update(cx, |v, cx| v.close_tab(tab, cx));
     }
+
+    out.push(others(view, &fake, &dir, cx).await?);
 
     registry.remove(WS)?;
     if fake.writes().iter().any(|w| !w.contains(&schedule::task_root(home))) {

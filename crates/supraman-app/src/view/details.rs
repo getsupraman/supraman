@@ -38,6 +38,7 @@ impl DetailsPage {
             MenuTarget::Repo { workspace, repo } => format!("repo-{workspace}/{repo}"),
             MenuTarget::Schedule { workspace, id } => format!("schedule-{workspace}/{id}"),
             MenuTarget::Schedules(workspace) => format!("schedules-{workspace}"),
+            MenuTarget::OtherSchedule(path) => format!("other-{path}"),
         }
     }
 }
@@ -79,7 +80,7 @@ impl FleetView {
                 let home = self.workspaces.iter().find(|r| &r.name == w)?.home().map(std::path::Path::to_path_buf);
                 (format!("Details · {w}"), home, None, None)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => return None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
         let disk = seen.as_ref().map(|r| self.on_disk(r, None)).unwrap_or_default();
         let page = DetailsPage { target, scroll: ScrollHandle::new(), seen, folder, listed: true, disk };
@@ -202,7 +203,7 @@ impl FleetView {
         match &page.target {
             MenuTarget::Session { .. } => self.session_sections(page, cx).map(|(title, s)| details::text(&title, &s)),
             MenuTarget::Workspace(w) => self.workspace_sections(w, cx).map(|(_, s)| details::text(w, &s)),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         }
     }
 
@@ -255,7 +256,7 @@ impl FleetView {
                 let items = workspace_items(&node, self.has_closed_background(w), own, relay);
                 (w.clone(), (row_details::workspace_pill(node.started).to_string(), color), sections, items)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => return None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
         let actions = self.action_buttons(page, items, cx);
         let workspace = match &page.target {

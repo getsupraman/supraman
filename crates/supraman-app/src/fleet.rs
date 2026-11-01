@@ -608,18 +608,7 @@ pub fn shell_cwd(active: Option<&Path>, workspaces: &[Workspace], home: Option<P
     holder.or(workspaces.first()).and_then(|w| w.home()).map(Path::to_path_buf).or(home)
 }
 
-/// The workspace whose home or folder holds `cwd`, the deepest match winning.
-pub fn holder_of<'a>(cwd: &Path, workspaces: &'a [Workspace]) -> Option<&'a Workspace> {
-    let depth = |w: &Workspace| {
-        w.home()
-            .into_iter()
-            .chain(w.folders.iter().map(|f| f.path.as_path()))
-            .filter(|d| supraman_core::paths::within(cwd, d))
-            .map(|d| path_key(d).len())
-            .max()
-    };
-    workspaces.iter().filter_map(|w| depth(w).map(|d| (d, w))).max_by_key(|(d, _)| *d).map(|(_, w)| w)
-}
+pub use supraman_core::holder_of;
 
 #[cfg(test)]
 mod tests {

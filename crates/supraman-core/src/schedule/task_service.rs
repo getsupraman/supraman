@@ -2,12 +2,13 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
-use windows::Win32::System::TaskScheduler::{ITaskFolder, ITaskService, TASK_CREATE_OR_UPDATE, TASK_ENUM_HIDDEN, TASK_LOGON_INTERACTIVE_TOKEN, TaskScheduler};
+use windows::Win32::System::TaskScheduler::{IRegisteredTask, ITaskFolder, ITaskService, TASK_CREATE_OR_UPDATE, TASK_ENUM_HIDDEN, TASK_LOGON_INTERACTIVE_TOKEN, TaskScheduler};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::System::Variant::VARIANT;
 use windows::core::{BSTR, HRESULT, PWSTR};
 
-use super::registrar::Registrar;
+use super::foreign::ole_date_ms;
+use super::registrar::{Listing, Registrar, TaskState};
 use crate::{CoreError, Result};
 
 const NOT_FOUND: [HRESULT; 2] = [HRESULT(0x8007_0002_u32 as i32), HRESULT(0x8007_0003_u32 as i32)];
@@ -97,6 +98,61 @@ impl Registrar for WindowsRegistrar {
             let Some(p) = folder(service, parent)? else { return Ok(true) };
             p.DeleteFolder(&BSTR::from(name), 0)?;
             Ok(true)
+        })
+    }
+
+    fn all_tasks(&self, skip: &(dyn Fn(&str) -> bool + Sync)) -> Result<Listing> {
+        on_mta("list every task", |service| unsafe {
+            let mut out = Listing::default();
+            walk(&service.GetFolder(&BSTR::from(r"\"))?, skip, &mut out);
+            Ok(out)
+        })
+    }
+}
+
+/// Reads only: `GetTasks`, `GetFolders` and each task's state; a folder or task that refuses is counted.
+unsafe fn walk(folder: &ITaskFolder, skip: &(dyn Fn(&str) -> bool + Sync), out: &mut Listing) {
+    let Ok(path) = (unsafe { folder.Path() }).map(|p| p.to_string()) else {
+        out.unreadable += 1;
+        return;
+    };
+    match unsafe { folder.GetTasks(TASK_ENUM_HIDDEN.0) } {
+        Ok(all) => {
+            for i in 1..=unsafe { all.Count() }.unwrap_or(0) {
+                match unsafe { all.get_Item(&VARIANT::from(i)).and_then(|t| state(&path, &t)) } {
+                    Ok(task) => out.tasks.push(task),
+                    Err(_) => out.unreadable += 1,
+                }
+            }
+        }
+        Err(_) => out.unreadable += 1,
+    }
+    let Ok(children) = (unsafe { folder.GetFolders(0) }) else {
+        out.unreadable += 1;
+        return;
+    };
+    for i in 1..=unsafe { children.Count() }.unwrap_or(0) {
+        let Ok(child) = (unsafe { children.get_Item(&VARIANT::from(i)) }) else {
+            out.unreadable += 1;
+            continue;
+        };
+        if unsafe { child.Path() }.is_ok_and(|p| skip(&p.to_string())) {
+            continue;
+        }
+        unsafe { walk(&child, skip, out) };
+    }
+}
+
+unsafe fn state(folder: &str, task: &IRegisteredTask) -> windows::core::Result<TaskState> {
+    unsafe {
+        Ok(TaskState {
+            folder: folder.to_string(),
+            name: task.Name()?.to_string(),
+            xml: task.Xml()?.to_string(),
+            enabled: task.Enabled()?.as_bool(),
+            last_run_ms: ole_date_ms(task.LastRunTime().unwrap_or(0.0)),
+            last_result: task.LastTaskResult().unwrap_or(0),
+            next_run_ms: ole_date_ms(task.NextRunTime().unwrap_or(0.0)),
         })
     }
 }

@@ -4,7 +4,7 @@ use supraman_claude::{Kind, Session};
 use supraman_ui::menu::item;
 use gpui::{AnyElement, Context};
 
-use supraman_core::schedule::Status;
+use supraman_core::schedule::{ForeignTask, Status};
 
 use super::FleetView;
 use crate::fleet::{self, RepoNode, SessionRow, WorkspaceNode};
@@ -43,6 +43,7 @@ pub enum MenuAction {
     SetPaused { workspace: String, id: String, paused: bool },
     History { workspace: String, id: String },
     RemoveSchedule { workspace: String, id: String },
+    OpenTaskScheduler,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +70,8 @@ pub enum MenuTarget {
     Session { workspace: String, repo: String, session_id: String },
     Schedule { workspace: String, id: String },
     Schedules(String),
+    /// A Task Scheduler task outside Supraman, by its path.
+    OtherSchedule(String),
 }
 
 /// `own` and `relay` are [`session_items`] of the workspace session and the relay, which have no row of their
@@ -153,6 +156,14 @@ pub fn new_task_items(workspace: &str, folder: Option<&std::path::Path>) -> [Men
 
 pub fn schedules_items(workspace: &str) -> Vec<MenuItem> {
     new_task_items(workspace, None).into_iter().filter(|i| i.key == "new-scheduled-task").collect()
+}
+
+/// A task outside Supraman: only what reads it.
+pub fn other_schedule_items(task: &ForeignTask) -> Vec<MenuItem> {
+    vec![
+        item("open-task-scheduler", "Open in Task Scheduler", MenuAction::OpenTaskScheduler).under("Read only: Supraman never changes, runs or deletes it"),
+        item("copy-action", "Copy action", MenuAction::Copy(task.action.clone())),
+    ]
 }
 
 /// Add workspace: today's scan of a parent folder, or a workspace with no folder yet.
@@ -447,5 +458,26 @@ mod tests {
         assert_eq!(keys(&ws), ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
         assert_eq!(ws[9].label, "Delete closed background sessions…");
         assert_eq!(ws[9].action, MenuAction::DeleteClosed("demo".into()));
+    }
+
+    #[test]
+    fn an_other_schedule_offers_only_what_reads_it() {
+        let task = ForeignTask {
+            folder: r"\Mine".into(),
+            name: "Nightly review".into(),
+            enabled: true,
+            trigger: "daily at 09:00".into(),
+            last_run_ms: None,
+            last_result: None,
+            next_run_ms: None,
+            working_dir: None,
+            via: supraman_core::schedule::Via::Direct,
+            action: "claude.exe -p review".into(),
+        };
+        let items = other_schedule_items(&task);
+        assert_eq!(keys(&items), ["open-task-scheduler", "copy-action"]);
+        assert_eq!(items[0].action, MenuAction::OpenTaskScheduler);
+        assert!(items[0].section.as_deref().is_some_and(|s| s.contains("never changes, runs or deletes")));
+        assert_eq!(items[1].action, MenuAction::Copy("claude.exe -p review".into()));
     }
 }

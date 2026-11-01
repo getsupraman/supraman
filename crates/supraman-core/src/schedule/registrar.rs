@@ -58,6 +58,28 @@ pub trait Registrar {
     fn delete(&self, folder: &str, name: &str) -> Result<()>;
     /// Deletes `folder` when it holds no task and no folder; `true` when it is gone.
     fn delete_empty_folder(&self, folder: &str) -> Result<bool>;
+    /// Every task below the root, read only, leaving out each folder `skip` names and everything below it.
+    fn all_tasks(&self, skip: &(dyn Fn(&str) -> bool + Sync)) -> Result<Listing>;
+}
+
+/// A registered task as Task Scheduler reports it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskState {
+    /// `\`-separated, `\` for the root.
+    pub folder: String,
+    pub name: String,
+    pub xml: String,
+    pub enabled: bool,
+    pub last_run_ms: Option<i64>,
+    pub last_result: i32,
+    pub next_run_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Listing {
+    pub tasks: Vec<TaskState>,
+    /// Folders and tasks that refused to be read.
+    pub unreadable: usize,
 }
 
 /// What a [`sync`] runs against besides the schedules.
@@ -164,7 +186,9 @@ pub struct FakeRegistrar {
 #[derive(Debug, Default)]
 struct FakeState {
     tasks: BTreeMap<String, String>,
+    states: BTreeMap<String, TaskState>,
     folders: BTreeSet<String>,
+    unreadable: BTreeSet<String>,
     writes: Vec<String>,
 }
 
@@ -194,6 +218,30 @@ impl FakeRegistrar {
         let mut st = self.lock();
         add_folders(&mut st.folders, folder);
         st.tasks.insert(format!(r"{folder}\{name}"), xml.to_string());
+    }
+
+    /// [`Self::plant`] with the state [`Registrar::all_tasks`] reports.
+    pub fn plant_task(&self, task: TaskState) {
+        let folder = task.folder.trim_end_matches('\\');
+        let path = format!(r"{folder}\{}", task.name);
+        let mut st = self.lock();
+        add_folders(&mut st.folders, folder);
+        st.tasks.insert(path.clone(), task.xml.clone());
+        st.states.insert(path, task);
+    }
+
+    /// Takes a planted task away without recording a write.
+    pub fn unplant(&self, path: &str) {
+        let mut st = self.lock();
+        st.tasks.remove(path);
+        st.states.remove(path);
+    }
+
+    /// A folder [`Registrar::all_tasks`] cannot read, as one of another user's would be.
+    pub fn plant_unreadable(&self, folder: &str) {
+        let mut st = self.lock();
+        add_folders(&mut st.folders, folder);
+        st.unreadable.insert(folder.to_string());
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, FakeState> {
@@ -252,5 +300,27 @@ impl Registrar for FakeRegistrar {
         st.folders.remove(folder);
         st.writes.push(format!("rmdir {folder}"));
         Ok(true)
+    }
+
+    fn all_tasks(&self, skip: &(dyn Fn(&str) -> bool + Sync)) -> Result<Listing> {
+        let st = self.lock();
+        let hidden = |folder: &str| {
+            let mut path = String::new();
+            folder.split('\\').filter(|p| !p.is_empty()).any(|part| {
+                path.push('\\');
+                path.push_str(part);
+                skip(&path) || st.unreadable.contains(&path)
+            })
+        };
+        let mut out = Listing { unreadable: st.unreadable.iter().filter(|f| !parent_of(f).is_some_and(|p| hidden(p)) && !skip(f)).count(), ..Listing::default() };
+        for (path, xml) in &st.tasks {
+            let Some((folder, name)) = path.rsplit_once('\\') else { continue };
+            if hidden(folder) {
+                continue;
+            }
+            let state = st.states.get(path).cloned().unwrap_or_else(|| TaskState { enabled: true, xml: xml.clone(), ..TaskState::default() });
+            out.tasks.push(TaskState { folder: if folder.is_empty() { "\\".into() } else { folder.into() }, name: name.into(), ..state });
+        }
+        Ok(out)
     }
 }

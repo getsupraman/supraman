@@ -171,3 +171,25 @@ mod tests {
         assert_eq!(linked_git_dir(&wt.join(".git")), Some(wt.join("../../Alpha/.git/worktrees/feat")));
     }
 }
+
+/// `%NAME%` replaced by that environment variable; a name that is not set stays as written.
+pub fn expand_env(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('%') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find('%').map(|close| (&after[..close], close)) {
+            Some((name, close)) if !name.is_empty() && let Some(value) = std::env::var_os(name) => {
+                out.push_str(&value.to_string_lossy());
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}

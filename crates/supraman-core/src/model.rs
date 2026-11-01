@@ -210,6 +210,19 @@ pub fn owners(workspaces: &[Workspace]) -> HashMap<String, String> {
     out
 }
 
+/// The workspace whose home or folder holds `cwd`, the deepest match winning.
+pub fn holder_of<'a>(cwd: &Path, workspaces: &'a [Workspace]) -> Option<&'a Workspace> {
+    let depth = |w: &Workspace| {
+        w.home()
+            .into_iter()
+            .chain(w.folders.iter().map(|f| f.path.as_path()))
+            .filter(|d| within(cwd, d))
+            .map(|d| path_key(d).len())
+            .max()
+    };
+    workspaces.iter().filter_map(|w| depth(w).map(|d| (d, w))).max_by_key(|(d, _)| *d).map(|(_, w)| w)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
