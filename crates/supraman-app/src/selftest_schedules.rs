@@ -30,7 +30,7 @@ pub fn folder() -> PathBuf {
     cargo_root().join("target").join(FOLDER)
 }
 
-fn sm(args: &[&str]) -> anyhow::Result<String> {
+pub(crate) fn sm(args: &[&str]) -> anyhow::Result<String> {
     let exe = std::env::current_exe()?.with_file_name(supraman_core::HOOK_EXE);
     let out = supraman_core::process::run(supraman_core::process::command(&exe).args(args), WITHIN, supraman_core::process::Kill::Tree)
         .with_context(|| format!("run {}", exe.display()))?;

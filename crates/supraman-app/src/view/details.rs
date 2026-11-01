@@ -37,6 +37,7 @@ impl DetailsPage {
             MenuTarget::Workspace(w) => format!("ws-{w}"),
             MenuTarget::Repo { workspace, repo } => format!("repo-{workspace}/{repo}"),
             MenuTarget::Schedule { workspace, id } => format!("schedule-{workspace}/{id}"),
+            MenuTarget::Schedules(workspace) => format!("schedules-{workspace}"),
         }
     }
 }
@@ -78,7 +79,7 @@ impl FleetView {
                 let home = self.workspaces.iter().find(|r| &r.name == w)?.home().map(std::path::Path::to_path_buf);
                 (format!("Details · {w}"), home, None, None)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } => return None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => return None,
         };
         let disk = seen.as_ref().map(|r| self.on_disk(r, None)).unwrap_or_default();
         let page = DetailsPage { target, scroll: ScrollHandle::new(), seen, folder, listed: true, disk };
@@ -201,7 +202,7 @@ impl FleetView {
         match &page.target {
             MenuTarget::Session { .. } => self.session_sections(page, cx).map(|(title, s)| details::text(&title, &s)),
             MenuTarget::Workspace(w) => self.workspace_sections(w, cx).map(|(_, s)| details::text(w, &s)),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } => None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => None,
         }
     }
 
@@ -249,13 +250,12 @@ impl FleetView {
             MenuTarget::Workspace(w) => {
                 let (node, sections) = self.workspace_sections(w, cx)?;
                 let color = if node.started == Some(true) { status.success } else { colors.text_muted };
-                let can_task = node.started == Some(true) && self.relay_refusal(w).is_none();
                 let own = node.own.as_ref().map(|r| self.session_menu(w, "workspace", r, None, cx)).unwrap_or_default();
                 let relay = node.relay.as_ref().map(|r| self.session_menu(w, "relay", r, None, cx)).unwrap_or_default();
-                let items = workspace_items(&node, can_task, self.has_closed_background(w), own, relay);
+                let items = workspace_items(&node, self.has_closed_background(w), own, relay);
                 (w.clone(), (row_details::workspace_pill(node.started).to_string(), color), sections, items)
             }
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } => return None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => return None,
         };
         let actions = self.action_buttons(page, items, cx);
         let workspace = match &page.target {
@@ -266,7 +266,7 @@ impl FleetView {
             this.open_schedule(&workspace, schedule, At::Top, cx);
         });
         let key = format!("details-{page_key}");
-        let page = details::Page { key: &key, title, pill: Some(pill), sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link) };
+        let page = details::Page { key: &key, title, pill: Some(pill), sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None };
         Some(details::render(page, &self.hits, cx))
     }
 }

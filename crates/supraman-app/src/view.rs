@@ -59,6 +59,7 @@ pub(crate) mod notices;
 mod reopen;
 mod results;
 pub(crate) mod schedules;
+pub(crate) mod start;
 mod term;
 
 pub(crate) use left::grid;
@@ -120,6 +121,7 @@ pub enum TabKind {
     Work(Entity<WorkView>),
     Schedule(schedules::SchedulePage),
     Details(details::DetailsPage),
+    Start(start::StartPage),
     /// Reopened from the last run, waiting for a click on Resume.
     Saved(crate::saved_tabs::SavedTab),
 }
@@ -154,7 +156,25 @@ pub struct Tab {
     /// The full uuid it was launched or attached with, and that session's name.
     pub launched_session: Option<String>,
     pub session_name: Option<String>,
+    pub asks_schedule: Option<start::AsksSchedule>,
     watchers: Vec<Nudge>,
+}
+
+/// claude's first prompt, in a file the launch script reads, and its `--permission-mode`.
+#[derive(Debug, Clone)]
+pub struct FirstPrompt {
+    pub file: PathBuf,
+    pub mode: &'static str,
+}
+
+impl FirstPrompt {
+    fn apply(first: Option<&Self>, mut extras: Extras) -> Extras {
+        if let Some(first) = first {
+            extras.args.extend(["--permission-mode".to_string(), first.mode.to_string()]);
+            extras.prompt = Some(first.file.clone());
+        }
+        extras
+    }
 }
 
 impl Tab {
@@ -179,6 +199,7 @@ impl Tab {
             claude: None,
             launched_session: None,
             session_name: None,
+            asks_schedule: None,
             watchers: Vec::new(),
         }
     }
@@ -1355,6 +1376,7 @@ impl FleetView {
             supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
             let waiting: Vec<String> = crate::schedules::waiting(&self.schedules).into_iter().map(|w| w.key).collect();
             supraman_ui::notices::keep_dismissed(&mut self.waiting_dismissed, &waiting);
+            self.find_asked_schedules();
         }
         self.refresh_details();
         self.last_refresh_took = Some(refresh.took);
@@ -1733,7 +1755,7 @@ impl FleetView {
         } else {
             let resume = format!("{} --resume '{}'", self.claude_command, sid.replace('\'', "''"));
             let own = (!session.name.is_empty()).then(|| session.name.clone());
-            let id = self.hand_claude(session.cwd.clone(), title, resume, own, Some(sid.clone()), cx);
+            let id = self.hand_claude_in(None, session.cwd.clone(), title, resume, own, Some(sid.clone()), None, cx);
             if let Some(tab) = self.tab_mut(id) {
                 tab.session = Some(tab_card::session_label(&session.name, sid));
             }
@@ -1743,11 +1765,34 @@ impl FleetView {
 
     pub fn new_claude(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let claude = self.claude_command.clone();
-        self.hand_claude(cwd, title, claude, None, None, cx)
+        self.hand_claude_in(None, cwd, title, claude, None, None, None, cx)
     }
 
-    fn hand_claude(&mut self, cwd: PathBuf, title: String, claude: String, own: Option<String>, resumes: Option<String>, cx: &mut Context<Self>) -> u64 {
-        let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
+    /// `into` is a prompt tab that becomes this session's tab.
+    #[allow(clippy::too_many_arguments)]
+    fn hand_claude_in(
+        &mut self,
+        into: Option<u64>,
+        cwd: PathBuf,
+        title: String,
+        claude: String,
+        own: Option<String>,
+        resumes: Option<String>,
+        first: Option<FirstPrompt>,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let id = match into.and_then(|id| self.tab_mut(id)) {
+            Some(tab) => {
+                tab.kind = TabKind::Shell;
+                tab.title = title;
+                tab.cwd = Some(cwd.clone());
+                let id = tab.id;
+                self.active = Some(id);
+                cx.notify();
+                id
+            }
+            None => self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx),
+        };
         let (watch, mut changed) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
@@ -1756,7 +1801,7 @@ impl FleetView {
             tab.session_name = own.clone();
         }
         let Some(hands) = self.hands.clone() else {
-            let extras = self.hand_extras(&cwd, own.as_deref(), &Launch::Plain);
+            let extras = FirstPrompt::apply(first.as_ref(), self.hand_extras(&cwd, own.as_deref(), &Launch::Plain));
             self.start_terminal_env(id, self.claude_shell(&Launch::Plain, &claude, &extras), Some(cwd), &extras, cx);
             return id;
         };
@@ -1778,7 +1823,7 @@ impl FleetView {
                     this.hand_notices.extend(notice.clone());
                 }
                 if this.tab(id).is_some() {
-                    let extras = this.hand_extras(&cwd, named.as_deref(), &launch);
+                    let extras = FirstPrompt::apply(first.as_ref(), this.hand_extras(&cwd, named.as_deref(), &launch));
                     let shell = this.claude_shell(&launch, &claude, &extras);
                     this.start_terminal_env(id, shell, Some(cwd), &extras, cx);
                 }
@@ -1944,7 +1989,7 @@ impl FleetView {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
             TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
-            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) => false,
+            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => false,
         }
     }
 
@@ -2042,7 +2087,7 @@ impl FleetView {
             TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
             TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
             TabKind::Shell => Some(tab_card::Kind::Shell),
-            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) => None,
+            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => None,
             TabKind::Saved(saved) => reopen::kind_of(saved),
         };
         tab_card::Card {
@@ -2569,6 +2614,7 @@ impl FleetView {
                 .render_schedule_page(page, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} of {} is gone.", page.id, page.workspace), cx)),
             Some(Tab { kind: TabKind::Details(page), .. }) => self.render_details_page(page, cx).unwrap_or_else(|| placeholder("Its workspace is gone.".into(), cx)),
+            Some(Tab { id, kind: TabKind::Start(page), .. }) => self.render_start_page(*id, page, cx).unwrap_or_else(|| placeholder(format!("Workspace {} is gone.", page.workspace), cx)),
             Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()
@@ -2587,6 +2633,7 @@ impl FleetView {
                             ))),
                     )
                 })
+                .children(self.render_schedule_ask(*tab_id, cx))
                 .when_some(find.as_ref(), |d, find| d.child(self.find_bar(*tab_id, find, cx)))
                 .child(
                     div()

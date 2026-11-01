@@ -567,7 +567,7 @@ impl FleetView {
         actions.push(button::bordered(&self.hits, format!("sched-page-edit-{k}"), "Edit…", cx).on_click(act(|this, w, id, window, cx| this.open_schedule_edit(w, id, window, cx))).into_any_element());
         actions.push(button::bordered(&self.hits, format!("sched-page-remove-{k}"), "Remove…", cx).on_click(act(|this, w, id, _, cx| this.ask_remove_schedule(w, id, cx))).into_any_element());
         let page_key = format!("sched-page-{k}");
-        let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll, on_link: None };
+        let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll, on_link: None, top: None };
         Some(details::render(page, &self.hits, cx))
     }
 
@@ -738,6 +738,13 @@ impl FleetView {
             .child(tree_label(&self.hits, &tree_key, div().flex_none().whitespace_nowrap().child("Schedules")))
             .child(div().flex_none().text_xs().text_color(secondary(cx)).child(SharedString::from(count.to_string())))
             .child(hit_target(&self.hits, format!("schedules-row-{workspace}")))
+            .on_mouse_down(MouseButton::Right, {
+                let target = MenuTarget::Schedules(workspace.to_string());
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(target.clone(), e.position, cx);
+                })
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
             .into_any_element()
     }

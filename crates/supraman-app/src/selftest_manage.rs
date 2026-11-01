@@ -688,7 +688,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let ws_key = format!("ws-row-{ADDED}");
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, ADDED, cx).await?;
-    if keys != ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"] {
+    if keys != ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"] {
         bail!("the menu of {ADDED} has {keys:?}");
     }
     shot("menu-workspace", cx).await;

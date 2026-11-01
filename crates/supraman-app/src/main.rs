@@ -31,6 +31,7 @@ mod selftest_reopen;
 mod selftest_schedules;
 mod selftest_search;
 mod selftest_shell;
+mod selftest_start;
 mod selftest_startup;
 mod selftest_supervise;
 mod selftest_tabs;
@@ -103,6 +104,14 @@ const USAGE: &str =
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    // the selftest's stand-in claude (selftest_start.rs): its argv as a JSON array
+    if let ["--selftest-argv", out, rest @ ..] = args.as_slice() {
+        let code = match supraman_core::fs::write_atomic(std::path::Path::new(out), serde_json::to_string(rest).unwrap_or_default().as_bytes()) {
+            Ok(()) => 0,
+            Err(_) => 1,
+        };
+        std::process::exit(code);
+    }
     if let Some(relaunched) = elevate::parse_relaunch(&args) {
         // SAFETY: no other thread exists yet.
         unsafe { std::env::set_var(supraman_core::HOME_VAR, &relaunched.home) };

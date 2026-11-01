@@ -64,7 +64,7 @@ impl FleetView {
         let named = |sid: &str| self.sessions.iter().chain(&self.closed).find(|s| s.session_id == sid).map(|s| s.name.clone()).filter(|n| !n.is_empty());
         Some(match &tab.kind {
             TabKind::Saved(saved) => saved.clone(),
-            TabKind::Schedule(_) | TabKind::Details(_) => return None,
+            TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,
             TabKind::Work(view) => SavedTab::Work { title, workspace: view.read(cx).workspace.clone() },
             TabKind::Shell if tab.hand => {
                 let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone());

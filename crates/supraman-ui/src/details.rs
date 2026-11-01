@@ -87,6 +87,8 @@ pub struct Page<'a, V> {
     pub actions: Vec<AnyElement>,
     pub scroll: &'a ScrollHandle,
     pub on_link: Option<OnLink<V>>,
+    /// Above the sections, in the scrolled body: a form of the owner's.
+    pub top: Option<AnyElement>,
 }
 
 pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
@@ -104,6 +106,9 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
         .child(div().min_w_0().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(colors.text).child(SharedString::from(page.title)))
         .children(pill);
     let mut body = div().id(SharedString::from(format!("{}-body", page.key))).flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(page.scroll).px_6().pb_4();
+    if let Some(top) = page.top {
+        body = body.child(top);
+    }
     for section in page.sections {
         body = body.child(render_section(page.key, section, page.on_link.clone(), hits, cx));
     }

@@ -1554,7 +1554,7 @@ async fn workspace_row_step(tb: &Testbed, ctrl: &str, own: &Session, view: &Enti
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    for want in ["stop", "work", "task", "session-attach", "session-stop", "session-copy-name", "session-copy-id", "session-star"] {
+    for want in ["stop", "work", "new-task", "new-scheduled-task", "session-attach", "session-stop", "session-copy-name", "session-copy-id", "session-star"] {
         if !keys.contains(&want) {
             bail!("the menu of {w} has {keys:?}, no {want}");
         }
@@ -1589,7 +1589,7 @@ async fn no_relay(tb: &Testbed, relay_name: &str, view: &Entity<FleetView>, cx: 
 }
 
 /// As gpui_windows makes them: `enter` for a new line, `space`, else the character itself.
-fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, modifiers: Modifiers) -> anyhow::Result<()> {
+pub(crate) fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, modifiers: Modifiers) -> anyhow::Result<()> {
     let event = KeyDownEvent {
         keystroke: Keystroke { modifiers, key: key.into(), key_char: key_char.map(String::from) },
         is_held: false,
@@ -1602,7 +1602,7 @@ fn keystroke(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>, mod
 }
 
 /// Each character a keystroke that no binding takes, which gpui then hands to the input's handler as a real key's WM_CHAR is.
-fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
+pub(crate) fn type_text(cx: &mut AsyncWindowContext, text: &str) -> anyhow::Result<()> {
     for ch in text.chars() {
         let c = ch.to_string();
         let keystroke = match ch {
