@@ -4,18 +4,16 @@ use supraman_ui::text_input::TextInput;
 
 pub struct Compose {
     pub workspace: String,
-    /// The outbox file this answers; `None`: a new task.
-    pub reply_to: Option<String>,
+    /// The outbox file this answers.
+    pub reply_to: String,
     pub input: Entity<TextInput>,
     pub error: Option<String>,
-    pub sent: Option<String>,
-    pub route: Option<String>,
     _events: Subscription,
 }
 
 impl Compose {
-    pub fn new(workspace: &str, reply_to: Option<String>, input: Entity<TextInput>, events: Subscription) -> Self {
-        Self { workspace: workspace.to_string(), reply_to, input, error: None, sent: None, route: None, _events: events }
+    pub fn new(workspace: &str, reply_to: String, input: Entity<TextInput>, events: Subscription) -> Self {
+        Self { workspace: workspace.to_string(), reply_to, input, error: None, _events: events }
     }
 
     pub fn text(&self, cx: &App) -> String {

@@ -554,6 +554,15 @@ pub fn waiting(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Waiting> {
         .collect()
 }
 
+/// Every workspace with schedules, and the keys of its pending ones: what a dismissal of a waiting entry is kept against.
+pub fn waiting_keys(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = rows.keys().map(|w| (w.clone(), Vec::new())).collect();
+    for w in waiting(rows) {
+        out.entry(w.workspace).or_default().push(w.key);
+    }
+    out
+}
+
 /// A schedule's latest run, when it ended in a way that needs René: the Inbox and the tray show it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attention {
@@ -819,6 +828,33 @@ mod tests {
         assert!(waiting(&rows).is_empty());
         assert_eq!(tray_tooltip(0, 1), "Supraman · 1 schedule waits for your approval");
         assert_eq!(tray_tooltip(1, 2), "Supraman · 1 scheduled run needs you · 2 schedules wait for your approval");
+    }
+
+    #[test]
+    fn a_dismissed_wait_stays_dismissed_across_a_restart_until_its_fingerprint_changes() {
+        use crate::dismissed_messages::DismissedMessages;
+        let home = tempfile::tempdir().unwrap();
+        let file = home.path().join("schedules").join("waiting-dismissed.json");
+        let pending = |fingerprint: &str| {
+            let mut r = row(Status::Pending, vec![]);
+            r.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: fingerprint.into(), command_sha256: None }));
+            BTreeMap::from([("demo".to_string(), vec![r])])
+        };
+        let shown = |d: &DismissedMessages, rows: &BTreeMap<String, Vec<ScheduleRow>>| waiting(rows).into_iter().filter(|w| !d.hides(&w.workspace, &w.key)).count();
+        let rows = pending("f1");
+        let (mut d, notice) = DismissedMessages::load_at(Some(file.clone()), "x");
+        assert!(notice.is_none() && shown(&d, &rows) == 1);
+        let w = &waiting(&rows)[0];
+        d.dismiss(&w.workspace, &w.key).unwrap();
+        let (mut restarted, _) = DismissedMessages::load_at(Some(file.clone()), "x");
+        assert_eq!(restarted.prune_keys(&waiting_keys(&rows)), Ok(false));
+        assert_eq!(shown(&restarted, &rows), 0, "still dismissed after a restart");
+        assert_eq!(restarted.prune_keys(&waiting_keys(&BTreeMap::new())), Ok(false), "a workspace the poll did not read keeps it");
+        let edited = pending("f2");
+        assert_eq!(shown(&restarted, &edited), 1, "a covered edit shows it again");
+        assert_eq!(restarted.prune_keys(&waiting_keys(&edited)), Ok(true));
+        let (again, _) = DismissedMessages::load_at(Some(file), "x");
+        assert_eq!(shown(&again, &rows), 1, "the old fingerprint's dismissal is gone from the file");
     }
 
     #[test]

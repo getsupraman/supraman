@@ -263,6 +263,10 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the changed schedule's Inbox entry", |v| painted(v, &later).then_some(())).await?;
     click(view, &later, cx).await?;
     until(view, cx, WITHIN, "the dismissed entry gone", |v| (!painted(v, &later) && v.tray_tooltip() == "Supraman").then_some(())).await?;
+    let kept = std::fs::read_to_string(home.join("schedules").join("waiting-dismissed.json")).unwrap_or_default();
+    if !kept.contains(&format!("{WS}/{ID}@")) {
+        bail!("the dismissal is not kept in the home for a restart: {kept:?}");
+    }
     sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:30"])?;
     until(view, cx, WITHIN, "the entry back once the schedule changed again", |v| painted(v, &later).then_some(())).await?;
     double_click(view, &format!("sched-row-{WS}/{ID}"), cx).await?;
@@ -273,7 +277,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     click(view, &page_approve, cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the task registered again", |_| (fake.writes().len() > writes && has_task(&fake)).then_some(())).await?;
-    out.push("3 changed through sm: an entry, dismissed, back after the next change; the page shows Trigger time 09:00 → 10:30, approved again".into());
+    out.push("3 changed through sm: an entry, dismissed (kept in schedules/waiting-dismissed.json), back after the next change; the page shows Trigger time 09:00 → 10:30, approved again".into());
 
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
     from_menu(view, "details", cx).await?;

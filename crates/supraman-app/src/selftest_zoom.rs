@@ -93,6 +93,11 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     ))
 }
 
+// Only Escape, the caption ✕ or Alt+F4 close it while the step holds it, and the step sends none of them.
+fn gone(e: anyhow::Error) -> anyhow::Error {
+    anyhow!("settings window: {e} (closed under the step by Escape, ✕ or Alt+F4 reaching it)")
+}
+
 async fn settings_page(
     view: &Entity<FleetView>,
     home: &Path,
@@ -114,7 +119,7 @@ async fn settings_page(
     let shown = async |want: Pixels, cx: &mut AsyncWindowContext| -> anyhow::Result<()> {
         let started = Instant::now();
         loop {
-            let shown = handle.read_with(cx, |s, _| s.shown_font_size()).map_err(|e| anyhow!("settings window: {e}"))?;
+            let shown = handle.read_with(cx, |s, _| s.shown_font_size()).map_err(gone)?;
             if shown == Some(want) {
                 return Ok(());
             }
@@ -127,7 +132,7 @@ async fn settings_page(
     let result: anyhow::Result<String> = async {
         shown(size, cx).await?;
         crate::selftest_manage::shot_window("m5-41-settings-font-size", Some("Supraman Settings"), cx).await;
-        handle.update(cx, |s, _, cx| s.set_term_font_size(size + px(1.), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+        handle.update(cx, |s, _, cx| s.set_term_font_size(size + px(1.), cx)).map_err(gone)?;
         let plus = size + px(1.);
         let now = view.read_with(cx, |v, _| v.term_font_size);
         if now != plus {

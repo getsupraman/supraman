@@ -5370,3 +5370,32 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   the automated evidence. Manual check: start `supraman.exe --selftest`, then click into Notepad and type with Shift
   held for its whole run. Notepad keeps the focus and every character, no Supraman window appears, and the run PASSes
   with `isolation: no window … had the focus`.
+
+## 2026-11-01 — sched2/10 follow-ups: the name box ignores keys, Task opens New task, claude.cmd, kept dismissals, 7q
+
+- **Name box** (`view/manage.rs` `name_char`): space and `_` are refused like any other character outside
+  `[a-z0-9-]` (the hint under the box says so); uppercase still lowers. It was the only `TextInput` filter that
+  turned one character into another.
+- **Task hover icon** opens New task (`open_start(ws, None, false)`), shown on every workspace row, a stopped one
+  too, as the menu's New task… is. The compose box is reply-only: `Compose::reply_to` is a `String`, it renders only
+  under its Inbox row, and Send closes it on success (`sent`/`route` and the row-level "Task for …" box are gone).
+  Supervise step t0 keeps the hover-hold proof on the same icon and now checks that the click opened `New task ·
+  <ws>`; step t drives the box through Reply… on an injected `DECIDE:` (typing, Up/Down, Ctrl+Shift+Left, Ctrl+Enter
+  → `sent direct`, in the workspace session's transcript), then Approve on an `APPROVE?` with a second `DECIDE:`'s
+  box open, a click back into that box, Escape: still exactly 2 direct sends. Main selftest 7+t clicks the icon too;
+  7n's shot opens the box with Reply….
+- **claude.cmd** (`view/start.rs` `launched_file`, `cmd_refusal`): Send resolves the tab's `claude` the way its pwsh
+  will (`supraman_core::paths::pwsh_command`: per `PATH` folder, `.ps1`, then `PATHEXT` order; measured: an earlier
+  folder's `.cmd` beats a later folder's `.ps1`, a folder's `.ps1` beats its `.cmd`, extensionless files never run).
+  A `.cmd`/`.bat` with a newline or `"` in the prompt is refused in the tab with the fix, text kept. A New scheduled
+  task always has a newline (the ask line), so through a `claude.cmd` it is always refused. 7+t checks the refusal
+  with a `claude.cmd` stand-in.
+- **Dismissed waits survive a restart**: `waiting_dismissed` is a `DismissedMessages` at
+  `<home>/schedules/waiting-dismissed.json` keyed `<ws>/<id>@<fingerprint>`; `prune_keys(schedules::waiting_keys)` after
+  each schedule read drops a key whose fingerprint changed. A workspace the read left out (unreadable file, no
+  schedules) keeps its dismissals.
+- **7q "settings window: window not found"**: the handle was valid when found, so the window went between two reads.
+  The only closers are `close_settings` (the step's end), WM_CLOSE (caption ✕, Alt+F4) and Escape in the window's
+  `key_down`; the step sends none. On a visible desktop the settings window opens activated and takes the foreground,
+  so a typed Escape closes it: focus loss from the user's input, which sched2/9's hidden desktop removes. No log of the
+  failed run survives; the step's error now names those closers. 7q passed on the hidden desktop in this unit's gate.

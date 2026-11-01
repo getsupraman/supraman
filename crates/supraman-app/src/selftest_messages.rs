@@ -149,20 +149,32 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
 }
 
 pub async fn compose(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    cx.update(|window, cx| {
-        view.update(cx, |v, cx| {
-            v.open_compose(WORKSPACE, None, window, cx);
-            if let Some(c) = &v.compose {
-                c.input.update(cx, |input, cx| input.set_text("Rebase m5/51 on main, then run the gate.", cx));
-            }
-        })
-    })?;
+    let home = crate::selftest::home();
+    let outbox = outbox_dir(&home, WORKSPACE)?;
+    let file = format!("{:013}-selftest-decide.json", supraman_claude::now_ms());
+    let from = supraman_supervisor::workspace_session_name(WORKSPACE);
+    let text = serde_json::json!({"from": "uds:selftest", "from_name": from, "body": "DECIDE: rebase m5/51 now or after the gate?"}).to_string();
+    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
+    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
+    pointer_off(view, cx).await?;
+    let reply = format!("msg-reply-{WORKSPACE}/{file}");
+    until(view, cx, WITHIN, "the DECIDE: row's Reply…", |v| painted(v, &reply).then_some(())).await?;
+    click(view, &reply, cx).await?;
+    until(view, cx, WITHIN, "the reply box", |v| painted(v, "compose-box").then_some(())).await?;
+    view.update(cx, |v, cx| {
+        if let Some(c) = &v.compose {
+            c.input.update(cx, |input, cx| input.set_text("Rebase m5/51 on main, then run the gate.", cx));
+        }
+    });
     crate::selftest::scrolled_into_view(view, "compose-text", cx).await?;
     shot("m5-51-compose", cx).await;
     view.update(cx, |v, cx| {
         v.compose = None;
         cx.notify();
     });
-    until(view, cx, WITHIN, "the task box closed", |v| (!painted(v, "compose-box")).then_some(())).await?;
-    Ok("task box opened with a line typed, shot, closed".into())
+    until(view, cx, WITHIN, "the reply box closed", |v| (!painted(v, "compose-box")).then_some(())).await?;
+    let dismiss = format!("msg-dismiss-{WORKSPACE}/{file}");
+    click(view, &dismiss, cx).await?;
+    until(view, cx, WITHIN, "the DECIDE: row dismissed", |v| (!painted(v, &dismiss)).then_some(())).await?;
+    Ok("Reply… on a DECIDE: row opened the reply box under it; a line typed, shot, closed, the row dismissed".into())
 }

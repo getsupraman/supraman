@@ -97,6 +97,14 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let repo = folder.file_name().context("the main repo has no folder name")?.to_string_lossy().into_owned();
     let plugin = view.read_with(cx, |v, _| v.plugin_dir.clone()).context("this build found no plugins/supraman")?;
 
+    click(view, &format!("task-{WORKSPACE}"), cx).await?;
+    let icon_tab = start_tab(view, cx).await?;
+    let opened = view.read_with(cx, |v, _| (v.start_page(icon_tab).map(|p| (p.workspace.clone(), p.scheduled)), v.compose.is_some()));
+    if opened != (Some((WORKSPACE.to_string(), false)), false) {
+        bail!("the workspace row's Task icon opened (prompt tab, reply box) {opened:?}, not New task · {WORKSPACE}");
+    }
+    view.update(cx, |v, cx| v.close_tab(icon_tab, cx));
+
     press_painted(view, &format!("ws-row-{WORKSPACE}"), MouseButton::Right, cx).await?;
     let keys = menu_open(view, WORKSPACE, cx).await?;
     if keys.contains(&"task") || !keys.contains(&"new-task") || !keys.contains(&"new-scheduled-task") {
@@ -123,6 +131,17 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let typed = view.read_with(cx, |v, cx| v.start_page(tab).map(|p| p.input.read(cx).text().to_string()));
     if typed.as_deref() != Some(want.as_str()) {
         bail!("the prompt box holds {typed:?} after typing {want:?}");
+    }
+    let cmd_dir = home.join("start-cmd");
+    std::fs::create_dir_all(&cmd_dir)?;
+    let cmd = cmd_dir.join("claude.cmd");
+    std::fs::write(&cmd, "@echo off\r\nexit /b 1\r\n")?;
+    view.update(cx, |v, _| v.claude_command = format!("& '{}'", cmd.display().to_string().replace('\'', "''")));
+    keystroke(cx, "enter", None, Modifiers::default())?;
+    let refused = until(view, cx, WITHIN, "Send's refusal for a claude.cmd", |v| v.start_page(tab).and_then(|p| p.error.clone())).await?;
+    let kept = view.read_with(cx, |v, cx| v.start_page(tab).map(|p| p.input.read(cx).text().to_string()));
+    if !refused.contains("claude.cmd") || !refused.contains("the native claude.exe") || kept.as_deref() != Some(want.as_str()) {
+        bail!("Send through a claude.cmd said {refused:?} and left {kept:?} in the box, not the claude.exe fix with the text kept");
     }
     let out = argv_file(home, 1);
     fake(view, &out, cx)?;
@@ -171,7 +190,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     click(view, &open, cx).await?;
     until(view, cx, WITHIN, "the schedule's tab active", |v| v.schedule_page(WORKSPACE, ASKED).filter(|(id, _)| v.active == Some(*id)).map(drop)).await?;
     Ok(format!(
-        "New task in {WORKSPACE}/{repo} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags; \
+        "the Task icon opened New task · {WORKSPACE}; Send through a claude.cmd refused with the claude.exe fix, text kept; New task in {WORKSPACE}/{repo} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags; \
          New scheduled task from the folder's menu: `{}` first; the session's schedule raised `Schedule Selftest asked waits for your approval`, Open opened its tab",
         lines[0], SCHEDULE_ASK
     ))

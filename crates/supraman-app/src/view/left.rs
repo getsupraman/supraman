@@ -436,9 +436,6 @@ impl FleetView {
             let pkey = format!("workspace:{}", workspace.name);
             let open = !self.collapsed.contains(&pkey);
             body = body.child(self.render_workspace_row(workspace, open, cx));
-            if self.compose.as_ref().is_some_and(|c| c.workspace == workspace.name && c.reply_to.is_none()) {
-                body = body.children(self.render_compose(cx));
-            }
             if !open {
                 continue;
             }
@@ -903,7 +900,7 @@ impl FleetView {
                     button::bordered(&self.hits, format!("msg-reply-{key}"), "Reply…", cx).on_click(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             cx.stop_propagation();
-                            this.open_compose(&w, Some(file.clone()), window, cx);
+                            this.open_compose(&w, file.clone(), window, cx);
                         },
                     ))
                 };
@@ -946,7 +943,7 @@ impl FleetView {
             let replying = self
                 .compose
                 .as_ref()
-                .is_some_and(|c| &c.workspace == workspace && c.reply_to.as_deref() == Some(m.file.as_str()));
+                .is_some_and(|c| &c.workspace == workspace && c.reply_to == m.file);
             section = section.child(
                 div()
                     .id(SharedString::from(format!("msg-{key}")))
@@ -1006,10 +1003,7 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
         let ctrl = workspace_session_name(&c.workspace);
-        let title = match &c.reply_to {
-            Some(_) => format!("Reply to {ctrl}"),
-            None => format!("Task for {ctrl}"),
-        };
+        let title = format!("Reply to {ctrl}");
         let refusal = self.relay_refusal(&c.workspace);
         let line = |text: String, color: Hsla| div().text_xs().text_color(color).child(SharedString::from(text));
         Some(
@@ -1040,7 +1034,6 @@ impl FleetView {
                 .child(div().relative().child(c.input.clone()).child(hit_target(&self.hits, "compose-text".into())))
                 .children(refusal.map(|why| line(format!("Cannot send now: {why}."), status.warning)))
                 .children(c.error.clone().map(|e| line(e, status.error)))
-                .children(c.sent.clone().map(|s| line(format!("{}: {s}", c.route.as_deref().unwrap_or("sent")), status.success)))
                 .child(
                     div()
                         .flex()
@@ -1162,15 +1155,15 @@ impl FleetView {
                 },
             ))
         };
-        let task = (started && self.relay_refusal(&w).is_none()).then(|| {
+        let task = {
             let w = w.clone();
-            self.hover_icon(format!("task-{w}"), Icon::Task, "Task…: write the workspace session a task", &group, shown, cx).on_click(cx.listener(
+            self.hover_icon(format!("task-{w}"), Icon::Task, "New task…: start a session with a first prompt", &group, shown, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    this.open_compose(&w, None, window, cx);
+                    this.open_start(&w, None, false, window, cx);
                 },
             ))
-        });
+        };
         let session = own.and_then(|row| {
             let (w, session) = (w.clone(), row.session.clone());
             if row.attachable {
@@ -1233,7 +1226,7 @@ impl FleetView {
                     .items_center()
                     .gap(px(2.))
                     .child(work)
-                    .child(task.map_or_else(slot, IntoElement::into_any_element))
+                    .child(task)
                     .child(session.map_or_else(slot, IntoElement::into_any_element))
                     .child(start_stop),
             );

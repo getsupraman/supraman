@@ -367,11 +367,12 @@ pub struct FleetView {
     /// Scheduled runs whose Inbox notice was dismissed, by workspace and run id.
     pub runs_dismissed: DismissedMessages,
     /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
-    pub waiting_dismissed: Vec<String>,
+    pub waiting_dismissed: DismissedMessages,
 }
 
 /// The dismissed run notices beside the dismissed messages.
 const RUNS_DISMISSED: &str = "schedules/dismissed.json";
+const WAITING_DISMISSED: &str = "schedules/waiting-dismissed.json";
 
 const QUIT_RELEASE_WITHIN: Duration = Duration::from_secs(5);
 
@@ -701,6 +702,7 @@ impl FleetView {
         let (stars, stars_notice) = Stars::load(home.as_deref());
         let (dismissed_messages, dismissed_notice) = DismissedMessages::load(home.as_deref());
         let (runs_dismissed, runs_notice) = DismissedMessages::load_at(home.as_deref().map(|h| h.join(RUNS_DISMISSED)), "every failed scheduled run shows");
+        let (waiting_dismissed, waiting_notice) = DismissedMessages::load_at(home.as_deref().map(|h| h.join(WAITING_DISMISSED)), "every schedule that waits for approval shows");
         let schedule_store: Arc<dyn supraman_core::secret::SecretStore> = match home.as_deref() {
             Some(h) => supraman_core::secret::default_store(h),
             None => Arc::new(supraman_core::secret::MemoryStore::default()),
@@ -813,7 +815,7 @@ impl FleetView {
             loaded_at_scan: 0,
             transcripts_cache: None,
             transcripts_restart: false,
-            action_error: stars_notice.or(dismissed_notice).or(runs_notice),
+            action_error: stars_notice.or(dismissed_notice).or(runs_notice).or(waiting_notice),
             stars,
             closed_expanded: HashSet::new(),
             claude_command: "claude".into(),
@@ -845,7 +847,7 @@ impl FleetView {
             schedule_store,
             schedule_edit: None,
             runs_dismissed,
-            waiting_dismissed: Vec::new(),
+            waiting_dismissed,
         }
     }
 
@@ -1384,8 +1386,9 @@ impl FleetView {
             self.schedules = schedules;
             self.schedule_errors = errors;
             supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
-            let waiting: Vec<String> = crate::schedules::waiting(&self.schedules).into_iter().map(|w| w.key).collect();
-            supraman_ui::notices::keep_dismissed(&mut self.waiting_dismissed, &waiting);
+            if let Err(e) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules)) {
+                self.action_error = Some(format!("Cannot save the dismissed approvals: {e}"));
+            }
             self.find_asked_schedules();
         }
         self.refresh_details();
@@ -1511,7 +1514,7 @@ impl FleetView {
         }
     }
 
-    pub fn open_compose(&mut self, workspace: &str, reply_to: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_compose(&mut self, workspace: &str, reply_to: String, window: &mut Window, cx: &mut Context<Self>) {
         let input = match &self.compose {
             Some(c) if c.workspace == workspace && c.reply_to == reply_to => c.input.clone(),
             _ => {
@@ -1547,24 +1550,11 @@ impl FleetView {
             return;
         };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
-        let result = if text.is_empty() {
-            Err("Nothing to send.".to_string())
-        } else {
-            match &reply_to {
-                Some(file) => self.answer(&workspace, file, &text),
-                None => self.send_to_workspace(&workspace, &text),
-            }
-        };
+        let result = if text.is_empty() { Err("Nothing to send.".to_string()) } else { self.answer(&workspace, &reply_to, &text) };
         match (result, &mut self.compose) {
-            (Ok(_), _) if reply_to.is_some() => self.compose = None,
-            (Ok(sent), Some(c)) => {
-                c.input.update(cx, |input, cx| input.set_text("", cx));
-                c.sent = Some(compose::first_line(&text));
-                c.route = Some(sent.label());
-                c.error = None;
-            }
+            (Ok(_), _) => self.compose = None,
             (Err(e), Some(c)) => c.error = Some(e),
-            (_, None) => {}
+            (Err(_), None) => {}
         }
         cx.notify();
     }

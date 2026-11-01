@@ -32,11 +32,7 @@ pub struct Removing {
 }
 
 fn name_char(c: char) -> Option<char> {
-    match c {
-        ' ' | '_' => Some('-'),
-        c if c.is_ascii_alphanumeric() || c == '-' => Some(c.to_ascii_lowercase()),
-        _ => None,
-    }
+    (c.is_ascii_alphanumeric() || c == '-').then(|| c.to_ascii_lowercase())
 }
 
 impl AddDraft {
@@ -663,7 +659,9 @@ mod tests {
     #[test]
     fn the_name_takes_only_what_a_workspace_name_allows() {
         use supraman_ui::text_input::filtered;
-        assert_eq!(filtered("My Repo_2", name_char), ("my-repo-2".to_string(), None));
+        assert_eq!(filtered("My-Repo2", name_char), ("my-repo2".to_string(), None));
+        assert_eq!(filtered("a b", name_char), ("ab".to_string(), Some(' ')));
+        assert_eq!(filtered("a_b", name_char), ("ab".to_string(), Some('_')));
         assert_eq!(filtered("aä7", name_char), ("a7".to_string(), Some('ä')));
         assert_eq!(filtered("ä", name_char), (String::new(), Some('ä')));
     }
