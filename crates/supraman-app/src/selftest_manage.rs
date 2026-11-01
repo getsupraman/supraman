@@ -226,7 +226,7 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
 }
 
 /// Resting on a workspace, a folder and a session row shows no card while each row's icon keeps its tooltip;
-/// Details in the row's menu shows what the card did, and OK closes it (m5/71).
+/// Details in the row's menu opens the row's Details tab, and a second Details focuses it (m5/71, sched2/5).
 async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let folder = until(view, cx, WITHIN, &format!("a folder row of {ADDED}"), |v| {
         v.hits.borrow().keys().find_map(|k| k.strip_prefix(&format!("repo-row-{ADDED}/")).map(str::to_string))
@@ -243,30 +243,82 @@ async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWind
         no_card_on(view, row, icon, cx).await?;
     }
 
-    let ws = details_of(view, &ws_row, ADDED, cx).await?;
-    for want in [format!("{ADDED}\n"), "\nfolders  alpha, beta (disabled)\n".into(), "\nstate  never started\n".into(), "\nsession  not wanted\n".into()] {
+    let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?;
+    let (ws_tab, ws) = details_tab(view, &ws_row, ADDED, cx).await?;
+    let wants = [
+        format!("{ADDED}\n"),
+        format!("\nName  {ADDED}\n"),
+        "\nState  Never started\n".into(),
+        "\nalpha  ".into(),
+        " (disabled)\n".into(),
+        "\nWorkspace session\nNot wanted.".into(),
+    ];
+    for want in wants {
         if !ws.starts_with(ADDED) || !format!("{ws}\n").contains(&want) {
-            bail!("Details of {ADDED} reads {ws:?}, without {want:?}");
+            bail!("the Details tab of {ADDED} reads {ws:?}, without {want:?}");
         }
     }
-    let session = details_of(view, &session_row, &own.name, cx).await?;
-    let cwd = format!("\ncwd  {}\n", own.cwd.display());
-    let uuid = format!("\nuuid  {}\n", own.session_id);
-    if session.lines().next() != Some(own.name.as_str()) || !session.contains("\nstate  ") || !format!("{session}\n").contains(&cwd) {
-        bail!("Details of {} reads {session:?}, not its name, state and {cwd:?}", own.name);
+    crate::selftest_schedules::themed_shots(&home, "sched2-5-details-workspace", cx).await;
+    let (session_tab, session) = details_tab(view, &session_row, &own.name, cx).await?;
+    let name = format!("\nName  {}\n", own.name);
+    let cwd = format!("\nWorking directory  {}\n", own.cwd.display());
+    let folder_line = session.lines().find(|l| l.starts_with("Folder  ")).unwrap_or_default().to_string();
+    if !session.contains(&name) || !session.contains(&cwd) || folder_line.is_empty() || folder_line.contains("none of") || !session.contains("\nState  ") {
+        bail!("the Details tab of {} reads {session:?}, not its name, its folder and {cwd:?}", own.name);
     }
-    if own.id != own.session_id && !session.contains(&uuid) {
-        bail!("Details of {} reads {session:?}, without {uuid:?}", own.name);
+    if own.id != own.session_id && !session.contains(&format!("\nUUID  {}\n", own.session_id)) {
+        bail!("the Details tab of {} reads {session:?}, without its UUID", own.name);
+    }
+    crate::selftest_schedules::themed_shots(&home, "sched2-5-details-session", cx).await;
+    let tabs = view.read_with(cx, |v, _| v.tabs.len());
+    let (again, _) = details_tab(view, &session_row, &own.name, cx).await?;
+    if again != session_tab || view.read_with(cx, |v, _| v.tabs.len()) != tabs {
+        bail!("a second Details of {} opened tab {again} ({} tabs), not its tab {session_tab} again ({tabs})", own.name, view.read_with(cx, |v, _| v.tabs.len()));
+    }
+    let starred = view.read_with(cx, |v, _| v.stars.ids().contains(&own.session_id));
+    let star = format!("details-session-{}-star", own.session_id);
+    for want in [!starred, starred] {
+        crate::selftest::scrolled_into_view(view, &star, cx).await?;
+        click(view, &star, cx).await?;
+        until(view, cx, WITHIN, &format!("the page's Star made {} starred {want}", own.name), |v| (v.stars.ids().contains(&own.session_id) == want).then_some(())).await?;
+        let label = if want { "Unstar" } else { "Star" };
+        until(view, cx, Duration::from_secs(15), &format!("the page's action reads {label} after a poll"), |v| {
+            let page = v.tab(session_tab).and_then(|t| match &t.kind { crate::view::TabKind::Details(p) => p.seen.as_ref(), _ => None })?;
+            (page.starred == want && painted(v, &star)).then_some(())
+        })
+        .await?;
     }
     if let Some(card) = supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take()) {
         bail!("a hover card showed during the Details checks: {card:?}");
     }
+    view.update(cx, |v, cx| {
+        v.close_tab(session_tab, cx);
+        v.close_tab(ws_tab, cx);
+    });
     Ok(format!(
-        "no card on {ADDED}'s row, folder {folder} or {}'s row, their icons' tooltips shown; Details: {:?}; {:?}",
+        "no card on {ADDED}'s row, folder {folder} or {}'s row, their icons' tooltips shown; Details opened tab {ws_tab}: {:?}; tab {session_tab}: {:?}; a second Details focused tab {session_tab}; its Star starred and unstarred it",
         own.name,
         ws.replace('\n', " | "),
         session.replace('\n', " | ")
     ))
+}
+
+/// Details in the row's menu opens or focuses a Details tab; its id and text once it is the active tab.
+async fn details_tab(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<(u64, String)> {
+    press_painted(view, row, MouseButton::Right, cx).await?;
+    let keys = menu_open(view, title, cx).await?;
+    if !keys.contains(&"details") {
+        bail!("the menu of {title} has {keys:?}, no details");
+    }
+    click(view, "menu-details", cx).await?;
+    let found = until_app(view, cx, WITHIN, &format!("the Details tab of {title}"), |v, cx| {
+        let tab = v.active.and_then(|id| v.tab(id))?;
+        let crate::view::TabKind::Details(page) = &tab.kind else { return None };
+        let text = v.details_text(&page.target, cx)?;
+        (v.confirm.is_none() && text.starts_with(title)).then_some((tab.id, text))
+    })
+    .await?;
+    Ok(found)
 }
 
 /// Rests the pointer near the row's left edge, off its icons and labels, long past the tooltip delay: no card shows.
@@ -306,26 +358,6 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
 }
 
 /// Details from the row's menu: its report's text, once painted; OK closes it.
-async fn details_of(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    press_painted(view, row, MouseButton::Right, cx).await?;
-    let keys = menu_open(view, title, cx).await?;
-    if !keys.contains(&"details") {
-        bail!("the menu of {title} has {keys:?}, no details");
-    }
-    click(view, "menu-details", cx).await?;
-    let text = until(view, cx, WITHIN, &format!("Details of {title}"), |v| {
-        v.confirm.as_ref().filter(|c| c.action.is_none() && painted(v, "confirm-yes")).map(|c| c.text.clone())
-    })
-    .await?;
-    if view.read_with(cx, |v, _| painted(v, "confirm-cancel")) {
-        bail!("Details of {title} offers a Cancel");
-    }
-    shot(&format!("m5-71-details-{}", if title == ADDED { "workspace" } else { "session" }), cx).await;
-    click(view, "confirm-yes", cx).await?;
-    until(view, cx, WITHIN, &format!("Details of {title} closed by OK"), |v| v.confirm.is_none().then_some(())).await?;
-    Ok(text)
-}
-
 /// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width (m5/63).
 async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspace: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const LONG: &str = "a-folder-with-a-rather-long-name-for-edit-folders";

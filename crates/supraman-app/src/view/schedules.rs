@@ -567,7 +567,7 @@ impl FleetView {
         actions.push(button::bordered(&self.hits, format!("sched-page-edit-{k}"), "Edit…", cx).on_click(act(|this, w, id, window, cx| this.open_schedule_edit(w, id, window, cx))).into_any_element());
         actions.push(button::bordered(&self.hits, format!("sched-page-remove-{k}"), "Remove…", cx).on_click(act(|this, w, id, _, cx| this.ask_remove_schedule(w, id, cx))).into_any_element());
         let page_key = format!("sched-page-{k}");
-        let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll };
+        let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll, on_link: None };
         Some(details::render(page, &self.hits, cx))
     }
 

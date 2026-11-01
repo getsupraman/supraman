@@ -49,6 +49,7 @@ use crate::workstate_setup::{self, WsStatus};
 
 pub(crate) mod icon;
 mod delete;
+pub(crate) mod details;
 mod drop;
 mod folders;
 mod left;
@@ -118,6 +119,7 @@ pub enum TabKind {
     Shell,
     Work(Entity<WorkView>),
     Schedule(schedules::SchedulePage),
+    Details(details::DetailsPage),
     /// Reopened from the last run, waiting for a click on Resume.
     Saved(crate::saved_tabs::SavedTab),
 }
@@ -1354,6 +1356,7 @@ impl FleetView {
             let waiting: Vec<String> = crate::schedules::waiting(&self.schedules).into_iter().map(|w| w.key).collect();
             supraman_ui::notices::keep_dismissed(&mut self.waiting_dismissed, &waiting);
         }
+        self.refresh_details();
         self.last_refresh_took = Some(refresh.took);
     }
 
@@ -1941,7 +1944,7 @@ impl FleetView {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
             TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
-            TabKind::Work(_) | TabKind::Schedule(_) => false,
+            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) => false,
         }
     }
 
@@ -2039,7 +2042,7 @@ impl FleetView {
             TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
             TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
             TabKind::Shell => Some(tab_card::Kind::Shell),
-            TabKind::Work(_) | TabKind::Schedule(_) => None,
+            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) => None,
             TabKind::Saved(saved) => reopen::kind_of(saved),
         };
         tab_card::Card {
@@ -2565,6 +2568,7 @@ impl FleetView {
             Some(Tab { kind: TabKind::Schedule(page), .. }) => self
                 .render_schedule_page(page, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} of {} is gone.", page.id, page.workspace), cx)),
+            Some(Tab { kind: TabKind::Details(page), .. }) => self.render_details_page(page, cx).unwrap_or_else(|| placeholder("Its workspace is gone.".into(), cx)),
             Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()

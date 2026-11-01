@@ -5245,3 +5245,26 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   row, so the press never reached it. `press_painted` waits 100 ms first; 7b passed 5/5 since.
 - **The zone** comes from `iana-time-zone` (already in the lock through chrono): "This computer's time
   (Europe/Berlin, UTC+01:00)".
+
+## 2026-11-01 — sched2/5 Details opens a tab for sessions and workspaces
+
+- **`TabKind::Details(DetailsPage)`** (`view/details.rs`) keys its tab by `MenuTarget` (a session by its
+  `session_id` only, so the same session's row under another workspace focuses the same tab); `open_details`
+  focuses an open one. Schedules keep `TabKind::Schedule`; both render on `supraman_ui::details`.
+- **The page shows the poll's row, not the paint's**: `refresh_details` runs at the end of `apply` and stores the
+  tree's row (`seen`), its folder row and `OnDisk` (branch, worktree, transcript path and mtime). A session the tree
+  no longer lists keeps its last row with a "Not listed" pill and no actions. Nothing on the page reads disk while
+  painting.
+- **The folder is the tree's folder row**, not "a workspace folder containing the cwd": a session in a linked
+  worktree (the selftest's own, under `AutoWork.worktrees\…`) sits under its main checkout's row.
+- **The actions are the menu's items** (`session_menu`, `workspace_items`) rendered as buttons and run through
+  `run_action`; only the Details item of the page itself is left out. The workspace page keeps the workspace
+  session's and the relay's items under their captions, and their Details opens that session's tab.
+- **Started by**: `schedule_of_session` (a link to the schedule's tab via the new `Section::link` / `Page::on_link`),
+  else wanted or `fm-` named (supervisor), else a [+] tab running it, else "outside Supraman". A closed [+] tab
+  leaves no trace, so such a session then reads "outside Supraman".
+- **Claims are known only while the workspace's Work tab is open**; the Workman section says so rather than "none".
+- `row_details` no longer builds `HoverCard`s; `HoverCard` stays for the tab card.
+- Selftest 7b opens both tabs, checks name, folder, cwd and UUID, focuses the session tab with a second Details,
+  and stars and unstars through the page's Star (the selftest home's `starred.json`). Shots
+  `sched2-5-details-{session,workspace}-{dark,light}` (`selftest_schedules::themed_shots`).

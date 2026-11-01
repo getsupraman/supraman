@@ -1,7 +1,9 @@
 //! A details page: a title with a status pill, sections of `label  value` rows and paragraphs, and an actions
 //! bar under them. The owner builds the [`Section`]s from its data and keeps the [`ScrollHandle`].
 
-use gpui::{AnyElement, ClickEvent, ClipboardItem, Context, FontWeight, Hsla, ScrollHandle, SharedString, div, prelude::*, px};
+use std::rc::Rc;
+
+use gpui::{AnyElement, ClickEvent, ClipboardItem, Context, FontWeight, Hsla, ScrollHandle, SharedString, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::banner;
@@ -17,6 +19,8 @@ pub enum Line {
     Text(String),
     /// Wrapped as written, in the mono font, with a Copy button.
     Long(String),
+    /// `label  value`, the value a link: a click passes `target` to the page's `on_link`.
+    Link { label: String, value: String, target: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +50,11 @@ impl Section {
         self.lines.push(Line::Long(text.into()));
         self
     }
+
+    pub fn link(mut self, label: impl Into<String>, value: impl Into<String>, target: impl Into<String>) -> Self {
+        self.lines.push(Line::Link { label: label.into(), value: value.into(), target: target.into() });
+        self
+    }
 }
 
 /// The sections as plain text: a caption line, then a line per row or paragraph.
@@ -55,7 +64,7 @@ pub fn text(title: &str, sections: &[Section]) -> String {
         out.push_str(&format!("\n\n{}", s.caption));
         for line in &s.lines {
             match line {
-                Line::Row(label, value) => out.push_str(&format!("\n{label}  {value}")),
+                Line::Row(label, value) | Line::Link { label, value, .. } => out.push_str(&format!("\n{label}  {value}")),
                 Line::Text(t) | Line::Long(t) => out.push_str(&format!("\n{t}")),
             }
         }
@@ -68,16 +77,19 @@ pub fn index_of(sections: &[Section], key: &str) -> Option<usize> {
     sections.iter().position(|s| s.key == key)
 }
 
-pub struct Page<'a> {
+pub type OnLink<V> = Rc<dyn Fn(&mut V, &str, &mut Window, &mut Context<V>)>;
+
+pub struct Page<'a, V> {
     pub key: &'a str,
     pub title: String,
     pub pill: Option<(String, Hsla)>,
     pub sections: &'a [Section],
     pub actions: Vec<AnyElement>,
     pub scroll: &'a ScrollHandle,
+    pub on_link: Option<OnLink<V>>,
 }
 
-pub fn render<V: 'static>(page: Page, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
     let colors = cx.theme().colors().clone();
     let pill = page.pill.map(|(label, color)| {
         div().flex_none().px_2().rounded_full().bg(banner::tint(color)).text_xs().text_color(color).whitespace_nowrap().child(SharedString::from(label))
@@ -93,7 +105,7 @@ pub fn render<V: 'static>(page: Page, hits: &HitTargets, cx: &mut Context<V>) ->
         .children(pill);
     let mut body = div().id(SharedString::from(format!("{}-body", page.key))).flex().flex_col().flex_1().min_h_0().overflow_y_scroll().track_scroll(page.scroll).px_6().pb_4();
     for section in page.sections {
-        body = body.child(render_section(page.key, section, hits, cx));
+        body = body.child(render_section(page.key, section, page.on_link.clone(), hits, cx));
     }
     let actions = div().flex().flex_none().flex_wrap().items_center().gap_2().px_6().py_3().border_t_1().border_color(colors.border_variant).children(page.actions);
     div()
@@ -108,7 +120,7 @@ pub fn render<V: 'static>(page: Page, hits: &HitTargets, cx: &mut Context<V>) ->
         .into_any_element()
 }
 
-fn render_section<V: 'static>(page: &str, section: &Section, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
+fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnLink<V>>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
     let colors = cx.theme().colors().clone();
     let key = format!("{page}-section-{}", section.key);
     let mut out = div()
@@ -132,6 +144,33 @@ fn render_section<V: 'static>(page: &str, section: &Section, hits: &HitTargets, 
                 .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.clone())))
                 .child(div().flex_1().min_w_0().child(SharedString::from(value.clone())))
                 .into_any_element(),
+            Line::Link { label, value, target } => {
+                let link_key = format!("{key}-link-{i}");
+                let (on_link, target) = (on_link.clone(), target.clone());
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .text_sm()
+                    .child(div().flex_none().w(px(LABEL)).text_color(colors.text_muted).child(SharedString::from(label.clone())))
+                    .child(
+                        div()
+                            .id(SharedString::from(link_key.clone()))
+                            .relative()
+                            .min_w_0()
+                            .text_color(colors.text_accent)
+                            .underline()
+                            .cursor_pointer()
+                            .child(SharedString::from(value.clone()))
+                            .child(hit_target(hits, link_key))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                if let Some(f) = &on_link {
+                                    f(this, &target, window, cx);
+                                }
+                            })),
+                    )
+                    .into_any_element()
+            }
             Line::Text(t) => div().text_sm().child(SharedString::from(t.clone())).into_any_element(),
             Line::Long(t) => {
                 let copy_key = format!("{key}-copy-{i}");
@@ -160,8 +199,11 @@ mod tests {
 
     #[test]
     fn the_text_reads_each_section_under_its_caption() {
-        let sections = [Section::new("when", "When").row("Runs", "Every Monday at 08:00").text("Missed runs catch up once."), Section::new("what", "What").long("fix\nit")];
-        assert_eq!(text("Gate", &sections), "Gate\n\nWhen\nRuns  Every Monday at 08:00\nMissed runs catch up once.\n\nWhat\nfix\nit");
+        let sections = [
+            Section::new("when", "When").row("Runs", "Every Monday at 08:00").text("Missed runs catch up once."),
+            Section::new("what", "What").long("fix\nit").link("Schedule", "nightly", "demo/nightly"),
+        ];
+        assert_eq!(text("Gate", &sections), "Gate\n\nWhen\nRuns  Every Monday at 08:00\nMissed runs catch up once.\n\nWhat\nfix\nit\nSchedule  nightly");
         assert_eq!((index_of(&sections, "what"), index_of(&sections, "may")), (Some(1), None));
     }
 }
