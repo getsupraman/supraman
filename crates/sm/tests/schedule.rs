@@ -153,6 +153,38 @@ fn a_missing_slash_command_names_the_folder() {
     assert!(err.contains("no slash command /fix in folder") && err.contains(s(&f.alpha)), "{err}");
 }
 
+/// sched2/4: Git Bash's `/fix` → `<Git root>/fix` is refused with the fix, on add and on edit.
+#[test]
+fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() {
+    let f = fixture();
+    let git_root = f.outside.join("Fake Git");
+    let rewritten = format!("{}/fix", git_root.to_string_lossy().replace('\\', "/"));
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_sm"))
+            .args(args)
+            .current_dir(&f.outside)
+            .env("SUPRAMAN_HOME", &f.home)
+            .env("CLAUDE_CONFIG_DIR", &f.claude)
+            .env("EXEPATH", &git_root)
+            .env_remove("MSYSTEM")
+            .env_remove("APPDATA")
+            .env_remove("FOREMAN_ROLE")
+            .output()
+            .unwrap()
+    };
+    let want = format!("error: Git Bash rewrote /fix into {rewritten}; write //fix (or set MSYS_NO_PATHCONV=1)");
+    let out = run(&["schedule", "add", "demo", "--name", "Fix bugs", "--every", "daily 09:00", "--command", &rewritten]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&want), "{out:?}");
+    assert!(schedule::load(&f.home, "demo").unwrap().is_empty(), "nothing is written");
+
+    add_fix(&f, &[]);
+    let out = run(&["schedule", "edit", "demo", "fix-bugs", "--command", &rewritten]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&want), "{out:?}");
+    assert_eq!(f.stored("fix-bugs").action.prompt, Some(schedule::Prompt::Command("/fix".into())));
+}
+
 #[test]
 fn refuses_bypass_permissions_unknown_scripts_and_flag_shaped_rules() {
     let f = fixture();

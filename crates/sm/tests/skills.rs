@@ -84,7 +84,7 @@ fn the_repo_controller_never_reaches_the_human() {
 /// sched/8: the scheduler skill runs only these `sm schedule` verbs, and pre-allows nothing else.
 #[test]
 fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
-    const ALLOWED: [&str; 6] = ["add", "list", "show", "pause", "resume", "dry-run"];
+    const ALLOWED: [&str; 7] = ["add", "edit", "list", "show", "pause", "resume", "dry-run"];
     let raw = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman/skills/supraman-scheduler/SKILL.md")).unwrap();
     let text = plugin("skills/supraman-scheduler/SKILL.md");
     let never = text.split("## 4. Never").nth(1).expect("a Never section");
@@ -104,7 +104,7 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     let allowed_tools = raw.lines().find_map(|l| l.strip_prefix("allowed-tools: ")).expect("allowed-tools in the header");
     let rules: Vec<&str> = allowed_tools.split(", ").collect();
     assert_eq!(rules, ALLOWED.map(|v| format!("Bash(sm schedule {v}:*)")).iter().map(String::as_str).collect::<Vec<_>>());
-    for word in ["approve", "TOML", "`sm schedule edit` or `sm schedule remove`", "`schtasks`", "`edit` or `auto` without the human's answer"] {
+    for word in ["approve", "TOML", "`sm schedule remove`, or `sm schedule edit` of a schedule you did not add in this conversation at the human's request", "the built-in schedule skill", "`schtasks`", "`edit` or `auto` without the human's answer"] {
         assert!(never.contains(word), "the Never table names {word}");
     }
     for word in ["schtasks", "Register-ScheduledTask", ".toml"] {
@@ -114,6 +114,23 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     assert!(body.contains("**Pass the hint on; never add the rule yourself.**"), "a dry-run hint goes to the human");
     assert!(!body.contains("worktree-edit"), "the profile is edit");
     assert!(body.contains("It is pending: it runs only after you Approve it on its row in the Supraman window."));
+    assert!(!body.contains("sm schedule remove"), "remove stays the human's");
+    let verb_table = body.split("| Verb | Use |").nth(1).and_then(|t| t.split("`<w>` is the workspace").next()).expect("a verb table");
+    assert!(verb_table.contains("| `sm schedule edit [<w>] <id> <options>` | change a schedule **you added in this conversation at the human's request**"), "{verb_table}");
+    assert!(body.contains("Only for a schedule **you added in this conversation at the human's request**: `sm schedule edit"));
+}
+
+/// sched2/4: the description wins over the built-in /schedule for recurring work on this machine.
+#[test]
+fn the_scheduler_skill_claims_recurring_work_on_this_machine_over_the_built_in_schedule() {
+    let raw = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman/skills/supraman-scheduler/SKILL.md")).unwrap();
+    let description = raw.lines().find_map(|l| l.strip_prefix("description: ")).expect("a one-paragraph description");
+    for phrase in ["\"every monday\"", "\"daily\"", "\"weekly\"", "\"at 7\"", "\"schedule /replay-failures\"", "this repo's files", "git-ignored secrets (.env)", "Docker", "local tools"] {
+        assert!(description.contains(phrase), "the description names {phrase}");
+    }
+    assert!(description.contains("Use this, not the built-in schedule skill (cloud routines, which cannot see this machine) and not a hand-made Windows task."));
+    assert!(description.contains("USE FOR - ") && description.contains("DO NOT USE FOR - "));
+    assert!(description.contains("DO NOT USE FOR - approving a schedule, removing one, editing one you did not add in this conversation"));
 }
 
 #[test]

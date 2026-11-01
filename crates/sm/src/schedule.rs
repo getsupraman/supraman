@@ -1,7 +1,7 @@
 //! `sm schedule …`: the schedules of a workspace through [`supraman_core::schedule`]. Nothing here approves a
 //! schedule or registers a task (C100): an added or changed schedule stays pending until René's Approve.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, TimeZone};
 use supraman_claude::{LaunchSpec, mcp_config_path};
@@ -129,7 +129,13 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
             "--description" => o.description = Some(v(arg)?.to_string()),
             "--folder" => o.folder = Some(v(arg)?.to_string()),
             "--every" => o.every = Some(parse_every(v(arg)?)?),
-            "--command" => set_prompt(&mut o, PromptArg::Command(v(arg)?.to_string()))?,
+            "--command" => {
+                let c = v(arg)?;
+                if let Some(name) = git_bash_rewrite(c, &git_roots(), std::env::var_os("MSYSTEM").is_some()) {
+                    return Err(Failure::Refused(format!("error: Git Bash rewrote /{name} into {c}; write //{name} (or set MSYS_NO_PATHCONV=1)")));
+                }
+                set_prompt(&mut o, PromptArg::Command(c.to_string()))?
+            }
             "--prompt-file" => set_prompt(&mut o, PromptArg::File(v(arg)?.to_string()))?,
             "--prompt" => set_prompt(&mut o, PromptArg::Text(v(arg)?.to_string()))?,
             "--script" => o.script = Some(v(arg)?.to_string()),
@@ -179,6 +185,41 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
         return Err(Failure::Usage("--script and --no-script exclude each other".into()));
     }
     Ok((o, positional))
+}
+
+/// The name in `/name` when `value` is what Git Bash makes of it: `<Git root>/name`.
+fn git_bash_rewrite<'a>(value: &'a str, roots: &[PathBuf], msystem: bool) -> Option<&'a str> {
+    let slashed = value.replace('\\', "/");
+    let b = slashed.as_bytes();
+    if b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'/' {
+        return None;
+    }
+    let (parent, name) = slashed.rsplit_once('/')?;
+    if name.is_empty() || name.contains('.') {
+        return None;
+    }
+    let key = paths::path_key(Path::new(parent));
+    let ours = roots.iter().any(|r| paths::path_key(r).trim_end_matches('/') == key.trim_end_matches('/'));
+    let git_like = msystem && parent.rsplit('/').next().is_some_and(|last| last.eq_ignore_ascii_case("git"));
+    (ours || git_like).then(|| &value[value.len() - name.len()..])
+}
+
+/// Where Git for Windows may be installed: the usual folders and the one holding `git.exe` on PATH.
+fn git_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(|var| std::env::var_os(var).map(|d| PathBuf::from(d).join("Git")))
+        .collect();
+    roots.extend(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("Git")));
+    roots.extend(std::env::var_os("EXEPATH").map(PathBuf::from));
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path).filter(|d| d.join("git.exe").is_file()) {
+            let up = dir.parent().map(Path::to_path_buf);
+            let mingw = up.as_deref().filter(|u| u.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mingw")));
+            roots.extend(mingw.and_then(Path::parent).map(Path::to_path_buf).or(up));
+        }
+    }
+    roots
 }
 
 fn set_prompt(o: &mut Opts, p: PromptArg) -> Result<(), Failure> {
@@ -815,7 +856,22 @@ fn quoted(arg: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::uncovered_tools;
+    use std::path::PathBuf;
+
+    use super::{git_bash_rewrite, uncovered_tools};
+
+    #[test]
+    fn a_command_git_bash_turned_into_a_path_under_its_root_is_named() {
+        let root = [PathBuf::from(r"D:\Fake Tools\Git")];
+        assert_eq!(git_bash_rewrite("D:/Fake Tools/Git/replay-failures", &root, false), Some("replay-failures"));
+        assert_eq!(git_bash_rewrite(r"d:\fake tools\git\fix", &root, false), Some("fix"));
+        assert_eq!(git_bash_rewrite("C:/Program Files/Git/fix", &root, false), None, "not under a known root");
+        assert_eq!(git_bash_rewrite("C:/Program Files/Git/fix", &root, true), Some("fix"), "MSYSTEM and a Git folder");
+        assert_eq!(git_bash_rewrite("C:/Program Files/Other/fix", &root, true), None);
+        assert_eq!(git_bash_rewrite("/replay-failures", &root, true), None);
+        assert_eq!(git_bash_rewrite("D:/Fake Tools/Git/sub/fix", &root, false), None);
+        assert_eq!(git_bash_rewrite("D:/Fake Tools/Git/fix.md", &root, false), None);
+    }
 
     #[test]
     fn a_tool_is_hinted_when_named_as_a_word_and_no_rule_covers_it() {
