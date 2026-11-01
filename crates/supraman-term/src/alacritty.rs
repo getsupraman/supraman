@@ -800,6 +800,11 @@ pub(super) fn find_from_terminal_point(
     hyperlinks::find_from_grid_point(term, point, regex_searches, path_style)
 }
 
+pub(super) fn link_uri_at(term: &AlacrittyTerm, point: Point) -> Option<String> {
+    let point = point.to_alacritty().grid_clamp(term, Boundary::Grid);
+    term.grid()[point].hyperlink().map(|link| link.uri().to_owned())
+}
+
 pub(super) fn search_matches(term: &AlacrittyTerm, searcher: Search) -> Vec<Range> {
     let mut searcher = searcher.into_alacritty();
     all_search_matches(term, &mut searcher)

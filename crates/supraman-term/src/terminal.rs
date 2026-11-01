@@ -74,6 +74,7 @@ pub struct Terminal {
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<GpuiPoint<Pixels>>,
     mouse_down_hyperlink: Option<HyperlinkMatch>,
+    hovered_link: Option<String>,
     #[cfg(windows)]
     shell_program: Option<String>,
     child_exited: Option<ExitStatus>,
@@ -85,6 +86,8 @@ pub struct Terminal {
     /// The selection's background and its text's colour as last painted, while a selection with text
     /// is shown; the selftest reads it.
     pub selection_painted: Option<(Hsla, Hsla)>,
+    /// Whether the painter last showed the hand over a Ctrl-hovered link; the selftest reads it.
+    pub hand_painted: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,

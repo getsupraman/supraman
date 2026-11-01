@@ -42,7 +42,7 @@ pub(crate) fn insert_terminal_env(
     env: &mut HashMap<String, String>,
     version: &impl std::fmt::Display,
 ) {
-    env.insert("TERM_PROGRAM".to_string(), "foreman".to_string());
+    env.insert("TERM_PROGRAM".to_string(), "supraman".to_string());
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
@@ -52,6 +52,8 @@ pub(crate) fn insert_terminal_env(
         "CLAUDE_CODE_FORCE_STRIKETHROUGH".to_string(),
         "1".to_string(),
     );
+    // claude writes a markdown link as OSC 8 only with this set on Windows; see LEARNINGS sched2/11.
+    env.insert("FORCE_HYPERLINK".to_string(), "1".to_string());
 }
 
 #[derive(Error, Debug)]
@@ -170,6 +172,7 @@ impl TerminalBuilder {
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
+            hovered_link: None,
             #[cfg(windows)]
             shell_program: None,
             child_exited: None,
@@ -177,6 +180,7 @@ impl TerminalBuilder {
             cursor_moved_at: Instant::now(),
             cursor_painted_lit: true,
             selection_painted: None,
+            hand_painted: false,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -364,6 +368,7 @@ impl TerminalBuilder {
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
+                hovered_link: None,
                 #[cfg(windows)]
                 shell_program,
                 child_exited: None,
@@ -371,6 +376,7 @@ impl TerminalBuilder {
                 cursor_moved_at: Instant::now(),
                 cursor_painted_lit: true,
                 selection_painted: None,
+                hand_painted: false,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -617,10 +623,11 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_env_names_foreman_not_zed() {
+    fn test_terminal_env_names_supraman_and_forces_hyperlinks() {
         let mut env = HashMap::default();
         insert_terminal_env(&mut env, &"1.2.3");
-        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("foreman"));
+        assert_eq!(env.get("TERM_PROGRAM").map(String::as_str), Some("supraman"));
+        assert_eq!(env.get("FORCE_HYPERLINK").map(String::as_str), Some("1"));
         assert_eq!(
             env.get("TERM_PROGRAM_VERSION").map(String::as_str),
             Some("1.2.3")

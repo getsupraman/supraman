@@ -3,9 +3,9 @@
 // (GPL-3.0-or-later).
 
 use gpui::{
-    App, Bounds, ContentMask, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
-    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
+    App, Bounds, ContentMask, CursorStyle, DispatchPhase, Entity, Font, FontFeatures, FontId, FontStyle,
+    FontWeight, Hitbox, HitboxBehavior, Hsla, IntoElement, Keystroke, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point as GpuiPoint, SharedString, ShapedLine,
     StrikethroughStyle, Styled, TextRun, UnderlineStyle, Window, WindowTextSystem, canvas, fill,
     point, px, size,
 };
@@ -202,6 +202,7 @@ pub struct PaintedGlyph {
     pub ink_height: Option<Pixels>,
     pub fitted: bool,
     pub font_size: Pixels,
+    pub underlined: bool,
 }
 
 thread_local! {
@@ -242,6 +243,7 @@ fn record(run: &BatchedTextRun, shaped: &ShapedLine, at: GpuiPoint<Pixels>, fitt
                 ink_height: bounds.map(|b| b.size.height),
                 fitted,
                 font_size: shaped.font_size,
+                underlined: run.style.underline.is_some(),
             })
         })
         .collect();
@@ -338,6 +340,8 @@ pub struct LayoutState {
     cursor: Option<(Bounds<Pixels>, Hsla)>,
     selection: Vec<LayoutRect>,
     matches: Vec<LayoutRect>,
+    /// Ctrl is held over a link: the pointer is a hand.
+    on_link: bool,
     hitbox: Hitbox,
 }
 
@@ -505,6 +509,8 @@ fn prepaint(
         })
         .collect();
     terminal.update(cx, |terminal, _| terminal.selection_painted = painted);
+    let on_link = terminal.read(cx).last_content().last_hovered_word.is_some();
+    terminal.update(cx, |terminal, _| terminal.hand_painted = on_link);
 
     LayoutState {
         dims,
@@ -516,6 +522,7 @@ fn prepaint(
         cursor,
         selection,
         matches,
+        on_link,
         hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
     }
 }
@@ -586,6 +593,8 @@ fn register_mouse_listeners(terminal: &Entity<Terminal>, hitbox: &Hitbox, window
                 }
                 if hovered {
                     terminal.mouse_move(e, mode, cx);
+                } else if terminal.hovered_link().is_some() {
+                    cx.notify();
                 }
             });
         }
@@ -627,6 +636,9 @@ fn paint(state: LayoutState, window: &mut Window, cx: &mut App) {
     }
     if let Some((bounds, color)) = state.cursor {
         window.paint_quad(fill(bounds + origin, color));
+    }
+    if state.on_link {
+        window.set_cursor_style(CursorStyle::PointingHand, &state.hitbox);
     }
 }
 

@@ -1256,6 +1256,8 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
         println!("step 6b: {copied}");
         let keys = step("6c", crate::selftest_term::run(view, tab, &terminal, cx)).await?;
         println!("step 6c: {keys}");
+        let linked = step("6d", crate::selftest_link::run(view, tab, &terminal, cx)).await?;
+        println!("step 6d: {linked}");
         Ok(wheel)
     }
     .await;

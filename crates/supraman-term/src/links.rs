@@ -1,8 +1,9 @@
 // Vendored from Zed crates/terminal/src/terminal.rs @ 03efd49220ba06703d04f9c4732fdf814f9c523c
 // (GPL-3.0-or-later).
 
-use crate::alacritty::{HyperlinkMatch, find_from_terminal_point};
+use crate::alacritty::{AlacrittyTerm, HyperlinkMatch, find_from_terminal_point, link_uri_at};
 use crate::events::InternalEvent;
+use crate::mappings::mouse::grid_point;
 use crate::mouse::SelectionPhase;
 use crate::{Event, HoveredWord, Point, Range, Terminal};
 use gpui::{Context, Modifiers, Pixels, Point as GpuiPoint, Window, px};
@@ -155,8 +156,38 @@ impl Terminal {
         cx.notify();
     }
 
-    pub(crate) fn refresh_hovered_word(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub fn refresh_hovered_word(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.schedule_find_hyperlink(window.modifiers(), window.mouse_position(), cx);
+    }
+
+    /// The OSC 8 URI of the cell under the mouse, with or without Ctrl.
+    pub fn hovered_link(&self) -> Option<&str> {
+        self.hovered_link.as_deref()
+    }
+
+    pub(crate) fn refresh_hovered_link(
+        &mut self,
+        term: &AlacrittyTerm,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = self.last_content.terminal_bounds;
+        let link = bounds
+            .bounds
+            .contains(&position)
+            .then(|| {
+                let point = grid_point(
+                    position - bounds.bounds.origin,
+                    bounds,
+                    self.last_content.display_offset,
+                );
+                link_uri_at(term, point)
+            })
+            .flatten();
+        if link != self.hovered_link {
+            self.hovered_link = link;
+            cx.notify();
+        }
     }
 }
 
@@ -308,6 +339,38 @@ mod tests {
         assert_eq!(
             opened,
             [MaybeNavigationTarget::Url("vscode://file/c:/x.exe".into())]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hover_without_ctrl_names_the_osc8_uri_and_only_over_its_text(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, cx) = init_terminal_test_with_window(cx, OSC8_LINK);
+        cx.run_until_parked();
+        let hovered_at = |x: f32, cx: &mut VisualTestContext| {
+            cx.update_window_entity(&terminal, |terminal, window, cx| {
+                terminal.sync(window, cx);
+                terminal.last_content.terminal_bounds = TerminalBounds::new(
+                    px(20.0),
+                    px(10.0),
+                    gpui::bounds(point(px(0.0), px(0.0)), gpui::size(px(400.0), px(400.0))),
+                );
+                window.simulate_mouse_move(point(px(x), px(5.0)), cx);
+                terminal.sync(window, cx);
+                terminal.hovered_link().map(str::to_owned)
+            })
+        };
+        assert_eq!(
+            hovered_at(85.0, cx).as_deref(),
+            Some("vscode://file/c:/x.exe")
+        );
+        assert_eq!(hovered_at(25.0, cx), None, "\"Visit\" is no link");
+        assert_eq!(hovered_at(145.0, cx), None, "\"now\" is no link");
+        assert_eq!(
+            hovered_at(135.0, cx).as_deref(),
+            Some("vscode://file/c:/x.exe"),
+            "the last cell of \"the link\""
         );
     }
 

@@ -15,7 +15,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 | `crates/supraman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
 | `crates/supraman-workstate` | Every WorkState read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
 | `crates/supraman-ui` | The gpui widgets and painters every Supraman binary shares: text input, buttons, banners, menu, confirm, toast, notices, tabs, hover card, split pane, matcher, settings pages, themes, the terminal grid painter, hit targets, logger, frame probes. | core, term |
-| `crates/supraman-term` | The terminal model: Zed's `terminal` crate vendored onto alacritty (PTY, grid, input, mouse, links, scroll, search). No gpui views, no Supraman knowledge. | — |
+| `crates/supraman-term` | The terminal model: Zed's `terminal` crate vendored onto alacritty (PTY, grid, input, mouse, links, scroll, search). No gpui views, no Supraman knowledge. A tab's env (`builder.rs` `insert_terminal_env`) is `TERM_PROGRAM=supraman` with `FORCE_HYPERLINK=1`, so claude writes a markdown link as OSC 8; the app opens a Ctrl+clicked link only through `view.rs` `link_target` (`http`, `https`, `mailto`, `file`). | — |
 | `crates/supraman-core` | Plain Rust shared by all: the workspace registry, settings, files written safely, paths, time, process spawning, secrets at rest, the relay's files, hook events, names. No gpui, no claude, no HTTP. | — |
 
 **Boundaries.**
@@ -74,7 +74,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `settings_page::{SettingsPages, SettingsPage, row}` — a settings window's pages, registered by id with a title, an icon and a render fn, and one setting's row.
 - `nudge::{nudge, Nudge, Nudged}` — a coalescing wake-up for a loop on a gpui executor, instead of polling a flag.
 - `themes` — Zed theme JSON over a base, the bundled themes, the terminal palette, `contrast` and the contrast floors (`fit_floors`).
-- `term_element` (`terminal_grid`, `TermFont`, `cell_metrics`) — the terminal grid painter for a `supraman_term::Terminal`.
+- `term_element` (`terminal_grid`, `TermFont`, `cell_metrics`) — the terminal grid painter for a `supraman_term::Terminal`; OSC 8 cells are underlined, and the pointer is a hand while Ctrl is held over a link.
 - `lib.rs`: `init_globals`, `init_logger`/`Logger` (`foreman.log` via `append_capped`), `FrameProbe`, `memory` — global setup and the probes the selftests print.
 
 ### supraman-workstate (`crates/supraman-workstate/src/`)
