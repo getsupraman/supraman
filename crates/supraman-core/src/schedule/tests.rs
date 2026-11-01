@@ -107,7 +107,7 @@ fn the_doc_example_loads_and_saves_unchanged() {
     assert_eq!(s.trigger, Trigger::Weekly { days: vec![Day::Mon], at: Clock::new(9, 0).unwrap() });
     assert_eq!(s.action.prompt, Some(Prompt::Command("/autofix-prod-bugs".into())));
     assert_eq!((s.action.script_timeout, s.caps.max_runtime, s.caps.max_tokens), (Span(600), Span(3600), 3_000_000));
-    assert_eq!((s.permissions.profile, s.policy.overlap, s.policy.catch_up), (Profile::WorktreeEdit, Overlap::Skip, CatchUp::Once));
+    assert_eq!((s.permissions.profile, s.policy.overlap, s.policy.catch_up), (Profile::Edit, Overlap::Skip, CatchUp::Once));
     let file = ScheduleFile { version: 1, schedule: vec![s] };
     assert_eq!(toml::from_str::<ScheduleFile>(&toml::to_string(&file).unwrap()).unwrap(), file);
     let f = fixture();
@@ -168,7 +168,6 @@ fn validate_refuses_what_the_doc_forbids() {
     assert!(refused(|s| s.action.prompt = Some(Prompt::File("C:/x.md".into()))).contains("inside the folder"));
     assert!(refused(|s| s.action.prompt = Some(Prompt::Command("/../x".into()))).contains("slash command"));
     assert!(refused(|s| s.action.prompt = None).contains("needs a prompt"));
-    assert!(refused(|s| s.action.worktree = false).contains("worktree"));
     assert!(refused(|s| s.permissions.secrets = vec!["lower".into()]).contains("secret"));
     assert!(refused(|s| s.caps.max_runtime = Span(9 * 3600)).contains("max_runtime"));
     assert!(refused(|s| s.caps.max_tokens = 20_000_001).contains("max_tokens"));
@@ -684,19 +683,23 @@ fn a_runs_session_name_is_a_valid_name_and_profiles_map_onto_claudes_flags() {
     crate::validate_name(&name).unwrap();
     assert_eq!(run_id("autofix-prod-bugs", &stamp), "autofix-prod-bugs-20261102-090000");
 
-    assert_eq!("worktree-edit".parse::<Profile>().unwrap().permission_mode(), "acceptEdits");
+    assert_eq!("worktree-edit".parse::<Profile>(), Ok(Profile::Edit), "the earlier name still reads");
+    assert_eq!(("edit".parse::<Profile>(), Profile::Edit.as_str()), (Ok(Profile::Edit), "edit"));
+    assert_eq!(Profile::Edit.permission_mode(), "acceptEdits");
     assert!("bypassPermissions".parse::<Profile>().unwrap_err().contains("never a schedule's mode"));
     let p = Permissions { profile: Profile::Read, allow_tools: vec!["Read".into(), "Bash(ls:*)".into()], deny_tools: vec!["WebFetch".into()], ..Permissions::default() };
-    assert_eq!(p.allowed(&["Bash(sm:*)".into()], "fm-sched/x/1"), ["Bash(sm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
-    let edit = Permissions { profile: Profile::WorktreeEdit, ..Permissions::default() };
+    assert_eq!(p.allowed(&["Bash(sm:*)".into()], None), ["Bash(sm:*)", "Read", "Glob", "Grep", "Bash(ls:*)"]);
+    let edit = Permissions { profile: Profile::Edit, ..Permissions::default() };
     let branch = run_branch("fix", &stamp);
     assert_eq!(branch, "fm-sched/fix/20261102-090000");
-    let allowed = edit.allowed(&[], &branch);
-    for rule in ["Edit", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)"] {
-        assert!(allowed.contains(&rule.to_string()), "{rule} in {allowed:?}");
-    }
-    assert_eq!(allowed.iter().filter(|r| r.contains("push")).collect::<Vec<_>>(), ["Bash(git push -u origin fm-sched/fix/20261102-090000)"], "its own branch only");
-    assert!(!Permissions { profile: Profile::Auto, ..Permissions::default() }.allowed(&[], &branch).iter().any(|r| r.contains("push")));
+    assert_eq!(
+        edit.allowed(&[], None),
+        ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)", "Bash(git commit:*)"],
+        "an edit run in the checkout pushes nothing"
+    );
+    let in_worktree = edit.allowed(&[], Some(&branch));
+    assert_eq!(in_worktree.iter().filter(|r| r.contains("push")).collect::<Vec<_>>(), ["Bash(git push -u origin fm-sched/fix/20261102-090000)"], "a run worktree's own branch only");
+    assert!(!Permissions { profile: Profile::Auto, ..Permissions::default() }.allowed(&[], Some(&branch)).iter().any(|r| r.contains("push")));
     assert_eq!(p.denied().len(), DEFAULT_DENY.len() + 1);
 }
 
@@ -749,13 +752,66 @@ fn the_diff_names_each_covered_field_that_changed_since_the_approval() {
     fs::write(f.folder.join("scripts").join("gate.ps1"), "exit 0").unwrap();
     let diff = covered_diff(&approval.covered, &now(&s));
     let shown: Vec<(&str, Option<&str>, Option<&str>)> = diff.iter().map(|c| (c.field.as_str(), c.before.as_deref(), c.after.as_deref())).collect();
-    assert_eq!(shown.iter().map(|c| c.0).collect::<Vec<_>>(), ["caps.max_tokens", "files.scripts/gate.ps1", "trigger.at", "trigger.days"]);
-    assert_eq!(shown[0], ("caps.max_tokens", Some("3000000"), Some("1000000")));
-    assert_eq!(shown[2], ("trigger.at", Some("09:00"), Some("10:30")));
-    assert_eq!(shown[3], ("trigger.days", Some(r#"["mon"]"#), Some(r#"["mon","fri"]"#)));
+    assert_eq!(shown.iter().map(|c| c.0).collect::<Vec<_>>(), ["action.worktree", "caps.max_tokens", "files.scripts/gate.ps1", "trigger.at", "trigger.days"]);
+    assert_eq!(shown[0], ("action.worktree", Some("true"), Some("false")));
+    assert_eq!(shown[1], ("caps.max_tokens", Some("3000000"), Some("1000000")));
+    assert_eq!(shown[3], ("trigger.at", Some("09:00"), Some("10:30")));
+    assert_eq!(shown[4], ("trigger.days", Some(r#"["mon"]"#), Some(r#"["mon","fri"]"#)));
 
     let removed = covered_diff(r#"{"a":1,"b":{"c":2}}"#, r#"{"a":1}"#);
     assert_eq!(removed, [Change { field: "b.c".into(), before: Some("2".into()), after: None }]);
     assert_eq!(covered_diff(r#"{"a":null}"#, r#"{"a":"x"}"#)[0].before.as_deref(), Some("none"));
     assert!(covered_fields("not json").is_empty());
+}
+
+
+/// The fingerprint of the doc example as the release before `edit` computed it.
+const GOLDEN_FINGERPRINT: &str = "52cd87cf1e7c3ce22ccc64f9ea094dfeecbf02c6aa9b3510351505d88ab0061e";
+
+#[test]
+fn a_schedule_approved_by_the_earlier_release_keeps_its_fingerprint_and_its_worktree() {
+    let f = fixture();
+    let store = MemoryStore::default();
+    let s = approved(&f, &store);
+    let a = s.approval.clone().unwrap();
+    assert_eq!(a.fingerprint, GOLDEN_FINGERPRINT, "{}", a.covered);
+    assert!(a.covered.contains(r#""profile":"worktree-edit""#) && a.covered.contains(r#""worktree":true"#), "{}", a.covered);
+
+    let renamed = change(&f, &s.id, |s| s.name = "Renamed".into());
+    assert_eq!((renamed.status, renamed.action.worktree), (Status::Active, true), "an uncovered edit keeps both");
+    assert!(verify_approval(&store, &f.ws, &renamed).is_ok());
+    let text = fs::read_to_string(file_path(&f.home, "demo").unwrap()).unwrap();
+    assert!(text.contains(r#"profile = "edit""#) && text.contains("worktree = true"), "{text}");
+    assert_eq!(covered(&f.ws, &one(&f, &s.id)).unwrap().fingerprint, GOLDEN_FINGERPRINT, "saved as edit, fingerprinted as before");
+}
+
+#[test]
+fn a_covered_edit_of_a_worktree_schedule_drops_the_worktree_and_goes_pending() {
+    let f = fixture();
+    let store = MemoryStore::default();
+    let s = approved(&f, &store);
+    let after = change(&f, &s.id, |s| s.caps.max_tokens = 1_000_000);
+    assert_eq!((after.status, after.action.worktree), (Status::Pending, false));
+    assert_eq!(after.approval, s.approval);
+    let fields: Vec<String> = covered_diff(&s.approval.unwrap().covered, &covered(&f.ws, &after).unwrap().json).into_iter().map(|c| c.field).collect();
+    assert_eq!(fields, ["action.worktree", "caps.max_tokens"]);
+}
+
+#[test]
+fn a_schedule_above_read_without_a_worktree_is_valid() {
+    let f = fixture();
+    for profile in [Profile::Edit, Profile::Auto] {
+        let mut s = example();
+        s.action.worktree = false;
+        s.permissions.profile = profile;
+        assert_eq!(s.validate(&f.ws), Ok(()), "{profile:?}");
+    }
+}
+
+#[test]
+fn the_preamble_says_where_the_run_works() {
+    let checkout = preamble("r", "sm", Path::new(r"C:\r\Nomos"), None);
+    assert!(checkout.contains("You work in the folder's checkout `C:/r/Nomos`") && checkout.contains("make one yourself"), "{checkout}");
+    let wt = preamble("r", "sm", Path::new(r"C:\r\Nomos\.claude\worktrees\fm-sched-x-1"), Some("fm-sched/x/1"));
+    assert!(wt.contains("your own git worktree `C:/r/Nomos/.claude/worktrees/fm-sched-x-1`") && wt.contains("on branch `fm-sched/x/1`") && !wt.contains("checkout"), "{wt}");
 }

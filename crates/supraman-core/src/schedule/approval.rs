@@ -8,7 +8,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::store::{edit_raw, schedules_dir};
-use super::{Action, ActionKind, Approval, Caps, Permissions, Policy, Prompt, Schedule, Span, Status, Trigger};
+use super::{Action, ActionKind, Approval, Caps, Permissions, Policy, Profile, Prompt, Schedule, Span, Status, Trigger};
 use crate::secret::SecretStore;
 use crate::{CoreError, Result, Workspace};
 
@@ -26,7 +26,7 @@ struct CoveredJson<'a> {
     folder: &'a str,
     trigger: &'a Trigger,
     action: CoveredAction<'a>,
-    permissions: &'a Permissions,
+    permissions: CoveredPermissions<'a>,
     caps: &'a Caps,
     policy: &'a Policy,
     files: BTreeMap<String, String>,
@@ -41,6 +41,27 @@ struct CoveredAction<'a> {
     script_timeout: Span,
     worktree: bool,
     model: &'a str,
+}
+
+/// [`Permissions`] with the profile under its fingerprinted name, which an approved schedule keeps.
+#[derive(Serialize)]
+struct CoveredPermissions<'a> {
+    profile: &'static str,
+    allow_tools: &'a [String],
+    deny_tools: &'a [String],
+    add_dirs: &'a [String],
+    secrets: &'a [String],
+}
+
+impl<'a> CoveredPermissions<'a> {
+    fn of(p: &'a Permissions) -> Self {
+        let profile = match p.profile {
+            Profile::Read => "read",
+            Profile::Edit => "worktree-edit",
+            Profile::Auto => "auto",
+        };
+        Self { profile, allow_tools: &p.allow_tools, deny_tools: &p.deny_tools, add_dirs: &p.add_dirs, secrets: &p.secrets }
+    }
 }
 
 #[derive(Serialize)]
@@ -112,7 +133,7 @@ fn covered_json<'a>(workspace: &'a str, s: &'a Schedule, command_path: Option<St
             worktree: a.worktree,
             model: &a.model,
         },
-        permissions: &s.permissions,
+        permissions: CoveredPermissions::of(&s.permissions),
         caps: &s.caps,
         policy: &s.policy,
         files: BTreeMap::new(),

@@ -18,7 +18,7 @@ impl Profile {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Read => "read",
-            Self::WorktreeEdit => "worktree-edit",
+            Self::Edit => "edit",
             Self::Auto => "auto",
         }
     }
@@ -27,7 +27,7 @@ impl Profile {
     pub fn permission_mode(self) -> &'static str {
         match self {
             Self::Read => "default",
-            Self::WorktreeEdit => "acceptEdits",
+            Self::Edit => "acceptEdits",
             Self::Auto => "auto",
         }
     }
@@ -35,7 +35,7 @@ impl Profile {
     pub fn tools(self) -> &'static [&'static str] {
         match self {
             Self::Read => &["Read", "Glob", "Grep"],
-            Self::WorktreeEdit => &[
+            Self::Edit => &[
                 "Read",
                 "Glob",
                 "Grep",
@@ -58,20 +58,20 @@ impl std::str::FromStr for Profile {
     fn from_str(s: &str) -> std::result::Result<Self, String> {
         match s {
             "read" => Ok(Self::Read),
-            "worktree-edit" => Ok(Self::WorktreeEdit),
+            "edit" | "worktree-edit" => Ok(Self::Edit),
             "auto" => Ok(Self::Auto),
-            "bypassPermissions" => Err("bypassPermissions is never a schedule's mode; the profiles are read, worktree-edit and auto".into()),
-            other => Err(format!("'{other}' is not a profile: read, worktree-edit or auto")),
+            "bypassPermissions" => Err("bypassPermissions is never a schedule's mode; the profiles are read, edit and auto".into()),
+            other => Err(format!("'{other}' is not a profile: read, edit or auto")),
         }
     }
 }
 
 impl Permissions {
-    /// `--allowedTools`: `always` (Foreman's own, `sm_allowed_tools`), the profile's, then the schedule's. A
-    /// `worktree-edit` run may push its own `branch` and no other.
-    pub fn allowed(&self, always: &[String], branch: &str) -> Vec<String> {
+    /// `--allowedTools`: `always` (Foreman's own, `sm_allowed_tools`), the profile's, then the schedule's. An
+    /// `edit` run in a run worktree may push that worktree's `branch` and no other; in the checkout it pushes nothing.
+    pub fn allowed(&self, always: &[String], run_branch: Option<&str>) -> Vec<String> {
         let profile = self.profile.tools().iter().map(|t| t.to_string());
-        let push = (self.profile == Profile::WorktreeEdit).then(|| format!("Bash(git push -u origin {branch})"));
+        let push = run_branch.filter(|_| self.profile == Profile::Edit).map(|branch| format!("Bash(git push -u origin {branch})"));
         dedup(always.iter().cloned().chain(profile).chain(push).chain(self.allow_tools.iter().cloned()))
     }
 
@@ -131,10 +131,18 @@ pub fn run_worktree(folder: &Path, id: &str, stamp: &str) -> PathBuf {
 }
 
 /// What a run tells its session in front of the base prompt; `sm` is the command its `--allowedTools` lets run
-/// (`sm_allowed_tools`).
-pub fn preamble(run: &str, sm: &str) -> String {
+/// (`sm_allowed_tools`), `cwd` where it starts and `run_branch` its run worktree's branch, when it has one.
+pub fn preamble(run: &str, sm: &str, cwd: &Path, run_branch: Option<&str>) -> String {
+    let cwd = crate::paths::normalize(cwd);
+    let works_in = match run_branch {
+        Some(branch) => format!("You work in your own git worktree `{cwd}` on branch `{branch}`."),
+        None => format!(
+            "You work in the folder's checkout `{cwd}`, the human's working copy, with its git-ignored files and tools; \
+             if the job needs a separate git worktree, make one yourself."
+        ),
+    };
     format!(
-        "This is an unattended scheduled run `{run}`; nobody watches it. When you are finished, run \
+        "This is an unattended scheduled run `{run}`; nobody watches it. {works_in} When you are finished, run \
          `{sm} schedule report {run} done \"<one line>\"`. If you cannot go on without the human, run \
          `{sm} schedule report {run} needs-you \"<why>\"`. Run `{sm}` with the Bash tool, exactly as written: \
          only that is allowed without a prompt."

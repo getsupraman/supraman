@@ -6,7 +6,7 @@ Each section ends with what it decides for the unit that builds it. The choices 
 
 ## Where things live
 
-Everything is in Foreman's home (`Registry::open`: `FOREMAN_HOME`, else `%APPDATA%\Foreman`). Nothing goes in a workspace folder except a run's git worktree.
+Everything is in Foreman's home (`Registry::open`: `FOREMAN_HOME`, else `%APPDATA%\Foreman`). Nothing goes in a workspace folder except the run worktree of a schedule an earlier release saved with `worktree = true`.
 
 | Path | What | Written by |
 |---|---|---|
@@ -47,11 +47,11 @@ prompt = { command = "/autofix-prod-bugs" }   # or { file = "prompts/x.md" } or 
 script = "scripts/gate.ps1"          # relative to the folder; script_then_session and script only
 script_args = []
 script_timeout = "10m"
-worktree = true                      # the session runs in a fresh worktree of the folder
+worktree = false                     # true only from an earlier release: a fresh run worktree; a covered edit clears it
 model = ""                           # empty: claude's default
 
 [schedule.permissions]               # covered
-profile = "worktree-edit"            # read | worktree-edit | auto (see "Permission profile and caps")
+profile = "edit"                     # read | edit | auto ("worktree-edit" still reads as edit); see "Permission profile and caps"
 allow_tools = ["Bash(dotnet test:*)"]  # added to the profile's
 deny_tools = []                      # added to the profile's
 add_dirs = []
@@ -188,7 +188,7 @@ The task runs `fmw.exe schedule fire --home "<home>" <workspace> <id> --fingerpr
 6. **Live file.** Write `schedules/live/<ws>/<id>.json`: run id, fm pid with its `process::started(pid)`, stage, and later the session and the WorkState session id. Record `started`.
 7. **Script stage**, for `script*` kinds. `script` ends here.
 8. **Session stage** (sched/6):
-   1. Worktree, when `worktree = true`: `git worktree add -b fm-sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD`. It lives inside the folder, so it falls under the folder's existing claude trust; Foreman never changes trust.
+   1. The cwd is the folder's checkout. Only a schedule an earlier release saved with `worktree = true` gets `git worktree add -b fm-sched/<id>/<stamp> <folder>/.claude/worktrees/fm-sched-<id>-<stamp> HEAD` first. It lives inside the folder, so it falls under the folder's existing claude trust; Supraman never changes trust.
    2. Mint (see [fm without the app](#fm-without-the-app-mint-launch-stop)) and write the mcp config.
    3. `Claude::launch` (refuses a taken name), then `find_by_name` for the row's id and uuid, then `Minter::bind`.
 9. **Watch.** Poll `Claude::list_sessions` every 15 s, sleeping in between with no flag polling. Read the session's hook events (`EventReader`) and its transcript's `usage` lines. Check `<id>.restart`. The run ends on the first of:
@@ -258,16 +258,22 @@ sched/3 builds `Registrar { sync(workspace, &[Schedule]) }` with `WindowsRegistr
 
 The profiles map onto claude's flags. Every profile also gets `LaunchConfig::allowed_tools` (`Bash(fm:*)`) and the default deny list.
 
-| Profile | `--permission-mode` | Worktree | `--allowedTools` | Use |
-|---|---|---|---|---|
-| `read` | `default` | no (the main checkout) | `Read Glob Grep` + `allow_tools` | reports, triage; anything else parks → `needs_you` |
-| `worktree-edit` | `acceptEdits` | required | `Read Glob Grep Edit Write`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git add:*)`, `Bash(git commit:*)`, the run's own `Bash(git push -u origin fm-sched/<id>/<stamp>)` + `allow_tools` | fixes that end in a branch or PR |
-| `auto` | `auto` | required | `allow_tools` | the classifier decides, like a workspace session |
+Every run works in the folder's checkout, René's working copy, where its git-ignored files (`.env`) and tools are (sched2/Q1, René 2026-11-01). A job that needs a separate git worktree makes it itself; Supraman makes none.
+
+| Profile | `--permission-mode` | `--allowedTools` | Use |
+|---|---|---|---|
+| `read` | `default` | `Read Glob Grep` + `allow_tools` | reports, triage; anything else parks → `needs_you` |
+| `edit` | `acceptEdits` | `Read Glob Grep Edit Write`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git log:*)`, `Bash(git add:*)`, `Bash(git commit:*)` + `allow_tools`; no `git push` | fixes and ops jobs in the checkout |
+| `auto` | `auto` | `allow_tools` | the classifier decides, like a workspace session |
+
+- **`worktree-edit`** is the earlier name of `edit`: TOML and `--profile` still read it, and the fingerprint keeps `"profile":"worktree-edit"` for `edit`, so a schedule approved before the rename still verifies.
+- **A schedule saved with `worktree = true`** by an earlier release still runs in a run worktree, and an `edit` run there may push that worktree's own branch (`Bash(git push -u origin fm-sched/<id>/<stamp>)`). `worktree` stays covered; the next covered edit (`sm schedule edit`, the window's Edit) sets it to `false`, which makes the schedule pending as any covered change does.
+- **Tools an ops job calls.** `dry-run` prints `hint: the run calls <tool>; add --allow-tools "Bash(<tool>:*)"` for each of `dotnet`, `docker`, `npm`, `pnpm`, `cargo` and `python` the command file or prompt names as a word and no allow rule covers. The skill passes the hint on to the human; it never adds the rule.
 
 - `bypassPermissions` is never a schedule's mode; `fm schedule add` refuses it.
 - **Default deny list** (`--disallowedTools`, always): `Bash(git push --force:*)`, `Bash(claude rm:*)`, `Bash(schtasks:*)`, `PowerShell(Register-ScheduledTask:*)`, `PowerShell(Unregister-ScheduledTask:*)`. A run cannot schedule anything, and cannot rm.
 - **sched/8's skill** asks the human whenever the action needs more than `read`.
-- **`worktree-edit` and git (F-01, the controller's decision).** Inside its worktree a run may look at, stage and commit its work, and push its own run branch: the push rule is generated per run with the exact branch, so no other branch and no `--force` (also denied). Build and test commands stay per schedule (`--allow-tools`); the skill and `dry-run` say which a fix needs. The rules come from the profile, so the fingerprint covers them.
+- **`edit` and git (F-01; sched2/2, the controller's decision).** In the checkout a run may look at, stage and commit its work, and push nothing. Build and test commands stay per schedule (`--allow-tools`); the skill and `dry-run` say which a job needs. The rules come from the profile, so the fingerprint covers them.
 
 **Caps** (C102), all covered by the fingerprint:
 
@@ -299,18 +305,18 @@ A3 is confirmed by reading the code. The supervisor ticks only inside the app (`
 - **The bearer.** `Auth::open(home).access_token(configured_origin)`, as `fm work` does (`crates/fm/src/work.rs:36`). It reads the refresh token from the DPAPI `FileStore`, refreshes under `oauth/refresh.lock` (cross-process, so fm and a running app never spend one refresh token twice), and keeps a rotated token. `AppTokens`/`bearer`/`workstate_role` live in `foreman-app/src/tokens.rs`. sched/6 moves them into `foreman-supervisor` (next to `TokenProvider`) so fm uses the same provider instead of a copy (C56). Not signed in → the run launches without WorkState, as the supervisor does, and the record says so.
 - **The mint.** `HttpMinter::mint` with a `MintRequest`:
   - `name` = the session name; `role` = `orchestrator` (Decision 4);
-  - `launched_by` = `origin` = `foreman/<ws>/schedule/<id>`; `cwd` = the worktree; `external_role` = `schedule`;
+  - `launched_by` = `origin` = `foreman/<ws>/schedule/<id>`; `cwd` = the run's cwd; `external_role` = `schedule`;
   - `replace` false (every run is a new name); `repo` = `git_repo(cwd)`; `claude_session_id` None.
 
   Once the row shows its uuid, `Minter::bind` sends it.
 - **The launch.** `foreman_claude::Claude::launch(&LaunchSpec)`, built exactly as `Supervisor::launch` builds it (`executor.rs:414`):
   - `strict_mcp_config`, the plugin dir (`foreman_core::find_plugin_dir`), `--add-dir`s;
   - `--settings` with `FOREMAN_HOME`/`ROLE`/`WORKSPACE`/`SESSION`, plus `FOREMAN_SCHEDULE` and `FOREMAN_RUN`;
-  - `bgIsolation: none`, because the run already has its own worktree;
+  - `bgIsolation: none`, so claude moves the run into no worktree of its own;
   - `--allowedTools`/`--disallowedTools` from the profile; `--model` when set.
 
   sched/6 pulls the spec building out into one shared function on `LaunchConfig`, used by both.
-- **The stop.** `Claude::stop(id)`, `Minter::revoke(session_id)`, delete `mcp_config_path(mcp, name)`. Never `rm`. The worktree is kept, so a run's branch survives. `prune` removes it after the 30-day retention only when it holds no uncommitted and no unpushed work; it lists the rest (Decision 8).
+- **The stop.** `Claude::stop(id)`, `Minter::revoke(session_id)`, delete `mcp_config_path(mcp, name)`. Never `rm`. A run worktree is kept, so its branch survives. `prune` removes it after the 30-day retention only when it holds no uncommitted and no unpushed work; it lists the rest (Decision 8).
 
 ## Probes (a)–(d): run by the controller under René's grant, 2026-10-30
 

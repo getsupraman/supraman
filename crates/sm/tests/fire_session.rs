@@ -336,12 +336,13 @@ fn report_done_after(after_ms: i64) -> OnSleep {
     })
 }
 
-/// c1: a session-only schedule starts one `fm-<ws>-sched-*` session in a fresh worktree, with the profile, the
-/// prompt and a minted token; DONE ends it, and the end stops (never rm) and revokes.
+/// c1: a session-only schedule the earlier release saved with `worktree = true` starts one `fm-<ws>-sched-*`
+/// session in a fresh worktree, with the profile, the prompt and a minted token; DONE ends it, and the end stops
+/// (never rm) and revokes.
 #[test]
 fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint() {
     let f = fixture(true);
-    f.add_approved(session_schedule("fix", ActionKind::Session, Profile::WorktreeEdit));
+    f.add_approved(session_schedule("fix", ActionKind::Session, Profile::Edit));
     let mut host = TestHost::new(&f, &[Look::Working]);
     host.on_sleep = Some(report_done_after(30_000));
     let report = run_now(&f, "fix", &mut host);
@@ -355,7 +356,8 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert_eq!(spec.cwd, worktree);
     assert_eq!(git(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]), format!("fm-sched/fix/{stamp}"), "a fresh worktree on the run's branch");
     assert_eq!(spec.permission_mode, "acceptEdits");
-    assert!(spec.prompt.starts_with(&schedule::preamble(&run, "sm")) && spec.prompt.ends_with("Fix the bugs."), "{}", spec.prompt);
+    let preamble = schedule::preamble(&run, "sm", &worktree, Some(&format!("fm-sched/fix/{stamp}")));
+    assert!(spec.prompt.starts_with(&preamble) && spec.prompt.ends_with("Fix the bugs."), "{}", spec.prompt);
     let allowed = flag(&spec, "--allowedTools");
     for rule in ["Bash(sm:*)", "Edit", "Bash(git commit:*)", &format!("Bash(git push -u origin fm-sched/fix/{stamp})")] {
         assert!(allowed.contains(&rule), "{rule} in {allowed:?}");
@@ -534,7 +536,7 @@ fn fire_session_without_a_sign_in_launches_without_workstate() {
 #[test]
 fn fire_session_needs_a_repo_for_a_worktree_and_launches_nothing() {
     let f = fixture(true);
-    f.add_approved(session_schedule("wt", ActionKind::Session, Profile::WorktreeEdit));
+    f.add_approved(session_schedule("wt", ActionKind::Session, Profile::Edit));
     fs::remove_dir_all(f.alpha.join(".git")).unwrap();
     let mut host = TestHost::new(&f, &[Look::Working]);
     let report = run_now(&f, "wt", &mut host);
@@ -600,4 +602,28 @@ fn fire_session_real_run_scratch_home() {
     let approved = schedule::approve(&home, &*store, &w, "reply-ok", T0).unwrap();
     assert_eq!(schedule::effective_status(&*store, &w, &approved), Sched::Active);
     println!("home: {}", home.display());
+}
+
+/// An `edit` run without a worktree starts in the folder's checkout, needs no git repo, makes no worktree and
+/// may not push.
+#[test]
+fn fire_session_of_an_edit_schedule_works_in_the_folders_checkout() {
+    let f = fixture(true);
+    let mut s = session_schedule("ops", ActionKind::Session, Profile::Edit);
+    s.action.worktree = false;
+    f.add_approved(s);
+    fs::remove_dir_all(f.alpha.join(".git")).unwrap();
+    let mut host = TestHost::new(&f, &[Look::Working]);
+    host.on_sleep = Some(report_done_after(30_000));
+    let report = run_now(&f, "ops", &mut host);
+    assert_eq!(report.outcome, Some(Outcome::Done), "{report:?}");
+    let spec = host.spec();
+    assert_eq!(spec.cwd, f.alpha);
+    assert!(spec.prompt.contains("You work in the folder's checkout"), "{}", spec.prompt);
+    assert_eq!(spec.permission_mode, "acceptEdits");
+    let allowed = flag(&spec, "--allowedTools");
+    assert!(allowed.contains(&"Bash(git commit:*)") && !allowed.iter().any(|r| r.contains("git push")), "{allowed:?}");
+    assert!(!f.alpha.join(".claude").join("worktrees").exists(), "no run worktree");
+    let Stage::Session { worktree, .. } = session_stage(&f.records(&report.run.unwrap())) else { unreachable!() };
+    assert_eq!(worktree, None);
 }

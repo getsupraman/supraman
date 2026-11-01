@@ -5165,3 +5165,27 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   records its argv and env, runs `where sm`, `sm --version` and plays SessionStart and a permission-prompt
   Notification through `sm hook`; it then checks the injected `FOREMAN-ROLE hand`, the hook signal and the row's
   label. It does not see a real claude's skill list: that `supraman-scheduler` is listed rests on `--plugin-dir`.
+
+## 2026-11-01 — sched2/2 runs work in the folder's checkout; Supraman makes no worktree
+
+- **Where a run works.** `sm schedule add` saves `worktree = false` for every profile, and nothing sets it `true`
+  again: the run's cwd is the folder's checkout, with its `.env` and tools. `dry-run` prints that `cwd:`. The validation
+  rule "profiles above read run in a worktree" is gone. The preamble says where the run works, in the second person
+  (`You work in the folder's checkout `<path>`, …; if the job needs a separate git worktree, make one yourself.`).
+- **`worktree-edit` is `edit`.** `Profile::Edit` serializes as `edit` and reads `worktree-edit` (serde alias and
+  `FromStr`). The covered JSON spells it `worktree-edit` (`CoveredPermissions` in `approval.rs`), so the fingerprint
+  of an unchanged schedule is the one the earlier release computed:
+  `a_schedule_approved_by_the_earlier_release_keeps_its_fingerprint_and_its_worktree` pins the doc example's
+  fingerprint captured on master d2061a0. The covered `worktree` field keeps its name and value for the same reason.
+- **No push in the checkout.** `Permissions::allowed(always, run_branch: Option<&str>)`: the push rule of the run's
+  own branch exists only for a run worktree (a schedule saved with `worktree = true`), so a run in René's checkout has
+  no `git push` rule at all.
+- **The old flag goes on the next covered edit.** `schedule::edit` clears `action.worktree` whenever the covered JSON
+  changes, so `sm schedule edit` and the window's Edit both drop it, and the Approve diff shows
+  `action.worktree: true → false` next to the edit that caused it. An uncovered edit (name, description, pause) keeps
+  it and the approval.
+- **The dry-run hint** reads the slash command's file, the prompt file or the text, and names each of `dotnet`,
+  `docker`, `npm`, `pnpm`, `cargo`, `python` that appears as a word (not `docker-compose`, `npmrc`, `mydotnet`) and no
+  `Bash`/`PowerShell` allow rule covers (`Bash`, `Bash(<tool>:…)`, `Bash(<tool> …)`). It lives in `sm`'s
+  `schedule.rs`: only dry-run uses it. The app's Edit dialog has no allow-tools field, so the skill tells the human to
+  add a hinted rule with `sm schedule edit`.

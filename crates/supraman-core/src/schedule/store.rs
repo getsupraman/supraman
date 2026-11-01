@@ -35,8 +35,8 @@ fn load_file(path: &Path) -> Result<ScheduleFile> {
 }
 
 /// Applies `change` to `workspace`'s schedules and saves them under `<workspace>.lock`; nothing is written
-/// when `change` or a check fails. `approval` stays as it was, a covered change sets `pending`, and `active`
-/// holds only where the approval's fingerprint is the current one (C100).
+/// when `change` or a check fails. `approval` stays as it was, a covered change sets `pending` and clears
+/// `worktree`, and `active` holds only where the approval's fingerprint is the current one (C100).
 pub fn edit<T>(home: &Path, workspace: &Workspace, change: impl FnOnce(&mut Vec<Schedule>) -> Result<T>) -> Result<T> {
     edit_raw(home, workspace, |schedules| {
         let before = schedules.clone();
@@ -57,6 +57,7 @@ pub fn edit<T>(home: &Path, workspace: &Workspace, change: impl FnOnce(&mut Vec<
             let changed = old.is_some_and(|o| covered_toml(&workspace.name, o) != covered_toml(&workspace.name, s));
             if changed {
                 s.status = Status::Pending;
+                s.action.worktree = false;
             } else if s.status == Status::Active && old.is_none_or(|o| o.status != Status::Active) {
                 let approved = s.approval.as_ref().is_some_and(|a| covered(workspace, s).is_ok_and(|c| c.fingerprint == a.fingerprint));
                 if !approved {

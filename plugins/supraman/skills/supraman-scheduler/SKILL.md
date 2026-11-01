@@ -43,15 +43,19 @@ Work out each part, then ask **once** for everything still open (§2), then add.
    | Profile | The run may | Where it works |
    |---|---|---|
    | `read` | read and search, run `sm`; anything else parks it as needs-you | the folder's checkout |
-   | `worktree-edit` | also edit and write files; `git status/diff/log/add/commit`; push its own run branch | its own git worktree, never the checkout |
-   | `auto` | what the auto-mode classifier allows | its own git worktree |
+   | `edit` | also edit and write files; `git status/diff/log/add/commit`; no `git push` | the folder's checkout |
+   | `auto` | what the auto-mode classifier allows | the folder's checkout |
 
-   `read` when the command only reads, reports or triages. **Anything more — it edits, fixes, commits, opens a
-   branch or a PR, runs a build — needs `worktree-edit` or `auto`, and only the human picks it: ask (§2),
-   never choose it yourself.** `bypassPermissions` is never a schedule's mode; `sm` refuses it. Extra rules
-   only when the human names them: `--allow-tools "Bash(dotnet test:*)"`, `--deny-tools <rule>`. A
-   `worktree-edit` fix that builds or runs tests needs those commands as `--allow-tools` (the profile has
-   git, not the build): say which in §2, e.g. `--allow-tools "Bash(cargo test:*)"`; `dry-run` names it too.
+   Every run works in the folder's checkout, the human's working copy, where its git-ignored files (`.env`)
+   and tools are. A job that needs a separate git worktree makes one itself; Supraman makes none.
+
+   `read` when the command only reads, reports or triages. **Anything more — it edits, fixes, commits, runs a
+   build, Docker or `dotnet run` — needs `edit` or `auto`, and only the human picks it: ask (§2), never choose
+   it yourself.** `bypassPermissions` is never a schedule's mode; `sm` refuses it. Extra rules only when the
+   human names them: `--allow-tools "Bash(dotnet test:*)"`, `--deny-tools <rule>`. An `edit` run that builds,
+   runs tests or starts containers needs those commands as `--allow-tools` (the profile has git, not the
+   build). `dry-run` prints a `hint:` line for each such tool the command names
+   (`hint: the run calls docker; add --allow-tools "Bash(docker:*)"`).
 5. **The caps** (unattended runs end at them): always pass `--max-runtime 1h --max-tokens 3000000`, the
    defaults, unless the human gave others (hard limits 8h and 20000000 tokens).
 6. **The name.** `--name "<Command words>"` (`--name "Autofix prod bugs"`); the id is its slug
@@ -63,7 +67,7 @@ Work out each part, then ask **once** for everything still open (§2), then add.
 `--command //autofix-prod-bugs`: Git Bash passes it on as `/autofix-prod-bugs`. Elsewhere one slash.
 
 ```
-sm schedule add --name "Autofix prod bugs" --every "weekly mon 09:00" --command //autofix-prod-bugs --profile worktree-edit --max-runtime 1h --max-tokens 3000000
+sm schedule add --name "Autofix prod bugs" --every "weekly mon 09:00" --command //autofix-prod-bugs --profile edit --max-runtime 1h --max-tokens 3000000
 ```
 
 Then, with the id it printed:
@@ -77,6 +81,8 @@ sm schedule dry-run <id>
 - the schedule: id, workspace, folder, trigger, command, profile, caps;
 - the **next three fires**, exactly as `next fires:` printed them;
 - the **command line**: the whole `claude` argv as printed, in one code block, and the working folder (`cwd:`);
+- every `hint:` line `dry-run` printed, as a question: "add `--allow-tools "Bash(docker:*)"`?"
+  **Pass the hint on; never add the rule yourself.** Changing the schedule is the human's (§4);
 - **"It is pending: it runs only after you Approve it on its row in the Supraman window."**
 
 ## 2. Asking
@@ -86,9 +92,13 @@ Ask before `sm schedule add`, once, with everything still open and your proposal
 ```
 To schedule /autofix-prod-bugs every Monday I need:
 - the time: 09:00? (local)
-- the profile: it fixes bugs, so it edits files — worktree-edit (edits in its own worktree) or auto? read would park it.
+- the profile: it fixes bugs, so it edits files — edit (edits and commits in the folder's checkout, no push) or auto? read would park it.
+- the tools: it runs `docker compose up` — add --allow-tools "Bash(docker:*)"?
 Caps: 1h runtime, 3000000 tokens unless you want others.
 ```
+
+Name each tool the command file calls (`dotnet`, `docker`, `npm`, `pnpm`, `cargo`, `python`) with the
+`--allow-tools` rule `dry-run` would hint, and add the rule only when the human says yes to it.
 
 Ask the one who asked you, the way you reach them: in your reply when the request came in your prompt; by
 `SendMessage` to its sender when it came in a message (a repo session asks `fm-<w>-workspace`, which asks the
@@ -131,5 +141,6 @@ Nothing is open (time given, the command only reads) → add without asking.
 | edit, write or delete a schedule's TOML (`<home>/schedules/<w>.toml`) or a run record | `sm schedule …` only |
 | `sm schedule edit` or `sm schedule remove` | tell the human: the Supraman window (or they run `sm schedule edit`/`remove` themselves) |
 | `schtasks`, `Register-ScheduledTask`, Task Scheduler, any Windows task | Supraman registers the task after Approve |
-| choose `worktree-edit` or `auto` without the human's answer | §2 |
+| choose `edit` or `auto` without the human's answer | §2 |
+| add an `--allow-tools` rule the human did not say yes to, a `dry-run` hint's included | §2 |
 | run a scheduled command now to try it | `sm schedule dry-run` |
