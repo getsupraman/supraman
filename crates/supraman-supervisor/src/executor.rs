@@ -86,11 +86,37 @@ impl LaunchConfig {
         if let Some(settings) = self.settings_with(workspace, &w.name, &w.role, w.repo.as_deref(), env) {
             spec.extra_args = vec!["--settings".into(), settings];
         }
-        if !self.allowed_tools.is_empty() {
-            spec.extra_args.push("--allowedTools".into());
-            spec.extra_args.extend(self.allowed_tools.iter().cloned());
-        }
+        spec.extra_args.extend(self.allowed_tools_args());
         spec
+    }
+
+    fn allowed_tools_args(&self) -> Vec<String> {
+        if self.allowed_tools.is_empty() {
+            return Vec::new();
+        }
+        std::iter::once("--allowedTools".to_string()).chain(self.allowed_tools.iter().cloned()).collect()
+    }
+
+    /// The plugin and `--allowedTools` flags of a foreground `claude` (a [+] session); its env is [`Self::session_env`].
+    pub fn interactive_args(&self) -> Vec<String> {
+        let plugins = self.plugin_dirs.iter().flat_map(|d| ["--plugin-dir".to_string(), d.to_string_lossy().into_owned()]);
+        plugins.chain(self.allowed_tools_args()).collect()
+    }
+
+    /// The session's `SUPRAMAN_HOME`/`FOREMAN_HOME` and `FOREMAN_*` vars; empty without a home.
+    pub fn session_env(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
+        let Some(home) = &self.foreman_home else {
+            return Vec::new();
+        };
+        let mut env: Vec<(String, String)> =
+            [("FOREMAN_ROLE", role), ("FOREMAN_WORKSPACE", workspace), ("FOREMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
+        env.extend(supraman_core::home::home_env(home).map(|(k, v)| (k.to_string(), v)));
+        env.extend(repo.map(|r| ("FOREMAN_REPO".to_string(), r.to_string())));
+        for (k, v) in extra {
+            env.retain(|(have, _)| have != k);
+            env.push((k.to_string(), v.to_string()));
+        }
+        env
     }
 
     /// The `--settings` JSON for one session, `None` when there is nothing to set.
@@ -100,22 +126,10 @@ impl LaunchConfig {
 
     fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
         let mut settings = serde_json::Map::new();
-        if let Some(home) = &self.foreman_home {
-            let mut env = serde_json::json!({
-                "FOREMAN_ROLE": role,
-                "FOREMAN_WORKSPACE": workspace,
-                "FOREMAN_SESSION": name,
-            });
-            for (k, v) in supraman_core::home::home_env(home) {
-                env[k] = v.into();
-            }
-            if let Some(repo) = repo {
-                env["FOREMAN_REPO"] = repo.into();
-            }
-            for (k, v) in extra {
-                env[*k] = (*v).into();
-            }
-            settings.insert("env".into(), env);
+        let env = self.session_env(workspace, name, role, repo, extra);
+        if !env.is_empty() {
+            let env: serde_json::Map<String, serde_json::Value> = env.into_iter().map(|(k, v)| (k, v.into())).collect();
+            settings.insert("env".into(), env.into());
         }
         if self.bg_isolation_none {
             settings.insert("worktree".into(), serde_json::json!({ "bgIsolation": "none" }));
@@ -836,7 +850,8 @@ mod tests {
     use supraman_claude::{ClaudeError, Kind, SessionState, Status};
 
     use super::*;
-    use crate::{MintError, Minted, NeedsKind, Remedy, SECOND, tick_all};
+    use crate::{MintError, Minted, NeedsKind, Remedy, SECOND, is_foreign, tick_all};
+    use supraman_core::FM_PREFIX;
 
     const NOW: Millis = 1_800_000_000_000;
 
@@ -1659,6 +1674,30 @@ mod tests {
         sups[1].desired.sessions[0].name = "fm-nomos-workspace".into();
         tick_all(sups.iter_mut(), &["alpha", "beta"], &foreign[..1], 1, NOW);
         assert_eq!(launched(&sups), [0, 0]);
+    }
+
+    #[test]
+    fn hand_sessions_are_never_wanted_respawned_stopped_or_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let hand = |name: &str, n: u32, pid: Option<u32>| Session {
+            kind: Kind::Interactive,
+            pid,
+            ..live(name, n, SessionState::Working, Status::Busy)
+        };
+        let busy = [hand("hand-cwd-1", 1, Some(101)), hand("René's review", 2, Some(102))];
+        assert_eq!(Budget::new(1, &busy, &["demo"], NOW).free, 1, "a busy hand session takes no slot");
+        let gone = [hand("hand-cwd-1", 1, None), hand("René's review", 2, None)];
+
+        let mut sup = workspace("demo", dir.path());
+        let controller = live("fm-demo-workspace", 9, SessionState::Done, Status::Idle);
+        for (i, hands) in [&busy, &gone, &busy, &gone].into_iter().enumerate() {
+            let rows: Vec<Session> = hands.iter().cloned().chain([controller.clone()]).collect();
+            let needs = tick_all(std::iter::once(&mut sup), &["demo"], &rows, 1, NOW + i as i64 * 60 * SECOND);
+            assert!(needs.is_empty(), "tick {i}: {needs:?}");
+            assert_eq!(sup.launcher().take(), [], "tick {i}: no hand session is launched, stopped or resumed");
+        }
+        assert!(sup.desired.sessions.iter().all(|w| w.name.starts_with(FM_PREFIX)), "{:?}", sup.desired.sessions);
+        assert!(!is_foreign("hand-cwd-1", ["demo"].into_iter(), std::iter::empty()), "not another home's session either");
     }
 
     #[test]

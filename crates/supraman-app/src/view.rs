@@ -10,7 +10,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use collections::HashMap;
 use futures::{FutureExt as _, StreamExt as _};
 use supraman_claude::{ClaudeVersion, Sent, Session, Transcripts, check_supported, list_sessions, main_repo, now_ms, send_from_human};
 use supraman_core::{
@@ -39,7 +38,7 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
-use crate::hand::{Hands, Launch};
+use crate::hand::{Extras, Hands, Launch};
 use crate::settings_window::{self, SettingsView};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
@@ -89,6 +88,7 @@ pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
 const SHELL_SETTLED: Duration = Duration::from_millis(500);
 const SHELL_SETTLE_LIMIT: Duration = Duration::from_secs(15);
+const NO_PLUGIN: &str = "No plugins/supraman found for this build: [+] sessions start plain claude, without the Supraman skills, hooks and sm.";
 /// Claude draws a frame per wakeup; a hand tab looks at its token file at most this often.
 const HAND_CHECK_GAP: Duration = Duration::from_millis(250);
 const HAND_EXIT_FALLBACK: Duration = Duration::from_secs(30);
@@ -1747,9 +1747,11 @@ impl FleetView {
             tab.session_name = own.clone();
         }
         let Some(hands) = self.hands.clone() else {
-            self.start_terminal(id, self.claude_shell(&Launch::Plain, &claude), Some(cwd), cx);
+            let extras = self.hand_extras(&cwd, own.as_deref(), &Launch::Plain);
+            self.start_terminal_env(id, self.claude_shell(&Launch::Plain, &claude, &extras), Some(cwd), &extras, cx);
             return id;
         };
+        let named = own.clone();
         let at = cwd.clone();
         let mint = hands.clone();
         let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch_for(&at, own.as_deref(), resumes.as_deref()) });
@@ -1767,8 +1769,9 @@ impl FleetView {
                     this.hand_notices.extend(notice.clone());
                 }
                 if this.tab(id).is_some() {
-                    let shell = this.claude_shell(&launch, &claude);
-                    this.start_terminal(id, shell, Some(cwd), cx);
+                    let extras = this.hand_extras(&cwd, named.as_deref(), &launch);
+                    let shell = this.claude_shell(&launch, &claude, &extras);
+                    this.start_terminal_env(id, shell, Some(cwd), &extras, cx);
                 }
             })
             .ok();
@@ -1814,13 +1817,31 @@ impl FleetView {
         id
     }
 
-    fn claude_shell(&self, launch: &Launch, claude: &str) -> util::shell::Shell {
+    /// A missing plugin starts plain claude and says so once.
+    fn hand_extras(&mut self, cwd: &Path, own: Option<&str>, launch: &Launch) -> Extras {
+        let Some(plugin_dir) = self.plugin_dir.clone() else {
+            if !self.hand_notices.iter().any(|n| n == NO_PLUGIN) {
+                self.hand_notices.push(NO_PLUGIN.into());
+            }
+            return Extras::default();
+        };
+        let name = match launch {
+            Launch::Minted { session, .. } => session.clone(),
+            _ => own.map(str::to_string).unwrap_or_else(|| crate::hand::plain_name(cwd)),
+        };
+        let settings = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+        let config = crate::supervise::launch_config(self.home.clone(), Some(&plugin_dir), &settings);
+        let sm_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
+        crate::hand::extras(&config, &self.workspaces, cwd, &name, sm_dir.as_deref())
+    }
+
+    fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {
         let launch_args = match &self.daemon_hold {
             Some(why) => {
-                let script = format!("{}; {}", held_line(why), launch.script_with(claude));
+                let script = format!("{}; {}", held_line(why), launch.script_with(claude, extras));
                 ["-NoExit".into(), "-EncodedCommand".into(), crate::hand::encoded_command(&script)]
             }
-            None => launch.shell_args_with(claude),
+            None => launch.shell_args_with(claude, extras),
         };
         pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
@@ -2070,11 +2091,15 @@ impl FleetView {
     }
 
     fn start_terminal(&mut self, id: u64, shell: util::shell::Shell, cwd: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.start_terminal_env(id, shell, cwd, &Extras::default(), cx);
+    }
+
+    fn start_terminal_env(&mut self, id: u64, shell: util::shell::Shell, cwd: Option<PathBuf>, extras: &Extras, cx: &mut Context<Self>) {
         let build = TerminalBuilder::new(
             cwd,
             TerminalMode::interactive(),
             shell,
-            HashMap::default(),
+            extras.env.iter().cloned().collect(),
             CursorShape::Bar,
             AlternateScroll::On,
             None,

@@ -115,8 +115,17 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
 }
 
 #[test]
-fn workspace_and_repo_roles_point_at_the_scheduler_skill() {
-    for path in ["roles/workspace.md", "roles/repo.md"] {
+fn workspace_repo_and_hand_roles_point_at_the_scheduler_skill() {
+    for path in ["roles/workspace.md", "roles/repo.md", "roles/hand.md"] {
         assert_eq!(plugin(path).matches("/supraman:supraman-scheduler").count(), 1, "{path}");
+    }
+}
+
+#[test]
+fn the_hand_role_has_no_supervision_duties() {
+    let hand = plugin("roles/hand.md");
+    assert!(hand.contains("{workspace}") && hand.contains("`sm`") && hand.contains("never the built-in /schedule"), "{hand}");
+    for duty in ["sm tell", "relay", "report", "work_brief", "controller", "done:"] {
+        assert!(!hand.contains(duty), "the hand role names {duty}");
     }
 }
