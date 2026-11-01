@@ -996,7 +996,7 @@ impl FleetView {
 
     /// The pending schedules whose Inbox entry is not dismissed for what they cover now.
     pub fn schedules_waiting(&self) -> Vec<Waiting> {
-        schedules::waiting(&self.schedules).into_iter().filter(|w| !self.waiting_dismissed.contains(&w.key)).collect()
+        schedules::waiting(&self.schedules).into_iter().filter(|w| !self.waiting_dismissed.hides(&w.workspace, &w.key)).collect()
     }
 
     pub fn tray_tooltip(&self) -> String {
@@ -1052,9 +1052,11 @@ impl FleetView {
                 }
             }));
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
-                let dismissed = w.key.clone();
+                let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
-                    this.waiting_dismissed.push(dismissed.clone());
+                    if let Err(e) = this.waiting_dismissed.dismiss(&ws, &dismissed) {
+                        this.action_error = Some(e);
+                    }
                     cx.notify();
                 }
             }));

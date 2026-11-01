@@ -49,11 +49,17 @@ impl DismissedMessages {
 
     /// A workspace not in `messages` (an empty or unreadable outbox) keeps its dismissals.
     pub fn prune(&mut self, messages: &BTreeMap<String, Vec<OutboxMessage>>) -> Result<bool, String> {
+        let listed: BTreeMap<String, Vec<String>> = messages.iter().map(|(w, msgs)| (w.clone(), msgs.iter().map(|m| m.file.clone()).collect())).collect();
+        self.prune_keys(&listed)
+    }
+
+    /// [`Self::prune`] for any keys: a workspace not in `current` keeps its dismissals.
+    pub fn prune_keys(&mut self, current: &BTreeMap<String, Vec<String>>) -> Result<bool, String> {
         let mut changed = false;
-        for (workspace, listed) in messages {
+        for (workspace, listed) in current {
             let Some(files) = self.files.get_mut(workspace) else { continue };
             let before = files.len();
-            files.retain(|f| listed.iter().any(|m| &m.file == f));
+            files.retain(|f| listed.contains(f));
             changed |= files.len() != before;
             if files.is_empty() {
                 self.files.remove(workspace);

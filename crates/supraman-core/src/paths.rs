@@ -193,3 +193,34 @@ pub fn expand_env(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
+/// The file pwsh runs for a bare `name`: the first `PATH` folder holding `name.ps1` or `name` with a `PATHEXT` extension, `.ps1` first.
+pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
+    let exts: Vec<&str> = std::iter::once(".ps1").chain(pathext.split(';').map(str::trim).filter(|e| !e.is_empty())).collect();
+    std::env::split_paths(path).filter(|dir| !dir.as_os_str().is_empty()).find_map(|dir| {
+        exts.iter().map(|ext| dir.join(format!("{name}{}", ext.to_ascii_lowercase()))).find(|file| file.is_file())
+    })
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn pwsh_runs_the_first_folders_ps1_then_its_pathext_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = |n: &str, files: &[&str]| {
+            let d = tmp.path().join(n);
+            fs::create_dir_all(&d).unwrap();
+            files.iter().for_each(|f| fs::write(d.join(f), "").unwrap());
+            d
+        };
+        let (npm, native, bare) = (dir("npm", &["claude", "claude.cmd", "claude.ps1"]), dir("native", &["claude.exe"]), dir("bare", &["claude.cmd", "claude"]));
+        let ext = ".COM;.EXE;.BAT;.CMD";
+        let path = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
+        assert_eq!(pwsh_command("claude", &path(&[&npm, &native]), ext), Some(npm.join("claude.ps1")));
+        assert_eq!(pwsh_command("claude", &path(&[&native, &npm]), ext), Some(native.join("claude.exe")));
+        assert_eq!(pwsh_command("claude", &path(&[&bare, &native]), ext), Some(bare.join("claude.cmd")), "a folder earlier on PATH wins");
+        assert_eq!(pwsh_command("claude", &path(&[&bare]), ".EXE"), None, "only PATHEXT extensions and .ps1");
+    }
+}

@@ -1716,34 +1716,47 @@ async fn steady_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindo
     let outbox = outbox_dir(&tb.home, w)?;
     let (steady, aimed) = crate::selftest_left::steady_click(view, &task_key, &outbox, &workspace_session_name(w), cx).await?;
     println!("step t0: {steady}");
-    wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
+    let tab = crate::selftest::until(view, cx, Duration::from_secs(5), "New task's prompt tab from the Task icon", |v| {
+        v.active.filter(|id| v.start_page(*id).is_some_and(|p| p.workspace == w && !p.scheduled))
+    })
+    .await?;
+    println!("step t0: the Task icon opened New task · {w}");
     let table = crate::selftest_left::table_lines(view, &task_key, aimed, cx).await?;
     println!("step t0: {table}");
-    view.update(cx, |v, cx| {
-        v.compose = None;
-        cx.notify();
-    });
+    view.update(cx, |v, cx| v.close_tab(tab, cx));
     Ok(())
+}
+
+/// An outbox drop from the workspace session, as the relay's watcher writes one.
+fn inject(outbox: &std::path::Path, from_name: &str, tag: &str, body: &str) -> anyhow::Result<String> {
+    let file = format!("{:013}-selftest-{tag}.json", now_ms());
+    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body}).to_string();
+    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
+    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
+    Ok(file)
 }
 
 async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let w = tb.a.0.as_str();
     let ctrl = workspace_session_name(w);
-    let task_key = format!("task-{w}");
-    wait_painted(view, &task_key, Duration::from_secs(10), cx).await?;
-    click(view, &task_key, cx).await?;
+    own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
+    let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
+    let outbox = outbox_dir(&tb.home, w)?;
+    let decide = inject(&outbox, &ctrl, "decide", &format!("DECIDE: selftest question {nonce} (injected by the selftest)"))?;
+    let decide_key = format!("{w}/{decide}");
+    let reply_key = format!("msg-reply-{decide_key}");
+    wait_painted(view, &reply_key, Duration::from_secs(10), cx).await?;
+    click(view, &reply_key, cx).await?;
     wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
     let open = cx.update(|window, cx| {
         view.read(cx).compose.as_ref().map(|c| (c.workspace.clone(), c.reply_to.clone(), c.input.read(cx).is_focused(window)))
     })?;
-    if open != Some((w.to_string(), None, true)) {
-        bail!("Task… opened {open:?}, not a focused task box for {w}");
+    if open != Some((w.to_string(), decide.clone(), true)) {
+        bail!("Reply… opened {open:?}, not a focused reply box for {w}/{decide}");
     }
     until_compose_focused(view, cx).await?;
-    own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
-    let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
     // the workspace session reads this as the human's: it must not start work
-    let first = format!("{nonce} Automated Supraman selftest of the task box. This is not a task.");
+    let first = format!("{nonce} Automated Supraman selftest of the reply box. This is not a task.");
     let task = format!("{first}\nDo nothing and send nothing.");
     let typed = format!("{first}\nDo nothing and send WRONG.");
     type_text(cx, &typed)?;
@@ -1772,29 +1785,27 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     }
     println!("step t: two lines typed; Up → {up:?}, Down → {down:?}; Ctrl+Shift+Left selected \"WRONG.\", typed over");
     keystroke(cx, "enter", None, Modifiers::control())?;
-    let after = view.read_with(cx, |v, cx| v.compose.as_ref().map(|c| (c.text(cx), c.sent.clone(), c.route.clone(), c.error.clone())));
-    let Some((left, Some(sent), Some(route), None)) = after else {
-        bail!("after Ctrl+Enter the box is {after:?}, expected open, cleared, `sent` set and no error");
+    wait_painted(view, &format!("msg-answered-{decide_key}"), Duration::from_secs(5), cx).await?;
+    let after = view.read_with(cx, |v, _| (v.compose.is_none(), v.answered_route.get(&decide_key).cloned()));
+    let (true, Some(route)) = after else {
+        bail!("after Ctrl+Enter (box closed, route) is {after:?}, expected the box closed and the reply's route");
     };
-    if !left.is_empty() || !sent.starts_with(&nonce) {
-        bail!("after Ctrl+Enter the box holds {left:?}, sent {sent:?} ({route})");
-    }
     let task_id = direct_id(&route)?;
     let task_in = wait_delivered(transcript, w, &task, &task_id, cx).await?;
 
-    let file = format!("{:013}-selftest-approve.json", now_ms());
-    let body = format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)");
-    let outbox = outbox_dir(&tb.home, w)?;
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": ctrl, "body": body}).to_string();
-    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
-    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
+    let file = inject(&outbox, &ctrl, "approve", &format!("APPROVE? selftest plan {nonce} — 1 repo, 1 unit, 0 need a decision from you\n(injected by the selftest)"))?;
+    let later = inject(&outbox, &ctrl, "decide-later", &format!("DECIDE: second selftest question {nonce} (injected by the selftest)"))?;
     let key = format!("{w}/{file}");
     let approve_key = format!("msg-approve-{key}");
     wait_painted(view, &approve_key, Duration::from_secs(10), cx).await?;
     if !view.read_with(cx, |v, _| v.hits.borrow().contains_key(&format!("msg-reply-{key}"))) {
         bail!("the APPROVE? row has Approve but no Reply…");
     }
+    let later_reply = format!("msg-reply-{w}/{later}");
+    wait_painted(view, &later_reply, Duration::from_secs(10), cx).await?;
     crate::selftest_manage::shot("m5-14-messages", cx).await;
+    click(view, &later_reply, cx).await?;
+    wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
     click(view, &approve_key, cx).await?;
     wait_painted(view, &format!("msg-answered-{key}"), Duration::from_secs(5), cx).await?;
     if view.read_with(cx, |v, _| v.hits.borrow().contains_key(&approve_key)) {
@@ -1808,8 +1819,9 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         bail!("direct sends left relay drops for {ctrl}: {relayed:?}");
     }
     let saved = read_answered(&tb.home, w)?;
-    if saved.get(&file).map(String::as_str) != Some("approve") {
-        bail!("answered.json has {saved:?}, not {file} → approve");
+    let reply_line = crate::compose::first_line(&task);
+    if saved.get(&file).map(String::as_str) != Some("approve") || saved.get(&decide) != Some(&reply_line) {
+        bail!("answered.json has {saved:?}, not {file} → approve and {decide} → {reply_line:?}");
     }
 
     // The Approve click gave the keys to the window: a click in the box takes them back.
@@ -1851,7 +1863,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         sleep(cx, Duration::from_millis(500)).await;
     }
     println!(
-        "step t: Task… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → `sent direct [{task_id}]`, box cleared, in {ctrl}'s transcript framed as the human's after {} | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked → `answered: approve · sent direct [{approve_id}]`, answered.json has it, in the transcript after {}, no relay drop | typed + Escape → closed, nothing sent | {ctrl} idle {} s after {}",
+        "step t: DECIDE: {decide} → Reply… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → `sent direct [{task_id}]`, box closed, in {ctrl}'s transcript framed as the human's after {} | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked with a reply box open → `answered: approve · sent direct [{approve_id}]`, answered.json has both, in the transcript after {}, no relay drop | typed in the box + Escape → closed, nothing sent | {ctrl} idle {} s after {}",
         task.chars().count(),
         secs(task_in),
         secs(approve_in),
