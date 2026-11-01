@@ -400,8 +400,7 @@ impl FleetView {
                 };
                 Some(row_details::session(row, self.claimed_item(workspace, &row.session.name, cx), self.open_of(row), adopt, now_ms()))
             }
-            MenuTarget::Schedule { workspace, id } => Some(crate::schedules::details(self.schedule_row(workspace, id)?, now_ms())),
-            MenuTarget::Repo { .. } => None,
+            MenuTarget::Schedule { .. } | MenuTarget::Repo { .. } => None,
         }
     }
 
@@ -499,12 +498,17 @@ impl FleetView {
             }
             MenuAction::Delete(session) => self.ask_delete(session),
             MenuAction::DeleteClosed(workspace) => self.ask_delete_closed(workspace, cx),
+            MenuAction::Details(MenuTarget::Schedule { workspace, id }) => {
+                self.open_schedule(&workspace, &id, super::schedules::At::Top, cx);
+            }
             MenuAction::Details(target) => {
                 if let Some(details) = self.details(&target, cx) {
                     self.confirm = Some(Confirm::report(details.text()));
                 }
             }
-            MenuAction::Approve { workspace, id } => self.ask_approve(&workspace, &id, cx),
+            MenuAction::Approve { workspace, id } => {
+                self.open_schedule(&workspace, &id, super::schedules::At::Approve, cx);
+            }
             MenuAction::RunNow { workspace, id } => self.run_schedule_now(&workspace, &id, cx),
             MenuAction::EditSchedule { workspace, id } => self.open_schedule_edit(&workspace, &id, window, cx),
             MenuAction::DryRun { workspace, id } => self.dry_run_schedule(&workspace, &id, cx),
@@ -526,7 +530,6 @@ impl FleetView {
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
                 Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
-                Confirmed::ApproveSchedule { workspace, id, fingerprint } => self.approve_schedule(workspace, id, fingerprint, cx),
                 Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
             }
         }

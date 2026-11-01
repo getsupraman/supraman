@@ -1,5 +1,5 @@
-//! `--selftest` step 7y: the Schedules group in the window, against the fake Task Scheduler (C101). `sm` adds and
-//! changes the schedule; only the window approves it (C100).
+//! `--selftest` step 7y: the Schedules group and a schedule's Details tab in the window, against the fake Task
+//! Scheduler (C101). `sm` adds and changes the schedule; only the page's Approve approves it (C100).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -48,6 +48,49 @@ fn painted(v: &FleetView, key: &str) -> bool {
     v.hits.borrow().contains_key(key)
 }
 
+/// The schedule's Details tab as text, once it is the active tab and holds `needle`.
+async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    until(view, cx, WITHIN, what, |v| {
+        let (tab, page) = v.schedule_page(WS, ID)?;
+        let row = v.schedule_row(WS, ID)?;
+        let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
+        (v.active == Some(tab) && text.contains(needle)).then_some(text)
+    })
+    .await
+}
+
+/// The Details tab in the dark default and in a light theme planted in the selftest home, when `FOREMAN_SHOTS` asks.
+async fn shots(home: &Path, cx: &mut AsyncWindowContext) {
+    if std::env::var_os("FOREMAN_SHOTS").is_none() {
+        return;
+    }
+    shot("sched-7-details-dark", cx).await;
+    let dir = supraman_ui::themes::themes_dir(home);
+    if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("selftest-light.json"), LIGHT)).is_err() {
+        return;
+    }
+    let apply = |name: Option<&str>, cx: &mut AsyncWindowContext| {
+        let home = home.to_path_buf();
+        cx.update(|_, cx| {
+            supraman_ui::themes::apply(cx, name, supraman_ui::themes::TerminalColors::Theme, Some(&home));
+        })
+        .ok();
+    };
+    apply(Some("Selftest Light"), cx);
+    shot("sched-7-details-light", cx).await;
+    apply(None, cx);
+    std::fs::remove_file(dir.join("selftest-light.json")).ok();
+}
+
+const LIGHT: &str = r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
+"background":"#F3F3F3","editor.background":"#FFFFFF","panel.background":"#F3F3F3","surface.background":"#F3F3F3","elevated_surface.background":"#FFFFFF",
+"element.background":"#F0F0F0","element.hover":"#E4E4E4","element.active":"#D8D8D8","element.selected":"#DDE8F5",
+"ghost_element.hover":"#E8E8E8","ghost_element.active":"#DCDCDC","ghost_element.selected":"#DDE8F5",
+"text":"#1F1F1F","text.muted":"#5A5A5A","text.placeholder":"#6E6E6E","border":"#D0D0D0","border.variant":"#E2E2E2","border.focused":"#005FB8","border.selected":"#005FB8",
+"tab_bar.background":"#F3F3F3","tab.active_background":"#FFFFFF","tab.inactive_background":"#F3F3F3","title_bar.background":"#F3F3F3","status_bar.background":"#F3F3F3",
+"terminal.background":"#FFFFFF","terminal.foreground":"#1F1F1F",
+"warning":"#8A5A00","success":"#1E7A35","error":"#B3261E","info":"#005FB8","hint":"#5A5A5A"}}]}"##;
+
 async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     until(view, cx, WITHIN, what, |v| v.confirm.as_ref().filter(|c| c.text.contains(needle)).map(|c| c.text.clone()))
         .await
@@ -80,54 +123,77 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     registry.save(&Workspace::new(WS, &dir, vec![Folder { kind: FolderKind::Plain, ..Folder::new("gate", &dir) }]), true)?;
     let mut out = Vec::new();
 
-    sm(&["schedule", "add", WS, "--id", ID, "--name", "Gate", "--every", "daily 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found."])?;
+    sm(&["schedule", "add", WS, "--id", ID, "--name", "Gate", "--every", "weekly mon 09:00", "--script", "gate.cmd", "--prompt", "Fix what the gate found.", "--profile", "edit"])?;
     status_is(view, Status::Pending, cx).await?;
     let approve = format!("sched-approve-{WS}/{ID}");
     until(view, cx, WITHIN, "Approve painted on the pending row", |v| painted(v, &approve).then_some(())).await?;
     if !fake.paths().is_empty() {
         bail!("a task before any Approve: {:?}", fake.paths());
     }
-    out.push("1 added through sm: pending, no task".to_string());
+    let open = format!("inbox-sched-open-{WS}/{ID}");
+    until(view, cx, WITHIN, "the pending schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
+    let tip = view.read_with(cx, |v, _| v.tray_tooltip());
+    if tip != "Supraman · 1 schedule waits for your approval" {
+        bail!("the tray says {tip:?}");
+    }
+    out.push("1 added through sm: pending, no task, an Inbox entry and the tray say it waits".to_string());
 
-    click(view, &approve, cx).await?;
-    let first = confirm_text(view, "Approve's question", "Never approved. The approval covers:", cx).await?;
-    for field in ["files.gate.cmd: ", "trigger.at: 09:00", "permissions.profile: read", "caps.max_tokens: 3000000"] {
-        if !first.contains(field) {
-            bail!("Approve does not show {field}: {first}");
+    click(view, &open, cx).await?;
+    let first = page_text(view, "the Details tab from the Inbox", "Never approved.", cx).await?;
+    for words in ["Runs  Every Monday at 09:00", "Profile  edit", "Script  gate.cmd", "Fix what the gate found.", "In the folder's checkout", "Max tokens  3,000,000"] {
+        if !first.contains(words) {
+            bail!("the page does not say {words:?}: {first}");
         }
     }
-    crate::selftest::scrolled_into_view(view, "confirm-yes", cx).await?;
-    shot("sched-7-approve-first", cx).await;
-    click(view, "confirm-yes", cx).await?;
+    if first.contains("worktree-edit") || first.contains("trigger.at") {
+        bail!("the page shows keys: {first}");
+    }
+    let page_approve = format!("sched-page-approve-{WS}/{ID}");
+    crate::selftest::scrolled_into_view(view, &page_approve, cx).await?;
+    shots(home, cx).await;
+    click(view, &page_approve, cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the fake holds the task", |_| has_task(&fake).then_some(())).await?;
-    out.push(format!("2 approved in the window: {task} registered"));
+    until(view, cx, WITHIN, "the Inbox entry gone", |v| (!painted(v, &open) && v.tray_tooltip() == "Supraman").then_some(())).await?;
+    out.push(format!("2 opened from the Inbox: the page says Every Monday and edit; approved there: {task} registered, the entry gone"));
 
     let writes = fake.writes().len();
-    sm(&["schedule", "edit", WS, ID, "--every", "daily 10:00"])?;
+    sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:00"])?;
     status_is(view, Status::Pending, cx).await?;
     if fake.writes().len() != writes {
         bail!("sm's edit reached Task Scheduler: {:?}", fake.writes());
     }
+    let later = format!("inbox-sched-later-{WS}/{ID}");
+    until(view, cx, WITHIN, "the changed schedule's Inbox entry", |v| painted(v, &later).then_some(())).await?;
+    click(view, &later, cx).await?;
+    until(view, cx, WITHIN, "the dismissed entry gone", |v| (!painted(v, &later) && v.tray_tooltip() == "Supraman").then_some(())).await?;
+    sm(&["schedule", "edit", WS, ID, "--every", "weekly mon 10:30"])?;
+    until(view, cx, WITHIN, "the entry back once the schedule changed again", |v| painted(v, &later).then_some(())).await?;
     double_click(view, &format!("sched-row-{WS}/{ID}"), cx).await?;
-    let diff = confirm_text(view, "Approve's diff", "Changed since the approval of", cx).await?;
-    if !diff.contains("\n  trigger.at: 09:00 → 10:00") || diff.contains("files.gate.cmd") {
-        bail!("Approve's diff is not the one change: {diff}");
+    let diff = page_text(view, "the change since the approval", "Changed since your last approval", cx).await?;
+    if !diff.contains("\nTrigger time: 09:00 → 10:30") || diff.contains("File gate.cmd") {
+        bail!("the page's change is not the one change: {diff}");
     }
-    crate::selftest::scrolled_into_view(view, "confirm-yes", cx).await?;
-    shot("sched-7-approve-diff", cx).await;
-    click(view, "confirm-yes", cx).await?;
+    click(view, &page_approve, cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the task registered again", |_| (fake.writes().len() > writes && has_task(&fake)).then_some(())).await?;
-    out.push("3 changed through sm: pending, the diff shows trigger.at 09:00 → 10:00, approved again".into());
+    out.push("3 changed through sm: an entry, dismissed, back after the next change; the page shows Trigger time 09:00 → 10:30, approved again".into());
 
+    let tabs = view.read_with(cx, |v, _| v.tabs.len());
+    from_menu(view, "details", cx).await?;
+    page_text(view, "Details from the row's menu", "Runs  Every Monday at 10:30", cx).await?;
+    if view.read_with(cx, |v, _| v.tabs.len()) != tabs {
+        bail!("Details opened a second tab for the same schedule");
+    }
     from_menu(view, "pause", cx).await?;
     status_is(view, Status::Paused, cx).await?;
     until(view, cx, WITHIN, "the paused schedule's task gone", |_| (!has_task(&fake)).then_some(())).await?;
-    from_menu(view, "resume", cx).await?;
+    // the page's button turns into Resume with the frame after the poll
+    crate::selftest::sleep(cx, Duration::from_millis(300)).await;
+    click(view, &format!("sched-page-pause-{WS}/{ID}"), cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the resumed schedule's task back", |_| has_task(&fake).then_some(())).await?;
-    out.push("4 paused (task removed) and resumed (task back)".into());
+    out.push("4 Details from the row's menu focused the one tab; paused from the menu (task removed), resumed on the page (task back)".into());
 
     let runs_before = schedule::runs(home, WS)?.len();
     click(view, &format!("sched-run-{WS}/{ID}"), cx).await?;
@@ -141,21 +207,18 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         bail!("Run now ended as {ended:?}, not a run_now with nothing to do");
     }
     shot("sched-7-schedules", cx).await;
-    from_menu(view, "history", cx).await?;
-    let history = confirm_text(view, "History", "History of Gate", cx).await?;
-    if !history.lines().nth(1).is_some_and(|l| l.starts_with("nothing to do · ")) {
-        bail!("History's newest run is not 'nothing to do': {history}");
+    let history = page_text(view, "Last runs", "Last runs", cx).await?;
+    if !history.lines().skip_while(|l| *l != "Last runs").nth(1).is_some_and(|l| l.contains("  Run now · nothing to do")) {
+        bail!("the newest of Last runs is not Run now's 'nothing to do': {history}");
     }
-    click(view, "confirm-yes", cx).await?;
-    out.push(format!("5 Run now: {} nothing to do, first in History", ended.0));
+    out.push(format!("5 Run now: {} nothing to do, first in Last runs", ended.0));
 
-    from_menu(view, "dry-run", cx).await?;
-    let dry = confirm_text(view, "the dry run", "Dry run of", cx).await?;
+    click(view, &format!("sched-page-dry-run-{WS}/{ID}"), cx).await?;
+    let dry = page_text(view, "the dry run", "\n\nDry run\n", cx).await?;
     if !dry.contains("next fires") {
         bail!("the dry run lacks the next fires: {dry}");
     }
-    click(view, "confirm-yes", cx).await?;
-    out.push("5d dry run reported".into());
+    out.push("5d dry run in the page's Dry run section".into());
 
     let failed = format!("{ID}-selftest-failed");
     let at = supraman_core::time::now_ms();
@@ -175,7 +238,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     until(view, cx, WITHIN, "the dismissed notice gone", |v| (!painted(v, &dismiss) && v.tray_tooltip() == "Supraman").then_some(())).await?;
     out.push("6 a failed run in the Inbox and the tray, dismissed".into());
 
-    from_menu(view, "edit-schedule", cx).await?;
+    click(view, &format!("sched-page-edit-{WS}/{ID}"), cx).await?;
     until(view, cx, WITHIN, "the Edit dialog", |v| painted(v, "sched-edit-kind-weekly").then_some(())).await?;
     click(view, "sched-edit-kind-weekly", cx).await?;
     until(view, cx, WITHIN, "the days", |v| painted(v, "sched-edit-day-fri").then_some(())).await?;
@@ -183,13 +246,13 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     click(view, "sched-edit-save", cx).await?;
     status_is(view, Status::Pending, cx).await?;
     let saved = schedule::load(home, WS)?.into_iter().find(|s| s.id == ID).ok_or_else(|| anyhow!("the schedule is gone"))?;
-    if saved.trigger.to_string() != "weekly mon,fri 10:00" {
+    if saved.trigger.to_string() != "weekly mon,fri 10:30" {
         bail!("the edit saved {}", saved.trigger);
     }
     until(view, cx, WITHIN, "the pending schedule's task gone", |_| (!has_task(&fake)).then_some(())).await?;
-    out.push("7 edited in the dialog: weekly mon,fri 10:00, pending, task removed".into());
+    out.push("7 edited in the dialog from the page: weekly mon,fri 10:30, pending, task removed".into());
 
-    from_menu(view, "remove-schedule", cx).await?;
+    click(view, &format!("sched-page-remove-{WS}/{ID}"), cx).await?;
     confirm_text(view, "Remove's question", "nothing in any folder is touched", cx).await?;
     click(view, "confirm-yes", cx).await?;
     until(view, cx, WITHIN, "the schedule removed", |v| v.schedule_row(WS, ID).is_none().then_some(())).await?;
@@ -200,6 +263,9 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         bail!("Remove touched the folder");
     }
     out.push("8 removed: entry, task and task folder gone, the folder untouched".into());
+    if let Some(tab) = view.read_with(cx, |v, _| v.schedule_page(WS, ID).map(|(t, _)| t)) {
+        view.update(cx, |v, cx| v.close_tab(tab, cx));
+    }
 
     registry.remove(WS)?;
     if fake.writes().iter().any(|w| !w.contains(&schedule::task_root(home))) {

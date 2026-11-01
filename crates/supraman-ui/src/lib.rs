@@ -1,12 +1,13 @@
 //! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! the text input, buttons, banners, fonts, the widgets (menu, confirm, toast, notices, tab strip, hover
-//! card, split pane, matcher, settings pages), the selftests' hit targets, global init, and the frame / memory probes the
+//! card, split pane, matcher, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
 //! selftests print.
 
 pub mod banner;
 mod builtin_glyphs;
 pub mod button;
 pub mod confirm;
+pub mod details;
 pub mod fonts;
 pub mod hit;
 pub mod hover_card;

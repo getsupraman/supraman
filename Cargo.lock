@@ -5213,6 +5213,7 @@ dependencies = [
  "futures",
  "gpui",
  "gpui_platform",
+ "iana-time-zone",
  "image",
  "log",
  "raw-window-handle",

@@ -1,16 +1,18 @@
 //! The Schedules group of the tree: what each schedule shows, read off the UI thread with each poll.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{Local, TimeZone};
 use supraman_core::Workspace;
-use supraman_core::schedule::{self, Change, Covered, Live, Outcome, Run, Schedule, Stage, Status};
+use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
-use supraman_ui::hover_card::HoverCard;
+use supraman_ui::details::Section;
 
-/// History lists at most this many runs.
+/// A row keeps at most this many runs.
 pub const HISTORY: usize = 30;
+/// The Details page lists this many.
+const RUNS_SHOWN: usize = 10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScheduleRow {
@@ -24,6 +26,11 @@ pub struct ScheduleRow {
     pub running: Option<Live>,
     /// Newest first.
     pub runs: Vec<Run>,
+    /// While pending: what Approve approves, or why it cannot.
+    pub approvable: Option<std::result::Result<Covered, String>>,
+    pub folder_path: Option<PathBuf>,
+    /// The slash command's file as `schedule::command_file` shows it.
+    pub command_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +164,15 @@ pub fn read(home: &Path, workspaces: &[Workspace], store: &dyn SecretStore, now_
                     },
                     other => (other, false),
                 };
+                let approvable = (status == Status::Pending).then(|| {
+                    s.validate(w).map_err(|why| format!("it cannot be approved: {why}"))?;
+                    schedule::covered(w, &s).map_err(|e| e.to_string())
+                });
+                let folder_path = w.folder(&s.folder).map(|f| f.path.clone());
+                let command_path = match (&s.action.prompt, &folder_path) {
+                    (Some(schedule::Prompt::Command(name)), Some(folder)) => Some(schedule::command_file(folder, name).0),
+                    _ => None,
+                };
                 let running = live
                     .as_ref()
                     .and_then(|d| std::fs::read(d.join(format!("{}.json", s.id))).ok())
@@ -168,6 +184,9 @@ pub fn read(home: &Path, workspaces: &[Workspace], store: &dyn SecretStore, now_
                     running,
                     status,
                     command_changed,
+                    approvable,
+                    folder_path,
+                    command_path,
                     schedule: s,
                 }
             })
@@ -206,109 +225,333 @@ fn session_of(run: &Run) -> Option<&str> {
     })
 }
 
-/// One line per run, newest first: outcome, start, duration, tokens and the session.
-pub fn history_text(row: &ScheduleRow, now_ms: i64) -> String {
-    let mut out = format!("History of {} ({} · {})", row.title(), row.workspace, row.schedule.id);
-    if row.runs.is_empty() {
-        out.push_str("\nNo run yet.");
+/// `Monday`, `Monday and Friday`, `Monday, Wednesday and Friday`; all seven read `day`.
+fn days_words(days: &[Day]) -> String {
+    if days.len() == 7 {
+        return "day".into();
     }
-    for r in &row.runs {
-        let started = r.started.map(|(ts, _)| ts);
+    let names: Vec<&str> = days.iter().map(|d| ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][*d as usize]).collect();
+    match names.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => "no day".into(),
+    }
+}
+
+/// `2 hours`, `30 minutes`, `1 hour 30 minutes`, `45 seconds`.
+pub fn span_words(span: Span) -> String {
+    let plural = |n: u64, unit: &str| if n == 1 { format!("1 {unit}") } else { format!("{n} {unit}s") };
+    let (h, m, s) = (span.0 / 3600, span.0 % 3600 / 60, span.0 % 60);
+    let parts: Vec<String> = [(h, "hour"), (m, "minute"), (s, "second")].into_iter().filter(|(n, _)| *n > 0).map(|(n, u)| plural(n, u)).collect();
+    if parts.is_empty() { "0 seconds".into() } else { parts.join(" ") }
+}
+
+/// `Every Monday at 08:00`, `Every day at 09:00`, `Every 2 hours from 08:00, through the day`.
+pub fn trigger_words(t: &Trigger) -> String {
+    match t {
+        Trigger::Weekly { days, at } => format!("Every {} at {at}", days_words(days)),
+        Trigger::Daily { at } => format!("Every day at {at}"),
+        Trigger::Interval { at, every } => format!("Every {} from {at}, through the day", span_words(*every)),
+    }
+}
+
+fn policy_words(p: &Policy) -> String {
+    let catch_up = match p.catch_up {
+        CatchUp::Once => "A fire missed while the computer was off or asleep runs once when it is back",
+        CatchUp::Skip => "A fire missed while the computer was off or asleep is skipped",
+    };
+    let overlap = match p.overlap {
+        Overlap::Skip => "a fire while the last run still works is skipped",
+        Overlap::Queue => "a fire while the last run still works waits for it",
+        Overlap::Restart => "a fire while the last run still works stops it and starts again",
+    };
+    let wake = if p.wake { "It wakes the computer to run." } else { "It does not wake the computer." };
+    format!("{catch_up}; {overlap}. {wake}")
+}
+
+pub fn profile_words(p: Profile) -> &'static str {
+    match p {
+        Profile::Read => "Reads and searches the folder; it changes nothing.",
+        Profile::Edit => "Reads and edits files and commits with git in the folder's checkout; it does not push.",
+        Profile::Auto => "Claude's auto mode: it decides what to run, except what the denied rules forbid.",
+    }
+}
+
+fn fired_words(f: Fired) -> &'static str {
+    match f {
+        Fired::Task => "on schedule",
+        Fired::RunNow => "Run now",
+        Fired::CatchUp => "caught up",
+    }
+}
+
+fn tokens_count(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A covered field by its meaning; `files.<path>` reads `File <path>`.
+fn field_words(field: &str) -> String {
+    if let Some(file) = field.strip_prefix("files.") {
+        return format!("File {file}");
+    }
+    match field {
+        "v" => "Format",
+        "workspace" => "Workspace",
+        "id" => "Id",
+        "folder" => "Folder",
+        "trigger.kind" => "Trigger",
+        "trigger.at" => "Trigger time",
+        "trigger.days" => "Trigger days",
+        "trigger.every" => "Trigger interval",
+        "action.kind" => "Action",
+        "action.prompt.command.name" => "Slash command",
+        "action.prompt.command.path" => "Slash command file",
+        "action.prompt.file" => "Prompt file",
+        "action.prompt.text" => "Prompt",
+        "action.script" => "Script",
+        "action.script_args" => "Script arguments",
+        "action.script_timeout" => "Script timeout",
+        "action.worktree" => "Where it runs",
+        "action.model" => "Model",
+        "permissions.profile" => "Profile",
+        "permissions.allow_tools" => "Allowed rules",
+        "permissions.deny_tools" => "Denied rules",
+        "permissions.add_dirs" => "Extra folders",
+        "permissions.secrets" => "Secrets",
+        "caps.max_runtime" => "Max runtime",
+        "caps.max_tokens" => "Max tokens",
+        "policy.overlap" => "While a run still works",
+        "policy.catch_up" => "Missed fires",
+        "policy.wake" => "Wakes the computer",
+        other => other,
+    }
+    .to_string()
+}
+
+/// A covered value as the page shows it: `worktree-edit` is `edit` (sched2/F-03).
+fn value_words(field: &str, value: &str) -> String {
+    if field == "permissions.profile" && value == "worktree-edit" {
+        return "edit".into();
+    }
+    if value.is_empty() || value == "[]" || value == "none" {
+        return "none".into();
+    }
+    value.to_string()
+}
+
+/// One covered change in words, `Trigger time: 09:00 → 10:30`; none when only its spelling differs.
+pub fn change_words(c: &Change) -> Option<String> {
+    if c.field == "action.worktree" {
+        return Some(match c.after.as_deref() {
+            Some("false") | None => "Runs in the folder's checkout instead of its own worktree".into(),
+            _ => "Runs in its own worktree instead of the folder's checkout".into(),
+        });
+    }
+    let name = field_words(&c.field);
+    if c.field.starts_with("files.") {
+        return Some(match (&c.before, &c.after) {
+            (Some(_), Some(_)) => format!("{name}: its content changed"),
+            (None, Some(_)) => format!("{name}: newly covered"),
+            (Some(_), None) => format!("{name}: no longer covered"),
+            (None, None) => name,
+        });
+    }
+    let before = c.before.as_deref().map(|v| value_words(&c.field, v));
+    let after = c.after.as_deref().map(|v| value_words(&c.field, v));
+    match (before, after) {
+        (Some(b), Some(a)) if b == a => None,
+        (Some(b), Some(a)) => Some(format!("{name}: {b} → {a}")),
+        (None, Some(a)) => Some(format!("{name}: {a} (new)")),
+        (Some(b), None) => Some(format!("{name}: {b} (gone)")),
+        (None, None) => Some(name),
+    }
+}
+
+/// The local zone's name and offset, as the When section shows it.
+pub fn zone_words(now_ms: i64) -> String {
+    let offset = Local.timestamp_millis_opt(now_ms).single().map(|t| t.format("UTC%:z").to_string()).unwrap_or_default();
+    match iana_time_zone::get_timezone() {
+        Ok(name) => format!("This computer's time ({name}, {offset})"),
+        Err(_) => format!("This computer's time ({offset})"),
+    }
+}
+
+/// `Mon 3 Nov 2026 at 08:00`.
+fn date_words(ms: i64) -> String {
+    Local.timestamp_millis_opt(ms).single().map_or_else(|| ms.to_string(), |t| t.format("%a %-d %b %Y at %H:%M").to_string())
+}
+
+/// The status as the page's pill says it, and whether it asks for René.
+pub fn status_words(row: &ScheduleRow) -> (&'static str, bool) {
+    match (row.running.is_some(), row.status, row.command_changed) {
+        (true, _, _) => ("Running", false),
+        (_, Status::Pending, _) => ("Waits for your approval", true),
+        (_, Status::Paused, _) => ("Paused", false),
+        (_, Status::Active, true) => ("Active · its slash command changed", true),
+        (_, Status::Active, false) => ("Active", false),
+    }
+}
+
+/// The Details page's sections, in words; `dry_run` is the last Dry run's output.
+pub fn sections(row: &ScheduleRow, zone: &str, dry_run: Option<&str>, now_ms: i64) -> Vec<Section> {
+    let s = &row.schedule;
+    let mut out = Vec::new();
+    if !s.description.is_empty() {
+        out.push(Section::new("about", "About").text(s.description.clone()));
+    }
+
+    let mut fires = Vec::new();
+    let mut after = now_ms;
+    while fires.len() < 3 {
+        let Some(next) = schedule::next_fire_local(&s.trigger, after) else { break };
+        fires.push(date_words(next));
+        after = next;
+    }
+    let next_label = if row.status == Status::Active { "Next" } else { "Next, once active" };
+    out.push(
+        Section::new("when", "When")
+            .row("Runs", trigger_words(&s.trigger))
+            .row("Zone", zone.to_string())
+            .row(next_label, if fires.is_empty() { "none".into() } else { fires.join("\n") })
+            .text(policy_words(&s.policy)),
+    );
+
+    let folder = match &row.folder_path {
+        Some(p) => format!("{} ({})", s.folder, p.display()),
+        None => format!("{} (not a folder of {})", s.folder, row.workspace),
+    };
+    let checkout = if s.action.worktree {
+        "In its own worktree (saved by an earlier release; the next change moves it to the checkout)"
+    } else {
+        "In the folder's checkout"
+    };
+    out.push(Section::new("where", "Where").row("Workspace", row.workspace.clone()).row("Folder", folder).text(checkout));
+
+    let a = &s.action;
+    let mut what = Section::new("what", "What").text(match a.kind {
+        ActionKind::Session => "Starts a Claude session with the prompt below.",
+        ActionKind::Script => "Runs the script below; no Claude session.",
+        ActionKind::ScriptThenSession => "Runs the script below; when it exits 10, a Claude session follows with the prompt and the script's output.",
+    });
+    if let Some(script) = &a.script {
+        let args = if a.script_args.is_empty() { String::new() } else { format!(" {}", a.script_args.join(" ")) };
+        what = what.row("Script", format!("{script}{args}")).row("Script timeout", span_words(a.script_timeout));
+    }
+    match &a.prompt {
+        Some(Prompt::Command(name)) => {
+            what = what.row("Slash command", name.clone());
+            if let Some(path) = &row.command_path {
+                what = what.row("Its file", path.clone());
+            }
+        }
+        Some(Prompt::File(file)) => what = what.row("Prompt file", file.clone()),
+        Some(Prompt::Text(text)) => what = what.long(text.clone()),
+        None => {}
+    }
+    if !a.model.is_empty() {
+        what = what.row("Model", a.model.clone());
+    }
+    out.push(what);
+
+    let p = &s.permissions;
+    let listed = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.join("\n") };
+    let mut may = Section::new("may", "May")
+        .row("Profile", p.profile.as_str())
+        .text(profile_words(p.profile))
+        .row("Also allowed", listed(&p.allow_tools))
+        .row("Denied", p.denied().join("\n"));
+    if !p.add_dirs.is_empty() {
+        may = may.row("Extra folders", p.add_dirs.join("\n"));
+    }
+    out.push(may.row("Secrets", listed(&p.secrets)));
+
+    out.push(Section::new("stops", "Stops at").row("Max runtime", span_words(s.caps.max_runtime)).row("Max tokens", tokens_count(s.caps.max_tokens)));
+
+    match (&row.approvable, &s.approval) {
+        (Some(Err(why)), _) => out.push(Section::new("changed", "Cannot be approved").text(why.clone())),
+        (Some(Ok(now)), Some(approval)) => {
+            let mut changed = Section::new("changed", "Changed since your last approval").row("Approved", date_words(approval.approved_at));
+            let lines: Vec<String> = schedule::covered_diff(&approval.covered, &now.json).iter().filter_map(change_words).collect();
+            if lines.is_empty() {
+                changed = changed.text("Nothing it covers changed.");
+            }
+            for line in lines {
+                changed = changed.text(line);
+            }
+            if approval.command_sha256 != now.command_sha256 {
+                changed = changed.text("The slash command's file changed (shown only; the approval does not cover it).");
+            }
+            out.push(changed);
+        }
+        (Some(Ok(_)), None) => out.push(Section::new("changed", "Approval").text("Never approved. Approve lets its task run it as this page shows it.")),
+        (None, _) => {}
+    }
+
+    let mut runs = Section::new("runs", "Last runs");
+    if row.runs.is_empty() {
+        runs = runs.text("No run yet.");
+    }
+    for r in row.runs.iter().take(RUNS_SHOWN) {
+        let start = r.started.map_or("not started".to_string(), |(ts, _)| local_text(ts, now_ms));
         let outcome = match &r.ended {
-            Some((_, o, _)) => outcome_text(*o),
-            None if row.running.as_ref().is_some_and(|l| l.run == r.run) => "running",
-            None => "no end recorded",
+            Some((_, o, why)) if why.is_empty() => outcome_text(*o).to_string(),
+            Some((_, o, why)) => format!("{}: {why}", outcome_text(*o)),
+            None if row.running.as_ref().is_some_and(|l| l.run == r.run) => "running".into(),
+            None => "no end recorded".into(),
         };
-        let mut line = format!("\n{outcome} · {}", started.map_or("not started".to_string(), |t| local_text(t, now_ms)));
-        if let (Some(start), Some((end, _, _))) = (started, &r.ended) {
-            line.push_str(&format!(" · {}", duration_text(end - start)));
+        let mut value = match r.started {
+            Some((_, f)) => format!("{} · {outcome}", fired_words(f)),
+            None => outcome,
+        };
+        if let (Some((start, _)), Some((end, _, _))) = (r.started, &r.ended) {
+            value.push_str(&format!(" · {}", duration_text(end - start)));
         }
         if let Some(tokens) = &r.tokens {
-            line.push_str(&format!(" · {} tokens", tokens_text(tokens.capped())));
+            value.push_str(&format!(" · {} tokens", tokens_text(tokens.capped())));
         }
         if let Some(name) = session_of(r) {
-            line.push_str(&format!(" · {name}"));
+            value.push_str(&format!(" · {name}"));
         }
-        if let Some((_, _, why)) = r.ended.as_ref().filter(|(_, _, why)| !why.is_empty()) {
-            line.push_str(&format!("\n    {why}"));
-        }
-        out.push_str(&line);
+        runs = runs.row(start, value);
+    }
+    out.push(runs);
+
+    if let Some(text) = dry_run {
+        out.push(Section::new("dry-run", "Dry run").long(text.trim_end().to_string()));
     }
     out
 }
 
-/// The schedule's facts for its menu's Details.
-pub fn details(row: &ScheduleRow, now_ms: i64) -> HoverCard {
-    let s = &row.schedule;
-    let mut rows = vec![("id", s.id.clone()), ("status", row.status_text().to_string()), ("folder", s.folder.clone()), ("every", s.trigger.to_string())];
-    rows.extend(row.next_fire.map(|t| ("next", local_text(t, now_ms))));
-    let a = &s.action;
-    let kind = match a.kind {
-        schedule::ActionKind::Session => "session",
-        schedule::ActionKind::ScriptThenSession => "script, then a session",
-        schedule::ActionKind::Script => "script",
-    };
-    rows.push(("action", kind.to_string()));
-    rows.extend(a.script.clone().map(|x| ("script", x)));
-    rows.extend(a.prompt.as_ref().map(|p| {
-        let text = match p {
-            schedule::Prompt::Command(c) => c.clone(),
-            schedule::Prompt::File(f) => format!("file {f}"),
-            schedule::Prompt::Text(t) => format!("\"{}\"", t.chars().take(60).collect::<String>()),
-        };
-        ("prompt", text)
-    }));
-    rows.push(("profile", s.permissions.profile.as_str().to_string()));
-    rows.push(("caps", format!("{} · {} tokens", s.caps.max_runtime, tokens_text(s.caps.max_tokens))));
-    rows.extend(s.approval.as_ref().map(|a| ("approved", local_text(a.approved_at, now_ms))));
-    rows.extend(row.running.as_ref().map(|l| ("running", format!("{} since {}", l.run, local_text(l.started_at, now_ms)))));
-    rows.extend(row.last().map(|(r, o)| ("last", format!("{} · {}", outcome_text(o), r.run))));
-    if !s.description.is_empty() {
-        rows.push(("about", s.description.clone()));
-    }
-    HoverCard { title: format!("{} · {}", row.title(), row.workspace), rows }
+/// A pending schedule's Inbox entry; `key` changes when what it covers changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    pub workspace: String,
+    pub id: String,
+    pub title: String,
+    pub key: String,
 }
 
-/// A 64-hex value (a file's or a fingerprint's sha256) as its first 12 characters.
-fn shown_value(v: &str) -> String {
-    if v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()) { format!("{}…", &v[..12]) } else { v.to_string() }
-}
-
-fn change_line(c: &Change) -> String {
-    match (&c.before, &c.after) {
-        (Some(b), Some(a)) => format!("  {}: {} → {}", c.field, shown_value(b), shown_value(a)),
-        (None, Some(a)) => format!("  {}: (new) {}", c.field, shown_value(a)),
-        (Some(b), None) => format!("  {}: {} (gone)", c.field, shown_value(b)),
-        (None, None) => format!("  {}", c.field),
-    }
-}
-
-/// What Approve asks: the change since the last approval, else what the approval covers.
-pub fn approve_text(workspace: &str, s: &Schedule, now: &Covered, now_ms: i64) -> String {
-    let mut out = format!("Approve schedule {} of {workspace}? Its task then runs it {}.", s.id, s.trigger);
-    match &s.approval {
-        Some(a) => {
-            let changes = schedule::covered_diff(&a.covered, &now.json);
-            out.push_str(&format!("\nChanged since the approval of {}:", local_text(a.approved_at, now_ms)));
-            if changes.is_empty() {
-                out.push_str("\n  nothing covered");
-            }
-            for c in &changes {
-                out.push('\n');
-                out.push_str(&change_line(c));
-            }
-            if a.command_sha256 != now.command_sha256 {
-                out.push_str("\n  the slash command's file (not covered; shown only)");
-            }
-        }
-        None => {
-            out.push_str("\nNever approved. The approval covers:");
-            for (field, value) in schedule::covered_fields(&now.json) {
-                out.push_str(&format!("\n  {field}: {}", shown_value(&value)));
-            }
-        }
-    }
-    out
+pub fn waiting(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Waiting> {
+    rows.values()
+        .flatten()
+        .filter(|row| row.status == Status::Pending)
+        .map(|row| {
+            let state = match &row.approvable {
+                Some(Ok(c)) => c.fingerprint.clone(),
+                Some(Err(e)) => e.clone(),
+                None => String::new(),
+            };
+            Waiting { workspace: row.workspace.clone(), id: row.schedule.id.clone(), title: row.title().to_string(), key: format!("{}/{}@{state}", row.workspace, row.schedule.id) }
+        })
+        .collect()
 }
 
 /// A schedule's latest run, when it ended in a way that needs René: the Inbox and the tray show it.
@@ -340,13 +583,20 @@ pub fn attention(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Attention> {
         .collect()
 }
 
-/// The tray's tooltip: Foreman, and how many runs need René.
-pub fn tray_tooltip(attention: usize) -> String {
+/// The tray's tooltip: Supraman, how many runs need René and how many schedules wait for his approval.
+pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
+    let mut out = "Supraman".to_string();
     match attention {
-        0 => "Supraman".into(),
-        1 => "Supraman · 1 scheduled run needs you".into(),
-        n => format!("Supraman · {n} scheduled runs need you"),
+        0 => {}
+        1 => out.push_str(" · 1 scheduled run needs you"),
+        n => out.push_str(&format!(" · {n} scheduled runs need you")),
     }
+    match waiting {
+        0 => {}
+        1 => out.push_str(" · 1 schedule waits for your approval"),
+        n => out.push_str(&format!(" · {n} schedules wait for your approval")),
+    }
+    out
 }
 
 #[cfg(test)]
@@ -377,7 +627,18 @@ mod tests {
     }
 
     fn row(status: Status, runs: Vec<Run>) -> ScheduleRow {
-        ScheduleRow { workspace: "demo".into(), schedule: schedule(), status, command_changed: false, next_fire: None, running: None, runs }
+        ScheduleRow {
+            workspace: "demo".into(),
+            schedule: schedule(),
+            status,
+            command_changed: false,
+            next_fire: None,
+            running: None,
+            runs,
+            approvable: None,
+            folder_path: None,
+            command_path: None,
+        }
     }
 
     #[test]
@@ -406,33 +667,78 @@ mod tests {
         }
     }
 
-    #[test]
-    fn approve_shows_the_change_since_the_approval_else_every_covered_field() {
-        let s = schedule();
-        let now = Covered { json: r#"{"caps":{"max_tokens":1000000},"files":{"gate.cmd":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"trigger":{"at":"10:00","kind":"daily"}}"#.into(), fingerprint: "f".into(), command_sha256: None };
-        let first = approve_text("demo", &s, &now, NOW);
-        assert!(first.starts_with("Approve schedule nightly of demo? Its task then runs it daily 09:00.\nNever approved. The approval covers:\n"), "{first}");
-        assert!(first.contains("\n  caps.max_tokens: 1000000\n  files.gate.cmd: bbbbbbbbbbbb…\n  trigger.at: 10:00"), "{first}");
-
-        let mut approved = s.clone();
-        approved.approval = Some(Approval {
-            fingerprint: "e".into(),
-            mac: "m".into(),
-            approved_at: NOW,
-            covered: r#"{"caps":{"max_tokens":3000000},"files":{"gate.cmd":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"trigger":{"at":"10:00","kind":"daily"},"old":1}"#.into(),
-            command_sha256: Some("c".into()),
-        });
-        let text = approve_text("demo", &approved, &now, NOW);
-        let lines: Vec<&str> = text.lines().skip(1).collect();
-        assert!(lines[0].starts_with("Changed since the approval of "), "{text}");
-        assert_eq!(
-            lines[1..],
-            ["  caps.max_tokens: 3000000 → 1000000", "  files.gate.cmd: aaaaaaaaaaaa… → bbbbbbbbbbbb…", "  old: 1 (gone)", "  the slash command's file (not covered; shown only)"]
-        );
+    fn page(row: &ScheduleRow) -> String {
+        supraman_ui::details::text("t", &sections(row, "zone", None, NOW))
     }
 
     #[test]
-    fn history_lists_runs_newest_first_with_outcome_duration_tokens_and_session() {
+    fn the_page_says_the_schedule_in_words_and_never_worktree_edit() {
+        let mut r = row(Status::Pending, vec![]);
+        r.schedule.trigger = Trigger::Weekly { days: vec![Day::Mon], at: "08:00".parse().unwrap() };
+        r.schedule.permissions.profile = Profile::Edit;
+        r.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f".into(), command_sha256: None }));
+        let text = page(&r);
+        for words in [
+            "Runs  Every Monday at 08:00",
+            "Zone  zone",
+            "Next, once active  ",
+            "runs once when it is back; a fire while the last run still works is skipped. It does not wake the computer.",
+            "Folder  Alpha (not a folder of demo)",
+            "In the folder's checkout",
+            "Script  gate.cmd",
+            "Script timeout  10 minutes",
+            "\nfix\n",
+            "Profile  edit",
+            "it does not push.",
+            "Denied  Bash(git push --force:*)",
+            "Max runtime  1 hour",
+            "Max tokens  3,000,000",
+            "Never approved.",
+            "No run yet.",
+        ] {
+            assert!(text.contains(words), "{words:?} not in\n{text}");
+        }
+        assert!(!text.contains("worktree-edit") && !text.contains("trigger.") && !text.contains("caps."), "{text}");
+        let next = text.lines().skip_while(|l| !l.starts_with("Next")).take(3).count();
+        assert_eq!(next, 3, "three fires");
+        assert_eq!(trigger_words(&Trigger::Weekly { days: vec![Day::Mon, Day::Wed, Day::Fri], at: "09:30".parse().unwrap() }), "Every Monday, Wednesday and Friday at 09:30");
+        assert_eq!(trigger_words(&Trigger::Interval { at: "08:00".parse().unwrap(), every: Span(5400) }), "Every 1 hour 30 minutes from 08:00, through the day");
+        assert_eq!(trigger_words(&Trigger::Weekly { days: Day::ALL.to_vec(), at: "07:00".parse().unwrap() }), "Every day at 07:00");
+    }
+
+    #[test]
+    fn the_change_since_the_approval_reads_as_words() {
+        let mut r = row(Status::Pending, vec![]);
+        let now = r#"{"action":{"worktree":false},"caps":{"max_tokens":1000000},"files":{"gate.cmd":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"permissions":{"profile":"worktree-edit"},"trigger":{"at":"10:30","kind":"daily"}}"#;
+        r.approvable = Some(Ok(Covered { json: now.into(), fingerprint: "f".into(), command_sha256: None }));
+        r.schedule.approval = Some(Approval {
+            fingerprint: "e".into(),
+            mac: "m".into(),
+            approved_at: NOW,
+            covered: r#"{"action":{"worktree":true},"caps":{"max_tokens":3000000},"files":{"gate.cmd":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"permissions":{"profile":"worktree-edit"},"trigger":{"at":"09:00","kind":"daily"},"old":1}"#.into(),
+            command_sha256: Some("c".into()),
+        });
+        let text = page(&r);
+        let changed: Vec<&str> = text.lines().skip_while(|l| *l != "Changed since your last approval").skip(2).take_while(|l| !l.is_empty()).collect();
+        assert_eq!(
+            changed,
+            [
+                "Runs in the folder's checkout instead of its own worktree",
+                "Max tokens: 3000000 → 1000000",
+                "File gate.cmd: its content changed",
+                "Trigger time: 09:00 → 10:30",
+                "old: 1 (gone)",
+                "The slash command's file changed (shown only; the approval does not cover it).",
+            ]
+        );
+        let renamed = Change { field: "permissions.profile".into(), before: Some("worktree-edit".into()), after: Some("edit".into()) };
+        assert_eq!(change_words(&renamed), None, "the same profile, spelt as an earlier release did");
+        r.approvable = Some(Err("it cannot be approved: no folder".into()));
+        assert!(page(&r).contains("Cannot be approved\nit cannot be approved: no folder"));
+    }
+
+    #[test]
+    fn last_runs_list_newest_first_with_how_it_fired_and_its_outcome() {
         let mut done = run("nightly-2", NOW, Some(Outcome::Done), "fixed 2 bugs");
         done.tokens = Some(Tokens { input: 80_000, output: 9_000, cache_creation: 40_000, cache_read: 1_000_000 });
         done.stages.push(supraman_core::schedule::Stage::Session {
@@ -443,14 +749,30 @@ mod tests {
             workstate_session: None,
             without_workstate: None,
         });
-        let r = row(Status::Active, vec![done, run("nightly-1", NOW - 86_400_000, Some(Outcome::NothingToDo), "")]);
-        let text = history_text(&r, NOW);
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "History of Nightly gate (demo · nightly)");
-        assert!(lines[1].starts_with("done · ") && lines[1].ends_with(" · 1 min 5 s · 129k tokens · fm-demo-sched-nightly-2"), "{text}");
-        assert_eq!(lines[2], "    fixed 2 bugs");
-        assert!(lines[3].starts_with("nothing to do · ") && lines[3].ends_with(" · 1 min 5 s"), "{text}");
-        assert!(history_text(&row(Status::Pending, vec![]), NOW).ends_with("\nNo run yet."));
+        let mut manual = run("nightly-1", NOW - 86_400_000, Some(Outcome::NothingToDo), "");
+        manual.started = Some((NOW - 86_400_000, Fired::RunNow));
+        let r = row(Status::Active, vec![done, manual]);
+        let text = page(&r);
+        let runs: Vec<&str> = text.lines().skip_while(|l| *l != "Last runs").skip(1).collect();
+        assert!(runs[0].ends_with("  on schedule · done: fixed 2 bugs · 1 min 5 s · 129k tokens · fm-demo-sched-nightly-2"), "{text}");
+        assert!(runs[1].ends_with("  Run now · nothing to do · 1 min 5 s"), "{text}");
+        assert!(sections(&r, "z", Some("next fires:\n  x\n"), NOW).last().is_some_and(|s| s.key == "dry-run" && s.lines == [supraman_ui::details::Line::Long("next fires:\n  x".into())]));
+    }
+
+    #[test]
+    fn a_pending_schedule_waits_under_a_key_that_changes_with_what_it_covers() {
+        let mut rows = BTreeMap::new();
+        let mut pending = row(Status::Pending, vec![]);
+        pending.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f1".into(), command_sha256: None }));
+        rows.insert("demo".to_string(), vec![pending, row(Status::Active, vec![])]);
+        let w = waiting(&rows);
+        assert_eq!(w, [Waiting { workspace: "demo".into(), id: "nightly".into(), title: "Nightly gate".into(), key: "demo/nightly@f1".into() }]);
+        rows.get_mut("demo").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: None }));
+        assert_eq!(waiting(&rows)[0].key, "demo/nightly@f2");
+        rows.get_mut("demo").unwrap()[0].status = Status::Active;
+        assert!(waiting(&rows).is_empty());
+        assert_eq!(tray_tooltip(0, 1), "Supraman · 1 schedule waits for your approval");
+        assert_eq!(tray_tooltip(1, 2), "Supraman · 1 scheduled run needs you · 2 schedules wait for your approval");
     }
 
     #[test]
@@ -463,7 +785,7 @@ mod tests {
         assert!(attention(&rows).is_empty(), "a later good run clears it");
         rows.get_mut("demo").unwrap()[0].runs.insert(0, run("r4", NOW + 2, Some(Outcome::NeedsYou), "a prompt"));
         assert_eq!(attention(&rows)[0].outcome, Outcome::NeedsYou);
-        assert_eq!(tray_tooltip(0), "Supraman");
-        assert_eq!(tray_tooltip(2), "Supraman · 2 scheduled runs need you");
+        assert_eq!(tray_tooltip(0, 0), "Supraman");
+        assert_eq!(tray_tooltip(2, 0), "Supraman · 2 scheduled runs need you");
     }
 }
