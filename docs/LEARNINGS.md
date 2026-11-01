@@ -5215,3 +5215,33 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `an_action_without_the_worktree_key_runs_in_the_checkout` covers the missing key.
 - **Gate:** selftest step 7b (the right-click menu of `selftest-added` not within 5s) failed 5/5 on this branch and
   the same way on master 47056e4 built in the same target: the desktop's UI input, not this unit.
+
+## 2026-11-01 — sched2/3 a schedule's Details tab with Approve, and an Inbox entry while a schedule waits
+
+- **`supraman_ui::details` is the shared details page** (listed in CLAUDE.md): `Section::new(key, caption)` with
+  `.row`, `.text` and `.long` (wrapped mono text with a Copy button), `render(Page { key, title, pill, sections,
+  actions, scroll }, hits, cx)`, `text` for tests and `index_of` for `ScrollHandle::scroll_to_item`. Its hit keys are
+  `<page key>-section-<key>` and `…-copy-<i>`. gpui has no selectable static text and `TextInput` has no read-only
+  mode, so long text is copied with its button, not selected (sched2/5 and sched2/6 reuse the page).
+- **`TabKind::Schedule(SchedulePage)`** holds only the schedule's key, its scroll handle and the last Dry run's
+  output; the page renders the row of the last poll each frame, so a changed file refreshes it. One tab per schedule
+  (`open_schedule` focuses it). Not saved with the open tabs (`saved_tab` returns `None`).
+- **What Approve approves is on the row**: `ScheduleRow::approvable` (only while pending) is `validate` + `covered`
+  computed in the poll, off the UI thread. The page's Approve passes that fingerprint to `approve_schedule`, which
+  still compares it with the file (C100: `schedule::approve` has the one caller). `Confirmed::ApproveSchedule`,
+  `approve_text`, `history_text` and `schedules::details` are gone; History, the Inbox's Details, Approve… and the
+  row's Approve icon open the tab (Approve scrolls to the Changed section, History to Last runs).
+- **Covered changes in words** (`schedules::change_words`, sched2/F-03): `field_words` maps each covered field;
+  `action.worktree` true→false reads "Runs in the folder's checkout instead of its own worktree"; `worktree-edit`
+  reads `edit` and a change that differs only in that spelling is not shown; a file's hash reads "its content
+  changed".
+- **A pending schedule's Inbox entry is keyed by its fingerprint** (`schedules::waiting`, `<ws>/<id>@<fingerprint>`):
+  Dismiss hides it via `notices::keep_dismissed` until the covered state changes. `tray_tooltip(runs, waiting)` adds
+  "n schedule(s) wait for your approval".
+- **gpui's `on_click` is the primary button only**, but a clickable label inside a row with a right-click menu still
+  checks `is_right_click` before acting.
+- **Selftest 7b's failure (5/5 on master in a worker's target) was the selftest's, not the desktop's**: a right-click
+  right after a menu closed hit the last frame's hitboxes, where the closed menu's `.occlude()` still covered the
+  row, so the press never reached it. `press_painted` waits 100 ms first; 7b passed 5/5 since.
+- **The zone** comes from `iana-time-zone` (already in the lock through chrono): "This computer's time
+  (Europe/Berlin, UTC+01:00)".

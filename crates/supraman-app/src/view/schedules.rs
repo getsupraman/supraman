@@ -1,5 +1,6 @@
-//! The Schedules group's actions: Approve (the only approval in the app, C100), Run now, Dry run, Pause and Resume,
-//! History, Remove, and the Edit dialog. Every change of a schedule's task goes through `schedule::sync`.
+//! The Schedules group's actions: the schedule's Details tab with Approve (the only approval in the app, C100), Run
+//! now, Dry run, Pause and Resume, Remove, and the Edit dialog. Every change of a schedule's task goes through
+//! `schedule::sync`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -9,18 +10,19 @@ use supraman_core::schedule::{self, Clock, Day, Overlap, Profile, Registrar, Sch
 use supraman_core::secret::SecretStore;
 use supraman_core::{Workspace, process};
 use supraman_ui::button;
+use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
 use supraman_ui::text_input::{InputEvent, TextInput};
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, MouseButton, MouseDownEvent, ScrollHandle, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use super::FleetView;
+use super::{FleetView, Tab, TabKind};
 use super::icon::Icon;
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
 use crate::clipped::clipped;
 use crate::fleet::WorkspaceNode;
-use crate::schedules::{self, Primary, ScheduleRow};
+use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
 const DRY_RUN_WITHIN: Duration = Duration::from_secs(60);
 
@@ -37,6 +39,25 @@ pub enum TriggerKind {
     Weekly,
     Daily,
     Interval,
+}
+
+/// A schedule's Details tab: the page renders its row as of the last poll.
+pub struct SchedulePage {
+    pub workspace: String,
+    pub id: String,
+    pub scroll: ScrollHandle,
+    /// The last Dry run's output, or why it failed.
+    pub dry_run: Option<String>,
+    pub dry_running: bool,
+}
+
+/// The section a Details tab opens on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum At {
+    Top,
+    /// What Approve approves: the change since the last approval, when there is one.
+    Approve,
+    Runs,
 }
 
 /// What the Edit dialog changes; the rest of the schedule is `sm schedule edit`'s.
@@ -157,33 +178,73 @@ impl FleetView {
         self.workspaces.iter().find(|w| w.name == workspace).cloned()
     }
 
-    /// The row's one action, also its double-click.
+    /// The row's one action, also its double-click; Approve opens the Details tab on what it approves.
     pub fn schedule_primary(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         match self.schedule_row(workspace, id).map(ScheduleRow::primary) {
-            Some(Primary::Approve) => self.ask_approve(workspace, id, cx),
+            Some(Primary::Approve) => {
+                self.open_schedule(workspace, id, At::Approve, cx);
+            }
             Some(Primary::RunNow) => self.run_schedule_now(workspace, id, cx),
             None => {}
         }
     }
 
-    /// Shows what the fingerprint covers, or what changed since the last approval, before [`Self::approve_schedule`].
-    pub fn ask_approve(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(workspace)) else {
-            return;
-        };
-        let asked = schedule::load(&home, workspace)
-            .map_err(|e| e.to_string())
-            .and_then(|all| all.into_iter().find(|s| s.id == id).ok_or_else(|| format!("workspace {workspace} has no schedule {id}")))
-            .and_then(|s| {
-                s.validate(&w).map_err(|why| format!("Schedule {id} cannot be approved: {why}"))?;
-                let now = schedule::covered(&w, &s).map_err(|e| e.to_string())?;
-                Ok((schedules::approve_text(workspace, &s, &now, supraman_core::time::now_ms()), now.fingerprint))
-            });
-        match asked {
-            Ok((text, fingerprint)) => {
-                self.confirm = Some(Confirm::ask(text, "Approve", Confirmed::ApproveSchedule { workspace: workspace.to_string(), id: id.to_string(), fingerprint }));
+    pub fn schedule_page(&self, workspace: &str, id: &str) -> Option<(u64, &SchedulePage)> {
+        self.tabs.iter().find_map(|t| match &t.kind {
+            TabKind::Schedule(p) if p.workspace == workspace && p.id == id => Some((t.id, p)),
+            _ => None,
+        })
+    }
+
+    fn schedule_page_mut(&mut self, workspace: &str, id: &str) -> Option<&mut SchedulePage> {
+        self.tabs.iter_mut().find_map(|t| match &mut t.kind {
+            TabKind::Schedule(p) if p.workspace == workspace && p.id == id => Some(p),
+            _ => None,
+        })
+    }
+
+    pub fn page_sections(&self, row: &ScheduleRow, page: Option<&SchedulePage>) -> Vec<Section> {
+        let now = supraman_core::time::now_ms();
+        schedules::sections(row, &schedules::zone_words(now), page.and_then(|p| p.dry_run.as_deref()), now)
+    }
+
+    /// Opens the schedule's Details tab, or focuses the one open, scrolled to `at`.
+    pub fn open_schedule(&mut self, workspace: &str, id: &str, at: At, cx: &mut Context<Self>) -> Option<u64> {
+        let row = self.schedule_row(workspace, id)?.clone();
+        self.menu = None;
+        let tab = match self.schedule_page(workspace, id) {
+            Some((tab, _)) => tab,
+            None => {
+                let page = SchedulePage { workspace: workspace.to_string(), id: id.to_string(), scroll: ScrollHandle::new(), dry_run: None, dry_running: false };
+                let tab = self.next_tab_id;
+                self.next_tab_id += 1;
+                self.tabs.push(Tab::new(tab, format!("Schedule · {}", row.title()), TabKind::Schedule(page), row.folder_path.clone()));
+                tab
             }
-            Err(e) => self.action_error = Some(format!("Cannot approve {workspace}/{id}: {e}")),
+        };
+        let key = match at {
+            At::Top => None,
+            At::Approve => Some("changed"),
+            At::Runs => Some("runs"),
+        };
+        if let Some(key) = key
+            && let Some((_, page)) = self.schedule_page(workspace, id)
+            && let Some(ix) = details::index_of(&self.page_sections(&row, Some(page)), key)
+        {
+            page.scroll.scroll_to_item(ix);
+        }
+        self.active = Some(tab);
+        cx.notify();
+        Some(tab)
+    }
+
+    /// Approve on the page: the fingerprint of the covered state the page shows, which [`Self::approve_schedule`]
+    /// refuses once the file holds another.
+    pub fn approve_shown(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
+        match self.schedule_row(workspace, id).map(|r| r.approvable.clone()) {
+            Some(Some(Ok(covered))) => self.approve_schedule(workspace.to_string(), id.to_string(), covered.fingerprint, cx),
+            Some(Some(Err(why))) => self.action_error = Some(format!("Cannot approve {workspace}/{id}: {why}")),
+            _ => {}
         }
         cx.notify();
     }
@@ -195,7 +256,7 @@ impl FleetView {
             let s = schedule::load(home, &w.name).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == id).ok_or("the schedule is gone")?;
             let now = schedule::covered(w, &s).map_err(|e| e.to_string())?;
             if now.fingerprint != fingerprint {
-                return Err("it changed while Approve was open: Approve again to see the change".into());
+                return Err("it changed after the page showed it: read the page again, then Approve".into());
             }
             schedule::approve(home, &*store, w, id, supraman_core::time::now_ms()).map(|_| ()).map_err(|e| e.to_string())
         });
@@ -307,11 +368,15 @@ impl FleetView {
         .detach();
     }
 
-    /// `sm schedule dry-run`'s output in a report.
+    /// `sm schedule dry-run`'s output in the Dry run section of the schedule's Details tab.
     pub fn dry_run_schedule(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;
         };
+        self.open_schedule(workspace, id, At::Top, cx);
+        if let Some(page) = self.schedule_page_mut(workspace, id) {
+            page.dry_running = true;
+        }
         let (ws, id) = (workspace.to_string(), id.to_string());
         let args = (ws.clone(), id.clone());
         let task = cx.background_executor().spawn(async move {
@@ -327,9 +392,14 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let out = task.await;
             this.update(cx, |this, cx| {
-                match out {
-                    Ok(text) => this.confirm = Some(Confirm::report(format!("Dry run of {ws}/{id}\n{}", text.trim_end()))),
-                    Err(e) => this.action_error = Some(format!("Dry run of {ws}/{id} failed: {e}")),
+                let text = match out {
+                    Ok(text) => text,
+                    Err(e) => format!("The dry run failed: {e}"),
+                };
+                if let Some(page) = this.schedule_page_mut(&ws, &id) {
+                    page.dry_run = Some(text);
+                    page.dry_running = false;
+                    page.scroll.scroll_to_bottom();
                 }
                 cx.notify();
             })
@@ -339,10 +409,7 @@ impl FleetView {
     }
 
     pub fn schedule_history(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
-        if let Some(row) = self.schedule_row(workspace, id) {
-            self.confirm = Some(Confirm::report(schedules::history_text(row, supraman_core::time::now_ms())));
-        }
-        cx.notify();
+        self.open_schedule(workspace, id, At::Runs, cx);
     }
 
     pub fn open_schedule_edit(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -450,6 +517,58 @@ impl FleetView {
             self.action_error = Some(e);
         }
         cx.notify();
+    }
+
+    /// The Details tab of `page`'s schedule; `None` once the schedule is gone.
+    pub(super) fn render_schedule_page(&self, page: &SchedulePage, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let row = self.schedule_row(&page.workspace, &page.id)?.clone();
+        let colors = cx.theme().colors().clone();
+        let status = cx.theme().status().clone();
+        let sections = self.page_sections(&row, Some(page));
+        let (pill, asks) = schedules::status_words(&row);
+        let pill_color = match (asks, row.status) {
+            (true, _) => status.warning,
+            (false, Status::Paused) => colors.text_muted,
+            (false, _) => status.success,
+        };
+        let k = key(&page.workspace, &page.id);
+        let (w, id) = (page.workspace.clone(), page.id.clone());
+        let act = |f: fn(&mut Self, &str, &str, &mut Window, &mut Context<Self>)| {
+            let (w, id) = (w.clone(), id.clone());
+            cx.listener(move |this: &mut Self, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                f(this, &w, &id, window, cx);
+            })
+        };
+        let mut actions = Vec::new();
+        if matches!(row.approvable, Some(Ok(_))) {
+            actions.push(
+                button::outline(&self.hits, format!("sched-page-approve-{k}"), "Approve", status.warning, cx)
+                    .on_click(act(|this, w, id, _, cx| this.approve_shown(w, id, cx)))
+                    .into_any_element(),
+            );
+        }
+        let paused = row.schedule.status == Status::Paused;
+        actions.push(
+            button::bordered(&self.hits, format!("sched-page-pause-{k}"), if paused { "Resume" } else { "Pause" }, cx)
+                .on_click(if paused {
+                    act(|this, w, id, _, cx| this.set_schedule_paused(w.to_string(), id.to_string(), false, cx))
+                } else {
+                    act(|this, w, id, _, cx| this.set_schedule_paused(w.to_string(), id.to_string(), true, cx))
+                })
+                .into_any_element(),
+        );
+        actions.push(button::bordered(&self.hits, format!("sched-page-run-{k}"), "Run now", cx).on_click(act(|this, w, id, _, cx| this.run_schedule_now(w, id, cx))).into_any_element());
+        actions.push(
+            button::bordered(&self.hits, format!("sched-page-dry-run-{k}"), if page.dry_running { "Dry run…" } else { "Dry run" }, cx)
+                .on_click(act(|this, w, id, _, cx| this.dry_run_schedule(w, id, cx)))
+                .into_any_element(),
+        );
+        actions.push(button::bordered(&self.hits, format!("sched-page-edit-{k}"), "Edit…", cx).on_click(act(|this, w, id, window, cx| this.open_schedule_edit(w, id, window, cx))).into_any_element());
+        actions.push(button::bordered(&self.hits, format!("sched-page-remove-{k}"), "Remove…", cx).on_click(act(|this, w, id, _, cx| this.ask_remove_schedule(w, id, cx))).into_any_element());
+        let page_key = format!("sched-page-{k}");
+        let page = details::Page { key: &page_key, title: row.title().to_string(), pill: Some((pill.to_string(), pill_color)), sections: &sections, actions, scroll: &page.scroll };
+        Some(details::render(page, &self.hits, cx))
     }
 
     pub(super) fn render_schedule_edit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -649,7 +768,7 @@ impl FleetView {
         let action = {
             let (w, id) = (w.clone(), id.clone());
             let button = match row.primary() {
-                Primary::Approve => self.hover_icon(format!("sched-approve-{k}"), Icon::Check, "Approve: shows what it covers first", &group, true, cx),
+                Primary::Approve => self.hover_icon(format!("sched-approve-{k}"), Icon::Check, "Approve: opens what it approves", &group, true, cx),
                 Primary::RunNow => self.hover_icon(format!("sched-run-{k}"), Icon::Play, "Run now", &group, false, cx),
             };
             button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -677,7 +796,20 @@ impl FleetView {
             .h(px(SESSION_LINE))
             .child(toggle)
             .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, color).into_any_element())))
-            .child(tree_label(&self.hits, &tree_key, clipped(format!("sched-name-{k}"), row.title().to_string(), false).flex_shrink(4.)))
+            .child(tree_label(&self.hits, &tree_key, clipped(format!("sched-name-{k}"), row.title().to_string(), false).flex_shrink(4.)).cursor_pointer().on_click({
+                let (w, id) = (w.clone(), id.clone());
+                cx.listener(move |this, e: &ClickEvent, _, cx| {
+                    if e.is_right_click() {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    if e.click_count() == 2 {
+                        this.schedule_primary(&w, &id, cx);
+                    } else {
+                        this.open_schedule(&w, &id, if pending { At::Approve } else { At::Top }, cx);
+                    }
+                })
+            }))
             .child(
                 div()
                     .id(SharedString::from(format!("sched-state-{k}")))
@@ -736,9 +868,14 @@ impl FleetView {
         (runs, self.sync_errors.iter().map(|(k, e)| (k.clone(), e.clone())).collect())
     }
 
+    /// The pending schedules whose Inbox entry is not dismissed for what they cover now.
+    pub fn schedules_waiting(&self) -> Vec<Waiting> {
+        schedules::waiting(&self.schedules).into_iter().filter(|w| !self.waiting_dismissed.contains(&w.key)).collect()
+    }
+
     pub fn tray_tooltip(&self) -> String {
         let (runs, syncs) = self.schedule_attention();
-        schedules::tray_tooltip(runs.len() + syncs.len())
+        schedules::tray_tooltip(runs.len() + syncs.len(), self.schedules_waiting().len())
     }
 
     /// The Inbox's entries for scheduled runs and failed syncs.
@@ -747,6 +884,7 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let now = supraman_core::time::now_ms();
         let (runs, syncs) = self.schedule_attention();
+        let waiting = self.schedules_waiting();
         let card = |color: gpui::Hsla, label: &'static str, title: String, when: Option<String>, detail: String, buttons: gpui::Div| {
             div()
                 .flex()
@@ -779,13 +917,31 @@ impl FleetView {
                 .into_any_element()
         };
         let mut out = Vec::new();
+        for w in waiting {
+            let k = key(&w.workspace, &w.id);
+            let open = button::bordered(&self.hits, format!("inbox-sched-open-{k}"), "Open", cx).on_click(cx.listener({
+                let (ws, id) = (w.workspace.clone(), w.id.clone());
+                move |this, _: &ClickEvent, _, cx| {
+                    this.open_schedule(&ws, &id, At::Approve, cx);
+                }
+            }));
+            let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
+                let dismissed = w.key.clone();
+                move |this, _: &ClickEvent, _, cx| {
+                    this.waiting_dismissed.push(dismissed.clone());
+                    cx.notify();
+                }
+            }));
+            let title = format!("{} waits for your approval", w.title);
+            out.push(card(status.warning, "Approve", title, None, format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace), div().flex().flex_none().gap_1().child(open).child(dismiss)));
+        }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;
             let color = if needs_you { status.warning } else { status.error };
             let label = if needs_you { "Needs you" } else { "Run failed" };
             let detail = if a.why.is_empty() { schedules::outcome_text(a.outcome).to_string() } else { format!("{}: {}", schedules::outcome_text(a.outcome), a.why) };
             let (w, id, run) = (a.workspace.clone(), a.id.clone(), a.run.clone());
-            let history = button::bordered(&self.hits, format!("inbox-sched-history-{}", a.run), "History", cx).on_click(cx.listener({
+            let history = button::bordered(&self.hits, format!("inbox-sched-history-{}", a.run), "Details", cx).on_click(cx.listener({
                 let (w, id) = (w.clone(), id.clone());
                 move |this, _: &ClickEvent, _, cx| this.schedule_history(&w, &id, cx)
             }));

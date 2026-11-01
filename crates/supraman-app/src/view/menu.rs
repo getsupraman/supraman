@@ -53,8 +53,6 @@ pub enum Confirmed {
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
     Edit { workspace: String, edit: supraman_core::Edit },
-    /// `fingerprint`: the covered state the question showed; another one is not approved.
-    ApproveSchedule { workspace: String, id: String, fingerprint: String },
     RemoveSchedule { workspace: String, id: String },
 }
 
@@ -325,7 +323,7 @@ mod tests {
             "id": "nightly", "folder": "Alpha", "trigger": {"kind": "daily", "at": "09:00"}, "action": {"kind": "script", "script": "gate.cmd"}
         }))
         .unwrap();
-        let mut row = ScheduleRow { workspace: "demo".into(), schedule: s, status: Status::Pending, command_changed: false, next_fire: None, running: None, runs: vec![] };
+        let mut row = ScheduleRow { workspace: "demo".into(), schedule: s, status: Status::Pending, command_changed: false, next_fire: None, running: None, runs: vec![], approvable: None, folder_path: None, command_path: None };
         let all = ["edit-schedule", "dry-run", "pause", "history", "details", "remove-schedule"];
         assert_eq!(keys(&schedule_items(&row)), [&["approve"][..], &all].concat());
         row.status = Status::Active;

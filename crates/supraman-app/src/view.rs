@@ -117,6 +117,7 @@ pub enum TabKind {
     Attach { session_id: String },
     Shell,
     Work(Entity<WorkView>),
+    Schedule(schedules::SchedulePage),
     /// Reopened from the last run, waiting for a click on Resume.
     Saved(crate::saved_tabs::SavedTab),
 }
@@ -338,6 +339,8 @@ pub struct FleetView {
     pub schedule_edit: Option<schedules::ScheduleEdit>,
     /// Scheduled runs whose Inbox notice was dismissed, by workspace and run id.
     pub runs_dismissed: DismissedMessages,
+    /// [`schedules::Waiting::key`]s whose Inbox entry René dismissed.
+    pub waiting_dismissed: Vec<String>,
 }
 
 /// The dismissed run notices beside the dismissed messages.
@@ -809,6 +812,7 @@ impl FleetView {
             schedule_store,
             schedule_edit: None,
             runs_dismissed,
+            waiting_dismissed: Vec::new(),
         }
     }
 
@@ -1347,6 +1351,8 @@ impl FleetView {
             self.schedules = schedules;
             self.schedule_errors = errors;
             supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
+            let waiting: Vec<String> = crate::schedules::waiting(&self.schedules).into_iter().map(|w| w.key).collect();
+            supraman_ui::notices::keep_dismissed(&mut self.waiting_dismissed, &waiting);
         }
         self.last_refresh_took = Some(refresh.took);
     }
@@ -1935,7 +1941,7 @@ impl FleetView {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
             TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
-            TabKind::Work(_) => false,
+            TabKind::Work(_) | TabKind::Schedule(_) => false,
         }
     }
 
@@ -2033,7 +2039,7 @@ impl FleetView {
             TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
             TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
             TabKind::Shell => Some(tab_card::Kind::Shell),
-            TabKind::Work(_) => None,
+            TabKind::Work(_) | TabKind::Schedule(_) => None,
             TabKind::Saved(saved) => reopen::kind_of(saved),
         };
         tab_card::Card {
@@ -2556,6 +2562,9 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let content: AnyElement = match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
+            Some(Tab { kind: TabKind::Schedule(page), .. }) => self
+                .render_schedule_page(page, cx)
+                .unwrap_or_else(|| placeholder(format!("Schedule {} of {} is gone.", page.id, page.workspace), cx)),
             Some(Tab { id: tab_id, terminal: Some(terminal), detach, find, .. }) => div()
                 .size_full()
                 .flex()
