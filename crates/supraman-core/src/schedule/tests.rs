@@ -132,7 +132,18 @@ action = { kind = "session", prompt = { text = "hi" } }"#,
     assert_eq!((s.status, s.created_by, s.permissions.profile), (Status::Pending, CreatedBy::Fm, Profile::Read));
     assert_eq!(s.trigger, Trigger::Interval { at: Clock::default(), every: Span(7200) });
     assert_eq!((s.caps.clone(), s.policy.clone()), (Caps::default(), Policy::default()));
-    assert!(s.action.worktree);
+    assert!(!s.action.worktree);
+}
+
+#[test]
+fn an_action_without_the_worktree_key_runs_in_the_checkout() {
+    let without = DOC_EXAMPLE.replace("worktree = true
+", "");
+    assert_ne!(without, DOC_EXAMPLE);
+    let s: ScheduleFile = toml::from_str(&without).unwrap();
+    assert!(!s.schedule[0].action.worktree);
+    let s: ScheduleFile = toml::from_str(DOC_EXAMPLE).unwrap();
+    assert!(s.schedule[0].action.worktree, "a saved key still reads");
 }
 
 #[test]

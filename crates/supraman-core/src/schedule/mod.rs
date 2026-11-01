@@ -166,7 +166,7 @@ pub struct Action {
     #[serde(default = "default_script_timeout")]
     pub script_timeout: Span,
     /// A run in a Supraman run worktree, set only by an earlier release; a covered edit clears it.
-    #[serde(default = "yes")]
+    #[serde(default)]
     pub worktree: bool,
     #[serde(default)]
     pub model: String,
@@ -174,10 +174,6 @@ pub struct Action {
 
 fn default_script_timeout() -> Span {
     Span(10 * 60)
-}
-
-fn yes() -> bool {
-    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

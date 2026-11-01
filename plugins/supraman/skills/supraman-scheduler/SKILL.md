@@ -1,7 +1,7 @@
 ---
 name: supraman-scheduler
-description: Set up, list, pause, resume and explain Supraman's scheduled runs of a workspace with `sm schedule` — e.g. "call /autofix-prod-bugs every monday using foreman's scheduler" becomes one `sm schedule add` (trigger, slash command, permission profile, caps), then `sm schedule dry-run` to show the next three fires and the command line; the schedule then waits for the human's Approve in the Supraman window. USE FOR - a request to run a slash command or a prompt on a schedule through Supraman; "what is scheduled", "why did the run fail", "pause/resume that schedule". DO NOT USE FOR - approving a schedule, editing or removing one, registering a Windows task, or running a schedule now (all of them are the human's, in the Supraman window).
-allowed-tools: Bash(sm schedule add:*), Bash(sm schedule list:*), Bash(sm schedule show:*), Bash(sm schedule pause:*), Bash(sm schedule resume:*), Bash(sm schedule dry-run:*)
+description: Schedule recurring work that runs on this machine through Supraman with `sm schedule` — "every monday", "daily", "weekly", "at 7", "schedule /replay-failures", "run X every night", any recurring job that needs this repo's files, its git-ignored secrets (.env), Docker or other local tools. Use this, not the built-in schedule skill (cloud routines, which cannot see this machine) and not a hand-made Windows task. One `sm schedule add` (trigger, slash command, permission profile, caps), then `sm schedule dry-run` for the next three fires and the command line; the schedule waits for the human's Approve in the Supraman window. USE FOR - running a slash command or a prompt on a schedule on this machine; "what is scheduled", "why did the run fail", "pause/resume that schedule"; changing a schedule you added in this conversation at the human's request. DO NOT USE FOR - approving a schedule, removing one, editing one you did not add in this conversation, registering a Windows task, or running a schedule now (all of them are the human's, in the Supraman window).
+allowed-tools: Bash(sm schedule add:*), Bash(sm schedule edit:*), Bash(sm schedule list:*), Bash(sm schedule show:*), Bash(sm schedule pause:*), Bash(sm schedule resume:*), Bash(sm schedule dry-run:*)
 ---
 
 # Supraman scheduler
@@ -15,6 +15,7 @@ run**. Until then it is `pending`, and every change to what it runs makes it pen
 | Verb | Use |
 |---|---|
 | `sm schedule add` | create one schedule (§1) |
+| `sm schedule edit [<w>] <id> <options>` | change a schedule **you added in this conversation at the human's request**, with `add`'s options (§1); it goes `pending` again |
 | `sm schedule dry-run [<w>] <id>` | the prompt, the `claude` command line, the permissions and the next three fires; launches and writes nothing |
 | `sm schedule list [<w>]` | every schedule of the workspace: id, status, folder, trigger, next fire, name |
 | `sm schedule show [<w>] <id>` | one schedule in full, and its last runs |
@@ -63,7 +64,7 @@ Work out each part, then ask **once** for everything still open (§2), then add.
    `--name`/`--id` or ask whether the existing one is meant.
 
 **On Windows the Bash tool is Git Bash, which rewrites an argument starting with `/` into a path**
-(`/fix` → `C:/Program Files/Git/fix`, which `sm` refuses). Write the command with two slashes,
+(`/fix` → `C:/Program Files/Git/fix`; `sm` refuses it and names the fix). Write the command with two slashes,
 `--command //autofix-prod-bugs`: Git Bash passes it on as `/autofix-prod-bugs`. Elsewhere one slash.
 
 ```
@@ -82,7 +83,7 @@ sm schedule dry-run <id>
 - the **next three fires**, exactly as `next fires:` printed them;
 - the **command line**: the whole `claude` argv as printed, in one code block, and the working folder (`cwd:`);
 - every `hint:` line `dry-run` printed, as a question: "add `--allow-tools "Bash(docker:*)"`?"
-  **Pass the hint on; never add the rule yourself.** Changing the schedule is the human's (§4);
+  **Pass the hint on; never add the rule yourself.** On the human's yes, `sm schedule edit <id> --allow-tools "<rule>"` (§3);
 - **"It is pending: it runs only after you Approve it on its row in the Supraman window."**
 
 ## 2. Asking
@@ -107,7 +108,13 @@ human). End the turn with the question and wait; do not add anything meanwhile. 
 
 Nothing is open (time given, the command only reads) → add without asking.
 
-## 3. List, show, explain, pause, resume
+## 3. Edit, list, show, explain, pause, resume
+
+- **"Change <id>" / the human's answer to a hint.** Only for a schedule **you added in this conversation at the
+  human's request**: `sm schedule edit [<w>] <id>` with the options that change (`--every "daily 07:00"`,
+  `--allow-tools "Bash(docker:*)"`, `--profile edit` on the human's answer, §2). The id cannot change. It goes
+  `pending` again: tell the human it runs only after their Approve in the Supraman window. Any other schedule
+  is the human's (§4).
 
 - **"What is scheduled?"** `sm schedule list [<w>]`; one line per schedule: id, status, folder, trigger,
   next fire, name.
@@ -139,8 +146,9 @@ Nothing is open (time given, the command only reads) → add without asking.
 |---|---|
 | approve a schedule, or say it is approved before `list`/`show` says `active` | the human's Approve in the Supraman window |
 | edit, write or delete a schedule's TOML (`<home>/schedules/<w>.toml`) or a run record | `sm schedule …` only |
-| `sm schedule edit` or `sm schedule remove` | tell the human: the Supraman window (or they run `sm schedule edit`/`remove` themselves) |
+| `sm schedule remove`, or `sm schedule edit` of a schedule you did not add in this conversation at the human's request | tell the human: the Supraman window (or they run `sm schedule edit`/`remove` themselves) |
 | `schtasks`, `Register-ScheduledTask`, Task Scheduler, any Windows task | Supraman registers the task after Approve |
+| the built-in schedule skill or a cloud routine for a job on this machine | this skill: `sm schedule add` |
 | choose `edit` or `auto` without the human's answer | §2 |
 | add an `--allow-tools` rule the human did not say yes to, a `dry-run` hint's included | §2 |
 | run a scheduled command now to try it | `sm schedule dry-run` |
