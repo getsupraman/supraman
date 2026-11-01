@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use supraman_core::schedule::{self, Clock, Day, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
+use supraman_core::schedule::{self, Clock, Day, ForeignTask, Overlap, Profile, Registrar, Schedule, Span, Status, SyncTarget, Trigger};
 use supraman_core::secret::SecretStore;
 use supraman_core::{Workspace, process};
 use supraman_ui::button;
@@ -692,11 +692,13 @@ impl FleetView {
     /// schedule's run sessions at level 3. A run whose schedule is gone stays under the workspace.
     pub(super) fn render_schedules(&self, node: &WorkspaceNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let rows = self.schedules.get(&node.name).cloned().unwrap_or_default();
+        let others = self.others();
+        let others = others.of_workspace(&node.name);
         let mut out = Vec::new();
-        if !rows.is_empty() {
+        if !rows.is_empty() || !others.is_empty() {
             let gkey = format!("schedules:{}", node.name);
             let open = !self.collapsed.contains(&gkey);
-            out.push(self.render_schedules_row(&node.name, rows.len(), open, cx));
+            out.push(self.render_schedules_row(&node.name, rows.len() + others.len(), open, cx));
             if open {
                 for row in &rows {
                     let runs = node.scheduled.get(&row.schedule.id).map(Vec::as_slice).unwrap_or_default();
@@ -707,6 +709,7 @@ impl FleetView {
                         out.extend(runs.iter().map(|r| self.render_session(&node.name, &row.schedule.id, r, grid::indent(3), cx)));
                     }
                 }
+                out.extend(self.render_others(Some(&node.name), others, 2, cx));
             }
         }
         for (id, runs) in node.scheduled.iter().filter(|(id, _)| !rows.iter().any(|r| &r.schedule.id == *id)) {
@@ -746,6 +749,122 @@ impl FleetView {
                 })
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
+            .into_any_element()
+    }
+
+    /// Reads Task Scheduler off the UI thread, read only; a later scan's answer replaces an earlier one's.
+    pub fn scan_other_schedules(&mut self, cx: &mut Context<Self>) {
+        self.other_scans += 1;
+        let scan = self.other_scans;
+        let registrar = self.registrar.clone();
+        let task = cx.background_executor().spawn(async move { schedule::scan_foreign(&*registrar) });
+        cx.spawn(async move |this, cx| {
+            let found = task.await;
+            this.update(cx, |this, cx| {
+                if this.other_scans != scan {
+                    return;
+                }
+                match found {
+                    Ok(found) => {
+                        this.other_schedules = Some(found);
+                        this.other_scan_error = None;
+                    }
+                    Err(e) => this.other_scan_error = Some(format!("Cannot read Task Scheduler: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn others(&self) -> schedules::Others {
+        self.other_schedules.as_ref().map(|f| schedules::Others::of(f, &self.workspaces)).unwrap_or_default()
+    }
+
+    /// The top-level Other schedules: tasks that run claude in no workspace's folder.
+    pub(super) fn render_unowned_others(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let others = self.others();
+        self.render_others(None, &others.unowned, 0, cx)
+    }
+
+    /// The Other schedules group at `level` with its rows; nothing when there are none.
+    fn render_others(&self, workspace: Option<&str>, tasks: &[ForeignTask], level: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        if tasks.is_empty() {
+            return vec![];
+        }
+        let colors = cx.theme().colors().clone();
+        let scope = workspace.unwrap_or_default();
+        let gkey = format!("others:{scope}");
+        let open = !self.collapsed.contains(&gkey);
+        let (hit, tree_key) = if scope.is_empty() { ("others-row".to_string(), "others".to_string()) } else { (format!("others-row-{scope}"), format!("others-{scope}")) };
+        let group = div()
+            .id(SharedString::from(hit.clone()))
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(grid::gap())
+            .h(px(REPO_ROW))
+            .pl(grid::indent(level))
+            .pr_2()
+            .text_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .active(|s| s.bg(colors.ghost_element_active))
+            .child(disclosure(Some(open), secondary(cx)))
+            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
+            .child(tree_label(
+                &self.hits,
+                &tree_key,
+                div().flex_none().whitespace_nowrap().text_color(secondary(cx)).child(SharedString::from(format!("Other schedules ({})", tasks.len()))),
+            ))
+            .child(hit_target(&self.hits, hit))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(gkey.clone(), cx)))
+            .into_any_element();
+        let mut out = vec![group];
+        if open {
+            out.extend(tasks.iter().map(|t| self.render_other_row(t, level + 1, cx)));
+        }
+        out
+    }
+
+    /// Muted: Supraman shows the task and never changes, runs or deletes it.
+    fn render_other_row(&self, t: &ForeignTask, level: usize, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let path = t.path();
+        let tree_key = format!("other-{path}");
+        let target = MenuTarget::OtherSchedule(path.clone());
+        div()
+            .id(SharedString::from(format!("other-row-{path}")))
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(grid::gap())
+            .h(px(SESSION_LINE))
+            .pl(grid::indent(level))
+            .pr_2()
+            .text_sm()
+            .opacity(super::left::DIMMED)
+            .hover(|s| s.bg(colors.ghost_element_hover))
+            .child(disclosure(None, secondary(cx)))
+            .child(icon_slot(&self.hits, &tree_key, Some(Icon::Clock.slotted(grid::ICON, secondary(cx)).into_any_element())))
+            .child(tree_label(&self.hits, &tree_key, clipped(format!("other-name-{path}"), t.name.clone(), false).flex_shrink(4.)))
+            .child(
+                clipped(format!("other-summary-{path}"), schedules::other_summary(t, supraman_core::time::now_ms()), false)
+                    .flex_shrink(1.)
+                    .text_xs()
+                    .text_color(secondary(cx)),
+            )
+            .child(hit_target(&self.hits, format!("other-row-{path}")))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_menu(target.clone(), e.position, cx);
+                }),
+            )
             .into_any_element()
     }
 

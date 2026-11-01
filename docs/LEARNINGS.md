@@ -5299,3 +5299,38 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `&`, `%`, a backtick and `é`, Enter; the argv ends `--` and exactly that text, with the mode and the [+] flags.
   New scheduled task from the folder's menu (preselected, mode default) sends the ask line first; `sm schedule add`
   then raises the banner, and Open activates the schedule's tab. Shots `sched2-6-start-{dark,light}`.
+
+## 2026-11-01 — sched2/7 Other schedules: Windows tasks that run claude, shown read-only
+
+- **Scan** (`supraman_core::schedule::foreign`, `scan_foreign`): `Registrar::all_tasks(skip)` walks every Task
+  Scheduler folder from `\` in one MTA call (`GetFolder`, `GetFolders`, `GetTasks(TASK_ENUM_HIDDEN)`, each task's
+  `Enabled`/`Xml`/`LastRunTime`/`LastTaskResult`/`NextRunTime`; nothing that writes), leaving out `is_own_root`
+  (`\Supraman…`, `\Foreman…`, any home). A folder or task that refuses is counted (`Foreign::unreadable`), not
+  fatal. `FakeRegistrar::{plant_task, plant_unreadable, unplant}` stand in for it (C101).
+- **Matcher** (`runs_claude` → `Via`): `claude`/`claude.exe`/`claude.cmd` as the command; `pwsh`/`powershell`/`cmd`
+  whose arguments name `claude` as a word (`names_claude`: `claude.exe` and `claude-code` count, `claudette` and
+  `myclaude` do not); a `.ps1`/`.cmd`/`.bat` as the command or among the arguments (quoted runs whole, either
+  quote) whose first 256 KB (`read_script`: UTF-16 with BOM, else UTF-8) names it, relative to the working dir.
+  `%VAR%` expands through the new shared `paths::expand_env`. Any other exe (node, robocopy) is not kept even when
+  its arguments say claude.
+- **Trigger words** (`trigger_words`, roxmltree 0.21, already in the lock via usvg): on logon, at startup, when idle,
+  daily / every N days at HH:MM, weekly Mon, Thu at HH:MM, once at date time; anything with a `Repetition`, a
+  monthly trigger or no start: custom; no trigger: on demand. Several are joined with `, `.
+- **Dates**: `ole_date_ms` turns the OLE DATE (local days since 1899-12-30) into epoch ms. Task Scheduler's
+  "never" is 0 or 1999-11-30, so anything before 2000 is `None`; `SCHED_S_TASK_HAS_NOT_RUN` (0x41303) is no result.
+- **Owner**: `fleet::holder_of` (deepest home or folder wins) moved to `supraman_core::holder_of`, and
+  `schedule::owner` uses it. Selftest 9 caught first-match `Workspace::contains`: the selftest home's `larchsys`
+  workspace holds the worktree, so a task in `target\selftest-sched` went to `larchsys`. Red: first-match fails
+  `a_task_belongs_to_the_workspace_holding_its_working_dir_or_script`.
+- **App**: `scan_other_schedules` runs off the UI thread after the first poll and on each Rescan; a later scan's
+  answer wins (`other_scans`). `Others::of` groups by workspace. A workspace's Schedules group shows while it has
+  either kind, and then holds an "Other schedules (N)" sub-group at level 2. The tasks no workspace holds go under a
+  top-level "Other schedules (N)" after the workspaces, shown only when there are any. Rows are dimmed: name, then
+  `other_summary` (trigger · disabled · next … · last OK|0x…|never ran). The menu (`MenuTarget::OtherSchedule`) has
+  Open in Task Scheduler (`taskschd.msc` through `open_with` → `shell_execute`, C56) under the caption "Read only:
+  Supraman never changes, runs or deletes it", and Copy action. A scan error is a warning notice.
+- **Real machine, read only** (`a_real_scan_reads_task_scheduler_and_prints_what_runs_claude`, ignored): 291
+  tasks read, 0 unreadable, 0 run claude, in 0.3 to 0.5 s.
+- Selftest 7y step 9: plants an owned task, an unowned one, a non-claude one and one under `\Foreman-selftest` in
+  the fake. Checks which rows are painted and the row's words, then the menu keys and Copy's text; Open in Task
+  Scheduler opens `taskschd.msc` through a recording `open_with`. No fake write; unplanted and gone afterwards.

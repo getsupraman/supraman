@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Local, TimeZone};
 use supraman_core::Workspace;
-use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
+use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Foreign, ForeignTask, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
 use supraman_ui::details::Section;
 
@@ -599,6 +599,52 @@ pub fn tray_tooltip(attention: usize, waiting: usize) -> String {
     out
 }
 
+/// Task Scheduler's tasks that run claude outside Supraman: under the workspace that holds them
+/// ([`schedule::owner`]), the rest apart. Supraman never changes, runs or deletes them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Others {
+    pub by_workspace: BTreeMap<String, Vec<ForeignTask>>,
+    pub unowned: Vec<ForeignTask>,
+}
+
+impl Others {
+    pub fn of(found: &Foreign, workspaces: &[Workspace]) -> Self {
+        let mut out = Self::default();
+        for t in &found.tasks {
+            match schedule::owner(t, workspaces) {
+                Some(w) => out.by_workspace.entry(w.name.clone()).or_default().push(t.clone()),
+                None => out.unowned.push(t.clone()),
+            }
+        }
+        out
+    }
+
+    pub fn of_workspace(&self, workspace: &str) -> &[ForeignTask] {
+        self.by_workspace.get(workspace).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    pub fn find(&self, path: &str) -> Option<&ForeignTask> {
+        self.by_workspace.values().flatten().chain(&self.unowned).find(|t| t.path() == path)
+    }
+}
+
+/// An other schedule's row after its name: `daily at 09:00 · next Mon 09:00 · last OK`.
+pub fn other_summary(t: &ForeignTask, now_ms: i64) -> String {
+    let mut parts = vec![t.trigger.clone()];
+    if !t.enabled {
+        parts.push("disabled".into());
+    }
+    if let Some(next) = t.next_run_ms {
+        parts.push(format!("next {}", local_text(next, now_ms)));
+    }
+    match t.result_text() {
+        Some(r) => parts.push(format!("last {r}")),
+        None if t.last_run_ms.is_none() => parts.push("never ran".into()),
+        None => {}
+    }
+    parts.join(" · ")
+}
+
 #[cfg(test)]
 mod tests {
     use supraman_core::schedule::{Approval, Fired, Tokens};
@@ -787,5 +833,56 @@ mod tests {
         assert_eq!(attention(&rows)[0].outcome, Outcome::NeedsYou);
         assert_eq!(tray_tooltip(0, 0), "Supraman");
         assert_eq!(tray_tooltip(2, 0), "Supraman · 2 scheduled runs need you");
+    }
+
+    fn other(folder: &str, name: &str, wd: Option<&str>, via: schedule::Via) -> ForeignTask {
+        ForeignTask {
+            folder: folder.into(),
+            name: name.into(),
+            enabled: true,
+            trigger: "daily at 09:00".into(),
+            last_run_ms: None,
+            last_result: None,
+            next_run_ms: None,
+            working_dir: wd.map(PathBuf::from),
+            via,
+            action: "claude -p x".into(),
+        }
+    }
+
+    #[test]
+    fn other_schedules_go_under_the_workspace_holding_them_and_the_rest_apart() {
+        use supraman_core::{Folder, FolderKind};
+        let alpha = PathBuf::from(r"C:\code\alpha");
+        let ws = Workspace::new("alpha", &alpha, vec![Folder { kind: FolderKind::Plain, ..Folder::new("alpha", &alpha) }]);
+        let found = Foreign {
+            tasks: vec![
+                other(r"\", "in alpha", Some(r"C:\code\alpha\sub"), schedule::Via::Direct),
+                other(r"\Mine", "script in alpha", None, schedule::Via::Script(PathBuf::from(r"C:\code\alpha\jobs\run.ps1"))),
+                other(r"\Mine", "elsewhere", Some(r"D:\other"), schedule::Via::Shell),
+            ],
+            unreadable: 0,
+        };
+        let others = Others::of(&found, &[ws]);
+        let names = |ts: &[ForeignTask]| ts.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(others.of_workspace("alpha")), ["in alpha", "script in alpha"]);
+        assert_eq!(names(&others.unowned), ["elsewhere"]);
+        assert!(others.of_workspace("beta").is_empty());
+        assert_eq!(others.find(r"\Mine\elsewhere").map(|t| t.name.as_str()), Some("elsewhere"));
+        assert_eq!(others.find(r"\in alpha").map(|t| t.name.as_str()), Some("in alpha"));
+    }
+
+    #[test]
+    fn an_other_schedule_says_its_trigger_next_run_and_last_result() {
+        let mut t = other(r"\", "t", None, schedule::Via::Direct);
+        assert_eq!(other_summary(&t, NOW), "daily at 09:00 · never ran");
+        t.next_run_ms = Some(NOW + 3_600_000);
+        t.last_run_ms = Some(NOW - 3_600_000);
+        t.last_result = Some(0);
+        assert_eq!(other_summary(&t, NOW), format!("daily at 09:00 · next {} · last OK", local_text(NOW + 3_600_000, NOW)));
+        t.last_result = Some(0x8007_0005_u32 as i32);
+        t.enabled = false;
+        t.next_run_ms = None;
+        assert_eq!(other_summary(&t, NOW), "daily at 09:00 · disabled · last 0x80070005");
     }
 }

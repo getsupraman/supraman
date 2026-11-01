@@ -358,6 +358,10 @@ pub struct FleetView {
     /// A failed `sync` by `<ws>/<id>` of the schedule acted on: on its row and in the Inbox until a sync succeeds.
     pub sync_errors: BTreeMap<String, String>,
     pub registrar: schedules::SharedRegistrar,
+    /// Task Scheduler's tasks that run claude outside Supraman, as the last scan found them; read only.
+    pub other_schedules: Option<supraman_core::schedule::Foreign>,
+    pub other_scan_error: Option<String>,
+    pub(crate) other_scans: u64,
     pub schedule_store: Arc<dyn supraman_core::secret::SecretStore>,
     pub schedule_edit: Option<schedules::ScheduleEdit>,
     /// Scheduled runs whose Inbox notice was dismissed, by workspace and run id.
@@ -635,6 +639,9 @@ impl FleetView {
                 if this
                     .update(cx, |this, cx| {
                         this.apply(refresh);
+                        if this.other_scans == 0 {
+                            this.scan_other_schedules(cx);
+                        }
                         cx.notify();
                     })
                     .is_err()
@@ -832,6 +839,9 @@ impl FleetView {
             schedule_errors_dismissed: Vec::new(),
             sync_errors: BTreeMap::new(),
             registrar: Arc::new(supraman_core::schedule::WindowsRegistrar),
+            other_schedules: None,
+            other_scan_error: None,
+            other_scans: 0,
             schedule_store,
             schedule_edit: None,
             runs_dismissed,

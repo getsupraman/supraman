@@ -9,7 +9,7 @@ use supraman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
-use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, schedule_items, schedules_items, session_items, workspace_items};
+use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, other_schedule_items, repo_items, schedule_items, schedules_items, session_items, workspace_items};
 use crate::fleet::{self, SessionRow};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
@@ -300,7 +300,7 @@ impl FleetView {
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
             MenuTarget::Workspace(w) => self.tree().workspaces.into_iter().find(|n| &n.name == w).and_then(|n| n.own).map(|r| r.session.session_id),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         };
         let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
             return;
@@ -355,6 +355,7 @@ impl FleetView {
                 self.schedule_row(workspace, id).map(|row| (format!("{workspace} · {}", row.title()), schedule_items(row)))
             }
             MenuTarget::Schedules(workspace) => Some((format!("{workspace} · Schedules"), schedules_items(workspace))),
+            MenuTarget::OtherSchedule(path) => self.others().find(path).map(|t| (t.path(), other_schedule_items(t))),
         }
     }
 
@@ -400,6 +401,7 @@ impl FleetView {
                 self.open_start(&workspace, folder, scheduled, window, cx);
             }
             MenuAction::Rescan(w) => self.rescan_workspace(&w, cx),
+            MenuAction::OpenTaskScheduler => self.open_folder(PathBuf::from("taskschd.msc"), cx),
             MenuAction::EditFolders(w) => self.edit_folders(&w, window, cx),
             MenuAction::AddFromFolder => self.add_workspace(window, cx),
             MenuAction::AddEmpty => self.begin_add_empty(window, cx),
@@ -553,6 +555,7 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
+        self.scan_other_schedules(cx);
         let name = name.to_string();
         let task = cx.background_executor().spawn(async move {
             let registry = Registry::at(home);
