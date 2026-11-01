@@ -10,7 +10,7 @@ use supraman_core::{
     read_answered, read_outbox, relay_demand, relay_ready,
 };
 use supraman_supervisor::{
-    DesiredState, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, adopted_session, fill_paths, is_live,
+    DesiredState, HAND_ROLE, LaunchConfig, Millis, NeedsYou, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, Supervisor, adopted_session, fill_paths, is_live,
     relay_session, relay_session_name, render_repo_role, role_prompt, tick_all,
 };
 
@@ -59,7 +59,7 @@ pub fn setup(home: &Path) -> Setup {
             sm.display()
         ));
     }
-    for role in [WORKSPACE_ROLE, RELAY_ROLE, REPO_ROLE] {
+    for role in [WORKSPACE_ROLE, RELAY_ROLE, REPO_ROLE, HAND_ROLE] {
         if let Err(e) = write_role_template(home, &plugin_dir, role) {
             notices.push(format!("Cannot write the {role} role into {}: {e:#}", home.display()));
         }
@@ -259,15 +259,20 @@ pub fn plugin_dirs(plugin_dir: Option<&Path>, settings: &Settings) -> Vec<PathBu
     plugin_dir.map(Path::to_path_buf).into_iter().chain(settings.sessions.extra_plugin_dirs.iter().cloned()).collect()
 }
 
+/// The launch pieces of this home's supervised and [+] sessions.
+pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings: &Settings) -> LaunchConfig {
+    LaunchConfig {
+        mcp_dir: home.as_deref().map(|h| h.join("mcp")).unwrap_or_default(),
+        plugin_dirs: plugin_dirs(plugin_dir, settings),
+        foreman_home: home,
+        bg_isolation_none: true,
+        allowed_tools: plugin_dir.map(sm_allowed_tools).unwrap_or_default(),
+    }
+}
+
 impl Supervision {
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
-        let config = LaunchConfig {
-            mcp_dir: home.join("mcp"),
-            plugin_dirs: plugin_dir.clone().into_iter().collect(),
-            foreman_home: Some(home.clone()),
-            bg_isolation_none: true,
-            allowed_tools: plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_default(),
-        };
+        let config = launch_config(Some(home.clone()), plugin_dir.as_deref(), &Settings::default());
         Self {
             home,
             plugin_dir,

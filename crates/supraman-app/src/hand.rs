@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use supraman_supervisor::{HttpMinter, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
+use supraman_core::home::home_env;
+use supraman_core::paths::{path_key, within};
+use supraman_core::{Workspace, owners};
+use supraman_supervisor::{HAND_ROLE, HttpMinter, LaunchConfig, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
 use supraman_workstate::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -26,31 +29,72 @@ pub enum Launch {
 impl Launch {
     #[cfg(test)]
     pub fn script(&self) -> String {
-        self.script_with("claude")
+        self.script_with("claude", &Extras::default())
     }
 
     /// It deletes the config file once claude exits, however it exits, which is how [`Hands::ended`] sees it.
-    pub fn script_with(&self, claude: &str) -> String {
+    pub fn script_with(&self, claude: &str, extras: &Extras) -> String {
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let flags: String = extras.args.iter().map(|a| format!(" {}", quote(a))).collect();
+        let on_path = extras.path.as_ref().map(|d| format!("$env:Path = {} + $env:Path; ", quote(&format!("{};", d.display())))).unwrap_or_default();
         match self {
             Launch::Minted { config, new_session, .. } => {
-                let path = config.to_string_lossy().replace('\'', "''");
-                let id = new_session.as_ref().map(|id| format!(" --session-id '{}'", id.replace('\'', "''"))).unwrap_or_default();
+                let path = quote(&config.to_string_lossy());
+                let id = new_session.as_ref().map(|id| format!(" --session-id {}", quote(id))).unwrap_or_default();
                 format!(
-                    "if (Test-Path -LiteralPath '{path}') {{ try {{ {claude}{id} --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude} }}"
+                    "{on_path}if (Test-Path -LiteralPath {path}) {{ try {{ {claude}{id} --mcp-config {path}{flags} }} finally {{ Remove-Item -LiteralPath {path} -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude}{flags} }}"
                 )
             }
-            Launch::Plain | Launch::Unminted(_) => claude.into(),
+            Launch::Plain | Launch::Unminted(_) => format!("{on_path}{claude}{flags}"),
         }
     }
 
     #[cfg(test)]
     pub fn shell_args(&self) -> [String; 3] {
-        self.shell_args_with("claude")
+        self.shell_args_with("claude", &Extras::default())
     }
 
-    pub fn shell_args_with(&self, claude: &str) -> [String; 3] {
-        ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script_with(claude))]
+    pub fn shell_args_with(&self, claude: &str, extras: &Extras) -> [String; 3] {
+        ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script_with(claude, extras))]
     }
+}
+
+/// `env` goes on the PTY, not into `--settings`: LEARNINGS sched2/1.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Extras {
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub path: Option<PathBuf>,
+}
+
+/// `name` is the session's `FOREMAN_SESSION`; a cwd outside every workspace gets the home and no role.
+pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name: &str, sm_dir: Option<&Path>) -> Extras {
+    let owner = owners(workspaces)
+        .get(&path_key(cwd))
+        .and_then(|n| workspaces.iter().find(|w| &w.name == n))
+        .or_else(|| workspaces.iter().find(|w| w.contains(cwd)));
+    let env = match (owner, &config.foreman_home) {
+        (Some(w), _) => {
+            let repo = w.folders.iter().find(|f| within(cwd, &f.path)).map(|f| f.name.as_str());
+            config.session_env(&w.name, name, HAND_ROLE, repo, &[])
+        }
+        (None, Some(home)) => home_env(home).map(|(k, v)| (k.to_string(), v)).into(),
+        (None, None) => Vec::new(),
+    };
+    Extras { args: config.interactive_args(), env, path: sm_dir.map(Path::to_path_buf) }
+}
+
+/// `hand-<folder>`: the session name of a [+] session without a token of its own.
+pub fn plain_name(cwd: &Path) -> String {
+    format!("hand-{}", folder_slug(cwd))
+}
+
+fn folder_slug(cwd: &Path) -> String {
+    let folder: String = cwd
+        .file_name()
+        .map(|f| f.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect())
+        .unwrap_or_default();
+    if folder.trim_matches('-').is_empty() { "session".to_string() } else { folder }
 }
 
 pub fn encoded_command(script: &str) -> String {
@@ -145,11 +189,7 @@ impl Hands {
     }
 
     fn next_name(&self, cwd: &Path) -> String {
-        let folder: String = cwd
-            .file_name()
-            .map(|f| f.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect())
-            .unwrap_or_default();
-        let folder = if folder.trim_matches('-').is_empty() { "session".to_string() } else { folder };
+        let folder = folder_slug(cwd);
         (1..).map(|n| format!("hand-{folder}-{n}")).find(|n| self.minted.get(n).is_none()).unwrap()
     }
 
@@ -450,6 +490,69 @@ mod tests {
     }
 
     #[test]
+    fn hand_script_carries_the_plugin_flags_after_the_token_and_sm_first_on_path() {
+        let extras = Extras {
+            args: vec!["--plugin-dir".into(), r"C:\fm\plugins\supraman".into(), "--allowedTools".into(), "Bash(sm:*)".into(), "Bash(C:/o'neil/sm.exe:*)".into()],
+            env: vec![("FOREMAN_ROLE".into(), "hand".into())],
+            path: Some(PathBuf::from(r"C:\Tools\supraman")),
+        };
+        let flags = r" '--plugin-dir' 'C:\fm\plugins\supraman' '--allowedTools' 'Bash(sm:*)' 'Bash(C:/o''neil/sm.exe:*)'";
+        let on_path = r"$env:Path = 'C:\Tools\supraman;' + $env:Path; ";
+        let config = PathBuf::from(r"C:\fm\mcp\workstate-hand-alpha-1.json");
+        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
+        let resume = "claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'";
+        let script = launch.script_with(resume, &extras);
+        assert!(script.starts_with(&format!("{on_path}if (Test-Path")), "{script}");
+        assert!(script.contains(&format!("try {{ {resume} --mcp-config 'C:\\fm\\mcp\\workstate-hand-alpha-1.json'{flags} }} finally")), "{script}");
+        assert!(script.ends_with(&format!("; {resume}{flags} }}")), "the stale branch gets them too: {script}");
+        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{on_path}claude{flags}"));
+        assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{on_path}claude{flags}"));
+        assert!(!script.contains("FOREMAN_ROLE"), "the env goes on the PTY, not into the script");
+    }
+
+    #[test]
+    fn extras_give_a_workspace_folder_the_hand_role_and_the_shared_launch_pieces() {
+        let home = PathBuf::from(r"C:\fm\home");
+        let plugin = PathBuf::from(r"C:\fm\plugins\supraman");
+        let config = crate::supervise::launch_config(Some(home.clone()), Some(&plugin), &supraman_core::Settings::default());
+        let ws = Workspace::new("demo", r"C:\demo", vec![supraman_core::Folder::new("Alpha", r"C:\demo\Alpha")]);
+        let sm = Path::new(r"C:\Tools\supraman");
+        let extras = extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha"), "hand-Alpha-1", Some(sm));
+        let mut want = vec!["--plugin-dir".to_string(), plugin.display().to_string(), "--allowedTools".into()];
+        want.extend(supraman_core::sm_allowed_tools(&plugin));
+        assert_eq!(extras.args, want);
+        assert_eq!(extras.path.as_deref(), Some(sm));
+        let env: std::collections::BTreeMap<&str, &str> = extras.env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(
+            env,
+            [
+                ("FOREMAN_HOME", r"C:\fm\home"),
+                ("FOREMAN_REPO", "Alpha"),
+                ("FOREMAN_ROLE", "hand"),
+                ("FOREMAN_SESSION", "hand-Alpha-1"),
+                ("FOREMAN_WORKSPACE", "demo"),
+                ("SUPRAMAN_HOME", r"C:\fm\home"),
+            ]
+            .into()
+        );
+        assert_eq!(
+            config.session_env("demo", "hand-Alpha-1", HAND_ROLE, Some("Alpha"), &[]),
+            extras.env,
+            "the same env a supervised session gets in its --settings"
+        );
+
+        let deeper = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha\src"), "René's review", None);
+        assert!(deeper.env.contains(&("FOREMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("FOREMAN_REPO".into(), "Alpha".into())));
+        assert_eq!(deeper.path, None);
+        let home_only = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo"), "hand-demo", None);
+        assert!(home_only.env.contains(&("FOREMAN_WORKSPACE".into(), "demo".into())) && !home_only.env.iter().any(|(k, _)| k == "FOREMAN_REPO"));
+        let outside = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\elsewhere"), "hand-elsewhere", None);
+        assert_eq!(outside.env, home_env(&home).map(|(k, v)| (k.to_string(), v)).to_vec(), "outside every workspace: the home only, no role");
+        assert_eq!(outside.args, want);
+        assert_eq!(plain_name(Path::new(r"C:\demo\my repo")), "hand-my-repo");
+    }
+
+    #[test]
     fn hand_script_passes_only_the_path_and_no_strict_flag() {
         let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
         let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
@@ -464,10 +567,10 @@ mod tests {
         assert!(!script.contains("--strict-mcp-config") && !script.contains("wss_"));
         assert_eq!(launch.shell_args(), ["-NoExit".to_string(), "-EncodedCommand".into(), encoded_command(&script)]);
         assert_eq!(Launch::Plain.script(), "claude");
-        let resume = launch.script_with("claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'");
+        let resume = launch.script_with("claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'", &Extras::default());
         assert!(resume.contains("try { claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' --mcp-config '"), "{resume}");
         assert!(resume.ends_with("; claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' }"), "the stale branch resumes too: {resume}");
-        assert_eq!(Launch::Plain.script_with("claude --resume 'x'"), "claude --resume 'x'");
+        assert_eq!(Launch::Plain.script_with("claude --resume 'x'", &Extras::default()), "claude --resume 'x'");
         let fresh = Launch::Minted {
             name: "hand-alpha-1".into(),
             session: "hand-alpha-1".into(),

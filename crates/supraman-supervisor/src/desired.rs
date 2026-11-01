@@ -61,6 +61,8 @@ pub const WORKSPACE_ROLE: &str = "workspace";
 pub const RELAY_ROLE: &str = "relay";
 /// A repo-controller: `fm-<workspace>-<repo slug>`, started on demand (`sm want`).
 pub const REPO_ROLE: &str = "repo";
+/// A session René opens with [+]: never wanted, never supervised.
+pub const HAND_ROLE: &str = "hand";
 /// What a resumed relay is told: its `Monitor` died with the process.
 pub const RELAY_RESUME_PROMPT: &str =
     "You were restarted and your Monitor is gone. Re-arm it now exactly as your instructions say (rewrite ready.json), then wait.";

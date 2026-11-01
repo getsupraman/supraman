@@ -5138,3 +5138,30 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gotcha, shell escapes**: the Bash tool here turned a doubled backslash into one, and `\f` into a form feed, inside heredocs and
   `sed` scripts; a backslash path written that way lost characters (`bin\fm.exe` → `bin<FF>m.exe`). Scripts that
   write Windows paths go through the Write tool or `chr(92)`.
+
+## 2026-11-01 — sched2/1 [+] sessions get the plugin, hooks, sm on PATH and the sm rules
+
+- **What a [+] session starts with** (`hand.rs` `extras`, `view.rs` `hand_extras`): `--plugin-dir` for the app's plugin
+  (and `extra_plugin_dirs`), `--allowedTools` with `sm_allowed_tools`, the env `FOREMAN_ROLE=hand`,
+  `FOREMAN_WORKSPACE` (the owning workspace: `owners`, else the first that `contains` the cwd), `FOREMAN_SESSION` (the
+  Workman session name when minted, else René's own name or `hand-<folder>`), `FOREMAN_REPO` (the folder the cwd is in),
+  `SUPRAMAN_HOME`/`FOREMAN_HOME`, and the folder of the running `sm.exe` first on `Path`. A cwd outside every workspace
+  gets the home vars only (events, no role). New and resumed hand sessions go through the same `hand_claude`, so a
+  resume rebuilds the same flags and env. The pieces come from `LaunchConfig` (`session_env`, `interactive_args`,
+  `supervise::launch_config`), the ones supervised sessions use.
+- **The env goes on the PTY, not into `--settings`**: an inline `--settings '{"env":…}'` reaches claude intact only
+  when `claude` is an exe. pwsh 7's `PSNativeCommandArgumentPassing=Windows` passes `.cmd`/`.bat` targets the legacy
+  way, so with an npm `claude.cmd` (and the selftests' fake `claude.cmd`) the JSON loses its quotes. The PTY env
+  reaches claude, its tools and its hooks. Cost: the pwsh that stays open after claude exits keeps `FOREMAN_ROLE=hand`,
+  so `sm send` typed there refuses as from a session.
+- **`Path` goes into the script** (`$env:Path = '<dir>;' + $env:Path`), not the PTY env: Windows env names are
+  case-insensitive and the inherited one is `Path`; pwsh resolves the case.
+- **The tree needs nothing new**: `HookSignal` is keyed by claude's session id for every row, so a hand session's
+  events show like a supervised one's once its hooks write to the app's home. The supervisor acts only on desired
+  names, and `Budget` counts only `fm-` rows: `hand_sessions_are_never_wanted_respawned_stopped_or_counted` pins it.
+- **`roles/hand.md`** is copied to `<home>/roles` by `supervise::setup` with the other roles; no supervision duties
+  (`the_hand_role_has_no_supervision_duties`).
+- **Selftest 7+** (`selftest_hand.rs`) opens a [+] in the testbed's main-repo folder with a fake `claude.cmd` that
+  records its argv and env, runs `where sm`, `sm --version` and plays SessionStart and a permission-prompt
+  Notification through `sm hook`; it then checks the injected `FOREMAN-ROLE hand`, the hook signal and the row's
+  label. It does not see a real claude's skill list: that `supraman-scheduler` is listed rests on `--plugin-dir`.
