@@ -35,8 +35,13 @@ impl Launch {
     /// It deletes the config file once claude exits, however it exits, which is how [`Hands::ended`] sees it.
     pub fn script_with(&self, claude: &str, extras: &Extras) -> String {
         let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-        let flags: String = extras.args.iter().map(|a| format!(" {}", quote(a))).collect();
-        let on_path = extras.path.as_ref().map(|d| format!("$env:Path = {} + $env:Path; ", quote(&format!("{};", d.display())))).unwrap_or_default();
+        let mut flags: String = extras.args.iter().map(|a| format!(" {}", quote(a))).collect();
+        let mut on_path = extras.path.as_ref().map(|d| format!("$env:Path = {} + $env:Path; ", quote(&format!("{};", d.display())))).unwrap_or_default();
+        if let Some(file) = &extras.prompt {
+            let file = quote(&file.to_string_lossy());
+            on_path = format!("$supramanPrompt = [IO.File]::ReadAllText({file}); Remove-Item -LiteralPath {file} -ErrorAction SilentlyContinue; {on_path}");
+            flags.push_str(" -- $supramanPrompt");
+        }
         match self {
             Launch::Minted { config, new_session, .. } => {
                 let path = quote(&config.to_string_lossy());
@@ -65,6 +70,9 @@ pub struct Extras {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub path: Option<PathBuf>,
+    /// A UTF-8 file holding claude's first prompt; the script reads it into a variable and deletes it, so the text
+    /// reaches claude as one argument, never through the script's own quoting (LEARNINGS sched2/6).
+    pub prompt: Option<PathBuf>,
 }
 
 /// `name` is the session's `FOREMAN_SESSION`; a cwd outside every workspace gets the home and no role.
@@ -81,7 +89,7 @@ pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name:
         (None, Some(home)) => home_env(home).map(|(k, v)| (k.to_string(), v)).into(),
         (None, None) => Vec::new(),
     };
-    Extras { args: config.interactive_args(), env, path: sm_dir.map(Path::to_path_buf) }
+    Extras { args: config.interactive_args(), env, path: sm_dir.map(Path::to_path_buf), prompt: None }
 }
 
 /// `hand-<folder>`: the session name of a [+] session without a token of its own.
@@ -495,6 +503,7 @@ mod tests {
             args: vec!["--plugin-dir".into(), r"C:\fm\plugins\supraman".into(), "--allowedTools".into(), "Bash(sm:*)".into(), "Bash(C:/o'neil/sm.exe:*)".into()],
             env: vec![("FOREMAN_ROLE".into(), "hand".into())],
             path: Some(PathBuf::from(r"C:\Tools\supraman")),
+            prompt: None,
         };
         let flags = r" '--plugin-dir' 'C:\fm\plugins\supraman' '--allowedTools' 'Bash(sm:*)' 'Bash(C:/o''neil/sm.exe:*)'";
         let on_path = r"$env:Path = 'C:\Tools\supraman;' + $env:Path; ";
@@ -508,6 +517,19 @@ mod tests {
         assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{on_path}claude{flags}"));
         assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{on_path}claude{flags}"));
         assert!(!script.contains("FOREMAN_ROLE"), "the env goes on the PTY, not into the script");
+    }
+
+    #[test]
+    fn a_first_prompt_is_read_from_its_file_and_passed_last_after_the_option_end() {
+        let extras = Extras { args: vec!["--allowedTools".into(), "Bash(sm:*)".into(), "--permission-mode".into(), "plan".into()], prompt: Some(PathBuf::from(r"C:\fm\prompts\o'neil.txt")), ..Extras::default() };
+        let read = r"$supramanPrompt = [IO.File]::ReadAllText('C:\fm\prompts\o''neil.txt'); Remove-Item -LiteralPath 'C:\fm\prompts\o''neil.txt' -ErrorAction SilentlyContinue; ";
+        let flags = " '--allowedTools' 'Bash(sm:*)' '--permission-mode' 'plan' -- $supramanPrompt";
+        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{read}claude{flags}"));
+        let launch = Launch::Minted { name: "hand-a-1".into(), session: "hand-a-1".into(), config: PathBuf::from(r"C:\fm\mcp\w.json"), notice: None, new_session: None };
+        let script = launch.script_with("claude", &extras);
+        assert!(script.starts_with(read), "{script}");
+        assert!(script.contains(&format!(r"--mcp-config 'C:\fm\mcp\w.json'{flags} }} finally")), "{script}");
+        assert!(script.ends_with(&format!("; claude{flags} }}")), "the stale branch sends it too: {script}");
     }
 
     #[test]

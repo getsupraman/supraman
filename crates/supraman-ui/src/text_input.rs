@@ -443,7 +443,7 @@ pub enum InputEvent {
     Edited,
     /// A character the input's filter does not take; nothing of it was inserted.
     Refused(char),
-    /// Enter on one line, Ctrl+Enter on either.
+    /// Enter on one line or with [`TextInput::enter_confirms`], Ctrl+Enter on either.
     Confirm,
     /// Shift+Enter on one line.
     ConfirmBack,
@@ -582,6 +582,8 @@ pub struct TextInput {
     filter: Option<fn(char) -> Option<char>>,
     /// Several lines, wrapped: Enter types a new line and Ctrl+Enter confirms.
     multi_line: bool,
+    /// On several lines, Enter confirms and Shift+Enter types the new line.
+    enter_confirms: bool,
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: Pixels,
@@ -632,6 +634,7 @@ impl TextInput {
             placeholder: placeholder.into(),
             filter,
             multi_line: false,
+            enter_confirms: false,
             last_layout: None,
             last_bounds: None,
             last_line_height: LINE_HEIGHT,
@@ -647,6 +650,13 @@ impl TextInput {
     /// The task box's kind: wrapped lines, [`MIN_ROWS`] to [`MAX_ROWS`] high.
     pub fn multi_line(mut self) -> Self {
         self.multi_line = true;
+        self
+    }
+
+    /// [`Self::multi_line`] where Enter confirms and Shift+Enter types the new line: a prompt box.
+    pub fn enter_confirms(mut self) -> Self {
+        self.multi_line = true;
+        self.enter_confirms = true;
         self
     }
 
@@ -911,7 +921,7 @@ impl TextInput {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if self.multi_line {
+        if self.multi_line && !self.enter_confirms {
             self.insert(None, "\n", EditKind::Other, window, cx);
         } else {
             cx.emit(InputEvent::Confirm);

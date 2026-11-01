@@ -1017,6 +1017,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let scheduled = step("7y", crate::selftest_schedules::run(view, &home(), cx)).await?;
     println!("step 7y: {scheduled}");
 
+    let tasked = step("7+t", crate::selftest_start::run(view, &home(), cx)).await?;
+    println!("step 7+t: {tasked}");
+
     let branded = step("7z", crate::selftest_brand::run(view, cx)).await?;
     println!("step 7z: {branded}");
 

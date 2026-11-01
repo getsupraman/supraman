@@ -9,7 +9,7 @@ use supraman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
-use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, schedule_items, session_items, workspace_items};
+use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, schedule_items, schedules_items, session_items, workspace_items};
 use crate::fleet::{self, SessionRow};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
@@ -300,7 +300,7 @@ impl FleetView {
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
             MenuTarget::Workspace(w) => self.tree().workspaces.into_iter().find(|n| &n.name == w).and_then(|n| n.own).map(|r| r.session.session_id),
-            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } => None,
+            MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) => None,
         };
         let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
             return;
@@ -331,13 +331,12 @@ impl FleetView {
         let tree = self.tree();
         match target {
             MenuTarget::Workspace(w) => tree.workspaces.iter().find(|n| &n.name == w).map(|node| {
-                let can_task = node.started == Some(true) && self.relay_refusal(w).is_none();
                 let items_of = |row: Option<&SessionRow>, repo: &str, send_name: Option<String>| {
                     row.map(|r| self.session_menu(w, repo, r, send_name, cx)).unwrap_or_default()
                 };
                 let own = items_of(node.own.as_ref(), "workspace", send_name);
                 let relay = items_of(node.relay.as_ref(), "relay", None);
-                (w.clone(), workspace_items(node, can_task, self.has_closed_background(w), own, relay))
+                (w.clone(), workspace_items(node, self.has_closed_background(w), own, relay))
             }),
             MenuTarget::Repo { workspace, repo } => tree
                 .workspaces
@@ -355,6 +354,7 @@ impl FleetView {
             MenuTarget::Schedule { workspace, id } => {
                 self.schedule_row(workspace, id).map(|row| (format!("{workspace} · {}", row.title()), schedule_items(row)))
             }
+            MenuTarget::Schedules(workspace) => Some((format!("{workspace} · Schedules"), schedules_items(workspace))),
         }
     }
 
@@ -396,7 +396,9 @@ impl FleetView {
             MenuAction::Work(w) => {
                 self.open_work(&w, cx);
             }
-            MenuAction::Task(w) => self.open_compose(&w, None, window, cx),
+            MenuAction::NewTask { workspace, folder, scheduled } => {
+                self.open_start(&workspace, folder, scheduled, window, cx);
+            }
             MenuAction::Rescan(w) => self.rescan_workspace(&w, cx),
             MenuAction::EditFolders(w) => self.edit_folders(&w, window, cx),
             MenuAction::AddFromFolder => self.add_workspace(window, cx),

@@ -15,7 +15,8 @@ pub enum MenuAction {
     Start(String),
     Stop(String),
     Work(String),
-    Task(String),
+    /// The prompt tab; `folder` preselects one of the workspace's.
+    NewTask { workspace: String, folder: Option<PathBuf>, scheduled: bool },
     Rescan(String),
     EditFolders(String),
     AddFromFolder,
@@ -67,11 +68,12 @@ pub enum MenuTarget {
     /// By `session_id`, which every row has (an interactive one has no 8-hex `id`).
     Session { workspace: String, repo: String, session_id: String },
     Schedule { workspace: String, id: String },
+    Schedules(String),
 }
 
 /// `own` and `relay` are [`session_items`] of the workspace session and the relay, which have no row of their
 /// own: they follow under a caption each, so nothing on those sessions is out of reach.
-pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: bool, own: Vec<MenuItem>, relay: Vec<MenuItem>) -> Vec<MenuItem> {
+pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<MenuItem>, relay: Vec<MenuItem>) -> Vec<MenuItem> {
     let w = &node.name;
     let mut items = vec![if node.started == Some(true) {
         item("stop", "Stop", MenuAction::Stop(w.clone()))
@@ -79,9 +81,7 @@ pub fn workspace_items(node: &WorkspaceNode, can_task: bool, closed_background: 
         item("start", "Start", MenuAction::Start(w.clone()))
     }];
     items.push(item("work", "Work", MenuAction::Work(w.clone())));
-    if can_task {
-        items.push(item("task", "Task…", MenuAction::Task(w.clone())));
-    }
+    items.extend(new_task_items(w, None));
     items.push(item("rescan", "Rescan repos", MenuAction::Rescan(w.clone())));
     items.push(item("edit-folders", "Edit folders…", MenuAction::EditFolders(w.clone())));
     if let Some(home) = &node.home {
@@ -145,6 +145,16 @@ fn section_key(of: Section, key: &'static str) -> &'static str {
     }
 }
 
+/// The prompt tab's two openings, in `folder` when given.
+pub fn new_task_items(workspace: &str, folder: Option<&std::path::Path>) -> [MenuItem; 2] {
+    let action = |scheduled| MenuAction::NewTask { workspace: workspace.to_string(), folder: folder.map(std::path::Path::to_path_buf), scheduled };
+    [item("new-task", "New task…", action(false)), item("new-scheduled-task", "New scheduled task…", action(true))]
+}
+
+pub fn schedules_items(workspace: &str) -> Vec<MenuItem> {
+    new_task_items(workspace, None).into_iter().filter(|i| i.key == "new-scheduled-task").collect()
+}
+
 /// Add workspace: today's scan of a parent folder, or a workspace with no folder yet.
 pub fn add_items() -> Vec<MenuItem> {
     vec![item("add-from-folder", "From a parent folder…", MenuAction::AddFromFolder), item("add-empty", "Empty workspace", MenuAction::AddEmpty)]
@@ -156,6 +166,7 @@ pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
     if repo.enabled && repo.supervised_in.is_none() {
         items.push(item("new-claude", "New claude here", MenuAction::NewClaude { cwd: repo.path.clone(), title: title("claude") }));
     }
+    items.extend(new_task_items(workspace, Some(&repo.path)));
     items.extend([
         item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: repo.path.clone(), title: title("pwsh") }),
         item("open-folder", "Open folder", MenuAction::OpenFolder(repo.path.clone())),
@@ -282,11 +293,17 @@ mod tests {
 
     #[test]
     fn workspace_menu_follows_its_state() {
-        assert_eq!(keys(&workspace_items(&node(None), false, false, vec![], vec![])), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
-        let started = workspace_items(&node(Some(true)), true, false, vec![], vec![]);
-        assert_eq!(keys(&started), ["stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
+        let stopped = workspace_items(&node(None), false, vec![], vec![]);
+        assert_eq!(keys(&stopped), ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
+        assert_eq!(stopped[2].label, "New task…");
+        assert_eq!(stopped[2].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: false });
+        assert_eq!(stopped[3].label, "New scheduled task…");
+        assert_eq!(stopped[3].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: true });
+        let started = workspace_items(&node(Some(true)), false, vec![], vec![]);
+        assert_eq!(keys(&started), ["stop", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"]);
+        assert!(!started.iter().any(|i| i.label == "Task…"), "the relay's task box is not on the menu");
         assert_eq!(started.last().unwrap().action, MenuAction::Remove("demo".into()));
-        assert_eq!(started[7].action, MenuAction::Details(MenuTarget::Workspace("demo".into())));
+        assert_eq!(started[8].action, MenuAction::Details(MenuTarget::Workspace("demo".into())));
     }
 
     #[test]
@@ -299,20 +316,20 @@ mod tests {
         let own_items = session_items("demo", "workspace", n.own.as_ref().unwrap(), false, Some("item-1".into()), Some("ctrl [abc123]".into()), false, None);
         let relay_items = session_items("demo", "relay", n.relay.as_ref().unwrap(), false, None, None, false, None);
         let (own_n, relay_n) = (own_items.len(), relay_items.len());
-        let items = workspace_items(&n, true, false, own_items, relay_items);
+        let items = workspace_items(&n, false, own_items, relay_items);
         assert_eq!(
             keys(&items),
             [
-                "stop", "work", "task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove",
+                "stop", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove",
                 "session-attach", "session-stop", "session-copy-send-name", "session-copy-name", "session-copy-id", "session-show-in-work", "session-star", "session-details",
                 "relay-attach", "relay-stop", "relay-copy-name", "relay-copy-id", "relay-star", "relay-details",
             ]
         );
-        assert_eq!(items.len(), 9 + own_n + relay_n, "nothing dropped");
+        assert_eq!(items.len(), 10 + own_n + relay_n, "nothing dropped");
         let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (i.key, c))).collect();
         assert_eq!(captions, [("session-attach", "workspace session · fm-demo-workspace"), ("relay-attach", "relay · fm-demo-relay")]);
-        assert!(matches!(&items[9].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
-        assert_eq!(items[10].label, "Stop", "an fm- session stops without a question");
+        assert!(matches!(&items[10].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
+        assert_eq!(items[11].label, "Stop", "an fm- session stops without a question");
         let keys = keys(&items);
         assert_eq!(keys.iter().collect::<std::collections::HashSet<_>>().len(), keys.len(), "keys unique");
     }
@@ -354,20 +371,26 @@ mod tests {
             sessions: vec![],
             more: 0,
         };
-        assert_eq!(keys(&repo_items("demo", &repo)), ["new-claude", "open-terminal", "open-folder", "disable"]);
+        let items = repo_items("demo", &repo);
+        assert_eq!(keys(&items), ["new-claude", "new-task", "new-scheduled-task", "open-terminal", "open-folder", "disable"]);
+        assert_eq!(items[1].action, MenuAction::NewTask { workspace: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: false }, "the folder is preselected");
+        assert_eq!(items[2].action, MenuAction::NewTask { workspace: "demo".into(), folder: Some(r"C:\demo\Alpha".into()), scheduled: true });
         repo.enabled = false;
         let items = repo_items("demo", &repo);
-        assert_eq!(keys(&items), ["open-terminal", "open-folder", "enable"]);
+        assert_eq!(keys(&items), ["new-task", "new-scheduled-task", "open-terminal", "open-folder", "enable"]);
         assert_eq!(
-            items[2].action,
+            items[4].action,
             MenuAction::SetRepoEnabled { workspace: "demo".into(), repo: "Alpha".into(), enabled: true }
         );
         repo.supervised_in = Some("other".into());
-        assert_eq!(keys(&repo_items("demo", &repo)), ["open-terminal", "open-folder"], "supervised in another workspace: no Enable");
+        assert_eq!(keys(&repo_items("demo", &repo)), ["new-task", "new-scheduled-task", "open-terminal", "open-folder"], "supervised in another workspace: no Enable");
         repo.enabled = true;
-        assert_eq!(keys(&repo_items("demo", &repo)), ["open-terminal", "open-folder", "disable"], "enabled in two: this one can let go");
+        assert_eq!(keys(&repo_items("demo", &repo)), ["new-task", "new-scheduled-task", "open-terminal", "open-folder", "disable"], "enabled in two: this one can let go");
         let home_folder = RepoNode { enabled: false, listed: false, supervised_in: None, ..repo };
-        assert_eq!(keys(&repo_items("demo", &home_folder)), ["open-terminal", "open-folder"], "a folder of the home is not the workspace's to enable");
+        assert_eq!(keys(&repo_items("demo", &home_folder)), ["new-task", "new-scheduled-task", "open-terminal", "open-folder"], "a folder of the home is not the workspace's to enable");
+        let group = schedules_items("demo");
+        assert_eq!(keys(&group), ["new-scheduled-task"]);
+        assert_eq!(group[0].action, MenuAction::NewTask { workspace: "demo".into(), folder: None, scheduled: true });
     }
 
     #[test]
@@ -420,9 +443,9 @@ mod tests {
         assert_eq!(keys(&items), ["resume", "copy-name", "copy-id", "star", "details", "delete"]);
         assert_eq!(items[5].label, "Delete…");
         assert!(matches!(&items[5].action, MenuAction::Delete(s) if s.id == "aaaa0002"));
-        let ws = workspace_items(&node(Some(false)), false, true, vec![], vec![]);
-        assert_eq!(keys(&ws), ["start", "work", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
-        assert_eq!(ws[7].label, "Delete closed background sessions…");
-        assert_eq!(ws[7].action, MenuAction::DeleteClosed("demo".into()));
+        let ws = workspace_items(&node(Some(false)), true, vec![], vec![]);
+        assert_eq!(keys(&ws), ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "delete-closed", "remove"]);
+        assert_eq!(ws[9].label, "Delete closed background sessions…");
+        assert_eq!(ws[9].action, MenuAction::DeleteClosed("demo".into()));
     }
 }
