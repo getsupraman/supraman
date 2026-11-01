@@ -5189,3 +5189,29 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `Bash`/`PowerShell` allow rule covers (`Bash`, `Bash(<tool>:…)`, `Bash(<tool> …)`). It lives in `sm`'s
   `schedule.rs`: only dry-run uses it. The app's Edit dialog has no allow-tools field, so the skill tells the human to
   add a hinted rule with `sm schedule edit`.
+
+## 2026-11-01 — sched2/4 the skill wins over /schedule, Git Bash's slash, the edit rule, the worktree default
+
+- **The description claims local recurring work.** `supraman-scheduler`'s description names the phrasing ("every
+  monday", "daily", "weekly", "at 7", "schedule /replay-failures") and what makes a job local (this repo's files,
+  git-ignored secrets (.env), Docker, local tools), and says "Use this, not the built-in schedule skill (cloud
+  routines, which cannot see this machine) and not a hand-made Windows task". The Never table has a row for the
+  built-in skill. `the_scheduler_skill_claims_recurring_work_on_this_machine_over_the_built_in_schedule` pins it.
+- **Git Bash's rewrite is refused with the fix, never undone silently.** `sm`'s `--command` (add and edit) goes
+  through `git_bash_rewrite` in `crates/sm/src/schedule.rs`: an absolute `X:/…/<name>` whose parent is a Git root
+  (`%ProgramFiles%`/`%ProgramW6432%`/`%ProgramFiles(x86)%`\Git, `%LOCALAPPDATA%\Programs\Git`, `%EXEPATH%`, the
+  root of a `git.exe` on PATH), or any `…/Git/<name>` while `MSYSTEM` is set, ends with
+  `error: Git Bash rewrote /<name> into <value>; write //<name> (or set MSYS_NO_PATHCONV=1)`. Local to `sm`: only
+  this flag needs it.
+- **Windows resets `ProgramFiles` in a child's environment**: a test that sets it on a `Command` still sees
+  `C:\Program Files` in the child. The integration test points `EXEPATH` at the fake root instead.
+- **The edit rule.** The skill runs `sm schedule edit` (verb table, `allowed-tools`, §3) only for a schedule it added
+  in this conversation at the human's request; the edit sets pending and only René's Approve makes it run (C100).
+  `sm schedule remove` and editing any other schedule stay the human's (Never table). `sm` is unchanged for this.
+  A `dry-run` hint the human says yes to becomes `sm schedule edit <id> --allow-tools "<rule>"`.
+- **`Action.worktree` defaults to false** (`#[serde(default)]`): a hand-written TOML without the key runs in the
+  checkout. sm and the app always write the key, so no saved fingerprint changes; the golden
+  `a_schedule_approved_by_the_earlier_release_keeps_its_fingerprint_and_its_worktree` passes unmodified and
+  `an_action_without_the_worktree_key_runs_in_the_checkout` covers the missing key.
+- **Gate:** selftest step 7b (the right-click menu of `selftest-added` not within 5s) failed 5/5 on this branch and
+  the same way on master 47056e4 built in the same target: the desktop's UI input, not this unit.
