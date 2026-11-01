@@ -5399,3 +5399,50 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `key_down`; the step sends none. On a visible desktop the settings window opens activated and takes the foreground,
   so a typed Escape closes it: focus loss from the user's input, which sched2/9's hidden desktop removes. No log of the
   failed run survives; the step's error now names those closers. 7q passed on the hidden desktop in this unit's gate.
+
+## 2026-11-01 — sched2/11 links with display text in the terminal (OSC 8)
+
+- **Probe** (`probes/sched2.11-osc8/run.ps1`, a ConPTY host in `ConPty.cs`): claude 2.1.316, interactive, plan mode,
+  `--strict-mcp-config`, hooks off, `--model haiku`, a throwaway cwd under the worktree's `target`, the tab env of
+  `builder.rs` (no `WT_SESSION`), prompt "Reply with exactly this markdown and nothing else:
+  [Supraman](https://example.com/osc8-probe)". Raw output bytes:
+  - without `FORCE_HYPERLINK`: `● Supraman (https://example.com/osc8-probe)`, no `ESC ]8;` (38 659 bytes);
+  - with `FORCE_HYPERLINK=1`: `● ESC]8;id=u-m3wa1p%14938084229916758499;https://example.com/osc8-probe ESC\Supraman
+    ESC]8;;ESC\` (30 `ESC ]8;` in 46 853 bytes). The `id=` is conhost's: ConPTY re-renders the link it stored.
+  - Why: claude bundles npm `supports-hyperlinks` with an early `return` that leaves only `FORCE_HYPERLINK`,
+    `--hyperlink=…` argv, `NETLIFY` and `WT_SESSION` (after a colour and TTY check); the `TERM_PROGRAM` list
+    (iTerm, WezTerm, vscode) is unreachable. So `TERM_PROGRAM` alone never turns links on.
+- **Env** (`builder.rs` `insert_terminal_env`): `TERM_PROGRAM=supraman` (was `foreman`, missed by the rename) and
+  `FORCE_HYPERLINK=1`. Every program in a tab that uses `supports-hyperlinks` now writes OSC 8, not only claude.
+- **Hover** (`links.rs` `Terminal::hovered_link`, refreshed in `sync` from `window.mouse_position()` through
+  `alacritty.rs` `link_uri_at`): the OSC 8 URI under the mouse, without Ctrl. `view/term.rs` `link_hint` paints it at
+  the terminal's bottom left (hit key `terminal-link-<tab>`). A local label: `toast` goes by itself and `hover_card`
+  is a card of rows; neither is a status line.
+- **Hand**: `term_element` sets `CursorStyle::PointingHand` on its hitbox while the Ctrl hover (`last_hovered_word`,
+  OSC 8 or a regex URL) is set; `Terminal::hand_painted` records it for the selftest.
+- **Pitfall:** gpui calls `on_modifiers_changed` listeners only on the focus path (window.rs
+  `dispatch_modifiers_changed_event`), so one registered by the grid's canvas never fires. The view's root
+  (`track_focus`) holds it and calls `Terminal::refresh_hovered_word` (now `pub`), so pressing Ctrl alone turns the
+  pointer.
+- **Allowlist** (controller decision; supersedes m5/44.2's "any scheme"): `view.rs` `link_target` opens `http`,
+  `https`, `mailto`, `file` (case-insensitive) and a `PathLike` (a decoded `file://`); any other scheme, or none, is
+  refused with the pane toast `link_refused`. The terminal still emits `Event::Open` for any scheme
+  (`test_ctrl_click_opens_osc8_link_of_any_scheme`); the refusal is the app's. `FleetView::open_link_with` is the
+  opener seam (`cx.open_url` / `cx.open_with_system`).
+- **Selftest 6d** (`selftest_link.rs`, in step 6's pwsh tab after 6c): Ctrl+C first (6c leaves `fm-rclick-…` pasted at
+  the prompt, which turned the command into a not-found command), then `Write-Host` of an OSC 8 link and a
+  `ms-settings:privacy` link; checks the cells' stored URI, the painted glyphs underlined (`PaintedGlyph::underlined`),
+  the hint on hover and gone off it, no hand without Ctrl, the hand on a `ModifiersChanged` Ctrl, Ctrl+click
+  recorded exactly `https://example.com/sched2-11?a=1&b=2`, no hand after Ctrl is released, and the refusal toast with
+  nothing opened.
+- **ConPTY pitfall** (the probe): a child started with `PSEUDOCONSOLE` but without `STARTF_USESTDHANDLES` inherits
+  the caller's redirected pipes, and claude then runs as `--print` ("Input must be provided…").
+- **Tests:** `links.rs` `test_hover_without_ctrl_names_the_osc8_uri_and_only_over_its_text`, `view.rs`
+  `an_open_event_opens_web_mail_and_file_links_and_resolves_relative_paths`, `any_other_scheme_is_refused_by_name`,
+  `builder.rs` `test_terminal_env_names_supraman_and_forces_hyperlinks`.
+- **Red:** with the allowlist bypassed, `any_other_scheme_is_refused_by_name` FAILS ("ms-settings:privacy"); without the
+  `sync` refresh, the hover test FAILS; with `TERM_PROGRAM=foreman` and no `FORCE_HYPERLINK` (master's env), the env
+  test FAILS.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched2-11\target`): build ok, no warnings; `cargo test --release --workspace`
+  871 passed, 0 failed, 6 ignored; `--selftest` PASS (hidden desktop) after two FAILs of the new step 6d while it was
+  written (the leftover prompt text above); 0 `fm-selftest` sessions.

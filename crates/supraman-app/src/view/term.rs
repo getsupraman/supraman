@@ -268,6 +268,35 @@ impl FleetView {
         cx.notify();
     }
 
+    /// The OSC 8 URI under the mouse, over the terminal's bottom left corner.
+    pub(super) fn link_hint(&self, tab_id: u64, terminal: &Entity<Terminal>, cx: &App) -> Option<AnyElement> {
+        let link = terminal.read(cx).hovered_link()?.to_owned();
+        let colors = cx.theme().colors();
+        let key = format!("terminal-link-{tab_id}");
+        Some(
+            div()
+                .id(SharedString::from(key.clone()))
+                .absolute()
+                .bottom_1()
+                .left_1()
+                .max_w(gpui::relative(0.66))
+                .px_2()
+                .py_0p5()
+                .rounded_sm()
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.elevated_surface_background)
+                .text_xs()
+                .text_color(colors.text_muted)
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(SharedString::from(link))
+                .child(hit_target(&self.hits, key))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn find_bar(&self, tab_id: u64, find: &Find, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors();
         let status = match (find.at, find.count) {

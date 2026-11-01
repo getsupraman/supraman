@@ -71,6 +71,8 @@ Everything else goes to the program, including Shift+PgUp/PgDn (Windows Terminal
 | Alt+drag | block (rectangle) selection |
 | right-click | with a selection: copy it and clear it; without one: paste |
 | wheel | scrollback; in a full-screen program, arrow keys or its own mouse reports |
+| hover a link | an OSC 8 link (a program's `[text](url)`, underlined) shows its URL in the terminal's bottom left corner |
+| Ctrl+hover, Ctrl+click | the pointer is a hand over a link or a URL; Ctrl+click opens it: `http`, `https`, `mailto` and `file` only, any other scheme is refused with a note |
 
 When the program turned mouse reporting on, clicks and drags go to it; hold Shift to select instead.
 

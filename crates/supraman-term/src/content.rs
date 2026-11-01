@@ -18,6 +18,12 @@ pub fn is_default_background_color(color: Color) -> bool {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Hyperlink(pub(crate) AlacrittyHyperlink);
 
+impl Hyperlink {
+    pub fn uri(&self) -> &str {
+        self.0.uri()
+    }
+}
+
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 pub struct Cell {
     pub(crate) cell: AlacrittyCell,
@@ -271,6 +277,7 @@ impl Terminal {
         if self.last_content.cursor.point != cursor_before {
             self.cursor_moved_at = Instant::now();
         }
+        self.refresh_hovered_link(&terminal, window.mouse_position(), cx);
         if self.last_content.grid_lines_change == GridLinesChange::Changed {
             debug_assert!(self.last_content.last_hovered_word.is_none());
             self.refresh_hovered_word(window, cx);

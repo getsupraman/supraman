@@ -23,6 +23,7 @@ mod selftest_first_run;
 mod selftest_font;
 mod selftest_hand;
 mod selftest_left;
+mod selftest_link;
 mod selftest_manage;
 mod selftest_mark;
 mod selftest_paste;

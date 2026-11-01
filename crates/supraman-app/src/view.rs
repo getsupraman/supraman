@@ -29,8 +29,8 @@ use supraman_ui::tabs::{TabHeader, tab_strip};
 use supraman_ui::toast::ToastSlot;
 use supraman_ui::{FrameProbe, button, term_element};
 use gpui::{
-    AnyElement, AnyWindowHandle, ClickEvent, Context, Entity, FocusHandle,
-    KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
+    AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
+    KeyBinding, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, Pixels, Render, ScrollEvent, SharedString, Window,
     WindowHandle, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -295,6 +295,7 @@ pub struct FleetView {
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), isize>,
+    pub open_link_with: fn(&Link, &mut App),
     pub workstate: WsStatus,
     workstate_dismissed: Option<String>,
     workstate_recheck: Nudge,
@@ -785,6 +786,10 @@ impl FleetView {
             removing: BTreeMap::new(),
             pick_folder: None,
             open_with: |path| supraman_core::process::shell_execute("open", path.as_os_str(), None, None),
+            open_link_with: |link, cx| match link {
+                Link::Url(url) => cx.open_url(url),
+                Link::Path(path) => cx.open_with_system(path),
+            },
             workstate: WsStatus::Checking,
             workstate_dismissed: None,
             workstate_recheck,
@@ -2194,9 +2199,7 @@ impl FleetView {
                                     }
                                     cx.notify();
                                 }
-                                TerminalEvent::Open(target) => {
-                                    open_link(target, |url| cx.open_url(url), |path| cx.open_with_system(path))
-                                }
+                                TerminalEvent::Open(target) => this.open_link(target, cx),
                                 _ => return,
                             }
                             if let Some(tab) = this.tab(id) {
@@ -2445,6 +2448,13 @@ impl FleetView {
         cx.notify();
     }
 
+    fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
+        match link_target(target) {
+            Ok(link) => (self.open_link_with)(&link, cx),
+            Err(scheme) => self.pane_toast.show_why(link_refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
+        }
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         if k.key == "," && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift {
@@ -2512,17 +2522,34 @@ impl FleetView {
     }
 }
 
-fn open_link(target: &MaybeNavigationTarget, open_url: impl FnOnce(&str), open_path: impl FnOnce(&Path)) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Link {
+    Url(String),
+    Path(PathBuf),
+}
+
+/// A program's output must not reach any other protocol handler (sched2/11).
+pub const LINK_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
+
+/// What a Ctrl+click on `target` opens, or the scheme it refuses.
+pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match target {
-        MaybeNavigationTarget::Url(url) => open_url(url),
+        MaybeNavigationTarget::Url(url) => {
+            let scheme = url.split_once(':').map_or("", |(scheme, _)| scheme).to_ascii_lowercase();
+            if LINK_SCHEMES.contains(&scheme.as_str()) { Ok(Link::Url(url.clone())) } else { Err(scheme) }
+        }
         MaybeNavigationTarget::PathLike(link) => {
             let path = Path::new(&link.maybe_path);
-            match &link.working_directory {
-                Some(cwd) if path.is_relative() => open_path(&cwd.join(path)),
-                _ => open_path(path),
-            }
+            Ok(Link::Path(match &link.working_directory {
+                Some(cwd) if path.is_relative() => cwd.join(path),
+                _ => path.to_path_buf(),
+            }))
         }
     }
+}
+
+pub fn link_refused(scheme: &str) -> String {
+    format!("Not opened: a {scheme}: link. Only http, https, mailto and file links open.")
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
@@ -2657,6 +2684,7 @@ impl FleetView {
                             })
                         })
                         .child(term_element::terminal_grid(terminal.clone(), self.term_font()))
+                        .children(self.link_hint(*tab_id, terminal, cx))
                         .child(self.terminal_drop(*tab_id, cx)),
                 )
                 .into_any_element(),
@@ -2716,6 +2744,14 @@ impl Render for FleetView {
             .on_action(cx.listener(|this, _: &PreviousTab, _, cx| this.cycle_tab(-1, cx)))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)))
             .on_key_down(cx.listener(Self::key_down))
+            .on_modifiers_changed(cx.listener(|this, _: &ModifiersChangedEvent, window, cx| {
+                if let Some(terminal) = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone()) {
+                    terminal.update(cx, |t, cx| {
+                        t.refresh_hovered_word(window, cx);
+                        cx.notify();
+                    });
+                }
+            }))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| {
@@ -2776,21 +2812,30 @@ mod tests {
 
     use super::*;
 
-    fn opened(target: &MaybeNavigationTarget) -> (Option<String>, Option<PathBuf>) {
-        let (mut url, mut path) = (None, None);
-        open_link(target, |u| url = Some(u.to_owned()), |p| path = Some(p.to_owned()));
-        (url, path)
+    #[test]
+    fn an_open_event_opens_web_mail_and_file_links_and_resolves_relative_paths() {
+        for uri in ["https://example.com/", "HTTP://example.com/a?b=c", "mailto:a@b.c", "file:///C:/tmp/a.txt"] {
+            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Ok(Link::Url(uri.into())));
+        }
+        let relative = PathLikeTarget { maybe_path: "src/x.rs".into(), working_directory: Some(PathBuf::from("C:/repo")) };
+        assert_eq!(link_target(&MaybeNavigationTarget::PathLike(relative)), Ok(Link::Path(PathBuf::from("C:/repo").join("src/x.rs"))));
+        let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
+        assert_eq!(link_target(&MaybeNavigationTarget::PathLike(absolute)), Ok(Link::Path(PathBuf::from("C:/tmp/a.txt"))));
     }
 
     #[test]
-    fn an_open_event_opens_any_scheme_and_resolves_relative_paths() {
-        for uri in ["https://example.com/", "ftp://host/x", "vscode://file/c:/x", "mailto:a@b.c"] {
-            assert_eq!(opened(&MaybeNavigationTarget::Url(uri.into())), (Some(uri.into()), None));
+    fn any_other_scheme_is_refused_by_name() {
+        for (uri, scheme) in [
+            ("ms-settings:privacy", "ms-settings"),
+            ("vscode://file/c:/x", "vscode"),
+            ("ftp://host/x", "ftp"),
+            ("C:/tmp/a.exe", "c"),
+            ("javascript:alert(1)", "javascript"),
+            ("no-scheme", ""),
+        ] {
+            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(scheme.into()), "{uri}");
         }
-        let relative = PathLikeTarget { maybe_path: "src/x.rs".into(), working_directory: Some(PathBuf::from("C:/repo")) };
-        assert_eq!(opened(&MaybeNavigationTarget::PathLike(relative)), (None, Some(PathBuf::from("C:/repo").join("src/x.rs"))));
-        let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
-        assert_eq!(opened(&MaybeNavigationTarget::PathLike(absolute)), (None, Some(PathBuf::from("C:/tmp/a.txt"))));
+        assert_eq!(link_refused("ms-settings"), "Not opened: a ms-settings: link. Only http, https, mailto and file links open.");
     }
 
     #[test]
