@@ -59,12 +59,13 @@ async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut 
     .await
 }
 
-/// The Details tab in the dark default and in a light theme planted in the selftest home, when `FOREMAN_SHOTS` asks.
-async fn shots(home: &Path, cx: &mut AsyncWindowContext) {
+/// `<name>-dark` in the dark default and `<name>-light` in a light theme planted in the selftest home, when
+/// `FOREMAN_SHOTS` asks.
+pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowContext) {
     if std::env::var_os("FOREMAN_SHOTS").is_none() {
         return;
     }
-    shot("sched-7-details-dark", cx).await;
+    shot(&format!("{name}-dark"), cx).await;
     let dir = supraman_ui::themes::themes_dir(home);
     if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("selftest-light.json"), LIGHT)).is_err() {
         return;
@@ -77,7 +78,7 @@ async fn shots(home: &Path, cx: &mut AsyncWindowContext) {
         .ok();
     };
     apply(Some("Selftest Light"), cx);
-    shot("sched-7-details-light", cx).await;
+    shot(&format!("{name}-light"), cx).await;
     apply(None, cx);
     std::fs::remove_file(dir.join("selftest-light.json")).ok();
 }
@@ -150,7 +151,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     let page_approve = format!("sched-page-approve-{WS}/{ID}");
     crate::selftest::scrolled_into_view(view, &page_approve, cx).await?;
-    shots(home, cx).await;
+    themed_shots(home, "sched-7-details", cx).await;
     click(view, &page_approve, cx).await?;
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the fake holds the task", |_| has_task(&fake).then_some(())).await?;

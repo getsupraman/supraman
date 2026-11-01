@@ -385,7 +385,7 @@ pub fn zone_words(now_ms: i64) -> String {
 }
 
 /// `Mon 3 Nov 2026 at 08:00`.
-fn date_words(ms: i64) -> String {
+pub fn date_words(ms: i64) -> String {
     Local.timestamp_millis_opt(ms).single().map_or_else(|| ms.to_string(), |t| t.format("%a %-d %b %Y at %H:%M").to_string())
 }
 

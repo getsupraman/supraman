@@ -11,7 +11,6 @@ use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subsc
 use super::FleetView;
 use super::menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuItem, MenuTarget, add_items, is_foremans, repo_items, schedule_items, session_items, workspace_items};
 use crate::fleet::{self, SessionRow};
-use crate::row_details;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::work_view;
 
@@ -359,7 +358,7 @@ impl FleetView {
         }
     }
 
-    fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &Context<Self>) -> Vec<MenuItem> {
+    pub(super) fn session_menu(&self, workspace: &str, repo: &str, row: &SessionRow, send_name: Option<String>, cx: &Context<Self>) -> Vec<MenuItem> {
         let claimed = self.claimed_item(workspace, &row.session.name, cx);
         let adopt = match self.adoption(workspace, repo, row) {
             Some(fleet::Adoption::Offer { name }) => Some(name),
@@ -368,47 +367,11 @@ impl FleetView {
         session_items(workspace, repo, row, self.resumable(row), claimed, send_name, self.deletable(row), adopt)
     }
 
-    pub(super) fn details(&self, target: &MenuTarget, cx: &Context<Self>) -> Option<supraman_ui::hover_card::HoverCard> {
-        let tree = self.tree();
-        match target {
-            MenuTarget::Workspace(w) => {
-                let node = tree.workspaces.iter().find(|n| &n.name == w)?;
-                let facts = row_details::WorkspaceFacts {
-                    name: w.clone(),
-                    home: node.home.as_ref().map(|h| h.display().to_string()),
-                    folders: self
-                        .workspaces
-                        .iter()
-                        .find(|r| &r.name == w)
-                        .map(|r| r.folders.iter().map(|f| if f.enabled { f.name.clone() } else { format!("{} (disabled)", f.name) }).collect())
-                        .unwrap_or_default(),
-                    started: node.started,
-                    own: node.own.clone(),
-                    relay: self.relays.get(w).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
-                    project: self.tabs.iter().find_map(|t| match &t.kind {
-                        super::TabKind::Work(view) if &view.read(cx).workspace == w => view.read(cx).project().map(|p| p.qualified_ref.clone()),
-                        _ => None,
-                    }),
-                };
-                Some(row_details::workspace(&facts, now_ms()))
-            }
-            MenuTarget::Session { workspace, repo, session_id } => {
-                let row = tree.workspaces.iter().find(|n| &n.name == workspace)?.rows().find(|r| &r.session.session_id == session_id)?;
-                let adopt = match self.adoption(workspace, repo, row) {
-                    Some(fleet::Adoption::No(why)) => Some(why),
-                    _ => None,
-                };
-                Some(row_details::session(row, self.claimed_item(workspace, &row.session.name, cx), self.open_of(row), adopt, now_ms()))
-            }
-            MenuTarget::Schedule { .. } | MenuTarget::Repo { .. } => None,
-        }
-    }
-
     pub(crate) fn adoption(&self, workspace: &str, folder: &str, row: &SessionRow) -> Option<fleet::Adoption> {
         fleet::adoption(&self.workspaces, workspace, folder, row, &self.sessions, &self.desired)
     }
 
-    pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &Context<Self>) -> Option<String> {
+    pub(super) fn claimed_item(&self, workspace: &str, name: &str, cx: &gpui::App) -> Option<String> {
         if name.is_empty() {
             return None;
         }
@@ -502,9 +465,7 @@ impl FleetView {
                 self.open_schedule(&workspace, &id, super::schedules::At::Top, cx);
             }
             MenuAction::Details(target) => {
-                if let Some(details) = self.details(&target, cx) {
-                    self.confirm = Some(Confirm::report(details.text()));
-                }
+                self.open_details(target, cx);
             }
             MenuAction::Approve { workspace, id } => {
                 self.open_schedule(&workspace, &id, super::schedules::At::Approve, cx);
