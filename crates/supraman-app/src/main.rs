@@ -13,9 +13,11 @@ mod search;
 mod selftest;
 mod selftest_box;
 mod selftest_brand;
+mod selftest_capture;
 mod selftest_clipboard;
 mod selftest_closed;
 mod selftest_delete;
+mod selftest_desktop;
 mod selftest_drop;
 mod selftest_first_run;
 mod selftest_font;
@@ -99,7 +101,7 @@ impl Mode {
 }
 
 const USAGE: &str =
-    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise]";
+    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise] [--visible]";
 
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -117,7 +119,9 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
         unsafe { std::env::set_var(supraman_core::HOME_VAR, &relaunched.home) };
         return (Mode::App, Some(relaunched));
     }
-    let mode = match args.as_slice() {
+    let visible = args.last() == Some(&selftest_desktop::VISIBLE_FLAG);
+    let args = if visible { &args[..args.len() - 1] } else { &args[..] };
+    let mode = match args {
         [] => Mode::App,
         ["--selftest"] => Mode::Selftest,
         ["--selftest-detach", n] if n.parse::<u32>().is_ok_and(|n| n > 0) => {
@@ -131,6 +135,18 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
             std::process::exit(2);
         }
     };
+    let hideable = matches!(mode, Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown);
+    if visible && !hideable {
+        eprintln!("{} is for --selftest, --selftest-supervise and --selftest-detach-shutdown; {USAGE}", selftest_desktop::VISIBLE_FLAG);
+        std::process::exit(2);
+    }
+    if hideable {
+        if selftest_desktop::relaunch_wanted(visible, |name| std::env::var(name).ok()) {
+            let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+            std::process::exit(selftest_desktop::run_hidden(&args));
+        }
+        println!("{}", selftest_desktop::placement());
+    }
     (mode, None)
 }
 
