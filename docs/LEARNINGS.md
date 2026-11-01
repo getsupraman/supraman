@@ -5268,3 +5268,34 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Selftest 7b opens both tabs, checks name, folder, cwd and UUID, focuses the session tab with a second Details,
   and stars and unstars through the page's Star (the selftest home's `starred.json`). Shots
   `sched2-5-details-{session,workspace}-{dark,light}` (`selftest_schedules::themed_shots`).
+
+## 2026-11-01 — sched2/6 New task and New scheduled task open a prompt tab
+
+- **The page** (`view/start.rs`, `TabKind::Start`): one tab per opening, built on `supraman_ui::details` with the
+  form in the page's new `top` slot; the prompt box is `TextInput::enter_confirms()` (multi-line, Enter sends,
+  Shift+Enter a new line, Ctrl+Enter sends too). Folder choices are the workspace's home, then each folder once
+  (`start::folders`); a folder's menu preselects it, else the first. Modes `default` (preselected), `acceptEdits`,
+  `auto`, `plan`; never `bypassPermissions`. Picking a folder or a mode gives the focus back to the box. Below: the
+  workspace's schedules and its eight newest sessions as links (a session link runs `open_row`, as the tree's click).
+- **Send** writes the first prompt to `<home>/prompts/<ms>-<hex6>.txt` and calls `hand_claude_in(Some(tab), …)`: the
+  prompt tab becomes the [+] session tab (same mint, `hand::extras`, plugin, hooks, PTY env), titled by the text's
+  first line. `FirstPrompt::apply` adds `--permission-mode <mode>` and `Extras::prompt`.
+- **How the text reaches claude**: the launch script reads the file into `$supramanPrompt`, deletes it, and ends
+  claude's argv with `-- $supramanPrompt`. `--` keeps a prompt that starts with `-` a prompt and stops the variadic
+  `--allowedTools` from swallowing it. pwsh 7.6 passes a variable to a native exe with its quotes, `$`, newlines and
+  non-ASCII intact (measured with `git rev-parse --sq-quote`, and by selftest 7+t through `supraman.exe
+  --selftest-argv`, the stand-in claude that writes its argv as JSON). claude.exe (native install) and npm's
+  `claude.ps1` both take it whole. **A `claude.cmd` cannot**: cmd.exe ends the command line at a newline and
+  re-parses quotes and `%`; pwsh only runs the `.cmd` when `claude` resolves to nothing else.
+- **New scheduled task** sends `start::SCHEDULE_ASK` on its own first line, then the text. The tab keeps
+  `asks_schedule` (workspace, Send time); after each schedule poll `find_asked_schedules` takes the oldest pending
+  schedule of that workspace whose `created_at` is at or after Send, and the session tab shows the warning banner
+  "Schedule <name> waits for your approval" with Open (`open_schedule`). Approve stays the schedule tab's (C100).
+- **Menus**: the workspace menu's Task… is gone; New task… and New scheduled task… follow Work (always offered, a
+  stopped workspace too); a folder's menu has both with the folder preselected; the Schedules group row has a menu
+  with New scheduled task… (`MenuTarget::Schedules`). The workspace row's Task hover icon and the compose box stay:
+  the box answers relay messages from the Inbox, and the icon is what supervise steps t0/t drive.
+- Selftest 7+t: New task from the workspace menu, folder and mode `plan` picked, two typed lines with quotes, `$`,
+  `&`, `%`, a backtick and `é`, Enter; the argv ends `--` and exactly that text, with the mode and the [+] flags.
+  New scheduled task from the folder's menu (preselected, mode default) sends the ask line first; `sm schedule add`
+  then raises the banner, and Open activates the schedule's tab. Shots `sched2-6-start-{dark,light}`.
