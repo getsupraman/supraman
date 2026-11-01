@@ -490,7 +490,7 @@ impl FleetView {
             )));
         }
         let mut profiles = line("Profile");
-        for p in [Profile::Read, Profile::WorktreeEdit, Profile::Auto] {
+        for p in [Profile::Read, Profile::Edit, Profile::Auto] {
             profiles = profiles.child(choice(format!("sched-edit-profile-{}", p.as_str()), p.as_str(), edit.profile == p, cx).on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
                     if let Some(e) = &mut this.schedule_edit {

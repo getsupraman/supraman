@@ -579,7 +579,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
 fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     let f = fixture();
     let mut s = script_schedule("gate", "gate.cmd", ActionKind::ScriptThenSession);
-    s.permissions.profile = schedule::Profile::WorktreeEdit;
+    s.permissions.profile = schedule::Profile::Edit;
     s.action.worktree = true;
     schedule::edit(&f.home, &f.workspace(), |all| {
         all.push(s.clone());

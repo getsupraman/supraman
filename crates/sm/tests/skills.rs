@@ -104,13 +104,15 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     let allowed_tools = raw.lines().find_map(|l| l.strip_prefix("allowed-tools: ")).expect("allowed-tools in the header");
     let rules: Vec<&str> = allowed_tools.split(", ").collect();
     assert_eq!(rules, ALLOWED.map(|v| format!("Bash(sm schedule {v}:*)")).iter().map(String::as_str).collect::<Vec<_>>());
-    for word in ["approve", "TOML", "`sm schedule edit` or `sm schedule remove`", "`schtasks`", "`worktree-edit` or `auto` without the human's answer"] {
+    for word in ["approve", "TOML", "`sm schedule edit` or `sm schedule remove`", "`schtasks`", "`edit` or `auto` without the human's answer"] {
         assert!(never.contains(word), "the Never table names {word}");
     }
     for word in ["schtasks", "Register-ScheduledTask", ".toml"] {
         assert!(!body.contains(word), "only the Never table names {word}");
     }
     assert!(body.contains("only the human picks it: ask (§2), never choose it yourself"));
+    assert!(body.contains("**Pass the hint on; never add the rule yourself.**"), "a dry-run hint goes to the human");
+    assert!(!body.contains("worktree-edit"), "the profile is edit");
     assert!(body.contains("It is pending: it runs only after you Approve it on its row in the Supraman window."));
 }
 

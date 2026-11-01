@@ -95,6 +95,7 @@ fn add_fix(f: &Fixture, extra: &[&str]) -> String {
 fn add_saves_a_pending_schedule_through_the_store() {
     let f = fixture();
     let text = add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--secret", "SENTRY_TOKEN", "--max-tokens", "500000", "--overlap", "queue", "--wake"]);
+    assert!(text.contains("profile: edit\n") && !text.contains("worktree:"), "the earlier name reads as edit: {text}");
     assert!(text.contains("added schedule fix-bugs to workspace demo"), "{text}");
     assert!(text.contains("status: pending\n"), "{text}");
     assert!(text.contains("pending: it runs only after Approve in the Supraman window"), "{text}");
@@ -104,7 +105,7 @@ fn add_saves_a_pending_schedule_through_the_store() {
     assert!(saved.approval.is_none());
     assert_eq!(saved.folder, "Alpha");
     assert_eq!(saved.action.prompt, Some(schedule::Prompt::Command("/fix".into())));
-    assert!(saved.action.worktree, "worktree-edit runs in a worktree");
+    assert_eq!((saved.permissions.profile, saved.action.worktree), (schedule::Profile::Edit, false), "a new schedule runs in the checkout");
     assert_eq!(saved.permissions.secrets, ["SENTRY_TOKEN"]);
     assert_eq!(saved.caps.max_tokens, 500_000);
     assert!(saved.policy.wake);
@@ -113,7 +114,8 @@ fn add_saves_a_pending_schedule_through_the_store() {
 
     let list = f.ok(&["schedule", "list", "demo"]);
     assert!(list.starts_with("fix-bugs\tpending\tfolder=Alpha\tevery=weekly mon,fri 09:00\tnext="), "{list}");
-    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).contains("profile: worktree-edit\n"));
+    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).contains("profile: edit\n"));
+    assert!(toml.contains("profile = \"edit\"") && toml.contains("worktree = false"), "{toml}");
 
     let taken = f.refused(&ADD.iter().copied().chain(["--command", "/fix"]).collect::<Vec<_>>());
     assert!(taken.contains("the id is taken"), "{taken}");
@@ -227,7 +229,7 @@ fn covered_edits_pause_and_resume_never_make_a_schedule_active_without_approval(
 #[test]
 fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     let f = fixture();
-    add_fix(&f, &["--profile", "worktree-edit", "--allow-tools", "Bash(dotnet test:*)", "--deny-tools", "WebFetch", "--secret", "SENTRY_TOKEN", "--model", "opus"]);
+    add_fix(&f, &["--profile", "edit", "--allow-tools", "Bash(dotnet test:*)", "--deny-tools", "WebFetch", "--secret", "SENTRY_TOKEN", "--model", "opus"]);
     let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
     assert!(text.contains("nothing launched, nothing written"), "{text}");
     assert!(text.contains("This is an unattended scheduled run `fix-bugs-") && text.contains(" schedule report fix-bugs-"), "{text}");
@@ -237,10 +239,13 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     for arg in ["  claude\n", "  --bg\n", "  --name\n  fm-demo-sched-fix-bugs-", "  --permission-mode\n  acceptEdits\n", "  --strict-mcp-config\n", "  --allowedTools\n", "  Bash(sm:*)\n", "  Edit\n", "  \"Bash(dotnet test:*)\"\n", "  --disallowedTools\n", "  \"Bash(git push --force:*)\"\n", "  Bash(schtasks:*)\n", "  WebFetch\n", "  --model\n  opus\n", "  --\n"] {
         assert!(argv.contains(arg), "argv lacks {arg:?}: {text}");
     }
-    assert!(text.contains(&format!("cwd: {}", f.alpha.join(".claude").join("worktrees").join("fm-sched-fix-bugs-").display())), "{text}");
-    assert!(text.contains("permissions: profile worktree-edit (--permission-mode acceptEdits)"), "{text}");
+    assert!(text.contains(&format!("\ncwd: {}\n", f.alpha.display())), "the folder's checkout: {text}");
+    assert!(text.contains(&format!("You work in the folder's checkout `{}`", supraman_core::paths::normalize(&f.alpha))), "{text}");
+    assert!(!text.contains("worktrees"), "{text}");
+    assert!(text.contains("permissions: profile edit (--permission-mode acceptEdits)"), "{text}");
     assert!(text.contains("  allow: Bash(sm:*)") && text.contains("Read  Glob  Grep  Edit  Write  Bash(git status:*)"), "{text}");
-    assert!(text.contains("Bash(git commit:*)  Bash(git push -u origin fm-sched/fix-bugs/") && text.contains(")  Bash(dotnet test:*)"), "{text}");
+    assert!(text.contains("Bash(git commit:*)  Bash(dotnet test:*)") && !text.contains("git push -u"), "an edit run pushes nothing: {text}");
+    assert!(!text.contains("hint:"), "/fix names no tool: {text}");
     assert!(text.contains("needs those commands as --allow-tools"), "dry-run says what a fix needs: {text}");
     assert!(text.contains("  deny: Bash(git push --force:*)") && text.contains("WebFetch"), "{text}");
     assert!(text.contains("secrets: SENTRY_TOKEN (names only"), "{text}");
@@ -311,4 +316,50 @@ fn fm_never_approves_and_never_registers_a_task() {
     assert!(files > 5, "read the sources at {}", src.display());
     let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
     assert!(!manifest.contains("registrar") && !manifest.contains("windows"), "{manifest}");
+}
+
+#[test]
+fn add_and_edit_take_no_worktree_option() {
+    let f = fixture();
+    for flag in ["--worktree", "--no-worktree"] {
+        let out = f.sm(&ADD.iter().copied().chain(["--command", "/fix", flag]).collect::<Vec<_>>());
+        assert_eq!(out.status.code(), Some(1), "{flag}: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains(&format!("unknown option {flag}")), "{out:?}");
+    }
+}
+
+#[test]
+fn dry_run_hints_the_allow_rule_of_each_tool_the_command_file_calls() {
+    let f = fixture();
+    fs::write(f.alpha.join(".claude").join("commands").join("ops.md"), "Run `docker compose up -d`, then `dotnet run` and report.\n").unwrap();
+    f.ok(&["schedule", "add", "demo", "--name", "Ops", "--folder", "Alpha", "--every", "daily 07:00", "--command", "/ops", "--profile", "edit"]);
+    let text = f.ok(&["schedule", "dry-run", "demo", "ops"]);
+    let hints: Vec<&str> = text.lines().filter(|l| l.starts_with("hint:")).collect();
+    assert_eq!(hints, ["hint: the run calls dotnet; add --allow-tools \"Bash(dotnet:*)\"", "hint: the run calls docker; add --allow-tools \"Bash(docker:*)\""], "{text}");
+
+    f.ok(&["schedule", "edit", "demo", "ops", "--allow-tools", "Bash(docker:*)", "--allow-tools", "Bash(dotnet:*)"]);
+    let text = f.ok(&["schedule", "dry-run", "demo", "ops"]);
+    assert!(!text.contains("hint:"), "both are allowed now: {text}");
+}
+
+/// A schedule the earlier release saved with `worktree = true`: shown as such until a covered edit drops it.
+#[test]
+fn an_earlier_worktree_schedule_keeps_its_worktree_until_a_covered_edit() {
+    let f = fixture();
+    add_fix(&f, &["--profile", "edit"]);
+    let path = schedule::file_path(&f.home, "demo").unwrap();
+    let toml = fs::read_to_string(&path).unwrap().replace("worktree = false", "worktree = true").replace("profile = \"edit\"", "profile = \"worktree-edit\"");
+    fs::write(&path, toml).unwrap();
+    f.approve("fix-bugs");
+    let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    assert!(text.contains(&format!("cwd: {}", f.alpha.join(".claude").join("worktrees").join("fm-sched-fix-bugs-").display())), "{text}");
+    assert!(text.contains("Bash(git push -u origin fm-sched/fix-bugs/"), "the run worktree's branch, as before: {text}");
+    assert!(f.ok(&["schedule", "show", "demo", "fix-bugs"]).contains("worktree: yes (saved by an earlier release"));
+
+    f.ok(&["schedule", "edit", "demo", "fix-bugs", "--name", "Fix all bugs"]);
+    assert_eq!((f.stored("fix-bugs").status, f.stored("fix-bugs").action.worktree), (Status::Active, true), "a name is not covered");
+    f.ok(&["schedule", "edit", "demo", "fix-bugs", "--max-runtime", "2h"]);
+    let saved = f.stored("fix-bugs");
+    assert_eq!((saved.status, saved.action.worktree), (Status::Pending, false));
+    assert!(f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]).contains(&format!("\ncwd: {}\n", f.alpha.display())));
 }

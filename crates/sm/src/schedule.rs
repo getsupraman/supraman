@@ -169,7 +169,7 @@ fn parse_opts<'a>(args: &[&'a str]) -> Result<(Opts, Vec<&'a str>), Failure> {
             "--wake" => o.wake = Some(true),
             "--no-wake" => o.wake = Some(false),
             "--permission-mode" | "--dangerously-skip-permissions" => {
-                return Err(Failure::Refused(format!("error: {arg} is not a schedule option; a schedule's mode comes from --profile read|worktree-edit|auto")));
+                return Err(Failure::Refused(format!("error: {arg} is not a schedule option; a schedule's mode comes from --profile read|edit|auto")));
             }
             flag if flag.starts_with("--") => return Err(Failure::Usage(format!("unknown option {flag}"))),
             p => positional.push(p),
@@ -272,7 +272,6 @@ fn apply(w: &Workspace, s: &mut Schedule, o: Opts) -> Result<(), Failure> {
     let p = &mut s.permissions;
     if let Some(profile) = o.profile {
         p.profile = profile;
-        a.worktree = profile != Profile::Read;
     }
     for (field, given) in [(&mut p.allow_tools, o.allow_tools), (&mut p.deny_tools, o.deny_tools), (&mut p.add_dirs, o.add_dirs), (&mut p.secrets, o.secrets)] {
         if let Some(given) = given {
@@ -533,7 +532,9 @@ fn print_schedule(registry: &Registry, w: &Workspace, s: &Schedule) {
     if let Some(script) = &a.script {
         println!("script: {script} {}\ttimeout={}", a.script_args.join(" "), a.script_timeout);
     }
-    println!("worktree: {}", if a.worktree { "yes" } else { "no" });
+    if a.worktree {
+        println!("worktree: yes (saved by an earlier release; the next covered edit runs it in the folder's checkout)");
+    }
     if !a.model.is_empty() {
         println!("model: {}", a.model);
     }
@@ -587,12 +588,15 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;
     let run = schedule::run_id(&s.id, stamp);
     let name = schedule::session_name(&w.name, &s.id, stamp);
+    let run_branch = s.action.worktree.then(|| schedule::run_branch(&s.id, stamp));
+    let cwd = if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() };
+    let preamble = schedule::preamble(&run, &sm_command(plugin_dir), &cwd, run_branch.as_deref());
     let wanted = WantedSession {
         name: name.clone(),
         role: RUN_ROLE.into(),
-        cwd: if s.action.worktree { schedule::run_worktree(&folder.path, &s.id, stamp) } else { folder.path.clone() },
+        cwd,
         repo: Some(folder.name.clone()),
-        prompt: format!("{}\n\n{}", schedule::preamble(&run, &sm_command(plugin_dir)), schedule::base_prompt(&folder.path, prompt)?),
+        prompt: format!("{preamble}\n\n{}", schedule::base_prompt(&folder.path, prompt)?),
         permission_mode: s.permissions.profile.permission_mode().into(),
         add_dirs: s.permissions.add_dirs.iter().map(|d| folder.path.join(d)).collect(),
         resume_prompt: None,
@@ -604,7 +608,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         plugin_dirs: plugin_dir.map(Path::to_path_buf).into_iter().collect(),
         foreman_home: Some(home.to_path_buf()),
         bg_isolation_none: true,
-        allowed_tools: s.permissions.allowed(&always, &schedule::run_branch(&s.id, stamp)),
+        allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
     };
     let mut spec = config.launch_spec(&w.name, &wanted, &[("FOREMAN_SCHEDULE", &s.id), ("FOREMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
@@ -629,8 +633,8 @@ fn sm_command(plugin_dir: Option<&Path>) -> String {
 fn tools_hint(profile: Profile) -> Option<&'static str> {
     match profile {
         Profile::Read => None,
-        Profile::WorktreeEdit => Some(
-            "a fix that builds or tests needs those commands as --allow-tools (e.g. --allow-tools \"Bash(cargo test:*)\"); git status/diff/log/add/commit and the push of the run's own branch are allowed",
+        Profile::Edit => Some(
+            "a fix that builds or tests needs those commands as --allow-tools (e.g. --allow-tools \"Bash(cargo test:*)\"); git status/diff/log/add/commit are allowed, git push is not",
         ),
         Profile::Auto => Some("the classifier decides; --allow-tools pre-approves what it would ask about"),
     }
@@ -669,10 +673,15 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         println!("mcp config: written at fire with the run's minted token; absent when Supraman is not signed in");
         let always = plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into(), "Bash(fm:*)".into()]);
         println!("permissions: profile {} (--permission-mode {})", s.permissions.profile.as_str(), s.permissions.profile.permission_mode());
-        println!("  allow: {}", s.permissions.allowed(&always, &schedule::run_branch(&s.id, &stamp)).join("  "));
+        let allowed = s.permissions.allowed(&always, s.action.worktree.then(|| schedule::run_branch(&s.id, &stamp)).as_deref());
+        println!("  allow: {}", allowed.join("  "));
         println!("  deny: {}", s.permissions.denied().join("  "));
         if let Some(needs) = tools_hint(s.permissions.profile) {
             println!("  {needs}");
+        }
+        let folder = w.folder(&s.folder).ok_or_else(|| no_folder(&w, &s.folder))?;
+        for tool in uncovered_tools(&prompt_text(&folder.path, s.action.prompt.as_ref()), &allowed) {
+            println!("hint: the run calls {tool}; add --allow-tools \"Bash({tool}:*)\"");
         }
     }
     if !s.permissions.secrets.is_empty() {
@@ -683,6 +692,39 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         println!("  {}", local_text(f));
     }
     Ok(())
+}
+
+/// Build and run tools a prompt commonly calls, which no profile allows by itself.
+const HINTED_TOOLS: [&str; 6] = ["dotnet", "docker", "npm", "pnpm", "cargo", "python"];
+
+/// The text a run's prompt is made from: the slash command's file, the prompt file or the text; empty where unreadable.
+fn prompt_text(folder: &Path, prompt: Option<&Prompt>) -> String {
+    match prompt {
+        Some(Prompt::Command(name)) => std::fs::read_to_string(schedule::command_file(folder, name).1).unwrap_or_default(),
+        Some(Prompt::File(rel)) => std::fs::read_to_string(folder.join(rel)).unwrap_or_default(),
+        Some(Prompt::Text(text)) => text.clone(),
+        None => String::new(),
+    }
+}
+
+/// Each of [`HINTED_TOOLS`] that `text` names as a word and no rule in `allowed` covers.
+fn uncovered_tools(text: &str, allowed: &[String]) -> Vec<&'static str> {
+    let names = |tool: &str| {
+        text.match_indices(tool).any(|(i, _)| {
+            let before = text.as_bytes()[..i].last().is_none_or(|&b| !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')));
+            let after = text.as_bytes().get(i + tool.len()).is_none_or(|&b| !(b.is_ascii_alphabetic() || matches!(b, b'_' | b'-')));
+            before && after
+        })
+    };
+    let covered = |tool: &str| {
+        allowed.iter().any(|rule| {
+            rule == "Bash"
+                || ["Bash(", "PowerShell("]
+                    .iter()
+                    .any(|shell| rule.strip_prefix(shell).and_then(|r| r.strip_prefix(tool)).is_some_and(|rest| rest.starts_with([':', ' ', ')'])))
+        })
+    };
+    HINTED_TOOLS.into_iter().filter(|t| names(t) && !covered(t)).collect()
 }
 
 /// Run now: the task's path without its fingerprint (checks 1 to 3 still hold).
@@ -769,4 +811,19 @@ fn quoted(arg: &str) -> String {
         return arg.to_string();
     }
     format!("{arg:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uncovered_tools;
+
+    #[test]
+    fn a_tool_is_hinted_when_named_as_a_word_and_no_rule_covers_it() {
+        let text = "Run `docker compose up -d`, then dotnet run; pnpm i. python3 x.py";
+        assert_eq!(uncovered_tools(text, &[]), ["dotnet", "docker", "pnpm", "python"]);
+        let allowed = ["Bash(docker:*)".to_string(), "Bash(dotnet run:*)".into(), "PowerShell(pnpm:*)".into(), "Bash(dockerx:*)".into()];
+        assert_eq!(uncovered_tools(text, &allowed), ["python"]);
+        assert!(uncovered_tools(text, &["Bash".to_string()]).is_empty());
+        assert!(uncovered_tools("docker-compose up; the npmrc; cargo_home; mydotnet", &[]).is_empty());
+    }
 }

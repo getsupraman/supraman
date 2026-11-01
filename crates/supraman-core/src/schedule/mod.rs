@@ -165,6 +165,7 @@ pub struct Action {
     pub script_args: Vec<String>,
     #[serde(default = "default_script_timeout")]
     pub script_timeout: Span,
+    /// A run in a Supraman run worktree, set only by an earlier release; a covered edit clears it.
     #[serde(default = "yes")]
     pub worktree: bool,
     #[serde(default)]
@@ -216,7 +217,8 @@ pub struct Permissions {
 pub enum Profile {
     #[default]
     Read,
-    WorktreeEdit,
+    #[serde(alias = "worktree-edit")]
+    Edit,
     Auto,
 }
 
@@ -422,9 +424,6 @@ impl Schedule {
         }
         if a.script_timeout.0 == 0 || a.script_timeout > MAX_SCRIPT_TIMEOUT {
             return Err(format!("script_timeout is between 1s and {MAX_SCRIPT_TIMEOUT}"));
-        }
-        if self.permissions.profile != Profile::Read && !a.worktree && a.kind != ActionKind::Script {
-            return Err("profiles above read run in a worktree".into());
         }
         let p = &self.permissions;
         if let Some(bad) = p.allow_tools.iter().chain(&p.deny_tools).find(|t| t.trim().is_empty() || t.starts_with('-')) {

@@ -31,7 +31,7 @@ usage:
   sm inbox --dir <inbox>               (the relay's watcher: one JSON line per drop, forever)
   sm schedule add [<workspace>] --name <text> --every <when> (--command /<name> | --prompt-file <path> | --prompt <text>)
       [--id <id>] [--folder <folder>] [--script <path> [--script-arg <a>]... [--script-timeout 10m]]
-      [--profile read|worktree-edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
+      [--profile read|edit|auto] [--allow-tools <rule>]... [--deny-tools <rule>]... [--add-dir <dir>]...
       [--secret NAME]... [--model <model>] [--max-runtime 1h] [--max-tokens N] [--overlap skip|queue|restart]
       [--catch-up once|skip] [--wake] [--description <text>]
       <when>: 'weekly mon,fri 09:00' | 'daily 09:00' | 'interval 2h [from 08:00]'; a --script alone runs no session
