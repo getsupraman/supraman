@@ -80,6 +80,9 @@ only when Supraman starts depending on something an older CLI lacks, and say wha
 
 From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`): `supraman.exe --selftest` and
 `supraman.exe --selftest-supervise` both PASS, and `cargo test --workspace` passes in the repo.
+The selftests run on a hidden desktop of their own (their first line names it, their last says no selftest window
+had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
+on your desktop to watch it; it can then take your focus and read your held keys.
 
 ## The fm name
 

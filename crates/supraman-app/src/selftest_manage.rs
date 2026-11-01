@@ -68,7 +68,8 @@ async fn post_click(view: &Entity<FleetView>, key: &str, dx: f32, cx: &mut Async
 pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     use windows::Win32::UI::{
         Input::KeyboardAndMouse::{
-            GetKeyState, MAPVK_VK_TO_VSC, MapVirtualKeyW, VK_BACK, VK_CONTROL, VK_END, VK_ESCAPE, VK_LWIN, VK_MENU, VK_RETURN, VK_RWIN, VK_SHIFT,
+            GetAsyncKeyState, GetKeyState, GetKeyboardState, MAPVK_VK_TO_VSC, MapVirtualKeyW, SetKeyboardState, VK_BACK, VK_CONTROL, VK_END,
+            VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
             VkKeyScanW,
         },
         WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
@@ -81,6 +82,21 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
             .map(|(_, name)| name)
             .collect::<Vec<_>>()
     };
+    let stale = held();
+    if !stale.is_empty() {
+        let live: Vec<&str> = [(VK_CONTROL, "Ctrl"), (VK_MENU, "Alt"), (VK_SHIFT, "Shift")]
+            .into_iter()
+            .filter(|(vk, _)| unsafe { GetAsyncKeyState(vk.0 as i32) } as u16 & 0x8000 != 0)
+            .map(|(_, name)| name)
+            .collect();
+        let mut state = [0u8; 256];
+        unsafe { GetKeyboardState(&mut state) }.map_err(|e| anyhow!("GetKeyboardState: {e}"))?;
+        for vk in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN] {
+            state[vk.0 as usize] &= !0x80;
+        }
+        unsafe { SetKeyboardState(&state) }.map_err(|e| anyhow!("SetKeyboardState: {e}"))?;
+        println!("keys: {stale:?} held in the UI thread's key state (held on the keyboard: {live:?}); cleared there before posting {keys:?}");
+    }
     let started = Instant::now();
     while !held().is_empty() {
         if started.elapsed() > WITHIN {
@@ -455,21 +471,22 @@ pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncW
     }
 }
 
-/// A PNG of this process's main window, or its window titled `title`, as it is on screen.
+/// A PNG of this process's main window, or its window titled `title`, as the window paints itself.
 pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
-    let args: Vec<String> = title.iter().flat_map(|t| ["-Title".to_string(), t.to_string()]).collect();
-    shot_ps1(out, args, cx).await
+    let title = title.map(str::to_string);
+    cx.background_executor()
+        .spawn(async move {
+            let hwnd = crate::selftest_capture::window(title.as_deref())?;
+            crate::selftest_capture::print_window(hwnd, &out)?;
+            Ok(out)
+        })
+        .await
 }
 
 /// A PNG of the screen area `[x, y, width, height]` in physical pixels.
 pub(crate) async fn capture_screen(out: PathBuf, area: [i32; 4], cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
     let [x, y, w, h] = area;
-    shot_ps1(out, vec!["-Screen".into(), format!("{x},{y},{w},{h}")], cx).await
-}
-
-async fn shot_ps1(out: PathBuf, args: Vec<String>, cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
     let script = cargo_root().join("scripts").join("shot.ps1");
-    let pid = std::process::id().to_string();
     cx.background_executor()
         .spawn(async move {
             if let Some(dir) = out.parent() {
@@ -479,9 +496,9 @@ async fn shot_ps1(out: PathBuf, args: Vec<String>, cx: &mut AsyncWindowContext) 
                 supraman_core::process::command("pwsh")
                     .args(["-NoLogo", "-NoProfile", "-File"])
                     .arg(&script)
-                    .args(["-ProcessId", &pid, "-Out"])
+                    .arg("-Out")
                     .arg(&out)
-                    .args(&args),
+                    .args(["-Screen", &format!("{x},{y},{w},{h}")]),
                 Duration::from_secs(60),
                 supraman_core::process::Kill::Tree,
             )?;

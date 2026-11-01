@@ -5334,3 +5334,39 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - Selftest 7y step 9: plants an owned task, an unowned one, a non-claude one and one under `\Foreman-selftest` in
   the fake. Checks which rows are painted and the row's words, then the menu keys and Copy's text; Open in Task
   Scheduler opens `taskschd.msc` through a recording `open_with`. No fake write; unplanted and gone afterwards.
+
+## 2026-11-01 — sched2/9 The selftests stay out of René's way: a hidden desktop
+
+- **Probe** (`probes/sched2.9-desktop/run.ps1`, kept): a desktop made with `CreateDesktopW` in `WinSta0` (never
+  `SwitchDesktop`; the handle lacks `DESKTOP_SWITCHDESKTOP`), `supraman.exe --selftest` started on it through
+  `STARTUPINFOW.lpDesktop`. gpui creates and paints its window there (D3D11 + DirectComposition: no failure), posted
+  clicks and keys work, `PrintWindow(PW_RENDERFULLCONTENT)` of the window from inside the process gives real pixels,
+  and Windows OCR reads them. What failed: `scripts/shot.ps1` (pwsh, `Get-Process … MainWindowHandle`) captured a 75×75
+  black frame of some other window, so 7t failed "no ink". The window captures moved in-process
+  (`selftest_capture::{window, print_window}`, on a background thread while the UI thread pumps); `shot.ps1` keeps
+  only `-Screen`, for the tray-icon shot under `FOREMAN_SHOTS`, which a hidden desktop cannot take (no taskbar): it
+  says "skipped" there. The tray's tooltip check (7z) still passes. tray-icon prints "Error removing system tray icon"
+  on exit there.
+- **Shared**: `supraman_core::desktop::{HiddenDesktop, spawn_on, quote_arg, input_desktop_name, thread_desktop_name}`.
+  `spawn_on` is the one raw `CreateProcessW` (std's `Command` cannot set `lpDesktop`): `std::io::pipe` ends made
+  inheritable and passed through `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so the child inherits those two handles and no
+  other; the env block is this process's plus the given pairs. Its test has the child (Windows PowerShell 5.1)
+  print its own thread desktop's name. Red: without the `lpDesktop` line it prints `Default`.
+- **Default** (`selftest_desktop`): `--selftest`, `--selftest-supervise` and `--selftest-detach-shutdown` relaunch
+  themselves on a new hidden desktop and copy the child's stdout, stderr and exit code. `--visible` (last argument) or
+  `SUPRAMAN_SELFTEST_VISIBLE=1` runs on the user's desktop as before. The child gets `SUPRAMAN_SELFTEST_DESKTOP`, so
+  it and every selftest child it starts stay put. Red: without that check `relaunch_wanted` relaunches the child again.
+  The first output line says where the run is; the last says whether a window of this exe (same image path, another
+  pid) ever was the input desktop's foreground window, sampled every 100 ms (`FAIL isolation` if so).
+- **Key state** (`probes/sched2.9-desktop/keystate.ps1`, read only): a poller on a hidden desktop and one here, 90 to
+  120 s, while René typed. Here: 10 to 27 changes of GetKeyState/GetAsyncKeyState for Shift/Ctrl/Alt. Hidden: none,
+  even with its own window activated every 2 s. Yet one hidden run failed 7b on `["Ctrl"]` held in the UI thread's key
+  state for 5 s, and no selftest code posts `VK_CONTROL`. The source is unknown. `post_keys` now clears the modifier
+  bits of its own UI thread's key state (`GetKeyboardState`/`SetKeyboardState`, that thread only) before posting, and
+  prints `keys: [...] held in the UI thread's key state (held on the keyboard: [...])` when it had to. The 5 s guard
+  stays for `--visible`.
+- **Not done**: a synthetic "user" holding Shift. Injected input (`SendInput`, `keybd_event`) only reaches the input
+  desktop, which is René's, so there is no harmless way to make one. The hidden poller above and the focus sampler are
+  the automated evidence. Manual check: start `supraman.exe --selftest`, then click into Notepad and type with Shift
+  held for its whole run. Notepad keeps the focus and every character, no Supraman window appears, and the run PASSes
+  with `isolation: no window … had the focus`.

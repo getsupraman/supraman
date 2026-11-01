@@ -134,6 +134,10 @@ async fn tray_shot(dir: &Path, cx: &mut AsyncWindowContext) {
     if std::env::var_os("FOREMAN_SHOTS").is_none() {
         return;
     }
+    if std::env::var_os(crate::selftest_desktop::DESKTOP_VAR).is_some() {
+        println!("shot: ren-1-tray skipped: a hidden desktop has no taskbar ({} takes it)", crate::selftest_desktop::VISIBLE_FLAG);
+        return;
+    }
     let Some((rect, light)) = crate::tray_state() else {
         println!("shot: ren-1-tray failed: no tray icon rect");
         return;
