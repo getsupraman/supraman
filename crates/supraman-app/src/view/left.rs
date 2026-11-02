@@ -572,6 +572,12 @@ impl FleetView {
         false
     }
 
+    /// How many folder rows of `workspace` the sidebar holds, in view or not.
+    pub fn folder_rows(&self, workspace: &str) -> usize {
+        let (tree, rows) = &*self.left_rows;
+        rows.iter().filter(|r| matches!(r, LeftRow::Folder(w, _) if tree.workspaces[*w].name == workspace)).count()
+    }
+
     pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
         &self.left_list
     }
