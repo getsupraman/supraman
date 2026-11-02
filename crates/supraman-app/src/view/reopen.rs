@@ -87,6 +87,7 @@ impl FleetView {
 
     /// Called on every render, so every change to the tabs reaches the file; nothing is written while a quit closes them.
     pub(super) fn persist_tabs(&mut self, cx: &App) {
+        let _stall = supraman_ui::stall::section("render: persist_tabs");
         if !self.tabs_restored || self.tabs_frozen || self.quit_asked || self.home.is_none() {
             return;
         }

@@ -58,7 +58,7 @@ async fn recorded(out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec
 }
 
 /// The page's input, painted focused: only then do typed characters reach it.
-async fn start_tab(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<u64> {
+pub(crate) async fn start_tab(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<u64> {
     let tab = until(view, cx, WITHIN, "a prompt tab active", |v| v.active.filter(|id| v.start_page(*id).is_some())).await?;
     let deadline = std::time::Instant::now() + WITHIN;
     loop {

@@ -5618,3 +5618,21 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **The cargo gate needs `plugins\supraman` above the target dir** (the "Dev build" junction of the Supraman rename entry): without it
   three `sm` `want` tests fail with "No Supraman plugin for …\sm.exe".
 - Gate: gitleaks `--all --redact --exit-code 1` no leaks; `cargo test --release --workspace` 917 passed, 0 failed.
+
+## 2026-11-02 — responsive/1 keystroke-to-paint with René's load
+
+- **The prompt "hang" is renders queued behind keys, not a blocked call.** Step 7+r injects 460 live and 2800 closed
+  fixture sessions and types into New task… at 12 keys/s: keystroke-to-paint p50 3731 ms, p95 6485 ms, max 6796 ms;
+  frames p50 186 ms, all over 100 ms. Each frame costs more than the gap between keys, so the delay grows with every key.
+  One core is pinned, which a many-core machine shows as an almost idle CPU.
+- **Where a frame goes (supraman_ui::stall):** `render` 120–137 ms with the prompt open, `render: left` ~64 ms,
+  `FleetView::tree()` (fleet::build over every live and closed session) ~56 ms, called twice or more per frame
+  (render_left, start_sections, details); `render: right` ~56 ms is its second build. The foreground heartbeat saw one
+  11373 ms hold while keys queued. Without the prompt open a frame is ~65–70 ms.
+- **Ruled out:** blocking IO on the UI thread (the poll, transcript scan, schedules, WorkState and updates do theirs on
+  the background executor); gpui's `notify_text_input_changed`, a no-op on Windows (`text_input_state_changed` keeps
+  the default impl); text shaping, cached per line, so a long prompt reshapes only the edited line.
+- **Every keystroke, caret blink (530 ms) and terminal Wakeup (any tab, batched at 4 ms) re-renders the root view**, so
+  the per-frame cost is paid at the rate of whichever is fastest.
+- **René's machine at the time:** 531 processes, ~257k handles, 34 orphaned `tail -F | grep` watcher pairs from expired
+  Monitor watches (parents gone; killed). Machine load, not the cause: the fixture reproduces the hang alone.

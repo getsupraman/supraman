@@ -1032,6 +1032,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let tasked = step("7+t", crate::selftest_start::run(view, &home(), cx)).await?;
     println!("step 7+t: {tasked}");
 
+    let responsive = step("7+r", crate::selftest_responsive::run(view, cx)).await?;
+    println!("step 7+r: {responsive}");
+
     let branded = step("7z", crate::selftest_brand::run(view, cx)).await?;
     println!("step 7z: {branded}");
 

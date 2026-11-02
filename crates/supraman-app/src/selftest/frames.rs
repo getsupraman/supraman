@@ -18,7 +18,7 @@ pub(crate) const OWN_WORK_P10_MS: f64 = 16.0;
 /// Idle at 60 Hz is 16.67 ms; a baseline whose median is above this is not a quiet machine.
 const QUIET_P50_MS: f64 = 18.5;
 /// Other processes at this share of the CPU lift own work p10 over its budget (F-94).
-const BUSY_CPU: f64 = 0.35;
+pub(crate) const BUSY_CPU: f64 = 0.35;
 const BASELINE: Duration = Duration::from_secs(1);
 const CALM_WITHIN: Duration = Duration::from_secs(60);
 

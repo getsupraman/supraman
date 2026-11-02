@@ -313,10 +313,12 @@ pub struct FleetView {
     left_servers: std::collections::HashSet<String>,
     left_pending: Vec<String>,
     pub closed: Vec<Session>,
+    /// A selftest's closed sessions, kept across transcript scans.
+    pub injected_closed: Vec<Session>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub transcript_scans: u64,
     pub transcripts_nudge: Nudge,
-    poll_nudge: Nudge,
+    pub poll_nudge: Nudge,
     pub refresh_asks: u64,
     refreshes_answered: u64,
     /// The first poll's snapshot (or its failure) is applied.
@@ -809,6 +811,7 @@ impl FleetView {
             left_servers: Default::default(),
             left_pending: Vec::new(),
             closed: Vec::new(),
+            injected_closed: Vec::new(),
             closed_repos: StdHashMap::new(),
             transcript_scans: 0,
             transcripts_nudge,
@@ -945,6 +948,7 @@ impl FleetView {
                             this.main_repos.extend(known.clone());
                             this.closed_repos = known;
                             this.closed = closed;
+                            this.closed.extend(this.injected_closed.iter().cloned());
                             this.drop_deleted();
                             this.transcripts_read = true;
                             this.check_loaded(cx);
@@ -1004,6 +1008,7 @@ impl FleetView {
                         }
                         this.transcripts_read = true;
                         this.closed = closed;
+                        this.closed.extend(this.injected_closed.iter().cloned());
                         this.drop_deleted();
                         this.transcripts_progress = None;
                         this.transcripts_answered = asks;
@@ -1339,6 +1344,7 @@ impl FleetView {
     }
 
     fn apply(&mut self, refresh: Refresh) {
+        let _stall = supraman_ui::stall::section("poll: apply");
         match refresh.workspaces {
             Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
             Ok((workspaces, skipped)) => {
@@ -1430,6 +1436,7 @@ impl FleetView {
     }
 
     pub fn tree(&self) -> Tree {
+        let _stall = supraman_ui::stall::section("tree");
         let sup = Supervised {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
@@ -2587,6 +2594,7 @@ fn held_line(why: &str) -> String {
 
 impl FleetView {
     fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let _stall = supraman_ui::stall::section("render: right");
         let colors = cx.theme().colors().clone();
         let headers = self
             .tabs
@@ -2727,6 +2735,7 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
 
 impl Render for FleetView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _stall = supraman_ui::stall::section("render");
         self.probe.on_render(window);
         if !self.painted_sessions && self.sessions_read {
             self.painted_sessions = true;

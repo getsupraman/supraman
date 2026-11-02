@@ -98,6 +98,7 @@ impl FleetView {
 
     /// Each session page takes its row from this poll's tree, or keeps the last one seen.
     pub(super) fn refresh_details(&mut self) {
+        let _stall = supraman_ui::stall::section("poll: refresh_details");
         if !self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Details(p) if matches!(p.target, MenuTarget::Session { .. }))) {
             return;
         }
