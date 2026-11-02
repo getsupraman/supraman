@@ -21,7 +21,7 @@ use crate::client::{BearerSource, api_base};
 use crate::http::pct_encode;
 use crate::secret::{SecretStore, default_store};
 
-pub const SCOPE: &str = "workstate.read workstate.sessions offline_access";
+pub const SCOPE: &str = "workman.read workman.sessions offline_access";
 /// What DCR registers; the server ignores the port of a loopback redirect.
 pub const REGISTERED_REDIRECT: &str = "http://127.0.0.1/callback";
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);

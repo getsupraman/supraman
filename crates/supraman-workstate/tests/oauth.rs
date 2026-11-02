@@ -65,7 +65,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     let q = location_query(&url);
     assert_eq!(url.matches("resource=").count(), 1, "exactly one resource");
     assert_eq!(q["resource"], format!("{}/api", fake.base()));
-    assert_eq!(q["scope"], "workstate.read workstate.sessions offline_access");
+    assert_eq!(q["scope"], "workman.read workman.sessions offline_access");
     assert_eq!((q["code_challenge_method"].as_str(), q["response_type"].as_str()), ("S256", "code"));
     assert!(q["redirect_uri"].starts_with("http://127.0.0.1:") && q["redirect_uri"].ends_with("/callback"));
     assert!(q["state"].len() >= 16 && q["code_challenge"].len() == 43);
@@ -120,6 +120,38 @@ fn refresh_rotates_and_stores_the_new_refresh_token() {
     oauth.set_access_ttl(3600);
     let a3 = auth.access_token(fake.base()).unwrap();
     assert_eq!(auth.access_token(fake.base()).unwrap(), a3);
+}
+
+#[test]
+fn sign_in_asks_for_the_workman_scopes() {
+    let (_dir, fake, oauth, _store, auth) = setup();
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert_eq!(oauth.grant_scopes(), ["workman.read workman.sessions offline_access"]);
+    let register = fake.seen().into_iter().find(|s| s.target == "/connect/register").unwrap();
+    assert!(register.body.contains(r#""scope":"workman.read workman.sessions offline_access""#), "{}", register.body);
+}
+
+#[test]
+fn a_grant_under_the_old_scope_names_refreshes_until_they_go_then_one_sign_in_mends_it() {
+    let (_dir, fake, oauth, store, auth) = setup();
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    oauth.rescope_grants("workstate.read workstate.sessions offline_access");
+    let client = Client::with_source(fake.base(), auth.bearer_for(fake.base()));
+    assert!(auth.access_token(fake.base()).is_ok(), "Workman 2.0 still refreshes a grant under the old names");
+
+    oauth.drop_legacy_scopes();
+    let e = auth.access_token(fake.base()).unwrap_err();
+    assert!(matches!(&e, AuthError::SignInAgain { why, .. } if why.contains("invalid_scope")), "{e}");
+    assert!(matches!(auth.status(fake.base()), AuthStatus::SignInAgain(_)));
+    assert!(client.overview().unwrap_err().to_string().contains("sign in to Workman"));
+
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert_eq!(oauth.grant_scopes().last().map(String::as_str), Some("workman.read workman.sessions offline_access"));
+    let rt = store.get(&oauth.issuer()).unwrap().unwrap();
+    assert!(auth.access_token(fake.base()).is_ok());
+    assert_ne!(store.get(&oauth.issuer()).unwrap().unwrap(), rt, "the new grant refreshes");
+    assert!(client.overview().is_ok());
 }
 
 #[test]
