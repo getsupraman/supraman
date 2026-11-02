@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use supraman_workstate::Auth;
+use supraman_workman::Auth;
 
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
     let mut settings = supraman_core::Settings::load(home).unwrap_or_default();
-    settings.workstate.url = Some(base.to_string());
+    settings.workman.url = Some(base.to_string());
     settings.save(home).unwrap();
-    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workstate::MemoryStore::default())));
-    auth.sign_in(base, &supraman_workstate::auth::http_browser()).unwrap();
+    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workman::MemoryStore::default())));
+    auth.sign_in(base, &supraman_workman::auth::http_browser()).unwrap();
     auth
 }
 
@@ -15,7 +15,7 @@ mod tests {
     use std::path::Path;
 
     use supraman_core::Settings;
-    use supraman_workstate::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkman};
 
     use supraman_supervisor::{AppTokens, TokenProvider};
 
@@ -26,10 +26,10 @@ mod tests {
     fn provider_is_the_sign_in_none_without_one_an_error_when_broken() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
-        let fake = FakeWorkState::start(vec![]);
+        let fake = FakeWorkman::start(vec![]);
         let oauth = fake.enable_oauth();
-        Settings { workstate: supraman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
-        let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workstate::MemoryStore::default()))) };
+        Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
+        let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default()))) };
         assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no Workman");
 
         oauth.set_access_ttl(60);
@@ -66,7 +66,7 @@ mod tests {
         use supraman_supervisor::{Budget, DesiredState, LaunchConfig, Supervisor};
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
-        let fake = FakeWorkState::start(vec![
+        let fake = FakeWorkman::start(vec![
             (
                 "/api/agent-sessions".into(),
                 Answer::status(
@@ -153,9 +153,9 @@ mod tests {
             let body = format!(r#"{{"sessionId":"{id}","name":"fm-demo-workspace","role":"controller","token":"{token}"}}"#);
             vec![("/api/agent-sessions".to_string(), Answer::status(201, body))]
         };
-        let a = FakeWorkState::start(minted("91", "wss_from_a"));
+        let a = FakeWorkman::start(minted("91", "wss_from_a"));
         a.enable_oauth();
-        let b = FakeWorkState::start(minted("92", "wss_from_b"));
+        let b = FakeWorkman::start(minted("92", "wss_from_b"));
         b.enable_oauth();
         let auth = signed_in(&home, a.base());
         let mut desired = DesiredState::workspace_controller("demo", r"C:\demo", "be the controller");
@@ -171,11 +171,11 @@ mod tests {
         assert!(std::fs::read_to_string(&file).unwrap().contains(&format!("{}/mcp", a.base())));
 
         let mut settings = Settings::load(&home).unwrap();
-        settings.workstate.url = Some(b.base().into());
+        settings.workman.url = Some(b.base().into());
         settings.save(&home).unwrap();
         assert_eq!(server(), None, "not signed in to B yet");
         assert!(sup.server_changed(server().as_deref()).is_empty());
-        auth.sign_in(b.base(), &supraman_workstate::auth::http_browser()).unwrap();
+        auth.sign_in(b.base(), &supraman_workman::auth::http_browser()).unwrap();
         assert_eq!(sup.server_changed(server().as_deref()), [("fm-demo-workspace".to_string(), Some(a.base().to_string()))]);
 
         sup.launcher().0.borrow_mut().clear();

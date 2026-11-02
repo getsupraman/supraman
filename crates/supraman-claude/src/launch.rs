@@ -123,8 +123,6 @@ pub struct SessionIdentity {
 /// The `mcpServers` key of a session's Workman server: its tools are `mcp__workman__*`, and a [+] session's entry
 /// overrides the user-scope server of the same name (`/workman:setup` registers it).
 pub const MCP_SERVER: &str = "workman";
-/// The key of a config written before [`MCP_SERVER`]; Workman serves it until 2.0.
-pub const LEGACY_MCP_SERVER: &str = "workstate";
 
 /// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
 pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
@@ -157,7 +155,7 @@ pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers
     Ok(path)
 }
 
-/// `<dir>/workstate-<agent>.json`, the one file of `agent`'s WorkState config; `agent` must be a plain session name.
+/// `<dir>/workstate-<agent>.json`, the one file of `agent`'s Workman config; `agent` must be a plain session name.
 pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     let plain = !agent.is_empty()
         && !agent.starts_with('.')
@@ -168,12 +166,11 @@ pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     Ok(dir.join(format!("workstate-{agent}.json")))
 }
 
-/// The WorkState URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
+/// The Workman URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let servers = &v["mcpServers"];
-    servers[MCP_SERVER]["url"].as_str().or_else(|| servers[LEGACY_MCP_SERVER]["url"].as_str()).map(str::to_string)
+    v["mcpServers"][MCP_SERVER]["url"].as_str().map(str::to_string)
 }
 
 #[cfg(windows)]
@@ -519,9 +516,6 @@ mod tests {
         assert_ne!(path_b, path, "one file per session");
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path_b).unwrap()).unwrap();
         assert_eq!(v["mcpServers"]["workman"]["headers"]["X-Extra"], "1");
-        let legacy = mcp.join("workstate-fm-demo-gamma.json");
-        std::fs::write(&legacy, r#"{"mcpServers":{"workstate":{"type":"http","url":"https://old.example/mcp"}}}"#).unwrap();
-        assert_eq!(mcp_config_url(&mcp, "fm-demo-gamma").as_deref(), Some("https://old.example/mcp"), "a config written under the old key still reads");
         for bad in ["", "..", "../x", r"a\b", "a b"] {
             assert!(write_mcp_config(&mcp, bad, "u", "fake-token", &[]).is_err(), "{bad:?}");
             assert!(mcp_config_path(&mcp, bad).is_err(), "{bad:?}");

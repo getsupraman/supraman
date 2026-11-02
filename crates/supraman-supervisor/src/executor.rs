@@ -35,10 +35,10 @@ impl Launcher for Claude {
 /// OAuth access token, never written anywhere.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RoleToken {
-    /// The WorkState MCP URL; its origin is the API's base.
+    /// The Workman MCP URL; its origin is the API's base.
     pub url: String,
     pub token: String,
-    /// The WorkState role the session is minted with (controller, orchestrator, worker).
+    /// The Workman role the session is minted with (controller, orchestrator, worker).
     pub role: String,
 }
 
@@ -50,13 +50,13 @@ impl std::fmt::Debug for RoleToken {
 
 /// Where the bearer comes from: the app's sign-in.
 pub trait TokenProvider {
-    /// `Ok(None)`: not signed in, so the role launches without a WorkState server. `Err`: signed in but
+    /// `Ok(None)`: not signed in, so the role launches without a Workman server. `Err`: signed in but
     /// no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
     fn token(&self, role: &str) -> Result<Option<RoleToken>, String>;
 }
 
 /// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
-/// session gets the role's WorkState server or none, never the user-scope one.
+/// session gets the role's Workman server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
     /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
@@ -75,7 +75,7 @@ pub struct LaunchConfig {
 }
 
 impl LaunchConfig {
-    /// The `claude --bg` of `w` in `workspace`, before its WorkState token: what the supervisor launches and
+    /// The `claude --bg` of `w` in `workspace`, before its Workman token: what the supervisor launches and
     /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `FOREMAN_*` env.
     pub fn launch_spec(&self, workspace: &str, w: &WantedSession, env: &[(&str, &str)]) -> LaunchSpec {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
@@ -472,8 +472,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 
     /// Mints `w`'s own token with the signed-in bearer, always with `replace` (a relaunch or resume gets a
-    /// fresh token on the same WorkState row), and remembers its `sessionId`. Returns the MCP URL and the
-    /// minted token; `None` when the role has no WorkState (not signed in). A failed mint fails the launch.
+    /// fresh token on the same Workman row), and remembers its `sessionId`. Returns the MCP URL and the
+    /// minted token; `None` when the role has no Workman (not signed in). A failed mint fails the launch.
     ///
     /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
     /// ignores `--session-id` (m5/40 probe), so a launch sends none and its row's id is PATCHed later
@@ -790,7 +790,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 }
 
-/// What `w` tells WorkState about itself: its name, `foreman/<workspace>` as launcher, the repo in its
+/// What `w` tells Workman about itself: its name, `foreman/<workspace>` as launcher, the repo in its
 /// origin, its cwd and Foreman role.
 pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
     let launched_by = format!("foreman/{workspace}");
@@ -908,7 +908,7 @@ mod tests {
         }
     }
 
-    /// The same bearer for every role, with the WorkState role the app maps it to; `.1` an error instead.
+    /// The same bearer for every role, with the Workman role the app maps it to; `.1` an error instead.
     struct FakeTokens(Option<RoleToken>, Option<String>);
 
     impl TokenProvider for FakeTokens {
@@ -949,7 +949,7 @@ mod tests {
         /// Popped per mint; empty means success.
         mint_errors: Vec<MintError>,
         revoke_error: Option<MintError>,
-        /// One WorkState row per name, as `replace` keeps it.
+        /// One Workman row per name, as `replace` keeps it.
         rows: Vec<String>,
         minted: u32,
     }

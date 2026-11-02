@@ -1,4 +1,4 @@
-//! The one HTTP agent every WorkState call and the update check use, and how its answers are read.
+//! The one HTTP agent every Workman call and the update check use, and how its answers are read.
 
 use std::time::Duration;
 

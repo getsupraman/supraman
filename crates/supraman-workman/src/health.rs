@@ -24,13 +24,13 @@ fn transport(e: &ureq::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{Answer, FakeWorkState};
+    use crate::fake::{Answer, FakeWorkman};
 
     const QUICK: Duration = Duration::from_secs(3);
 
     #[test]
     fn a_2xx_is_healthy_anything_else_says_why() {
-        let fake = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
+        let fake = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
         assert_eq!(health(&fake.mcp_url(), QUICK), Ok(()));
         let seen = fake.seen();
         assert_eq!(seen.last().map(|s| (s.target.as_str(), s.authorization.clone())), Some(("/health", None)), "no token sent");

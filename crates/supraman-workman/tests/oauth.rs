@@ -5,19 +5,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use supraman_core::Settings;
-use supraman_workstate::auth::{http_browser, http_browser_with};
-use supraman_workstate::fake::{Answer, FakeWorkState, location_query};
-use supraman_workstate::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
+use supraman_workman::auth::{http_browser, http_browser_with};
+use supraman_workman::fake::{Answer, FakeWorkman, location_query};
+use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
 
 fn overview() -> Answer {
     Answer::json(r#"{"asOf":"2026-10-28T10:00:00+00:00","seq":1,"projects":[],"workingNow":[],"inboxCount":0}"#)
 }
 
-fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<supraman_workstate::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
+fn setup() -> (tempfile::TempDir, FakeWorkman, Arc<supraman_workman::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
     let dir = tempfile::tempdir().unwrap();
-    let fake = FakeWorkState::start(vec![("/api/v1/overview".into(), overview())]);
+    let fake = FakeWorkman::start(vec![("/api/v1/overview".into(), overview())]);
     let oauth = fake.enable_oauth();
-    Settings { workstate: supraman_core::WorkStateSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
+    Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
     let store = Arc::new(MemoryStore::default());
     let auth = Arc::new(Auth::with_store(dir.path(), store.clone()).with_sign_in_timeout(Duration::from_secs(10)));
     (dir, fake, oauth, store, auth)
@@ -65,7 +65,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     let q = location_query(&url);
     assert_eq!(url.matches("resource=").count(), 1, "exactly one resource");
     assert_eq!(q["resource"], format!("{}/api", fake.base()));
-    assert_eq!(q["scope"], "workstate.read workstate.sessions offline_access");
+    assert_eq!(q["scope"], "workman.read workman.sessions offline_access");
     assert_eq!((q["code_challenge_method"].as_str(), q["response_type"].as_str()), ("S256", "code"));
     assert!(q["redirect_uri"].starts_with("http://127.0.0.1:") && q["redirect_uri"].ends_with("/callback"));
     assert!(q["state"].len() >= 16 && q["code_challenge"].len() == 43);
@@ -120,6 +120,38 @@ fn refresh_rotates_and_stores_the_new_refresh_token() {
     oauth.set_access_ttl(3600);
     let a3 = auth.access_token(fake.base()).unwrap();
     assert_eq!(auth.access_token(fake.base()).unwrap(), a3);
+}
+
+#[test]
+fn sign_in_asks_for_the_workman_scopes() {
+    let (_dir, fake, oauth, _store, auth) = setup();
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert_eq!(oauth.grant_scopes(), ["workman.read workman.sessions offline_access"]);
+    let register = fake.seen().into_iter().find(|s| s.target == "/connect/register").unwrap();
+    assert!(register.body.contains(r#""scope":"workman.read workman.sessions offline_access""#), "{}", register.body);
+}
+
+#[test]
+fn a_grant_under_the_old_scope_names_refreshes_until_they_go_then_one_sign_in_mends_it() {
+    let (_dir, fake, oauth, store, auth) = setup();
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    oauth.rescope_grants("workstate.read workstate.sessions offline_access");
+    let client = Client::with_source(fake.base(), auth.bearer_for(fake.base()));
+    assert!(auth.access_token(fake.base()).is_ok(), "Workman 2.0 still refreshes a grant under the old names");
+
+    oauth.drop_legacy_scopes();
+    let e = auth.access_token(fake.base()).unwrap_err();
+    assert!(matches!(&e, AuthError::SignInAgain { why, .. } if why.contains("invalid_scope")), "{e}");
+    assert!(matches!(auth.status(fake.base()), AuthStatus::SignInAgain(_)));
+    assert!(client.overview().unwrap_err().to_string().contains("sign in to Workman"));
+
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    assert_eq!(oauth.grant_scopes().last().map(String::as_str), Some("workman.read workman.sessions offline_access"));
+    let rt = store.get(&oauth.issuer()).unwrap().unwrap();
+    assert!(auth.access_token(fake.base()).is_ok());
+    assert_ne!(store.get(&oauth.issuer()).unwrap().unwrap(), rt, "the new grant refreshes");
+    assert!(client.overview().is_ok());
 }
 
 #[test]
@@ -230,7 +262,7 @@ fn sign_out_revokes_the_grant_and_forgets_everything() {
 #[test]
 fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replaced() {
     let (_dir, fake, oauth, _store, auth) = setup();
-    let res = supraman_workstate::http_agent(Duration::from_secs(5)).get(format!("{}/api/v1/overview", fake.base())).call().unwrap();
+    let res = supraman_workman::http_agent(Duration::from_secs(5)).get(format!("{}/api/v1/overview", fake.base())).call().unwrap();
     assert_eq!(res.status().as_u16(), 401);
     let www = res.headers().get("www-authenticate").unwrap().to_str().unwrap().to_string();
     assert_eq!(www, format!(r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource/api""#, fake.base()));
@@ -240,7 +272,7 @@ fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replac
     client.overview().unwrap();
     // the server forgets the access token (not the grant): the 401 makes the client refresh once
     let held = auth.access_token(fake.base()).unwrap();
-    let revoke = supraman_workstate::http_agent(Duration::from_secs(5))
+    let revoke = supraman_workman::http_agent(Duration::from_secs(5))
         .post(format!("{}/connect/revoke", fake.base()))
         .content_type("application/x-www-form-urlencoded")
         .send(format!("token={held}").as_str())
@@ -262,7 +294,7 @@ fn revoke_at(home: &Path, origin: &str, url: &str) {
 fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_token() {
     let (dir, old, _old_oauth, _store, auth) = setup();
     auth.sign_in(old.base(), &http_browser()).unwrap();
-    let new = FakeWorkState::start(vec![]);
+    let new = FakeWorkman::start(vec![]);
     new.enable_oauth();
     auth.sign_in(new.base(), &http_browser()).unwrap();
     // accepts the connection and never answers: the slowest a gone server can be
@@ -300,7 +332,7 @@ fn the_fake_names_why_it_refuses_a_refresh_and_its_ids_are_not_guessable() {
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     let first = store.get(&oauth.issuer()).unwrap().unwrap();
     auth.access_token(fake.base()).unwrap();
-    let other = FakeWorkState::start(vec![]);
+    let other = FakeWorkman::start(vec![]);
     let other_oauth = other.enable_oauth();
     Auth::with_store(_dir.path(), Arc::new(MemoryStore::default())).sign_in(other.base(), &http_browser()).unwrap();
     for id in oauth.registered().iter().chain(oauth.issued().iter()) {
@@ -433,11 +465,11 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
     assert_eq!(store.get(&oauth.issuer()).unwrap().as_ref(), oauth.issued().last());
 }
 
-/// WorkState 1.0.0's refresh tokens are 6 KB.
+/// Workman 1.0.0's refresh tokens are 6 KB.
 #[cfg(windows)]
 #[test]
 fn a_6_kb_refresh_token_rotates_through_the_file_store() {
-    use supraman_workstate::secret::FileStore;
+    use supraman_workman::secret::FileStore;
     let (dir, fake, oauth, _store, _auth) = setup();
     let store = || Arc::new(FileStore::new(dir.path()));
     oauth.set_access_ttl(60);

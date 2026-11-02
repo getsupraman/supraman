@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use supraman_core::Settings;
-use supraman_workstate::AuthStatus;
-use supraman_workstate::fake::{Answer, FakeWorkState};
+use supraman_workman::AuthStatus;
+use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{
@@ -102,7 +102,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} Workman rows read with them", fresh.len(), rows.len()));
 
-    let other = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
+    let other = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
     let revoked = oauth.revoked();
     handle.update(cx, |s, _, cx| s.set_url_text(other.base(), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -111,7 +111,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         matches!(&v.workstate, WsStatus::Ready { url, .. } if url == other.base()).then_some(())
     })
     .await?;
-    if Settings::load(&home)?.workstate.origin() != other.base() {
+    if Settings::load(&home)?.workman.origin() != other.base() {
         bail!("the new URL was not saved after the sign-in there");
     }
     let started = Instant::now();
@@ -131,8 +131,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
-    if !error.contains(&closed) || Settings::load(&home)?.workstate.origin() != other.base() {
-        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workstate.origin());
+    if !error.contains(&closed) || Settings::load(&home)?.workman.origin() != other.base() {
+        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workman.origin());
     }
     shot_window("m5-43-settings-switch-failed", Some("Supraman Settings"), cx).await;
     lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
@@ -146,7 +146,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     view.update(cx, |v, cx| v.close_settings(cx));
 
-    Settings { workstate: supraman_core::WorkStateSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
+    Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
     view.update(cx, |v, _| v.recheck_workstate());
     let down = until(view, cx, "the unreachable notice", |v| {
         (v.workstate.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workstate_notice()).flatten()

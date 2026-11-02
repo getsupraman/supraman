@@ -379,7 +379,7 @@ mod tests {
     use supraman_core::update::{SigningKey, sign};
 
     use super::*;
-    use crate::fake::{Answer, FakeWorkState};
+    use crate::fake::{Answer, FakeWorkman};
 
     const LATEST: &str = "/repos/getsupraman/supraman/releases/latest";
     const MANIFEST_AT: &str = "/download/supraman-update.json";
@@ -418,8 +418,8 @@ mod tests {
     }
 
     /// A fake serving release `tag` with a manifest of `version` signed by `signer`.
-    fn serve(tag: &str, version: &str, signer: &SigningKey) -> FakeWorkState {
-        let fake = FakeWorkState::start(Vec::new());
+    fn serve(tag: &str, version: &str, signer: &SigningKey) -> FakeWorkman {
+        let fake = FakeWorkman::start(Vec::new());
         let base = fake.base().to_string();
         let bytes = manifest(version).to_bytes();
         fake.set(LATEST, Answer::json(release(&base, tag)).api(None).header("ETag", "\"e1\""));
@@ -428,7 +428,7 @@ mod tests {
         fake
     }
 
-    fn source(fake: &FakeWorkState, running: &str) -> Source {
+    fn source(fake: &FakeWorkman, running: &str) -> Source {
         Source { api: fake.base().into(), repo: REPO.into(), keys: Ok(vec![key(1).verifying_key()]), running: Version::parse(running).unwrap() }
     }
 
@@ -597,7 +597,7 @@ mod tests {
     }
 
     /// Release `version`'s zip served at `/download/zip` (behind a redirect), and what the check would offer.
-    fn offered(fake: &FakeWorkState, version: &str, zip: &[u8]) -> Available {
+    fn offered(fake: &FakeWorkman, version: &str, zip: &[u8]) -> Available {
         let (sha256, size) = {
             let tmp = tempfile::NamedTempFile::new().unwrap();
             std::fs::write(tmp.path(), zip).unwrap();
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn a_download_is_checked_against_the_manifest_and_unpacked_with_progress() {
         let home = tempfile::tempdir().unwrap();
-        let fake = FakeWorkState::start(Vec::new());
+        let fake = FakeWorkman::start(Vec::new());
         let available = offered(&fake, "0.2.0", &release_zip("0.2.0"));
         let mut seen = Vec::new();
         let got = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |d, t| seen.push((d, t))).unwrap();
@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn a_zip_that_does_not_match_the_signed_manifest_is_deleted_and_refused() {
         let home = tempfile::tempdir().unwrap();
-        let fake = FakeWorkState::start(Vec::new());
+        let fake = FakeWorkman::start(Vec::new());
         let mut available = offered(&fake, "0.2.0", &release_zip("0.2.0"));
         available.manifest.sha256 = "cd".repeat(32);
         let err = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap_err();
@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn a_release_whose_version_file_differs_from_its_manifest_is_refused() {
         let home = tempfile::tempdir().unwrap();
-        let fake = FakeWorkState::start(Vec::new());
+        let fake = FakeWorkman::start(Vec::new());
         let mut available = offered(&fake, "0.2.0", &release_zip("0.3.0"));
         available.manifest.version = "0.2.0".into();
         let err = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap_err();
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn a_cancelled_download_keeps_nothing() {
         let home = tempfile::tempdir().unwrap();
-        let fake = FakeWorkState::start(Vec::new());
+        let fake = FakeWorkman::start(Vec::new());
         let zip = release_zip("0.2.0");
         let available = offered(&fake, "0.2.0", &zip);
         fake.set("/cdn/zip", Answer::bytes(zip).paced(16 * 1024, Duration::from_millis(20)));

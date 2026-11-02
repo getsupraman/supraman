@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use supraman_workstate::Auth;
+use supraman_workman::Auth;
 
 static AUTHS: OnceLock<Mutex<HashMap<PathBuf, Arc<Auth>>>> = OnceLock::new();
 static HTTP_BROWSER: AtomicBool = AtomicBool::new(false);
@@ -22,13 +22,13 @@ pub fn use_http_browser() {
 
 pub fn browser() -> Box<dyn Fn(&str) -> Result<(), String> + Send + Sync> {
     if HTTP_BROWSER.load(Ordering::SeqCst) {
-        Box::new(supraman_workstate::auth::http_browser())
+        Box::new(supraman_workman::auth::http_browser())
     } else {
         Box::new(open_system_browser)
     }
 }
 
-pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workstate::AuthStatus, supraman_workstate::AuthError> {
+pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workman::AuthStatus, supraman_workman::AuthError> {
     let auth = auth(home);
     let status = auth.sign_in(origin, &browser())?;
     if let Some(issuer) = auth.issuer_of(origin) {
@@ -39,7 +39,7 @@ pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workstate::AuthStat
 
 pub fn forget_own_credentials() -> Vec<String> {
     let issuers = std::mem::take(&mut *ISSUERS.lock().unwrap_or_else(|e| e.into_inner()));
-    issuers.iter().filter_map(|(home, issuer)| supraman_workstate::secret::default_store(home).delete(issuer).err()).collect()
+    issuers.iter().filter_map(|(home, issuer)| supraman_workman::secret::default_store(home).delete(issuer).err()).collect()
 }
 
 #[cfg(windows)]

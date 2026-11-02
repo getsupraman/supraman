@@ -84,7 +84,7 @@ impl RealHost {
         Self {
             store: supraman_core::secret::default_store(home),
             claude: Claude::default(),
-            tokens: AppTokens { auth: supraman_workstate::Auth::open(home) },
+            tokens: AppTokens { auth: supraman_workman::Auth::open(home) },
             minter: HttpMinter::default(),
         }
     }
@@ -120,7 +120,7 @@ impl SessionHost for RealHost {
     }
 }
 
-/// [`Host::end_dead_session`] with `host`'s claude and WorkState.
+/// [`Host::end_dead_session`] with `host`'s claude and Workman.
 pub fn end_dead_session(host: &dyn SessionHost, home: &Path, session: &LiveSession) -> Result<(), String> {
     let mut failed = Vec::new();
     if let Err(e) = host.claude().stop(&session.id) {

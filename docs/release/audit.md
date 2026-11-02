@@ -30,7 +30,7 @@ No real secret anywhere in the history: gitleaks finds one hit, a fake token in 
 Nomos data: the legal vocabulary sweep has **zero** hits in all history, and nothing from `P:\Projects\Magic\Nomos` was copied in;
 `Nomos` occurs only as DIKAIA's product and repo names (`Nomos`, `Nomos.Pdf`, `Nomos.Extract`, workspace `nomos`) used as test data.
 Every `wss_` token in history is a test fake (`wss_selftest`, `wss_from_a`, `wss_from_b`, `wss_run_token_7f3c`). The only host other
-than public/example ones is `workstate.dikaia.ai` (the default WorkState server, René's public company domain: left). Personal data
+than public/example ones is `workstate.dikaia.ai` (the default Workman server, René's public company domain: left). Personal data
 that does go public: René's personal e-mail as author and committer of all 457 commits (history only), his Windows user and machine
 name in two research docs (fixed in the tree, still in history), and his folder layout (`P:\Projects\LarchSys\…`, `C:\fmbuild\…`) in
 test fixtures and the internal docs.
@@ -70,7 +70,7 @@ found`, exit 0. Working tree (`--no-git`): no leaks found.
 | `crates/supraman-app/src/brand.rs:61`, `crates/supraman-app/assets/brand/NOTICE.md:4` | path of the brand kit on René's machine (`P:\Projects\LarchSys\getsupraman\brand`); the test compares against it when it exists | accept, or name the kit's repo instead (`SUPRAMAN_BRAND_KIT` already overrides) |
 | `crates/supraman-app/src/fleet.rs:623-638,1038-1039`, `tab_card.rs:111-117`, `supraman-claude/src/launch.rs:419,538,570,577`, `transcript.rs:862`, `supraman-core/src/paths.rs:96-102`, `supraman-term/src/events.rs:349,356` | `P:\Projects\…` test paths; `fleet.rs:1038` describes René's real registry (workspaces `foreman`, `gaia`, `larchsys`; repos `AutoWork`, `Skills`, `Gaia`, `NodeApi`, `node-api-dotnet`) | accept: folder and repo names only, no data |
 | `crates/supraman-app/src/hand.rs:505-541`, `README.md:49`, `docs/RELEASE.md:19,141,144,199` | `C:\Tools\supraman` as the example install folder | accept (documented example) |
-| `crates/supraman-core/src/settings.rs`, `url.rs`, `crates/sm/tests/work.rs`, `plugins/supraman/README.md`, `supraman-app/src/settings_window.rs` | `https://workstate.dikaia.ai`, the default WorkState server | leave (René's public domain; a default URL is behaviour) |
+| `crates/supraman-core/src/settings.rs`, `url.rs`, `crates/sm/tests/work.rs`, `plugins/supraman/README.md`, `supraman-app/src/settings_window.rs` | `https://workstate.dikaia.ai`, the default Workman server | leave (René's public domain; a default URL is behaviour) |
 | tests across `sm`, `supraman-core`, `supraman-app`, `supraman-supervisor` | `Nomos`, `Nomos.Pdf`, `Nomos.Extract`, `nomos`, `pipeline-tools` as workspace and repo names | accept: product and repo names, no client data |
 | ~20 doc comments in `crates/` (`schedules.rs`, `approval.rs`, `tray.rs`, `view.rs`, `desired.rs`, `sm/tests/*.rs`, …) and `scripts/new-signing-key.ps1:3` | `René` as the user who approves | accept, or say "the user" in a later comment pass |
 | `docs/research/scheduler.md:350,370` | power-scheme GUID with CPU model; a probe session's UUID | accept (no account data) |
@@ -79,7 +79,7 @@ found`, exit 0. Working tree (`--no-git`): no leaks found.
 
 | Commit | Path | Kind | Recommendation |
 |---|---|---|---|
-| all 457 commits | commit metadata | René's personal (gmail) address as author and committer; name `René Larch` | René decides: **accept** (GitHub shows it on every commit once public) or **rewrite** all SHAs (`git filter-repo --mailmap`, breaks every recorded sha in WorkState and LEARNINGS). Either way, set a public or noreply `user.email` for this repo before the next commit. |
+| all 457 commits | commit metadata | René's personal (gmail) address as author and committer; name `René Larch` | René decides: **accept** (GitHub shows it on every commit once public) or **rewrite** all SHAs (`git filter-repo --mailmap`, breaks every recorded sha in Workman and LEARNINGS). Either way, set a public or noreply `user.email` for this repo before the next commit. |
 | `6df1fa2` | `docs/research/scheduler.md` | Windows machine and user name, user home path (fixed in the tree above) | accept: a user name and a machine name, no credential |
 | `ad19138` | `docs/research/gitkraken-12.6.1.md` | user home path (fixed in the tree above) | accept |
 | `9b781c9`, `aa74d64` | `crates/foreman-core/src/registry.rs`, `docs/PLAN.md` | `P:\Projects\Magic\Nomos` path (the registry sample is fixed above; `PLAN.md:192` and `LEARNINGS.md:457,490` still name it in the tree) | accept: a folder path, no Nomos content |
@@ -95,9 +95,9 @@ None of these holds a secret, a client matter or Nomos data (sweep above). What 
 
 | Path | What is in it | Recommendation |
 |---|---|---|
-| `docs/LEARNINGS.md` (5606 lines) | Every unit's findings since m0: gate results with `C:\fmbuild\<unit>` target dirs (72), `P:\Projects\…` paths incl. `P:/Projects/Magic/Nomos` (457, 490), ~70 mentions of René and his decisions, session names (`autowork-7c`, `skills-5d`, …), WorkState refs | René decides: publishable as a development log (no secrets, no client data); trim if the personal working style and paths should stay private |
-| `docs/PLAN.md` | The original plan (Foreman era), milestones, `P:\Projects\Magic\Nomos yields 13 repos` (192), "Nomos as first real workspace" | trim or remove: superseded by WorkState and `docs/ROADMAP.md` |
-| `docs/WORKSTATE-HANDOVER.md` | A 2026-10-22 handover to the WorkState owner session: paths of René's Skills repo and worktrees, a DB migration id and the path of its backup under `P:\system\temp\claude\…` (20), how role tokens are registered (no token values) | remove from the tree: internal to WorkState's development, nothing a user needs |
+| `docs/LEARNINGS.md` (5606 lines) | Every unit's findings since m0: gate results with `C:\fmbuild\<unit>` target dirs (72), `P:\Projects\…` paths incl. `P:/Projects/Magic/Nomos` (457, 490), ~70 mentions of René and his decisions, session names (`autowork-7c`, `skills-5d`, …), Workman refs | René decides: publishable as a development log (no secrets, no client data); trim if the personal working style and paths should stay private |
+| `docs/PLAN.md` | The original plan (Foreman era), milestones, `P:\Projects\Magic\Nomos yields 13 repos` (192), "Nomos as first real workspace" | trim or remove: superseded by Workman and `docs/ROADMAP.md` |
+| `docs/WORKSTATE-HANDOVER.md` | A 2026-10-22 handover to the Workman owner session: paths of René's Skills repo and worktrees, a DB migration id and the path of its backup under `P:\system\temp\claude\…` (20), how role tokens are registered (no token values) | remove from the tree: internal to Workman's development, nothing a user needs |
 | `docs/research/scheduler.md` | Task Scheduler design and probe results; René's repo paths and probe output (user and machine name now neutralised) | publishable after this audit |
 | `docs/research/scheduler-probe/**` | The probe program and its register script, defaults pointing at `C:\fmbuild\sched-1` and `P:\Projects\LarchSys\AutoWork` | publishable, or remove with the probe phase done |
 | `docs/research/gitkraken-12.6.1.md` | Analysis of an installed third-party app (GitKraken 12.6.1) for the GitMan roadmap item | René decides: it describes another vendor's app internals; remove if that should not be published |

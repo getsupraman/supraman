@@ -10,17 +10,17 @@ Dependencies point down this list only; nothing below depends on anything above 
 | Crate | Owns | Depends on |
 |---|---|---|
 | `crates/supraman-app` | The `supraman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
-| `crates/sm` | The `sm` CLI (`lib.rs`, shared by `sm.exe` and the console-less `smw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop, revoke). | claude, core, supervisor, workstate |
-| `crates/supraman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workstate |
+| `crates/sm` | The `sm` CLI (`lib.rs`, shared by `sm.exe` and the console-less `smw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop, revoke). | claude, core, supervisor, workman |
+| `crates/supraman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workman |
 | `crates/supraman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
-| `crates/supraman-workstate` | Every Workman read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
+| `crates/supraman-workman` | Every Workman read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
 | `crates/supraman-ui` | The gpui widgets and painters every Supraman binary shares: text input, buttons, banners, menu, confirm, toast, notices, tabs, hover card, split pane, matcher, settings pages, themes, the terminal grid painter, hit targets, logger, frame probes. | core, term |
 | `crates/supraman-term` | The terminal model: Zed's `terminal` crate vendored onto alacritty (PTY, grid, input, mouse, links, scroll, search). No gpui views, no Supraman knowledge. A tab's env (`builder.rs` `insert_terminal_env`) is `TERM_PROGRAM=supraman` with `FORCE_HYPERLINK=1`, so claude writes a markdown link as OSC 8; the app opens a Ctrl+clicked link only through `view.rs` `link_target` (`http`, `https`, `mailto`, `file`). | — |
 | `crates/supraman-core` | Plain Rust shared by all: the workspace registry, settings, files written safely, paths, time, process spawning, secrets at rest, the relay's files, hook events, names. No gpui, no claude, no HTTP. | — |
 
 **Boundaries.**
 - Only `supraman-claude` runs `claude` outside a terminal tab or parses its output; a tab runs `claude` in its PTY (`hand.rs`, `view.rs` `attach`).
-- Only `supraman-workstate` talks HTTP to Workman (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Supraman writes Workman items; the MCP tools are the agents' write path (C21).
+- Only `supraman-workman` talks HTTP to Workman (the supervisor's `mint.rs` uses its `http_agent`). Nothing in Supraman writes Workman items; the MCP tools are the agents' write path (C21).
 - `supraman-supervisor` takes a snapshot and returns actions; it never polls, never paints, and is ticked by the app.
 - `supraman-core` and `supraman-term` have no Supraman crate dependencies; `supraman-ui` has no `claude` or Workman knowledge.
 - `plugins/supraman` is not a crate: the Claude Code plugin loaded with `--plugin-dir` on sessions Supraman launches — `plugins/supraman/hooks/hooks.json` (exec-form `sm.exe hook <event>`), `plugins/supraman/roles/` (workspace, relay, repo), and the skills `workspace-controller` and `repo-controller`. See `plugins/supraman/README.md`.
@@ -42,12 +42,12 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `time::{now_ms, epoch_ms, modified_ms, hex6}` — epoch milliseconds and a scratch-name suffix.
 - `update::{Manifest, sign, verify, release_keys, sha256_file, signature_path}` — a release's `supraman-update.json` (its bytes as written are what is signed), its ed25519 signature file and the release keys compiled in from `update.pub`; `Manifest::check_zip` checks a downloaded zip. `sm release` writes and signs it; the app's update check and install use it.
 - `prune::{prune, KEEP_MS}` — the one retention rule for what sessions leave in the home: event logs, relay outbox messages, sent and rejected drops, the `answered.json` entries of gone messages, and the schedules' rotated run records and spent run worktrees, after 30 days unmodified, and the state dirs of removed schedules; a drop still waiting is never removed. The supervision runs it hourly.
-- `url::origin` (re-exported as `url_origin`; `supraman_workstate::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
+- `url::origin` (re-exported as `url_origin`; `supraman_workman::api_base`) — the one origin rule; origins key `servers.json` and the minted records.
 - `process::{command, run, run_watched, git, shell_execute, alive, started, wait_any_exit}` — every child process outside the PTY: no console window, both pipes drained, a timeout that kills the child or its tree (`Kill::Child` for `claude`, whose tree holds the background service), ShellExecute, pid liveness. `run_watched` also kills the child when its `stop` returns true and returns what a killed child wrote (`Ended::{Exited, TimedOut, Stopped}`). Never `Command::new(..).output()` by hand.
 - `secret::{SecretStore, FileStore, MemoryStore, default_store}` — every secret at rest: one DPAPI-encrypted file per key under `<home>/oauth/secrets`; `MemoryStore` in tests.
 - `slug::{slugify, validate_name, FM_PREFIX}` — a repo or workspace name as a session-name part; every Supraman session name starts with `fm-`.
 - `Settings::update` — every change to `settings.toml`: load, edit, save, retried against other writers. `Settings::load_with_notices` when a bad key should be shown.
-- `Settings` sections (`sessions`, `workstate`, `appearance`, `terminal`, `window`, each a `Section`) — a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
+- `Settings` sections (`sessions`, `workman`, `appearance`, `terminal`, `window`, each a `Section`) — a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `Registry` (`load_all`, `list`, `home_from`) — the workspaces at `<home>/workspaces/<name>.toml`; `load_all` where one corrupt file must not hide the rest (the supervisor), `list` where it should stop the caller.
 - `Workspace` (`model.rs`: `home`, `folders`, `scans`; `home()`, `contains`, `other_dirs`, `folder_at`, `add_folder`, `unique_folder_name`), `Folder` (`kind`: `git` or `plain`), `Scan`, `owners` — a workspace is a name, a home and a set of folders; a root-based file loads as one scan of its root. `owners` says which workspace a folder's supervised session belongs to (the first that has it enabled); `Registry::claim_folders` disables what another workspace owns.
 - `discover`, `rescan`, `scan`, `branch_at` — a folder to a workspace and its repos, and each scan run again; shared by `sm workspace add` and the app's Add workspace and Rescan.
@@ -78,16 +78,16 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `term_element` (`terminal_grid`, `TermFont`, `cell_metrics`) — the terminal grid painter for a `supraman_term::Terminal`; OSC 8 cells are underlined, and the pointer is a hand while Ctrl is held over a link.
 - `lib.rs`: `init_globals`, `init_logger`/`Logger` (`foreman.log` via `append_capped`), `FrameProbe`, `memory` — global setup and the probes the selftests print.
 
-### supraman-workstate (`crates/supraman-workstate/src/`)
+### supraman-workman (`crates/supraman-workman/src/`)
 
 - `http_agent`, `read_reply`, `pct_encode`, `server_reason` (`http.rs`) — the HTTP agent, an answer read whole (status, headers, body; a body that cannot be read is a transport failure), path/query encoding and a refusal's reason for every Workman call, the mint and OAuth included.
 - `Client` (`client.rs`) — the blocking read API v1 client (`overview`, `board`, `item`, `brief`, `inbox`, `journal`, `backlog`, `sessions`, `resolve`); GET only; its bearer comes from a `BearerSource` at each read; no error carries the token.
 - `Stream` (`stream.rs`) — the `/api/stream` subscriber on its own thread: `StreamSignal::{Connected, Event, Lost}`; an event means "re-read".
 - `Auth` (`auth.rs`) — the OAuth 2.1 native client: sign-in, `access_token`, refresh under `refresh.lock`, `bearer_for(origin)`.
 - `health` — the unauthenticated `GET /health`.
-- `fake::FakeWorkState` (feature `fake`) — the one test server for anything that talks HTTP to Workman: routes by `<METHOD> <target>` or by target, `set` to change an answer, `seen()` for each request's method, target, Authorization, Content-Type and body.
+- `fake::FakeWorkman` (feature `fake`) — the one test server for anything that talks HTTP to Workman: routes by `<METHOD> <target>` or by target, `set` to change an answer, `seen()` for each request's method, target, Authorization, Content-Type and body.
 - `model` — the read API v1 shapes, lenient (v1 grows additively).
-- `fake::FakeWorkState` (feature `fake`) — the read API and its OAuth server on 127.0.0.1 for tests and selftests.
+- `fake::FakeWorkman` (feature `fake`) — the read API and its OAuth server on 127.0.0.1 for tests and selftests.
 - `secret` re-exports `supraman_core::secret`.
 
 ### supraman-claude (`crates/supraman-claude/src/`)
@@ -113,7 +113,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 ## Shared vs app-only
 
-**GitMan and FileMan may reuse:** all of `supraman-core`, `supraman-ui`, `supraman-term`, `supraman-workstate`, and `supraman-claude` if they run claude. Their settings live in their own `Settings` table (`Settings::section`/`set_section`) and their settings window registers its pages with `SettingsPages`.
+**GitMan and FileMan may reuse:** all of `supraman-core`, `supraman-ui`, `supraman-term`, `supraman-workman`, and `supraman-claude` if they run claude. Their settings live in their own `Settings` table (`Settings::section`/`set_section`) and their settings window registers its pages with `SettingsPages`.
 
 **App-only (in `crates/supraman-app`, not for reuse):**
 - `FleetView` (`crates/supraman-app/src/view.rs`, `crates/supraman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_details.rs` the sections of a session's and a workspace's Details tab, `view/details.rs` that tab), tabs, menus, delete flow; `crates/supraman-app/src/work_view.rs` and `crates/supraman-app/src/work_view/` — the Work tab and Inbox.
@@ -151,14 +151,14 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 
 ### OAuth sign-in and refresh
 1. `crates/supraman-app/src/view.rs` `FleetView::sign_in` → `crates/supraman-app/src/signin.rs` (one `Auth` per home).
-2. `crates/supraman-workstate/src/auth.rs` `Auth::sign_in`: discovery, dynamic client registration, PKCE S256 on a loopback callback, the browser, the token request.
+2. `crates/supraman-workman/src/auth.rs` `Auth::sign_in`: discovery, dynamic client registration, PKCE S256 on a loopback callback, the browser, the token request.
 3. `Auth::access_token`: the held token while fresh, else a `refresh_token` grant under `<home>/oauth/refresh.lock` (shared with `sm`); `invalid_grant`/`invalid_client` forgets the stored token.
 4. The refresh token lives in `crates/supraman-core/src/secret.rs` `FileStore`: `<home>/oauth/secrets/<hash>.bin`, DPAPI-encrypted for the current user, written with `write_atomic`. `<home>/oauth/servers.json` holds server metadata, no token. The access token is never logged and never written.
 
 ### The Workman read and its stream
 1. `crates/supraman-app/src/work_view.rs` `WorkHub` (a gpui global) builds a `Client` with `Auth::bearer_for(origin)` and subscribes a `Stream`.
-2. `crates/supraman-workstate/src/stream.rs` `Stream::subscribe` holds `GET /api/stream` on its own thread with `Last-Event-ID` and our backoff; `WorkHub::on_signal` turns signals into `HubEvent`s.
-3. `WorkView::on_hub` re-reads the open view through `crates/supraman-workstate/src/client.rs` `Client`, debounced, off the UI thread; `crates/supraman-app/src/work_view/inbox.rs` `WorkInbox` listens to the same hub. `WorkHub::reconfigure` runs after sign-in, sign-out or a URL change.
+2. `crates/supraman-workman/src/stream.rs` `Stream::subscribe` holds `GET /api/stream` on its own thread with `Last-Event-ID` and our backoff; `WorkHub::on_signal` turns signals into `HubEvent`s.
+3. `WorkView::on_hub` re-reads the open view through `crates/supraman-workman/src/client.rs` `Client`, debounced, off the UI thread; `crates/supraman-app/src/work_view/inbox.rs` `WorkInbox` listens to the same hub. `WorkHub::reconfigure` runs after sign-in, sign-out or a URL change.
 4. `sm work` (`crates/sm/src/work.rs`) reads through the same `Client` and the same sign-in.
 
 ### Quit
@@ -171,8 +171,8 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 
 Change these only deliberately, with the owner's say and a LEARNINGS entry.
 
-- **C21, Workman is read only:** `crates/supraman-workstate/src/client.rs` (GET only), `crates/supraman-app/src/work_view/inbox.rs` (dismissals are local), `crates/sm/src/work.rs`. Test: `crates/supraman-workstate/tests/client.rs`.
-- **C15/C17, the units' red lines in code:** selftests run on a home under `target/` (`crates/supraman-app/src/selftest.rs` `home`), act only on their own `fm-selftest-<hex>` sessions and clean them up (`cleanup`), read Workman from `FakeWorkState`, and never print or write a token.
+- **C21, Workman is read only:** `crates/supraman-workman/src/client.rs` (GET only), `crates/supraman-app/src/work_view/inbox.rs` (dismissals are local), `crates/sm/src/work.rs`. Test: `crates/supraman-workman/tests/client.rs`.
+- **C15/C17, the units' red lines in code:** selftests run on a home under `target/` (`crates/supraman-app/src/selftest.rs` `home`), act only on their own `fm-selftest-<hex>` sessions and clean them up (`cleanup`), read Workman from `FakeWorkman`, and never print or write a token.
 - **The supervisor's rules:** the R1–R14 table, the budget, failures and hold in the crate docs of `crates/supraman-supervisor/src/lib.rs`, implemented in `reconcile.rs` and `executor.rs`; the claude health table in `crates/supraman-claude/src/lib.rs`.
 - **The claude CLI protocols:** `peerProtocol 1` in `crates/supraman-claude/src/peer.rs` (`PEER_PROTOCOL`); the minimum and tested CLI in `cli.rs`; the `--bg` line and its resume in `launch.rs` (`LaunchSpec::argv`, `resume_argv`: a resume carries no other flag); rm and its refusals in `launch.rs` (`Claude::remove`, `RmRefusal`); the service reach in `daemon.rs`. The facts are the `sm probe` results (`crates/sm/src/probe_rm.rs`, `crates/sm/src/probe_session_id.rs` and the other `sm probe` files, LEARNINGS m2/1, m5/38, m5/40).
 - **Delete confinement:** `crates/supraman-claude/src/forget.rs` (`forget_transcript`, `confined`: a UUID id, no link or junction, inside `projects/`); its one caller is `crates/supraman-app/src/view/delete.rs` `delete_blocking`.
@@ -182,7 +182,7 @@ Change these only deliberately, with the owner's say and a LEARNINGS entry.
 
 ## Testing
 
-- **cargo:** `cargo test --workspace`. Unit tests sit beside the code; integration tests in each crate's `tests/`. Fakes: `FakeWorkState` (`crates/supraman-workstate/src/fake.rs`), a fake claude (`crates/supraman-claude/tests/fake_claude.rs`), `MemoryStore` for secrets.
+- **cargo:** `cargo test --workspace`. Unit tests sit beside the code; integration tests in each crate's `tests/`. Fakes: `FakeWorkman` (`crates/supraman-workman/src/fake.rs`), a fake claude (`crates/supraman-claude/tests/fake_claude.rs`), `MemoryStore` for secrets.
 - **Selftests** drive the real app on a home under `target/` (`crates/supraman-app/src/main.rs` `parse_args`, `crates/supraman-app/src/selftest.rs` `start`):
   - `supraman.exe --selftest` — the gate's UI run (`selftest.rs` `gate`, steps in `selftest_*.rs`), clicking through `HitTargets`.
   - `--selftest-supervise` — the supervisor against real `claude --bg` sessions (`crates/supraman-app/src/selftest_supervise.rs`).

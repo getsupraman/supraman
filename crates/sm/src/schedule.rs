@@ -622,7 +622,7 @@ fn local_text(t: &DateTime<Local>) -> String {
     t.format("%a %Y-%m-%d %H:%M %:z").to_string()
 }
 
-/// The `claude --bg` a run of `s` stamped `stamp` launches, before its WorkState token; `plugin_dir` is
+/// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token; `plugin_dir` is
 /// Foreman's plugin, when found. Dry-run prints it and fire launches it.
 pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;

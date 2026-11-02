@@ -574,7 +574,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
 }
 
 /// The real host: Run now through `sm`, the task's line through `smw`. Folder Alpha is no git repo, so the session
-/// stage stops at its worktree, before any `claude` or WorkState call.
+/// stage stops at its worktree, before any `claude` or Workman call.
 #[test]
 fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     let f = fixture();

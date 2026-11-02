@@ -9,7 +9,7 @@ use supraman_core::home::home_env;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
 use supraman_supervisor::{HAND_ROLE, HttpMinter, LaunchConfig, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
-use supraman_workstate::Auth;
+use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
 pub const ROLE: &str = "orchestrator";
@@ -21,7 +21,7 @@ const STALE: &str = "This tab''s Workman token was revoked when its claude exite
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
     Plain,
-    /// `name` keys the file and `hands.json`; `session` is the WorkState session's name.
+    /// `name` keys the file and `hands.json`; `session` is the Workman session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
     Unminted(String),
 }
@@ -346,7 +346,7 @@ mod tests {
     use std::io::Write;
     use std::sync::mpsc;
 
-    use supraman_workstate::fake::{FakeAuth, read_request};
+    use supraman_workman::fake::{FakeAuth, read_request};
 
     use super::*;
 
@@ -400,7 +400,7 @@ mod tests {
             }
             None => {
                 supraman_core::Settings::default().save(&home).unwrap();
-                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workstate::MemoryStore::default())));
+                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())));
                 (home, auth)
             }
         }
@@ -422,9 +422,9 @@ mod tests {
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
 
         let mut settings = supraman_core::Settings::load(&home).unwrap();
-        settings.workstate.url = Some(b.clone());
+        settings.workman.url = Some(b.clone());
         settings.save(&home).unwrap();
-        auth.sign_in(&b, &supraman_workstate::auth::http_browser()).unwrap();
+        auth.sign_in(&b, &supraman_workman::auth::http_browser()).unwrap();
         assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);
         assert_eq!(
             restart_notice(1, &b).as_deref(),

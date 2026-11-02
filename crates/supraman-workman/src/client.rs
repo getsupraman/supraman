@@ -1,4 +1,4 @@
-//! The blocking read API v1 client. `GET` only: Foreman never writes to WorkState (C21).
+//! The blocking read API v1 client. `GET` only: Foreman never writes to Workman (C21).
 
 use std::fmt;
 use std::sync::Arc;
@@ -10,8 +10,6 @@ use crate::http::{Reply, pct_encode, read, server_reason};
 use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Resolved, Sessions};
 
 pub const API_HEADER: &str = "X-Workman-Api";
-/// Read when [`API_HEADER`] is absent, until Workman 2.0 stops sending it.
-pub const LEGACY_API_HEADER: &str = "X-WorkState-Api";
 pub const API_VERSION: &str = "1";
 
 /// Never carries the token: the bearer is part of no message, and a server reason is cut short.
@@ -24,7 +22,7 @@ pub enum Error {
     Auth(String),
     #[error("Workman at {base} is unreachable ({reason})")]
     Transport { base: String, reason: String },
-    /// A 2xx without `X-Workman-Api: 1` (or `X-WorkState-Api: 1`): not a v1 server (or not Workman).
+    /// A 2xx without `X-Workman-Api: 1`: not a v1 server (or not Workman).
     #[error("{0}")]
     Api(String),
     #[error("Workman's answer was not understood: {0}")]
@@ -199,7 +197,7 @@ impl Client {
             base: self.base.clone(),
             reason: scrub(token, &e),
         })?;
-        let api = headers.get(API_HEADER).or_else(|| headers.get(LEGACY_API_HEADER)).and_then(|v| v.to_str().ok()).map(str::to_string);
+        let api = headers.get(API_HEADER).and_then(|v| v.to_str().ok()).map(str::to_string);
         if !(200..300).contains(&status) {
             return Err(Error::Http {
                 status,

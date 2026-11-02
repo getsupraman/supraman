@@ -58,7 +58,7 @@ pub enum Stage {
         worktree: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workstate_session: Option<String>,
-        /// Why the run has no WorkState, when it has none.
+        /// Why the run has no Workman, when it has none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         without_workstate: Option<String>,
     },

@@ -1,4 +1,4 @@
-//! `--selftest` step 7: the Work tab against a [`FakeWorkState`] on 127.0.0.1 (never the real server, C21).
+//! `--selftest` step 7: the Work tab against a [`FakeWorkman`] on 127.0.0.1 (never the real server, C21).
 
 use std::{
     cell::RefCell,
@@ -11,9 +11,9 @@ use std::{
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
 use supraman_core::{Registry, Settings, Workspace};
-use supraman_workstate::{
+use supraman_workman::{
     ItemStatus,
-    fake::{Answer, FakeWorkState},
+    fake::{Answer, FakeWorkman},
 };
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
 use serde_json::{Value, json};
@@ -34,14 +34,14 @@ const SHIPPED: &str = "5e1f0000-0000-4000-8000-0000000001a1";
 const LOADED_WITHIN: Duration = Duration::from_secs(5);
 const LIVE_WITHIN: Duration = Duration::from_secs(2);
 
-static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
-static OAUTH: OnceLock<std::sync::Arc<supraman_workstate::fake::FakeAuth>> = OnceLock::new();
+static FAKE: OnceLock<FakeWorkman> = OnceLock::new();
+static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
 
 pub fn inbox_keys() -> [String; 2] {
     [format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}")]
 }
 
-pub fn fake() -> Option<(&'static FakeWorkState, &'static supraman_workstate::fake::FakeAuth)> {
+pub fn fake() -> Option<(&'static FakeWorkman, &'static supraman_workman::fake::FakeAuth)> {
     Some((FAKE.get()?, OAUTH.get()?.as_ref()))
 }
 
@@ -262,7 +262,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(root)?;
     Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, Vec::new()), true)?;
     let resolved = json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [project()] }).to_string();
-    let fake = FakeWorkState::start(vec![
+    let fake = FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
         (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         ("/api/v1/overview".into(), Answer::json(overview(100))),
@@ -288,10 +288,10 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
             )),
         ),
     ]);
-    // signed in to the fake's own OAuth server, so the WorkState notice has nothing to say during the gate; step 7d signs out and in again through the UI
+    // signed in to the fake's own OAuth server, so the Workman notice has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
     let mut settings = Settings::load(home)?;
-    settings.workstate.url = Some(fake.base().to_string());
+    settings.workman.url = Some(fake.base().to_string());
     settings.save(home)?;
     crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
@@ -432,7 +432,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     let issued = oauth.issued();
     let is_oauth = |t: &str| t.starts_with("/.well-known/") || t.starts_with("/connect/");
     let seen: Vec<_> = fake.seen().into_iter().filter(|s| !is_oauth(&s.target)).collect();
-    let token_ok = |s: &supraman_workstate::fake::Seen| match s.target.as_str() {
+    let token_ok = |s: &supraman_workman::fake::Seen| match s.target.as_str() {
         "/health" => s.authorization.is_none(),
         _ => s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| issued.iter().any(|i| i == t)),
     };
@@ -461,7 +461,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
 async fn item_page(
     view: &Entity<FleetView>,
     work: &Entity<WorkView>,
-    fake: &FakeWorkState,
+    fake: &FakeWorkman,
     launched: &Session,
     cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<String> {
@@ -574,7 +574,7 @@ async fn item_page(
     Ok(lines.join("; "))
 }
 
-async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkState, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let mut lines = Vec::new();
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let question = format!("inbox-ws-question:{TASK_1}");

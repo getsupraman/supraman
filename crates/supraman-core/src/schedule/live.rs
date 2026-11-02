@@ -32,7 +32,7 @@ pub struct Live {
 pub struct LiveSession {
     pub name: String,
     pub id: String,
-    /// The minted WorkState session id, with the origin its revoke goes to; never the token.
+    /// The minted Workman session id, with the origin its revoke goes to; never the token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workstate_session: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

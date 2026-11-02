@@ -53,7 +53,7 @@ const ENTROPY: &[u8] = b"Foreman/WorkState refresh token";
 const TRIES: u32 = 8;
 
 /// `<home>/oauth/secrets/<sha256 of key>.bin`, each the key's secret sealed with DPAPI for the current
-/// user. `set` and `delete` rely on the caller holding `refresh.lock` (`supraman_workstate::auth`).
+/// user. `set` and `delete` rely on the caller holding `refresh.lock` (`supraman_workman::auth`).
 #[cfg(windows)]
 pub struct FileStore {
     dir: std::path::PathBuf,

@@ -1,12 +1,12 @@
 [package]
-name = "supraman-workstate"
+name = "supraman-workman"
 version = "0.1.3"
 edition = "2024"
 publish = false
 license.workspace = true
 
 [features]
-# A fake WorkState (HTTP + SSE + OAuth authorization server on 127.0.0.1) for other crates' tests.
+# A fake Workman (HTTP + SSE + OAuth authorization server on 127.0.0.1) for other crates' tests.
 fake = []
 
 [dependencies]
@@ -22,6 +22,6 @@ thiserror = "2.0.12"
 ureq = { version = "3", default-features = false, features = ["native-tls-no-default"] }
 
 [dev-dependencies]
-supraman-workstate = { path = ".", features = ["fake"] }
+supraman-workman = { path = ".", features = ["fake"] }
 tempfile = "3.27.0"
 zip = { version = "9.2.1", default-features = false, features = ["deflate-flate2"] }

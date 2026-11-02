@@ -11,5 +11,5 @@ license = "GPL-3.0-or-later"
 [dependencies]
 supraman-claude = { path = "../../../crates/supraman-claude" }
 supraman-core = { path = "../../../crates/supraman-core" }
-supraman-workstate = { path = "../../../crates/supraman-workstate", features = ["fake"] }
+supraman-workman = { path = "../../../crates/supraman-workman", features = ["fake"] }
 windows = { version = "0.62", features = ["Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_System_Threading"] }

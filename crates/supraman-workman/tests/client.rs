@@ -1,5 +1,5 @@
-use supraman_workstate::fake::{Answer, FakeWorkState};
-use supraman_workstate::{
+use supraman_workman::fake::{Answer, FakeWorkman};
+use supraman_workman::{
     BriefFor, Client, Error, ItemResolution, ItemStatus, JournalQuery, SessionsQuery,
 };
 
@@ -16,14 +16,14 @@ fn route(target: impl Into<String>, fixture_name: &str) -> (String, Answer) {
     (target.into(), Answer::json(fixture(fixture_name)))
 }
 
-fn server(routes: Vec<(String, Answer)>) -> (FakeWorkState, Client) {
-    let fake = FakeWorkState::start(routes);
+fn server(routes: Vec<(String, Answer)>) -> (FakeWorkman, Client) {
+    let fake = FakeWorkman::start(routes);
     let client = Client::new(fake.base(), TOKEN);
     (fake, client)
 }
 
 /// Every request carried the bearer, and nothing but `GET` was sent (C21).
-fn assert_read_only_with_bearer(fake: &FakeWorkState) {
+fn assert_read_only_with_bearer(fake: &FakeWorkman) {
     for s in fake.seen() {
         assert_eq!(s.method, "GET", "{s:?}");
         assert_eq!(s.authorization.as_deref(), Some("Bearer fake-reader-token"), "{s:?}");
@@ -141,14 +141,14 @@ fn client_resolve_encodes_the_typed_ref() {
 }
 
 #[test]
-fn client_reads_either_api_header_and_refuses_neither() {
+fn client_reads_x_workman_api_and_refuses_a_server_without_it() {
     let (_fake, c) = server(vec![
         ("/api/v1/overview".into(), Answer::json(fixture("overview.json")).api(None).header("X-Workman-Api", "1")),
         ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None).header("X-WorkState-Api", "1")),
         ("/api/v1/journal".into(), Answer::json(fixture("journal.json")).api(None)),
     ]);
     assert!(c.overview().is_ok(), "X-Workman-Api alone");
-    assert!(c.inbox(None).is_ok(), "X-WorkState-Api alone");
+    assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")), "Workman 1.x's header alone");
     assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")));
 }
 

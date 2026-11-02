@@ -5667,3 +5667,19 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   scroll to the key their row really paints under with `selftest::scrolled_into_view`. That key is
   `session-row-<id>@<ws>`: the testbed lies under this checkout, step v's VGit, so their sessions are `also_in` it, and
   the sidebar's row tokens are session ids alone, so `reveal` alone finds step v's copy first.
+
+## 2026-11-02 — workman-2/workman-2-rename Supraman's side of Workman 2.0
+
+- **Scopes:** Supraman asks for `workman.read workman.sessions offline_access`. A refresh sends no scope, so a grant
+  made under the old `workstate.*` names keeps them; Workman 2.0 still takes them. Once they go (2.1), FakeWorkman
+  refuses that grant's refresh with `invalid_scope`, `Auth` turns it into Sign in again, and one sign-in (a fresh
+  client registration every time) mends it. A real 2.1 may answer `invalid_grant` instead, which gives the same path.
+- **What stays under the old name on purpose, because something stored holds it:** the DPAPI entropy
+  `Foreman/WorkState refresh token` (a change makes every stored refresh token unreadable), `<home>/oauth`,
+  `<home>/mcp/workstate-<agent>.json` (named by `mcp_config_path`; removed by name), the run records'
+  `workstate_session`/`without_workstate`, and the app-internal names (`workstate_setup`, `FleetView::workstate`,
+  the Settings page id `workstate`).
+- **`[workstate]` in settings.toml** loads through `Section::LEGACY_KEY` and the next save writes `[workman]`; a build
+  before this one reading a saved file finds no `[workstate]` and uses the default server (work.supraman.ai).
+- **No `LEGACY_MCP_SERVER`:** its only reader was `MintedSessions::adopt_origins`, for records minted without an
+  origin; such a session now has an unknown origin, and the supervisor re-mints it once (`server_changed`).

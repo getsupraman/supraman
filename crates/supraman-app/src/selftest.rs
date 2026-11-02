@@ -132,7 +132,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    unsafe { std::env::set_var(supraman_workstate::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };
+    unsafe { std::env::set_var(supraman_workman::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
@@ -185,10 +185,10 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         saved.display()
     );
 
-    // A closed loopback port as the WorkState server, never the real one; the gate's step 1w names its fake instead.
+    // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let mut settings = supraman_core::Settings::load(&home)?;
-    settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
+    settings.workman.url = Some(format!("http://127.0.0.1:{closed}"));
     settings.save(&home)?;
 
     if mode == Mode::Selftest {

@@ -14,14 +14,14 @@ I ran the cross-crate duplicate pass myself, merged the overlapping reports, and
 **Columns.**
 - **Risk** is the risk of the fix: what could break.
 - **Prot.** flags protected business logic from m5/44's intent:
-  - WS: the WorkState contract
+  - WS: the Workman contract
   - OAuth: m5/43
   - C15/17/21
   - CLI: peerProtocol, `--bg`, rm/resume, the daemon
   - Del: m5/38 deletion confinement
   - Mint: m5/35, m5/40, m5/48
   - Contrast: m5/26
-- **Sev.** is the severity recorded in WorkState. *blocker* is used only for a security hole, a UI freeze or data loss that is reachable in normal use. Everything else is *minor*.
+- **Sev.** is the severity recorded in Workman. *blocker* is used only for a security hole, a UI freeze or data loss that is reachable in normal use. Everything else is *minor*.
 
 ## Summary
 
@@ -39,7 +39,7 @@ I ran the cross-crate duplicate pass myself, merged the overlapping reports, and
 
 There are **81 findings** and **16 proposed units** (U1–U15, with U6 split into U6a/U6b), in 10 waves.
 
-The findings are recorded in WorkState against `m5/44`, source `audit m5/44.1`. A-26, A-27 and A-28 are F-07, F-08 and F-09 (blockers). A-01 … A-25 are F-10 … F-34. A-29 … A-81 are F-35 … F-87.
+The findings are recorded in Workman against `m5/44`, source `audit m5/44.1`. A-26, A-27 and A-28 are F-07, F-08 and F-09 (blockers). A-01 … A-25 are F-10 … F-34. A-29 … A-81 are F-35 … F-87.
 
 **Decisions the controller or René must take before the units start:**
 1. **A-53:** is re-syncing the Zed terminal copy still a goal (LEARNINGS:415)? If not, about 1,000 lines of product code and about 1,000 lines of tests go.
@@ -91,13 +91,13 @@ The findings are recorded in WorkState against `m5/44`, source `audit m5/44.1`. 
 - Risk: low–med (origin strings are map keys).
 - Prot.: Mint (m5/48 origin comparison), OAuth.
 
-**A-05 — WorkState HTTP helpers are copied**
+**A-05 — Workman HTTP helpers are copied**
 - Where:
   - percent-encoding 3×: `foreman-supervisor/src/mint.rs:163-169`, `foreman-workstate/src/client.rs:251`, `auth.rs:606-610` (byte-identical);
   - `server_reason` 2×: `mint.rs:148`, `client.rs:243`;
   - status + body read 3×: `mint.rs:136`, `auth.rs:577`, `client.rs:207-225`;
   - a hand-rolled test HTTP server in `mint.rs:357` that duplicates `foreman-workstate/src/fake.rs`.
-- Fix: put these next to the one agent in `foreman-workstate/src/http.rs`, export them, and have mint's tests use `FakeWorkState`.
+- Fix: put these next to the one agent in `foreman-workstate/src/http.rs`, export them, and have mint's tests use `FakeWorkman`.
 - Risk: low.
 - Prot.: WS (request bytes must be unchanged).
 
@@ -749,7 +749,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
 **Toast and notices**
 - Where today:
   - Toast: `view.rs:359-365` (`Toast`, `TOAST_FOR`), `manage.rs:267-283` (`show_toast`), render at `left.rs:737-765`.
-  - Notices: `view/notices.rs:8-67` (kinds Setup, Supervise, Hand, Action; `dismiss_key`, `keep_dismissed`), render at `left.rs:423-509`, the WorkState notice at `left.rs:915-976`.
+  - Notices: `view/notices.rs:8-67` (kinds Setup, Supervise, Hand, Action; `dismiss_key`, `keep_dismissed`), render at `left.rs:423-509`, the Workman notice at `left.rs:915-976`.
   - Banner copies: A-21.
 - Ties to foreman-app: the FleetView fields (`view.rs:228-240, 350`); the app's `Notice` enum; status colours; the hit keys `toast` and `notice-dismiss-<kind>-<n>`.
 - Target: **foreman-ui**.
@@ -822,7 +822,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
   - the trait (get/set/delete; errors never carry the secret);
   - `MemoryStore`;
   - `CredentialStore` (`CredReadW` :78, `CredWriteW` :110 with `CRED_PERSIST_LOCAL_MACHINE` and user "Foreman", `CredDeleteW` :119);
-  - the target is `<prefix>:<issuer>`, where the prefix is `Foreman/WorkState` or `FOREMAN_CREDENTIAL_PREFIX` (`PREFIX_VAR`).
+  - the target is `<prefix>:<issuer>`, where the prefix is `Foreman/Workman` or `FOREMAN_CREDENTIAL_PREFIX` (`PREFIX_VAR`).
   - The only production user is `Auth` (`auth.rs:37, 125, 149`).
   - Other users: `signin.rs:55`, `selftest.rs:175`, `fm/tests/work.rs:11`, and the `MemoryStore` tests (`hand.rs:399`, `tokens.rs:52, 74`, `workstate_setup.rs:125`, `tests/oauth.rs`).
   - Minted `wss_` tokens are plaintext in `<home>/mcp/workstate-<name>.json`, made owner-only with icacls (`launch.rs:171-198`), which is correct for claude's `--mcp-config`. They stay out of scope.
@@ -831,7 +831,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
 - What the extraction needs:
   - Move the trait, both stores and `default_store`.
   - Add a cfg(windows) `windows` dependency (`Win32_Foundation`, `Win32_Security_Credentials`) and a `getrandom` dev-dependency.
-  - Make the namespace a parameter, keeping the `Foreman/WorkState` default and the `<prefix>:<key>` format **byte-identical** so existing credentials stay readable. Keep `PREFIX_VAR`.
+  - Make the namespace a parameter, keeping the `Foreman/Workman` default and the `<prefix>:<key>` format **byte-identical** so existing credentials stay readable. Keep `PREFIX_VAR`.
   - Re-export from foreman-workstate so `Auth::with_store` compiles unchanged.
   - Optionally zeroize the blob copies (`secret.rs:86, 98`).
   - **Protected (OAuth).**
@@ -840,7 +840,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
 - Where today:
   - `foreman-core/src/settings.rs`: one flat struct with 11 keys from 5 features:
     - sessions: `max_working`, `extra_plugin_dirs`, `relay_idle_secs`, `run_as_admin`;
-    - WorkState: `workstate_url`;
+    - Workman: `workstate_url`;
     - appearance: `theme`, `terminal_colors`;
     - terminal: `terminal_font_size`, `terminal_font_family`, `terminal_ligatures`;
     - window: `left_width`.
@@ -860,7 +860,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
   2. **App:** a `SettingsStore` global entity that emits `Changed(section)`. It replaces each page's re-read and FleetView's mirror fields.
   3. **foreman-ui:** `trait SettingsPage { id(); title(); render(store, window, cx) }`, a registry filled at start, and `open_settings(page_id)` in place of the `Page` enum. The selftests address pages by id.
   4. Each page gets its own model instead of `WeakEntity<FleetView>`:
-     - the WorkState page gets an auth/sign-in model that owns `signing_in` and `sign_in_error` and computes `AuthStatus` off the UI thread (A-27);
+     - the Workman page gets an auth/sign-in model that owns `signing_in` and `sign_in_error` and computes `AuthStatus` off the UI thread (A-27);
      - Appearance gets a terminal-font model;
      - About gets read-only status.
   5. `row`, `choice` and `small_button` move into foreman-ui with the buttons (A-20).
@@ -888,7 +888,7 @@ The cross-cutting blocker is the selftest hook. Every widget takes `&self.hits` 
 - Risk: low–med. Prot.: no.
 - Alongside: U2.
 
-### U2 — OAuth and WorkState client robustness (A-27 auth side, A-28, A-45, A-48 `health.rs`, A-61, A-77 F-05 steps 1–2)
+### U2 — OAuth and Workman client robustness (A-27 auth side, A-28, A-45, A-48 `health.rs`, A-61, A-77 F-05 steps 1–2)
 - Files:
   - `crates/foreman-workstate/src/{auth.rs, fake.rs, stream.rs, health.rs}`;
   - `crates/foreman-workstate/tests/{oauth.rs, stream.rs}`;

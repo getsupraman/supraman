@@ -1272,8 +1272,8 @@ impl FleetView {
 
     pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Supraman home: settings cannot be saved.")?;
-        let origin = supraman_core::validate_workstate_url(text)?;
-        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workstate.origin();
+        let origin = supraman_core::validate_workman_url(text)?;
+        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workman.origin();
         if origin == current {
             return Ok(());
         }
@@ -1282,7 +1282,7 @@ impl FleetView {
             cx.background_executor().spawn(async move { auth.status(&current) })
         };
         cx.spawn(async move |this, cx| {
-            let signed_in = matches!(status.await, supraman_workstate::AuthStatus::SignedIn { .. });
+            let signed_in = matches!(status.await, supraman_workman::AuthStatus::SignedIn { .. });
             this.update(cx, |this, cx| {
                 if signed_in {
                     this.sign_in_to(origin, Some(current), cx);
@@ -3093,7 +3093,7 @@ mod tests {
 }
 
 fn save_workstate_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
-    Settings::update(home, |settings| settings.workstate.url = Some(origin.to_string()))
+    Settings::update(home, |settings| settings.workman.url = Some(origin.to_string()))
         .map(drop)
         .map_err(|e| format!("Cannot save settings.toml: {e}"))
 }

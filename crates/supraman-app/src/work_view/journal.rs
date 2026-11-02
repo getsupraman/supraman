@@ -1,6 +1,6 @@
 //! The v1 journal pages only forward: `since` is exclusive, and no `since` is the newest page.
 
-use supraman_workstate::{Journal, JournalEvent, JournalQuery};
+use supraman_workman::{Journal, JournalEvent, JournalQuery};
 use gpui::ScrollHandle;
 
 use super::*;
@@ -52,7 +52,7 @@ impl JournalFeed {
     }
 }
 
-pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workstate::Result<(Vec<JournalEvent>, i64)> {
+pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workman::Result<(Vec<JournalEvent>, i64)> {
     let mut events = Vec::new();
     let mut cursor = since;
     for _ in 0..FORWARD_PAGES {
@@ -67,7 +67,7 @@ pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workstate::Re
 }
 
 /// `since=0` would be the newest page, so `seq` 1, the workspace's first event, is never shown.
-pub fn older(client: &Client, scope: &str, oldest: i64) -> supraman_workstate::Result<(Vec<JournalEvent>, bool)> {
+pub fn older(client: &Client, scope: &str, oldest: i64) -> supraman_workman::Result<(Vec<JournalEvent>, bool)> {
     let mut span = OLDER_SPAN;
     loop {
         let low = (oldest - span).max(1);
@@ -307,7 +307,7 @@ impl WorkView {
 
 #[cfg(test)]
 mod tests {
-    use supraman_workstate::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkman};
     use serde_json::json;
 
     use super::*;
@@ -357,7 +357,7 @@ mod tests {
         // 10 events in (400, 600), then 60 in (1, 600): the window widens from 200 to 800 (→ since=1).
         let near: Vec<i64> = (590..600).collect();
         let far: Vec<i64> = (540..600).collect();
-        let fake = FakeWorkState::start(vec![(target(400), page(&near, 599, false)), (target(1), page(&far, 599, false))]);
+        let fake = FakeWorkman::start(vec![(target(400), page(&near, 599, false)), (target(1), page(&far, 599, false))]);
         let client = Client::new(fake.base(), "fake-test-reader");
         let (events, more) = older(&client, scope, 600).unwrap();
         assert_eq!(events.len(), far.len());
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn after_follows_the_cursor_while_there_is_more() {
         let target = |since: i64| format!("/api/v1/journal?scope=p1&since={since}&limit=500");
-        let fake = FakeWorkState::start(vec![(target(10), page(&[11, 12], 12, true)), (target(12), page(&[13], 13, false))]);
+        let fake = FakeWorkman::start(vec![(target(10), page(&[11, 12], 12, true)), (target(12), page(&[13], 13, false))]);
         let client = Client::new(fake.base(), "fake-test-reader");
         let (events, cursor) = after(&client, "p1", 10).unwrap();
         assert_eq!((seqs(&events), cursor), (vec![11, 12, 13], 13));

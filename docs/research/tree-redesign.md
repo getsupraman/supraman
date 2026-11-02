@@ -84,7 +84,7 @@ Header `INBOX · n` (`· k new, shown when the pointer leaves` while held). Rows
 - **needs-you** (supervisor `NeedsYou`): kind label in its colour (`blocked`, `trust needed`, `gave up`, `launch failed`,
   `duplicate`, `token expired`, `other server`, `stop failed`) · `<ws> · <name>` · age · detail; one remedy button
   (`Attach`, `Retry`, `Run in terminal`, `Re-mint`, `Restart as administrator`), key `inbox-<verb>-<name>`. No click on the row.
-- **WorkState rows**: `WorkState · <kind>` · `<ws> · <ref>` · since · what · the MCP call (mono, never run, C21);
+- **Workman rows**: `Workman · <kind>` · `<ws> · <ref>` · since · what · the MCP call (mono, never run, C21);
   click opens the item in the Work tab; × dismisses locally. Keys `work:<ws>/<key>` (row), `work_view::dismiss_key`.
 
 Area key `inbox-area`.
@@ -99,7 +99,7 @@ attachable session; ×. Click expands/collapses. Keys `msg-<ws>/<file>`, `msg-at
 ### 1.8 Notices
 
 Banners above the search box: CLI failed, registry error, skipped workspace, stale session list (no ×); plain
-notices with × (`notice-dismiss-<setup|supervise|hand|inbox|action>-<n>`, `foreman_ui::notices`); the WorkState
+notices with × (`notice-dismiss-<setup|supervise|hand|inbox|action>-<n>`, `foreman_ui::notices`); the Workman
 notice (`ws-setup-notice`, `ws-setup-signin`/`-cancel`/`-retry`/`-settings`/`-dismiss`); the start warning;
 "Removing <ws>…"; the confirm (`confirm`); the Add workspace review (`add-review`, `add-name`, `add-repo-<name>`,
 `add-save`, `add-cancel`); "No workspaces registered". The toast floats at the panel's bottom (`toast`).
@@ -224,7 +224,7 @@ become icons that are always laid out and become visible on row hover, keyboard 
 - **Session row:** the pills become icons: Attach `⤢`, Resume `↻`, Tab `▭`; star stays as an icon. Stop, Copy, Show
   in Work, Delete stay in the menu. The state word stays (it is what a glance needs); `kind · id` stays.
 - **A hover card** (`foreman_ui::hover_card`) on the workspace row lists: home, folders, workspace session (name,
-  health, id, hook), relay (status), WorkState project; on a session row: cwd, worktree, branch, hook, claimed item.
+  health, id, hook), relay (status), Workman project; on a session row: cwd, worktree, branch, hook, claimed item.
   The tab strip already uses the same card.
 - **Two workspaces / plain / supervised elsewhere:** as in A.
 

@@ -1,4 +1,4 @@
-//! A fake WorkState read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkState::enable_oauth`].
+//! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -35,7 +35,7 @@ impl Seen {
 pub struct Answer {
     pub status: u16,
     pub content_type: &'static str,
-    /// The value of `X-Workman-Api` and `X-WorkState-Api`, both sent as Workman 1.2 does; `None` sends neither.
+    /// The value of `X-Workman-Api`; `None` sends none.
     pub api: Option<&'static str>,
     pub body: String,
     pub headers: Vec<(String, String)>,
@@ -101,7 +101,7 @@ impl Answer {
 
     /// The bytes of the whole response, `Connection: close`.
     pub fn to_http(&self) -> String {
-        let mut head = self.api.map(|v| format!("X-Workman-Api: {v}\r\nX-WorkState-Api: {v}\r\n")).unwrap_or_default();
+        let mut head = self.api.map(|v| format!("X-Workman-Api: {v}\r\n")).unwrap_or_default();
         for (k, v) in &self.headers {
             head.push_str(&format!("{k}: {v}\r\n"));
         }
@@ -117,7 +117,7 @@ impl Answer {
 
 type Routes = Arc<Mutex<Vec<(String, Answer)>>>;
 
-pub struct FakeWorkState {
+pub struct FakeWorkman {
     base: String,
     seen: Arc<Mutex<Vec<Seen>>>,
     routes: Routes,
@@ -157,12 +157,12 @@ fn read_seen(stream: &TcpStream) -> Option<Seen> {
     Some(Seen { method, target, authorization, content_type, body: String::from_utf8_lossy(&body).into_owned(), headers })
 }
 
-impl FakeWorkState {
+impl FakeWorkman {
     /// `routes`: `<METHOD> <target>` or, for any method, the exact target (path and query) → answer.
     /// Anything else is a v1 404, except
     /// `/api/stream`, which stays open until [`Self::push`] fails on it or [`Self::drop_streams`].
     pub fn start(routes: Vec<(String, Answer)>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake WorkState");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake Workman");
         let base = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));
         let routes: Routes = Arc::new(Mutex::new(routes));
@@ -195,7 +195,7 @@ impl FakeWorkState {
                     let answer = answer.unwrap_or_else(|| Answer::status(404, format!(r#"{{"error":"no route {target}"}}"#)));
                     log.lock().unwrap().push(seen);
                     if stream_open {
-                        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Workman-Api: 1\r\nX-WorkState-Api: 1\r\n\r\n: connected\n\n";
+                        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Workman-Api: 1\r\n\r\n: connected\n\n";
                         if stream.write_all(head.as_bytes()).is_ok() {
                             open.lock().unwrap().push(stream);
                         }
@@ -264,7 +264,12 @@ struct Code {
     redirect_uri: String,
     challenge: String,
     grant: u64,
+    scope: String,
 }
+
+/// Workman 2.0's scope names; until 2.1 it also takes these old names for them.
+const SCOPES: [&str; 3] = ["workman.read", "workman.sessions", "offline_access"];
+const LEGACY_SCOPES: [&str; 2] = ["workstate.read", "workstate.sessions"];
 
 /// `fake-<what>-<16 random hex>`: no id is guessable from another fake or another run.
 fn fresh_id(what: &str) -> String {
@@ -283,6 +288,9 @@ struct AuthState {
     /// Refresh token → (grant, already redeemed).
     refresh: HashMap<String, (u64, bool)>,
     revoked: HashSet<u64>,
+    /// Grant → the scope it was authorized with.
+    scopes: HashMap<u64, String>,
+    legacy_dropped: bool,
     next: u64,
     access_ttl: u64,
     refresh_len: usize,
@@ -292,7 +300,7 @@ struct AuthState {
     refusals: Vec<String>,
 }
 
-/// Shaped like WorkState's (Skills `docs/workstate/10-read-api.md` rule 5); authorize redirects at once: the test is the browser.
+/// Shaped like Workman's (Skills `docs/workstate/10-read-api.md` rule 5); authorize redirects at once: the test is the browser.
 pub struct FakeAuth {
     base: String,
     state: Mutex<AuthState>,
@@ -313,7 +321,7 @@ impl FakeAuth {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// With a trailing slash, as WorkState's.
+    /// With a trailing slash, as Workman's.
     pub fn issuer(&self) -> String {
         format!("{}/", self.base)
     }
@@ -330,13 +338,33 @@ impl FakeAuth {
         self.st().access_ttl = secs;
     }
 
-    /// Refresh tokens issued from now on are padded to `bytes` (WorkState 1.0.0's exceed 2560).
+    /// Refresh tokens issued from now on are padded to `bytes` (Workman 1.0.0's exceed 2560).
     pub fn set_refresh_len(&self, bytes: usize) {
         self.st().refresh_len = bytes;
     }
 
     pub fn fail_refresh(&self, fail: bool) {
         self.st().fail_refresh = fail;
+    }
+
+    /// As Workman 2.1: the old `workstate.*` scope names are no longer offered, and a grant made with them is refused.
+    pub fn drop_legacy_scopes(&self) {
+        self.st().legacy_dropped = true;
+    }
+
+    /// Every grant so far as one made with `scope`, as a Supraman before Workman 2.0 asked for.
+    pub fn rescope_grants(&self, scope: &str) {
+        for s in self.st().scopes.values_mut() {
+            *s = scope.to_string();
+        }
+    }
+
+    /// The scopes of the grants so far, in grant order.
+    pub fn grant_scopes(&self) -> Vec<String> {
+        let st = self.st();
+        let mut grants: Vec<_> = st.scopes.iter().collect();
+        grants.sort();
+        grants.into_iter().map(|(_, s)| s.clone()).collect()
     }
 
     /// The operator refuses at the authorize step.
@@ -392,7 +420,15 @@ impl FakeAuth {
     pub fn accepts(&self, authorization: Option<&str>) -> bool {
         let Some(token) = authorization.and_then(|a| a.strip_prefix("Bearer ")) else { return false };
         let st = self.st();
-        st.access.get(token).is_some_and(|(grant, until)| *until > Instant::now() && !st.revoked.contains(grant))
+        st.access.get(token).is_some_and(|(grant, until)| *until > Instant::now() && !st.revoked.contains(grant) && !Self::stale_scope(&st, *grant))
+    }
+
+    fn offered(st: &AuthState, scope: &str) -> bool {
+        SCOPES.contains(&scope) || (!st.legacy_dropped && LEGACY_SCOPES.contains(&scope))
+    }
+
+    fn stale_scope(st: &AuthState, grant: u64) -> bool {
+        st.scopes.get(&grant).is_some_and(|s| s.split(' ').any(|s| !Self::offered(st, s)))
     }
 
     pub fn unauthorized(&self) -> Answer {
@@ -413,7 +449,7 @@ impl FakeAuth {
         st.issued.push(refresh.clone());
         serde_json::json!({
             "access_token": access, "token_type": "Bearer", "expires_in": st.access_ttl,
-            "refresh_token": refresh, "scope": crate::auth::SCOPE,
+            "refresh_token": refresh, "scope": st.scopes.get(&grant).cloned().unwrap_or_default(),
         })
     }
 
@@ -440,11 +476,15 @@ impl FakeAuth {
         let (path, query) = target.split_once('?').unwrap_or((target, ""));
         let base = self.base.clone();
         Some(match (method, path) {
-            ("GET", "/.well-known/oauth-protected-resource/api") => Self::json(serde_json::json!({
-                "resource": format!("{base}/api"),
-                "authorization_servers": [base],
-                "scopes_supported": ["workstate.read", "workstate.sessions", "offline_access"],
-            })),
+            ("GET", "/.well-known/oauth-protected-resource/api") => {
+                let st = self.st();
+                let scopes: Vec<&str> = SCOPES.iter().chain(&LEGACY_SCOPES).copied().filter(|s| Self::offered(&st, s)).collect();
+                Self::json(serde_json::json!({
+                    "resource": format!("{base}/api"),
+                    "authorization_servers": [base],
+                    "scopes_supported": scopes,
+                }))
+            }
             ("GET", "/.well-known/oauth-authorization-server") => Self::json(serde_json::json!({
                 "issuer": self.issuer(),
                 "authorization_endpoint": format!("{base}/connect/authorize"),
@@ -489,7 +529,8 @@ impl FakeAuth {
                 if get("response_type") != "code" || get("code_challenge_method") != "S256" || get("code_challenge").is_empty() {
                     return Some(refuse("invalid_request"));
                 }
-                if !get("scope").split(' ').any(|s| s == "offline_access") {
+                let scope = get("scope");
+                if !scope.split(' ').any(|s| s == "offline_access") || scope.split(' ').any(|s| !Self::offered(&st, s)) {
                     return Some(refuse("invalid_scope"));
                 }
                 if st.deny {
@@ -500,7 +541,7 @@ impl FakeAuth {
                 let code = fresh_id("code");
                 st.codes.insert(
                     code.clone(),
-                    Code { client_id: get("client_id"), redirect_uri: redirect.clone(), challenge: get("code_challenge"), grant },
+                    Code { client_id: get("client_id"), redirect_uri: redirect.clone(), challenge: get("code_challenge"), grant, scope },
                 );
                 Self::plain(302, "").header("Location", format!("{redirect}?code={code}&state={state}"))
             }
@@ -523,6 +564,7 @@ impl FakeAuth {
                         if code.client_id != get("client_id") || code.redirect_uri != get("redirect_uri") || code.challenge != pkce {
                             return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "client, redirect or PKCE mismatch"));
                         }
+                        st.scopes.insert(code.grant, code.scope);
                         Self::json(self.issue(&mut st, code.grant))
                     }
                     "refresh_token" => {
@@ -538,6 +580,9 @@ impl FakeAuth {
                             Some(_) => return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "redeemed")),
                             None => return Some(Self::refuse(&mut st, &endpoint, "invalid_grant", "unknown")),
                         };
+                        if Self::stale_scope(&st, grant) {
+                            return Some(Self::refuse(&mut st, &endpoint, "invalid_scope", "the grant's scope is no longer offered"));
+                        }
                         st.refresh.insert(rt, (grant, true));
                         Self::json(self.issue(&mut st, grant))
                     }

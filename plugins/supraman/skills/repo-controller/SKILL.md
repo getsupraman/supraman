@@ -52,7 +52,7 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
    - `repo_root` = the absolute path of `../<repo>.worktrees/<unit>`, a worktree **you** create next to
      the repo (`git worktree add ../<repo>.worktrees/<unit> -b <branch>`), never inside it;
    - `controller: "<your name [ref]>"` from the first line of `ListAgents`, ref included;
-   - `workstate: {role: "worker", url: "https://work.supraman.ai"}` — the url always, its default is
+   - `workman: {role: "worker", url: "https://work.supraman.ai"}` — the url always, its default is
      a local server that does not exist.
 
    A launch refused for want of a grant names `agent_signin`: that sign-in is the human's, so escalate
