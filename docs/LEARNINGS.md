@@ -5446,3 +5446,16 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\sched2-11\target`): build ok, no warnings; `cargo test --release --workspace`
   871 passed, 0 failed, 6 ignored; `--selftest` PASS (hidden desktop) after two FAILs of the new step 6d while it was
   written (the leftover prompt text above); 0 `fm-selftest` sessions.
+
+## 2026-11-02 — public/10 macOS and Linux on the roadmap (docs/ROADMAP.md)
+
+- **Off Windows, `process::started` is a `/proc` check that returns 0**, so on macOS (no `/proc`) every pid reads as
+  dead and `alive` is always false: the supervisor, `recover_if_dead` and the peer registry would all misjudge
+  sessions there. `docs/ROADMAP.md` puts processes second in the porting order for that reason.
+- **`supraman-core` and `supraman-claude` already pass `cargo check --target x86_64-unknown-linux-musl`** from
+  Windows (one unused-import warning in `peer.rs`, `Instant`, used only by the Windows `write_pipe`). The other crates
+  stop in C build scripts (`openssl-sys` via `ureq`'s `native-tls`, `zstd-sys` via zed's `util`), not in our code.
+- **Off Windows, `secret::default_store` is a `MemoryStore` and `signin::open_system_browser` refuses**, so sign-in
+  neither starts nor survives a restart there; both are in the roadmap tables.
+- **Count:** 104 `cfg(windows)` sites in 38 files, 45 `cfg(not(windows))`, 9 `target_os = "windows"` in
+  `supraman-term` (master 78691df).
