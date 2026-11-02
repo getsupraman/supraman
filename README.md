@@ -23,6 +23,8 @@ It is one of a family of tools:
 
 Supraman runs on Windows. It is a native Rust app built on [gpui](https://github.com/zed-industries/zed).
 
+**Platforms:** Windows today. macOS and Linux are on the roadmap: [docs/ROADMAP.md](docs/ROADMAP.md).
+
 ## Build
 
 ```powershell
