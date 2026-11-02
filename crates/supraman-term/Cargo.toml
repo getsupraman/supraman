@@ -2,7 +2,7 @@
 # settings / theme / theme_settings / task / release_channel. Versions are Zed's workspace ones.
 [package]
 name = "supraman-term"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 publish = false
 license.workspace = true
