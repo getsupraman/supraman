@@ -79,7 +79,7 @@ fn stream_delivers_frames_and_reconnects_after_a_drop_and_a_refusal() {
             "\"itemId\":null,\"kind\":\"transition\",\"addedLater\":1}\n\n",
             "event: change\ndata: {\"seq\":1236,\"runId\":\"r1\",\ndata: \"kind\":\"note\"}\n\ndata: not an event\n\n",
         ];
-        write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nX-WorkState-Api: 1\r\n\r\n").unwrap();
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nX-Workman-Api: 1\r\n\r\n").unwrap();
         for f in frames {
             s.write_all(chunk(f).as_bytes()).unwrap();
             s.flush().unwrap();
@@ -88,12 +88,12 @@ fn stream_delivers_frames_and_reconnects_after_a_drop_and_a_refusal() {
         // 2: refused.
         let (mut s, _) = listener.accept().unwrap();
         heads_tx.send(read_head(&s)).unwrap();
-        write!(s, "HTTP/1.1 401 Unauthorized\r\nX-WorkState-Api: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        write!(s, "HTTP/1.1 401 Unauthorized\r\nX-Workman-Api: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         drop(s);
         // 3: close-delimited, one frame, then silent until the test is done.
         let (mut s, _) = listener.accept().unwrap();
         heads_tx.send(read_head(&s)).unwrap();
-        write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-WorkState-Api: 1\r\n\r\nid: 42\r\ndata: {{\"seq\":1240,\"runId\":\"r1\",\"kind\":\"claim\"}}\r\n\r\n").unwrap();
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Workman-Api: 1\r\n\r\nid: 42\r\ndata: {{\"seq\":1240,\"runId\":\"r1\",\"kind\":\"claim\"}}\r\n\r\n").unwrap();
         s.flush().unwrap();
         let _ = release.recv();
     });

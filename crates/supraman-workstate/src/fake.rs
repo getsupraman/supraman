@@ -35,7 +35,7 @@ impl Seen {
 pub struct Answer {
     pub status: u16,
     pub content_type: &'static str,
-    /// The value of `X-Workman-Api` and `X-WorkState-Api`, both sent as Workman 1.2 does; `None` sends neither.
+    /// The value of `X-Workman-Api`; `None` sends none.
     pub api: Option<&'static str>,
     pub body: String,
     pub headers: Vec<(String, String)>,
@@ -101,7 +101,7 @@ impl Answer {
 
     /// The bytes of the whole response, `Connection: close`.
     pub fn to_http(&self) -> String {
-        let mut head = self.api.map(|v| format!("X-Workman-Api: {v}\r\nX-WorkState-Api: {v}\r\n")).unwrap_or_default();
+        let mut head = self.api.map(|v| format!("X-Workman-Api: {v}\r\n")).unwrap_or_default();
         for (k, v) in &self.headers {
             head.push_str(&format!("{k}: {v}\r\n"));
         }
@@ -195,7 +195,7 @@ impl FakeWorkState {
                     let answer = answer.unwrap_or_else(|| Answer::status(404, format!(r#"{{"error":"no route {target}"}}"#)));
                     log.lock().unwrap().push(seen);
                     if stream_open {
-                        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Workman-Api: 1\r\nX-WorkState-Api: 1\r\n\r\n: connected\n\n";
+                        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Workman-Api: 1\r\n\r\n: connected\n\n";
                         if stream.write_all(head.as_bytes()).is_ok() {
                             open.lock().unwrap().push(stream);
                         }

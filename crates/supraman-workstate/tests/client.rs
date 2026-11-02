@@ -141,14 +141,14 @@ fn client_resolve_encodes_the_typed_ref() {
 }
 
 #[test]
-fn client_reads_either_api_header_and_refuses_neither() {
+fn client_reads_x_workman_api_and_refuses_a_server_without_it() {
     let (_fake, c) = server(vec![
         ("/api/v1/overview".into(), Answer::json(fixture("overview.json")).api(None).header("X-Workman-Api", "1")),
         ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None).header("X-WorkState-Api", "1")),
         ("/api/v1/journal".into(), Answer::json(fixture("journal.json")).api(None)),
     ]);
     assert!(c.overview().is_ok(), "X-Workman-Api alone");
-    assert!(c.inbox(None).is_ok(), "X-WorkState-Api alone");
+    assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")), "Workman 1.x's header alone");
     assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")));
 }
 
