@@ -22,6 +22,8 @@ use crate::schedules;
 /// claude's `--permission-mode` values the page offers; never `bypassPermissions`.
 pub const MODES: [&str; 4] = ["default", "acceptEdits", "auto", "plan"];
 
+pub const DEFAULT_MODE: &str = "auto";
+
 /// The line a scheduled task's text follows.
 pub const SCHEDULE_ASK: &str = "Set this up as a Supraman schedule (supraman-scheduler skill); ask me what is open, then add it and show the dry run:";
 
@@ -123,7 +125,7 @@ impl FleetView {
             InputEvent::ConfirmBack | InputEvent::Cancel | InputEvent::Refused(_) => {}
         });
         let title = if scheduled { format!("New scheduled task · {workspace}") } else { format!("New task · {workspace}") };
-        let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: MODES[0], input: input.clone(), error: None, scroll: ScrollHandle::new(), _events: events };
+        let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, scroll: ScrollHandle::new(), _events: events };
         self.tabs.push(Tab::new(tab, title, TabKind::Start(page), Some(folder)));
         self.active = Some(tab);
         input.update(cx, |input, cx| input.focus(window, cx));
@@ -347,6 +349,12 @@ mod tests {
         assert_eq!(first_prompt("fix \"it\"\nnow", false), "fix \"it\"\nnow");
         let asked = first_prompt("every monday at 7: replay failures", true);
         assert_eq!(asked.lines().collect::<Vec<_>>(), [SCHEDULE_ASK, "every monday at 7: replay failures"]);
+    }
+
+    #[test]
+    fn a_page_starts_in_auto() {
+        assert_eq!(DEFAULT_MODE, "auto");
+        assert!(MODES.contains(&DEFAULT_MODE));
     }
 
     #[test]

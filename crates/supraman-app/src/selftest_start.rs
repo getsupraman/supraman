@@ -114,8 +114,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let tab = start_tab(view, cx).await?;
     let choices = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == WORKSPACE).map(crate::view::start::folders)).unwrap_or_default();
     let heading = view.read_with(cx, |v, _| v.start_page(tab).map(|p| (p.scheduled, p.folder.clone(), p.mode)));
-    if heading != choices.first().map(|(_, p)| (false, p.clone(), "default")) {
-        bail!("New task opened {heading:?}, not a task in {WORKSPACE}'s first folder of {choices:?} in mode default");
+    if heading != choices.first().map(|(_, p)| (false, p.clone(), "auto")) {
+        bail!("New task opened {heading:?}, not a task in {WORKSPACE}'s first folder of {choices:?} in mode auto");
     }
     let index = choices
         .iter()
@@ -167,8 +167,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     click(view, "menu-new-scheduled-task", cx).await?;
     let tab = start_tab(view, cx).await?;
     let preselected = view.read_with(cx, |v, _| v.start_page(tab).map(|p| (p.scheduled, p.folder.clone(), p.mode)));
-    if preselected != Some((true, folder.clone(), "default")) {
-        bail!("New scheduled task from {repo}'s menu opened {preselected:?}, not a scheduled task in {} in mode default", folder.display());
+    if preselected != Some((true, folder.clone(), "auto")) {
+        bail!("New scheduled task from {repo}'s menu opened {preselected:?}, not a scheduled task in {} in mode auto", folder.display());
     }
     let job = "every monday at 07:00 run the gate";
     type_text(cx, job)?;
@@ -177,8 +177,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     click(view, "start-send", cx).await?;
     let argv = recorded(&out, cx).await?;
     let asked = format!("{SCHEDULE_ASK}\n{job}");
-    if argv.last() != Some(&asked) || !has_pair(&argv, "--permission-mode", "default") {
-        bail!("the scheduled task's claude got {argv:?}, not mode default and {asked:?} last");
+    if argv.last() != Some(&asked) || !has_pair(&argv, "--permission-mode", "auto") {
+        bail!("the scheduled task's claude got {argv:?}, not mode auto and {asked:?} last");
     }
     crate::selftest_schedules::sm(&["schedule", "add", WORKSPACE, "--id", ASKED, "--name", "Selftest asked", "--folder", &repo, "--every", "weekly mon 07:00", "--prompt", job])?;
     let open = format!("start-schedule-open-{tab}");
@@ -190,8 +190,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     click(view, &open, cx).await?;
     until(view, cx, WITHIN, "the schedule's tab active", |v| v.schedule_page(WORKSPACE, ASKED).filter(|(id, _)| v.active == Some(*id)).map(drop)).await?;
     Ok(format!(
-        "the Task icon opened New task · {WORKSPACE}; Send through a claude.cmd refused with the claude.exe fix, text kept; New task in {WORKSPACE}/{repo} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags; \
-         New scheduled task from the folder's menu: `{}` first; the session's schedule raised `Schedule Selftest asked waits for your approval`, Open opened its tab",
+        "the Task icon opened New task · {WORKSPACE}; Send through a claude.cmd refused with the claude.exe fix, text kept; New task opened in mode auto; New task in {WORKSPACE}/{repo} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags; \
+         New scheduled task from the folder's menu in mode auto: `{}` first; the session's schedule raised `Schedule Selftest asked waits for your approval`, Open opened its tab",
         lines[0], SCHEDULE_ASK
     ))
 }
