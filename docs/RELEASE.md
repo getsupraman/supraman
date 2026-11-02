@@ -5,17 +5,49 @@
 ```powershell
 scripts\release.ps1                 # -> <target dir>\dist\Supraman + <target dir>\dist\Supraman-<version>.zip
 scripts\release.ps1 -OutDir D:\out\Supraman
+scripts\release.ps1 -Version 0.1.0  # what the release workflow runs: Supraman-0.1.0.zip
 ```
 
 `<target dir>` is `CARGO_TARGET_DIR` if set, else `<repo>\target`. The script runs
 `cargo build --release --workspace`, assembles the folder below, runs `sm plugin install` into it, writes `VERSION`
-and zips the folder (the zip's root is the folder, `Supraman\`). It replaces an existing `-OutDir` only if that holds a
-`VERSION` (an earlier release). `<version>` is `<crate version>-<yyyyMMdd>-<git sha>`, with `-dirty` if the tree had
-changes.
+and `SOURCE.txt`, zips the folder (the zip's root is the folder, `Supraman\`) and runs `sm release manifest`, which
+writes `supraman-update.json` and `SHA256SUMS` beside the zip. It replaces an existing `-OutDir` only if that holds a
+`VERSION` (an earlier release). Without `-Version`, `<version>` is `<crate version>-<yyyyMMdd>-<git sha>`, with
+`-dirty` if the tree had changes. With `-Version <semver>` it is that semver, which must equal the crates' version
+(`crates\supraman-app\Cargo.toml`), and a dirty tree is refused. A local build is never signed.
 
-No signing and no installer in v1: the zip is extracted anywhere (`C:\Tools\supraman` here) and `supraman.exe`
-started from there. Unsigned
-exes may get a SmartScreen prompt on first start from a downloaded zip (unblock the zip before extracting).
+No installer: the zip is extracted anywhere (`C:\Tools\supraman` here) and `supraman.exe` started from there. The exes
+are not code-signed and may get a SmartScreen prompt on first start from a downloaded zip (unblock the zip before
+extracting).
+
+## Publish a release
+
+1. Set the crates' `version` to the release's semver (every `crates\*\Cargo.toml`), commit, and pass the gate below.
+2. Tag and push the tag: `git tag v0.1.0; git push origin v0.1.0`.
+3. `.github/workflows/release.yml` runs on the tag (`windows-latest`): `cargo test --release --workspace` (no
+   selftests: they need a desktop), `release.ps1 -Version <tag without v>`, `sm release sign` with the repository
+   secret `UPDATE_SIGNING_KEY`, `sm release verify`, then `gh release create <tag> --draft` with the zip, `SHA256SUMS`,
+   `supraman-update.json` and `supraman-update.json.sig`. Its notes name the tag and link the source at it
+   (GPL-3.0 §6). It stops before the build while `update.pub` is the placeholder.
+4. René installs from the draft, checks it, and publishes it on GitHub. The workflow never publishes.
+
+## Signing
+
+`supraman-update.json` is `{ version, commit, zip, sha256, size, published, notes_url }`; the bytes of the file as
+written are what is signed (ed25519), and `supraman-update.json.sig` is the base64 of the 64-byte signature
+(`supraman_core::update`). The app verifies with the public keys compiled in from
+`crates\supraman-core\src\update.pub` (one base64 key per line, `#` lines ignored), then checks the zip's size and
+sha256 against the manifest.
+
+- **The key pair:** René runs `scripts\new-signing-key.ps1` once. It pipes `sm release keygen --public-out
+  crates\supraman-core\src\update.pub` into `gh secret set UPDATE_SIGNING_KEY`: the secret key exists only in that
+  pipe and in the secret (`keygen` refuses a console stdout), and `update.pub` gets the public key, to be committed.
+- `sm release sign <manifest>` reads `UPDATE_SIGNING_KEY` and refuses when it is unset or its public half is not in
+  `update.pub`; it never prints the key. `sm release verify <manifest> [--public-key <file>]` checks the signature and
+  the zip beside the manifest.
+- **Rotation:** a new key needs a release whose app already carries both keys. Run the script (the secret becomes the
+  new key), add the old key's line back to `update.pub` under the new one, and release; drop the old line in a later
+  release, once installs have updated past the one that carries both.
 
 ## Layout
 
@@ -27,6 +59,7 @@ Supraman\
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
   fm.exe, fmw.exe              copies of sm.exe and smw.exe (see "The fm name" below)
   VERSION                      version, commit, build time (UTC), claude tested / minimum
+  SOURCE.txt                   where this build's source is: the tag's (or commit's) tree on GitHub
   THIRD_PARTY.md               the bundled assets and every shipped crate with its licence and source
   licenses\                    supraman.LICENSE (GPL-3.0), rust-crates.txt (every crate's licence and notices), the assets' licences
   plugins\supraman\

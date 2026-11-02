@@ -18,6 +18,7 @@ pub mod secret;
 mod settings;
 mod slug;
 pub mod time;
+pub mod update;
 pub mod url;
 
 pub use discover::{discover, rescan, same_path};

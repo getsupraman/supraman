@@ -5493,3 +5493,35 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\public-5\target`): build ok; `cargo test --release --workspace` 871 passed,
   0 failed, 6 ignored; `cargo deny check licenses` ok; `third-party.ps1 -Check` current (437 crates); `release.ps1`
   ok with 5 files in `licenses\`. No Rust code changed, so no selftest; no `fm-selftest` sessions.
+
+## 2026-11-02 — public/7 release pipeline: a v<semver> tag builds, tests, signs and uploads a draft GitHub Release
+
+- **`supraman_core::update`** (shared, CLAUDE.md): `Manifest` (`supraman-update.json`: version, commit, zip, sha256,
+  size, published, notes_url), `to_bytes` is the file as written and the bytes signed (pretty JSON + `\n`, never
+  re-serialised to verify); `verify(bytes, sig, keys)` is `verify_strict` over the raw bytes, then `Manifest::parse`
+  (semver, hex sha, plain `.zip` name, RFC 3339); `check_zip` compares size and sha256 of a file. `.sig` is base64 of
+  the 64 bytes, one line. `update.pub` is compiled in (`include_str!`): one base64 key per line, `#` lines skipped, so a
+  rotation is two lines; a file containing `PLACEHOLDER` is `UpdateError::PlaceholderKey`.
+- **`sm release`** (`crates/sm/src/release.rs`): `manifest` refuses a zip not named `Supraman-<version>.zip`; `sign`
+  refuses an unset `UPDATE_SIGNING_KEY` and a key whose public half is not in `update.pub` (so a signed manifest always
+  verifies in the app, and the placeholder stops the workflow); a bad key's error never quotes it (base64's own error
+  names the offending byte and offset, so it is mapped to a fixed text). `keygen` refuses a console stdout
+  (`IsTerminal`); a tool's or a pipe's stdout is not a console, so a run from an agent's shell does print the secret:
+  only ever in a scratch dir, with a throwaway key.
+- **`release.ps1 -Version <semver>`**: must equal `crates\supraman-app\Cargo.toml`'s version (`-cne`) and needs a clean
+  tree; writes `SOURCE.txt` (GPL-3.0 §6: the tag's tree on GitHub; without `-Version` the commit's) and runs
+  `sm release manifest` with the full commit sha. Without `-Version` the date-sha form stays and a manifest is still
+  written (unsigned).
+- **Workflow** `.github/workflows/release.yml`: `actions/checkout` pinned at v7.0.1 `3d3c42e5…`; job-level `env` cannot
+  use `runner.*` (actionlint), so `DIST` goes through `GITHUB_ENV`; the toolchain is installed from
+  `rust-toolchain.toml`'s channel explicitly (newer rustup no longer installs on `rustup show`); `--draft --verify-tag`
+  only, `contents: write` only, the tag read through `env`, never `${{ }}` inside a script.
+- **`third-party.ps1`** walks `cargo metadata`'s resolve, which lists optional deps that are only weakly enabled
+  (`pkcs8?/std`): `pkcs8`, `der`, `spki`, `const-oid`, `rand_core`, `getrandom 0.2` are in `THIRD_PARTY.md` though
+  `cargo tree` shows them unbuilt. Over-listing is harmless; not changed here.
+- **Red:** `check_zip` without its sha256 comparison → 1 failed (sm's verify test); `verify` accepting any signature →
+  2 failed; `keygen` without the console check → 1 failed; `release.ps1 -Version 9.9.9` → throws before building.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\public-7\target`): build ok; `cargo test --release --workspace` 885 passed,
+  0 failed, 6 ignored; `cargo deny check licenses` ok; `third-party.ps1 -Check` current (449 crates); actionlint clean;
+  `release.ps1 -Version 0.1.0` ok (zip, `SHA256SUMS` matching `Get-FileHash`, manifest, `SOURCE.txt`);
+  `sm release verify` refuses (placeholder) and `sm release sign` refuses (key unset), as designed; `--selftest` PASS.
