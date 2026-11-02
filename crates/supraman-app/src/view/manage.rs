@@ -253,6 +253,7 @@ impl FleetView {
             Ok((name, taken)) => {
                 self.adding = None;
                 self.collapsed.remove(&format!("workspace:{name}"));
+                self.reveal_new(super::left::PendingReveal::Row(format!("ws:{name}")));
                 self.reload_workspaces();
                 self.show_toast(format!("Added workspace {name}.{}", supervised_elsewhere(&taken)), cx);
                 if empty {
@@ -277,6 +278,7 @@ impl FleetView {
                     self.transcripts_nudge.wake();
                 }
                 self.workspaces = workspaces;
+                self.invalidate_tree();
                 self.registry_skipped = skipped;
                 self.registry_error = None;
             }
@@ -295,7 +297,7 @@ impl FleetView {
         cx.notify();
         let session_id = match &target {
             MenuTarget::Session { session_id, .. } => Some(session_id.clone()),
-            MenuTarget::Workspace(w) => self.tree().workspaces.into_iter().find(|n| &n.name == w).and_then(|n| n.own).map(|r| r.session.session_id),
+            MenuTarget::Workspace(w) => self.tree().workspaces.iter().find(|n| &n.name == w).and_then(|n| n.own.as_ref()).map(|r| r.session.session_id.clone()),
             MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => None,
         };
         let (Some(menu), Some(session_id)) = (&self.menu, session_id) else {
@@ -534,6 +536,7 @@ impl FleetView {
             match result {
                 Ok(()) => {
                     self.desired.remove(&name);
+                    self.invalidate_tree();
                     self.relays.remove(&name);
                     self.messages.remove(&name);
                     if self.compose.as_ref().is_some_and(|c| c.workspace == name) {

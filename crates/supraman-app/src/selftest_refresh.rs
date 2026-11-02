@@ -23,7 +23,7 @@ const WITHIN: Duration = Duration::from_secs(45);
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
     let tree = v.tree();
     let row = tree.workspaces.iter().flat_map(|w| w.repos.iter().flat_map(|r| &r.sessions)).find(|r| r.session.session_id == id)?;
-    let painted = v.hits.borrow().contains_key(&format!("resume-{}", &id[..8]));
+    let painted = v.shown(&format!("resume-{}", &id[..8]));
     Some((row.closed, v.resumable(row) && painted))
 }
 

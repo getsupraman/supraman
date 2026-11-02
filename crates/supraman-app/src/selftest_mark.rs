@@ -98,7 +98,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     wait_for_tab_terminal(view, plain, WITHIN, cx).await?;
     until(view, cx, WITHIN, "no row marked with a plain shell tab active", |v| marked(v).is_empty().then_some(())).await?;
     let link = format!("tab-link-{}", &sid[..8]);
-    until(view, cx, WITHIN, "the row's tab link", |v| v.hits.borrow().contains_key(&link).then_some(())).await?;
+    until(view, cx, WITHIN, "the row's tab link", |v| v.shown(&link).then_some(())).await?;
     click(view, &link, cx).await?;
     until(view, cx, WITHIN, "the claude tab active again from the row's tab link", |v| (v.active == Some(tab)).then_some(())).await?;
     until(view, cx, WITHIN, "the mark back on the row", |v| marked(v).contains(&sid).then_some(())).await?;
@@ -143,7 +143,7 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
 async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let row = format!("session-row-{sid}");
     let tree = |v: &FleetView| v.hits.borrow().get("tree-area").map(|h| h.bounds);
-    until(view, cx, WITHIN, "the row painted", |v| v.hits.borrow().contains_key(&row).then_some(())).await?;
+    until(view, cx, WITHIN, "the row painted", |v| v.shown(&row).then_some(())).await?;
     let before = until(view, cx, WITHIN, "the tree area painted", tree).await?;
     let mut copied = None;
     for _ in 0..CLIPBOARD_TRIES {

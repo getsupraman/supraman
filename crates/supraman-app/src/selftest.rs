@@ -228,7 +228,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest if std::env::var_os("FOREMAN_SHOTS").is_some() => Duration::from_secs(360),
-        Mode::Selftest => Duration::from_secs(210),
+        Mode::Selftest => Duration::from_secs(270),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(900),
         _ => Duration::from_secs(120),
@@ -445,6 +445,19 @@ async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>
     result
 }
 
+static FRAME_ASKED: AtomicBool = AtomicBool::new(false);
+
+/// [`FleetView::shown`] scrolled the sidebar; the next wait redraws the window so the row is painted.
+pub(crate) fn ask_frame() {
+    FRAME_ASKED.store(true, Ordering::SeqCst);
+}
+
+pub(crate) fn frame_if_asked(cx: &mut AsyncWindowContext) {
+    if FRAME_ASKED.swap(false, Ordering::SeqCst) {
+        cx.update(|window, _| window.refresh()).ok();
+    }
+}
+
 pub(crate) async fn until_with<T>(
     cx: &mut AsyncWindowContext,
     within: Duration,
@@ -459,6 +472,7 @@ pub(crate) async fn until_with<T>(
         if started.elapsed() > within {
             bail!("{what}: not within {within:?}");
         }
+        frame_if_asked(cx);
         sleep(cx, Duration::from_millis(25)).await;
     }
 }
@@ -541,9 +555,23 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
     for _ in 0..20 {
         // a refresh can rebuild the tree and drop the row from a frame or two, more often on a busy machine
         let missing = Instant::now();
+        let mut revealed = false;
+        let mut claimed = false;
         let hit = loop {
             if let Some(hit) = view.read_with(cx, |v, _| v.hits.borrow().get(key).copied()) {
                 break hit;
+            }
+            // the sidebar paints only the rows in view (supraman_ui::keyed_list)
+            if !revealed && missing.elapsed() > Duration::from_millis(300) {
+                revealed = true;
+                claimed = view.update(cx, |v, cx| {
+                    cx.notify();
+                    v.reveal_hit(key)
+                });
+                continue;
+            }
+            if claimed && missing.elapsed() > Duration::from_secs(1) && page_through(view, key, cx).await {
+                continue;
             }
             if missing.elapsed() > Duration::from_secs(2) {
                 bail!("nothing painted under {key} for 2 s (seen before: {})", if seen.is_empty() { "nothing".into() } else { seen.join(" → ") });
@@ -551,7 +579,7 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
             sleep(cx, Duration::from_millis(50)).await;
         };
         let (b, v) = (hit.bounds, hit.visible);
-        seen.push(format!("{}..{} in {}..{}", f32::from(b.top()), f32::from(b.bottom()), f32::from(v.top()), f32::from(v.bottom())));
+        seen.push(format!("{}..{} x {}..{} in {}..{} x {}..{}", f32::from(b.top()), f32::from(b.bottom()), f32::from(b.left()), f32::from(b.right()), f32::from(v.top()), f32::from(v.bottom()), f32::from(v.left()), f32::from(v.right())));
         if hit.fully_visible() {
             if seen.len() > 1 {
                 println!("click: scrolled {key} into view: {}", seen.join(" → "));
@@ -574,9 +602,34 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
     bail!("{key} is not fully inside its visible area after scrolling: {}", seen.join(" → "))
 }
 
+/// The sidebar from its top, a viewport at a time, until `key` is painted; false when it never is.
+async fn page_through(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> bool {
+    let painted = |cx: &mut AsyncWindowContext| view.read_with(cx, |v, _| v.hits.borrow().contains_key(key));
+    view.update(cx, |v, cx| {
+        v.left_list().to_top();
+        cx.notify();
+    });
+    for _ in 0..400 {
+        sleep(cx, Duration::from_millis(40)).await;
+        if painted(cx) {
+            return true;
+        }
+        let moved = view.update(cx, |v, cx| {
+            cx.notify();
+            v.left_list().page_down()
+        });
+        if !moved {
+            sleep(cx, Duration::from_millis(40)).await;
+            return painted(cx);
+        }
+    }
+    false
+}
+
 fn find_row(view: &FleetView, name: &str) -> Option<SessionRow> {
     view.tree()
         .workspaces
+        .clone()
         .into_iter()
         .find(|p| p.name == WORKSPACE)?
         .repos
@@ -678,7 +731,8 @@ async fn wait_attachable(
         let row = view.read_with(cx, |v, _| find_row(v, name));
         if let Some(row) = &row {
             let key = format!("attach-{}", row.session.id);
-            let painted = view.read_with(cx, |v, _| v.hits.borrow().contains_key(&key));
+            let painted = view.read_with(cx, |v, _| v.shown(&key));
+            frame_if_asked(cx);
             // A pid means the process is up; the pre-process row (no pid) is too early to attach.
             if row.attachable && row.session.pid.is_some() && painted {
                 break row.clone();
@@ -838,7 +892,7 @@ pub(crate) async fn close_attach(
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -910,6 +964,7 @@ fn startup_timeline() -> anyhow::Result<String> {
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let name = session_name()?;
     println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    crate::view::tree_check::set(true);
     let loading = step("3a", loading_until_listed(view, cx)).await?;
     println!("step 3a: {loading}");
     let (row, listed_after) = step("3", wait_attachable(view, &name, cx)).await?;
@@ -1032,8 +1087,23 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let tasked = step("7+t", crate::selftest_start::run(view, &home(), cx)).await?;
     println!("step 7+t: {tasked}");
 
+    let responsive = step("7+r", crate::selftest_responsive::run(view, cx)).await?;
+    println!("step 7+r: {responsive}");
+
     let branded = step("7z", crate::selftest_brand::run(view, cx)).await?;
     println!("step 7z: {branded}");
+
+    let cached = step("7+c", async {
+        crate::view::tree_check::set(false);
+        let (mismatches, compared) = crate::view::tree_check::take();
+        if !mismatches.is_empty() {
+            bail!("{} of {compared} cached trees differ from a fresh build: {}", mismatches.len(), mismatches.join(" | "));
+        }
+        let (builds, renders) = crate::view::tree_check::counts();
+        Ok(format!("{compared} cached trees each equal a fresh build at their instant; {builds} trees built over {renders} renders"))
+    })
+    .await?;
+    println!("step 7+c: {cached}");
 
     set_step("8");
     let (idle_private, idle_ws) = memory();

@@ -313,10 +313,16 @@ pub struct FleetView {
     left_servers: std::collections::HashSet<String>,
     left_pending: Vec<String>,
     pub closed: Vec<Session>,
+    /// A selftest's closed sessions, kept across transcript scans.
+    pub injected_closed: Vec<Session>,
+    tree_cache: RefCell<Option<CachedTree>>,
+    left_list: supraman_ui::keyed_list::KeyedList,
+    reveal_pending: Option<(left::PendingReveal, Instant)>,
+    left_rows: Rc<(Rc<Tree>, Vec<left::LeftRow>)>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     pub transcript_scans: u64,
     pub transcripts_nudge: Nudge,
-    poll_nudge: Nudge,
+    pub poll_nudge: Nudge,
     pub refresh_asks: u64,
     refreshes_answered: u64,
     /// The first poll's snapshot (or its failure) is applied.
@@ -809,6 +815,11 @@ impl FleetView {
             left_servers: Default::default(),
             left_pending: Vec::new(),
             closed: Vec::new(),
+            injected_closed: Vec::new(),
+            tree_cache: RefCell::new(None),
+            left_list: Default::default(),
+            reveal_pending: None,
+            left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
             closed_repos: StdHashMap::new(),
             transcript_scans: 0,
             transcripts_nudge,
@@ -945,7 +956,9 @@ impl FleetView {
                             this.main_repos.extend(known.clone());
                             this.closed_repos = known;
                             this.closed = closed;
+                            this.closed.extend(this.injected_closed.iter().cloned());
                             this.drop_deleted();
+                            this.invalidate_tree();
                             this.transcripts_read = true;
                             this.check_loaded(cx);
                             cx.notify();
@@ -1004,7 +1017,9 @@ impl FleetView {
                         }
                         this.transcripts_read = true;
                         this.closed = closed;
+                        this.closed.extend(this.injected_closed.iter().cloned());
                         this.drop_deleted();
+                        this.invalidate_tree();
                         this.transcripts_progress = None;
                         this.transcripts_answered = asks;
                         this.transcript_scans += 1;
@@ -1064,6 +1079,7 @@ impl FleetView {
         self.transcripts_restart = true;
         self.transcripts_read = false;
         self.closed.clear();
+        self.invalidate_tree();
         self.transcripts_cache = Some(warm);
         self.loaded = false;
         self.transcripts_nudge.wake();
@@ -1081,7 +1097,9 @@ impl FleetView {
     }
 
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        match self.stars.toggle(session_id) {
+        let toggled = self.stars.toggle(session_id);
+        self.invalidate_tree();
+        match toggled {
             Ok(_) => self.transcripts_nudge.wake(),
             Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
         }
@@ -1339,6 +1357,8 @@ impl FleetView {
     }
 
     fn apply(&mut self, refresh: Refresh) {
+        let _stall = supraman_ui::stall::section("poll: apply");
+        let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
         match refresh.workspaces {
             Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
             Ok((workspaces, skipped)) => {
@@ -1400,12 +1420,19 @@ impl FleetView {
             }
             self.find_asked_schedules();
         }
+        let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
+        // a permission prompt newer than the last poll makes its row Blocked (fleet::with_hook)
+        let prompted = self.polled_at != *polled_at && self.hooks.values().any(|h| h.is_permission_prompt() && h.last.ts > (*polled_at).min(self.polled_at));
+        if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
+            self.invalidate_tree();
+        }
         self.refresh_details();
         self.last_refresh_took = Some(refresh.took);
     }
 
     fn apply_report(&mut self, report: Report) {
         self.desired = report.desired;
+        self.invalidate_tree();
         self.needs = report.needs;
         let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
         self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
@@ -1429,7 +1456,32 @@ impl FleetView {
         self.ticks += 1;
     }
 
-    pub fn tree(&self) -> Tree {
+    /// The tree built once per change of its inputs; a mutation of one calls [`Self::invalidate_tree`].
+    pub fn tree(&self) -> Rc<Tree> {
+        let now = now_ms();
+        if let Some(cached) = self.tree_cache.borrow().as_ref()
+            && cached.show_stopped == self.show_stopped
+            && cached.own_prefix == self.own_prefix
+            && cached.until.is_none_or(|until| now < until)
+        {
+            if tree_check::on() {
+                tree_check::compare(&cached.tree, &self.build_tree(cached.at));
+            }
+            return cached.tree.clone();
+        }
+        tree_check::BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tree = Rc::new(self.build_tree(now));
+        let until = fleet::next_change(&self.sessions, &self.closed, now);
+        *self.tree_cache.borrow_mut() = Some(CachedTree { at: now, until, show_stopped: self.show_stopped, own_prefix: self.own_prefix.clone(), tree: tree.clone() });
+        tree
+    }
+
+    pub fn invalidate_tree(&self) {
+        self.tree_cache.borrow_mut().take();
+    }
+
+    fn build_tree(&self, now: i64) -> Tree {
+        let _stall = supraman_ui::stall::section("tree");
         let sup = Supervised {
             desired: Some(&self.desired),
             hooks: Some(&self.hooks),
@@ -1441,7 +1493,7 @@ impl FleetView {
             disabled_folders: false,
             own_prefix: self.own_prefix.as_deref(),
         };
-        fleet::build(&self.workspaces, &self.sessions, now_ms(), self.show_stopped, &sup)
+        fleet::build(&self.workspaces, &self.sessions, now, self.show_stopped, &sup)
     }
 
     pub fn start_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
@@ -1490,6 +1542,7 @@ impl FleetView {
                         Ok(Some(desired)) => {
                             let names = desired.sessions.iter().map(|w| w.name.clone()).collect();
                             this.desired.insert(name.clone(), (true, names));
+                            this.invalidate_tree();
                             this.action_error = None;
                             this.start_warning = this.workstate.start_warning(&name);
                         }
@@ -1497,6 +1550,7 @@ impl FleetView {
                             if let Some(entry) = this.desired.get_mut(&name) {
                                 entry.0 = false;
                             }
+                            this.invalidate_tree();
                             this.action_error = None;
                             this.start_warning = None;
                         }
@@ -1802,6 +1856,7 @@ impl FleetView {
             }
             None => self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx),
         };
+        self.reveal_new(left::PendingReveal::TabSession(id));
         let (watch, mut changed) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.hand = true;
@@ -2587,6 +2642,7 @@ fn held_line(why: &str) -> String {
 
 impl FleetView {
     fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let _stall = supraman_ui::stall::section("render: right");
         let colors = cx.theme().colors().clone();
         let headers = self
             .tabs
@@ -2727,6 +2783,8 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
 
 impl Render for FleetView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _stall = supraman_ui::stall::section("render");
+        tree_check::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.probe.on_render(window);
         if !self.painted_sessions && self.sessions_read {
             self.painted_sessions = true;
@@ -2808,6 +2866,58 @@ fn tab_sessions(shells: &[(u64, u32)]) -> StdHashMap<u64, String> {
             Some((tab, entry.session_id?))
         })
         .collect()
+}
+
+struct CachedTree {
+    at: i64,
+    until: Option<i64>,
+    show_stopped: bool,
+    own_prefix: Option<String>,
+    tree: Rc<Tree>,
+}
+
+/// A selftest's check that every cached tree equals a fresh build at its instant: a missed invalidation is a mismatch.
+pub mod tree_check {
+    use std::sync::{Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
+
+    use crate::fleet::Tree;
+
+    static ON: AtomicBool = AtomicBool::new(false);
+    static MISMATCHES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static COMPARED: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static BUILDS: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static RENDERS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Trees built and root renders so far.
+    pub fn counts() -> (usize, usize) {
+        (BUILDS.load(Ordering::Relaxed), RENDERS.load(Ordering::Relaxed))
+    }
+
+    pub fn set(on: bool) -> bool {
+        ON.swap(on, Ordering::SeqCst)
+    }
+
+    pub(super) fn on() -> bool {
+        ON.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn compare(cached: &Tree, fresh: &Tree) {
+        COMPARED.fetch_add(1, Ordering::Relaxed);
+        let (cached, fresh) = (format!("{cached:?}"), format!("{fresh:?}"));
+        if cached != fresh {
+            let at = cached.bytes().zip(fresh.bytes()).position(|(a, b)| a != b).unwrap_or(cached.len().min(fresh.len()));
+            let around = |s: &str| s.get(at.saturating_sub(120)..(at + 120).min(s.len())).unwrap_or_default().to_string();
+            let mut m = MISMATCHES.lock().unwrap_or_else(|e| e.into_inner());
+            if m.len() < 8 {
+                m.push(format!("cached …{}… vs fresh …{}…", around(&cached), around(&fresh)));
+            }
+        }
+    }
+
+    /// The mismatches found and how many cached trees were compared.
+    pub fn take() -> (Vec<String>, usize) {
+        (std::mem::take(&mut *MISMATCHES.lock().unwrap_or_else(|e| e.into_inner())), COMPARED.swap(0, Ordering::Relaxed))
+    }
 }
 
 #[cfg(test)]

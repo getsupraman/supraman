@@ -31,6 +31,7 @@ mod selftest_messages;
 mod selftest_notices;
 mod selftest_refresh;
 mod selftest_reopen;
+mod selftest_responsive;
 mod selftest_schedules;
 mod selftest_search;
 mod selftest_shell;
@@ -335,6 +336,7 @@ fn main() {
 
     gpui_platform::application().run(move |cx: &mut App| {
         supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
+        supraman_ui::stall::watch(cx);
         let home = supraman_core::home_from_env();
         if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
             log::warn!("{problem}");

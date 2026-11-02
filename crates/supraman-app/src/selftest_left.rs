@@ -15,7 +15,7 @@ const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refres
 const WITHIN: Duration = Duration::from_secs(5);
 
 fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
-    v.hits.borrow().get(key).map(|h| h.bounds)
+    v.shown(key).then(|| v.hits.borrow().get(key).map(|h| h.bounds)).flatten()
 }
 
 fn repo_rows(v: &FleetView) -> usize {
@@ -198,7 +198,7 @@ async fn check_foreign(
     let row = loop {
         let row = view.read_with(cx, |v, _| {
             let tree = v.tree();
-            let ws = tree.workspaces.into_iter().find(|w| w.name == workspace)?;
+            let ws = tree.workspaces.clone().into_iter().find(|w| w.name == workspace)?;
             ws.repos.into_iter().flat_map(|r| r.sessions.into_iter().map(move |s| (r.name.clone(), s))).find(|(_, s)| s.session.name == name)
         });
         if let Some(row) = row

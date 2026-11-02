@@ -11,12 +11,14 @@ pub mod details;
 pub mod fonts;
 pub mod hit;
 pub mod hover_card;
+pub mod keyed_list;
 pub mod matcher;
 pub mod menu;
 pub mod notices;
 pub mod nudge;
 pub mod settings_page;
 pub mod split;
+pub mod stall;
 pub mod tabs;
 pub mod term_element;
 pub mod text_input;
@@ -169,6 +171,7 @@ pub struct FrameProbe {
     pub frames: Vec<Instant>,
     drawing: Rc<Cell<Option<Instant>>>,
     work: Rc<RefCell<Vec<f64>>>,
+    painted: Rc<RefCell<Vec<Instant>>>,
 }
 
 impl FrameProbe {
@@ -184,12 +187,13 @@ impl FrameProbe {
     /// A zero-size element that records the frame's own work when it paints.
     pub fn paint_marker(&self) -> impl gpui::IntoElement {
         use gpui::Styled as _;
-        let (drawing, work) = (self.drawing.clone(), self.work.clone());
+        let (drawing, work, painted) = (self.drawing.clone(), self.work.clone(), self.painted.clone());
         gpui::canvas(
             |_, _, _| (),
             move |_, _, _, _| {
                 if let Some(started) = drawing.take() {
                     work.borrow_mut().push(started.elapsed().as_secs_f64() * 1000.0);
+                    painted.borrow_mut().push(Instant::now());
                 }
             },
         )
@@ -202,6 +206,12 @@ impl FrameProbe {
         self.frames.clear();
         self.drawing.set(None);
         self.work.borrow_mut().clear();
+        self.painted.borrow_mut().clear();
+    }
+
+    /// When each recorded frame finished painting.
+    pub fn painted(&self) -> Vec<Instant> {
+        self.painted.borrow().clone()
     }
 
     pub fn stop(&mut self) -> FrameStats {
