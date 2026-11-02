@@ -11,7 +11,8 @@
         <OutDir>\plugins\supraman\**          (hooks, roles, skills)
         <OutDir>\plugins\supraman\bin\sm.exe, fm.exe  (the hooks' copies, via sm plugin install)
         <OutDir>\VERSION
-        <OutDir>\SOURCE.txt                  (where this build's source is, GPL-3.0 §6)
+        <OutDir>\FILES                       (every file of the release: what the next update may remove)
+        <OutDir>\SOURCE.txt                 (where this build's source is, GPL-3.0 §6)
         <OutDir>\THIRD_PARTY.md
         <OutDir>\licenses\*                  (Supraman's and every shipped dependency's licence, THIRD_PARTY.md)
 
@@ -98,6 +99,11 @@ try {
         'Supraman is free software under GPL-3.0-or-later (licenses\supraman.LICENSE).'
         "The source of this build: https://github.com/getsupraman/supraman/tree/$source"
     ) | Set-Content -Encoding utf8 (Join-Path $OutDir 'SOURCE.txt')
+
+    Get-ChildItem -Recurse -File $OutDir |
+        ForEach-Object { $_.FullName.Substring($OutDir.Length + 1).Replace('\', '/') } |
+        Where-Object { $_ -ne 'FILES' } | Sort-Object -CaseSensitive |
+        Set-Content -Encoding utf8 (Join-Path $OutDir 'FILES')
 
     $zip = Join-Path (Split-Path -Parent $OutDir) "Supraman-$version.zip"
     if (Test-Path $zip) { Remove-Item -Force $zip }

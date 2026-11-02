@@ -56,6 +56,8 @@ usage:
   sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
   sm release verify <manifest> [--public-key <file>]   (the signature against update.pub, then the zip)
   sm release keygen --public-out <file>   (the secret key to stdout only, never to a console)
+  sm update apply --from <release dir> --to <install dir> --log <file> [--wait-pid <pid>] [--wait-secs 60]
+      [--restart <exe> [--restart-arg <a>]...]   (what Update runs from a copy of the new sm.exe)
   sm plugin install <plugin-dir>  (copies this sm.exe to <plugin-dir>/bin, where the hooks run it)
   sm hook <event>                 (run by plugins/supraman; reads the hook payload on stdin)";
 
@@ -72,6 +74,7 @@ mod release;
 mod repos;
 pub mod run;
 mod schedule;
+mod update;
 mod work;
 
 enum Failure {
@@ -122,6 +125,7 @@ fn failure_text(f: Failure) -> String {
 
 /// `sm`'s command line, without the program name.
 pub fn cli(args: Vec<String>) -> ExitCode {
+    clean_install();
     // A hook must never break the session: exit 0 whatever the arguments or the outcome.
     if args.first().map(String::as_str) == Some("hook") {
         if let Some(event) = args.get(1) {
@@ -162,11 +166,19 @@ pub fn cli(args: Vec<String>) -> ExitCode {
 
 /// `smw.exe`: `schedule fire` and the window's Run now (`schedule run --home`), with no console; what it has to say goes to `schedules/fire.log`.
 pub fn smw(args: Vec<String>) -> ExitCode {
+    clean_install();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["schedule", "fire", rest @ ..] => ExitCode::from(fire::fire_cmd(rest, false)),
         ["schedule", "run", rest @ ..] => ExitCode::from(fire::run_now_cmd(rest)),
         _ => ExitCode::from(fire::EXIT_UNKNOWN),
+    }
+}
+
+/// The leftovers of an update in the install this exe runs from (`supraman_core::install::cleanup`).
+fn clean_install() {
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(supraman_core::install::install_dir)) {
+        supraman_core::install::cleanup(&dir);
     }
 }
 
@@ -244,6 +256,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
             }
         }
         ["release", rest @ ..] => release::release(rest),
+        ["update", rest @ ..] => update::update(rest),
         ["plugin", "install", dir] => {
             let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate sm.exe: {e}")))?;
             match supraman_core::install_hook_exe(std::path::Path::new(dir), &exe) {

@@ -4,6 +4,7 @@ mod error;
 mod events;
 pub mod desktop;
 pub mod fs;
+pub mod install;
 pub mod home;
 mod model;
 pub mod paths;
