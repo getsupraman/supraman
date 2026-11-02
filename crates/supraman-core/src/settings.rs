@@ -649,8 +649,8 @@ url = "https://workstate.example"
     #[test]
     fn workstate_url_is_an_origin() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::default().workstate.origin(), "https://workstate.dikaia.ai");
-        assert_eq!(Settings::default().workstate.mcp_url(), "https://workstate.dikaia.ai/mcp");
+        assert_eq!(Settings::default().workstate.origin(), DEFAULT_WORKSTATE_URL);
+        assert_eq!(Settings::default().workstate.mcp_url(), format!("{DEFAULT_WORKSTATE_URL}/mcp"));
         let (s, _) = load_text(home.path(), "[workstate]\nurl = \"http://127.0.0.1:5290/mcp\"\n");
         assert_eq!(s.workstate.origin(), "http://127.0.0.1:5290");
         assert_eq!(s.workstate.mcp_url(), "http://127.0.0.1:5290/mcp");

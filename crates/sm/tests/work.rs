@@ -192,7 +192,7 @@ fn work_errors_are_one_line_without_the_token() {
         .env_remove("APPDATA")
         .output()
         .unwrap();
-    assert_eq!(text(&out.stderr).trim_end(), "error: not signed in to Workman at https://workstate.dikaia.ai");
+    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at {}", supraman_core::DEFAULT_WORKSTATE_URL));
 }
 
 #[test]

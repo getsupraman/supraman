@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use async_channel::{Receiver, Sender};
 
-use crate::client::{API_HEADER, API_VERSION, Client};
+use crate::client::{API_HEADER, API_VERSION, Client, LEGACY_API_HEADER};
 use crate::model::StreamEvent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -319,19 +319,21 @@ impl HttpReader {
                 None => return Err("Workman's answer was not HTTP".into()),
             }
             let mut body = Body::Close;
-            let mut api = None;
+            let (mut api, mut legacy_api) = (None, None);
             for line in lines {
                 let Some((k, v)) = line.split_once(':') else { continue };
                 let (k, v) = (k.trim().to_ascii_lowercase(), v.trim());
                 if k.eq_ignore_ascii_case(API_HEADER) {
                     api = Some(v.to_string());
+                } else if k.eq_ignore_ascii_case(LEGACY_API_HEADER) {
+                    legacy_api = Some(v.to_string());
                 } else if k == "transfer-encoding" && v.to_ascii_lowercase().contains("chunked") {
                     body = Body::Chunked(Chunk::Size(Vec::new()));
                 } else if k == "content-length" && !matches!(body, Body::Chunked(_)) {
                     body = Body::Length(v.parse().map_err(|_| "a bad Content-Length".to_string())?);
                 }
             }
-            match api.as_deref() {
+            match api.or(legacy_api).as_deref() {
                 Some(API_VERSION) => {}
                 Some(v) => return Err(format!("the stream speaks read API {v}, Supraman reads v{API_VERSION}")),
                 None => return Err(format!("the stream answered without {API_HEADER}: not a Workman read API v{API_VERSION}")),
@@ -496,7 +498,7 @@ mod tests {
 
     #[test]
     fn http_reader_decodes_chunked_split_anywhere() {
-        let resp = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-WorkState-Api: 1\r\n\r\n5\r\nhello\r\n3;x=y\r\n ab\r\n0\r\n\r\n";
+        let resp = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-Workman-Api: 1\r\n\r\n5\r\nhello\r\n3;x=y\r\n ab\r\n0\r\n\r\n";
         for cut in 0..resp.len() {
             let mut r = HttpReader::default();
             let (mut a, h1) = r.feed(&resp[..cut]).unwrap();
@@ -517,9 +519,13 @@ mod tests {
     #[test]
     fn http_reader_wants_read_api_v1() {
         let refused = |head: &[u8]| HttpReader::default().feed(head).unwrap_err();
-        assert!(refused(b"HTTP/1.1 200 OK\r\n\r\n").contains("without X-WorkState-Api"));
+        assert!(refused(b"HTTP/1.1 200 OK\r\n\r\n").contains("without X-Workman-Api"));
+        assert!(refused(b"HTTP/1.1 200 OK\r\nX-Workman-Api: 2\r\n\r\n").contains("read API 2"));
         assert!(refused(b"HTTP/1.1 200 OK\r\nX-WorkState-Api: 2\r\n\r\n").contains("read API 2"));
+        assert!(refused(b"HTTP/1.1 200 OK\r\nX-Workman-Api: 2\r\nX-WorkState-Api: 1\r\n\r\n").contains("read API 2"), "X-Workman-Api wins");
+        assert!(HttpReader::default().feed(b"HTTP/1.1 200 OK\r\nx-workman-api: 1\r\n\r\n").unwrap().1);
         assert!(HttpReader::default().feed(b"HTTP/1.1 200 OK\r\nx-workstate-api: 1\r\n\r\n").unwrap().1);
+        assert!(HttpReader::default().feed(b"HTTP/1.1 200 OK\r\nX-WorkState-Api: 1\r\nX-Workman-Api: 1\r\n\r\n").unwrap().1);
     }
 
     #[test]

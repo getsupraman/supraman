@@ -1158,7 +1158,7 @@ mod tests {
         let ws = config_text(&mcp, "fm-demo-workspace");
         let repo = config_text(&mcp, "fm-demo-alpha");
         assert!(ws.contains("wss_fake1") && repo.contains("wss_fake2"), "{ws} {repo}");
-        assert!(!ws.contains("X-WorkState-") && !repo.contains("X-WorkState-"), "identity is on the row, not in headers: {repo}");
+        assert!(["X-WorkState-", "X-Workman-"].iter().all(|h| !ws.contains(h) && !repo.contains(h)), "identity is on the row, not in headers: {repo}");
     }
 
     #[test]

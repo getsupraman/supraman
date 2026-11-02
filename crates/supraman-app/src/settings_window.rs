@@ -443,10 +443,12 @@ impl SettingsView {
             self.render_workstate_status(cx),
             row(
                 "Server URL",
-                "The Workman server Supraman signs in to, e.g. https://workstate.dikaia.ai (http only for this \
-                 machine). While signed in, a new server is used only once you have signed in there: Supraman then \
-                 restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
-                 the old one.",
+                format!(
+                    "The Workman server Supraman signs in to, e.g. {DEFAULT_WORKSTATE_URL} (http only for this \
+                     machine). While signed in, a new server is used only once you have signed in there: Supraman then \
+                     restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
+                     the old one."
+                ),
                 field.into_any_element(),
                 Some(below.into_any_element()),
                 cx,
