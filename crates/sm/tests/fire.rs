@@ -603,7 +603,8 @@ fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     let out = sm_bin("smw", &f, &["schedule", "fire", "--home", home, "demo", "nope", "--fingerprint", &fp], "");
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     let log = fs::read_to_string(schedule::fire_log(&f.home)).unwrap();
-    let lines: Vec<&str> = log.lines().collect();
+    // a machine without `claude` on PATH adds a budget notice before each session stage
+    let lines: Vec<&str> = log.lines().filter(|l| !l.contains("cannot read the budget")).collect();
     assert_eq!(lines.len(), 4, "{log}");
     assert!(lines[0].contains(" demo/gate run_now gate-") && lines[0].contains("is not a git repo"), "{log}");
     assert!(lines[1].contains(" demo/gate task gate-") && lines[1].contains("refused: the task's fingerprint"), "{log}");
