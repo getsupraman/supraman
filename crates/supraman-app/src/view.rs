@@ -2416,6 +2416,11 @@ impl FleetView {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 
+    /// [+] tabs whose claude runs in Supraman's PTY: quitting ends them.
+    pub(crate) fn running_hand_tabs(&self) -> usize {
+        self.tabs.iter().filter(|t| t.hand && !t.exited && t.terminal.is_some()).count()
+    }
+
     pub fn restart_elevated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
             return;

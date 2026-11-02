@@ -32,16 +32,29 @@ pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Cont
         open_release_page(view, available, cx);
         return;
     }
-    if view.updates.target.quit && view.has_attach_tabs() {
-        view.confirm = Some(Confirm::ask(
-            format!("Update to Supraman {}? Supraman restarts; your sessions keep running in the background.", available.version()),
-            "Update",
-            Confirmed::Update,
-        ));
+    if let Some(question) = view.updates.target.quit.then(|| question(available.version(), view.has_attach_tabs(), view.running_hand_tabs())).flatten() {
+        view.confirm = Some(Confirm::ask(question, "Update", Confirmed::Update));
         cx.notify();
         return;
     }
     view.download_update(available.clone(), cx);
+}
+
+/// What Update asks before Supraman quits, or `None` when no open tab holds a session.
+fn question(version: &str, attach: bool, hands: usize) -> Option<String> {
+    if !attach && hands == 0 {
+        return None;
+    }
+    let mut q = format!("Update to Supraman {version}? Supraman restarts.");
+    if attach {
+        q.push_str(" Attached sessions keep running in the background.");
+    }
+    match hands {
+        0 => {}
+        1 => q.push_str(" The [+] session running in Supraman ends and reopens as a resume after the restart; a turn in flight is lost."),
+        n => q.push_str(&format!(" The {n} [+] sessions running in Supraman end and reopen as resumes after the restart; turns in flight are lost.")),
+    }
+    Some(q)
 }
 
 /// Where an update goes and what happens after the hand-over; the selftest points it at a temp install.
@@ -345,6 +358,16 @@ mod tests {
     use supraman_core::update::Manifest;
 
     use super::*;
+
+    #[test]
+    fn update_asks_when_a_tab_holds_a_session() {
+        assert_eq!(question("0.1.3", false, 0), None);
+        assert_eq!(question("0.1.3", true, 0).as_deref(), Some("Update to Supraman 0.1.3? Supraman restarts. Attached sessions keep running in the background."));
+        let one = question("0.1.3", false, 1).unwrap();
+        assert!(one.contains("The [+] session running in Supraman ends") && !one.contains("Attached"), "{one}");
+        let both = question("0.1.3", true, 2).unwrap();
+        assert!(both.contains("Attached sessions keep running") && both.contains("The 2 [+] sessions running in Supraman end"), "{both}");
+    }
 
     fn available(version: &str) -> Available {
         Available {
