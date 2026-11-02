@@ -24,8 +24,8 @@ extracting).
 
 1. Set the crates' `version` to the release's semver (every `crates\*\Cargo.toml`), commit, and pass the gate below.
 2. Tag and push the tag: `git tag v0.1.0; git push origin v0.1.0`.
-3. `.github/workflows/release.yml` runs on the tag (`windows-latest`): `cargo test --release --workspace` (no
-   selftests: they need a desktop), `release.ps1 -Version <tag without v>`, `sm release sign` with the repository
+3. `.github/workflows/release.yml` runs on the tag (`windows-latest`, compiled dependencies cached by `Swatinem/rust-cache`; no tests: the tagged
+   commit passed the gate, and `.github/workflows/test.yml` runs `cargo test` on GitHub when started by hand), `release.ps1 -Version <tag without v>`, `sm release sign` with the repository
    secret `UPDATE_SIGNING_KEY`, `sm release verify`, then `gh release create <tag> --draft` with the zip, `SHA256SUMS`,
    `supraman-update.json` and `supraman-update.json.sig`. Its notes name the tag and link the source at it
    (GPL-3.0 §6). It stops before the build while `update.pub` is the placeholder.
