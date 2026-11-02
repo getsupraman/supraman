@@ -577,6 +577,19 @@ impl SettingsView {
         };
         let value = |id: &'static str, text: String| div().id(id).text_sm().child(SharedString::from(text)).into_any_element();
         let home = self.home.as_ref().map_or("not set".to_string(), |h| h.display().to_string());
+        let on = self.settings.updates.check;
+        let check_toggle = button::small("updates-check", if on { "On" } else { "Off" }, cx)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_update_check(!on, cx)));
+        let last_check = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().id("updates-last").max_w(px(260.)).text_sm().child(SharedString::from(self.updates_line(cx))))
+            .children(on.then(|| {
+                button::small("updates-check-now", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
+                }))
+            }));
         vec![
             div()
                 .id("about-mark")
@@ -590,6 +603,14 @@ impl SettingsView {
                 .child(crate::brand::wordmark(22., cx))
                 .into_any_element(),
             row("Supraman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
+            row(
+                "Check for updates",
+                "At start and once a day Supraman asks GitHub whether a newer release is published, and shows it above the session list. Off sends no request.",
+                check_toggle.into_any_element(),
+                None,
+                cx,
+            ),
+            row("Last check", "What the last update check found.", last_check.into_any_element(), None, cx),
             row(
                 "claude CLI",
                 "The Claude Code CLI Supraman lists, launches and attaches sessions with (`claude --version`).",
@@ -619,6 +640,18 @@ impl SettingsView {
                 cx,
             ),
         ]
+    }
+
+    pub fn set_update_check(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.change(|s| s.updates.check = on, cx);
+        if on {
+            self.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
+        }
+    }
+
+    pub fn updates_line(&self, cx: &App) -> String {
+        let on = self.settings.updates.check;
+        self.fleet.upgrade().map_or_else(|| "the main window is closed".into(), |f| f.read(cx).updates.status_line(on))
     }
 
     fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

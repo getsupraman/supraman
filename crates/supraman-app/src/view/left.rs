@@ -396,6 +396,7 @@ impl FleetView {
         if let Some(problem) = self.workstate_notice() {
             notices.push(self.render_workstate_notice(problem, cx));
         }
+        notices.extend(self.render_update_notice(cx));
         if let Some(warning) = &self.start_warning {
             notices.push(notice(warning.clone(), banner::tinted(status.warning)));
         }
@@ -724,6 +725,40 @@ impl FleetView {
             .child(actions)
             .child(hit_target(&self.hits, "ws-setup-notice".into()))
             .into_any_element()
+    }
+
+    fn render_update_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let version = self.updates.offered()?.version().to_string();
+        let color = cx.theme().status().info;
+        let dismiss = glyph_button(&self.hits, "update-dismiss".into(), Icon::Close, "Hide until a newer release", cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.dismiss_update(cx);
+            }));
+        let actions = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .pt_2()
+            .child(button::bordered(&self.hits, "update-notes", "What's new", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.update_notes(cx);
+            })))
+            .child(button::bordered(&self.hits, "update-install", "Update", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.run_update(cx);
+            })));
+        Some(
+            banner::tinted(color)
+                .id("update-notice")
+                .relative()
+                .mx_3()
+                .my_2()
+                .child(banner::dismissable(SharedString::from(format!("Supraman {version} is available")), dismiss))
+                .child(actions)
+                .child(hit_target(&self.hits, "update-notice".into()))
+                .into_any_element(),
+        )
     }
 
     /// The MCP call that would resolve it is shown, never run (C21).

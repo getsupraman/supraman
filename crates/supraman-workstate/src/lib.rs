@@ -12,11 +12,12 @@ mod http;
 pub mod model;
 pub mod secret;
 mod stream;
+pub mod updates;
 
 pub use auth::{Auth, AuthError, AuthStatus};
 pub use client::{API_VERSION, BearerSource, BriefFor, Client, Error, JournalQuery, Result, SessionsQuery, api_base};
 pub use health::health;
-pub use http::{Reply, agent as http_agent, pct_encode, read as read_reply, server_reason};
+pub use http::{Reply, agent as http_agent, agent_following as http_agent_following, pct_encode, read as read_reply, server_reason};
 pub use model::*;
 pub use secret::{MemoryStore, SecretStore};
 pub use stream::{Stream, StreamConfig, StreamSignal};

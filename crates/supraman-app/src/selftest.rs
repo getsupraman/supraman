@@ -130,6 +130,9 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     crate::signin::use_http_browser();
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
+    // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
+    unsafe { std::env::set_var(supraman_workstate::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
@@ -989,6 +992,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
 
     let notices = step("7o", crate::selftest_notices::run(view, cx)).await?;
     println!("step 7o: {notices}");
+
+    let updated = step("7+u", crate::selftest_updates::run(view, &home(), cx)).await?;
+    println!("step 7+u: {updated}");
 
     let reopened = step("7x", crate::selftest_reopen::run(view, &home(), &session_name()?, cx)).await?;
     println!("step 7x: {reopened}");

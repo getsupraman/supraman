@@ -199,6 +199,26 @@ impl Section for WindowSettings {
     const FIELDS: &'static [&'static str] = &["left_width"];
 }
 
+/// `[updates]`: whether the app looks for a newer release.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// At start and daily; off sends no request at all.
+    #[serde(skip_serializing_if = "is_true")]
+    pub check: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { check: true }
+    }
+}
+
+impl Section for UpdateSettings {
+    const KEY: &'static str = "updates";
+    const FIELDS: &'static [&'static str] = &["check"];
+}
+
 /// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
 /// [`Section`].
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -208,13 +228,15 @@ pub struct Settings {
     pub appearance: AppearanceSettings,
     pub terminal: TerminalSettings,
     pub window: WindowSettings,
+    pub updates: UpdateSettings,
     /// Every table and key Foreman does not own, as read and written back: a plugin's `[gitman]`, a newer
     /// build's keys, a key outside any table. Read and written through [`Settings::section`].
     pub other: Table,
 }
 
 /// The tables [`Settings`] owns, which [`Settings::section`] refuses.
-const OWNED: [&str; 5] = [SessionSettings::KEY, WorkStateSettings::KEY, AppearanceSettings::KEY, TerminalSettings::KEY, WindowSettings::KEY];
+const OWNED: [&str; 6] =
+    [SessionSettings::KEY, WorkStateSettings::KEY, AppearanceSettings::KEY, TerminalSettings::KEY, WindowSettings::KEY, UpdateSettings::KEY];
 
 /// The value, or nothing when it has the wrong type: a bad value must not make the whole file unreadable.
 fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> std::result::Result<Option<T>, D::Error> {
@@ -349,6 +371,7 @@ impl Settings {
         put(&mut out, &self.appearance)?;
         put(&mut out, &self.terminal)?;
         put(&mut out, &self.window)?;
+        put(&mut out, &self.updates)?;
         Ok(out)
     }
 }
@@ -384,12 +407,13 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
     let appearance = take(&mut table, path, &mut notices);
     let terminal = take(&mut table, path, &mut notices);
     let window = take(&mut table, path, &mut notices);
+    let updates = take(&mut table, path, &mut notices);
     for (key, value) in &table {
         if !value.is_table() {
             notices.push(format!("{}: {key} is not in a table; it is ignored", path.display()));
         }
     }
-    Ok((Settings { sessions, workstate, appearance, terminal, window, other: table }, notices))
+    Ok((Settings { sessions, workstate, appearance, terminal, window, updates, other: table }, notices))
 }
 
 /// `S` out of its own table in `table`, each key checked on its own. What `S` does not know stays in
@@ -445,6 +469,7 @@ mod tests {
             appearance: AppearanceSettings { theme: Some("Foreman Dark".into()), terminal_colors: Some("campbell".into()) },
             terminal: TerminalSettings { font_size: Some(20), font_family: Some("Lucida Console".into()), ligatures: Some(false) },
             window: WindowSettings { left_width: Some(512) },
+            updates: UpdateSettings { check: false },
             other: Table::new(),
         }
     }
@@ -466,7 +491,7 @@ mod tests {
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
         let file = saved(home.path());
-        assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "window", "workstate"]);
+        assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "updates", "window", "workstate"]);
         assert_eq!(file["terminal"]["font_size"].as_integer(), Some(20));
         assert_eq!(file["workstate"]["url"].as_str(), Some("https://workstate.example"));
     }
@@ -500,6 +525,19 @@ mod tests {
         check(&s.appearance);
         check(&s.terminal);
         check(&s.window);
+        check(&s.updates);
+    }
+
+    #[test]
+    fn updates_are_checked_unless_turned_off() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(Settings::default().updates.check);
+        Settings::default().save(home.path()).unwrap();
+        assert!(!saved(home.path()).contains_key("updates"));
+        let (s, notices) = load_text(home.path(), "[updates]
+check = false
+");
+        assert!(!s.updates.check && notices.is_empty(), "{notices:?}");
     }
 
     /// The shape of a home's `settings.toml` today, with made-up values: loads with no notice, and a save

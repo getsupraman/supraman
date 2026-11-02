@@ -5525,3 +5525,32 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   0 failed, 6 ignored; `cargo deny check licenses` ok; `third-party.ps1 -Check` current (449 crates); actionlint clean;
   `release.ps1 -Version 0.1.0` ok (zip, `SHA256SUMS` matching `Get-FileHash`, manifest, `SOURCE.txt`);
   `sm release verify` refuses (placeholder) and `sm release sign` refuses (key unset), as designed; `--selftest` PASS.
+
+## 2026-11-02 — public/8 updater part 1: find a newer signed release on GitHub and tell the user
+
+- **Where it lives:** the check is `supraman_workstate::updates` (testable without the UI, beside the shared HTTP agent
+  and `FakeWorkState`; a GitHub client of its own in core would have been a second HTTP stack, C56). The app side is
+  `crate::updates` (supraman-app): the loop, the banner (`view/left.rs`, `render_update_notice`, next to the Workman
+  notice, because the left panel above the tree is where every app-level notice lives), the About rows.
+- **Redirects:** `http_agent` follows none (WorkState's OAuth must see its own 302s); GitHub's `browser_download_url`
+  answers 302 to a CDN, so `http_agent_following(timeout, n)` is the same agent with `max_redirects(n)`.
+- **ETag:** `If-None-Match` is sent only when the release of the answer it names is kept (`state.json`: etag, release,
+  last). A 304 re-judges that kept release against the running version, so an available release stays available
+  across restarts without a download, and turns into "up to date" once the install is updated. A download failure keeps
+  no ETag (the next check fetches whole); a refused release (bad signature, manifest version ≠ tag, draft or
+  pre-release, missing assets) is kept as refused, so a 304 does not re-download it either.
+- **No key, no request:** `update.pub` is still the placeholder, so in the app every check is `Failed` ("no release
+  key …") without a request, logged only. Once René commits a real key it checks GitHub.
+- **Running version:** `VERSION` beside the exe (`version <semver>`, BOM tolerated), else `CARGO_PKG_VERSION`; a local
+  build's `0.1.0-<yyyymmdd>-<sha>` is valid semver *below* 0.1.0, so it is cut to its crate version.
+- **Switch:** `[updates] check` (default on, written only when off). `check_if_on` reads it before any request, so the
+  test counting requests covers the app's path. Check now shows only while on.
+- **Selftest 7+u:** `prepare` sets `SUPRAMAN_UPDATE_API` to a closed loopback port before anything (also for
+  `--selftest-supervise`), so no selftest start ever reaches GitHub; the step swaps `updates.source` for a
+  `FakeWorkState` and a key made in the step, and `open_link_with` for a recorder.
+- **Dark Modern's `status.info` is grey**, so the banner is neutral there and blue in a light theme
+  (`public-8-update-banner-{dark,light}.png`).
+- **Bash heredoc + Python:** a `\` line continuation written through `python - <<'EOF'` with `\` came out as a run of
+  spaces in the Rust string; the Sessions page's long texts carry the same gaps (left alone here).
+- **Red:** the verify call replaced by `Manifest::parse` → 1 failed (`a_release_signed_by_another_key_is_not_offered`);
+  the switch guard skipped → 1 failed (`checking_off_sends_no_request`, 3 requests instead of 0).

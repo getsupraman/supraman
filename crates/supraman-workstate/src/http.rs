@@ -1,14 +1,19 @@
-//! The one HTTP agent every WorkState call uses, and how its answers are read.
+//! The one HTTP agent every WorkState call and the update check use, and how its answers are read.
 
 use std::time::Duration;
 
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 pub fn agent(timeout: Duration) -> ureq::Agent {
+    agent_following(timeout, 0)
+}
+
+/// [`agent`] that follows up to `redirects` redirects: a release asset's download URL answers with one.
+pub fn agent_following(timeout: Duration, redirects: u32) -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .proxy(None)
-        .max_redirects(0)
+        .max_redirects(redirects)
         .timeout_global(Some(timeout))
         .tls_config(TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build())
         .build()
