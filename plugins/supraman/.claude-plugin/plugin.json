@@ -1,5 +1,5 @@
 {
   "name": "supraman",
   "version": "0.2.0",
-  "description": "Supraman's sessions: the skills workspace-controller (plans a task across a workspace's repos, one approval, starts repo-controllers) and repo-controller (runs one repo's WorkState run with /rlarch:controller), plus hooks that log lifecycle events to the Supraman home's events and re-inject the session's role on SessionStart. Loaded only with --plugin-dir on sessions Supraman launches."
+  "description": "Supraman's sessions: the skills workspace-controller (plans a task across a workspace's repos, one approval, starts repo-controllers) and repo-controller (runs one repo's Workman run with /rlarch:controller), plus hooks that log lifecycle events to the Supraman home's events and re-inject the session's role on SessionStart. Loaded only with --plugin-dir on sessions Supraman launches."
 }

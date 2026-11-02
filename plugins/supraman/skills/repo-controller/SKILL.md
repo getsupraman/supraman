@@ -1,6 +1,6 @@
 ---
 name: repo-controller
-description: Be the repo-controller of one repo in a Supraman workspace — the session `fm-<w>-<repo-slug>` that Supraman starts when the workspace controller runs `sm want`. Runs the WorkState run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Supraman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /supraman:workspace-controller), a repo session Supraman did not start, or doing the units yourself.
+description: Be the repo-controller of one repo in a Supraman workspace — the session `fm-<w>-<repo-slug>` that Supraman starts when the workspace controller runs `sm want`. Runs the Workman run it is handed with /rlarch:controller (nested agents in worktrees next to the repo, verify, merge into the repo's checkout, close with evidence), escalates to the workspace controller what is not its to decide, and reports done with the merge shas. USE FOR - the role Supraman's `roles/repo.md` names; nothing else. DO NOT USE FOR - planning across repos or talking to the human (that is /supraman:workspace-controller), a repo session Supraman did not start, or doing the units yourself.
 ---
 
 # Repo controller
@@ -17,7 +17,7 @@ tool, bare) lists every session if you need another name; never guess one.
 ## 1. What a task is
 
 - **A run ref** — your first task (`First task:` under your role) or a message from `fm-<w>-workspace`
-  says `Your run: <run ref> in WorkState project <w>`. That is the work: §2.
+  says `Your run: <run ref> in Workman project <w>`. That is the work: §2.
 - **A direct request with no run** — a question, one command, a status: do exactly that and answer where
   it came from. In your launch prompt → answer in your reply text, exactly in the form it asks for. In a
   message → `SendMessage` the answer back to its sender. Do not open a run for it.
@@ -40,7 +40,7 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
    parse was). Only a failed Skill call is a blocker →
    `BLOCKED <run ref>: /rlarch:controller is not loaded in this session (the rlarch plugin is not
    installed for this user)` to `fm-<w>-workspace`, then wait. No `work_*` tools → the same, naming
-   WorkState (Supraman is not signed in to it).
+   Workman (Supraman is not signed in to it).
 2. **The run and its units already exist**: the workspace controller made them, and the human approved
    them. Skip the controller skill's §1 creation and its "one approval" step — **your first task is the
    authorization**; do not ask again. You may split a unit, add a `followup`, add a unit's own binding
@@ -66,7 +66,7 @@ by `SendMessage` to `fm-<w>-workspace` (§3).
 5. **Never `git push`**, never deploy. Landing means merged into the local checkout.
 
 **Why a nested agent never closes its own unit.** `agent_launch` mints it a worker of its own, whose
-evidence never satisfies your unit's guard; `Start-NestedAgent.ps1` gives it none, so it reaches WorkState
+evidence never satisfies your unit's guard; `Start-NestedAgent.ps1` gives it none, so it reaches Workman
 with the user's own registration and its writes would be recorded as yours. Either way every brief says,
 as the controller skill's §3 requires: *the unit item is the repo controller's; do not call `work_status`,
 `work_verify` or `work_report` on `<unit ref>`*. Read its `DONE` as a claim; record it yourself with

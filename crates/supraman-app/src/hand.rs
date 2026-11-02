@@ -1,4 +1,4 @@
-//! `--mcp-config` without `--strict-mcp-config` deliberately overrides the user-scope `workstate` registration (LEARNINGS mint/7).
+//! `--mcp-config` without `--strict-mcp-config` deliberately overrides the user-scope registration named `supraman_claude::MCP_SERVER` (LEARNINGS mint/7).
 //! A minted token's name is its credential's and cannot be renamed; see Skills `docs/workstate/11-sessions.md`, resolution order (a).
 
 use std::path::{Path, PathBuf};

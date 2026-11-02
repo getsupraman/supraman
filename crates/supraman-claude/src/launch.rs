@@ -104,26 +104,27 @@ pub fn resume_argv(session_id: &str, prompt: Option<&str>) -> Vec<OsString> {
     args
 }
 
-/// Who a session is, for WorkState's named sessions (Skills `docs/workstate/11-sessions.md`): sent as
-/// `X-WorkState-*` headers on every request, so they survive resumes and compaction. A label, never
-/// an authority: the role still comes from the token.
+/// Who a session is, as its mint request tells Workman. A label, never an authority: the role still comes from the token.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIdentity {
-    /// `X-WorkState-Agent`: the session's `--name`; also the config file's name.
+    /// The session's `--name`; also the config file's name.
     pub agent: String,
-    /// `X-WorkState-Session`: the claude session uuid, when it is known at launch.
+    /// The claude session uuid, when it is known at launch.
     pub session: Option<String>,
-    /// `X-WorkState-Launched-By`, e.g. `foreman/nomos`.
+    /// E.g. `foreman/nomos`.
     pub launched_by: String,
-    /// `X-WorkState-Origin`, e.g. `foreman/nomos/Nomos.Extract`.
+    /// E.g. `foreman/nomos/Nomos.Extract`.
     pub origin: String,
-    /// `X-WorkState-Cwd`.
     pub cwd: String,
-    /// `X-WorkState-Foreman-Role`: Foreman's role (workspace, repo, …), not the token's.
+    /// Foreman's role (workspace, repo, …), not the token's.
     pub foreman_role: String,
 }
 
-/// The `workstate` server entry with the token and `headers` written in, shaped like Skills' `plugin.mcp.json`.
+/// The `mcpServers` key of a session's Workman server: its tools are `mcp__<key>__*`, and a [+] session's entry
+/// overrides the user-scope server of the same name (`/workman:setup` registers it).
+pub const MCP_SERVER: &str = "workstate";
+
+/// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
 pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
     let mut map = serde_json::Map::new();
     map.insert("Authorization".into(), format!("Bearer {token}").into());
@@ -132,7 +133,7 @@ pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) 
     }
     serde_json::json!({
         "mcpServers": {
-            "workstate": {
+            (MCP_SERVER): {
                 "type": "http",
                 "url": url,
                 "headers": map
@@ -169,7 +170,7 @@ pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v["mcpServers"]["workstate"]["url"].as_str().map(str::to_string)
+    v["mcpServers"][MCP_SERVER]["url"].as_str().map(str::to_string)
 }
 
 #[cfg(windows)]

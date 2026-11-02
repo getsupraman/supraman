@@ -20,7 +20,7 @@ Skills: `skills/workspace-controller` (`/supraman:workspace-controller`, loaded 
 the user-installed rlarch plugin, which loads with no `extra_plugin_dirs`). The roles stay short: who the session is, which skill to
 invoke, what to do on start and after a compaction; the skills hold the rules.
 
-WorkState is https://workstate.dikaia.ai, reached only through Supraman's OAuth sign-in (Settings → WorkState →
+Workman is https://workstate.dikaia.ai, reached only through Supraman's OAuth sign-in (Settings → Workman →
 Sign in); there is no static token and no local stack. Supraman mints each session its own token for its role and
 passes it with `--mcp-config <file> --strict-mcp-config`; not signed in, a session has no `work_*` tools.
 `sm work overview|board` reads the workspace's project with an access token of the same sign-in.
