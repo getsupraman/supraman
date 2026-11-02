@@ -1,0 +1,33 @@
+# cargo test on a clean windows-latest, started by hand (Actions → test → Run workflow); the selftests need a desktop and run locally.
+name: test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        run: |
+          $channel = [regex]::Match((Get-Content -Raw rust-toolchain.toml), 'channel = "([^"]+)"').Groups[1].Value
+          rustup toolchain install $channel --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install $channel failed" }
+          cargo --version
+
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Test
+        run: |
+          cargo test --release --workspace --locked --no-fail-fast
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed ($LASTEXITCODE)" }
