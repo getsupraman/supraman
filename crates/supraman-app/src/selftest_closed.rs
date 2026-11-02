@@ -162,6 +162,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     view.update(cx, |v, cx| {
         v.stars = on_disk;
+        v.invalidate_tree();
         cx.notify();
     });
     if view.read_with(cx, |v, _| row(v, RECENT).zip(row(v, OLD))).is_none() {

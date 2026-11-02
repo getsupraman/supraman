@@ -178,7 +178,7 @@ impl FleetView {
     }
 
     pub fn workspace_sections(&self, workspace: &str, cx: &gpui::App) -> Option<(WorkspaceNode, Vec<Section>)> {
-        let node = self.tree().workspaces.into_iter().find(|n| n.name == workspace)?;
+        let node = self.tree().workspaces.iter().find(|n| n.name == workspace)?.clone();
         let registered = self.workspaces.iter().find(|r| r.name == workspace);
         let facts = WorkspaceFacts {
             name: workspace.to_string(),

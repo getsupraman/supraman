@@ -11,6 +11,7 @@ pub mod details;
 pub mod fonts;
 pub mod hit;
 pub mod hover_card;
+pub mod keyed_list;
 pub mod matcher;
 pub mod menu;
 pub mod notices;

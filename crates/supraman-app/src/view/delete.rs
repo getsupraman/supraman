@@ -334,6 +334,7 @@ impl FleetView {
         let deleted = &self.deleted;
         self.sessions.retain(|s| !deleted.contains_key(&s.session_id));
         self.closed.retain(|s| !deleted.contains_key(&s.session_id));
+        self.invalidate_tree();
     }
 }
 

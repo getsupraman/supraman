@@ -268,7 +268,8 @@ impl FleetView {
         if let Some(id) = target.strip_prefix("schedule:") {
             self.open_schedule(workspace, id, At::Top, cx);
         } else if let Some((repo, session_id)) = target.strip_prefix("session:").and_then(|t| t.split_once('\u{0}')) {
-            let row = self.tree().workspaces.into_iter().filter(|n| n.name == workspace).flat_map(|n| n.repos).flat_map(|r| r.sessions).find(|r| r.session.session_id == session_id);
+            let tree = self.tree();
+            let row = tree.workspaces.iter().filter(|n| n.name == workspace).flat_map(|n| &n.repos).flat_map(|r| &r.sessions).find(|r| r.session.session_id == session_id).cloned();
             if let Some(row) = row {
                 self.open_row(workspace, repo, &row, window, cx);
             }

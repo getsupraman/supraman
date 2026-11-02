@@ -1002,7 +1002,7 @@ async fn edit_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     let live_after = started.elapsed();
     // the testbed's own sessions in the home show as its unlisted folders
     let folders_of = |v: &FleetView| {
-        let node = v.tree().workspaces.into_iter().find(|n| n.name == name)?;
+        let node = v.tree().workspaces.clone().into_iter().find(|n| n.name == name)?;
         Some(node.repos.iter().filter(|r| r.listed).map(|r| (r.name.clone(), r.sessions.first().map(|s| s.session.name.clone()))).collect::<Vec<_>>())
     };
     let placed = vec![("XGit".to_string(), None), ("XPlain".to_string(), Some(session_name.clone()))];

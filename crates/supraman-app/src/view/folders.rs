@@ -201,6 +201,10 @@ impl FleetView {
                     }
                 }
                 let live_in = self.live_in(&done);
+                if let Some(added) = done.added.first() {
+                    self.collapsed.remove(&format!("workspace:{w}"));
+                    self.reveal_new(super::left::PendingReveal::Row(format!("repo:{w}/{added}")));
+                }
                 self.reload_workspaces();
                 let what = if done.added.is_empty() && done.removed.is_empty() { format!("Saved {w}.") } else { summary(w, &done) };
                 self.show_toast(format!("{what}{}", edited_note(&done, &stopped, &live_in)), cx);

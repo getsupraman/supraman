@@ -41,6 +41,7 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
         v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear();
         v.injected_closed.clear();
         v.closed.retain(|s| !s.session_id.starts_with(FIXTURE));
+        v.invalidate_tree();
         let mine: Vec<u64> = v.tabs.iter().map(|t| t.id).filter(|id| !before.contains(id)).collect();
         mine.into_iter().for_each(|id| v.close_tab(id, cx));
         cx.notify();
@@ -118,10 +119,15 @@ async fn timed(
     cx: &mut AsyncWindowContext,
     mut seen: impl FnMut(usize, &mut AsyncWindowContext) -> bool,
 ) -> anyhow::Result<(Latency, frames::Stretch)> {
+    let checking = crate::view::tree_check::set(false);
+    let counted = crate::view::tree_check::counts();
     let recording = frames::start(view, cx);
     let typed = typed_at(view, keys, pace, cx, &mut seen).await;
     let painted = view.read_with(cx, |v, _| v.probe.painted());
     let stretch = recording.stop(view, cx);
+    let (builds, renders) = crate::view::tree_check::counts();
+    println!("step 7+r: {} trees built over {} renders while typing {} keys", builds - counted.0, renders - counted.1, keys.len());
+    crate::view::tree_check::set(checking);
     let shown = typed?;
     let mut ms = Vec::new();
     for (i, (due, at)) in shown.iter().enumerate() {
@@ -206,6 +212,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
         v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(live);
         v.closed.extend(closed.iter().cloned());
         v.injected_closed = closed;
+        v.invalidate_tree();
         v.poll_nudge.wake();
         cx.notify();
     });
@@ -280,6 +287,7 @@ async fn long_scheduled(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     let (long, frames) = timed(view, &typed, LONG_PACE, cx, |i, cx| count(cx) > i).await?;
     let block: String = (0..PASTE_LINES).map(|i| format!("{i:02} every weekday at 07:30 replay the failed runs of the night and report them\n")).collect();
     let input = view.read_with(cx, |v, _| v.start_page(tab).map(|p| p.input.clone())).context("the scheduled prompt tab is gone")?;
+    let checking = crate::view::tree_check::set(false);
     let recording = frames::start(view, cx);
     let before = count(cx);
     let at = Instant::now();
@@ -289,6 +297,7 @@ async fn long_scheduled(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     sleep(cx, Duration::from_millis(200)).await;
     let painted = view.read_with(cx, |v, _| v.probe.painted());
     recording.stop(view, cx);
+    crate::view::tree_check::set(checking);
     let pasted = painted.iter().find(|p| **p >= seen).map_or(f64::NAN, |p| p.saturating_duration_since(at).as_secs_f64() * 1000.0);
     let more = keys(20);
     let start = count(cx);

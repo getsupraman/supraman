@@ -198,7 +198,7 @@ async fn check_foreign(
     let row = loop {
         let row = view.read_with(cx, |v, _| {
             let tree = v.tree();
-            let ws = tree.workspaces.into_iter().find(|w| w.name == workspace)?;
+            let ws = tree.workspaces.clone().into_iter().find(|w| w.name == workspace)?;
             ws.repos.into_iter().flat_map(|r| r.sessions.into_iter().map(move |s| (r.name.clone(), s))).find(|(_, s)| s.session.name == name)
         });
         if let Some(row) = row

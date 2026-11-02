@@ -180,6 +180,7 @@ pub fn main_repos(sessions: &[Session]) -> HashMap<PathBuf, Option<PathBuf>> {
     out
 }
 
+#[derive(Debug)]
 pub struct Tree {
     pub workspaces: Vec<WorkspaceNode>,
     pub hidden_stopped: usize,
@@ -245,6 +246,18 @@ fn sort(rows: &mut [SessionRow]) {
             .cmp(&rank(b))
             .then_with(|| b.session.started_at.cmp(&a.session.started_at))
     });
+}
+
+/// The first instant after `now_ms` at which [`build`] would say something else of the same inputs: a background
+/// session turns orphaned (`Session::health`), a closed one leaves [`CLOSED_WINDOW_MS`].
+pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Option<i64> {
+    use supraman_claude::SessionState as S;
+    let orphaned = sessions
+        .iter()
+        .filter(|s| s.kind == Kind::Background && s.pid.is_none() && matches!(s.state, Some(S::Working | S::Blocked)))
+        .filter_map(|s| s.started_at.map(|t| t + supraman_claude::ORPHAN_AFTER.as_millis() as i64 + 1));
+    let aged_out = closed.iter().filter_map(|s| s.started_at.map(|t| t + CLOSED_WINDOW_MS + 1));
+    orphaned.chain(aged_out).filter(|t| *t > now_ms).min()
 }
 
 pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_stopped: bool, sup: &Supervised) -> Tree {

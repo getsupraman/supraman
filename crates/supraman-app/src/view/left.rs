@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::{
     collections::{BTreeMap, HashSet},
     time::{Duration, Instant},
@@ -20,6 +21,25 @@ use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 use crate::work_view;
+
+const REVEAL_WITHIN: Duration = Duration::from_secs(60);
+
+/// A sidebar row to scroll into view once it exists: a row key of [`FleetView::set_left_rows`], or a tab's claude session.
+pub(super) enum PendingReveal {
+    Row(String),
+    TabSession(u64),
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum LeftRow {
+    Workspace(usize),
+    Supervised(usize, usize),
+    Schedules(usize),
+    Folder(usize, usize),
+    Session(usize, usize, usize),
+    More(usize, usize),
+    Others,
+}
 
 const TREE_MIN_SHARE: f32 = 0.3;
 /// Inbox and Messages shrink only once the notices are squeezed to nothing.
@@ -424,69 +444,24 @@ impl FleetView {
         }
 
         let query = self.search_query(cx);
-        let mut body = div()
-            .id(if query.is_empty() { "fleet" } else { "search-results" })
-            .relative()
-            .child(hit_target(&self.hits, "tree-area".into()))
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(relative(TREE_MIN_SHARE))
-            .overflow_y_scroll()
-            .pb_4();
         self.search_marks.clear();
-        for workspace in tree.workspaces.iter().filter(|_| query.is_empty()) {
-            let pkey = format!("workspace:{}", workspace.name);
-            let open = !self.collapsed.contains(&pkey);
-            body = body.child(self.render_workspace_row(workspace, open, cx));
-            if !open {
-                continue;
-            }
-            for row in &workspace.supervised {
-                body = body.child(self.render_session(&workspace.name, "supervised", row, grid::indent(1), cx));
-            }
-            body = body.children(self.render_schedules(workspace, cx));
-            for repo in &workspace.repos {
-                let rkey = format!("repo:{}/{}", workspace.name, repo.name);
-                let ropen = !self.collapsed.contains(&rkey);
-                body = body.child(self.render_folder_row(workspace, repo, ropen, cx));
-                if !ropen {
-                    continue;
-                }
-                for row in &repo.sessions {
-                    body = body.child(self.render_session(&workspace.name, &repo.name, row, grid::indent(2), cx));
-                }
-                if repo.more > 0 {
-                    let key = format!("{}/{}", workspace.name, repo.name);
-                    let hit = format!("more-{key}");
-                    body = body.child(
-                        div()
-                            .id(SharedString::from(hit.clone()))
-                            .relative()
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .h(px(SESSION_LINE))
-                            .pl(grid::indent(2) + px(grid::LABEL))
-                            .text_xs()
-                            .text_color(secondary(cx))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
-                            .child(SharedString::from(format!("{} more closed…", repo.more)))
-                            .child(hit_target(&self.hits, hit))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.closed_expanded.insert(key.clone());
-                                cx.notify();
-                            })),
-                    );
-                }
-            }
-        }
-        if query.is_empty() {
-            body = body.children(self.render_unowned_others(cx));
+        let body = if query.is_empty() {
+            self.set_left_rows(&tree);
+            let list = gpui::list(self.left_list.state(), cx.processor(|this: &mut Self, ix: usize, _, cx| div().w_full().child(this.render_left_row(ix, cx)).into_any_element())).size_full().pb_4();
+            div().id("fleet").relative().child(hit_target(&self.hits, "tree-area".into())).flex().flex_col().flex_1().min_h(relative(TREE_MIN_SHARE)).child(list)
         } else {
-            body = self.render_results(body, &query, cx);
-        }
+            let body = div()
+                .id("search-results")
+                .relative()
+                .child(hit_target(&self.hits, "tree-area".into()))
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(relative(TREE_MIN_SHARE))
+                .overflow_y_scroll()
+                .pb_4();
+            self.render_results(body, &query, cx)
+        };
 
         let toast = self.toast.render(&self.hits, "toast", cx);
 
@@ -529,6 +504,120 @@ impl FleetView {
             .child(self.render_search_box())
             .child(body)
             .children(toast)
+            .into_any_element()
+    }
+
+    /// The sidebar's rows in order: a key each and the tokens its hit keys contain (supraman_ui::keyed_list).
+    fn set_left_rows(&mut self, tree: &Rc<fleet::Tree>) {
+        let mut rows = Vec::new();
+        for (w, workspace) in tree.workspaces.iter().enumerate() {
+            let name = &workspace.name;
+            rows.push((LeftRow::Workspace(w), format!("ws:{name}"), vec![name.clone()]));
+            if self.collapsed.contains(&format!("workspace:{name}")) {
+                continue;
+            }
+            for (i, row) in workspace.supervised.iter().enumerate() {
+                rows.push((LeftRow::Supervised(w, i), format!("sup:{name}/{}", row.session.session_id), vec![row.session.session_id.clone()]));
+            }
+            rows.push((LeftRow::Schedules(w), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
+            for (r, repo) in workspace.repos.iter().enumerate() {
+                let path = format!("{name}/{}", repo.name);
+                rows.push((LeftRow::Folder(w, r), format!("repo:{path}"), vec![path.clone()]));
+                if self.collapsed.contains(&format!("repo:{path}")) {
+                    continue;
+                }
+                for (i, row) in repo.sessions.iter().enumerate() {
+                    rows.push((LeftRow::Session(w, r, i), format!("s:{path}/{}", row.session.session_id), vec![row.session.session_id.clone()]));
+                }
+                if repo.more > 0 {
+                    rows.push((LeftRow::More(w, r), format!("more:{path}"), vec![format!("more-{path}")]));
+                }
+            }
+        }
+        rows.push((LeftRow::Others, "others".into(), ["others-row", "other-row-", "other-name-", "other-summary-"].iter().map(|p| p.to_string()).collect()));
+        self.left_list.set_rows(rows.iter().map(|(_, key, tokens)| (SharedString::from(key.clone()), tokens.clone())).collect());
+        self.left_rows = Rc::new((tree.clone(), rows.into_iter().map(|(row, ..)| row).collect()));
+        if let Some((pending, since)) = &self.reveal_pending {
+            let shown = match pending {
+                PendingReveal::Row(key) => self.left_list.reveal_where(|k| k == key),
+                PendingReveal::TabSession(tab) => match self.tab(*tab).and_then(|t| t.claude.clone()) {
+                    Some(sid) => self.left_list.reveal_where(|k| k.ends_with(&format!("/{sid}"))),
+                    None => self.tab(*tab).is_none(),
+                },
+            };
+            if shown || since.elapsed() > REVEAL_WITHIN {
+                self.reveal_pending = None;
+            }
+        }
+    }
+
+    /// The row of what the user just made, scrolled into view once the tree holds it.
+    pub(super) fn reveal_new(&mut self, pending: PendingReveal) {
+        self.reveal_pending = Some((pending, Instant::now()));
+    }
+
+    /// Scrolls the sidebar to the row `hit` belongs to; false when no row claims it.
+    pub fn reveal_hit(&self, hit: &str) -> bool {
+        self.left_list.reveal(hit)
+    }
+
+    pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {
+        &self.left_list
+    }
+
+    fn render_left_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let rows = self.left_rows.clone();
+        let (tree, rows) = (&rows.0, &rows.1);
+        let Some(row) = rows.get(ix) else { return div().into_any_element() };
+        match *row {
+            LeftRow::Workspace(w) => {
+                let workspace = &tree.workspaces[w];
+                let open = !self.collapsed.contains(&format!("workspace:{}", workspace.name));
+                self.render_workspace_row(workspace, open, cx)
+            }
+            LeftRow::Supervised(w, i) => {
+                let workspace = &tree.workspaces[w];
+                self.render_session(&workspace.name, "supervised", &workspace.supervised[i], grid::indent(1), cx)
+            }
+            LeftRow::Schedules(w) => div().flex().flex_col().children(self.render_schedules(&tree.workspaces[w], cx)).into_any_element(),
+            LeftRow::Folder(w, r) => {
+                let (workspace, repo) = (&tree.workspaces[w], &tree.workspaces[w].repos[r]);
+                let open = !self.collapsed.contains(&format!("repo:{}/{}", workspace.name, repo.name));
+                self.render_folder_row(workspace, repo, open, cx)
+            }
+            LeftRow::Session(w, r, i) => {
+                let workspace = &tree.workspaces[w];
+                let repo = &workspace.repos[r];
+                self.render_session(&workspace.name, &repo.name, &repo.sessions[i], grid::indent(2), cx)
+            }
+            LeftRow::More(w, r) => self.render_more_closed(&tree.workspaces[w], &tree.workspaces[w].repos[r], cx),
+            LeftRow::Others => div().flex().flex_col().children(self.render_unowned_others(cx)).into_any_element(),
+        }
+    }
+
+    fn render_more_closed(&self, workspace: &WorkspaceNode, repo: &RepoNode, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let key = format!("{}/{}", workspace.name, repo.name);
+        let hit = format!("more-{key}");
+        div()
+            .id(SharedString::from(hit.clone()))
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(SESSION_LINE))
+            .pl(grid::indent(2) + px(grid::LABEL))
+            .text_xs()
+            .text_color(secondary(cx))
+            .cursor_pointer()
+            .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
+            .child(SharedString::from(format!("{} more closed…", repo.more)))
+            .child(hit_target(&self.hits, hit))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.closed_expanded.insert(key.clone());
+                this.invalidate_tree();
+                cx.notify();
+            }))
             .into_any_element()
     }
 
