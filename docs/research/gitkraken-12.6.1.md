@@ -1,6 +1,6 @@
 # GitMan groundwork: analysis of GitKraken 12.6.1
 
-Ground work for WorkState `autowork/roadmap/3` (GitMan). Date 2026-10-28. Analysed install: `C:\Users\renel\AppData\Local\gitkraken\app-12.6.1`.
+Ground work for WorkState `autowork/roadmap/3` (GitMan). Date 2026-10-28. Analysed install: `%LOCALAPPDATA%\gitkraken\app-12.6.1`.
 
 ## 0. Method and legal frame
 

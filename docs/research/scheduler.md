@@ -341,7 +341,7 @@ The output goes to `<worktree>\.probe-run\register-probe-output.txt` (not commit
 
 ```
 == elevated shell: True
-== owner of P:\Projects\LarchSys\AutoWork: BUILTIN\Administrators; of .git: PCRENE\renel
+== owner of P:\Projects\LarchSys\AutoWork: BUILTIN\Administrators; of .git: <host>\<user>
 == serve (interactive): http://127.0.0.1:64944 sign_in=Ok(SignedIn { who: Some("Fake Operator"), unsaved: None }) secret_files=1
 == (d) registered, read back: LogonType=Interactive RunLevel=Limited WakeToRun=True StartWhenAvailable=True trigger=2026-10-30T17:59:02
 == (d) powercfg /waketimers
@@ -358,10 +358,10 @@ Power Scheme GUID: 9935e61f-1661-40c5-ae2f-8495027d5d5d  (AMD Ryzen™ High Perf
 
 ```
 == context
-user=renel session=1 elevated=false console_window=false
+user=<user> session=1 elevated=false console_window=false
 cwd=P:\Projects\LarchSys\AutoWork.worktrees\sched-1\.probe-run
 PATH has .local\bin: true
-user_home=Some("C:\\Users\\renel") claude_dir=Some("C:\\Users\\renel\\.claude")
+user_home=Some("C:\\Users\\<user>") claude_dir=Some("C:\\Users\\<user>\\.claude")
 == (a) claude
 claude --version: 2.1.314 (Claude Code)
 claude daemon status: NotRunning

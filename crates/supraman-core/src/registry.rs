@@ -119,10 +119,10 @@ mod tests {
     fn sample(name: &str) -> Workspace {
         Workspace::new(
             name,
-            r"P:\Projects\Magic\Nomos",
+            r"C:\work\demo",
             vec![
-                Folder { has_claude_md: true, branch: Some("main".into()), ..Folder::new("Nomos", r"P:\Projects\Magic\Nomos\Nomos") },
-                Folder { has_agents_md: true, enabled: false, ..Folder::new("Nomos.Pdf", r"P:\Projects\Magic\Nomos\Nomos.Pdf") },
+                Folder { has_claude_md: true, branch: Some("main".into()), ..Folder::new("Nomos", r"C:\work\demo\Nomos") },
+                Folder { has_agents_md: true, enabled: false, ..Folder::new("Nomos.Pdf", r"C:\work\demo\Nomos.Pdf") },
             ],
         )
     }
