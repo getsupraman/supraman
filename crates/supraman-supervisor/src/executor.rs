@@ -1100,8 +1100,8 @@ mod tests {
         let text = config_text(&mcp, "fm-demo-workspace");
         assert!(!text.contains(STATIC), "the static token never reaches the file: {text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["mcpServers"]["workstate"]["url"], "http://127.0.0.1:5290/mcp");
-        assert_eq!(v["mcpServers"]["workstate"]["headers"], serde_json::json!({ "Authorization": "Bearer wss_fake1" }));
+        assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:5290/mcp");
+        assert_eq!(v["mcpServers"]["workman"]["headers"], serde_json::json!({ "Authorization": "Bearer wss_fake1" }));
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 5 * SECOND), []);
         assert_eq!(sup.launcher().take(), [], "the row has not shown yet: no second launch");
