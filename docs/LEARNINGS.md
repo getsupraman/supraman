@@ -5585,3 +5585,22 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Red:** the rename aside replaced by `fs::copy` over the target → 1 failed
   (`a_running_hooks_copy_is_renamed_aside_and_the_next_start_removes_it`, os error 32); `VERSION` placed first → 1
   failed (`a_killed_apply_leaves_a_startable_install_at_every_step`, "after 1 moves" VERSION 0.2.0).
+
+## 2026-11-02 — public/6 the public README, its screenshots and scripts/check-readme.ps1
+
+- **Selftest shots are not publishable:** `--selftest` registers the folder above the repo as workspace `larchsys`
+  (a scan of the real repos) and lists the machine's real `claude agents` rows, so its `FOREMAN_SHOTS` captures show
+  real names and paths. The README's shots come from `--selftest-shots` instead (selftest-only, hidden desktop): a
+  workspace `demo` at `C:\src\demo` whose folders exist only in the registry, fixture rows through `injected` with the
+  real listing switched off (`selftest_shots::fixtures_only`, read in `Poller::read`), and a fake Workman on loopback
+  with its own OAuth for the Inbox rows. `FOREMAN_SHOTS=<dir> supraman.exe --selftest-shots` writes
+  `supraman-main.png` and `supraman-details.png`.
+- **The build path leaks through a notice:** a `cargo build -p supraman-app` without `sm` shows
+  "`<target>\release\sm.exe` is missing" with the full path; build the workspace before taking shots. A closed
+  loopback port as the Workman URL shows "Workman at http://127.0.0.1:… is unreachable"; a fake signed-in Workman
+  shows nothing.
+- **Only dark themes ship** (VS Code Dark Modern, Supraman Dark), so the README has no light screenshot.
+- **Red checks restore from HEAD:** `git checkout -- README.md` brings back the committed file, so commit the new
+  README before editing it for a red check.
+- **Red:** a broken image path, a renamed `## Roadmap` and a broken link to `docs/ROADMAP.md` each make
+  `check-readme.ps1` exit 1 with the one `FAIL` line; restored, it passes.
