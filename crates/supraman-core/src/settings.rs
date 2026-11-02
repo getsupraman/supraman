@@ -10,7 +10,7 @@ use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 20;
 /// `[workstate] url` when unset.
-pub const DEFAULT_WORKSTATE_URL: &str = "https://workstate.dikaia.ai";
+pub const DEFAULT_WORKSTATE_URL: &str = "https://work.supraman.ai";
 /// `[terminal] font_size` when unset or invalid, and Ctrl+0's size.
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `[terminal] font_size` is clamped to; `supraman_ui::term_element`'s MIN/MAX_FONT_SIZE.
