@@ -22,13 +22,18 @@ extracting).
 
 ## Publish a release
 
-1. Set the crates' `version` to the release's semver (every `crates\*\Cargo.toml`), commit, and pass the gate below.
-2. Tag and push the tag: `git tag v0.1.0; git push origin v0.1.0`.
-3. `.github/workflows/release.yml` runs on the tag (`windows-latest`, compiled dependencies cached by `Swatinem/rust-cache`; no tests: the tagged
-   commit passed the gate, and `.github/workflows/test.yml` runs `cargo test` on GitHub when started by hand), `release.ps1 -Version <tag without v>`, `sm release sign` with the repository
-   secret `UPDATE_SIGNING_KEY`, `sm release verify`, then `gh release create <tag> --draft` with the zip, `SHA256SUMS`,
-   `supraman-update.json` and `supraman-update.json.sig`. Its notes name the tag and link the source at it
-   (GPL-3.0 §6). It stops before the build while `update.pub` is the placeholder.
+1. Set the crates' `version` to the release's semver (every `crates\*\Cargo.toml`), commit, pass the gate below,
+   and push master.
+2. Start the release on master: `gh workflow run release.yml -f version=0.1.3` (or Actions → release → Run workflow).
+3. `.github/workflows/release.yml` refuses a ref other than master, a version other than the crates', and a tag
+   `v<version>` that names another commit. It builds (`windows-latest`, compiled dependencies cached by
+   `Swatinem/rust-cache` under master, the one ref every run can restore from; no tests: the commit passed the gate,
+   and `.github/workflows/test.yml` runs `cargo test` on GitHub when started by hand) with `release.ps1 -Version
+   <version>`, signs with `sm release sign` and the repository secret `UPDATE_SIGNING_KEY`, runs `sm release verify`,
+   pushes the tag `v<version>` on that commit, then `gh release create v<version> --draft` with the zip,
+   `SHA256SUMS`, `supraman-update.json` and `supraman-update.json.sig`. Its notes name the tag and link the source at
+   it (GPL-3.0 §6). It stops before the build while `update.pub` is the placeholder. A failed run is started again
+   the same way; a tag it already pushed on the same commit is kept.
 4. René installs from the draft, checks it, and publishes it on GitHub. The workflow never publishes.
 
 ## Signing

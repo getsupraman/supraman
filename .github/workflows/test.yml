@@ -1,4 +1,5 @@
 # cargo test on a clean windows-latest, started by hand (Actions → test → Run workflow); the selftests need a desktop and run locally.
+# Run on master, it also fills the dependency cache release.yml restores (same shared-key).
 name: test
 
 on:
@@ -26,6 +27,8 @@ jobs:
 
       - name: Cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release
 
       - name: Test
         run: |

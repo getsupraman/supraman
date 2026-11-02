@@ -1,16 +1,21 @@
-# A v<semver> tag builds and signs a release and uploads it as a DRAFT; publishing it is René's (docs/RELEASE.md).
-# The tagged commit passed the gate before the tag; test.yml runs the tests on GitHub on demand.
+# Started by hand on master (`gh workflow run release.yml -f version=X.Y.Z`): builds and signs that commit, tags it
+# v<version> and uploads it as a DRAFT; publishing it is René's (docs/RELEASE.md). Running on master keeps the
+# dependency cache under master, the one ref every run can restore from. test.yml runs the tests on demand.
 name: release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The crates' version, X.Y.Z (the tag becomes vX.Y.Z)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -21,7 +26,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      TAG: ${{ github.ref_name }}
+      VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -30,8 +35,14 @@ jobs:
           if ((Get-Content -Raw crates/supraman-core/src/update.pub) -match 'PLACEHOLDER') {
             throw 'crates/supraman-core/src/update.pub is the placeholder: run scripts/new-signing-key.ps1 and commit update.pub'
           }
-          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') { throw "tag $env:TAG is not v<semver>" }
-          "VERSION=$($Matches[1])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          if ($env:GITHUB_REF -ne 'refs/heads/master') { throw "a release runs on master, not $env:GITHUB_REF" }
+          if ($env:VERSION -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "version $env:VERSION is not X.Y.Z" }
+          $crate = [regex]::Match((Get-Content -Raw crates/supraman-app/Cargo.toml), '(?m)^version = "([^"]+)"').Groups[1].Value
+          if ($crate -ne $env:VERSION) { throw "version $env:VERSION is not the crates' version $crate" }
+          $tag = "v$env:VERSION"
+          $existing = git ls-remote origin "refs/tags/$tag"
+          if ($existing -and -not $existing.StartsWith($env:GITHUB_SHA)) { throw "tag $tag already names another commit: $existing" }
+          "TAG=$tag" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "DIST=$(Join-Path $env:RUNNER_TEMP 'dist')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
       - name: Toolchain
@@ -43,6 +54,8 @@ jobs:
 
       - name: Cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release
 
       - name: Build the release
         run: ./scripts/release.ps1 -OutDir "$env:DIST\Supraman" -Version $env:VERSION
@@ -59,13 +72,21 @@ jobs:
           & "$env:DIST\Supraman\sm.exe" release verify "$env:DIST\supraman-update.json"
           if ($LASTEXITCODE -ne 0) { throw "sm release verify failed ($LASTEXITCODE)" }
 
+      - name: Tag
+        run: |
+          if (-not (git ls-remote origin "refs/tags/$env:TAG")) {
+            git tag $env:TAG $env:GITHUB_SHA
+            git push origin "refs/tags/$env:TAG"
+            if ($LASTEXITCODE -ne 0) { throw "git push of $env:TAG failed ($LASTEXITCODE)" }
+          }
+
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $notes = Join-Path $env:RUNNER_TEMP 'notes.md'
           @(
-            "Supraman $env:VERSION, built from tag ``$env:TAG`` (commit ``$env:GITHUB_SHA``)."
+            "Supraman $env:VERSION, built from master at tag ``$env:TAG`` (commit ``$env:GITHUB_SHA``)."
             ''
             "Source code (GPL-3.0-or-later): https://github.com/$env:GITHUB_REPOSITORY/tree/$env:TAG"
             ''
