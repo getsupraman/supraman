@@ -179,7 +179,10 @@ const ICACLS_TIMEOUT: Duration = Duration::from_secs(30);
 fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     let user = std::env::var("USERNAME").map_err(|_| std::io::Error::other("USERNAME is not set"))?;
     let out = process::run(
-        process::command("icacls").arg(path).args(["/inheritance:r", "/grant:r", &format!("{user}:F")]),
+        // an elevated process's file also carries explicit SYSTEM and Administrators entries
+        process::command("icacls")
+            .arg(path)
+            .args(["/inheritance:r", "/grant:r", &format!("{user}:F"), "/remove:g", "*S-1-5-18", "*S-1-5-32-544"]),
         ICACLS_TIMEOUT,
         Kill::Tree,
     )
