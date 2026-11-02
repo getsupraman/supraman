@@ -6,7 +6,7 @@ publish = false
 license.workspace = true
 
 [features]
-# A fake WorkState (HTTP + SSE + OAuth authorization server on 127.0.0.1) for other crates' tests.
+# A fake Workman (HTTP + SSE + OAuth authorization server on 127.0.0.1) for other crates' tests.
 fake = []
 
 [dependencies]

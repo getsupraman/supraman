@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use gpui::{App, AsyncWindowContext, Entity};
 use supraman_core::update::{Manifest, SigningKey, sign};
-use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::updates::{self, Outcome, Source};
 
 use crate::selftest::{click, sleep, until, until_with};
@@ -30,8 +30,8 @@ fn opened() -> Vec<Link> {
 }
 
 /// Release v99.0.0 on a fake releases endpoint, its manifest signed by a key made here.
-fn serve(key: &SigningKey) -> FakeWorkState {
-    let fake = FakeWorkState::start(Vec::new());
+fn serve(key: &SigningKey) -> FakeWorkman {
+    let fake = FakeWorkman::start(Vec::new());
     let base = fake.base().to_string();
     let manifest = Manifest {
         version: VERSION.into(),
@@ -100,7 +100,7 @@ fn stored_zip(entries: &[(&str, &[u8])]) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Release v99.1.0 of `zip` (served slowly) with a manifest of `sha256` signed by `key`.
-fn serve_next(fake: &FakeWorkState, key: &SigningKey, zip: &[u8], sha256: &str) {
+fn serve_next(fake: &FakeWorkman, key: &SigningKey, zip: &[u8], sha256: &str) {
     let base = fake.base().to_string();
     let manifest = Manifest {
         version: NEXT.into(),
@@ -175,7 +175,7 @@ pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindow
     let (sha256, _) = supraman_core::update::sha256_file(&scratch)?;
 
     let key = SigningKey::from_bytes(&[9; 32]);
-    let fake = FakeWorkState::start(Vec::new());
+    let fake = FakeWorkman::start(Vec::new());
     serve_next(&fake, &key, &zip, &"cd".repeat(32));
     let restart_args = vec!["plugin".to_string(), "install".to_string(), marker.display().to_string()];
     let (real_source, real_target) = view.update(cx, |v, _| {
@@ -202,7 +202,7 @@ pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindow
 async fn install_steps(
     view: &Entity<FleetView>,
     home: &Path,
-    fake: &FakeWorkState,
+    fake: &FakeWorkman,
     key: &SigningKey,
     zip: &[u8],
     sha256: &str,
@@ -278,7 +278,7 @@ async fn checked(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     until(view, cx, WITHIN, "the update check answered", |v| (v.updates.checks > before && !v.updates.checking).then_some(())).await
 }
 
-async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkState, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     checked(view, cx).await?;
     until(view, cx, WITHIN, "the update banner painted", |v| painted(v).then_some(())).await?;
     let offered = view.read_with(cx, |v, _| v.updates.offered().map(|a| a.version().to_string()));

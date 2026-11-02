@@ -120,7 +120,7 @@ impl SessionHost for RealHost {
     }
 }
 
-/// [`Host::end_dead_session`] with `host`'s claude and WorkState.
+/// [`Host::end_dead_session`] with `host`'s claude and Workman.
 pub fn end_dead_session(host: &dyn SessionHost, home: &Path, session: &LiveSession) -> Result<(), String> {
     let mut failed = Vec::new();
     if let Err(e) = host.claude().stop(&session.id) {

@@ -1,4 +1,4 @@
-//! A fake WorkState read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkState::enable_oauth`].
+//! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`].
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -117,7 +117,7 @@ impl Answer {
 
 type Routes = Arc<Mutex<Vec<(String, Answer)>>>;
 
-pub struct FakeWorkState {
+pub struct FakeWorkman {
     base: String,
     seen: Arc<Mutex<Vec<Seen>>>,
     routes: Routes,
@@ -157,12 +157,12 @@ fn read_seen(stream: &TcpStream) -> Option<Seen> {
     Some(Seen { method, target, authorization, content_type, body: String::from_utf8_lossy(&body).into_owned(), headers })
 }
 
-impl FakeWorkState {
+impl FakeWorkman {
     /// `routes`: `<METHOD> <target>` or, for any method, the exact target (path and query) → answer.
     /// Anything else is a v1 404, except
     /// `/api/stream`, which stays open until [`Self::push`] fails on it or [`Self::drop_streams`].
     pub fn start(routes: Vec<(String, Answer)>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake WorkState");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake Workman");
         let base = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));
         let routes: Routes = Arc::new(Mutex::new(routes));
@@ -300,7 +300,7 @@ struct AuthState {
     refusals: Vec<String>,
 }
 
-/// Shaped like WorkState's (Skills `docs/workstate/10-read-api.md` rule 5); authorize redirects at once: the test is the browser.
+/// Shaped like Workman's (Skills `docs/workstate/10-read-api.md` rule 5); authorize redirects at once: the test is the browser.
 pub struct FakeAuth {
     base: String,
     state: Mutex<AuthState>,
@@ -321,7 +321,7 @@ impl FakeAuth {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// With a trailing slash, as WorkState's.
+    /// With a trailing slash, as Workman's.
     pub fn issuer(&self) -> String {
         format!("{}/", self.base)
     }
@@ -338,7 +338,7 @@ impl FakeAuth {
         self.st().access_ttl = secs;
     }
 
-    /// Refresh tokens issued from now on are padded to `bytes` (WorkState 1.0.0's exceed 2560).
+    /// Refresh tokens issued from now on are padded to `bytes` (Workman 1.0.0's exceed 2560).
     pub fn set_refresh_len(&self, bytes: usize) {
         self.st().refresh_len = bytes;
     }

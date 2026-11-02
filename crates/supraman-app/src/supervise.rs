@@ -179,7 +179,7 @@ pub struct Report {
 }
 
 pub fn signed_in_server(auth: &supraman_workman::Auth, settings: &Settings) -> Option<String> {
-    let origin = settings.workstate.origin();
+    let origin = settings.workman.origin();
     matches!(auth.status(&origin), supraman_workman::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 

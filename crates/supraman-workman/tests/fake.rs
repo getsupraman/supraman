@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
-use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 #[track_caller]
@@ -18,7 +18,7 @@ fn next(rx: &Receiver<StreamSignal>) -> StreamSignal {
 
 #[test]
 fn a_changed_route_answers_the_next_request() {
-    let fake = FakeWorkState::start(vec![("/api/v1/resolve?ref=a".into(), Answer::json(r#"{"seq":1}"#))]);
+    let fake = FakeWorkman::start(vec![("/api/v1/resolve?ref=a".into(), Answer::json(r#"{"seq":1}"#))]);
     let client = Client::new(fake.base(), "fake-token");
     assert_eq!(client.resolve("a").unwrap().seq, 1);
     fake.set("/api/v1/resolve?ref=a", Answer::json(r#"{"seq":2}"#));
@@ -28,7 +28,7 @@ fn a_changed_route_answers_the_next_request() {
 
 #[test]
 fn a_stream_answer_without_the_v1_header_is_refused() {
-    let fake = FakeWorkState::start(Vec::new());
+    let fake = FakeWorkman::start(Vec::new());
     let client = Client::new(fake.base(), "fake-token");
     let config = StreamConfig {
         initial_backoff: Duration::from_millis(50),
@@ -52,7 +52,7 @@ fn a_stream_answer_without_the_v1_header_is_refused() {
 
 #[test]
 fn pushed_frames_reach_a_subscriber_and_a_dropped_stream_reconnects() {
-    let fake = FakeWorkState::start(Vec::new());
+    let fake = FakeWorkman::start(Vec::new());
     let client = Client::new(fake.base(), "fake-token");
     let config = StreamConfig {
         initial_backoff: Duration::from_millis(50),

@@ -155,7 +155,7 @@ pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers
     Ok(path)
 }
 
-/// `<dir>/workstate-<agent>.json`, the one file of `agent`'s WorkState config; `agent` must be a plain session name.
+/// `<dir>/workstate-<agent>.json`, the one file of `agent`'s Workman config; `agent` must be a plain session name.
 pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     let plain = !agent.is_empty()
         && !agent.starts_with('.')
@@ -166,7 +166,7 @@ pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
     Ok(dir.join(format!("workstate-{agent}.json")))
 }
 
-/// The WorkState URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
+/// The Workman URL in the config [`write_mcp_config`] wrote for `agent`; `None` when it is gone or unreadable.
 pub fn mcp_config_url(dir: &Path, agent: &str) -> Option<String> {
     let text = std::fs::read_to_string(mcp_config_path(dir, agent).ok()?).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;

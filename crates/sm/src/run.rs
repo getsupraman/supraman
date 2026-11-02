@@ -1,5 +1,5 @@
 //! The session stage of `sm schedule fire` (docs/research/scheduler.md, "The life of `sm schedule fire`", steps
-//! 8 to 10): the run's worktree, its minted WorkState token, `claude --bg`, the watch until the run ends, and
+//! 8 to 10): the run's worktree, its minted Workman token, `claude --bg`, the watch until the run ends, and
 //! the stop (never rm) and revoke.
 
 use std::fs;

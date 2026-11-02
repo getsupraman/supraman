@@ -1,4 +1,4 @@
-//! Foreman's OAuth 2.1 native client for WorkState's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
+//! Foreman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
 //! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
 //! or a `Debug` output.
 
@@ -206,7 +206,7 @@ impl Auth {
     }
 
     pub fn configured_origin(&self) -> String {
-        Settings::load(&self.home).unwrap_or_default().workstate.origin()
+        Settings::load(&self.home).unwrap_or_default().workman.origin()
     }
 
     pub fn issuer_of(&self, origin: &str) -> Option<String> {

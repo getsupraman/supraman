@@ -6,18 +6,18 @@ use std::time::Duration;
 
 use supraman_core::Settings;
 use supraman_workman::auth::{http_browser, http_browser_with};
-use supraman_workman::fake::{Answer, FakeWorkState, location_query};
+use supraman_workman::fake::{Answer, FakeWorkman, location_query};
 use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
 
 fn overview() -> Answer {
     Answer::json(r#"{"asOf":"2026-10-28T10:00:00+00:00","seq":1,"projects":[],"workingNow":[],"inboxCount":0}"#)
 }
 
-fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<supraman_workman::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
+fn setup() -> (tempfile::TempDir, FakeWorkman, Arc<supraman_workman::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
     let dir = tempfile::tempdir().unwrap();
-    let fake = FakeWorkState::start(vec![("/api/v1/overview".into(), overview())]);
+    let fake = FakeWorkman::start(vec![("/api/v1/overview".into(), overview())]);
     let oauth = fake.enable_oauth();
-    Settings { workstate: supraman_core::WorkStateSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
+    Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
     let store = Arc::new(MemoryStore::default());
     let auth = Arc::new(Auth::with_store(dir.path(), store.clone()).with_sign_in_timeout(Duration::from_secs(10)));
     (dir, fake, oauth, store, auth)
@@ -294,7 +294,7 @@ fn revoke_at(home: &Path, origin: &str, url: &str) {
 fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_token() {
     let (dir, old, _old_oauth, _store, auth) = setup();
     auth.sign_in(old.base(), &http_browser()).unwrap();
-    let new = FakeWorkState::start(vec![]);
+    let new = FakeWorkman::start(vec![]);
     new.enable_oauth();
     auth.sign_in(new.base(), &http_browser()).unwrap();
     // accepts the connection and never answers: the slowest a gone server can be
@@ -332,7 +332,7 @@ fn the_fake_names_why_it_refuses_a_refresh_and_its_ids_are_not_guessable() {
     auth.sign_in(fake.base(), &http_browser()).unwrap();
     let first = store.get(&oauth.issuer()).unwrap().unwrap();
     auth.access_token(fake.base()).unwrap();
-    let other = FakeWorkState::start(vec![]);
+    let other = FakeWorkman::start(vec![]);
     let other_oauth = other.enable_oauth();
     Auth::with_store(_dir.path(), Arc::new(MemoryStore::default())).sign_in(other.base(), &http_browser()).unwrap();
     for id in oauth.registered().iter().chain(oauth.issued().iter()) {
@@ -465,7 +465,7 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
     assert_eq!(store.get(&oauth.issuer()).unwrap().as_ref(), oauth.issued().last());
 }
 
-/// WorkState 1.0.0's refresh tokens are 6 KB.
+/// Workman 1.0.0's refresh tokens are 6 KB.
 #[cfg(windows)]
 #[test]
 fn a_6_kb_refresh_token_rotates_through_the_file_store() {

@@ -1,4 +1,4 @@
-//! Per-session WorkState tokens (Skills `docs/workstate/14-agent-launch.md` §2): only the minted `wss_`
+//! Per-session Workman tokens (Skills `docs/workstate/14-agent-launch.md` §2): only the minted `wss_`
 //! token reaches a session's config file; the bearer never leaves Foreman's process.
 
 use std::collections::BTreeMap;
@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// `POST /api/agent-sessions`. `role` is the WorkState role (never above the bearer's),
+/// `POST /api/agent-sessions`. `role` is the Workman role (never above the bearer's),
 /// `external_role` Foreman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +33,7 @@ pub struct MintRequest {
     pub claude_session_id: Option<String>,
 }
 
-/// `repo:{root, remote?}` of a mint, as git prints them; WorkState normalises both (Skills
+/// `repo:{root, remote?}` of a mint, as git prints them; Workman normalises both (Skills
 /// `docs/workstate/02-data-model.md`, Identity).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MintRepo {
@@ -198,7 +198,7 @@ impl Minter for HttpMinter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MintedSession {
-    /// WorkState's `sessionId`, for the PATCH and the DELETE.
+    /// Workman's `sessionId`, for the PATCH and the DELETE.
     pub session_id: String,
     pub role: String,
     /// The claude session uuid sent with the mint or PATCHed since; `None` until then.
@@ -298,14 +298,14 @@ impl MintedSessions {
 mod tests {
     use std::net::TcpListener;
 
-    use supraman_workman::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkman};
 
     use super::*;
 
     const MINT: &str = "POST /api/agent-sessions";
 
-    fn fake(routes: &[(&str, u16, &str)]) -> FakeWorkState {
-        FakeWorkState::start(routes.iter().map(|(t, status, body)| (t.to_string(), Answer::status(*status, *body))).collect())
+    fn fake(routes: &[(&str, u16, &str)]) -> FakeWorkman {
+        FakeWorkman::start(routes.iter().map(|(t, status, body)| (t.to_string(), Answer::status(*status, *body))).collect())
     }
 
     fn request() -> MintRequest {

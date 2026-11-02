@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use foreman_claude::{Claude, LaunchSpec};
 use foreman_core::secret::{FileStore, SecretStore};
-use foreman_workstate::{Auth, fake::FakeWorkState};
+use foreman_workstate::{Auth, fake::FakeWorkman};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -21,13 +21,13 @@ fn main() {
     }
 }
 
-/// A fake WorkState with its OAuth server; signs in once through the DPAPI FileStore of `home`, then
+/// A fake Workman with its OAuth server; signs in once through the DPAPI FileStore of `home`, then
 /// serves refreshes until `<home>/stop` exists.
 fn serve(home: &Path) {
     std::fs::create_dir_all(home).unwrap();
-    let ws = FakeWorkState::start(Vec::new());
+    let ws = FakeWorkman::start(Vec::new());
     ws.enable_oauth();
-    foreman_core::Settings::update(home, |s| s.workstate.url = Some(ws.base().to_string())).unwrap();
+    foreman_core::Settings::update(home, |s| s.workman.url = Some(ws.base().to_string())).unwrap();
     let auth = Auth::open(home);
     let status = auth.sign_in(ws.base(), &foreman_workstate::auth::http_browser());
     let secrets = std::fs::read_dir(home.join("oauth").join("secrets")).map(|d| d.count()).unwrap_or(0);

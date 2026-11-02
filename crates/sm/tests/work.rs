@@ -3,7 +3,7 @@ use std::process::{Command, Output};
 use std::sync::Arc;
 
 use supraman_workman::auth::{form_decode, http_browser};
-use supraman_workman::fake::{Answer, FakeAuth, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman};
 use supraman_workman::secret::default_store;
 use supraman_workman::Auth;
 const RUN: &str = "22222222-0000-4000-8000-000000000004";
@@ -17,7 +17,7 @@ fn fixture(name: &str) -> String {
 /// A scratch home with settings naming `url`; signed in when `oauth` is given.
 fn home(url: &str, oauth: Option<&Arc<FakeAuth>>) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("settings.toml"), format!("[workstate]
+    std::fs::write(dir.path().join("settings.toml"), format!("[workman]
 url = '{url}'
 ")).unwrap();
     if oauth.is_some() {
@@ -36,7 +36,7 @@ fn sm(home: &Path, args: &[&str]) -> Output {
 }
 
 /// Every read carried an access token of the fake's sign-in.
-fn oauth_bearer(fake: &FakeWorkState, oauth: &FakeAuth) {
+fn oauth_bearer(fake: &FakeWorkman, oauth: &FakeAuth) {
     let issued = oauth.issued();
     for s in fake.seen().iter().filter(|s| s.target.starts_with("/api/")) {
         assert_eq!(s.method, "GET");
@@ -45,7 +45,7 @@ fn oauth_bearer(fake: &FakeWorkState, oauth: &FakeAuth) {
     }
 }
 
-fn refreshes_sent(fake: &FakeWorkState) -> Vec<String> {
+fn refreshes_sent(fake: &FakeWorkman) -> Vec<String> {
     fake.seen()
         .into_iter()
         .filter(|s| s.target == "/connect/token")
@@ -57,7 +57,7 @@ fn refreshes_sent(fake: &FakeWorkState) -> Vec<String> {
 
 /// Evidence without a token: each refresh token as `rt<n>`, its place among those the fake issued; which one the
 /// store held before and after one `sm`; what sm sent; why the fake refused.
-fn rt_report(fake: &FakeWorkState, oauth: &FakeAuth, before: Option<&str>, sent_before: usize, after: Option<&str>) -> String {
+fn rt_report(fake: &FakeWorkman, oauth: &FakeAuth, before: Option<&str>, sent_before: usize, after: Option<&str>) -> String {
     let issued: Vec<String> = oauth.issued().into_iter().filter(|t| t.starts_with("fake-rt-")).collect();
     let name = |t: Option<&str>| match t {
         None => "none".to_string(),
@@ -80,9 +80,9 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-fn fake() -> FakeWorkState {
+fn fake() -> FakeWorkman {
     let json = |t: &str, f: &str| (t.to_string(), Answer::json(fixture(f)));
-    FakeWorkState::start(vec![
+    FakeWorkman::start(vec![
         json("/api/v1/resolve?ref=autowork", "resolve-autowork.json"),
         json("/api/v1/resolve?ref=m4", "resolve-m4.json"),
         json("/api/v1/resolve?ref=backlog", "resolve-backlog.json"),
@@ -192,7 +192,7 @@ fn work_errors_are_one_line_without_the_token() {
         .env_remove("APPDATA")
         .output()
         .unwrap();
-    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at {}", supraman_core::DEFAULT_WORKSTATE_URL));
+    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at {}", supraman_core::DEFAULT_WORKMAN_URL));
 }
 
 #[test]

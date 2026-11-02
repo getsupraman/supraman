@@ -1,4 +1,4 @@
-//! Foreman writes nothing to WorkState (C21): dismissals are local ([`Dismissed`]).
+//! Foreman writes nothing to Workman (C21): dismissals are local ([`Dismissed`]).
 
 use std::{
     collections::BTreeMap,
@@ -342,7 +342,7 @@ impl WorkInbox {
     }
 }
 
-/// The key the Inbox paints a WorkState row under; its × is `inbox-ws-dismiss-<key>`.
+/// The key the Inbox paints a Workman row under; its × is `inbox-ws-dismiss-<key>`.
 pub fn row_key(row: &InboxRow) -> String {
     format!("inbox-ws-{}", row.key)
 }

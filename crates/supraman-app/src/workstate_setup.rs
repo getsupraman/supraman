@@ -1,4 +1,4 @@
-//! One wording for the notice above the tree, Settings → WorkState and the Work tab.
+//! One wording for the notice above the tree, Settings → Workman and the Work tab.
 
 use std::path::Path;
 use std::time::Duration;
@@ -22,7 +22,7 @@ pub enum WsStatus {
 /// Blocks up to a few seconds.
 pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-    let url = settings.workstate.origin();
+    let url = settings.workman.origin();
     if let Err(error) = supraman_workman::health(&url, HEALTH_TIMEOUT) {
         return WsStatus::Unreachable { url, error };
     }
@@ -98,7 +98,7 @@ mod tests {
     use std::sync::Arc;
 
     use supraman_workman::MemoryStore;
-    use supraman_workman::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkman};
 
     use super::*;
 
@@ -106,9 +106,9 @@ mod tests {
     fn signed_out_signed_in_and_broken_each_say_what_to_do() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
-        let fake = FakeWorkState::start(vec![("/health".into(), Answer::text("Healthy"))]);
+        let fake = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
         let oauth = fake.enable_oauth();
-        Settings { workstate: supraman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
+        Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
         let url = fake.base().to_string();
 
         let fresh = Auth::with_store(&home, Arc::new(MemoryStore::default()));
@@ -137,7 +137,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let closed = format!("http://127.0.0.1:{port}");
-        Settings { workstate: supraman_core::WorkStateSettings { url: Some(closed.clone()) }, ..Settings::default() }.save(dir.path()).unwrap();
+        Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..Settings::default() }.save(dir.path()).unwrap();
         let down = detect(Some(dir.path()), None);
         assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
         assert!(down.problem().unwrap().contains(&closed));

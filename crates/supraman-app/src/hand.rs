@@ -21,7 +21,7 @@ const STALE: &str = "This tab''s Workman token was revoked when its claude exite
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launch {
     Plain,
-    /// `name` keys the file and `hands.json`; `session` is the WorkState session's name.
+    /// `name` keys the file and `hands.json`; `session` is the Workman session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
     Unminted(String),
 }
@@ -422,7 +422,7 @@ mod tests {
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
 
         let mut settings = supraman_core::Settings::load(&home).unwrap();
-        settings.workstate.url = Some(b.clone());
+        settings.workman.url = Some(b.clone());
         settings.save(&home).unwrap();
         auth.sign_in(&b, &supraman_workman::auth::http_browser()).unwrap();
         assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);

@@ -127,11 +127,11 @@ pub fn prepare() -> anyhow::Result<()> {
     let relay_dir = supraman_core::ensure_relay_dirs(&home, &tb.a.0)?;
     desired.sessions.insert(0, relay_session(&tb.a.0, &tb.a.1, relay_dir, "relay"));
     desired.save(&home)?;
-    // no sign-in, and a closed loopback port as the server: the status check never reaches a real WorkState
+    // no sign-in, and a closed loopback port as the server: the status check never reaches a real Workman
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let mut settings = Settings::default();
     settings.sessions.relay_idle_secs = Some(RELAY_IDLE_SECS);
-    settings.workstate.url = Some(format!("http://127.0.0.1:{closed}"));
+    settings.workman.url = Some(format!("http://127.0.0.1:{closed}"));
     settings.save(&home)?;
     println!(
         "step a: claude {} | SUPRAMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted), {}, {} | {} wants {} and {} (permission mode default)",

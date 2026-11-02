@@ -1,4 +1,4 @@
-//! The blocking read API v1 client. `GET` only: Foreman never writes to WorkState (C21).
+//! The blocking read API v1 client. `GET` only: Foreman never writes to Workman (C21).
 
 use std::fmt;
 use std::sync::Arc;

@@ -1,5 +1,5 @@
 //! The session stage of `sm schedule fire` against a fake `claude` (scripted rows, a clock that moves only when
-//! fire sleeps), `FakeWorkState` with its OAuth, a temp home and a temp git repo.
+//! fire sleeps), `FakeWorkman` with its OAuth, a temp home and a temp git repo.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -15,7 +15,7 @@ use supraman_core::schedule::{self, Action, ActionKind, Fired, LiveSession, Outc
 use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::{Folder, Registry, Settings, Workspace};
 use supraman_supervisor::{AppTokens, HttpMinter, Launcher, Minter, TokenProvider};
-use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{Auth, auth::http_browser};
 
 const T0: i64 = 1_793_595_600_000;
@@ -28,7 +28,7 @@ struct Fixture {
     alpha: PathBuf,
     claude_dir: PathBuf,
     store: MemoryStore,
-    fake: FakeWorkState,
+    fake: FakeWorkman,
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -49,7 +49,7 @@ fn fixture(signed_in: bool) -> Fixture {
     git(&alpha, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
     let w = Workspace::new("demo", tmp.path().join("ws"), vec![Folder::new("Alpha", &alpha)]);
     Registry::at(&home).save(&w, false).unwrap();
-    let fake = FakeWorkState::start(vec![
+    let fake = FakeWorkman::start(vec![
         (
             "POST /api/agent-sessions".into(),
             Answer::status(201, format!(r#"{{"sessionId":"91","name":"x","role":"orchestrator","token":"{MINTED}"}}"#)),
@@ -60,7 +60,7 @@ fn fixture(signed_in: bool) -> Fixture {
     fake.enable_oauth();
     if signed_in {
         let mut settings = Settings::load(&home).unwrap_or_default();
-        settings.workstate.url = Some(fake.base().to_string());
+        settings.workman.url = Some(fake.base().to_string());
         settings.save(&home).unwrap();
     }
     let claude_dir = tmp.path().join("claude");
@@ -115,7 +115,7 @@ impl Fixture {
 
     fn auth(&self) -> Arc<Auth> {
         let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workman::MemoryStore::default())));
-        if Settings::load(&self.home).unwrap().workstate.url.is_some() {
+        if Settings::load(&self.home).unwrap().workman.url.is_some() {
             auth.sign_in(self.fake.base(), &http_browser()).unwrap();
         }
         auth
@@ -514,7 +514,7 @@ fn fire_session_a_vanished_session_fails_and_a_report_needs_a_run_in_flight() {
     assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("no run gone-20990101-000000 is in flight"), "{out:?}");
 }
 
-/// Not signed in: the run launches without WorkState, and its record says so.
+/// Not signed in: the run launches without Workman, and its record says so.
 #[test]
 fn fire_session_without_a_sign_in_launches_without_workstate() {
     let f = fixture(false);

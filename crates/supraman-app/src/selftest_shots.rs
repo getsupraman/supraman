@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_core::{Folder, FolderKind, Registry, Settings, Workspace};
-use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity};
 use serde_json::{Value, json};
 
@@ -26,7 +26,7 @@ const PROJECT: &str = "de000000-0000-4000-8000-000000000001";
 const RUN: &str = "de000000-0000-4000-8000-0000000000a1";
 
 static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
-static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
+static FAKE: OnceLock<FakeWorkman> = OnceLock::new();
 static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
 
 /// The session list holds the injected rows alone.
@@ -63,7 +63,7 @@ pub fn prepare() -> anyhow::Result<()> {
     let fake = workman();
     OAUTH.set(fake.enable_oauth()).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
     let mut settings = Settings::load(&home)?;
-    settings.workstate.url = Some(fake.base().to_string());
+    settings.workman.url = Some(fake.base().to_string());
     settings.save(&home)?;
     crate::signin::sign_in(&home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
@@ -79,7 +79,7 @@ fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
 }
 
-fn workman() -> FakeWorkState {
+fn workman() -> FakeWorkman {
     let project = item(PROJECT, WORKSPACE, "project", "Demo shop", "in_progress");
     let run = item(RUN, "checkout", "run", "Checkout flow", "in_progress");
     let task = |n: &str, title: &str, status: &str| item(&format!("de000000-0000-4000-8000-00000000020{n}"), &format!("checkout/{n}"), "task", title, status);
@@ -91,7 +91,7 @@ fn workman() -> FakeWorkState {
     ];
     let resolved = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "matches": [project] }).to_string();
     let inbox = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "rows": rows }).to_string();
-    FakeWorkState::start(vec![
+    FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
         (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         (format!("/api/v1/inbox?project={PROJECT}"), Answer::json(inbox)),

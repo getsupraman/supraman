@@ -249,7 +249,7 @@ impl WorkView {
         cx.new(|cx| WorkView::new(workspace.to_string(), hub, hits, link, cx))
     }
 
-    /// The WorkState project the open view read, once it has.
+    /// The Workman project the open view read, once it has.
     pub fn project(&self) -> Option<&ItemRef> {
         self.project.as_ref()
     }

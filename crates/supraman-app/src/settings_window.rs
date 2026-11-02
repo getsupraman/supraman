@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
+use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKMAN_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
 use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use supraman_ui::{banner, button, term_element};
 use supraman_workman::AuthStatus;
@@ -111,7 +111,7 @@ impl SettingsView {
             .detach();
         }
         let workstate = fleet.upgrade().map_or(WsStatus::Checking, |f| f.read(cx).workstate.clone());
-        let url_input = cx.new(|cx| TextInput::new(DEFAULT_WORKSTATE_URL, None, window, cx));
+        let url_input = cx.new(|cx| TextInput::new(DEFAULT_WORKMAN_URL, None, window, cx));
         let url_events = cx.subscribe_in(&url_input, window, |this: &mut Self, _, event: &InputEvent, _, cx| match event {
             InputEvent::Confirm => this.apply_url(cx),
             InputEvent::Edited => {
@@ -160,7 +160,7 @@ impl SettingsView {
             .detach();
         }
         this.reload(cx);
-        let url = this.settings.workstate.origin();
+        let url = this.settings.workman.origin();
         this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
         this
     }
@@ -208,7 +208,7 @@ impl SettingsView {
     /// `Auth::status` reads the servers file and decrypts the store: never on the UI thread.
     fn read_auth(&mut self, home: PathBuf, cx: &mut Context<Self>) {
         self.auth_reads += 1;
-        let (read, origin) = (self.auth_reads, self.settings.workstate.origin());
+        let (read, origin) = (self.auth_reads, self.settings.workman.origin());
         cx.spawn(async move |this, cx| {
             let auth = cx.background_spawn(async move { crate::signin::auth(&home).status(&origin) }).await;
             this.update(cx, |this, cx| {
@@ -238,7 +238,7 @@ impl SettingsView {
             Ok(()) => {
                 self.url_error = None;
                 self.reload(cx);
-                if let Ok(origin) = supraman_core::validate_workstate_url(&text) {
+                if let Ok(origin) = supraman_core::validate_workman_url(&text) {
                     self.url_input.update(cx, |input, cx| input.set_text(&origin, cx));
                 }
             }
@@ -436,15 +436,15 @@ impl SettingsView {
             .children(self.url_error.clone().map(|e| div().id("ws-url-error").text_xs().text_color(status.error).child(SharedString::from(e))))
             .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!(
                 "Now {}{}.",
-                self.settings.workstate.origin(),
-                if self.settings.workstate.url.is_none() { " (the default)" } else { "" }
+                self.settings.workman.origin(),
+                if self.settings.workman.url.is_none() { " (the default)" } else { "" }
             ))));
         vec![
             self.render_workstate_status(cx),
             row(
                 "Server URL",
                 format!(
-                    "The Workman server Supraman signs in to, e.g. {DEFAULT_WORKSTATE_URL} (http only for this \
+                    "The Workman server Supraman signs in to, e.g. {DEFAULT_WORKMAN_URL} (http only for this \
                      machine). While signed in, a new server is used only once you have signed in there: Supraman then \
                      restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
                      the old one."
@@ -467,7 +467,7 @@ impl SettingsView {
                 (f.signing_in.clone(), f.sign_in_error.clone())
             })
             .unwrap_or_default();
-        let url = self.settings.workstate.origin();
+        let url = self.settings.workman.origin();
         let (text, color) = match (&self.workstate, &self.auth) {
             (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
             (WsStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
@@ -550,7 +550,7 @@ impl SettingsView {
             WsStatus::Ready { url, .. } | WsStatus::NotSignedIn { url } | WsStatus::SignInAgain { url, .. } | WsStatus::Unreachable { url, .. } => {
                 url.clone()
             }
-            WsStatus::Checking => self.settings.workstate.origin(),
+            WsStatus::Checking => self.settings.workman.origin(),
         }
     }
 
