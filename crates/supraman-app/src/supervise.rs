@@ -178,9 +178,9 @@ pub struct Report {
     pub left_servers: Vec<String>,
 }
 
-pub fn signed_in_server(auth: &supraman_workstate::Auth, settings: &Settings) -> Option<String> {
+pub fn signed_in_server(auth: &supraman_workman::Auth, settings: &Settings) -> Option<String> {
     let origin = settings.workstate.origin();
-    matches!(auth.status(&origin), supraman_workstate::AuthStatus::SignedIn { .. }).then_some(origin)
+    matches!(auth.status(&origin), supraman_workman::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 
 pub const DAEMON_CHECK_EVERY: Millis = 15_000;

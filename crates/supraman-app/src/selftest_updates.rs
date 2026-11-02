@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::{anyhow, bail};
 use gpui::{App, AsyncWindowContext, Entity};
 use supraman_core::update::{Manifest, SigningKey, sign};
-use supraman_workstate::fake::{Answer, FakeWorkState};
-use supraman_workstate::updates::{self, Outcome, Source};
+use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::updates::{self, Outcome, Source};
 
 use crate::selftest::{click, sleep, until, until_with};
 use crate::selftest_manage::shot_window;

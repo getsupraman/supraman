@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use supraman_core::Settings;
-use supraman_workstate::{Auth, AuthError, AuthStatus};
+use supraman_workman::{Auth, AuthError, AuthStatus};
 
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
@@ -23,7 +23,7 @@ pub enum WsStatus {
 pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WsStatus {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
     let url = settings.workstate.origin();
-    if let Err(error) = supraman_workstate::health(&url, HEALTH_TIMEOUT) {
+    if let Err(error) = supraman_workman::health(&url, HEALTH_TIMEOUT) {
         return WsStatus::Unreachable { url, error };
     }
     let Some(auth) = auth else {
@@ -97,8 +97,8 @@ impl WsStatus {
 mod tests {
     use std::sync::Arc;
 
-    use supraman_workstate::MemoryStore;
-    use supraman_workstate::fake::{Answer, FakeWorkState};
+    use supraman_workman::MemoryStore;
+    use supraman_workman::fake::{Answer, FakeWorkState};
 
     use super::*;
 

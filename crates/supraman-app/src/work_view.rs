@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use supraman_workstate::{
+use supraman_workman::{
     AuthStatus, Board, BoardRow, Client, ItemRef, ItemStatus, OverviewProject, OverviewRun, Resolved, Rollup, Stream,
     StreamEvent, StreamSignal,
 };
@@ -191,10 +191,10 @@ fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     }
 }
 
-fn read_failed(e: supraman_workstate::Error) -> String {
+fn read_failed(e: supraman_workman::Error) -> String {
     match e {
-        supraman_workstate::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
-        supraman_workstate::Error::Auth(why) => format!("{why}. Sign in again in Settings → Workman."),
+        supraman_workman::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
+        supraman_workman::Error::Auth(why) => format!("{why}. Sign in again in Settings → Workman."),
         e => format!("Cannot read Workman: {e}"),
     }
 }

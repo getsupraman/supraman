@@ -11,7 +11,7 @@ use gpui::{AppContext as _, Context};
 use supraman_core::install;
 use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
-use supraman_workstate::updates::{self, Available, Checked, Downloaded, Outcome, Source};
+use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
 use crate::view::{Confirm, Confirmed, FleetView, Link, link_refused};
 

@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
 use supraman_core::Settings;
-use supraman_workstate::AuthStatus;
-use supraman_workstate::fake::{Answer, FakeWorkState};
+use supraman_workman::AuthStatus;
+use supraman_workman::fake::{Answer, FakeWorkState};
 use gpui::{AsyncWindowContext, Entity};
 
 use crate::{

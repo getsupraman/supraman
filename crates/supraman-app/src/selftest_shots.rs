@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_core::{Folder, FolderKind, Registry, Settings, Workspace};
-use supraman_workstate::fake::{Answer, FakeWorkState};
+use supraman_workman::fake::{Answer, FakeWorkState};
 use gpui::{AsyncWindowContext, Entity};
 use serde_json::{Value, json};
 
@@ -27,7 +27,7 @@ const RUN: &str = "de000000-0000-4000-8000-0000000000a1";
 
 static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
 static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
-static OAUTH: OnceLock<std::sync::Arc<supraman_workstate::fake::FakeAuth>> = OnceLock::new();
+static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
 
 /// The session list holds the injected rows alone.
 pub(crate) fn fixtures_only() -> bool {

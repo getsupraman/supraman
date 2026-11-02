@@ -84,7 +84,7 @@ impl RealHost {
         Self {
             store: supraman_core::secret::default_store(home),
             claude: Claude::default(),
-            tokens: AppTokens { auth: supraman_workstate::Auth::open(home) },
+            tokens: AppTokens { auth: supraman_workman::Auth::open(home) },
             minter: HttpMinter::default(),
         }
     }

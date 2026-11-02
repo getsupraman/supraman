@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
-use supraman_workstate::fake::{Answer, FakeWorkState};
-use supraman_workstate::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
+use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 #[track_caller]
 fn next(rx: &Receiver<StreamSignal>) -> StreamSignal {

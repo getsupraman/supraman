@@ -1,6 +1,6 @@
 //! The v1 journal pages only forward: `since` is exclusive, and no `since` is the newest page.
 
-use supraman_workstate::{Journal, JournalEvent, JournalQuery};
+use supraman_workman::{Journal, JournalEvent, JournalQuery};
 use gpui::ScrollHandle;
 
 use super::*;
@@ -52,7 +52,7 @@ impl JournalFeed {
     }
 }
 
-pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workstate::Result<(Vec<JournalEvent>, i64)> {
+pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workman::Result<(Vec<JournalEvent>, i64)> {
     let mut events = Vec::new();
     let mut cursor = since;
     for _ in 0..FORWARD_PAGES {
@@ -67,7 +67,7 @@ pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workstate::Re
 }
 
 /// `since=0` would be the newest page, so `seq` 1, the workspace's first event, is never shown.
-pub fn older(client: &Client, scope: &str, oldest: i64) -> supraman_workstate::Result<(Vec<JournalEvent>, bool)> {
+pub fn older(client: &Client, scope: &str, oldest: i64) -> supraman_workman::Result<(Vec<JournalEvent>, bool)> {
     let mut span = OLDER_SPAN;
     loop {
         let low = (oldest - span).max(1);
@@ -307,7 +307,7 @@ impl WorkView {
 
 #[cfg(test)]
 mod tests {
-    use supraman_workstate::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkState};
     use serde_json::json;
 
     use super::*;

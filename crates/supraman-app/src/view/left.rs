@@ -56,7 +56,7 @@ fn need_key(need: &NeedsYou) -> String {
     format!("need:{}/{}/{}", need.workspace, need.name, needs_label(need.kind))
 }
 
-fn work_key(workspace: &str, row: &supraman_workstate::InboxRow) -> String {
+fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
     format!("work:{workspace}/{}", row.key)
 }
 
@@ -660,7 +660,7 @@ impl FleetView {
     }
 
     fn render_inbox(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let all_work: Vec<(String, supraman_workstate::InboxRow)> =
+        let all_work: Vec<(String, supraman_workman::InboxRow)> =
             self.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
         let total = self.needs.len() + all_work.len();
         let work_rows: Vec<_> = all_work.into_iter().filter(|(w, r)| self.shown_now(&work_key(w, r))).collect();
@@ -891,7 +891,7 @@ impl FleetView {
     }
 
     /// The MCP call that would resolve it is shown, never run (C21).
-    fn render_work_row(&self, workspace: &str, row: &supraman_workstate::InboxRow, cx: &mut Context<Self>) -> AnyElement {
+    fn render_work_row(&self, workspace: &str, row: &supraman_workman::InboxRow, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let color = work_kind_color(&row.kind, cx);
         let key = work_view::row_key(row);

@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKSTATE_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
 use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use supraman_ui::{banner, button, term_element};
-use supraman_workstate::AuthStatus;
+use supraman_workman::AuthStatus;
 use supraman_ui::themes::{self, Catalog, TerminalColors};
 use gpui::{
     AnyElement, App, AppContext as _, Bounds, ClickEvent, Context, Entity, FocusHandle, FontWeight, KeyDownEvent,

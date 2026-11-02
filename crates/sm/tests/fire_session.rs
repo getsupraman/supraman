@@ -15,8 +15,8 @@ use supraman_core::schedule::{self, Action, ActionKind, Fired, LiveSession, Outc
 use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::{Folder, Registry, Settings, Workspace};
 use supraman_supervisor::{AppTokens, HttpMinter, Launcher, Minter, TokenProvider};
-use supraman_workstate::fake::{Answer, FakeWorkState};
-use supraman_workstate::{Auth, auth::http_browser};
+use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::{Auth, auth::http_browser};
 
 const T0: i64 = 1_793_595_600_000;
 const UUID: &str = "aaaa0001-0000-4000-8000-000000000001";
@@ -114,14 +114,14 @@ impl Fixture {
     }
 
     fn auth(&self) -> Arc<Auth> {
-        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workstate::MemoryStore::default())));
+        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workman::MemoryStore::default())));
         if Settings::load(&self.home).unwrap().workstate.url.is_some() {
             auth.sign_in(self.fake.base(), &http_browser()).unwrap();
         }
         auth
     }
 
-    fn api(&self, method: &str) -> Vec<supraman_workstate::fake::Seen> {
+    fn api(&self, method: &str) -> Vec<supraman_workman::fake::Seen> {
         self.fake.seen().into_iter().filter(|s| s.method == method && s.target.starts_with("/api/agent-sessions")).collect()
     }
 }

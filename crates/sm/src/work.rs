@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use supraman_workstate::{Auth, AuthStatus, Board, BoardRow, Client, ItemRef, Overview, Rollup};
+use supraman_workman::{Auth, AuthStatus, Board, BoardRow, Client, ItemRef, Overview, Rollup};
 
 use crate::Failure;
 

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use supraman_workstate::{Claim, ItemPage, ItemResolution, Report, Verification};
+use supraman_workman::{Claim, ItemPage, ItemResolution, Report, Verification};
 use gpui::Stateful;
 
 use super::*;
@@ -651,7 +651,7 @@ fn mono(text: &str, color: Hsla) -> gpui::Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use supraman_workstate::Session;
+    use supraman_workman::Session;
 
     fn iref(id: &str, kind: &str) -> ItemRef {
         ItemRef { id: id.into(), ref_: id.into(), qualified_ref: id.into(), kind: kind.into(), ..Default::default() }

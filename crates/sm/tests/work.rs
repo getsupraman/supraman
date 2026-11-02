@@ -2,16 +2,16 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
 
-use supraman_workstate::auth::{form_decode, http_browser};
-use supraman_workstate::fake::{Answer, FakeAuth, FakeWorkState};
-use supraman_workstate::secret::default_store;
-use supraman_workstate::Auth;
+use supraman_workman::auth::{form_decode, http_browser};
+use supraman_workman::fake::{Answer, FakeAuth, FakeWorkState};
+use supraman_workman::secret::default_store;
+use supraman_workman::Auth;
 const RUN: &str = "22222222-0000-4000-8000-000000000004";
 const OTHER_RUN: &str = "22222222-0000-4000-8000-00000000dead";
 const BACKLOG_RUN: &str = "22222222-0000-4000-8000-0000000000bb";
 
 fn fixture(name: &str) -> String {
-    std::fs::read_to_string(format!("{}/../supraman-workstate/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    std::fs::read_to_string(format!("{}/../supraman-workman/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 
 /// A scratch home with settings naming `url`; signed in when `oauth` is given.

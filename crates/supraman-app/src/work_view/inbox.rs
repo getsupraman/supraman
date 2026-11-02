@@ -7,7 +7,7 @@ use std::{
 };
 
 use supraman_core::fs::{load_json_or_notice, write_atomic};
-use supraman_workstate::{Inbox, InboxRow, Overview};
+use supraman_workman::{Inbox, InboxRow, Overview};
 
 use super::*;
 

@@ -5,15 +5,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use supraman_core::Settings;
-use supraman_workstate::auth::{http_browser, http_browser_with};
-use supraman_workstate::fake::{Answer, FakeWorkState, location_query};
-use supraman_workstate::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
+use supraman_workman::auth::{http_browser, http_browser_with};
+use supraman_workman::fake::{Answer, FakeWorkState, location_query};
+use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
 
 fn overview() -> Answer {
     Answer::json(r#"{"asOf":"2026-10-28T10:00:00+00:00","seq":1,"projects":[],"workingNow":[],"inboxCount":0}"#)
 }
 
-fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<supraman_workstate::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
+fn setup() -> (tempfile::TempDir, FakeWorkState, Arc<supraman_workman::fake::FakeAuth>, Arc<MemoryStore>, Arc<Auth>) {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeWorkState::start(vec![("/api/v1/overview".into(), overview())]);
     let oauth = fake.enable_oauth();
@@ -262,7 +262,7 @@ fn sign_out_revokes_the_grant_and_forgets_everything() {
 #[test]
 fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replaced() {
     let (_dir, fake, oauth, _store, auth) = setup();
-    let res = supraman_workstate::http_agent(Duration::from_secs(5)).get(format!("{}/api/v1/overview", fake.base())).call().unwrap();
+    let res = supraman_workman::http_agent(Duration::from_secs(5)).get(format!("{}/api/v1/overview", fake.base())).call().unwrap();
     assert_eq!(res.status().as_u16(), 401);
     let www = res.headers().get("www-authenticate").unwrap().to_str().unwrap().to_string();
     assert_eq!(www, format!(r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource/api""#, fake.base()));
@@ -272,7 +272,7 @@ fn a_read_without_a_token_is_401_with_where_to_sign_in_and_a_stale_one_is_replac
     client.overview().unwrap();
     // the server forgets the access token (not the grant): the 401 makes the client refresh once
     let held = auth.access_token(fake.base()).unwrap();
-    let revoke = supraman_workstate::http_agent(Duration::from_secs(5))
+    let revoke = supraman_workman::http_agent(Duration::from_secs(5))
         .post(format!("{}/connect/revoke", fake.base()))
         .content_type("application/x-www-form-urlencoded")
         .send(format!("token={held}").as_str())
@@ -469,7 +469,7 @@ fn a_refresh_token_the_store_refuses_is_kept_in_memory_and_reported() {
 #[cfg(windows)]
 #[test]
 fn a_6_kb_refresh_token_rotates_through_the_file_store() {
-    use supraman_workstate::secret::FileStore;
+    use supraman_workman::secret::FileStore;
     let (dir, fake, oauth, _store, _auth) = setup();
     let store = || Arc::new(FileStore::new(dir.path()));
     oauth.set_access_ttl(60);

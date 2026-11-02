@@ -170,7 +170,7 @@ The banner's **Update** (`crate::updates::install_update`) does the whole update
 `supraman.exe` (a dev build) or a release without its zip opens the release page instead.
 
 1. **Ask.** With sessions attached in tabs it asks once: Supraman restarts; the sessions keep running in the background.
-2. **Download** (`supraman_workstate::updates::download`, off the UI thread): the release's zip into
+2. **Download** (`supraman_workman::updates::download`, off the UI thread): the release's zip into
    `<home>\updates\<version>\` as `<zip>.part`, the banner showing `Downloading 12 of 48 MB` and Cancel. More bytes
    than the signed manifest's `size` stop it. The zip is trusted only through the verified manifest:
    `Manifest::check_zip` (size and sha256); a mismatch deletes it and the banner says why, and nothing else changes.

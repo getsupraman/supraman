@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use supraman_workstate::{Auth, AuthError};
+use supraman_workman::{Auth, AuthError};
 
 use crate::{RoleToken, TokenProvider};
 

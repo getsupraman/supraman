@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
 use supraman_core::{Registry, Settings, Workspace};
-use supraman_workstate::{
+use supraman_workman::{
     ItemStatus,
     fake::{Answer, FakeWorkState},
 };
@@ -35,13 +35,13 @@ const LOADED_WITHIN: Duration = Duration::from_secs(5);
 const LIVE_WITHIN: Duration = Duration::from_secs(2);
 
 static FAKE: OnceLock<FakeWorkState> = OnceLock::new();
-static OAUTH: OnceLock<std::sync::Arc<supraman_workstate::fake::FakeAuth>> = OnceLock::new();
+static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
 
 pub fn inbox_keys() -> [String; 2] {
     [format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}")]
 }
 
-pub fn fake() -> Option<(&'static FakeWorkState, &'static supraman_workstate::fake::FakeAuth)> {
+pub fn fake() -> Option<(&'static FakeWorkState, &'static supraman_workman::fake::FakeAuth)> {
     Some((FAKE.get()?, OAUTH.get()?.as_ref()))
 }
 
@@ -432,7 +432,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     let issued = oauth.issued();
     let is_oauth = |t: &str| t.starts_with("/.well-known/") || t.starts_with("/connect/");
     let seen: Vec<_> = fake.seen().into_iter().filter(|s| !is_oauth(&s.target)).collect();
-    let token_ok = |s: &supraman_workstate::fake::Seen| match s.target.as_str() {
+    let token_ok = |s: &supraman_workman::fake::Seen| match s.target.as_str() {
         "/health" => s.authorization.is_none(),
         _ => s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| issued.iter().any(|i| i == t)),
     };

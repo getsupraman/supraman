@@ -5185,7 +5185,7 @@ dependencies = [
  "supraman-claude",
  "supraman-core",
  "supraman-supervisor",
- "supraman-workstate",
+ "supraman-workman",
  "tempfile",
 ]
 
@@ -5342,7 +5342,7 @@ dependencies = [
  "supraman-supervisor",
  "supraman-term",
  "supraman-ui",
- "supraman-workstate",
+ "supraman-workman",
  "tempfile",
  "theme",
  "toml 0.9.8",
@@ -5398,7 +5398,7 @@ dependencies = [
  "serde_json",
  "supraman-claude",
  "supraman-core",
- "supraman-workstate",
+ "supraman-workman",
  "tempfile",
  "thiserror 2.0.17",
  "toml 0.9.8",
@@ -5450,7 +5450,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "supraman-workstate"
+name = "supraman-workman"
 version = "0.1.3"
 dependencies = [
  "async-channel",
@@ -5461,7 +5461,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "supraman-core",
- "supraman-workstate",
+ "supraman-workman",
  "tempfile",
  "thiserror 2.0.17",
  "ureq",

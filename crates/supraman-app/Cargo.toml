@@ -21,7 +21,7 @@ supraman-core = { path = "../supraman-core" }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
 supraman-ui = { path = "../supraman-ui" }
-supraman-workstate = { path = "../supraman-workstate", features = ["fake"] }
+supraman-workman = { path = "../supraman-workman", features = ["fake"] }
 futures = "0.3.34"
 log = "0.4"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }

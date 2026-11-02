@@ -1282,7 +1282,7 @@ impl FleetView {
             cx.background_executor().spawn(async move { auth.status(&current) })
         };
         cx.spawn(async move |this, cx| {
-            let signed_in = matches!(status.await, supraman_workstate::AuthStatus::SignedIn { .. });
+            let signed_in = matches!(status.await, supraman_workman::AuthStatus::SignedIn { .. });
             this.update(cx, |this, cx| {
                 if signed_in {
                     this.sign_in_to(origin, Some(current), cx);

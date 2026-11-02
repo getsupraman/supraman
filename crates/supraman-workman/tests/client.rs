@@ -1,5 +1,5 @@
-use supraman_workstate::fake::{Answer, FakeWorkState};
-use supraman_workstate::{
+use supraman_workman::fake::{Answer, FakeWorkState};
+use supraman_workman::{
     BriefFor, Client, Error, ItemResolution, ItemStatus, JournalQuery, SessionsQuery,
 };
 

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use supraman_workstate::Auth;
+use supraman_workman::Auth;
 
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
     let mut settings = supraman_core::Settings::load(home).unwrap_or_default();
     settings.workstate.url = Some(base.to_string());
     settings.save(home).unwrap();
-    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workstate::MemoryStore::default())));
-    auth.sign_in(base, &supraman_workstate::auth::http_browser()).unwrap();
+    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workman::MemoryStore::default())));
+    auth.sign_in(base, &supraman_workman::auth::http_browser()).unwrap();
     auth
 }
 
@@ -15,7 +15,7 @@ mod tests {
     use std::path::Path;
 
     use supraman_core::Settings;
-    use supraman_workstate::fake::{Answer, FakeWorkState};
+    use supraman_workman::fake::{Answer, FakeWorkState};
 
     use supraman_supervisor::{AppTokens, TokenProvider};
 
@@ -29,7 +29,7 @@ mod tests {
         let fake = FakeWorkState::start(vec![]);
         let oauth = fake.enable_oauth();
         Settings { workstate: supraman_core::WorkStateSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
-        let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workstate::MemoryStore::default()))) };
+        let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default()))) };
         assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no Workman");
 
         oauth.set_access_ttl(60);
@@ -175,7 +175,7 @@ mod tests {
         settings.save(&home).unwrap();
         assert_eq!(server(), None, "not signed in to B yet");
         assert!(sup.server_changed(server().as_deref()).is_empty());
-        auth.sign_in(b.base(), &supraman_workstate::auth::http_browser()).unwrap();
+        auth.sign_in(b.base(), &supraman_workman::auth::http_browser()).unwrap();
         assert_eq!(sup.server_changed(server().as_deref()), [("fm-demo-workspace".to_string(), Some(a.base().to_string()))]);
 
         sup.launcher().0.borrow_mut().clear();

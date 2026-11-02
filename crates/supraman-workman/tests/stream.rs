@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
-use supraman_workstate::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
+use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 const TOKEN: &str = "fake-reader-token";
 
