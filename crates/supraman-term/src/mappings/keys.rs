@@ -54,6 +54,15 @@ pub(crate) fn to_esc_str(
 ) -> Option<Cow<'static, str>> {
     let modifiers = TerminalModifiers::new(keystroke);
 
+    // Windows reports AltGr as Ctrl+Alt: the character it types (German AltGr+Q is @) goes in as text.
+    if cfg!(target_os = "windows")
+        && keystroke.modifiers.control
+        && keystroke.modifiers.alt
+        && keystroke.key_char.as_deref().is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+    {
+        return None;
+    }
+
     let manual_esc_str: Option<&'static str> = match (keystroke.key.as_ref(), &modifiers) {
         ("tab", TerminalModifiers::None) => Some("\x09"),
         ("escape", TerminalModifiers::None) => Some("\x1b"),
@@ -398,6 +407,20 @@ mod test {
                 format!("\x1b{}", key)
             );
         }
+    }
+
+    #[test]
+    fn altgr_characters_go_in_as_text() {
+        let altgr = |key: &str, ch: Option<&str>| Keystroke {
+            modifiers: Modifiers { control: true, alt: true, ..Default::default() },
+            key: key.into(),
+            key_char: ch.map(Into::into),
+        };
+        for (key, ch) in [("q", "@"), ("7", "{"), ("8", "["), ("9", "]"), ("0", "}"), ("ß", "\\"), ("+", "~"), ("<", "|"), ("e", "€"), ("2", "²"), ("m", "µ")] {
+            assert_eq!(to_esc_str(&altgr(key, Some(ch)), Modes::NONE, false), None, "AltGr+{key} ({ch})");
+        }
+        assert_eq!(to_esc_str(&altgr("q", None), Modes::NONE, false), Some("\x1b\x11".into()), "Ctrl+Alt+Q without a character");
+        assert_eq!(to_esc_str(&altgr("q", Some("\x11")), Modes::NONE, false), Some("\x1b\x11".into()), "a control key_char is no text");
     }
 
     #[test]
