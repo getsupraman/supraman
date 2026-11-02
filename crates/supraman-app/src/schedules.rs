@@ -26,7 +26,7 @@ pub struct ScheduleRow {
     pub running: Option<Live>,
     /// Newest first.
     pub runs: Vec<Run>,
-    /// While pending: what Approve approves, or why it cannot.
+    /// While pending or `command_changed`: what Approve approves, or why it cannot.
     pub approvable: Option<std::result::Result<Covered, String>>,
     pub folder_path: Option<PathBuf>,
     /// The slash command's file as `schedule::command_file` shows it.
@@ -164,7 +164,7 @@ pub fn read(home: &Path, workspaces: &[Workspace], store: &dyn SecretStore, now_
                     },
                     other => (other, false),
                 };
-                let approvable = (status == Status::Pending).then(|| {
+                let approvable = (status == Status::Pending || command_changed).then(|| {
                     s.validate(w).map_err(|why| format!("it cannot be approved: {why}"))?;
                     schedule::covered(w, &s).map_err(|e| e.to_string())
                 });
@@ -487,7 +487,11 @@ pub fn sections(row: &ScheduleRow, zone: &str, dry_run: Option<&str>, now_ms: i6
                 changed = changed.text(line);
             }
             if approval.command_sha256 != now.command_sha256 {
-                changed = changed.text("The slash command's file changed (shown only; the approval does not cover it).");
+                changed = changed
+                    .row("Slash command", row.command_path.clone().unwrap_or_default())
+                    .row("Approved file", sha_words(approval.command_sha256.as_deref()))
+                    .row("File now", sha_words(now.command_sha256.as_deref()))
+                    .text("Its runs read the file as it is now. Approve makes this file the approved one.");
             }
             out.push(changed);
         }
@@ -530,26 +534,40 @@ pub fn sections(row: &ScheduleRow, zone: &str, dry_run: Option<&str>, now_ms: i6
     out
 }
 
-/// A pending schedule's Inbox entry; `key` changes when what it covers changes.
+/// A slash command file's sha256 as the page shows it: its first 12 digits, or `missing`.
+fn sha_words(sha: Option<&str>) -> String {
+    sha.map_or_else(|| "missing".to_string(), |s| format!("sha256 {}…", &s[..s.len().min(12)]))
+}
+
+/// The Inbox entry of a pending schedule, or of an active one whose slash command changed; `key` changes when
+/// what it covers, or that command file, changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
     pub workspace: String,
     pub id: String,
     pub title: String,
     pub key: String,
+    pub command_changed: bool,
 }
 
 pub fn waiting(rows: &BTreeMap<String, Vec<ScheduleRow>>) -> Vec<Waiting> {
     rows.values()
         .flatten()
-        .filter(|row| row.status == Status::Pending)
+        .filter(|row| row.status == Status::Pending || row.command_changed)
         .map(|row| {
             let state = match &row.approvable {
+                Some(Ok(c)) if row.command_changed => format!("command-{}", c.command_sha256.as_deref().unwrap_or("missing")),
                 Some(Ok(c)) => c.fingerprint.clone(),
                 Some(Err(e)) => e.clone(),
                 None => String::new(),
             };
-            Waiting { workspace: row.workspace.clone(), id: row.schedule.id.clone(), title: row.title().to_string(), key: format!("{}/{}@{state}", row.workspace, row.schedule.id) }
+            Waiting {
+                workspace: row.workspace.clone(),
+                id: row.schedule.id.clone(),
+                title: row.title().to_string(),
+                key: format!("{}/{}@{state}", row.workspace, row.schedule.id),
+                command_changed: row.command_changed,
+            }
         })
         .collect()
 }
@@ -773,6 +791,7 @@ mod tests {
             covered: r#"{"action":{"worktree":true},"caps":{"max_tokens":3000000},"files":{"gate.cmd":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"permissions":{"profile":"worktree-edit"},"trigger":{"at":"09:00","kind":"daily"},"old":1}"#.into(),
             command_sha256: Some("c".into()),
         });
+        r.command_path = Some(".claude/commands/gate.md".into());
         let text = page(&r);
         let changed: Vec<&str> = text.lines().skip_while(|l| *l != "Changed since your last approval").skip(2).take_while(|l| !l.is_empty()).collect();
         assert_eq!(
@@ -783,7 +802,10 @@ mod tests {
                 "File gate.cmd: its content changed",
                 "Trigger time: 09:00 → 10:30",
                 "old: 1 (gone)",
-                "The slash command's file changed (shown only; the approval does not cover it).",
+                "Slash command  .claude/commands/gate.md",
+                "Approved file  sha256 c…",
+                "File now  missing",
+                "Its runs read the file as it is now. Approve makes this file the approved one.",
             ]
         );
         let renamed = Change { field: "permissions.profile".into(), before: Some("worktree-edit".into()), after: Some("edit".into()) };
@@ -821,11 +843,21 @@ mod tests {
         pending.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f1".into(), command_sha256: None }));
         rows.insert("demo".to_string(), vec![pending, row(Status::Active, vec![])]);
         let w = waiting(&rows);
-        assert_eq!(w, [Waiting { workspace: "demo".into(), id: "nightly".into(), title: "Nightly gate".into(), key: "demo/nightly@f1".into() }]);
+        assert_eq!(w, [Waiting { workspace: "demo".into(), id: "nightly".into(), title: "Nightly gate".into(), key: "demo/nightly@f1".into(), command_changed: false }]);
         rows.get_mut("demo").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: None }));
         assert_eq!(waiting(&rows)[0].key, "demo/nightly@f2");
         rows.get_mut("demo").unwrap()[0].status = Status::Active;
         assert!(waiting(&rows).is_empty());
+
+        let changed = &mut rows.get_mut("demo").unwrap()[0];
+        changed.command_changed = true;
+        changed.approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: Some("c2".into()) }));
+        let w = waiting(&rows);
+        assert_eq!((w.len(), w[0].key.as_str(), w[0].command_changed), (1, "demo/nightly@command-c2", true), "an active schedule whose command changed waits too");
+        rows.get_mut("demo").unwrap()[0].approvable = Some(Ok(Covered { json: "{}".into(), fingerprint: "f2".into(), command_sha256: Some("c3".into()) }));
+        assert_eq!(waiting(&rows)[0].key, "demo/nightly@command-c3", "another edit of the file is another entry");
+        rows.get_mut("demo").unwrap()[0].command_changed = false;
+        assert!(waiting(&rows).is_empty(), "approved again, the entry goes");
         assert_eq!(tray_tooltip(0, 1), "Supraman · 1 schedule waits for your approval");
         assert_eq!(tray_tooltip(1, 2), "Supraman · 1 scheduled run needs you · 2 schedules wait for your approval");
     }

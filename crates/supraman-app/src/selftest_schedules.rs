@@ -208,6 +208,64 @@ async fn status_is(view: &Entity<FleetView>, want: Status, cx: &mut AsyncWindowC
         .map_err(|e| e.context(format!("row {:?}, errors {:?}", view.read_with(cx, |v, _| row_state(v)), view.read_with(cx, |v, _| (v.action_error.clone(), v.sync_errors.clone())))))
 }
 
+/// 3c: an approved schedule whose slash command file is edited says so, offers Approve and asks in the Inbox; Approve
+/// takes the new file and the entry goes. Its own schedule, removed again, so the later steps see one.
+async fn changed_command(view: &Entity<FleetView>, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    const CMD: &str = "gate-command";
+    let commands = dir.join(".claude").join("commands");
+    std::fs::create_dir_all(&commands)?;
+    std::fs::write(commands.join("selftest-gate.md"), "Run the gate.\n")?;
+    sm(&["schedule", "add", WS, "--id", CMD, "--name", "Gate command", "--every", "weekly mon 09:00", "--command", "/selftest-gate", "--profile", "edit"])?;
+    let open = format!("inbox-sched-open-{WS}/{CMD}");
+    until(view, cx, WITHIN, "the command schedule's Inbox entry", |v| painted(v, &open).then_some(())).await?;
+    click(view, &open, cx).await?;
+    let approve = format!("sched-page-approve-{WS}/{CMD}");
+    crate::selftest::scrolled_into_view(view, &approve, cx).await?;
+    click(view, &approve, cx).await?;
+    until(view, cx, WITHIN, "the command schedule active", |v| {
+        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
+    })
+    .await?;
+    until(view, cx, WITHIN, "its Inbox entry gone", |v| (!painted(v, &open)).then_some(())).await?;
+
+    std::fs::write(commands.join("selftest-gate.md"), "Run the gate, then fix what it found.\n")?;
+    let row = until(view, cx, WITHIN, "the row says its command changed", |v| {
+        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && r.command_changed).map(|r| r.status_text())
+    })
+    .await?;
+    until(view, cx, WITHIN, "the changed command's Inbox entry", |v| painted(v, &open).then_some(())).await?;
+    let tip = view.read_with(cx, |v, _| v.tray_tooltip());
+    click(view, &open, cx).await?;
+    let page = until(view, cx, WITHIN, "the page with the changed file", |v| {
+        let (tab, page) = v.schedule_page(WS, CMD)?;
+        let row = v.schedule_row(WS, CMD)?;
+        let text = supraman_ui::details::text(row.title(), &v.page_sections(row, Some(page)));
+        (v.active == Some(tab) && text.contains("File now")).then_some(text)
+    })
+    .await?;
+    for words in ["Slash command  .claude/commands/selftest-gate.md", "Approved file  sha256 ", "File now  sha256 "] {
+        if !page.contains(words) {
+            bail!("the page does not say {words:?}: {page}");
+        }
+    }
+    crate::selftest::scrolled_into_view(view, &approve, cx).await?;
+    click(view, &approve, cx).await?;
+    until(view, cx, WITHIN, "approved again with the new file", |v| {
+        v.schedule_row(WS, CMD).filter(|r| r.status == Status::Active && !r.command_changed).map(|_| ())
+    })
+    .await?;
+    until(view, cx, WITHIN, "the entry gone after Approve", |v| (!painted(v, &open) && v.tray_tooltip() == "Supraman").then_some(())).await?;
+
+    view.update(cx, |v, cx| {
+        if let Some((tab, _)) = v.schedule_page(WS, CMD) {
+            v.close_tab(tab, cx);
+        }
+        v.remove_schedule(WS.into(), CMD.into(), cx);
+    });
+    until(view, cx, WITHIN, "the command schedule removed", |v| v.schedule_row(WS, CMD).is_none().then_some(())).await?;
+    Ok(format!("3c /selftest-gate edited after Approve: the row says {row:?}, the Inbox asks, the tray says {tip:?}, the page shows the approved and the new file's sha256 and offers Approve; approved again, the entry is gone"))
+}
+
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = registrar();
     let task = format!(r"{}\{WS}\{ID}", schedule::task_root(home));
@@ -278,6 +336,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     status_is(view, Status::Active, cx).await?;
     until(view, cx, WITHIN, "the task registered again", |_| (fake.writes().len() > writes && has_task(&fake)).then_some(())).await?;
     out.push("3 changed through sm: an entry, dismissed (kept in schedules/waiting-dismissed.json), back after the next change; the page shows Trigger time 09:00 → 10:30, approved again".into());
+    out.push(changed_command(view, &dir, cx).await?);
 
     let tabs = view.read_with(cx, |v, _| v.tabs.len());
     from_menu(view, "details", cx).await?;
