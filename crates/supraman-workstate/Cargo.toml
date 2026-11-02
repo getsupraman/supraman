@@ -3,6 +3,7 @@ name = "supraman-workstate"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license.workspace = true
 
 [features]
 # A fake WorkState (HTTP + SSE + OAuth authorization server on 127.0.0.1) for other crates' tests.

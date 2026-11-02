@@ -2,6 +2,9 @@
 resolver = "2"
 members = ["crates/supraman-core", "crates/supraman-claude", "crates/supraman-supervisor", "crates/supraman-workstate", "crates/supraman-term", "crates/supraman-ui", "crates/supraman-app", "crates/sm", "spikes/term-spike"]
 
+[workspace.package]
+license = "GPL-3.0-or-later"
+
 # A panic's backtrace in foreman.log names file:line through the shipped foreman.pdb.
 [profile.release]
 debug = "line-tables-only"
