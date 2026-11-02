@@ -136,6 +136,9 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     if mode == Mode::SelftestSupervise {
         return crate::selftest_supervise::prepare();
     }
+    if mode == Mode::SelftestShots {
+        return crate::selftest_shots::prepare();
+    }
     let target = cargo_root().join("target");
     let home = home();
     let cwd = target.join("selftest-cwd");
@@ -392,6 +395,7 @@ pub fn start(mode: Mode, view: Entity<FleetView>, window: &mut Window, cx: &mut 
                 Mode::SelftestDetach(cycles) => detach_cycles(&view, cycles, cx).await,
                 Mode::SelftestDetachShutdown => detach_on_shutdown(&view, cx).await,
                 Mode::SelftestSupervise => crate::selftest_supervise::run(&view, cx).await,
+                Mode::SelftestShots => crate::selftest_shots::run(&view, cx).await,
                 _ => perf(&view, cx).await,
             };
             // The window closed itself; `finish` gives the verdict once the event loop has ended.

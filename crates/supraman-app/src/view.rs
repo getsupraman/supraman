@@ -472,7 +472,8 @@ impl Poller {
         let polled_at = now_ms();
         let listing = Instant::now();
         let sessions = with_sessions.then(|| {
-            list_sessions().map_err(|e| e.to_string()).map(|mut rows| {
+            let listed = if crate::selftest_shots::fixtures_only() { Ok(Vec::new()) } else { list_sessions() };
+            listed.map_err(|e| e.to_string()).map(|mut rows| {
                 rows.extend(self.injected.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned());
                 rows
             })
