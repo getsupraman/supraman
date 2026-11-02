@@ -1,7 +1,7 @@
 # Supraman architecture
 
 For whoever is about to change Supraman, or to build another gpui tool (GitMan, FileMan) on its crates. What was
-measured and why is in `docs/LEARNINGS.md`; the plan is `docs/PLAN.md`; the keys are `docs/KEYS.md`.
+measured and why is in `docs/LEARNINGS.md`; what comes next is `docs/ROADMAP.md`; the keys are `docs/KEYS.md`.
 
 ## Crates
 

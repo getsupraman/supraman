@@ -108,3 +108,11 @@ None of these holds a secret, a client matter or Nomos data (sweep above). What 
 | `docs/icon-proposals/*.svg` | Three rejected icon proposals | remove (superseded by the brand kit) |
 | `.claude/` | not tracked (`.claude/briefs/` is ignored) | — |
 | `docs/images/*.png` | README screenshots from `--selftest-shots` fixtures (public/6) | publishable |
+
+## Decisions (René, 2026-11-02)
+
+- Commit metadata (gmail address, name): **accepted**, no history rewrite.
+- User and machine name in `6df1fa2` and `ad19138`: **accepted**.
+- `docs/WORKSTATE-HANDOVER.md`, `docs/icon-proposals/` and `docs/PLAN.md`: **removed** from the tree (public/11).
+- `docs/LEARNINGS.md`: **kept** as it is.
+- Everything else in the internal docs table stays as recommended above.
