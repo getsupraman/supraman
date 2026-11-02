@@ -5636,3 +5636,13 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   the per-frame cost is paid at the rate of whichever is fastest.
 - **René's machine at the time:** 531 processes, ~257k handles, 34 orphaned `tail -F | grep` watcher pairs from expired
   Monitor watches (parents gone; killed). Machine load, not the cause: the fixture reproduces the hang alone.
+
+## 2026-11-02 — backlog/approve-changed-command Approve after the slash command file changed
+
+- **The approval covers the command by name and path, not its content** (`schedule::covered`), so an edited command file
+  keeps the schedule active and running (Q2); only `approval.command_sha256` differs. `schedules::read` made a row
+  approvable only while pending, so that case showed "changed since approval" and offered no Approve anywhere.
+- **Now:** a `command_changed` row is approvable; the page's "Changed since your last approval" names the file with the
+  approved and the current sha256 (the old content is not kept, so no diff); the menu adds Approve… after Run now (Run now
+  stays the row's one action); the Inbox entry is keyed by the new sha256, so each edit asks again and a dismissal
+  holds until the next. `schedule::approve` already re-records `command_sha256`; nothing in core changed. Selftest 7y 3c.

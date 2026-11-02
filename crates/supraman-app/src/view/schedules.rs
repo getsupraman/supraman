@@ -1060,8 +1060,15 @@ impl FleetView {
                     cx.notify();
                 }
             }));
-            let title = format!("{} waits for your approval", w.title);
-            out.push(card(status.warning, "Approve", title, None, format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace), div().flex().flex_none().gap_1().child(open).child(dismiss)));
+            let (title, detail) = if w.command_changed {
+                (
+                    format!("{}: its slash command changed", w.title),
+                    format!("Schedule {} of {} runs the changed file; Approve makes it the approved one.", w.id, w.workspace),
+                )
+            } else {
+                (format!("{} waits for your approval", w.title), format!("Schedule {} of {}: nothing runs until you approve it.", w.id, w.workspace))
+            };
+            out.push(card(status.warning, "Approve", title, None, detail, div().flex().flex_none().gap_1().child(open).child(dismiss)));
         }
         for a in runs {
             let needs_you = a.outcome == schedule::Outcome::NeedsYou;

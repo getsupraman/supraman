@@ -243,13 +243,16 @@ pub fn session_items(
     items
 }
 
-/// The row's one action first, then the rest; Approve is offered only while the schedule is pending.
+/// The row's one action first, then the rest; Approve is offered while the schedule is pending or its slash command changed.
 pub fn schedule_items(row: &ScheduleRow) -> Vec<MenuItem> {
     let (w, id) = (row.workspace.clone(), row.schedule.id.clone());
     let mut items = vec![match row.primary() {
         Primary::Approve => item("approve", "Approve…", MenuAction::Approve { workspace: w.clone(), id: id.clone() }),
         Primary::RunNow => item("run-now", "Run now", MenuAction::RunNow { workspace: w.clone(), id: id.clone() }),
     }];
+    if row.command_changed {
+        items.push(item("approve", "Approve…", MenuAction::Approve { workspace: w.clone(), id: id.clone() }));
+    }
     items.push(item("edit-schedule", "Edit…", MenuAction::EditSchedule { workspace: w.clone(), id: id.clone() }));
     items.push(item("dry-run", "Dry run", MenuAction::DryRun { workspace: w.clone(), id: id.clone() }));
     items.push(match row.schedule.status {
@@ -362,6 +365,11 @@ mod tests {
         assert_eq!(keys(&items), [&["run-now"][..], &all].concat());
         assert_eq!(items[0].action, MenuAction::RunNow { workspace: "demo".into(), id: "nightly".into() });
         assert_eq!(items[3].action, MenuAction::SetPaused { workspace: "demo".into(), id: "nightly".into(), paused: true });
+        row.command_changed = true;
+        let items = schedule_items(&row);
+        assert_eq!(keys(&items), [&["run-now", "approve"][..], &all].concat(), "a changed slash command adds Approve after Run now");
+        assert_eq!(items[1].action, MenuAction::Approve { workspace: "demo".into(), id: "nightly".into() });
+        row.command_changed = false;
         row.status = Status::Paused;
         row.schedule.status = Status::Paused;
         let items = schedule_items(&row);
