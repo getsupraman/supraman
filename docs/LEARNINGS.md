@@ -5459,3 +5459,37 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   neither starts nor survives a restart there; both are in the roadmap tables.
 - **Count:** 104 `cfg(windows)` sites in 38 files, 45 `cfg(not(windows))`, 9 `target_os = "windows"` in
   `supraman-term` (master 78691df).
+
+## 2026-11-02 — public/5 one licence across the repo (GPL-3.0-or-later) with complete third-party notices
+
+- **Licence:** root `LICENSE` is gnu.org's `gpl-3.0.txt` verbatim (sha256 `3972dc97…986`). The root `Cargo.toml` has
+  `[workspace.package] license = "GPL-3.0-or-later"`; every member says `license.workspace = true`; the two standalone
+  manifests (`scripts/icon-gen`, `docs/research/scheduler-probe`) say it directly. `crates/supraman-term/LICENSE-GPL`
+  was Zed's git symlink stored as the 17-byte text `../../LICENSE-GPL` (pointing nowhere here); it is now the GPL text.
+- **`deny.toml`:** `[graph]` x86_64-pc-windows-msvc, dev-dependencies excluded; `[licenses] allow` lists only
+  GPL-3.0-or-later-compatible licences, each odd one with its reason (Apache-2.0: GPL-3 only; MPL-2.0 §3.3; LGPL;
+  OFL for fonts). `unused-allowed-license = "allow"` keeps the list stable as the tree changes. No `clarify` was
+  needed: every zed-industries git crate has a `license` field (gpui & co. Apache-2.0, `theme`/`syntax_theme`
+  GPL-3.0-or-later, `zed-scap` MIT, the alacritty fork Apache-2.0). The only MPL-2.0 crate is `option-ext`.
+- **`scripts/third-party.ps1`:** walks `cargo metadata --locked --filter-platform` from `supraman-app` and `sm` along
+  normal dependencies (437 third-party crates; build-only crates like `cc`, `semver`, `embed-resource` are not shipped)
+  and writes `THIRD_PARTY.md` (hand-kept assets: Zed's terminal crate, the theme, Lucide icons via Zed, Archivo, the Rust
+  std; then one table row per crate: name, version, licence, crates.io or git URL @ rev). `-LicensesDir` also writes
+  `supraman.LICENSE`, the assets' licences and `rust-crates.txt`: each crate's LICENSE*/COPYING*/NOTICE*/… files
+  as shipped (CRLF normalised, deduplicated by sha256 → 265 distinct texts under the crates that ship them). Zed's
+  checkouts on Windows hold symlinks as small text files (`../../LICENSE-APACHE`); the script follows them. 22 crates
+  ship no licence file (lyon*, accesskit*, taffy, profiling, …): they get `scripts/licenses/MIT.txt` (authors as the
+  copyright line) or `Apache-2.0.txt`; a crate with neither option makes the script throw.
+- **`-Check`** compares the committed `THIRD_PARTY.md` (CRLF-normalised) with the generated one and throws with the
+  first differing lines; `release.ps1` runs `-Check -LicensesDir <out>\licenses`, so a stale file stops a release.
+  Not in `cargo test`: it needs pwsh and the registry sources, and a test would be Rust code (out of scope); it is a
+  gate step (`docs/RELEASE.md`, "Release gate").
+- **Pitfall:** `git checkout -- <file>` as a red-check restore throws away uncommitted work on that file (it hit
+  `crates/sm/Cargo.toml` and `THIRD_PARTY.md` here); back the file up first, or commit before red-checking.
+- **Red:** `MPL-2.0` removed from `deny.toml` → `cargo deny check licenses` FAILS (`option-ext` rejected); a row
+  deleted from `THIRD_PARTY.md` → `-Check` FAILS (exit 1, `+ | anyhow | …`); `semver` added to `sm`'s dependencies
+  (lock updated) → `-Check` FAILS (`+ | semver | 1.0.28 | …`, 438 crates).
+- **CONTRIBUTING.md:** inbound = outbound under GPL-3.0-or-later with a DCO sign-off (`git commit -s`); no CLA.
+- **Gate** (`CARGO_TARGET_DIR=C:\fmbuild\public-5\target`): build ok; `cargo test --release --workspace` 871 passed,
+  0 failed, 6 ignored; `cargo deny check licenses` ok; `third-party.ps1 -Check` current (437 crates); `release.ps1`
+  ok with 5 files in `licenses\`. No Rust code changed, so no selftest; no `fm-selftest` sessions.

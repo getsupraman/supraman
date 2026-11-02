@@ -12,7 +12,7 @@
         <OutDir>\plugins\supraman\bin\sm.exe, fm.exe  (the hooks' copies, via sm plugin install)
         <OutDir>\VERSION
         <OutDir>\THIRD_PARTY.md
-        <OutDir>\licenses\*.LICENSE           (third-party licences, THIRD_PARTY.md)
+        <OutDir>\licenses\*                  (Supraman's and every shipped dependency's licence, THIRD_PARTY.md)
 
     and zips it to <OutDir>\..\Supraman-<version>.zip. Honours an existing CARGO_TARGET_DIR.
 .PARAMETER OutDir
@@ -57,10 +57,8 @@ try {
     & (Join-Path $OutDir 'sm.exe') plugin install $plugin
     if ($LASTEXITCODE -ne 0) { throw "sm plugin install $plugin failed ($LASTEXITCODE)" }
 
+    & (Join-Path $PSScriptRoot 'third-party.ps1') -Check -LicensesDir (Join-Path $OutDir 'licenses')
     Copy-Item (Join-Path $repo 'THIRD_PARTY.md') $OutDir
-    $licenses = Join-Path $OutDir 'licenses'
-    New-Item -ItemType Directory -Force $licenses | Out-Null
-    Copy-Item (Join-Path $repo 'crates/supraman-ui/assets/themes/*.LICENSE') $licenses
 
     $cli = Get-Content -Raw (Join-Path $repo 'crates\supraman-claude\src\cli.rs')
     $triple = {

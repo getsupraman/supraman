@@ -27,6 +27,8 @@ Supraman\
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
   fm.exe, fmw.exe              copies of sm.exe and smw.exe (see "The fm name" below)
   VERSION                      version, commit, build time (UTC), claude tested / minimum
+  THIRD_PARTY.md               the bundled assets and every shipped crate with its licence and source
+  licenses\                    supraman.LICENSE (GPL-3.0), rust-crates.txt (every crate's licence and notices), the assets' licences
   plugins\supraman\
     hooks\hooks.json           the exec-form hooks, run from ${CLAUDE_PLUGIN_ROOT}\bin\sm.exe
     roles\*.md                 role templates
@@ -80,6 +82,9 @@ only when Supraman starts depending on something an older CLI lacks, and say wha
 
 From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`): `supraman.exe --selftest` and
 `supraman.exe --selftest-supervise` both PASS, and `cargo test --workspace` passes in the repo.
+`cargo deny check licenses` passes (`deny.toml`: only licences that allow shipping the whole as GPL-3.0-or-later)
+and `pwsh -File scripts/third-party.ps1 -Check` says `THIRD_PARTY.md is current`; `release.ps1` runs that check
+itself and stops on a stale file. After a dependency change, `pwsh -File scripts/third-party.ps1` regenerates it.
 The selftests run on a hidden desktop of their own (their first line names it, their last says no selftest window
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.

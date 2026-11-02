@@ -1,0 +1,35 @@
+# `cargo deny check licenses`: every crate the shipped binaries link must be under a licence that
+# allows distributing the whole as GPL-3.0-or-later.
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+all-features = false
+exclude-dev = true
+
+[licenses]
+confidence-threshold = 0.93
+unused-allowed-license = "allow"
+allow = [
+    "GPL-3.0-or-later",
+    # LGPL code may be combined into a GPL-3.0 work (LGPL-3.0 is GPL-3.0 plus permissions; LGPL-2.1 §3).
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-or-later",
+    # Apache-2.0 is compatible with GPL-3.0 (not with GPL-2.0, which this project does not use).
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    # MPL-2.0 §3.3 names the GPL as a Secondary License; the MPL files stay under MPL-2.0.
+    "MPL-2.0",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "Unicode-3.0",
+    # Public-domain dedications: no conditions at all.
+    "CC0-1.0",
+    "Unlicense",
+    # Fonts only: the OFL allows bundling a font with any software as long as the font is not sold alone.
+    "OFL-1.1",
+]
