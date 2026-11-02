@@ -107,6 +107,16 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     }
     report.push(format!("palette[8] = {theme} bright black #666666; PSReadLine drew `-LiteralPath` in {fg:?}"));
 
+    let altgr = Modifiers { control: true, alt: true, ..Default::default() };
+    let german = [("q", '@'), ("7", '{'), ("8", '['), ("9", ']'), ("0", '}'), ("ß", '\\'), ("+", '~'), ("<", '|'), ("e", '€'), ("2", '²'), ("3", '³'), ("m", 'µ')];
+    let typed_altgr: String = german.iter().map(|(_, c)| *c).collect();
+    for (name, c) in german {
+        let keystroke = Keystroke { modifiers: altgr, key: name.into(), key_char: Some(c.to_string()) };
+        cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx))?;
+    }
+    until("the AltGr characters reached the prompt", Duration::from_secs(5), cx, |cx| last_line(terminal, cx).ends_with(&typed_altgr)).await?;
+    report.push(format!("AltGr (Ctrl+Alt with a character) typed {typed_altgr} at the prompt"));
+
     let line = last_line(terminal, cx);
     key(cx, "c", ctrl)?;
     let took = until("^C cancelled the prompt line", Duration::from_secs(5), cx, |cx| {
