@@ -156,7 +156,7 @@ impl Session {
         if self.pid.is_some() {
             if self.waiting_for.is_some()
                 || matches!(self.status, Some(Status::Waiting))
-                || (matches!(state, Some(S::Blocked)) && self.status.is_none())
+                || (matches!(state, Some(S::Blocked)) && matches!(self.status, None | Some(Status::Idle)))
             {
                 return Health::Blocked {
                     waiting_for: self.waiting_for.clone(),
@@ -382,6 +382,20 @@ mod tests {
         );
         let s = &parse(&json).unwrap()[0];
         assert_eq!(s.health(NOW), Health::Idle);
+    }
+
+    #[test]
+    fn blocked_and_idle_with_pid_is_blocked_and_a_foreman_session_idle() {
+        let json = format!(
+            r#"[{{"id":"aaaa0011","sessionId":"aaaa0011-x","name":"asks","cwd":"C:\\x","kind":"background","startedAt":{NOW},"state":"blocked","status":"idle","pid":27305}}]"#
+        );
+        let mut s = parse(&json).unwrap().remove(0);
+        assert_eq!(s.health(NOW), Health::Blocked { waiting_for: None }, "a turn that ended asking the human waits on them");
+        assert_eq!(s.supervised_health(NOW), Health::Blocked { waiting_for: None });
+        s.name = "fm-demo-asks".into();
+        assert_eq!(s.supervised_health(NOW), Health::Idle, "a Foreman session waits on a peer (m3/8)");
+        s.state = Some(SessionState::Done);
+        assert_eq!(s.health(NOW), Health::Idle, "a finished turn stays idle");
     }
 
     #[test]

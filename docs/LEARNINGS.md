@@ -5646,3 +5646,24 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   approved and the current sha256 (the old content is not kept, so no diff); the menu adds Approve… after Run now (Run now
   stays the row's one action); the Inbox entry is keyed by the new sha256, so each edit asks again and a dismissal
   holds until the next. `schedule::approve` already re-records `command_sha256`; nothing in core changed. Selftest 7y 3c.
+
+## 2026-11-02 — supervisor/F-01 and supervisor/1 the supervisor's list and a question in plain text
+
+- **F-01:** `Poller::read` reads the registry before `claude agents` (~0.4 s) and `Poller::tick` ran the supervisor on
+  that snapshot; only `FleetView::apply` compared `registry_writes`. The snapshot now carries the count it was read at,
+  and `tick` skips (logs, returns no report) when a Remove/Add saved since; the next poll reads again.
+- **supervisor/1, measured on claude 2.1.316 with three `--bg` probes in default mode:** an open permission prompt is
+  `state=blocked, status=waiting, waitingFor="permission prompt"`; an open AskUserQuestion is the same with
+  `waitingFor="input needed"`; both stay so (B1/B2, never `idle`). A turn that ends asking the human in plain text is
+  `state=blocked, status=idle`, no `waitingFor`, live pid, and stays so: claude marks the turn as waiting on the human.
+  B5 read it as Idle, so a [+] or adopted session asking that way never reached the Inbox. A finished turn is
+  `state=done, status=idle` (B5, unchanged).
+- **Now:** B3 is `blocked` with status absent or `idle` → `Blocked { waiting_for: None }`. `supervised_health` still reads
+  it as Idle on an `fm-…` row (m3/8), so the supervisor and the selftest's waits for an idle controller (which now use
+  `supervised_health`) see no change. `sm run` reads raw `health`: a scheduled run whose turn ends with a question in text
+  is now `needs-you` ("the session is blocked; attach to … to answer"), not a run that went idle.
+- **--selftest-supervise steps v, x and y broke on the virtualized sidebar, not on B3** (no supervise run since
+  responsive/1): their waits read `hits` for a row out of view. `wait_painted` waits through `FleetView::shown`; x and y
+  scroll to the key their row really paints under with `selftest::scrolled_into_view`. That key is
+  `session-row-<id>@<ws>`: the testbed lies under this checkout, step v's VGit, so their sessions are `also_in` it, and
+  the sidebar's row tokens are session ids alone, so `reveal` alone finds step v's copy first.

@@ -234,9 +234,10 @@ async fn wait_for<T>(
 
 async fn wait_painted(view: &Entity<FleetView>, key: &str, within: Duration, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
-    while !view.read_with(cx, |v, _| v.hits.borrow().contains_key(key)) {
+    while !view.read_with(cx, |v, _| v.shown(key)) {
         if started.elapsed() > within {
-            bail!("nothing painted under {key} within {} s", within.as_secs());
+            let near: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with(key)).cloned().collect());
+            bail!("nothing painted under {key} within {} s (painted under it: {near:?})", within.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     }
@@ -343,7 +344,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     // `claude stop`, not a kill: the daemon respawns a session killed while `state=working`/`blocked` (R13), never a stopped one.
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
-        rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
+        rows.iter().find(|s| s.name == ctrl && s.supervised_health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
     .await?;
     // what the skill made of its first turn: reported, not asserted (a model's choice, not Foreman's)
@@ -555,7 +556,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
                 if is_live(r, now) {
                     first_live[i].get_or_insert(started.elapsed());
                 }
-                if r.health(now) == Health::Idle {
+                if r.supervised_health(now) == Health::Idle {
                     first_idle[i].get_or_insert(started.elapsed());
                 }
             }
@@ -930,7 +931,7 @@ async fn unwanted_double_click(view: &Entity<FleetView>, session: &Session, cx: 
         let key = format!("session-row-{}", session.session_id);
         let started = Instant::now();
         while !view.read_with(cx, |v, _| {
-            v.hits.borrow().contains_key(&key) && v.tree().workspaces.iter().flat_map(|w| w.rows()).any(|r| r.session.session_id == session.session_id && !crate::fleet::is_alive(&r.health))
+            v.shown(&key) && v.tree().workspaces.iter().flat_map(|w| w.rows()).any(|r| r.session.session_id == session.session_id && !crate::fleet::is_alive(&r.health))
         }) {
             if started.elapsed() > Duration::from_secs(20) {
                 bail!("{key} not painted as stopped within 20 s");
@@ -1009,7 +1010,14 @@ async fn edit_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     crate::selftest::until(view, cx, within, "XGit and XPlain in the tree, the session first under XPlain", |v| (folders_of(v).as_ref() == Some(&placed)).then_some(()))
         .await
         .map_err(|e| e.context(format!("listed folders {:?}", view.read_with(cx, |v, _| folders_of(v)))))?;
-    wait_painted(view, &format!("session-row-{}", live.session_id), within, cx).await?;
+    // the testbed lies inside this checkout, step v's VGit, so the row may carry its `@{name}` scope
+    let row_key = view
+        .read_with(cx, |v, _| {
+            let node = v.tree().workspaces.iter().find(|n| n.name == name).cloned()?;
+            node.rows().find(|r| r.session.session_id == live.session_id).map(|r| format!("session-row-{}{}", r.session.session_id, r.scope(&name)))
+        })
+        .ok_or_else(|| anyhow!("{session_name} has no row under {name}"))?;
+    crate::selftest::scrolled_into_view(view, &row_key, cx).await?;
 
     click(view, "edit-enable-XGit", cx).await?;
     saved(&registry, &name, "with XGit disabled", |w| w.folder("XGit").is_some_and(|f| !f.enabled), cx).await?;
@@ -1101,6 +1109,7 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
         });
         e.context(format!("it sits at {at:?}"))
     })?;
+    crate::selftest::scrolled_into_view(view, &row_key, cx).await?;
     crate::selftest_manage::press_painted(view, &row_key, gpui::MouseButton::Right, cx).await?;
     wait_painted(view, "menu-adopt", Duration::from_secs(10), cx).await?;
     click(view, "menu-adopt", cx).await?;
@@ -1852,7 +1861,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let mut idle_since: Option<Instant> = None;
     loop {
         let delivered = in_transcript(transcript, w, &task, &task_id) && in_transcript(transcript, w, "approve", &approve_id);
-        let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.health(now_ms()) == Health::Idle);
+        let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.supervised_health(now_ms()) == Health::Idle);
         idle_since = if idle { idle_since.or(Some(Instant::now())) } else { None };
         if idle_since.is_some_and(|t| t.elapsed() >= SETTLED) {
             break;

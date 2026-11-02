@@ -446,7 +446,7 @@ struct Poller {
     injected: Arc<Mutex<Vec<Session>>>,
     registry_writes: Arc<AtomicU64>,
     hold: Arc<PollHold>,
-    snapshot: Option<(Vec<Workspace>, Vec<Session>)>,
+    snapshot: Option<(u64, Vec<Workspace>, Vec<Session>)>,
     first: bool,
     store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
 }
@@ -492,7 +492,7 @@ impl Poller {
         let events = self.events.as_mut().map(EventReader::poll).unwrap_or_default();
         let took = started.elapsed();
         self.snapshot = match (&workspaces, &sessions) {
-            (Ok((workspaces, _)), Some(Ok(sessions))) => Some((workspaces.clone(), sessions.clone())),
+            (Ok((workspaces, _)), Some(Ok(sessions))) => Some((registry_writes, workspaces.clone(), sessions.clone())),
             _ => None,
         };
         let loading_desired = Instant::now();
@@ -537,11 +537,16 @@ impl Poller {
         }
     }
 
-    /// The supervisor ticks only on the snapshot [`Poller::read`] took in this poll: a stale list never drives a launch.
+    /// The supervisor ticks only on the snapshot [`Poller::read`] took in this poll, and only while no registry write
+    /// came after it: a stale list never drives a launch.
     fn tick(&mut self) -> Option<Report> {
         let ticking = Instant::now();
         let first = std::mem::take(&mut self.first);
-        let (workspaces, sessions) = self.snapshot.take()?;
+        let (writes, workspaces, sessions) = self.snapshot.take()?;
+        if writes != self.registry_writes.load(Ordering::SeqCst) {
+            log::info!("supervisor tick skipped: the workspaces changed after this poll read them");
+            return None;
+        }
         let supervision = self.supervision.as_mut()?;
         let retries = std::mem::take(&mut *self.retries.lock().unwrap_or_else(|e| e.into_inner()));
         let report = supervision.tick(&workspaces, &sessions, retries, now_ms());
@@ -3051,6 +3056,39 @@ mod tests {
         assert!(offers_resume(&bg, &gone, Some(now - RESUME_GRACE_MS - 1), now), "past the grace");
         assert!(offers_resume(&bg, &gone, None, now), "never seen alive here");
         assert!(!offers_resume(&session(supraman_claude::Kind::Interactive, "fm-alpha-workspace"), &gone, None, now), "the supervisor's");
+    }
+
+    fn poller(home: &Path, writes: Arc<AtomicU64>) -> Poller {
+        Poller {
+            home: Some(home.to_path_buf()),
+            events: None,
+            supervision: Some(Supervision::new(home.to_path_buf(), None)),
+            retries: Arc::default(),
+            injected: Arc::default(),
+            registry_writes: writes,
+            hold: Arc::default(),
+            snapshot: None,
+            first: false,
+            store: None,
+        }
+    }
+
+    #[test]
+    fn a_registry_write_after_the_read_skips_that_tick() {
+        let home = tempfile::tempdir().unwrap();
+        let writes: Arc<AtomicU64> = Arc::default();
+        let mut poller = poller(home.path(), writes.clone());
+        poller.snapshot = Some((0, Vec::new(), Vec::new()));
+        assert!(poller.tick().is_some(), "an unchanged registry ticks");
+
+        poller.snapshot = Some((0, Vec::new(), Vec::new()));
+        writes.fetch_add(1, Ordering::SeqCst);
+        assert!(poller.tick().is_none(), "a write between read and tick: the supervisor does not run on the old list");
+        assert!(poller.snapshot.is_none(), "the stale snapshot is gone");
+        assert!(poller.tick().is_none(), "nothing to tick until the next read");
+
+        poller.snapshot = Some((1, Vec::new(), Vec::new()));
+        assert!(poller.tick().is_some(), "the next read's snapshot ticks");
     }
 }
 
