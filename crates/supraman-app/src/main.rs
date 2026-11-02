@@ -34,6 +34,7 @@ mod selftest_reopen;
 mod selftest_schedules;
 mod selftest_search;
 mod selftest_shell;
+mod selftest_shots;
 mod selftest_start;
 mod selftest_startup;
 mod selftest_supervise;
@@ -95,6 +96,7 @@ pub enum Mode {
     SelftestDetachShutdown,
     SelftestPerf,
     SelftestSupervise,
+    SelftestShots,
 }
 
 impl Mode {
@@ -104,7 +106,7 @@ impl Mode {
 }
 
 const USAGE: &str =
-    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise] [--visible]";
+    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise | --selftest-shots] [--visible]";
 
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -133,12 +135,13 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
         ["--selftest-detach-shutdown"] => Mode::SelftestDetachShutdown,
         ["--selftest-perf"] => Mode::SelftestPerf,
         ["--selftest-supervise"] => Mode::SelftestSupervise,
+        ["--selftest-shots"] => Mode::SelftestShots,
         other => {
             eprintln!("unknown arguments {other:?}; {USAGE}");
             std::process::exit(2);
         }
     };
-    let hideable = matches!(mode, Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown);
+    let hideable = matches!(mode, Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots);
     if visible && !hideable {
         eprintln!("{} is for --selftest, --selftest-supervise and --selftest-detach-shutdown; {USAGE}", selftest_desktop::VISIBLE_FLAG);
         std::process::exit(2);
@@ -216,7 +219,7 @@ fn main() {
         release_own_console();
     }
     let _machine = match mode {
-        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown => match selftest_clipboard::hold_machine() {
+        Mode::Selftest | Mode::SelftestSupervise | Mode::SelftestDetachShutdown | Mode::SelftestShots => match selftest_clipboard::hold_machine() {
             Ok(held) => Some(held),
             Err(error) => {
                 println!("FAIL setup: {error:#}");
