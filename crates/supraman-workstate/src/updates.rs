@@ -270,7 +270,6 @@ pub fn version_dir(home: &Path, version: &str) -> PathBuf {
     dir(home).join(version)
 }
 
-/// A verified download, unpacked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Downloaded {
     pub zip: PathBuf,

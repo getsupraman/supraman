@@ -50,7 +50,7 @@ struct Case {
 /// An install of the old release (with its `FILES` and a file of the user's it never named) and the new
 /// release unpacked beside it.
 fn case() -> Case {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let install = tmp.path().join("install");
     let release = tmp.path().join("updates").join("0.2.0").join("Supraman");
     write(&install, &old_files());
@@ -95,7 +95,7 @@ fn assert_new(c: &Case) {
 }
 
 /// `sm.exe inbox` run from the install's hooks copy: a running exe Windows will not overwrite or delete.
-fn hold(install: &Path) -> Child {
+fn hold(install: &Path) -> Holder {
     let exe = install.join(HOOK_EXE);
     fs::copy(env!("CARGO_BIN_EXE_sm"), &exe).unwrap();
     let inbox = install.parent().unwrap().join("inbox");
@@ -103,7 +103,7 @@ fn hold(install: &Path) -> Child {
     let mut cmd = Command::new(&exe);
     cmd.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     supraman_core::process::no_window(&mut cmd);
-    let child = cmd.spawn().unwrap();
+    let child = Holder(cmd.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(10);
     while !supraman_core::process::alive(child.id()) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
@@ -120,9 +120,20 @@ fn marker(c: &Case) -> PathBuf {
     dir
 }
 
-fn stop(mut child: Child) {
-    child.kill().unwrap();
-    child.wait().unwrap();
+/// A test process, killed when dropped: also when an assertion fails first.
+struct Holder(Child);
+
+impl Holder {
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 #[test]
@@ -155,7 +166,7 @@ fn a_running_hooks_copy_is_renamed_aside_and_the_next_start_removes_it() {
     install::cleanup(&c.install);
     assert_eq!(leftovers(&c.install), aside, "still locked: kept");
 
-    stop(holder);
+    drop(holder);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
         install::cleanup(&c.install);
@@ -207,7 +218,7 @@ fn a_kill_between_the_rename_aside_and_the_move_in_is_put_back_at_the_next_start
     let out = install::apply(&Apply { stop_after: Some(held_moves + 1), ..job(&c) });
     assert_eq!(out.result, Err(Failed::Stopped));
     assert!(!c.install.join(HOOK_EXE).exists(), "stopped with the hooks copy renamed aside and the new one not in");
-    stop(holder);
+    drop(holder);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !c.install.join(HOOK_EXE).exists() && Instant::now() < deadline {
         install::cleanup(&c.install);
@@ -244,7 +255,7 @@ fn a_supraman_that_does_not_exit_changes_nothing_and_starts_nothing() {
     fs::create_dir_all(&inbox).unwrap();
     sleeper.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     supraman_core::process::no_window(&mut sleeper);
-    let child = sleeper.spawn().unwrap();
+    let child = Holder(sleeper.spawn().unwrap());
     let marker = marker(&c);
     let out = install::apply(&Apply {
         wait_pid: Some(child.id()),
@@ -253,7 +264,7 @@ fn a_supraman_that_does_not_exit_changes_nothing_and_starts_nothing() {
         restart_args: vec!["plugin".into(), "install".into(), marker.display().to_string()],
         ..job(&c)
     });
-    stop(child);
+    drop(child);
     let Err(Failed::Refused(why)) = &out.result else { panic!("{:?}", out.result) };
     assert!(why.contains("did not exit"), "{why}");
     assert_eq!(out.restarted, None);

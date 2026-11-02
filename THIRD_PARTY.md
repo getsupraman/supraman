@@ -47,7 +47,7 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 
 ## Rust crates
 
-The 449 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
+The 451 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
 build-dependencies). Their licence texts and copyright notices, as each package ships them, are in a release's
 `licenses\rust-crates.txt`.
 
@@ -412,6 +412,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tracing-core | 0.1.36 | MIT | crates.io |
 | tray-icon | 0.26.1 | MIT OR Apache-2.0 | crates.io |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | crates.io |
+| typed-path | 0.13.0 | MIT OR Apache-2.0 | crates.io |
 | typenum | 1.19.0 | MIT OR Apache-2.0 | crates.io |
 | unarray | 0.1.4 | MIT OR Apache-2.0 | crates.io |
 | unicase | 2.8.1 | MIT OR Apache-2.0 | crates.io |
@@ -493,6 +494,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | zerotrie | 0.2.5 | Unicode-3.0 | crates.io |
 | zerovec | 0.11.8 | Unicode-3.0 | crates.io |
 | zerovec-derive | 0.11.5 | Unicode-3.0 | crates.io |
+| zip | 9.2.1 | MIT | crates.io |
 | zmij | 1.0.23 | MIT | crates.io |
 | zstd | 0.13.3 | MIT | crates.io |
 | zstd-safe | 7.3.0 | BSD-3-Clause | crates.io |

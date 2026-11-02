@@ -153,7 +153,6 @@ impl Updates {
         Self { source, nudge, last, checking: false, checks: 0, dismissed, action: install_update, target, stage, cancel: Arc::default() }
     }
 
-    /// The banner's line under its title, if any.
     pub fn stage_line(&self) -> Option<String> {
         match &self.stage {
             Stage::Idle => None,

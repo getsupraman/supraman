@@ -11,7 +11,6 @@ use std::time::Duration;
 pub const FILES: &str = "FILES";
 /// The `.old-<stamp>` files an apply left in the install, for [`cleanup`].
 pub const LEFTOVERS: &str = ".old-files";
-/// The zip's root folder.
 pub const ROOT: &str = "Supraman";
 pub const VERSION: &str = "VERSION";
 const LOCK: &str = ".update.lock";
@@ -70,7 +69,6 @@ pub fn install_dir(exe_dir: &Path) -> PathBuf {
     }
 }
 
-/// Every file below `root` as a `/`-separated relative path.
 pub fn file_list(root: &Path) -> io::Result<BTreeSet<String>> {
     fn walk(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> io::Result<()> {
         for entry in fs::read_dir(dir)? {
