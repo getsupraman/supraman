@@ -19,6 +19,10 @@ fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
 }
 
 fn repo_rows(v: &FleetView) -> usize {
+    v.folder_rows(WORKSPACE)
+}
+
+fn painted_repo_rows(v: &FleetView) -> usize {
     let prefix = format!("repo-row-{WORKSPACE}/");
     v.hits.borrow().keys().filter(|k| k.starts_with(&prefix)).count()
 }
@@ -46,7 +50,7 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     click(view, "collapse-all", cx).await?;
     until(view, cx, WITHIN, "Collapse all hides the repo rows", |v| (repo_rows(v) == 0).then_some(())).await?;
     click(view, "expand-all", cx).await?;
-    until(view, cx, WITHIN, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows).then_some(())).await?;
+    until(view, cx, WITHIN, "Expand all shows the repo rows again", |v| (repo_rows(v) == open_rows && painted_repo_rows(v) > 0).then_some(())).await?;
 
     let shown = view.read_with(cx, |v, _| v.show_stopped);
     click(view, "toggle-stopped", cx).await?;
