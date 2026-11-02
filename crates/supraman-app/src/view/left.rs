@@ -17,6 +17,7 @@ use super::icon::{Icon, Tooltip};
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
 use crate::clipped::clipped;
 use crate::settings_window::page;
+use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 use crate::work_view;
 
@@ -729,32 +730,53 @@ impl FleetView {
 
     fn render_update_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let version = self.updates.offered()?.version().to_string();
-        let color = cx.theme().status().info;
+        let status = cx.theme().status().clone();
+        let stage = self.updates.stage.clone();
+        let failed = matches!(stage, Stage::Failed(_));
         let dismiss = glyph_button(&self.hits, "update-dismiss".into(), Icon::Close, "Hide until a newer release", cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.dismiss_update(cx);
             }));
-        let actions = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .pt_2()
-            .child(button::bordered(&self.hits, "update-notes", "What's new", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.update_notes(cx);
-            })))
-            .child(button::bordered(&self.hits, "update-install", "Update", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.run_update(cx);
-            })));
+        let mut actions = div().flex().flex_wrap().gap_2().pt_2();
+        match stage {
+            Stage::Downloading { .. } => {
+                actions = actions.child(button::bordered(&self.hits, "update-cancel", "Cancel", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.cancel_update(cx);
+                })));
+            }
+            Stage::Applying => {}
+            Stage::Idle | Stage::Failed(_) => {
+                actions = actions
+                    .child(button::bordered(&self.hits, "update-notes", "What's new", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.update_notes(cx);
+                    })))
+                    .child(button::bordered(&self.hits, "update-install", "Update", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.run_update(cx);
+                    })));
+            }
+        }
+        let line = self.updates.stage_line().map(|line| {
+            div()
+                .id("update-stage")
+                .relative()
+                .pt_1()
+                .text_xs()
+                .when(failed, |d| d.text_color(status.error))
+                .child(SharedString::from(line))
+                .child(hit_target(&self.hits, "update-stage".into()))
+        });
         Some(
-            banner::tinted(color)
+            banner::tinted(if failed { status.error } else { status.info })
                 .id("update-notice")
                 .relative()
                 .mx_3()
                 .my_2()
                 .child(banner::dismissable(SharedString::from(format!("Supraman {version} is available")), dismiss))
+                .children(line)
                 .child(actions)
                 .child(hit_target(&self.hits, "update-notice".into()))
                 .into_any_element(),

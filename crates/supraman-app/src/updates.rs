@@ -2,20 +2,77 @@
 //! available (view/left.rs) and a line on Settings → About.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use gpui::Context;
+use futures::StreamExt as _;
+use gpui::{AppContext as _, Context};
+use supraman_core::install;
 use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
-use supraman_workstate::updates::{self, Available, Checked, Outcome, Source};
+use supraman_workstate::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
-use crate::view::{FleetView, Link, link_refused};
+use crate::view::{Confirm, Confirmed, FleetView, Link, link_refused};
 
-/// What Update does with the release the banner names; public/9 puts the download and the swap here.
+/// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
 
 pub fn open_release_page(view: &mut FleetView, available: &Available, cx: &mut Context<FleetView>) {
     view.open_web(&available.page_url.clone(), cx);
+}
+
+/// Downloads, verifies and unpacks the release, then hands the install over to `sm update apply` and quits;
+/// a build that is not an installed release (no `VERSION` beside it) or a release without its zip opens the page.
+pub fn install_update(view: &mut FleetView, available: &Available, cx: &mut Context<FleetView>) {
+    if matches!(view.updates.stage, Stage::Downloading { .. } | Stage::Applying) {
+        return;
+    }
+    if available.zip_url.is_none() || !view.updates.target.install.join(install::VERSION).is_file() {
+        open_release_page(view, available, cx);
+        return;
+    }
+    if view.updates.target.quit && view.has_attach_tabs() {
+        view.confirm = Some(Confirm::ask(
+            format!("Update to Supraman {}? Supraman restarts; your sessions keep running in the background.", available.version()),
+            "Update",
+            Confirmed::Update,
+        ));
+        cx.notify();
+        return;
+    }
+    view.download_update(available.clone(), cx);
+}
+
+/// Where an update goes and what happens after the hand-over; the selftest points it at a temp install.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub install: PathBuf,
+    /// The Supraman `sm update apply` waits for.
+    pub wait_pid: Option<u32>,
+    pub quit: bool,
+    pub restart_args: Vec<String>,
+}
+
+impl Target {
+    fn this_install() -> Self {
+        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+        Self { install: install::install_dir(&exe_dir), wait_pid: Some(std::process::id()), quit: true, restart_args: Vec::new() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stage {
+    Idle,
+    Downloading { done: u64, total: u64 },
+    /// Handed over to `sm update apply`.
+    Applying,
+    Failed(String),
+}
+
+fn mb(bytes: u64) -> String {
+    let mb = bytes as f64 / 1_000_000.0;
+    if mb < 10.0 { format!("{mb:.1}") } else { format!("{mb:.0}") }
 }
 
 pub struct Updates {
@@ -28,6 +85,9 @@ pub struct Updates {
     pub checks: u64,
     pub dismissed: Option<Version>,
     pub action: UpdateAction,
+    pub target: Target,
+    pub stage: Stage,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Updates {
@@ -35,7 +95,7 @@ impl Updates {
     pub fn start(home: Option<PathBuf>, cx: &mut Context<FleetView>) -> Self {
         let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
         let running = updates::running_version(env!("CARGO_PKG_VERSION"), exe_dir.as_deref());
-        let source = Arc::new(Mutex::new(Source::github(running)));
+        let source = Arc::new(Mutex::new(Source::github(running.clone())));
         let (nudge, mut nudged) = nudge::nudge();
         if let Some(home) = home.clone() {
             let shared = source.clone();
@@ -76,7 +136,30 @@ impl Updates {
             .detach();
         }
         let (last, dismissed) = home.as_deref().map_or((None, None), |h| (updates::last(h), updates::dismissed(h)));
-        Self { source, nudge, last, checking: false, checks: 0, dismissed, action: open_release_page }
+        let target = Target::this_install();
+        let stage = match home.as_deref().and_then(|h| updates::failed_apply(h, &running)) {
+            Some((version, why)) => Stage::Failed(format!("The update to {version} did not apply: {why}")),
+            None => Stage::Idle,
+        };
+        let (at, install, current) = (home.clone(), target.install.clone(), running.clone());
+        cx.background_executor()
+            .spawn(async move {
+                install::cleanup(&install);
+                if let Some(home) = at {
+                    updates::prune_downloads(&home, &current);
+                }
+            })
+            .detach();
+        Self { source, nudge, last, checking: false, checks: 0, dismissed, action: install_update, target, stage, cancel: Arc::default() }
+    }
+
+    pub fn stage_line(&self) -> Option<String> {
+        match &self.stage {
+            Stage::Idle => None,
+            Stage::Downloading { done, total } => Some(format!("Downloading {} of {} MB", mb(*done), mb(*total))),
+            Stage::Applying => Some("Supraman restarts on the new version…".into()),
+            Stage::Failed(why) => Some(why.clone()),
+        }
     }
 
     pub fn check_now(&self) {
@@ -140,6 +223,111 @@ impl FleetView {
         }
     }
 
+    /// After the question [`install_update`] asked.
+    pub fn update_confirmed(&mut self, cx: &mut Context<Self>) {
+        if let Some(available) = self.updates.offered().cloned() {
+            self.download_update(available, cx);
+        }
+    }
+
+    pub fn cancel_update(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.updates.stage, Stage::Downloading { .. }) {
+            self.updates.cancel.store(true, Ordering::Relaxed);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn download_update(&mut self, available: Available, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else { return };
+        let cancel = self.updates.cancel.clone();
+        cancel.store(false, Ordering::Relaxed);
+        self.updates.stage = Stage::Downloading { done: 0, total: available.manifest.size };
+        cx.notify();
+        let running = self.updates.running();
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<(u64, u64)>();
+        let wanted = available.clone();
+        let task = cx.background_executor().spawn(async move {
+            let mut shown = Instant::now();
+            updates::download(&home, &wanted, &running, &cancel, &mut |done, total| {
+                if done == total || shown.elapsed() >= Duration::from_millis(100) {
+                    shown = Instant::now();
+                    let _ = tx.unbounded_send((done, total));
+                }
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            while let Some((done, total)) = rx.next().await {
+                let alive = this.update(cx, |this, cx| {
+                    if matches!(this.updates.stage, Stage::Downloading { .. }) {
+                        this.updates.stage = Stage::Downloading { done, total };
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    return;
+                }
+            }
+            let downloaded = task.await;
+            this.update(cx, |this, cx| {
+                match downloaded {
+                    Ok(downloaded) => this.hand_over(&available, &downloaded, cx),
+                    Err(why) => {
+                        log::warn!("update to {}: {why}", available.version());
+                        this.updates.stage = Stage::Failed(format!("The update to {} failed: {why}", available.version()));
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Starts `sm update apply` from a copy of the new `sm.exe` outside the install, then quits.
+    fn hand_over(&mut self, available: &Available, downloaded: &Downloaded, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else { return };
+        let dir = updates::version_dir(&home, available.version());
+        let helper = dir.join("sm-update.exe");
+        let target = self.updates.target.clone();
+        let started = std::fs::copy(downloaded.release.join("sm.exe"), &helper)
+            .map_err(|e| format!("cannot copy the new sm.exe to {}: {e}", helper.display()))
+            .and_then(|_| {
+                let mut cmd = supraman_core::process::command(&helper);
+                cmd.args(["update", "apply", "--from"])
+                    .arg(&downloaded.release)
+                    .arg("--to")
+                    .arg(&target.install)
+                    .arg("--log")
+                    .arg(dir.join(updates::APPLY_LOG))
+                    .arg("--restart")
+                    .arg(target.install.join("supraman.exe"));
+                if let Some(pid) = target.wait_pid {
+                    cmd.arg("--wait-pid").arg(pid.to_string());
+                }
+                for arg in &target.restart_args {
+                    cmd.arg("--restart-arg").arg(arg);
+                }
+                supraman_core::process::spawn_detached(&mut cmd).map_err(|e| format!("cannot start {}: {e}", helper.display()))
+            });
+        match started {
+            Ok(pid) => {
+                log::info!("update to {}: sm update apply runs as pid {pid}", available.version());
+                self.updates.stage = Stage::Applying;
+                if target.quit {
+                    let window = self.window;
+                    cx.spawn(async move |this, cx| {
+                        cx.update_window(window, |_, window, cx| this.update(cx, |this, cx| this.quit(window, cx)).ok()).ok();
+                    })
+                    .detach();
+                }
+            }
+            Err(why) => {
+                log::warn!("update to {}: {why}", available.version());
+                self.updates.stage = Stage::Failed(format!("The update to {} failed: {why}", available.version()));
+            }
+        }
+    }
+
     pub fn dismiss_update(&mut self, cx: &mut Context<Self>) {
         let Some(version) = self.updates.offered().map(|a| a.version().to_string()) else { return };
         if let Some(home) = &self.home
@@ -185,6 +373,9 @@ mod tests {
             checks: 0,
             dismissed: None,
             action: open_release_page,
+            target: Target { install: PathBuf::new(), wait_pid: None, quit: false, restart_args: Vec::new() },
+            stage: Stage::Idle,
+            cancel: Arc::default(),
         }
     }
 

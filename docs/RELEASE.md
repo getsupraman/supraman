@@ -158,3 +158,43 @@ the zip to `C:\Tools\supraman` and start `supraman.exe`.
   through every resume: its hook events, relay messages and `fm tell` go to the old home, which Supraman does not read.
   After switching, stop each such session and start it fresh from Supraman (a new conversation, not a resume); until
   then it shows no status or messages in Supraman.
+
+## How Supraman updates itself
+
+The banner's **Update** (`crate::updates::install_update`) does the whole update; a build with no `VERSION` beside
+`supraman.exe` (a dev build) or a release without its zip opens the release page instead.
+
+1. **Ask.** With sessions attached in tabs it asks once: Supraman restarts; the sessions keep running in the background.
+2. **Download** (`supraman_workstate::updates::download`, off the UI thread): the release's zip into
+   `<home>\updates\<version>\` as `<zip>.part`, the banner showing `Downloading 12 of 48 MB` and Cancel. More bytes
+   than the signed manifest's `size` stop it. The zip is trusted only through the verified manifest:
+   `Manifest::check_zip` (size and sha256); a mismatch deletes it and the banner says why, and nothing else changes.
+   A zip already there that matches is not downloaded again.
+3. **Unpack** (`supraman_core::install::unpack`) into `<home>\updates\<version>\Supraman\`; an entry outside
+   `Supraman\`, absolute, with a drive, `..` or a symlink refuses the whole zip before anything is written. Its
+   `VERSION` must be the manifest's version.
+4. **Hand over.** The new `sm.exe` is copied to `<home>\updates\<version>\sm-update.exe` (never run from the install
+   folder it replaces) and started detached:
+   `sm-update.exe update apply --from <unpacked> --to <install> --log <home>\updates\<version>\apply.log --restart <install>\supraman.exe --wait-pid <pid>`.
+   Then Supraman quits normally (attached tabs detach; their sessions keep running).
+5. **Apply** (`supraman_core::install::apply`): waits up to 60 s for the pid (still running: nothing changes, nothing
+   restarts), takes `<install>\.update.lock`, reads the old release's `FILES`, then for each file of the new release
+   stages `<name>.new` and moves it over the target with `MoveFileExW`. A target that refuses (a running exe: sessions'
+   hooks run `plugins\supraman\bin\sm.exe` and `fm.exe` even while Supraman is closed) is renamed to
+   `<name>.old-<stamp>`, listed in `<install>\.old-files` first, and the new one moved in. If even that rename fails,
+   every move so far is undone from the journal and its backups (`<home>\updates\<version>\backup\`), the old
+   Supraman restarts, and the next start's banner says why (the last `failed:` line of `apply.log`). Files the old
+   `FILES` named that the new release lacks are removed (renamed aside when locked); nothing it never named is touched,
+   and there is never a recursive delete. `FILES` and then `VERSION` go last: a killed apply leaves every file whole,
+   old or new, and the old version reported, and running the update again finishes it.
+6. **Restart** the new `supraman.exe`.
+7. **Cleanup** (`supraman_core::install::cleanup`) at every start of Supraman and of `sm`/`smw` (hooks included):
+   the `.old-<stamp>` files `.old-files` lists that are no longer locked are removed; one whose file is missing (a
+   kill between the rename aside and the move in) is put back. Supraman also removes `<home>\updates\<version>`
+   folders older than the running version.
+
+`release.ps1` writes `FILES` (every file of the release, `/`-separated); an install without one gets no removals on its
+first update, and the apply writes the new release's list. `std::fs::rename` is not used for these moves: on NTFS it
+uses POSIX semantics and replaces even a running exe, which a FAT or network install refuses, so the apply uses one
+behaviour everywhere. Tests and the selftest (step 7+u) apply onto temp installs only, never `C:\Tools\supraman` or
+`%APPDATA%\Supraman` (C109).

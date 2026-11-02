@@ -5554,3 +5554,34 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   spaces in the Rust string; the Sessions page's long texts carry the same gaps (left alone here).
 - **Red:** the verify call replaced by `Manifest::parse` → 1 failed (`a_release_signed_by_another_key_is_not_offered`);
   the switch guard skipped → 1 failed (`checking_off_sends_no_request`, 3 requests instead of 0).
+
+## 2026-11-02 — public/9 updater part 2: download, verify and swap the install, then restart
+
+- **Where it lives:** the swap is `supraman_core::install` (`unpack`, `apply`, `cleanup`, `install_dir`, `file_list`),
+  because both the app (cleanup at start) and `sm` (`update apply`, cleanup on every start) need it; the download is
+  `supraman_workstate::updates::download` beside the check and the shared agent; the app's `crate::updates` holds
+  the `Stage` (Idle, Downloading, Applying, Failed), the `Target` seam (install, wait pid, quit, restart args) and
+  `install_update` in the `UpdateAction` seam. docs/RELEASE.md, "How Supraman updates itself", has the steps.
+- **`std::fs::rename` replaces a running exe on NTFS.** Rust's rename uses `FileRenameInfoEx` with POSIX semantics, so
+  the first locked-file test passed with no rename aside at all (the running `bin\sm.exe` simply replaced). The
+  apply moves with `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` and deletes with `DeleteFileW`, which refuse a
+  running exe the way FAT and network installs do, so the rename-aside path is the one exercised everywhere.
+  `fs::write` and `fs::copy` onto a running exe fail with os error 32 either way.
+- **What a test holds:** a real running exe (`sm.exe inbox --dir …` copied into the temp install's
+  `plugins\supraman\bin\sm.exe`); a Rust `File::open` shares delete and blocks nothing. A file no move can touch is a
+  handle with `share_mode(FILE_SHARE_READ)` (the rollback test).
+- **Kill safety:** every move is counted; `Apply::stop_after` stops before move k as a kill would, and the test walks
+  every k: each file wholly old or new, `VERSION` old, then cleanup and a second apply finish. The one two-rename window
+  (target aside, new not in yet) is covered by `.old-files` naming the aside before it happens: cleanup puts it back.
+- **The restart stub:** the selftest's fake release ships `sm.exe` as its `supraman.exe`; the restart runs it as
+  `plugin install <marker>` (`--restart-arg`), which leaves `marker\bin\sm.exe`: a shipped exe that writes a marker, so
+  the step also runs from a release folder.
+- **The fake serves binary and slow bodies:** `Answer::bytes` and `Answer::paced(chunk, every)` on `FakeWorkState`.
+  The selftest zip is ~9 MB (two sm.exe), 256 KiB every 40 ms; 32 KiB every 60 ms took 17 s and timed the step out.
+- **Helper outside the install:** `sm-update.exe` is the new release's `sm.exe` copied to `<home>\updates\<version>\`,
+  started with `process::command` (no console window) and `spawn_detached`.
+- **Line endings:** editing through `python - <<'EOF'` on Windows wrote CRLF over CRLF (`\r\r\n`) and turned `\r\n`
+  escapes into bare CRs; the Edit tool or a byte-level script is safer here.
+- **Red:** the rename aside replaced by `fs::copy` over the target → 1 failed
+  (`a_running_hooks_copy_is_renamed_aside_and_the_next_start_removes_it`, os error 32); `VERSION` placed first → 1
+  failed (`a_killed_apply_leaves_a_startable_install_at_every_step`, "after 1 moves" VERSION 0.2.0).

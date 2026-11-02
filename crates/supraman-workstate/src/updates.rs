@@ -2,7 +2,9 @@
 //! its `supraman-update.json` verified against the release keys (docs/RELEASE.md, "Signing"), and what
 //! the last check found, kept in `<home>/updates/`.
 
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,9 @@ const STATE_FILE: &str = "state.json";
 const DISMISSED_FILE: &str = "dismissed";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const REDIRECTS: u32 = 5;
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// The file in `<home>/updates/<version>/` `sm update apply` writes (docs/RELEASE.md, "How Supraman updates itself").
+pub const APPLY_LOG: &str = "apply.log";
 
 /// Where a check looks and what it trusts.
 #[derive(Debug, Clone)]
@@ -260,6 +265,115 @@ fn verified(agent: &ureq::Agent, body: &str, source: &Source, keys: &[VerifyingK
     Ok(Release::Verified(Available { manifest, page_url: gh.html_url, notes_url, zip_url }))
 }
 
+/// `<home>/updates/<version>/`: the download, the unpacked release, the helper and its log.
+pub fn version_dir(home: &Path, version: &str) -> PathBuf {
+    dir(home).join(version)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Downloaded {
+    pub zip: PathBuf,
+    /// The unpacked `Supraman\` folder.
+    pub release: PathBuf,
+}
+
+/// The release's zip into [`version_dir`] (a verified one already there is kept), `progress(done, total)`
+/// after each read; then its size and sha256 against the signed manifest and unpacked. A mismatch deletes the
+/// download; `cancel` stops it and deletes the part.
+pub fn download(
+    home: &Path,
+    available: &Available,
+    running: &Version,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<Downloaded, String> {
+    let manifest = &available.manifest;
+    let Some(url) = &available.zip_url else { return Err(format!("release {} has no {}", manifest.version, manifest.zip)) };
+    let folder = version_dir(home, &manifest.version);
+    std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let zip = folder.join(&manifest.zip);
+    if manifest.check_zip(&zip).is_err() {
+        fetch(url, &zip, manifest.size, running, cancel, progress)?;
+        if let Err(e) = manifest.check_zip(&zip) {
+            let _ = std::fs::remove_file(&zip);
+            let why = e.to_string().replacen(&format!("{}: ", zip.display()), "", 1);
+            return Err(format!("the download does not match the signed manifest, so it was deleted ({why})"));
+        }
+    }
+    progress(manifest.size, manifest.size);
+    let release = supraman_core::install::unpack(&zip, &folder)?;
+    let unpacked = running_version("0.0.0", Some(&release));
+    if unpacked != manifest.semver() {
+        return Err(format!("the unpacked release says version {unpacked}, its manifest {}", manifest.version));
+    }
+    Ok(Downloaded { zip, release })
+}
+
+fn fetch(url: &str, zip: &Path, size: u64, running: &Version, cancel: &AtomicBool, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+    let part = zip.with_extension("zip.part");
+    let agent = agent_following(DOWNLOAD_TIMEOUT, REDIRECTS);
+    let req = agent.get(url).header("User-Agent", format!("Supraman/{running}")).header("Accept", "application/octet-stream");
+    let res = req.call().map_err(|e| format!("cannot download {url}: {e}"))?;
+    if res.status() != 200 {
+        return Err(format!("{url} answered {}", res.status().as_u16()));
+    }
+    let written = (|| {
+        let mut body = res.into_body().into_reader();
+        let mut file = std::fs::File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
+        let mut buf = vec![0u8; 1 << 16];
+        let mut done = 0u64;
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("the download was cancelled".to_string());
+            }
+            let n = body.read(&mut buf).map_err(|e| format!("cannot download {url}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            done += n as u64;
+            if done > size {
+                return Err(format!("{url} sends more than the {size} bytes its manifest says"));
+            }
+            file.write_all(&buf[..n]).map_err(|e| format!("{}: {e}", part.display()))?;
+            progress(done, size);
+        }
+        file.sync_all().map_err(|e| format!("{}: {e}", part.display()))
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&part);
+        return Err(e);
+    }
+    std::fs::rename(&part, zip).map_err(|e| format!("{}: {e}", zip.display()))
+}
+
+/// Removes the `<home>/updates/<version>` folders of versions older than `running`.
+pub fn prune_downloads(home: &Path, running: &Version) {
+    let Ok(entries) = std::fs::read_dir(dir(home)) else { return };
+    for entry in entries.flatten() {
+        let older = entry.file_name().to_str().and_then(|n| Version::parse(n).ok()).is_some_and(|v| v < *running);
+        if older && entry.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Why the last apply of a version newer than `running` failed, from its [`APPLY_LOG`].
+pub fn failed_apply(home: &Path, running: &Version) -> Option<(Version, String)> {
+    let entries = std::fs::read_dir(dir(home)).ok()?;
+    let mut failed: Vec<(Version, String)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let version = Version::parse(e.file_name().to_str()?).ok().filter(|v| v > running)?;
+            let log = std::fs::read_to_string(e.path().join(APPLY_LOG)).ok()?;
+            let why = log.lines().rev().find_map(|l| l.split_once(" failed: ").map(|(_, why)| why.to_string()))?;
+            let after = log.lines().rev().take_while(|l| !l.contains(" failed: ")).any(|l| l.ends_with(" done"));
+            (!after).then_some((version, why))
+        })
+        .collect();
+    failed.sort();
+    failed.pop()
+}
+
 #[cfg(test)]
 mod tests {
     use supraman_core::update::{SigningKey, sign};
@@ -469,5 +583,117 @@ mod tests {
         assert_eq!(running_version("0.1.0", Some(dir.path())), Version::new(0, 4, 2));
         std::fs::write(dir.path().join("VERSION"), "version 0.1.0-20261102-c52996bdeadb-dirty\n").unwrap();
         assert_eq!(running_version("0.1.0", Some(dir.path())), Version::new(0, 1, 0));
+    }
+
+    fn release_zip(version: &str) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in [("Supraman/VERSION", format!("version {version}\n").into_bytes()), ("Supraman/sm.exe", vec![7u8; 200_000])] {
+            w.start_file(name, options).unwrap();
+            w.write_all(&bytes).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    /// Release `version`'s zip served at `/download/zip` (behind a redirect), and what the check would offer.
+    fn offered(fake: &FakeWorkState, version: &str, zip: &[u8]) -> Available {
+        let (sha256, size) = {
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(tmp.path(), zip).unwrap();
+            supraman_core::update::sha256_file(tmp.path()).unwrap()
+        };
+        fake.set("/cdn/zip", Answer::bytes(zip.to_vec()));
+        fake.set("/download/zip", Answer::status(302, "").api(None).header("Location", format!("{}/cdn/zip", fake.base())));
+        Available {
+            manifest: Manifest { sha256, size, ..manifest(version) },
+            page_url: format!("{}/releases/v{version}", fake.base()),
+            notes_url: String::new(),
+            zip_url: Some(format!("{}/download/zip", fake.base())),
+        }
+    }
+
+    #[test]
+    fn a_download_is_checked_against_the_manifest_and_unpacked_with_progress() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkState::start(Vec::new());
+        let available = offered(&fake, "0.2.0", &release_zip("0.2.0"));
+        let mut seen = Vec::new();
+        let got = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |d, t| seen.push((d, t))).unwrap();
+        assert_eq!(got.release, version_dir(home.path(), "0.2.0").join("Supraman"));
+        assert_eq!(std::fs::read(got.release.join("sm.exe")).unwrap().len(), 200_000);
+        assert!(seen.len() > 1 && seen.windows(2).all(|w| w[0].0 <= w[1].0), "{seen:?}");
+        assert_eq!(seen.last(), Some(&(available.manifest.size, available.manifest.size)));
+        let get = fake.seen().into_iter().find(|s| s.target == "/download/zip").unwrap();
+        assert_eq!(get.header("user-agent"), Some("Supraman/0.1.0"));
+
+        let before = fake.seen().len();
+        download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap();
+        assert_eq!(fake.seen().len(), before, "a verified zip already there is not downloaded again");
+    }
+
+    #[test]
+    fn a_zip_that_does_not_match_the_signed_manifest_is_deleted_and_refused() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkState::start(Vec::new());
+        let mut available = offered(&fake, "0.2.0", &release_zip("0.2.0"));
+        available.manifest.sha256 = "cd".repeat(32);
+        let err = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("does not match the signed manifest") && err.contains("sha256"), "{err}");
+        let dir = version_dir(home.path(), "0.2.0");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "neither the zip nor an unpacked folder is kept");
+
+        available.manifest.sha256 = offered(&fake, "0.2.0", &release_zip("0.2.0")).manifest.sha256;
+        available.manifest.size -= 1;
+        let err = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_release_whose_version_file_differs_from_its_manifest_is_refused() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkState::start(Vec::new());
+        let mut available = offered(&fake, "0.2.0", &release_zip("0.3.0"));
+        available.manifest.version = "0.2.0".into();
+        let err = download(home.path(), &available, &Version::new(0, 1, 0), &AtomicBool::new(false), &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("says version 0.3.0"), "{err}");
+    }
+
+    #[test]
+    fn a_cancelled_download_keeps_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkState::start(Vec::new());
+        let zip = release_zip("0.2.0");
+        let available = offered(&fake, "0.2.0", &zip);
+        fake.set("/cdn/zip", Answer::bytes(zip).paced(16 * 1024, Duration::from_millis(20)));
+        let cancel = AtomicBool::new(false);
+        let err = download(home.path(), &available, &Version::new(0, 1, 0), &cancel, &mut |done, _| {
+            if done > 0 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap_err();
+        assert!(err.contains("cancelled"), "{err}");
+        assert_eq!(std::fs::read_dir(version_dir(home.path(), "0.2.0")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn older_downloads_go_and_a_failed_apply_of_a_newer_one_is_reported() {
+        let home = tempfile::tempdir().unwrap();
+        for v in ["0.1.0", "0.2.0", "0.3.0", "notes"] {
+            std::fs::create_dir_all(version_dir(home.path(), v)).unwrap();
+        }
+        let log = |v: &str, text: &str| std::fs::write(version_dir(home.path(), v).join(APPLY_LOG), text).unwrap();
+        log("0.3.0", "t apply a over b\nt failed: supraman.exe is locked and cannot be renamed aside: denied\nt undid Added\n");
+        log("0.2.0", "t failed: x\nt apply again\nt done\n");
+        prune_downloads(home.path(), &Version::new(0, 2, 0));
+        let left: Vec<String> = std::fs::read_dir(dir(home.path())).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["0.2.0", "0.3.0", "notes"]);
+        let (v, why) = failed_apply(home.path(), &Version::new(0, 2, 0)).unwrap();
+        assert_eq!(v, Version::new(0, 3, 0));
+        assert!(why.starts_with("supraman.exe is locked"), "{why}");
+        assert_eq!(failed_apply(home.path(), &Version::new(0, 3, 0)), None);
+        assert_eq!(failed_apply(home.path(), &Version::new(0, 1, 0)).map(|(v, _)| v), Some(Version::new(0, 3, 0)));
     }
 }

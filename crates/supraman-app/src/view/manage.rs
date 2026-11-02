@@ -492,6 +492,7 @@ impl FleetView {
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
                 Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
                 Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
+                Confirmed::Update => self.update_confirmed(cx),
             }
         }
         cx.notify();

@@ -39,11 +39,23 @@ pub struct Answer {
     pub api: Option<&'static str>,
     pub body: String,
     pub headers: Vec<(String, String)>,
+    /// A binary body sent instead of `body`.
+    pub bytes: Option<Vec<u8>>,
+    /// The body sent in chunks of this many bytes, this long apart: a download that takes a while.
+    pub pace: Option<(usize, std::time::Duration)>,
 }
 
 impl Answer {
     pub fn json(body: impl Into<String>) -> Self {
-        Self { status: 200, content_type: "application/json", api: Some("1"), body: body.into(), headers: Vec::new() }
+        Self { status: 200, content_type: "application/json", api: Some("1"), body: body.into(), headers: Vec::new(), bytes: None, pace: None }
+    }
+
+    pub fn bytes(bytes: Vec<u8>) -> Self {
+        Self { content_type: "application/octet-stream", api: None, bytes: Some(bytes), ..Self::json("") }
+    }
+
+    pub fn paced(self, chunk: usize, every: std::time::Duration) -> Self {
+        Self { pace: Some((chunk.max(1), every)), ..self }
     }
 
     pub fn text(body: impl Into<String>) -> Self {
@@ -61,6 +73,30 @@ impl Answer {
     pub fn header(mut self, name: &str, value: impl Into<String>) -> Self {
         self.headers.push((name.into(), value.into()));
         self
+    }
+
+    /// The head, then the body as [`Self::pace`] says; an error is the client gone.
+    pub fn send(&self, stream: &mut impl Write) -> std::io::Result<()> {
+        let Some(bytes) = &self.bytes else {
+            if self.pace.is_none() {
+                return stream.write_all(self.to_http().as_bytes());
+            }
+            return Self { bytes: Some(self.body.clone().into_bytes()), ..self.clone() }.send(stream);
+        };
+        let http = Self { body: String::new(), bytes: None, ..self.clone() }.to_http();
+        let head = http.replacen("Content-Length: 0\r\n", &format!("Content-Length: {}\r\n", bytes.len()), 1);
+        stream.write_all(head.as_bytes())?;
+        match self.pace {
+            None => stream.write_all(bytes),
+            Some((chunk, every)) => {
+                for part in bytes.chunks(chunk) {
+                    stream.write_all(part)?;
+                    stream.flush()?;
+                    std::thread::sleep(every);
+                }
+                Ok(())
+            }
+        }
     }
 
     /// The bytes of the whole response, `Connection: close`.
@@ -165,7 +201,7 @@ impl FakeWorkState {
                         }
                         return;
                     }
-                    let _ = stream.write_all(answer.to_http().as_bytes());
+                    let _ = answer.send(&mut stream);
                 });
             }
         });
@@ -360,7 +396,7 @@ impl FakeAuth {
     }
 
     pub fn unauthorized(&self) -> Answer {
-        Answer { status: 401, content_type: "text/plain", api: Some("1"), body: String::new(), headers: Vec::new() }
+        Answer { status: 401, content_type: "text/plain", ..Answer::json("") }
             .header("WWW-Authenticate", format!(r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource/api""#, self.base))
     }
 

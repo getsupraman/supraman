@@ -64,7 +64,7 @@ mod term;
 
 pub(crate) use left::grid;
 pub use manage::{AddDraft, Removing};
-pub use menu::{Confirm, ContextMenu, MenuAction, MenuTarget};
+pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 
 gpui::actions!(foreman, [NextTab, PreviousTab, FocusSearch]);
 
@@ -244,7 +244,7 @@ pub struct FleetView {
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
-    window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     quitting: bool,
     quit_asked: bool,
     pub home: Option<PathBuf>,
@@ -2356,7 +2356,7 @@ impl FleetView {
         self.window.update(cx, |_, window, cx| crate::tray::close(window, cx)).ok();
     }
 
-    fn has_attach_tabs(&self) -> bool {
+    pub(crate) fn has_attach_tabs(&self) -> bool {
         self.tabs.iter().any(|t| matches!(t.kind, TabKind::Attach { .. }))
     }
 

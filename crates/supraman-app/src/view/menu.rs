@@ -56,6 +56,8 @@ pub enum Confirmed {
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
     Edit { workspace: String, edit: supraman_core::Edit },
     RemoveSchedule { workspace: String, id: String },
+    /// The banner's Update, while sessions are attached in tabs.
+    Update,
 }
 
 pub type MenuItem = supraman_ui::menu::MenuItem<MenuAction>;
