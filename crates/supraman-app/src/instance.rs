@@ -2,9 +2,7 @@ use std::path::Path;
 
 /// FNV-1a, stable across builds unlike `DefaultHasher`, so an old and a new build on one home see each other.
 pub fn key(home: &Path) -> String {
-    let path = std::fs::canonicalize(home)
-        .or_else(|_| std::path::absolute(home))
-        .unwrap_or_else(|_| home.to_path_buf());
+    let path = canonical(home);
     let path = path.to_string_lossy();
     let path = match path.strip_prefix(r"\\?\") {
         Some(rest) => rest.strip_prefix(r"UNC\").map_or_else(|| rest.to_string(), |share| format!(r"\\{share}")),
@@ -16,6 +14,26 @@ pub fn key(home: &Path) -> String {
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+/// The nearest existing ancestor canonicalized (8.3 names expanded) and the rest appended, so a home hashes the
+/// same before and after it is created.
+fn canonical(home: &Path) -> std::path::PathBuf {
+    let absolute = std::path::absolute(home).unwrap_or_else(|_| home.to_path_buf());
+    let mut base = absolute.as_path();
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(found) = std::fs::canonicalize(base) {
+            return rest.iter().rev().fold(found, |path, part| path.join(part));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                base = parent;
+            }
+            _ => return absolute,
+        }
+    }
 }
 
 const NAME: &str = "Supraman";

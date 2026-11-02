@@ -42,7 +42,7 @@ jobs:
 
       - name: Test
         run: |
-          cargo test --release --workspace --locked
+          cargo test --release --workspace --locked --no-fail-fast
           if ($LASTEXITCODE -ne 0) { throw "cargo test failed ($LASTEXITCODE)" }
 
       - name: Build the release
