@@ -15,7 +15,7 @@
 //! |---|---|---|---|---|---|
 //! | B1 | present | any | `waiting` | | `Blocked { waiting_for }` |
 //! | B2 | present | any | any | `waitingFor` present | `Blocked { waiting_for }` |
-//! | B3 | present | `blocked` | absent | | `Blocked { waiting_for }` |
+//! | B3 | present | `blocked` | absent or `idle` | | `Blocked { waiting_for }` |
 //! | B4 | present | any | `busy` | | `Running` |
 //! | B5 | present | any | `idle` | | `Idle` |
 //! | B6 | present | `done` or `stopped` | absent | | `Idle` |
@@ -26,6 +26,9 @@
 //! | B11 | absent | `working` | any | | `Running` (the pre-process row after `--bg`) |
 //! | B12 | absent | `blocked` | any | | `Blocked { waiting_for }` |
 //! | B13 | absent | anything else | | | `Unknown` |
+//!
+//! B3 takes `idle` because a turn that ends asking the human in plain text is `state=blocked,
+//! status=idle` with no `waitingFor` on a live pid (supervisor/1, claude 2.1.316).
 //!
 //! B10 exists because a dead process can leave its row marked `working`/`blocked`; such a
 //! session must not reach the inbox, where Attach would target a process that is gone. Its

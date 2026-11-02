@@ -343,7 +343,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     // `claude stop`, not a kill: the daemon respawns a session killed while `state=working`/`blocked` (R13), never a stopped one.
     let idle = wait_for("step c: workspace session idle", Duration::from_secs(120), cx, |rows| {
-        rows.iter().find(|s| s.name == ctrl && s.health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
+        rows.iter().find(|s| s.name == ctrl && s.supervised_health(now_ms()) == Health::Idle && s.pid.is_some()).cloned()
     })
     .await?;
     // what the skill made of its first turn: reported, not asserted (a model's choice, not Foreman's)
@@ -555,7 +555,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
                 if is_live(r, now) {
                     first_live[i].get_or_insert(started.elapsed());
                 }
-                if r.health(now) == Health::Idle {
+                if r.supervised_health(now) == Health::Idle {
                     first_idle[i].get_or_insert(started.elapsed());
                 }
             }
@@ -1852,7 +1852,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let mut idle_since: Option<Instant> = None;
     loop {
         let delivered = in_transcript(transcript, w, &task, &task_id) && in_transcript(transcript, w, "approve", &approve_id);
-        let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.health(now_ms()) == Health::Idle);
+        let idle = delivered && row(&ctrl, cx).await?.is_some_and(|r| r.pid.is_some() && r.supervised_health(now_ms()) == Health::Idle);
         idle_since = if idle { idle_since.or(Some(Instant::now())) } else { None };
         if idle_since.is_some_and(|t| t.elapsed() >= SETTLED) {
             break;
