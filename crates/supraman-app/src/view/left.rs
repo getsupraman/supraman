@@ -517,7 +517,7 @@ impl FleetView {
                 continue;
             }
             for (i, row) in workspace.supervised.iter().enumerate() {
-                rows.push((LeftRow::Supervised(w, i), format!("sup:{name}/{}", row.session.session_id), vec![row.session.session_id.clone()]));
+                rows.push((LeftRow::Supervised(w, i), format!("sup:{name}/{}", row.session.session_id), vec![row.session.session_id.clone(), row.session.id.clone()]));
             }
             rows.push((LeftRow::Schedules(w), format!("sched:{name}"), ["schedules-row-", "sched-row-", "sched-state-", "sched-error-"].iter().map(|p| format!("{p}{name}")).collect()));
             for (r, repo) in workspace.repos.iter().enumerate() {
@@ -527,7 +527,7 @@ impl FleetView {
                     continue;
                 }
                 for (i, row) in repo.sessions.iter().enumerate() {
-                    rows.push((LeftRow::Session(w, r, i), format!("s:{path}/{}", row.session.session_id), vec![row.session.session_id.clone()]));
+                    rows.push((LeftRow::Session(w, r, i), format!("s:{path}/{}", row.session.session_id), vec![row.session.session_id.clone(), row.session.id.clone()]));
                 }
                 if repo.more > 0 {
                     rows.push((LeftRow::More(w, r), format!("more:{path}"), vec![format!("more-{path}")]));
@@ -559,6 +559,17 @@ impl FleetView {
     /// Scrolls the sidebar to the row `hit` belongs to; false when no row claims it.
     pub fn reveal_hit(&self, hit: &str) -> bool {
         self.left_list.reveal(hit)
+    }
+
+    /// A selftest's look at a sidebar key: painted, or false after the row that claims it was scrolled to.
+    pub fn shown(&self, key: &str) -> bool {
+        if self.hits.borrow().contains_key(key) {
+            return true;
+        }
+        if self.reveal_hit(key) {
+            crate::selftest::ask_frame();
+        }
+        false
     }
 
     pub fn left_list(&self) -> &supraman_ui::keyed_list::KeyedList {

@@ -74,7 +74,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         v.clear_search(cx);
     });
     let tree_row = format!("ws-row-{WORKSPACE}");
-    until_app(view, cx, WITHIN, "the tree before the search", |v, _| v.hits.borrow().contains_key(&tree_row).then_some(())).await?;
+    until_app(view, cx, WITHIN, "the tree before the search", |v, _| v.shown(&tree_row).then_some(())).await?;
 
     // dispatched: a posted Ctrl is not in the keyboard state Windows reads
     let keystroke = Keystroke { modifiers: Modifiers { control: true, shift: true, ..Default::default() }, key: "e".into(), key_char: None };

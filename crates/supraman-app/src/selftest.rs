@@ -445,6 +445,19 @@ async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>
     result
 }
 
+static FRAME_ASKED: AtomicBool = AtomicBool::new(false);
+
+/// [`FleetView::shown`] scrolled the sidebar; the next wait redraws the window so the row is painted.
+pub(crate) fn ask_frame() {
+    FRAME_ASKED.store(true, Ordering::SeqCst);
+}
+
+pub(crate) fn frame_if_asked(cx: &mut AsyncWindowContext) {
+    if FRAME_ASKED.swap(false, Ordering::SeqCst) {
+        cx.update(|window, _| window.refresh()).ok();
+    }
+}
+
 pub(crate) async fn until_with<T>(
     cx: &mut AsyncWindowContext,
     within: Duration,
@@ -459,6 +472,7 @@ pub(crate) async fn until_with<T>(
         if started.elapsed() > within {
             bail!("{what}: not within {within:?}");
         }
+        frame_if_asked(cx);
         sleep(cx, Duration::from_millis(25)).await;
     }
 }
@@ -717,7 +731,8 @@ async fn wait_attachable(
         let row = view.read_with(cx, |v, _| find_row(v, name));
         if let Some(row) = &row {
             let key = format!("attach-{}", row.session.id);
-            let painted = view.read_with(cx, |v, _| v.hits.borrow().contains_key(&key));
+            let painted = view.read_with(cx, |v, _| v.shown(&key));
+            frame_if_asked(cx);
             // A pid means the process is up; the pre-process row (no pid) is too early to attach.
             if row.attachable && row.session.pid.is_some() && painted {
                 break row.clone();
@@ -877,7 +892,7 @@ pub(crate) async fn close_attach(
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

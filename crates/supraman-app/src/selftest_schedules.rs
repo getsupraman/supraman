@@ -47,7 +47,7 @@ fn row_state(v: &FleetView) -> Option<(Status, bool)> {
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 /// The schedule's Details tab as text, once it is the active tab and holds `needle`.

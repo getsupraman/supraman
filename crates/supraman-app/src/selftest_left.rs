@@ -15,7 +15,7 @@ const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refres
 const WITHIN: Duration = Duration::from_secs(5);
 
 fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
-    v.hits.borrow().get(key).map(|h| h.bounds)
+    v.shown(key).then(|| v.hits.borrow().get(key).map(|h| h.bounds)).flatten()
 }
 
 fn repo_rows(v: &FleetView) -> usize {

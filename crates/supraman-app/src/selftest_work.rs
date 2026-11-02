@@ -321,7 +321,9 @@ async fn painted(view: &Entity<FleetView>, keys: &[&str], within: Duration, what
 }
 
 fn is_painted(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> bool {
-    view.read_with(cx, |v, _| v.hits.borrow().contains_key(key))
+    let shown = view.read_with(cx, |v, _| v.shown(key));
+    crate::selftest::frame_if_asked(cx);
+    shown
 }
 
 fn painted_any(view: &Entity<FleetView>, prefix: &str, cx: &mut AsyncWindowContext) -> bool {

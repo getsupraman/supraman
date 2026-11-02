@@ -74,7 +74,7 @@ fn row(v: &FleetView, id: &str) -> Option<(String, bool, bool)> {
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

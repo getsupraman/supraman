@@ -21,7 +21,7 @@ fn title(v: &FleetView) -> Option<String> {
 }
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 pub async fn run(view: &Entity<FleetView>, home: &Path, main_repo: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

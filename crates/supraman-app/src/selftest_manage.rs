@@ -28,7 +28,7 @@ const ADDED: &str = "selftest-added";
 const WITHIN: Duration = Duration::from_secs(5);
 
 fn painted(v: &FleetView, key: &str) -> bool {
-    v.hits.borrow().contains_key(key)
+    v.shown(key)
 }
 
 fn typed(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>) -> anyhow::Result<()> {
