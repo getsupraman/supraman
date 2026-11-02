@@ -39,6 +39,7 @@ mod selftest_startup;
 mod selftest_supervise;
 mod selftest_tabs;
 mod selftest_title;
+mod selftest_updates;
 mod selftest_term;
 mod selftest_theme;
 mod selftest_work;
@@ -52,6 +53,7 @@ mod signin;
 #[cfg(test)]
 mod tokens;
 mod tray;
+mod updates;
 mod view;
 mod work_view;
 mod workstate_setup;

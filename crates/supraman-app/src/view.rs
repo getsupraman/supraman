@@ -342,6 +342,7 @@ pub struct FleetView {
     pub tab_resolves: u64,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
+    pub updates: crate::updates::Updates,
     pub claude_dir: Option<PathBuf>,
     pub deleted: StdHashMap<String, i64>,
     pub deleting: HashSet<String>,
@@ -713,6 +714,7 @@ impl FleetView {
         let transcripts_hold: Arc<PollHold> = Arc::default();
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
+        let updates = crate::updates::Updates::start(home.clone(), cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
@@ -831,6 +833,7 @@ impl FleetView {
             tab_resolves: 0,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
+            updates,
             claude_dir,
             deleted: StdHashMap::new(),
             deleting: HashSet::new(),

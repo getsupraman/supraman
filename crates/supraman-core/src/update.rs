@@ -9,6 +9,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use chrono::{DateTime, SecondsFormat, Utc};
 pub use ed25519_dalek::{SigningKey, VerifyingKey};
 use ed25519_dalek::{Signature, Signer as _};
+pub use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

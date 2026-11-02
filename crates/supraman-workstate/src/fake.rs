@@ -21,6 +21,14 @@ pub struct Seen {
     pub authorization: Option<String>,
     pub content_type: Option<String>,
     pub body: String,
+    /// Every header as sent, names lowercased.
+    pub headers: Vec<(String, String)>,
+}
+
+impl Seen {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,11 +99,12 @@ fn read_seen(stream: &TcpStream) -> Option<Seen> {
     let mut reader = BufReader::new(stream.try_clone().ok()?);
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
-    let (mut authorization, mut content_type, mut length) = (None, None, 0);
+    let (mut authorization, mut content_type, mut length, mut headers) = (None, None, 0, Vec::new());
     loop {
         let mut h = String::new();
         reader.read_line(&mut h).ok()?;
         let Some((k, v)) = h.trim_end().split_once(':') else { break };
+        headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         if k.eq_ignore_ascii_case("authorization") {
             authorization = Some(v.trim().to_string());
         } else if k.eq_ignore_ascii_case("content-type") {
@@ -109,7 +118,7 @@ fn read_seen(stream: &TcpStream) -> Option<Seen> {
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let target = parts.next().unwrap_or("").to_string();
-    Some(Seen { method, target, authorization, content_type, body: String::from_utf8_lossy(&body).into_owned() })
+    Some(Seen { method, target, authorization, content_type, body: String::from_utf8_lossy(&body).into_owned(), headers })
 }
 
 impl FakeWorkState {
