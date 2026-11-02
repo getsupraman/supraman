@@ -1,0 +1,14 @@
+title = "supraman gitleaks config"
+
+[extend]
+useDefault = true
+
+# Each entry is a proven fixture or false positive; docs/release/audit.md lists the reason.
+
+[[allowlists]]
+description = "peer.rs test fixture: a fake peerToken (the hex digits 0-f twice) in a temp key file"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^crates/(foreman|supraman)-claude/src/peer\.rs$''']
+regexTarget = "line"
+regexes = ['''"peerToken":"(0123456789abcdef){2}"''']

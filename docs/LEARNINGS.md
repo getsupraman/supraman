@@ -5604,3 +5604,17 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   README before editing it for a red check.
 - **Red:** a broken image path, a renamed `## Roadmap` and a broken link to `docs/ROADMAP.md` each make
   `check-readme.ps1` exit 1 with the one `FAIL` line; restored, it passes.
+
+## 2026-11-02 — public/4 secrets and client-name audit (docs/release/audit.md)
+
+- **gitleaks skips the root commit's diff:** `--log-opts="--all"` reports 288 of 289 non-merge commits; the missing one
+  is the root (`git diff-tree` shows no diff for a root without `--root`). Scan it with `git show <root> | gitleaks stdin`.
+- **One whole-history `git log --all -p -U0` dump** (9 MB) matched once per term is far cheaper than `git grep` over
+  457 revisions; a line whose text is no longer in the tree is the history-only list.
+- **The commit metadata is the biggest personal-data item:** every commit carries the author's personal address; only a
+  history rewrite removes it.
+- **An allowlist entry needs path AND line** (`condition = "AND"`, `regexTarget = "line"`) so a second token in the same
+  file still fails. Red: without `.gitleaks.toml` the gate finds 1 leak, exit 1.
+- **The cargo gate needs `plugins\supraman` above the target dir** (the "Dev build" junction of the Supraman rename entry): without it
+  three `sm` `want` tests fail with "No Supraman plugin for …\sm.exe".
+- Gate: gitleaks `--all --redact --exit-code 1` no leaks; `cargo test --release --workspace` 917 passed, 0 failed.
