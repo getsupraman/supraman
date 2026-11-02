@@ -5662,3 +5662,8 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   it as Idle on an `fm-…` row (m3/8), so the supervisor and the selftest's waits for an idle controller (which now use
   `supervised_health`) see no change. `sm run` reads raw `health`: a scheduled run whose turn ends with a question in text
   is now `needs-you` ("the session is blocked; attach to … to answer"), not a run that went idle.
+- **--selftest-supervise steps v, x and y broke on the virtualized sidebar, not on B3** (no supervise run since
+  responsive/1): their waits read `hits` for a row out of view. `wait_painted` waits through `FleetView::shown`; x and y
+  scroll to the key their row really paints under with `selftest::scrolled_into_view`. That key is
+  `session-row-<id>@<ws>`: the testbed lies under this checkout, step v's VGit, so their sessions are `also_in` it, and
+  the sidebar's row tokens are session ids alone, so `reveal` alone finds step v's copy first.

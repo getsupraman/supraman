@@ -234,9 +234,10 @@ async fn wait_for<T>(
 
 async fn wait_painted(view: &Entity<FleetView>, key: &str, within: Duration, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
-    while !view.read_with(cx, |v, _| v.hits.borrow().contains_key(key)) {
+    while !view.read_with(cx, |v, _| v.shown(key)) {
         if started.elapsed() > within {
-            bail!("nothing painted under {key} within {} s", within.as_secs());
+            let near: Vec<String> = view.read_with(cx, |v, _| v.hits.borrow().keys().filter(|k| k.starts_with(key)).cloned().collect());
+            bail!("nothing painted under {key} within {} s (painted under it: {near:?})", within.as_secs());
         }
         sleep(cx, Duration::from_millis(100)).await;
     }
@@ -930,7 +931,7 @@ async fn unwanted_double_click(view: &Entity<FleetView>, session: &Session, cx: 
         let key = format!("session-row-{}", session.session_id);
         let started = Instant::now();
         while !view.read_with(cx, |v, _| {
-            v.hits.borrow().contains_key(&key) && v.tree().workspaces.iter().flat_map(|w| w.rows()).any(|r| r.session.session_id == session.session_id && !crate::fleet::is_alive(&r.health))
+            v.shown(&key) && v.tree().workspaces.iter().flat_map(|w| w.rows()).any(|r| r.session.session_id == session.session_id && !crate::fleet::is_alive(&r.health))
         }) {
             if started.elapsed() > Duration::from_secs(20) {
                 bail!("{key} not painted as stopped within 20 s");
@@ -1009,7 +1010,14 @@ async fn edit_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindowC
     crate::selftest::until(view, cx, within, "XGit and XPlain in the tree, the session first under XPlain", |v| (folders_of(v).as_ref() == Some(&placed)).then_some(()))
         .await
         .map_err(|e| e.context(format!("listed folders {:?}", view.read_with(cx, |v, _| folders_of(v)))))?;
-    wait_painted(view, &format!("session-row-{}", live.session_id), within, cx).await?;
+    // the testbed lies inside this checkout, step v's VGit, so the row may carry its `@{name}` scope
+    let row_key = view
+        .read_with(cx, |v, _| {
+            let node = v.tree().workspaces.iter().find(|n| n.name == name).cloned()?;
+            node.rows().find(|r| r.session.session_id == live.session_id).map(|r| format!("session-row-{}{}", r.session.session_id, r.scope(&name)))
+        })
+        .ok_or_else(|| anyhow!("{session_name} has no row under {name}"))?;
+    crate::selftest::scrolled_into_view(view, &row_key, cx).await?;
 
     click(view, "edit-enable-XGit", cx).await?;
     saved(&registry, &name, "with XGit disabled", |w| w.folder("XGit").is_some_and(|f| !f.enabled), cx).await?;
@@ -1101,6 +1109,7 @@ async fn adopt_step(tb: &Testbed, view: &Entity<FleetView>, cx: &mut AsyncWindow
         });
         e.context(format!("it sits at {at:?}"))
     })?;
+    crate::selftest::scrolled_into_view(view, &row_key, cx).await?;
     crate::selftest_manage::press_painted(view, &row_key, gpui::MouseButton::Right, cx).await?;
     wait_painted(view, "menu-adopt", Duration::from_secs(10), cx).await?;
     click(view, "menu-adopt", cx).await?;
