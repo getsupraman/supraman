@@ -47,7 +47,7 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 
 ## Rust crates
 
-The 437 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
+The 449 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
 build-dependencies). Their licence texts and copyright notices, as each package ships them, are in a release's
 `licenses\rust-crates.txt`.
 
@@ -114,6 +114,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | compression-codecs | 0.4.31 | MIT OR Apache-2.0 | crates.io |
 | compression-core | 0.4.29 | MIT OR Apache-2.0 | crates.io |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | crates.io |
+| const-oid | 0.9.6 | Apache-2.0 OR MIT | crates.io |
 | convert_case | 0.10.0 | MIT | crates.io |
 | convert_case | 0.11.0 | MIT | crates.io |
 | core2 | 0.4.0 | Apache-2.0 OR MIT | crates.io |
@@ -130,9 +131,12 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | crypto-common | 0.1.6 | MIT OR Apache-2.0 | crates.io |
 | ctor | 1.0.12 | Apache-2.0 OR MIT | crates.io |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| curve25519-dalek | 4.1.3 | BSD-3-Clause | crates.io |
+| curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 | crates.io |
 | dary_heap | 0.3.9 | MIT OR Apache-2.0 | crates.io |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | crates.io |
 | deflate64 | 0.1.10 | MIT | crates.io |
+| der | 0.7.10 | Apache-2.0 OR MIT | crates.io |
 | der | 0.8.3 | Apache-2.0 OR MIT | crates.io |
 | derive_more | 2.1.1 | MIT | crates.io |
 | derive_more-impl | 2.1.1 | MIT | crates.io |
@@ -144,6 +148,8 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | dpi | 0.1.2 | Apache-2.0 AND MIT | crates.io |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | crates.io |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 | crates.io |
+| ed25519 | 2.2.3 | Apache-2.0 OR MIT | crates.io |
+| ed25519-dalek | 2.2.0 | BSD-3-Clause | crates.io |
 | either | 1.15.0 | MIT OR Apache-2.0 | crates.io |
 | enumn | 0.1.14 | MIT OR Apache-2.0 | crates.io |
 | equator | 0.4.2 | MIT | crates.io |
@@ -181,6 +187,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | futures-task | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | generic-array | 0.14.7 | MIT | crates.io |
+| getrandom | 0.2.16 | MIT OR Apache-2.0 | crates.io |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 | crates.io |
 | getrandom | 0.4.1 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
@@ -279,6 +286,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | pin-project-internal | 1.1.10 | Apache-2.0 OR MIT | crates.io |
 | pin-project-lite | 0.2.16 | Apache-2.0 OR MIT | crates.io |
 | piper | 0.2.4 | MIT OR Apache-2.0 | crates.io |
+| pkcs8 | 0.10.2 | Apache-2.0 OR MIT | crates.io |
 | png | 0.17.16 | MIT OR Apache-2.0 | crates.io |
 | png | 0.18.0 | MIT OR Apache-2.0 | crates.io |
 | polling | 3.11.0 | Apache-2.0 OR MIT | crates.io |
@@ -305,6 +313,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | rand | 0.9.4 | MIT OR Apache-2.0 | crates.io |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 | crates.io |
+| rand_core | 0.6.4 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.9.3 | MIT OR Apache-2.0 | crates.io |
 | rand_xorshift | 0.5.0 | MIT OR Apache-2.0 | crates.io |
 | rav1e | 0.8.1 | BSD-2-Clause | crates.io |
@@ -339,6 +348,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | schemars_derive | 1.0.4 | MIT | crates.io |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | crates.io |
 | seahash | 4.1.0 | MIT | crates.io |
+| semver | 1.0.28 | MIT OR Apache-2.0 | crates.io |
 | serde | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | crates.io |
@@ -350,6 +360,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | sha1_smol | 1.0.1 | BSD-3-Clause | crates.io |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | crates.io |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
+| signature | 2.2.0 | Apache-2.0 OR MIT | crates.io |
 | simd-adler32 | 0.3.7 | MIT | crates.io |
 | simd_helpers | 0.1.0 | MIT | crates.io |
 | simplecss | 0.2.2 | Apache-2.0 OR MIT | crates.io |
@@ -361,6 +372,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | smol_str | 0.3.6 | MIT OR Apache-2.0 | crates.io |
 | spin | 0.10.0 | MIT | crates.io |
 | spin | 0.9.8 | MIT | crates.io |
+| spki | 0.7.3 | Apache-2.0 OR MIT | crates.io |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | crates.io |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | strict-num | 0.1.1 | MIT | crates.io |

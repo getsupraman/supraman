@@ -51,6 +51,11 @@ usage:
   sm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
   sm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
   sm probe session-id                  (does --bg --session-id <uuid> keep the uuid, and --bg --resume)
+  sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
+      (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
+  sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
+  sm release verify <manifest> [--public-key <file>]   (the signature against update.pub, then the zip)
+  sm release keygen --public-out <file>   (the secret key to stdout only, never to a console)
   sm plugin install <plugin-dir>  (copies this sm.exe to <plugin-dir>/bin, where the hooks run it)
   sm hook <event>                 (run by plugins/supraman; reads the hook payload on stdin)";
 
@@ -63,6 +68,7 @@ mod probe_isolation;
 mod probe_rm;
 mod probe_session_id;
 mod relay;
+mod release;
 mod repos;
 pub mod run;
 mod schedule;
@@ -237,6 +243,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
                 Err(Failure::Probe("the session-id probe did not finish"))
             }
         }
+        ["release", rest @ ..] => release::release(rest),
         ["plugin", "install", dir] => {
             let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate sm.exe: {e}")))?;
             match supraman_core::install_hook_exe(std::path::Path::new(dir), &exe) {

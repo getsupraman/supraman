@@ -1,0 +1,77 @@
+# A v<semver> tag builds, tests and signs a release and uploads it as a DRAFT; publishing it is René's (docs/RELEASE.md).
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release key and version
+        run: |
+          if ((Get-Content -Raw crates/supraman-core/src/update.pub) -match 'PLACEHOLDER') {
+            throw 'crates/supraman-core/src/update.pub is the placeholder: run scripts/new-signing-key.ps1 and commit update.pub'
+          }
+          if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)$') { throw "tag $env:TAG is not v<semver>" }
+          "VERSION=$($Matches[1])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "DIST=$(Join-Path $env:RUNNER_TEMP 'dist')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Toolchain
+        run: |
+          $channel = [regex]::Match((Get-Content -Raw rust-toolchain.toml), 'channel = "([^"]+)"').Groups[1].Value
+          rustup toolchain install $channel --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install $channel failed" }
+          cargo --version
+
+      - name: Test
+        run: |
+          cargo test --release --workspace --locked
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed ($LASTEXITCODE)" }
+
+      - name: Build the release
+        run: ./scripts/release.ps1 -OutDir "$env:DIST\Supraman" -Version $env:VERSION
+
+      - name: Sign
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          & "$env:DIST\Supraman\sm.exe" release sign "$env:DIST\supraman-update.json"
+          if ($LASTEXITCODE -ne 0) { throw "sm release sign failed ($LASTEXITCODE)" }
+
+      - name: Verify
+        run: |
+          & "$env:DIST\Supraman\sm.exe" release verify "$env:DIST\supraman-update.json"
+          if ($LASTEXITCODE -ne 0) { throw "sm release verify failed ($LASTEXITCODE)" }
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = Join-Path $env:RUNNER_TEMP 'notes.md'
+          @(
+            "Supraman $env:VERSION, built from tag ``$env:TAG`` (commit ``$env:GITHUB_SHA``)."
+            ''
+            "Source code (GPL-3.0-or-later): https://github.com/$env:GITHUB_REPOSITORY/tree/$env:TAG"
+            ''
+            '`SHA256SUMS` holds the zip''s sha256; `supraman-update.json.sig` is the ed25519 signature of `supraman-update.json`.'
+          ) | Set-Content -Encoding utf8 $notes
+          gh release create $env:TAG --draft --verify-tag --title "Supraman $env:VERSION" --notes-file $notes `
+            "$env:DIST\Supraman-$env:VERSION.zip" "$env:DIST\SHA256SUMS" "$env:DIST\supraman-update.json" "$env:DIST\supraman-update.json.sig"
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
