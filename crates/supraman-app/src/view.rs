@@ -1722,7 +1722,7 @@ impl FleetView {
     }
 
     fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let id = self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx);
+        let id = self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), Some(cwd), window, cx);
         let (watch, mut output) = nudge::nudge();
         if let Some(tab) = self.tab_mut(id) {
             tab.watchers.push(watch);
@@ -1823,7 +1823,7 @@ impl FleetView {
                     session.id, session.id
                 ),
             };
-            let shell = pwsh(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
+            let shell = powershell(vec!["-NoLogo".into(), "-NoProfile".into(), "-Command".into(), script]);
             let kind = TabKind::Attach { session_id: session.id.clone() };
             let id = self.push_tab(title, kind, Some(session.cwd.clone()), cx);
             self.start_terminal(id, shell, Some(session.cwd.clone()), cx);
@@ -1978,7 +1978,7 @@ impl FleetView {
             }
             None => launch.shell_args_with(claude, extras),
         };
-        pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
+        powershell(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
     fn blink_cursor(mut woken: Nudged, cx: &mut Context<Self>) {
@@ -2202,13 +2202,13 @@ impl FleetView {
     }
 
     pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), Some(cwd), window, cx)
+        self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), Some(cwd), window, cx)
     }
 
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let title = format!("pwsh {}", self.next_tab_id);
+        let title = format!("{} {}", supraman_core::paths::terminal_powershell(), self.next_tab_id);
         let cwd = self.new_shell_cwd();
-        self.open_tab(title, TabKind::Shell, pwsh(self.shell_args.clone()), cwd, window, cx)
+        self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), cwd, window, cx)
     }
 
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
@@ -2650,8 +2650,8 @@ fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Durati
     }
 }
 
-fn pwsh(args: Vec<String>) -> util::shell::Shell {
-    util::shell::Shell::WithArguments { program: "pwsh".into(), args, title_override: None }
+fn powershell(args: Vec<String>) -> util::shell::Shell {
+    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().into(), args, title_override: None }
 }
 
 fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {
@@ -2801,8 +2801,9 @@ fn placeholder(text: String, cx: &gpui::App) -> AnyElement {
         .items_center()
         .justify_center()
         .bg(cx.theme().colors().editor_background)
+        .overflow_hidden()
         .text_color(cx.theme().colors().text_muted)
-        .child(SharedString::from(text))
+        .child(div().w_full().px_6().text_center().child(SharedString::from(text)))
         .into_any_element()
 }
 

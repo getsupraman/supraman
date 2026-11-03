@@ -6,7 +6,7 @@ use futures::StreamExt as _;
 use gpui::{AnyElement, App, ClickEvent, Context, SharedString, div, prelude::*};
 use theme::ActiveTheme as _;
 
-use super::{FleetView, Tab, TabKind, pwsh};
+use super::{FleetView, Tab, TabKind, powershell};
 use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
 use crate::{fleet, tab_card};
 
@@ -175,7 +175,7 @@ impl FleetView {
         match reopen {
             Reopen::Shell { title, cwd } => {
                 let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
-                self.start_terminal(id, pwsh(self.shell_args.clone()), Some(cwd), cx);
+                self.start_terminal(id, powershell(self.shell_args.clone()), Some(cwd), cx);
                 id
             }
             Reopen::Attach { title, session } => self.attach_titled(title, &session, cx),

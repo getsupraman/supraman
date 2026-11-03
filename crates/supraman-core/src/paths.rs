@@ -219,9 +219,43 @@ pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option
     })
 }
 
+/// The PowerShell a terminal tab runs: `pwsh` when a `PATH` folder holds it with a `PATHEXT` extension, else Windows PowerShell's `powershell`.
+pub fn powershell(path: &std::ffi::OsStr, pathext: &str) -> &'static str {
+    let exts: Vec<String> = pathext.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_ascii_lowercase).collect();
+    let found = std::env::split_paths(path).filter(|dir| !dir.as_os_str().is_empty()).any(|dir| exts.iter().any(|ext| dir.join(format!("pwsh{ext}")).is_file()));
+    if found { "pwsh" } else { "powershell" }
+}
+
+/// [`powershell`] for this process's `PATH` and `PATHEXT`, looked up once.
+pub fn terminal_powershell() -> &'static str {
+    static SHELL: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    SHELL.get_or_init(|| {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        powershell(&path, &pathext)
+    })
+}
+
 #[cfg(test)]
 mod command_tests {
     use super::*;
+
+    #[test]
+    fn powershell_is_pwsh_only_when_path_holds_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (seven, script, empty) = (tmp.path().join("seven"), tmp.path().join("script"), tmp.path().join("empty"));
+        for d in [&seven, &script, &empty] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(seven.join("pwsh.exe"), "").unwrap();
+        fs::write(script.join("pwsh.ps1"), "").unwrap();
+        let path = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
+        let ext = ".COM;.EXE;.BAT;.CMD";
+        assert_eq!(powershell(&path(&[&empty, &seven]), ext), "pwsh");
+        assert_eq!(powershell(&path(&[&empty]), ext), "powershell");
+        assert_eq!(powershell(&path(&[&script]), ext), "powershell", "a pwsh.ps1 is not PowerShell 7");
+        assert_eq!(powershell(&path(&[&seven]), ".CMD"), "powershell", "only PATHEXT extensions");
+    }
 
     #[test]
     fn pwsh_runs_the_first_folders_ps1_then_its_pathext_order() {
