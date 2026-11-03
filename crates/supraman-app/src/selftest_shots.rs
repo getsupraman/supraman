@@ -35,7 +35,7 @@ pub(crate) fn fixtures_only() -> bool {
 }
 
 fn out_dir() -> anyhow::Result<PathBuf> {
-    std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from).ok_or_else(|| anyhow!("--selftest-shots writes to FOREMAN_SHOTS, which is unset"))
+    std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from).ok_or_else(|| anyhow!("--selftest-shots writes to SUPRAMAN_SHOTS, which is unset"))
 }
 
 pub fn prepare() -> anyhow::Result<()> {

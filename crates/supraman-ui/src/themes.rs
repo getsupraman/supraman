@@ -1,6 +1,6 @@
 //! Themes: Zed theme JSON (`https://zed.dev/schema/themes/v0.2.0.json`) read tolerantly over a
 //! base theme, the bundled VS Code Dark Modern (the default) and Supraman Dark (One Dark with Campbell's
-//! ANSI colours), files in `<FOREMAN_HOME>\themes\*.json`, and the terminal colours
+//! ANSI colours), files in `<SUPRAMAN_HOME>\themes\*.json`, and the terminal colours
 //! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
 
 use std::{
@@ -19,9 +19,9 @@ use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
-pub const FOREMAN_DARK: &str = "Supraman Dark";
-/// The name an older `settings.toml` may hold for [`FOREMAN_DARK`].
-pub const FOREMAN_DARK_LEGACY: &str = "Foreman Dark";
+pub const SUPRAMAN_DARK: &str = "Supraman Dark";
+/// The name an older `settings.toml` may hold for [`SUPRAMAN_DARK`].
+pub const SUPRAMAN_DARK_LEGACY: &str = "Foreman Dark";
 pub const DEFAULT_THEME: &str = DARK_MODERN;
 
 /// kevcamel/vscode_dark_modern.zed (MIT, © 2024 Kevin Camellini), `themes/vscode-dark-modern.json` as of
@@ -180,7 +180,7 @@ pub struct Loaded {
     pub theme: Theme,
     /// Style keys that set a colour.
     pub applied: usize,
-    /// Keys with a value that is neither a colour nor null, or that Foreman does not know.
+    /// Keys with a value that is neither a colour nor null, or that Supraman does not know.
     pub ignored: Vec<String>,
     pub adjusted: Vec<Adjustment>,
 }
@@ -202,10 +202,10 @@ pub fn one_dark() -> Theme {
 
 /// Supraman Dark: One Dark with Campbell's ANSI colours; only the backgrounds of the
 /// marked row and the search matches are faded to [`BACKGROUND_FLOORS`].
-pub fn foreman_dark() -> Loaded {
+pub fn supraman_dark() -> Loaded {
     let mut theme = one_dark();
-    theme.name = FOREMAN_DARK.into();
-    theme.id = fresh_id(FOREMAN_DARK);
+    theme.name = SUPRAMAN_DARK.into();
+    theme.id = fresh_id(SUPRAMAN_DARK);
     set_ansi(&mut theme.styles.colors, campbell());
     let mut adjusted = fit_backgrounds(&mut theme);
     adjusted.extend(fit_placeholder(&mut theme));
@@ -256,7 +256,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
                     applied += 1;
                 }
             }
-            // known, and nothing Foreman paints
+            // known, and nothing Supraman paints
             "syntax" | "background.appearance" => {}
             _ => {
                 let field = key.replace('.', "_");
@@ -547,7 +547,7 @@ pub fn themes_dir(home: &Path) -> PathBuf {
 /// The bundled themes, then every theme in `<home>\themes\*.json` (by file name, then as listed).
 pub fn catalog(home: Option<&Path>) -> Catalog {
     let mut catalog = Catalog {
-        entries: [DARK_MODERN, FOREMAN_DARK].map(|name| Entry { name: name.into(), file: None }).to_vec(),
+        entries: [DARK_MODERN, SUPRAMAN_DARK].map(|name| Entry { name: name.into(), file: None }).to_vec(),
         errors: Vec::new(),
     };
     for (file, family) in theme_files(home, &mut catalog.errors) {
@@ -616,14 +616,14 @@ pub struct Resolved {
 
 /// A saved theme name as the catalog lists it.
 pub fn canonical(name: &str) -> &str {
-    if name == FOREMAN_DARK_LEGACY { FOREMAN_DARK } else { name }
+    if name == SUPRAMAN_DARK_LEGACY { SUPRAMAN_DARK } else { name }
 }
 
 /// `name` (None: [`DEFAULT_THEME`]) from the bundled themes or `<home>\themes`, with `terminal`'s ANSI.
 pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
     let name = canonical(name.unwrap_or(DEFAULT_THEME));
-    let (theme, adjusted, problem) = if name == FOREMAN_DARK {
-        let loaded = foreman_dark();
+    let (theme, adjusted, problem) = if name == SUPRAMAN_DARK {
+        let loaded = supraman_dark();
         (loaded.theme, loaded.adjusted, None)
     } else if name == DARK_MODERN {
         let loaded = dark_modern();
@@ -705,7 +705,7 @@ mod tests {
         // null keys keep One Dark's: success
         assert_eq!(s.success, one_dark().status().success);
         // 160 keys: two are skipped on purpose (syntax, background.appearance), the rest set a colour,
-        // are null, or are unknown to Foreman
+        // are null, or are unknown to Supraman
         println!("ignored: {:?}", loaded.ignored);
         assert_eq!(loaded.applied, 97);
         assert!(loaded.ignored.contains(&"version_control_conflict_ours_background".to_string()), "{:?}", loaded.ignored);
@@ -727,14 +727,14 @@ mod tests {
         let c = palette(&campbell_theme);
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
-        assert_eq!(palette(&foreman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
+        assert_eq!(palette(&supraman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
     }
 
     #[test]
     fn the_legacy_name_resolves_to_supraman_dark() {
-        let resolved = resolve(Some(FOREMAN_DARK_LEGACY), TerminalColors::Theme, None);
-        assert_eq!((resolved.theme.name.as_ref(), resolved.problem), (FOREMAN_DARK, None));
-        assert_eq!(canonical(FOREMAN_DARK_LEGACY), FOREMAN_DARK);
+        let resolved = resolve(Some(SUPRAMAN_DARK_LEGACY), TerminalColors::Theme, None);
+        assert_eq!((resolved.theme.name.as_ref(), resolved.problem), (SUPRAMAN_DARK, None));
+        assert_eq!(canonical(SUPRAMAN_DARK_LEGACY), SUPRAMAN_DARK);
     }
 
     #[test]
@@ -769,7 +769,7 @@ mod tests {
     /// Every key the loader had to change is printed (`cargo test -- --nocapture`) and pinned.
     #[test]
     fn the_contrast_floors_hold_under_each_bundled_theme() {
-        let (modern, dark) = (dark_modern(), foreman_dark());
+        let (modern, dark) = (dark_modern(), supraman_dark());
         for theme in [&modern.theme, &dark.theme] {
             let text = theme.colors().text;
             let ratio = |alpha: f32| worst_contrast(theme, text, alpha, On::Panel);
@@ -796,7 +796,7 @@ mod tests {
         let keys = |l: &Loaded| l.adjusted.iter().map(|a| (a.key, a.old.clone(), a.new.clone())).collect::<Vec<_>>();
         let pinned = |e: &[(&'static str, &str, &str)]| e.iter().map(|(k, o, n)| (*k, o.to_string(), n.to_string())).collect::<Vec<_>>();
         assert_eq!(keys(&modern), pinned(&EXPECTED_ADJUSTMENTS));
-        assert_eq!(keys(&dark), pinned(&EXPECTED_FOREMAN_DARK));
+        assert_eq!(keys(&dark), pinned(&EXPECTED_SUPRAMAN_DARK));
     }
 
     /// Under each bundled theme, on their own backgrounds: the search box's text, a matched name, the
@@ -804,7 +804,7 @@ mod tests {
     /// and its workspace and age (quiet) on the row's info or warning tint, resting and under the pointer.
     #[test]
     fn the_newer_elements_read_under_each_bundled_theme() {
-        for mut theme in [dark_modern().theme, foreman_dark().theme] {
+        for mut theme in [dark_modern().theme, supraman_dark().theme] {
             let (c, s) = (theme.colors().clone(), theme.status().clone());
             let marked: Hsla = over(c.ghost_element_selected, c.panel_background).into();
             let mut checks = vec![
@@ -837,7 +837,7 @@ mod tests {
     /// opaque; a theme whose placeholder is as bright as its text, or too dim, is moved into the range.
     #[test]
     fn the_placeholder_reads_as_a_hint_under_each_bundled_theme() {
-        for theme in [dark_modern().theme, foreman_dark().theme] {
+        for theme in [dark_modern().theme, supraman_dark().theme] {
             let c = theme.colors();
             let (low, high) = placeholder_contrast(&theme, c.text_placeholder);
             println!("{}: placeholder {} {low:.2}..{high:.2}", theme.name, hex(c.text_placeholder));
@@ -868,7 +868,7 @@ mod tests {
         ("text.placeholder", "#FFFFFF56", "#6B6B6B"),
     ];
     /// One Dark's marked-row background left the ids on it at 3.97:1.
-    const EXPECTED_FOREMAN_DARK: [(&str, &str, &str); 1] = [("ghost_element.selected", "#3B3F4A", "#3B3F4A8A")];
+    const EXPECTED_SUPRAMAN_DARK: [(&str, &str, &str); 1] = [("ghost_element.selected", "#3B3F4A", "#3B3F4A8A")];
 
     #[test]
     fn a_dim_theme_is_lifted_to_the_floors_and_reported() {
@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn the_catalog_lists_bundled_then_files_and_reports_bad_ones() {
-        let home = std::env::temp_dir().join(format!("foreman-themes-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("supraman-themes-{}", std::process::id()));
         let dir = themes_dir(&home);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.json"), r##"{"themes":[{"name":"Bee","style":{"background":"#000000"}},{"name":"Bee 2"}]}"##).unwrap();
@@ -895,7 +895,7 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "ignored").unwrap();
         let catalog = catalog(Some(&home));
         let names: Vec<&str> = catalog.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, [DARK_MODERN, FOREMAN_DARK, "Bee", "Bee 2"]);
+        assert_eq!(names, [DARK_MODERN, SUPRAMAN_DARK, "Bee", "Bee 2"]);
         assert_eq!(catalog.errors.len(), 1);
         assert!(catalog.errors[0].starts_with("a.json: "), "{:?}", catalog.errors);
 
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn a_theme_file_is_parsed_again_only_when_it_changes() {
-        let home = std::env::temp_dir().join(format!("foreman-themes-cache-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("supraman-themes-cache-{}", std::process::id()));
         let dir = themes_dir(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("c.json");

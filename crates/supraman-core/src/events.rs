@@ -1,4 +1,4 @@
-//! `<FOREMAN_HOME>/events/<session_id>.jsonl`, appended by `sm hook`; payload facts in LEARNINGS m0/3, m2/2.
+//! `<SUPRAMAN_HOME>/events/<session_id>.jsonl`, appended by `sm hook`; payload facts in LEARNINGS m0/3, m2/2.
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -13,7 +13,7 @@ use crate::is_safe_id;
 
 pub const ROTATE_AT: u64 = 256 * 1024;
 
-/// The fixed subset of a hook payload Foreman keeps. Never the prompt or the assistant's text.
+/// The fixed subset of a hook payload Supraman keeps. Never the prompt or the assistant's text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Unix epoch milliseconds, when `sm hook` ran.
@@ -73,7 +73,7 @@ pub fn append(home: &Path, event: &Event, rotate_at: u64) -> std::io::Result<Pat
     Ok(path)
 }
 
-/// What a SessionStart hook prints: a tag line `FOREMAN-ROLE <role> v<sha8>` and the role text from
+/// What a SessionStart hook prints: a tag line `SUPRAMAN-ROLE <role> v<sha8>` and the role text from
 /// `<home>/roles/<role>.md`, with `{workspace}` replaced by `workspace` when given (one role file serves
 /// every workspace). The tag changes only with the text, so a repeated injection (every `--resume`
 /// and compaction fires SessionStart) is recognisable. `None` when the role name is unsafe or the
@@ -82,7 +82,7 @@ pub fn role_injection(home: &Path, role: &str, workspace: Option<&str>) -> Optio
     role_injection_for(home, role, workspace, None)
 }
 
-/// [`role_injection`] for a repo session: `{repo}` too, from `FOREMAN_REPO`.
+/// [`role_injection`] for a repo session: `{repo}` too, from `SUPRAMAN_REPO`.
 pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo: Option<&str>) -> Option<String> {
     if !is_safe_id(role) {
         return None;
@@ -104,7 +104,7 @@ pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo
 pub fn role_tag(role: &str, text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
     let sha8 = crate::hex::encode(&digest[..4]);
-    format!("FOREMAN-ROLE {role} v{sha8}")
+    format!("SUPRAMAN-ROLE {role} v{sha8}")
 }
 
 /// Where the reader is in one session's log. `head` is the log's first line as last seen: a
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(text, format!("{tag}\nYou are the worker.\n"));
         assert_ne!(role_tag("worker", "other text"), tag);
         // sha256("abc") = ba7816bf…
-        assert_eq!(role_tag("r", "abc"), "FOREMAN-ROLE r vba7816bf");
+        assert_eq!(role_tag("r", "abc"), "SUPRAMAN-ROLE r vba7816bf");
         assert_eq!(role_injection(home.path(), "../worker", None), None);
         fs::write(home.path().join("roles").join("empty.md"), " \n").unwrap();
         assert_eq!(role_injection(home.path(), "empty", None), None);

@@ -1,4 +1,4 @@
-//! The one write Foreman makes under the claude dir: a confirmed session's `<sessionId>.jsonl` and its sibling
+//! The one write Supraman makes under the claude dir: a confirmed session's `<sessionId>.jsonl` and its sibling
 //! `<sessionId>/` in `projects/<project dir>/`, nothing else. Every path is checked first (a UUID id, no symlink or
 //! junction, the canonical path where it belongs); one refused path deletes nothing.
 

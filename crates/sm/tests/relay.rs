@@ -14,10 +14,10 @@ fn sm_cmd(home: &Path, args: &[&str]) -> Command {
         .env("HOME", home)
         .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("APPDATA")
-        .env_remove("FOREMAN_ROLE")
-        .env_remove("FOREMAN_WORKSPACE")
-        .env_remove("FOREMAN_SESSION")
-        .env_remove("FOREMAN_REPO");
+        .env_remove("SUPRAMAN_ROLE")
+        .env_remove("SUPRAMAN_WORKSPACE")
+        .env_remove("SUPRAMAN_SESSION")
+        .env_remove("SUPRAMAN_REPO");
     cmd
 }
 
@@ -26,24 +26,24 @@ fn sm(home: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
-fn send_is_refused_inside_a_foreman_session_before_touching_the_home() {
+fn send_is_refused_inside_a_supraman_session_before_touching_the_home() {
     let home = tempfile::tempdir().unwrap();
-    let out = sm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "hello"]).env("FOREMAN_ROLE", "workspace").output().unwrap();
+    let out = sm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "hello"]).env("SUPRAMAN_ROLE", "workspace").output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert_eq!(
         String::from_utf8_lossy(&out.stderr),
         "sm send speaks as the human through the relay and is refused inside a Supraman session \
-         (FOREMAN_ROLE=workspace); use SendMessage to reach a session, sm tell to reach the human\n"
+         (SUPRAMAN_ROLE=workspace); use SendMessage to reach a session, sm tell to reach the human\n"
     );
     assert!(out.stdout.is_empty(), "{out:?}");
-    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0, "nothing written under FOREMAN_HOME");
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 0, "nothing written under SUPRAMAN_HOME");
 }
 
 #[test]
 fn send_without_a_live_session_drops_for_the_relay_and_says_why() {
     let home = tempfile::tempdir().unwrap();
     let inbox = home.path().join("relay").join("demo").join("inbox");
-    let out = sm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "one"]).env("FOREMAN_ROLE", "").output().unwrap();
+    let out = sm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "one"]).env("SUPRAMAN_ROLE", "").output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let out = sm(home.path(), &["send", "demo", "fm-demo-workspace", "two"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
@@ -118,26 +118,26 @@ fn tell_writes_the_outbox_as_the_session_and_is_refused_outside_one() {
 
     let tell = |args: &[&str], env: &[(&str, &str)]| {
         let mut cmd = sm_cmd(home.path(), args);
-        cmd.env("FOREMAN_WORKSPACE", "demo");
+        cmd.env("SUPRAMAN_WORKSPACE", "demo");
         for (k, v) in env {
             cmd.env(k, v);
         }
         cmd.output().unwrap()
     };
     let out = tell(&["tell", "DONE: x
-second"], &[("FOREMAN_SESSION", "fm-demo-workspace"), ("FOREMAN_ROLE", "workspace")]);
+second"], &[("SUPRAMAN_SESSION", "fm-demo-workspace"), ("SUPRAMAN_ROLE", "workspace")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("told the human (demo): "), "{out:?}");
     let body_file = home.path().join("body.txt");
     fs::write(&body_file, "from a file").unwrap();
-    let out = tell(&["tell", "--file", body_file.to_str().unwrap()], &[("FOREMAN_SESSION", "fm-demo-api"), ("FOREMAN_ROLE", "workspace")]);
+    let out = tell(&["tell", "--file", body_file.to_str().unwrap()], &[("SUPRAMAN_SESSION", "fm-demo-api"), ("SUPRAMAN_ROLE", "workspace")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let out = tell(&["tell", "x"], &[("FOREMAN_SESSION", "fm-demo-nomos-extract"), ("FOREMAN_ROLE", "repo")]);
+    let out = tell(&["tell", "x"], &[("SUPRAMAN_SESSION", "fm-demo-nomos-extract"), ("SUPRAMAN_ROLE", "repo")]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let out = tell(&["tell", "x"], &[("FOREMAN_ROLE", "workspace")]);
-    assert_eq!(out.status.code(), Some(1), "no FOREMAN_SESSION names nobody: {out:?}");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("FOREMAN_SESSION is not set"), "{out:?}");
-    assert_eq!(tell(&["tell"], &[("FOREMAN_SESSION", "fm-demo-workspace")]).status.code(), Some(1));
+    let out = tell(&["tell", "x"], &[("SUPRAMAN_ROLE", "workspace")]);
+    assert_eq!(out.status.code(), Some(1), "no SUPRAMAN_SESSION names nobody: {out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("SUPRAMAN_SESSION is not set"), "{out:?}");
+    assert_eq!(tell(&["tell"], &[("SUPRAMAN_SESSION", "fm-demo-workspace")]).status.code(), Some(1));
 
     let out = sm(home.path(), &["messages", "demo"]);
     let text = String::from_utf8_lossy(&out.stdout);

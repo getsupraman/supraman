@@ -15,10 +15,10 @@ pub fn run(event: &str) {
     if let Some(e) = Event::from_payload(event, &payload, supraman_core::time::now_ms()) {
         let _ = append_event(&home, &e, ROTATE_AT);
     }
-    let workspace = std::env::var("FOREMAN_WORKSPACE").ok();
+    let workspace = std::env::var("SUPRAMAN_WORKSPACE").ok();
     if event == "SessionStart"
-        && let Some(role) = std::env::var("FOREMAN_ROLE").ok()
-        && let Some(text) = role_injection_for(&home, &role, workspace.as_deref(), std::env::var("FOREMAN_REPO").ok().as_deref())
+        && let Some(role) = std::env::var("SUPRAMAN_ROLE").ok()
+        && let Some(text) = role_injection_for(&home, &role, workspace.as_deref(), std::env::var("SUPRAMAN_REPO").ok().as_deref())
     {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(text.as_bytes());

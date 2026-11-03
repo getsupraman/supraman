@@ -1,6 +1,6 @@
 #Requires -Version 7
 # M0.3 hook: append one JSON line {ts, event, payload[, nonce]} to -Out, payload = stdin verbatim.
-# On SessionStart, also print a fresh FOREMAN-NONCE-<hex> to stdout (plain stdout is added to context).
+# On SessionStart, also print a fresh SUPRAMAN-NONCE-<hex> to stdout (plain stdout is added to context).
 param(
     [Parameter(Mandatory)][string]$Event,
     [Parameter(Mandatory)][string]$Out
@@ -16,7 +16,7 @@ if (-not $raw) { $payloadJson = 'null' }
 $ts = (Get-Date).ToUniversalTime().ToString('o')
 $nonce = $null
 if ($Event -eq 'SessionStart') {
-    $nonce = 'FOREMAN-NONCE-' + -join ((1..12) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+    $nonce = 'SUPRAMAN-NONCE-' + -join ((1..12) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
 }
 
 $head = '{"ts":' + ($ts | ConvertTo-Json) + ',"event":' + ($Event | ConvertTo-Json)
@@ -31,6 +31,6 @@ for ($i = 0; $i -lt 20; $i++) {
 
 if ($nonce) {
     $source = try { ($raw | ConvertFrom-Json).source } catch { 'unknown' }
-    Write-Output "$nonce (injected by the SessionStart hook, source=$source). If asked for the FOREMAN nonce, repeat this exact value."
+    Write-Output "$nonce (injected by the SessionStart hook, source=$source). If asked for the SUPRAMAN nonce, repeat this exact value."
 }
 exit 0

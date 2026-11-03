@@ -1,5 +1,5 @@
 # Times `sm hook` (release build) on a sample SessionStart payload, the slowest path (log append + role
-# read + stdout). Scratch FOREMAN_HOME under target/. Usage: pwsh -File crates/sm/probe/hook-timing.ps1 [-N 50]
+# read + stdout). Scratch SUPRAMAN_HOME under target/. Usage: pwsh -File crates/sm/probe/hook-timing.ps1 [-N 50]
 param([int]$N = 50)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
@@ -12,7 +12,7 @@ $payload = '{"cwd":"C:\\w","hook_event_name":"SessionStart","model":"m","session
 $psi = [System.Diagnostics.ProcessStartInfo]::new($sm)
 $psi.ArgumentList.Add('hook'); $psi.ArgumentList.Add('SessionStart')
 $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
-$psi.Environment['FOREMAN_HOME'] = $home_; $psi.Environment['FOREMAN_ROLE'] = 'timing'
+$psi.Environment['SUPRAMAN_HOME'] = $home_; $psi.Environment['SUPRAMAN_ROLE'] = 'timing'
 $ms = @()
 for ($i = 0; $i -lt $N; $i++) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -20,7 +20,7 @@ for ($i = 0; $i -lt $N; $i++) {
     $p.StandardInput.Write($payload); $p.StandardInput.Close()
     $out = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
     $sw.Stop()
-    if ($p.ExitCode -ne 0 -or -not $out.StartsWith('FOREMAN-ROLE timing v')) { throw "bad run: exit $($p.ExitCode) out '$out'" }
+    if ($p.ExitCode -ne 0 -or -not $out.StartsWith('SUPRAMAN-ROLE timing v')) { throw "bad run: exit $($p.ExitCode) out '$out'" }
     $ms += $sw.Elapsed.TotalMilliseconds
 }
 $s = $ms | Sort-Object

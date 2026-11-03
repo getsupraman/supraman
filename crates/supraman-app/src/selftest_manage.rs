@@ -413,9 +413,9 @@ pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `FOREMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
+/// `SUPRAMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
 pub(crate) fn shooting() -> bool {
-    std::env::var_os("FOREMAN_SHOTS").is_some()
+    std::env::var_os("SUPRAMAN_SHOTS").is_some()
 }
 
 pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
@@ -423,7 +423,7 @@ pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
 }
 
 pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
-    let Some(dir) = std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from) else {
+    let Some(dir) = std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from) else {
         return;
     };
     sleep(cx, Duration::from_millis(300)).await;
@@ -498,7 +498,7 @@ fn pumping_open(path: &Path) -> Result<(), String> {
     supraman_ui::open::open(path.as_os_str())
 }
 
-/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Foreman; the
+/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Supraman; the
 /// folder does not exist, so no Explorer opens and the refusal must come back as the action error.
 async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let missing = cargo_root().join("target").join("selftest-open-folder-missing");

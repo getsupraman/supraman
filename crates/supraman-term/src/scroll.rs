@@ -124,7 +124,7 @@ mod tests {
     };
     use util::default;
 
-    /// Foreman's tab passes `ReportToTerminal` for every wheel event: a plain shell
+    /// Supraman's tab passes `ReportToTerminal` for every wheel event: a plain shell
     /// scrolls its scrollback and writes nothing, later output keeps the view where the user
     /// left it, and the next keystroke scrolls back to the bottom.
     #[gpui::test]

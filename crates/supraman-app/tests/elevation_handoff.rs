@@ -31,7 +31,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let log = home.path().join("logs").join("foreman.log");
+    let log = home.path().join("logs").join(supraman_ui::LOG_FILE);
     let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
     // the app logs its tick errors or nothing, so give it time to take the lock
     std::thread::sleep(Duration::from_secs(5));

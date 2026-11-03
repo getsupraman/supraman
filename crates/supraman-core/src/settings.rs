@@ -19,7 +19,7 @@ pub const MAX_TERMINAL_FONT_SIZE: u32 = 72;
 /// The terminal font when `[terminal] font_family` is unset or not installed: the first one installed.
 pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono", "Consolas"];
 
-/// A table of `settings.toml` Foreman owns.
+/// A table of `settings.toml` Supraman owns.
 pub trait Section: Serialize + DeserializeOwned + Default {
     const KEY: &'static str;
     const FIELDS: &'static [&'static str];
@@ -33,11 +33,11 @@ pub trait Section: Serialize + DeserializeOwned + Default {
 pub struct SessionSettings {
     /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
     pub max_working: usize,
-    /// More plugin dirs every launch gets, as `--plugin-dir` after Foreman's own (e.g. the workman plugin
+    /// More plugin dirs every launch gets, as `--plugin-dir` after Supraman's own (e.g. the workman plugin
     /// whose `/workman:controller` a repo-controller runs). Edited in the file; the app only shows them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
-    /// Start elevated (one UAC prompt per start), so Foreman reaches a claude background service an
+    /// Start elevated (one UAC prompt per start), so Supraman reaches a claude background service an
     /// elevated `claude --bg` started.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub run_as_admin: bool,
@@ -45,7 +45,7 @@ pub struct SessionSettings {
     /// Edited in the file; the selftest shortens it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_idle_secs: Option<u64>,
-    /// Reopen the tabs open at the last close when Foreman starts.
+    /// Reopen the tabs open at the last close when Supraman starts.
     #[serde(skip_serializing_if = "is_true")]
     pub reopen_tabs: bool,
     /// Reopened claude tabs wait for a click on Resume instead of resuming at once.
@@ -222,7 +222,7 @@ impl Section for UpdateSettings {
     const FIELDS: &'static [&'static str] = &["check"];
 }
 
-/// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
+/// `<SUPRAMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
 /// [`Section`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
@@ -232,7 +232,7 @@ pub struct Settings {
     pub terminal: TerminalSettings,
     pub window: WindowSettings,
     pub updates: UpdateSettings,
-    /// Every table and key Foreman does not own, as read and written back: a plugin's `[gitman]`, a newer
+    /// Every table and key Supraman does not own, as read and written back: a plugin's `[gitman]`, a newer
     /// build's keys, a key outside any table. Read and written through [`Settings::section`].
     pub other: Table,
 }
@@ -379,7 +379,7 @@ impl Settings {
     }
 }
 
-/// `section`'s keys into its table in `out`, beside any keys of it Foreman does not know; no table when
+/// `section`'s keys into its table in `out`, beside any keys of it Supraman does not know; no table when
 /// both are empty.
 fn put<S: Section>(out: &mut Table, section: &S) -> std::result::Result<(), toml::ser::Error> {
     let Value::Table(fields) = Value::try_from(section)? else { unreachable!("a section serializes to a table") };
@@ -675,16 +675,16 @@ url = "https://workman.example"
         let home = tempfile::tempdir().unwrap();
         assert_eq!(Settings::default().workman.origin(), DEFAULT_WORKMAN_URL);
         assert_eq!(Settings::default().workman.mcp_url(), format!("{DEFAULT_WORKMAN_URL}/mcp"));
-        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://127.0.0.1:5290/mcp\"\n");
-        assert_eq!(s.workman.origin(), "http://127.0.0.1:5290");
-        assert_eq!(s.workman.mcp_url(), "http://127.0.0.1:5290/mcp");
+        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://127.0.0.1:1/mcp\"\n");
+        assert_eq!(s.workman.origin(), "http://127.0.0.1:1");
+        assert_eq!(s.workman.mcp_url(), "http://127.0.0.1:1/mcp");
     }
 
     #[test]
     fn validate_workman_url_keeps_an_origin_and_https_off_this_machine() {
         assert_eq!(validate_workman_url(" https://Work.Supraman.ai/ ").as_deref(), Ok("https://work.supraman.ai"));
         assert_eq!(validate_workman_url("https://work.supraman.ai/mcp").as_deref(), Ok("https://work.supraman.ai"));
-        assert_eq!(validate_workman_url("http://127.0.0.1:5290").as_deref(), Ok("http://127.0.0.1:5290"));
+        assert_eq!(validate_workman_url("http://127.0.0.1:1").as_deref(), Ok("http://127.0.0.1:1"));
         assert_eq!(validate_workman_url("http://localhost:9/api").as_deref(), Ok("http://localhost:9"));
         assert_eq!(validate_workman_url("http://[::1]:9").as_deref(), Ok("http://[::1]:9"));
         for bad in ["work.supraman.ai", "ftp://x", "http://work.supraman.ai", "https://", "https://a b", "https://x:port", "https://u@x"] {

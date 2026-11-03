@@ -13,7 +13,7 @@ use supraman_supervisor::{LaunchConfig, WantedSession};
 
 use crate::{Failure, value};
 
-/// The `FOREMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
+/// The `SUPRAMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
 pub(crate) const RUN_ROLE: &str = "repo";
 
 pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
@@ -623,7 +623,7 @@ fn local_text(t: &DateTime<Local>) -> String {
 }
 
 /// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token; `plugin_dir` is
-/// Foreman's plugin, when found. Dry-run prints it and fire launches it.
+/// Supraman's plugin, when found. Dry-run prints it and fire launches it.
 pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;
@@ -643,15 +643,15 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         resume_prompt: None,
         fork_from: None,
     };
-    let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into(), "Bash(fm:*)".into()]);
+    let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
     let config = LaunchConfig {
         mcp_dir: home.join("mcp"),
         plugin_dirs: plugin_dir.map(Path::to_path_buf).into_iter().collect(),
-        foreman_home: Some(home.to_path_buf()),
+        supraman_home: Some(home.to_path_buf()),
         bg_isolation_none: true,
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
     };
-    let mut spec = config.launch_spec(&w.name, &wanted, &[("FOREMAN_SCHEDULE", &s.id), ("FOREMAN_RUN", &run)]);
+    let mut spec = config.launch_spec(&w.name, &wanted, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
     spec.extra_args.push("--disallowedTools".into());
     spec.extra_args.extend(s.permissions.denied());
@@ -712,7 +712,7 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
             println!("  {}", quoted(&arg.to_string_lossy()));
         }
         println!("mcp config: written at fire with the run's minted token; absent when Supraman is not signed in");
-        let always = plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into(), "Bash(fm:*)".into()]);
+        let always = plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
         println!("permissions: profile {} (--permission-mode {})", s.permissions.profile.as_str(), s.permissions.profile.permission_mode());
         let allowed = s.permissions.allowed(&always, s.action.worktree.then(|| schedule::run_branch(&s.id, &stamp)).as_deref());
         println!("  allow: {}", allowed.join("  "));
@@ -794,7 +794,7 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         _ => return Err(usage()),
     };
     let (all, _) = registry.load_all()?;
-    let preferred = std::env::var("FOREMAN_WORKSPACE").ok();
+    let preferred = std::env::var("SUPRAMAN_WORKSPACE").ok();
     let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
     order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
     for w in order {

@@ -15,12 +15,7 @@ impl Registry {
         Self { home: home.into() }
     }
 
-    /// Refused while the Foreman home is still to be copied ([`crate::home::migrate_default_home`]), so nothing
-    /// starts the new home empty beside it.
     pub fn from_env() -> Result<Self> {
-        if let Some((old, new)) = crate::home::pending_migration() {
-            return Err(CoreError::NotMigrated { old, new });
-        }
         crate::home::home_from_env().map(Self::at).ok_or(CoreError::NoHome)
     }
 

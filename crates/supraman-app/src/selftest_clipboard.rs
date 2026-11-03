@@ -7,9 +7,8 @@ use std::time::{Duration, Instant};
 use gpui::{AsyncWindowContext, ClipboardItem};
 
 const HELD_WITHIN: Duration = Duration::from_secs(60);
-/// The Foreman names too: a selftest of an older build shares the machine and the clipboard.
-const MUTEX: &[&str] = &[r"Local\Supraman-selftest-clipboard", r"Local\Foreman-selftest-clipboard"];
-const MACHINE: &[&str] = &[r"Local\Supraman-selftest", r"Local\Foreman-selftest"];
+const MUTEX: &[&str] = &[r"Local\Supraman-selftest-clipboard"];
+const MACHINE: &[&str] = &[r"Local\Supraman-selftest"];
 const MACHINE_WITHIN: Duration = Duration::from_secs(20 * 60);
 
 /// Held for a whole `--selftest`, `--selftest-supervise` or `--selftest-detach-shutdown`: two runs at once break each other's windows.
@@ -282,30 +281,6 @@ mod tests {
         drop(first);
         let third = take(name);
         assert!(third, "the clipboard stayed held after its holder dropped");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn an_older_build_holding_only_the_foreman_name_keeps_a_new_selftest_out() {
-        let hex = crate::selftest::hex6();
-        let (new, old) = (format!(r"Local\Supraman-selftest-pair-test-{hex}"), format!(r"Local\Foreman-selftest-pair-test-{hex}"));
-        let take_both = |new: String, old: String| {
-            std::thread::spawn(move || {
-                let both = super::Held::open(&[&new, &old]).unwrap();
-                let taken = both.try_take().unwrap();
-                let new_free = std::thread::spawn(move || super::Held::open(&[&new]).unwrap().try_take().unwrap()).join().unwrap();
-                (taken, new_free)
-            })
-            .join()
-            .unwrap()
-        };
-        let older = super::Held::open(&[&old]).unwrap();
-        assert!(older.try_take().unwrap());
-        let (taken, new_free) = take_both(new.clone(), old.clone());
-        assert!(!taken, "took the pair while an older build held its name");
-        assert!(new_free, "a failed take left the Supraman name held");
-        drop(older);
-        assert_eq!(take_both(new, old), (true, false), "the pair is taken once the older build is gone, and held while taken");
     }
 
     #[cfg(windows)]

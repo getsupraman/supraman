@@ -36,7 +36,7 @@ function Set-TabEnv([bool]$force) {
     $env:CLAUDE_CODE_FORCE_SYNC_OUTPUT = '1'
     $env:CLAUDE_CODE_FORCE_STRIKETHROUGH = '1'
     $env:SUPRAMAN_HOME = $home_
-    $env:FOREMAN_HOME = $home_
+    $env:SUPRAMAN_HOME = $home_
     if ($force) { $env:FORCE_HYPERLINK = '1' }
 }
 

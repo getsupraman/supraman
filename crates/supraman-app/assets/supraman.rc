@@ -4,6 +4,6 @@
 2 ICON "tray-on-dark.ico"
 3 ICON "tray-on-light.ico"
 // The application manifest (RT_MANIFEST 24), language-neutral so that it, not gpui's, applies
-// (foreman.manifest): no console window of its own (main.rs release_own_console).
+// (supraman.manifest): no console window of its own (main.rs release_own_console).
 LANGUAGE 0, 0
-1 24 "foreman.manifest"
+1 24 "supraman.manifest"

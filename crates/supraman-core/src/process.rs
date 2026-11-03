@@ -42,7 +42,7 @@ pub enum Kill {
     Child,
 }
 
-/// A child of the app gets no console window of its own: Foreman has no console to share when started
+/// A child of the app gets no console window of its own: Supraman has no console to share when started
 /// from Explorer, and every `claude`, `git` and `icacls` would flash one.
 pub fn no_window(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -385,12 +385,12 @@ mod tests {
             thread::sleep(Duration::from_millis(50));
         }
         assert!(done.exists(), "the child finished on its own");
-        assert!(spawn_detached(&mut command("foreman-no-such-program")).is_err());
+        assert!(spawn_detached(&mut command("supraman-no-such-program")).is_err());
     }
 
     #[test]
     fn a_missing_program_is_a_spawn_error_with_its_kind() {
-        match run(&mut command("foreman-no-such-program"), Duration::from_secs(5), Kill::Tree) {
+        match run(&mut command("supraman-no-such-program"), Duration::from_secs(5), Kill::Tree) {
             Err(RunError::Spawn(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
             other => panic!("{other:?}"),
         }

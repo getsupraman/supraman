@@ -82,7 +82,7 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     let read = fake.seen().into_iter().find(|s| s.target == "/api/v1/overview").unwrap();
     assert!(read.authorization.as_deref().unwrap().starts_with("Bearer eyJ"), "the OAuth access token");
 
-    // no token in any of Foreman's files
+    // no token in any of Supraman's files
     let issued = oauth.issued();
     assert_eq!(issued.len(), 2);
     for (path, text) in files(dir.path()) {

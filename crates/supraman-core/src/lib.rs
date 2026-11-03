@@ -32,7 +32,7 @@ pub use events::{
 };
 pub use model::{Folder, FolderKind, Scan, Workspace, holder_of, owners};
 pub use plugin::{HOOK_EXE, find_plugin_dir, sm_allowed_tools, install_hook_exe};
-pub use home::{HOME_VAR, LEGACY_HOME_VAR, env_home, home_from, home_from_env};
+pub use home::{HOME_VAR, env_home, home_from, home_from_env};
 pub use registry::Registry;
 pub use relay::{
     ANSWERED_FILE, Ask, AskState, DEFAULT_RELAY_IDLE_MS, InboxWatcher, LAST_DROP_FILE, OutboxMessage, READY_FILE, REJECTED_DIR, RelayDrop,

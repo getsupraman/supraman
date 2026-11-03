@@ -201,7 +201,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// `(session, folder, enabled)` for each live session that does not belong to Foreman in a folder just added.
+    /// `(session, folder, enabled)` for each live session that does not belong to Supraman in a folder just added.
     fn live_in(&self, done: &Edited) -> Vec<(String, String, bool)> {
         let now = supraman_claude::now_ms();
         let mut out = Vec::new();

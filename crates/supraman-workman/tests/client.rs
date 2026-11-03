@@ -38,7 +38,7 @@ fn client_overview_decodes_the_fixture() {
     let p = &o.projects[0];
     assert_eq!((p.item.ref_.as_str(), p.item.kind.as_str(), p.item.status), ("autowork", "project", ItemStatus::InProgress));
     assert_eq!((p.rollup.total, p.rollup.done, p.rollup.counted()), (14, 10, 13));
-    assert_eq!(p.runs[0].branch.as_deref(), Some("m4/1-workstate-client"));
+    assert_eq!(p.runs[0].branch.as_deref(), Some("m4/1-workman-client"));
     assert!(p.runs[0].last_verification.as_ref().unwrap().passed);
     assert_eq!((p.runs[1].branch.as_deref(), p.runs[1].last_verification.as_ref()), (None, None));
     assert!(o.projects[1].runs.is_empty());
@@ -79,7 +79,7 @@ fn client_item_and_brief_go_by_item_id() {
     ]);
     let i = c.item(TASK).unwrap();
     assert_eq!(i.path.iter().map(|p| p.ref_.as_str()).collect::<Vec<_>>(), ["autowork", "m4"]);
-    assert_eq!(i.verify_cmd.as_deref(), Some("cargo test -p supraman-workstate"));
+    assert_eq!(i.verify_cmd.as_deref(), Some("cargo test -p supraman-workman"));
     assert_eq!((i.criteria.len(), i.criteria[0].checked, i.criteria[1].evidence.as_deref()), (2, true, None));
     assert_eq!(i.reports[0].red_check.as_deref(), Some("dropped the header check: 2 failed"));
     assert_eq!((i.verifications[0].result_line.as_str(), i.verifications[0].passed), ("Passed! 308", true));

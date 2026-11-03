@@ -1,4 +1,4 @@
-//! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
+//! What every Supraman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! the text input, buttons, banners, fonts, the widgets (menu, confirm, toast, notices, tab strip, hover
 //! card, split pane, matcher, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
 //! selftests print.
@@ -56,14 +56,16 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
 }
 
 /// gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors: to
-/// `<dir>/foreman.log` when it has a log folder, else to stderr.
+/// `<dir>/`[`LOG_FILE`] when it has a log folder, else to stderr.
 pub struct Logger {
     file: Option<PathBuf>,
     /// One writer at a time, so a rotation never races an append.
     write: Mutex<()>,
 }
 
-/// Where a log file rotates: the previous one is kept as `foreman.log.1`, so at most twice this.
+pub const LOG_FILE: &str = "supraman.log";
+
+/// Where a log file rotates: the previous one is kept as `supraman.log.1`, so at most twice this.
 pub const LOG_CAP: u64 = 1024 * 1024;
 
 impl log::Log for Logger {
@@ -96,15 +98,15 @@ impl log::Log for Logger {
 
 /// gpui_windows' VSync thread redraws every window in its list, and a destroyed window leaves that list
 /// only when the message its WM_DESTROY posts is handled; a redraw in between fails on the dead HWND
-/// (0x80070578). Harmless (nothing is drawn) and out of Foreman's reach (LEARNINGS, m5/22).
+/// (0x80070578). Harmless (nothing is drawn) and out of Supraman's reach (LEARNINGS, m5/22).
 pub fn is_vsync_race(target: &str, message: &str) -> bool {
     target == "gpui_windows::platform" && message.starts_with("Invalid window handle") && message.contains("0x80070578")
 }
 
-/// Log lines go to `<dir>/foreman.log` (created here) when `dir` is given, never to a console;
+/// Log lines go to `<dir>/`[`LOG_FILE`] (created here) when `dir` is given, never to a console;
 /// without one, to stderr. Call once.
 pub fn init_logger(dir: Option<&Path>) {
-    let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| dir.join("foreman.log")));
+    let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| dir.join(LOG_FILE)));
     let logger = Box::leak(Box::new(Logger { file, write: Mutex::new(()) }));
     log::set_logger(logger).ok();
     log::set_max_level(log::LevelFilter::Info);
@@ -117,7 +119,7 @@ pub fn log_panics() {
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current();
         let backtrace = std::backtrace::Backtrace::force_capture();
-        log::error!(target: "foreman::panic", "thread '{}' {info}\nbacktrace:\n{backtrace}", thread.name().unwrap_or("<unnamed>"));
+        log::error!(target: "supraman::panic", "thread '{}' {info}\nbacktrace:\n{backtrace}", thread.name().unwrap_or("<unnamed>"));
         previous(info);
     }));
 }

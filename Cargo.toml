@@ -5,7 +5,7 @@ members = ["crates/supraman-core", "crates/supraman-claude", "crates/supraman-su
 [workspace.package]
 license = "GPL-3.0-or-later"
 
-# A panic's backtrace in foreman.log names file:line through the shipped foreman.pdb.
+# A panic's backtrace in supraman.log names file:line through the shipped supraman.pdb.
 [profile.release]
 debug = "line-tables-only"
 

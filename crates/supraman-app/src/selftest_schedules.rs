@@ -62,9 +62,9 @@ async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut 
 }
 
 /// `<name>-dark` in the dark default and `<name>-light` in a light theme planted in the selftest home, when
-/// `FOREMAN_SHOTS` asks.
+/// `SUPRAMAN_SHOTS` asks.
 pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowContext) {
-    if std::env::var_os("FOREMAN_SHOTS").is_none() {
+    if std::env::var_os("SUPRAMAN_SHOTS").is_none() {
         return;
     }
     shot(&format!("{name}-dark"), cx).await;
@@ -117,7 +117,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
         other_task(FOLDER, "Nightly claude", &format!("<Exec><Command>claude.exe</Command><Arguments>-p review</Arguments><WorkingDirectory>{}</WorkingDirectory></Exec>", dir.display()), now),
         other_task(FOLDER, "Loose claude", r"<Exec><Command>pwsh.exe</Command><Arguments>-c claude -p hi</Arguments><WorkingDirectory>C:\selftest-nowhere</WorkingDirectory></Exec>", now),
         other_task(FOLDER, "Backup", r"<Exec><Command>robocopy.exe</Command><Arguments>C:\a D:\a</Arguments></Exec>", now),
-        other_task(r"\Foreman-selftest\x", "own", "<Exec><Command>claude.exe</Command></Exec>", now),
+        other_task(r"\Supraman-selftest\x", "own", "<Exec><Command>claude.exe</Command></Exec>", now),
     ];
     let paths: Vec<String> = planted.iter().map(|t| format!(r"{}\{}", t.folder, t.name)).collect();
     for t in planted {
@@ -137,7 +137,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     })?;
     let (summary, stray) = view.read_with(cx, |v, _| {
         let others = v.others();
-        let stray: Vec<String> = v.hits.borrow().keys().filter(|k| k.starts_with("other-row-") && (k.contains("Backup") || k.contains("Foreman-selftest"))).cloned().collect();
+        let stray: Vec<String> = v.hits.borrow().keys().filter(|k| k.starts_with("other-row-") && (k.contains("Backup") || k.contains("Supraman-selftest"))).cloned().collect();
         (others.of_workspace(WS).first().map(|t| schedules::other_summary(t, now)), stray)
     });
     if !stray.is_empty() {

@@ -75,13 +75,13 @@ pub struct Extras {
     pub prompt: Option<PathBuf>,
 }
 
-/// `name` is the session's `FOREMAN_SESSION`; a cwd outside every workspace gets the home and no role.
+/// `name` is the session's `SUPRAMAN_SESSION`; a cwd outside every workspace gets the home and no role.
 pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name: &str, sm_dir: Option<&Path>) -> Extras {
     let owner = owners(workspaces)
         .get(&path_key(cwd))
         .and_then(|n| workspaces.iter().find(|w| &w.name == n))
         .or_else(|| workspaces.iter().find(|w| w.contains(cwd)));
-    let env = match (owner, &config.foreman_home) {
+    let env = match (owner, &config.supraman_home) {
         (Some(w), _) => {
             let repo = w.folders.iter().find(|f| within(cwd, &f.path)).map(|f| f.name.as_str());
             config.session_env(&w.name, name, HAND_ROLE, repo, &[])
@@ -372,7 +372,7 @@ mod tests {
     }
 
     /// Each `POST` takes the next of `mints`, then mints `h<n>` with `wss_fake<n>`, n counting every `POST`.
-    fn fake_workstate(mints: Vec<(u16, &'static str)>) -> (String, Requests, Arc<FakeAuth>) {
+    fn fake_workman(mints: Vec<(u16, &'static str)>) -> (String, Requests, Arc<FakeAuth>) {
         let ids = 1..=mints.len() + MINTS;
         let fake = FakeWorkman::start(ids.clone().map(|n| (format!("DELETE /api/agent-sessions/h{n}"), Answer::status(204, ""))).collect());
         let queued = mints.iter().map(|(status, body)| Answer::status(*status, *body));
@@ -413,8 +413,8 @@ mod tests {
     #[test]
     fn a_hand_tab_minted_on_another_server_is_told_to_restart_and_left_to_its_grant() {
         let dir = tempfile::tempdir().unwrap();
-        let (a, seen_a, _) = fake_workstate(vec![]);
-        let (b, seen_b, _) = fake_workstate(vec![]);
+        let (a, seen_a, _) = fake_workman(vec![]);
+        let (b, seen_b, _) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&a));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demolpha"), None) else { panic!() };
@@ -445,21 +445,21 @@ mod tests {
         let home = dir.path().join("home");
         std::fs::create_dir_all(home.join("supervisor")).unwrap();
         std::fs::write(Hands::path(&home), r#"{"hand-alpha-1":{"sessionId":"h1","role":"hand"},"hand-beta-1":{"sessionId":"h2","role":"hand"}}"#).unwrap();
-        supraman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        supraman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
         let (_, auth) = home_with(dir.path(), None);
         let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
         assert_eq!(hands.elsewhere("https://b.example"), [
-            ("hand-alpha-1".to_string(), Some("http://127.0.0.1:5290".to_string())),
+            ("hand-alpha-1".to_string(), Some("http://127.0.0.1:1".to_string())),
             ("hand-beta-1".to_string(), None),
         ]);
-        assert!(std::fs::read_to_string(Hands::path(&home)).unwrap().contains("http://127.0.0.1:5290"), "saved");
+        assert!(std::fs::read_to_string(Hands::path(&home)).unwrap().contains("http://127.0.0.1:1"), "saved");
     }
 
     #[test]
     fn hand_mint_carries_the_repo_and_none_outside_a_repo() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, notice) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
@@ -501,7 +501,7 @@ mod tests {
     fn hand_script_carries_the_plugin_flags_after_the_token_and_sm_first_on_path() {
         let extras = Extras {
             args: vec!["--plugin-dir".into(), r"C:\fm\plugins\supraman".into(), "--allowedTools".into(), "Bash(sm:*)".into(), "Bash(C:/o'neil/sm.exe:*)".into()],
-            env: vec![("FOREMAN_ROLE".into(), "hand".into())],
+            env: vec![("SUPRAMAN_ROLE".into(), "hand".into())],
             path: Some(PathBuf::from(r"C:\Tools\supraman")),
             prompt: None,
         };
@@ -516,7 +516,7 @@ mod tests {
         assert!(script.ends_with(&format!("; {resume}{flags} }}")), "the stale branch gets them too: {script}");
         assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{on_path}claude{flags}"));
         assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{on_path}claude{flags}"));
-        assert!(!script.contains("FOREMAN_ROLE"), "the env goes on the PTY, not into the script");
+        assert!(!script.contains("SUPRAMAN_ROLE"), "the env goes on the PTY, not into the script");
     }
 
     #[test]
@@ -548,11 +548,10 @@ mod tests {
         assert_eq!(
             env,
             [
-                ("FOREMAN_HOME", r"C:\fm\home"),
-                ("FOREMAN_REPO", "Alpha"),
-                ("FOREMAN_ROLE", "hand"),
-                ("FOREMAN_SESSION", "hand-Alpha-1"),
-                ("FOREMAN_WORKSPACE", "demo"),
+                ("SUPRAMAN_REPO", "Alpha"),
+                ("SUPRAMAN_ROLE", "hand"),
+                ("SUPRAMAN_SESSION", "hand-Alpha-1"),
+                ("SUPRAMAN_WORKSPACE", "demo"),
                 ("SUPRAMAN_HOME", r"C:\fm\home"),
             ]
             .into()
@@ -564,10 +563,10 @@ mod tests {
         );
 
         let deeper = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha\src"), "René's review", None);
-        assert!(deeper.env.contains(&("FOREMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("FOREMAN_REPO".into(), "Alpha".into())));
+        assert!(deeper.env.contains(&("SUPRAMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("SUPRAMAN_REPO".into(), "Alpha".into())));
         assert_eq!(deeper.path, None);
         let home_only = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo"), "hand-demo", None);
-        assert!(home_only.env.contains(&("FOREMAN_WORKSPACE".into(), "demo".into())) && !home_only.env.iter().any(|(k, _)| k == "FOREMAN_REPO"));
+        assert!(home_only.env.contains(&("SUPRAMAN_WORKSPACE".into(), "demo".into())) && !home_only.env.iter().any(|(k, _)| k == "SUPRAMAN_REPO"));
         let outside = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\elsewhere"), "hand-elsewhere", None);
         assert_eq!(outside.env, home_env(&home).map(|(k, v)| (k.to_string(), v)).to_vec(), "outside every workspace: the home only, no role");
         assert_eq!(outside.args, want);
@@ -576,10 +575,10 @@ mod tests {
 
     #[test]
     fn hand_script_passes_only_the_path_and_no_strict_flag() {
-        let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
+        let config = PathBuf::from(r"C:\Users\o'neil\Supraman\mcp\workstate-hand-alpha-1.json");
         let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
         let script = launch.script();
-        let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
+        let path = "C:\\Users\\o''neil\\Supraman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
             script,
             format!(
@@ -614,7 +613,7 @@ mod tests {
     #[test]
     fn hand_config_file_is_owner_only() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, _seen, _oauth) = fake_workstate(vec![]);
+        let (url, _seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
@@ -637,7 +636,7 @@ mod tests {
     #[test]
     fn hand_token_is_revoked_on_exit_close_quit_and_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -705,7 +704,7 @@ mod tests {
     }
 
     fn slow_hands(dir: &Path, revoke_takes: std::time::Duration) -> (PathBuf, Arc<Mutex<Hands>>, Arc<std::sync::atomic::AtomicUsize>, Arc<Auth>) {
-        let (url, _seen, _oauth) = fake_workstate(vec![]);
+        let (url, _seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir, Some(&url));
         let revoked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let minter = SlowRevokes { revoke_takes, revoked: revoked.clone(), minted: Default::default() };
@@ -752,7 +751,7 @@ mod tests {
     #[test]
     fn deleting_a_resumed_session_revokes_only_its_own_token() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -775,9 +774,9 @@ mod tests {
     }
 
     #[test]
-    fn hand_without_workstate_is_plain_and_mints_nothing() {
+    fn hand_without_workman_is_plain_and_mints_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let (_url, seen, _oauth) = fake_workstate(vec![]);
+        let (_url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), None);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         assert_eq!(hands.launch(Path::new(r"C:\demo\alpha"), None), Launch::Plain);
@@ -789,7 +788,7 @@ mod tests {
     #[test]
     fn hand_with_a_broken_sign_in_opens_it_plain_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, oauth) = fake_workstate(vec![]);
+        let (url, seen, oauth) = fake_workman(vec![]);
         oauth.set_access_ttl(60);
         let (home, auth) = home_with(dir.path(), Some(&url));
         oauth.fail_refresh(true);
@@ -802,7 +801,7 @@ mod tests {
     #[test]
     fn hand_mint_failure_opens_it_plain_with_one_notice() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
@@ -820,7 +819,7 @@ mod tests {
     #[test]
     fn a_saved_session_named_before_slug_names_resumes_under_its_own_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         let folder = Path::new(r"C:\demo\Alpha");
@@ -836,7 +835,7 @@ mod tests {
     #[test]
     fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -883,7 +882,7 @@ mod tests {
     #[test]
     fn hand_name_held_by_another_launcher_falls_back_to_the_generated_one() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
@@ -898,7 +897,7 @@ mod tests {
     #[test]
     fn hand_refused_orchestrator_is_not_minted_as_a_worker() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow")) else { panic!() };

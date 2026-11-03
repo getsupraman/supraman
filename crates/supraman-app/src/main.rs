@@ -52,7 +52,7 @@ mod tray;
 mod updates;
 mod view;
 mod work_view;
-mod workstate_setup;
+mod workman_setup;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -194,19 +194,6 @@ fn release_own_console() {
 #[cfg(not(windows))]
 fn release_own_console() {}
 
-/// Before any window exists: the one way a refused start reaches someone who double-clicked the exe.
-#[cfg(windows)]
-fn alert(text: &str) {
-    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONWARNING, MB_OK, MessageBoxW};
-    use windows::core::HSTRING;
-    unsafe {
-        let _ = MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("Supraman"), MB_OK | MB_ICONWARNING);
-    }
-}
-
-#[cfg(not(windows))]
-fn alert(_text: &str) {}
-
 fn main() {
     supraman_ui::process_start();
     for name in env_scrub(|name| std::env::var(name).ok()) {
@@ -231,43 +218,15 @@ fn main() {
         Mode::App => supraman_core::home_from_env(),
         _ => Some(selftest::home()),
     };
-    let copied_from = match mode {
-        Mode::App if supraman_core::env_home().is_none() => supraman_core::home::legacy_default_home(std::env::var_os("APPDATA")),
-        _ => None,
-    };
     // The old instance holds the home until it quits.
     if let Some(pid) = relaunched.as_ref().and_then(|r| r.after) {
         elevate::wait_for_exit(pid, elevate::AFTER_WITHIN);
     }
-    // Before `prepare`, which clears a home a running selftest may use, before any UAC prompt, and before the copy.
-    let mut acquired = home.as_deref().map(|h| instance::acquire(h, copied_from.as_deref()));
-    if let Some(Ok(Acquired::Legacy(at))) = &acquired {
-        let why = format!("Foreman is running on {}. Quit it (tray, Quit) before starting Supraman.", at.display());
-        println!("{why}");
-        if mode == Mode::App {
-            alert(&why);
-            std::process::exit(0);
-        }
-        std::process::exit(1);
-    }
-    let migrated = match mode {
-        Mode::App if !matches!(acquired, Some(Ok(Acquired::Running))) => match supraman_core::home::migrate_default_home() {
-            Ok(migrated) => migrated,
-            Err(error) => {
-                let why = format!("Supraman could not copy your Foreman home to its own folder, and did not start: {error}");
-                println!("{why}");
-                alert(&why);
-                std::process::exit(1);
-            }
-        },
-        _ => None,
-    };
+    // Before `prepare`, which clears a home a running selftest may use, and before any UAC prompt.
+    let mut acquired = home.as_deref().map(instance::acquire);
     if mode == Mode::App {
         supraman_ui::init_logger(home.as_deref().map(|h| h.join("logs")).as_deref());
         supraman_ui::log_panics();
-    }
-    if let Some(m) = migrated {
-        log::info!("copied {} files of {} to {}", m.files, m.from.display(), m.to.display());
     }
     if let Some(home) = home.as_deref()
         && matches!(acquired, Some(Ok(Acquired::First(_))))
@@ -286,14 +245,14 @@ fn main() {
                     log::warn!("Run as administrator is on, but Supraman runs unelevated: {why}");
                 }
                 if acquired.is_none() {
-                    acquired = Some(instance::acquire(home, copied_from.as_deref()));
+                    acquired = Some(instance::acquire(home));
                 }
             }
         }
     }
     let instance = match acquired {
         Some(Ok(Acquired::First(instance))) => Some(instance),
-        Some(Ok(Acquired::Running | Acquired::Legacy(_))) => {
+        Some(Ok(Acquired::Running)) => {
             let home = home.unwrap_or_default();
             if mode == Mode::App {
                 println!("Supraman is already running for {}: asked it to show its window.", home.display());

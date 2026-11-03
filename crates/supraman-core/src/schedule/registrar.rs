@@ -27,17 +27,6 @@ pub fn task_root_for(home: &Path, default_home: Option<&Path>) -> String {
     root_named("Supraman", home, &[default_home])
 }
 
-/// Where an older build registered this home's tasks: `\Foreman` for the default home (either name),
-/// `\Foreman-<hex8>` for any other. [`sync`] empties it.
-pub fn legacy_task_root(home: &Path) -> String {
-    let appdata = || std::env::var_os("APPDATA");
-    legacy_task_root_for(home, crate::home::default_home(appdata()).as_deref(), crate::home::legacy_default_home(appdata()).as_deref())
-}
-
-pub fn legacy_task_root_for(home: &Path, default_home: Option<&Path>, legacy_default_home: Option<&Path>) -> String {
-    root_named("Foreman", home, &[default_home, legacy_default_home])
-}
-
 fn root_named(name: &str, home: &Path, defaults: &[Option<&Path>]) -> String {
     let key = crate::paths::path_key(home);
     if defaults.iter().flatten().any(|d| crate::paths::path_key(d) == key) {
@@ -99,14 +88,11 @@ pub struct Synced {
     pub updated: Vec<String>,
     pub removed: Vec<String>,
     pub folder_deleted: bool,
-    /// This home's tasks deleted from [`legacy_task_root`]`\<workspace>`.
-    pub legacy_removed: Vec<String>,
 }
 
 /// Makes `<task_root>\<workspace>` hold one task per schedule whose approval verifies and whose status is
 /// active, and nothing else. A task whose [`definition_digest`] matches stays; a changed definition, run
-/// level included, is registered again. Every task in [`legacy_task_root`]`\<workspace>` is deleted, and that folder
-/// and its root when they are left empty. No other task is read or written.
+/// level included, is registered again. No other task is read or written.
 pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspace, schedules: &[Schedule]) -> Result<Synced> {
     let root = task_root(target.home);
     let folder = format!(r"{root}\{}", workspace.name);
@@ -120,7 +106,6 @@ pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspac
         updated: vec![],
         removed: vec![],
         folder_deleted: false,
-        legacy_removed: vec![],
     };
     let mut wanted = BTreeSet::new();
     for s in schedules.iter().filter(|s| s.status == Status::Active) {
@@ -154,15 +139,6 @@ pub fn sync(registrar: &dyn Registrar, target: &SyncTarget, workspace: &Workspac
         if out.folder_deleted {
             registrar.delete_empty_folder(&root)?;
         }
-    }
-    let legacy_root = legacy_task_root(target.home);
-    let legacy = format!(r"{legacy_root}\{}", workspace.name);
-    for (name, _) in registrar.tasks(&legacy)? {
-        registrar.delete(&legacy, &name)?;
-        out.legacy_removed.push(name);
-    }
-    if registrar.delete_empty_folder(&legacy)? {
-        registrar.delete_empty_folder(&legacy_root)?;
     }
     Ok(out)
 }

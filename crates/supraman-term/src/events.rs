@@ -340,7 +340,7 @@ mod tests {
         assert!(is_default_title(none, r"c:\users\me\.local\bin\claude.exe"));
         assert!(is_default_title(Some("pwsh"), "pwsh"));
         assert!(is_default_title(None, r"C:\WINDOWS\system32\CMD.EXE"));
-        // an elevated Foreman
+        // an elevated Supraman
         assert!(is_default_title(
             none,
             r"Administrator: C:\Program Files\WindowsApps\Microsoft.PowerShell_7.6.7.0_x64__8wekyb3d8bbwe\pwsh.exe"

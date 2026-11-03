@@ -1,4 +1,4 @@
-//! The blocking read API v1 client. `GET` only: Foreman never writes to Workman (C21).
+//! The blocking read API v1 client. `GET` only: Supraman never writes to Workman (C21).
 
 use std::fmt;
 use std::sync::Arc;
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn api_base_is_the_mcp_urls_origin() {
-        assert_eq!(api_base("http://127.0.0.1:5290/mcp"), "http://127.0.0.1:5290");
+        assert_eq!(api_base("http://127.0.0.1:1/mcp"), "http://127.0.0.1:1");
         assert_eq!(api_base("http://localhost:9/"), "http://localhost:9");
         assert_eq!(api_base("http://localhost:9"), "http://localhost:9");
         assert_eq!(api_base("https://ws.example?x=/y"), "https://ws.example", "a query is not part of the origin");

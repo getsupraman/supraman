@@ -104,10 +104,10 @@ fn work_overview_resolves_the_workspace_and_prints_its_runs() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines[0], "autowork  Foreman  10/13 done, 1 in progress, 1 blocked, 1 open  (seq 1234, as of 2026-10-26T10:05:00+00:00)");
+    assert_eq!(lines[0], "autowork  Supraman  10/13 done, 1 in progress, 1 blocked, 1 open  (seq 1234, as of 2026-10-26T10:05:00+00:00)");
     assert_eq!(
         lines[1],
-        "  m4  The work browser  1/3 done, 1 in progress, 1 blocked  [in_progress]  branch m4/1-workstate-client  claims 1  inbox 2  last verify pass"
+        "  m4  The work browser  1/3 done, 1 in progress, 1 blocked  [in_progress]  branch m4/1-workman-client  claims 1  inbox 2  last verify pass"
     );
     assert_eq!(lines[2], "  m3  The supervisor  9/10 done, 1 open  [done]");
     assert_eq!(lines[3], "working now");
@@ -134,10 +134,10 @@ fn work_board_picks_the_workspaces_run_among_same_named_ones() {
     let stdout = text(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[0], "m4  The work browser  (autowork)  1/3 done, 1 in progress, 1 blocked  (seq 1234)");
-    assert_eq!(lines[1], "branch m4/1-workstate-client");
+    assert_eq!(lines[1], "branch m4/1-workman-client");
     assert_eq!(
         lines[2],
-        "  1        in_progress 1/4   aw-m4-1          -     supraman-workstate: read API v1 client  (1/1 done)  [unconsumed_notes]"
+        "  1        in_progress 1/4   aw-m4-1          -     supraman-workman: read API v1 client  (1/1 done)  [unconsumed_notes]"
     );
     assert_eq!(lines[3], "    1.1    done        2/2   -                pass  SSE parser");
     assert_eq!(lines[4], "  2        blocked     0/3   -                FAIL  The board view  blocked by m4/1  [done_unverified a_future_flag]");

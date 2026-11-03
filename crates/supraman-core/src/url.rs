@@ -25,8 +25,7 @@ mod tests {
     #[test]
     fn every_origin_the_tests_use_is_unchanged() {
         for (url, want) in [
-            ("http://127.0.0.1:5290/mcp", "http://127.0.0.1:5290"),
-            ("http://127.0.0.1:5290", "http://127.0.0.1:5290"),
+            ("http://127.0.0.1:1/mcp", "http://127.0.0.1:1"),
             ("http://127.0.0.1:1/", "http://127.0.0.1:1"),
             ("http://127.0.0.1:1", "http://127.0.0.1:1"),
             ("http://127.0.0.1:9", "http://127.0.0.1:9"),
@@ -42,9 +41,9 @@ mod tests {
             ("http://work.supraman.ai", "http://work.supraman.ai"),
             ("https://work.supraman.ai", "https://work.supraman.ai"),
             ("https://work.supraman.ai/mcp", "https://work.supraman.ai"),
-            ("https://workstate.example", "https://workstate.example"),
-            ("https://workstate.example/mcp", "https://workstate.example"),
-            ("https://WorkState.Example/mcp", "https://WorkState.Example"),
+            ("https://workman.example", "https://workman.example"),
+            ("https://workman.example/mcp", "https://workman.example"),
+            ("https://Workman.Example/mcp", "https://Workman.Example"),
             ("https://b.example", "https://b.example"),
             ("https://b.example/", "https://b.example"),
             ("https://ws.example", "https://ws.example"),

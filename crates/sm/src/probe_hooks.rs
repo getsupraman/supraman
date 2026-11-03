@@ -32,7 +32,7 @@ const PROMPT_PARK: &str = "This is an automated probe. Run exactly this one Bash
 /// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write.
 const PROMPT_TAGS: &str = "This is an automated probe. Do not use any tool and do not write any file. Look through \
 everything in your context (hook output, system reminders, the conversation summary) for lines that start with \
-FOREMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
+SUPRAMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
 nothing else; if there are none, reply NONE.";
 
 fn prompt_read(round: usize) -> String {
@@ -78,7 +78,7 @@ impl Setup {
 
     /// Writes role text version `v` and returns its tag line.
     fn set_role(&self, hex: &str, v: u32) -> Result<String, String> {
-        let text = format!("You are the Foreman m2/2 probe role, version {v} (run {hex}). Follow the user's probe instructions exactly.");
+        let text = format!("You are the Supraman m2/2 probe role, version {v} (run {hex}). Follow the user's probe instructions exactly.");
         fs::write(self.role_file(), format!("{text}\n")).map_err(|e| format!("write role: {e}"))?;
         Ok(role_tag(ROLE, &text))
     }
@@ -86,7 +86,7 @@ impl Setup {
     fn spec(&self, name: String, cwd: &Path, prompt: &str, extra_env: &[(&str, &str)]) -> LaunchSpec {
         let mut env = serde_json::Map::new();
         env.insert(supraman_core::HOME_VAR.into(), self.home.display().to_string().into());
-        env.insert("FOREMAN_ROLE".into(), ROLE.into());
+        env.insert("SUPRAMAN_ROLE".into(), ROLE.into());
         for (k, v) in extra_env {
             env.insert((*k).into(), (*v).into());
         }
@@ -367,7 +367,7 @@ fn summary(events: Vec<Event>) -> String {
 /// About 80 KB of plain words per file: ~20k tokens, under the Read tool's per-call cap.
 fn big_text(round: usize, file: usize) -> String {
     const WORDS: [&str; 16] = [
-        "foreman", "probe", "context", "window", "compaction", "session", "hook", "event", "ledger", "worker",
+        "supraman", "probe", "context", "window", "compaction", "session", "hook", "event", "ledger", "worker",
         "controller", "signal", "summary", "turn", "budget", "token",
     ];
     let mut out = String::with_capacity(BIG_LINES * 100);

@@ -59,10 +59,9 @@ sha256 against the manifest.
 ```
 Supraman\
   supraman.exe
-  supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in foreman.log
+  supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in supraman.log
   sm.exe                       the CLI controllers and users run
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
-  fm.exe, fmw.exe              copies of sm.exe and smw.exe (see "The fm name" below)
   VERSION                      version, commit, build time (UTC), claude tested / minimum
   SOURCE.txt                   where this build's source is: the tag's (or commit's) tree on GitHub
   THIRD_PARTY.md               the bundled assets and every shipped crate with its licence and source
@@ -72,11 +71,10 @@ Supraman\
     roles\*.md                 role templates
     skills\**
     bin\sm.exe                 the hooks' copy (sm plugin install; the app refreshes it at start)
-    bin\fm.exe                 the same copy under the old name
 ```
 
 The folder is self-contained: it runs from any path, no junction to a repo. Supraman's state stays in
-`%APPDATA%\Supraman` (or `SUPRAMAN_HOME`, else `FOREMAN_HOME`), not in this folder.
+`%APPDATA%\Supraman` (or `SUPRAMAN_HOME`), not in this folder.
 
 ## How the exes find the plugin
 
@@ -129,42 +127,9 @@ The selftests run on a hidden desktop of their own (their first line names it, t
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.
 
-## The fm name
+## Release notes
 
-The CLI is `sm` (`smw` without a console). For one release the old name still works, and every copy runs the same code:
-
-- `plugins\supraman\bin\fm.exe` beside `bin\sm.exe` (`install_hook_exe`): a session started from the previous
-  release runs its hooks through `bin\fm.exe` until it restarts.
-- `sm_allowed_tools` allows `Bash(fm:*)` and the plugin's `bin/fm.exe` next to the `sm` rules, so a session whose
-  prompt, role or skill still says `fm …` runs it without a permission prompt.
-- `fm.exe` and `fmw.exe` beside `sm.exe` and `smw.exe`: a scheduled task registered by the previous release calls
-  `fmw.exe`. The task's definition names `smw.exe` now, so its digest differs and the workspace's next `sync`
-  (Approve, Pause, Resume, Remove) registers it again with `smw.exe`.
-
-All of this is removed in the release after the first one that ships `sm.exe` (its `VERSION` line names it).
-
-## Updating from a Foreman install
-
-A Foreman install (`C:\Tools\foreman`, home `%APPDATA%\Foreman`) stays where it is: sessions it started keep running
-its `plugins\foreman\bin\fm.exe` until they restart. Quit Foreman (tray, Quit) first: Supraman does not start while
-a Foreman runs on its home or on `%APPDATA%\Foreman`, and brings that Foreman's window forward instead. Then extract
-the zip to `C:\Tools\supraman` and start `supraman.exe`.
-
-- **Home.** With neither `SUPRAMAN_HOME` nor `FOREMAN_HOME` set, the first start finds no `%APPDATA%\Supraman` and
-  copies the whole of `%APPDATA%\Foreman` there (settings, registry, supervisor state, minted records, `oauth` with
-  its DPAPI secrets, stars, dismissals, tabs, schedules with their runs and state, logs), writes
-  `migrated-from.toml`, and says so once. The old folder is only read, never moved or deleted. Until that copy
-  exists, `sm` refuses to run on the default home rather than start an empty one.
-- **Tasks.** A workspace's next `sync` (Approve, Pause, Resume, Remove) registers its tasks under `\Supraman\<ws>`
-  (another home: `\Supraman-<hex8>`) and deletes that home's old ones under `\Foreman\<ws>`, then that folder and
-  `\Foreman` itself when they are left empty.
-- **Env.** `SUPRAMAN_HOME` wins over `FOREMAN_HOME`; sessions and schedule scripts get both. The other session
-  variables (`FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION`, `FOREMAN_REPO`, `FOREMAN_SCHEDULE`, `FOREMAN_RUN`,
-  a script's `FOREMAN_*`) keep their names: running sessions and scripts written against them keep working.
-- **Sessions.** A session Foreman started keeps its saved `--settings`, so `FOREMAN_HOME=%APPDATA%\Foreman` stays with it
-  through every resume: its hook events, relay messages and `fm tell` go to the old home, which Supraman does not read.
-  After switching, stop each such session and start it fresh from Supraman (a new conversation, not a resume); until
-  then it shows no status or messages in Supraman.
+- The release after 0.1.5: the old Foreman names are gone: no `fm.exe`/`fmw.exe`, no `FOREMAN_*` env (`FOREMAN_HOME` included; sessions and schedule scripts get `SUPRAMAN_*`), and no copy of `%APPDATA%\Foreman`.
 
 ## How Supraman updates itself
 
@@ -187,7 +152,7 @@ The banner's **Update** (`crate::updates::install_update`) does the whole update
 5. **Apply** (`supraman_core::install::apply`): waits up to 60 s for the pid (still running: nothing changes, nothing
    restarts), takes `<install>\.update.lock`, reads the old release's `FILES`, then for each file of the new release
    stages `<name>.new` and moves it over the target with `MoveFileExW`. A target that refuses (a running exe: sessions'
-   hooks run `plugins\supraman\bin\sm.exe` and `fm.exe` even while Supraman is closed) is renamed to
+   hooks run `plugins\supraman\bin\sm.exe` even while Supraman is closed) is renamed to
    `<name>.old-<stamp>`, listed in `<install>\.old-files` first, and the new one moved in. If even that rename fails,
    every move so far is undone from the journal and its backups (`<home>\updates\<version>\backup\`), the old
    Supraman restarts, and the next start's banner says why (the last `failed:` line of `apply.log`). Files the old

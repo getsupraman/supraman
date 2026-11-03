@@ -1,4 +1,4 @@
-//! One [`Auth`] per Foreman home, shared by the read API, the mints and Settings.
+//! One [`Auth`] per Supraman home, shared by the read API, the mints and Settings.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

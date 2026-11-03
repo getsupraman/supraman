@@ -36,7 +36,7 @@ pub fn parse_daemon_status(text: &str) -> DaemonReach {
     }
 }
 
-/// The Inbox row's text when an unelevated Foreman faces a running service it cannot reach.
+/// The Inbox row's text when an unelevated Supraman faces a running service it cannot reach.
 pub fn elevation_mismatch(elevated: bool, reach: &DaemonReach) -> Option<String> {
     match reach {
         DaemonReach::Unreachable { pid } if !elevated => Some(format!(
@@ -193,7 +193,7 @@ mod tests {
 
     /// The real thing: from an elevated test process that reaches a running service, the same
     /// `claude daemon status` run at Medium IL (`runas /trustlevel:0x20000`, as Explorer would start
-    /// Foreman) is refused, and [`elevation_mismatch`] names it. Skipped unless elevated with a
+    /// Supraman) is refused, and [`elevation_mismatch`] names it. Skipped unless elevated with a
     /// reachable service that was itself started elevated; read-only, it starts and stops nothing.
     #[cfg(windows)]
     #[test]

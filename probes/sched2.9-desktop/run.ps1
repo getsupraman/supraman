@@ -1,6 +1,6 @@
 #Requires -Version 7
 # sched2/9 probe: does `supraman.exe --selftest` work on a hidden desktop that is never switched to?
-# It runs the selftest on its default (hidden) desktop with FOREMAN_SHOTS set, then reports where it ran, whether
+# It runs the selftest on its default (hidden) desktop with SUPRAMAN_SHOTS set, then reports where it ran, whether
 # it passed, whether a selftest window ever had the input desktop's focus, and how many window captures hold real
 # pixels (a black frame means the hidden desktop is not composed).
 # Run from the repo root: pwsh -File probes/sched2.9-desktop/run.ps1 [-Exe <supraman.exe>]
@@ -12,7 +12,7 @@ $shots = Join-Path $scratch 'shots'
 New-Item -ItemType Directory -Force $shots | Out-Null
 $log = Join-Path $scratch 'selftest.log'
 
-$env:FOREMAN_SHOTS = $shots
+$env:SUPRAMAN_SHOTS = $shots
 Remove-Item Env:SUPRAMAN_SELFTEST_VISIBLE -ErrorAction SilentlyContinue
 & $Exe --selftest *> $log
 $code = $LASTEXITCODE

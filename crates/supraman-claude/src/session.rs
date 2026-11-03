@@ -140,7 +140,7 @@ impl Session {
         }
     }
 
-    /// [`Self::health`] for what needs the human: a Foreman session (`fm-…`) on a live pid that is
+    /// [`Self::health`] for what needs the human: a Supraman session (`fm-…`) on a live pid that is
     /// `Blocked` with no `waitingFor` ended a turn that read as a question and waits on a peer's
     /// message, so it is `Idle` (m3/8). A `waitingFor` (a permission prompt) keeps it `Blocked`.
     pub fn supervised_health(&self, now_ms: i64) -> Health {
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_and_idle_with_pid_is_blocked_and_a_foreman_session_idle() {
+    fn blocked_and_idle_with_pid_is_blocked_and_a_supraman_session_idle() {
         let json = format!(
             r#"[{{"id":"aaaa0011","sessionId":"aaaa0011-x","name":"asks","cwd":"C:\\x","kind":"background","startedAt":{NOW},"state":"blocked","status":"idle","pid":27305}}]"#
         );
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(s.health(NOW), Health::Blocked { waiting_for: None }, "a turn that ended asking the human waits on them");
         assert_eq!(s.supervised_health(NOW), Health::Blocked { waiting_for: None });
         s.name = "fm-demo-asks".into();
-        assert_eq!(s.supervised_health(NOW), Health::Idle, "a Foreman session waits on a peer (m3/8)");
+        assert_eq!(s.supervised_health(NOW), Health::Idle, "a Supraman session waits on a peer (m3/8)");
         s.state = Some(SessionState::Done);
         assert_eq!(s.health(NOW), Health::Idle, "a finished turn stays idle");
     }

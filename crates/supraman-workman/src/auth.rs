@@ -1,4 +1,4 @@
-//! Foreman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
+//! Supraman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
 //! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
 //! or a `Debug` output.
 
@@ -348,7 +348,7 @@ impl Auth {
     }
 
     /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
-    /// where Foreman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
+    /// where Supraman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
         self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);
@@ -708,6 +708,7 @@ fn answer(mut stream: TcpStream, status: &str, text: &str) {
     let _ = stream.flush();
 }
 
+#[cfg(feature = "fake")]
 /// Tests and the selftest only: `GET`s the authorize URL, then its redirect passed through `rewrite`.
 pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     move |url: &str| {
@@ -724,6 +725,7 @@ pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Resu
     }
 }
 
+#[cfg(feature = "fake")]
 pub fn http_browser() -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     http_browser_with(|l| l)
 }
@@ -744,7 +746,7 @@ mod tests {
         for (issuer, origin, path) in [
             ("https://ws.example/tenant", "https://ws.example", "/tenant"),
             ("https://ws.example", "https://ws.example", ""),
-            ("http://127.0.0.1:5290/a/b", "http://127.0.0.1:5290", "/a/b"),
+            ("http://127.0.0.1:1/a/b", "http://127.0.0.1:1", "/a/b"),
             ("ws.example/x", "ws.example", "/x"),
         ] {
             assert_eq!(split_origin(issuer), (origin.to_string(), path), "{issuer}");

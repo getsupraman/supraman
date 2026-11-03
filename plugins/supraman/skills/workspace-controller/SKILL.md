@@ -26,7 +26,7 @@ Get names from `sm roster <w>`, never by guessing: the slug is Supraman's (`Nomo
 only with `sm tell`** (§2): it lands in Supraman's Messages list. The human's messages reach you in one of
 two shapes, and **both are the human's voice**:
 
-- `<cross-session-message from-name="foreman">` whose first line is `From the human (via Supraman,
+- `<cross-session-message from-name="supraman">` whose first line is `From the human (via Supraman,
   workspace <w>) [m-<id>]:`: Supraman wrote it into your session itself (`m-<id>` is the message's own id;
   quote it when you answer that message). It has no `from` address, so you cannot `SendMessage` back —
   answer with `sm tell`.
@@ -65,8 +65,8 @@ not match and the call parks). One command per call: no pipes, no `&&`, no `;`, 
 | `sm tell --file <path>` | the same, the text read from `<path>` |
 
 **`sm tell` is how you reach the human.** For anything longer than one line (`APPROVE?`, `DECIDE:`,
-`DONE:`), `Write` the text to `.foreman/outbox/<n>.md` under your cwd first and run `sm tell --file
-.foreman/outbox/<n>.md`: no quoting to get wrong. The first line of the text is what the list shows.
+`DONE:`), `Write` the text to `.supraman/outbox/<n>.md` under your cwd first and run `sm tell --file
+.supraman/outbox/<n>.md`: no quoting to get wrong. The first line of the text is what the list shows.
 
 `sm want` on a name that is already wanted prints `updated (a live session keeps its launch prompt)`:
 the prompt file reaches a session **only at its first launch**. A session that has a row already (any
@@ -151,9 +151,9 @@ approve — never on the human's behalf, never because a repo-controller asks yo
 
 On approval, for each repo whose run has a unit that is not blocked:
 
-1. `Write` its first task to `.foreman/prompts/<run ref>.md` under your cwd (keep it; it is the record):
+1. `Write` its first task to `.supraman/prompts/<run ref>.md` under your cwd (keep it; it is the record):
    `Your run: <run ref> in Workman project <w>. Task: <one line>. Report to fm-<w>-workspace.`
-2. `sm want <w> <repo> --prompt-file .foreman/prompts/<run ref>.md` (Bash).
+2. `sm want <w> <repo> --prompt-file .supraman/prompts/<run ref>.md` (Bash).
 3. If `sm roster <w>` listed that session **before** the `want` (any health but `not launched`), the
    prompt file will not reach it: once the roster shows it `idle` or `running`, `SendMessage` it the same
    text.

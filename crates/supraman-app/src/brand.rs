@@ -122,9 +122,9 @@ mod tests {
         for tray in ["tray-on-dark.ico", "tray-on-light.ico"] {
             assert_eq!(ico_sizes(&assets.join(tray)), square(&[16, 20, 24, 32]), "{tray}");
         }
-        let rc = std::fs::read_to_string(assets.join("foreman.rc")).unwrap();
+        let rc = std::fs::read_to_string(assets.join("supraman.rc")).unwrap();
         for line in [r#"1 ICON "supraman.ico""#, r#"2 ICON "tray-on-dark.ico""#, r#"3 ICON "tray-on-light.ico""#] {
-            assert!(rc.contains(line), "foreman.rc lacks {line}");
+            assert!(rc.contains(line), "supraman.rc lacks {line}");
         }
     }
 }

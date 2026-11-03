@@ -5,11 +5,10 @@
     cargo build --release --workspace, then assembles
 
         <OutDir>\supraman.exe
-        <OutDir>\supraman.pdb                (names the frames of a panic's backtrace in foreman.log)
+        <OutDir>\supraman.pdb                (names the frames of a panic's backtrace in supraman.log)
         <OutDir>\sm.exe, smw.exe
-        <OutDir>\fm.exe, fmw.exe               (copies of sm.exe and smw.exe for one release, docs/RELEASE.md)
         <OutDir>\plugins\supraman\**          (hooks, roles, skills)
-        <OutDir>\plugins\supraman\bin\sm.exe, fm.exe  (the hooks' copies, via sm plugin install)
+        <OutDir>\plugins\supraman\bin\sm.exe         (the hooks' copy, via sm plugin install)
         <OutDir>\VERSION
         <OutDir>\FILES                       (every file of the release: what the next update may remove)
         <OutDir>\SOURCE.txt                 (where this build's source is, GPL-3.0 §6)
@@ -62,8 +61,6 @@ try {
     $plugin = Join-Path $OutDir 'plugins\supraman'
     New-Item -ItemType Directory -Force $plugin | Out-Null
     Copy-Item (Join-Path $built 'supraman.exe'), (Join-Path $built 'supraman.pdb'), (Join-Path $built 'sm.exe'), (Join-Path $built 'smw.exe') $OutDir
-    Copy-Item (Join-Path $built 'sm.exe') (Join-Path $OutDir 'fm.exe')
-    Copy-Item (Join-Path $built 'smw.exe') (Join-Path $OutDir 'fmw.exe')
     # bin/ is the dev tree's own hooks copy (git-ignored); the release gets a fresh one below.
     Get-ChildItem (Join-Path $repo 'plugins\supraman') | Where-Object Name -ne 'bin' |
         Copy-Item -Destination $plugin -Recurse

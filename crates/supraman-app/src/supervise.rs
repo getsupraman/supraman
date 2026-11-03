@@ -33,7 +33,7 @@ pub struct Setup {
 }
 
 pub fn setup(home: &Path) -> Setup {
-    let mut notices: Vec<String> = supraman_core::home::take_migration_notice(home).into_iter().collect();
+    let mut notices: Vec<String> = Vec::new();
     let sm = match supraman_core::install::sm_exe() {
         Ok(sm) => sm,
         Err(e) => {
@@ -257,7 +257,7 @@ pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings:
     LaunchConfig {
         mcp_dir: home.as_deref().map(|h| h.join("mcp")).unwrap_or_default(),
         plugin_dirs: plugin_dirs(plugin_dir, settings),
-        foreman_home: home,
+        supraman_home: home,
         bg_isolation_none: true,
         allowed_tools: plugin_dir.map(sm_allowed_tools).unwrap_or_default(),
     }
@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn launches_get_extra_plugin_dirs_after_foremans_and_the_fm_rules() {
+    fn launches_get_extra_plugin_dirs_after_supramans_and_the_sm_rules() {
         let mut settings = Settings::default();
         settings.sessions.extra_plugin_dirs = vec![r"C:\skills\plugins\rlarch".into()];
         let own = Path::new(r"C:\fm\plugins\supraman");
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(plugin_dirs(None, &Settings::default()), Vec::<PathBuf>::new());
         assert_eq!(
             sm_allowed_tools(own),
-            ["Bash(sm:*)", "Bash(C:/fm/plugins/supraman/bin/sm.exe:*)", "Bash(fm:*)", "Bash(C:/fm/plugins/supraman/bin/fm.exe:*)"]
+            ["Bash(sm:*)", "Bash(C:/fm/plugins/supraman/bin/sm.exe:*)"]
         );
     }
 

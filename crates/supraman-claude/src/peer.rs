@@ -1,5 +1,5 @@
 //! Writing into a session's own message pipe, as another session's `SendMessage` does
-//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Foreman never registers a pipe, a
+//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Supraman never registers a pipe, a
 //! `.json` or a `.key` of its own, so a session cannot answer it there (it answers with `sm tell`).
 //!
 //! Registry: `<pid>.json` (`name`, `messagingSocketPath`, `peerProtocol`, `procStart` = the process
@@ -22,11 +22,11 @@ pub const PEER_PROTOCOL: i64 = 1;
 pub const DELIVER_TIMEOUT: Duration = Duration::from_secs(5);
 /// What the receiver shows as the sender's name; its wrapper is only honoured when it re-renders
 /// byte-identical, which `from-name` alone does (measured, m5/4).
-pub const FROM_NAME: &str = "foreman";
+pub const FROM_NAME: &str = "supraman";
 const CLOSE_TAG: &str = "</cross-session-message>";
 /// Under `cfg(test)`, [`deliver`] writes to no other pipe: a test can never reach a live session.
 #[cfg(test)]
-const TEST_PIPE_PREFIX: &str = r"\\.\pipe\local\cc-msg-foremantest-";
+const TEST_PIPE_PREFIX: &str = r"\\.\pipe\local\cc-msg-supramantest-";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PeerError {
@@ -241,7 +241,7 @@ pub fn wrap(body: &str) -> String {
     format!("<cross-session-message from-name=\"{FROM_NAME}\">\n{body}\n{CLOSE_TAG}")
 }
 
-/// The `user` line: no `from` (Foreman has no inbox to name), no mode.
+/// The `user` line: no `from` (Supraman has no inbox to name), no mode.
 pub fn user_line(content: &str, msg_id: &str) -> String {
     serde_json::json!({
         "type": "user",
@@ -323,7 +323,7 @@ mod tests {
         }
     }
 
-    const PIPE: &str = r"\\.\pipe\LOCAL\cc-msg-foremantest-nobody-serves-this";
+    const PIPE: &str = r"\\.\pipe\LOCAL\cc-msg-supramantest-nobody-serves-this";
 
     fn entry(pid: u32, name: &str, protocol: Option<i64>, start: u64) -> String {
         let mut v = serde_json::json!({
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn the_key_file_name_hashes_the_lowercased_canonical_pipe() {
-        assert_eq!(canonical_pipe(PIPE), r"\\.\pipe\local\cc-msg-foremantest-nobody-serves-this");
+        assert_eq!(canonical_pipe(PIPE), r"\\.\pipe\local\cc-msg-supramantest-nobody-serves-this");
         assert_eq!(canonical_pipe("//./pipe/LOCAL/cc-msg-AB"), r"\\.\pipe\local\cc-msg-ab");
         assert_eq!(canonical_pipe("/tmp/cc-socks-1000/42.sock"), "/tmp/cc-socks-1000/42.sock");
         let name = key_file_name(4242, PIPE);
@@ -439,7 +439,7 @@ mod tests {
         assert!(matches!(deliver(&unix, "hi"), Err(PeerError::Pipe { .. })));
     }
 
-    /// Serves one connection on a fresh `cc-msg-foremantest-…` pipe and returns what it read.
+    /// Serves one connection on a fresh `cc-msg-supramantest-…` pipe and returns what it read.
     #[cfg(windows)]
     fn serve_once(name: &str) -> std::thread::JoinHandle<Vec<u8>> {
         use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -475,7 +475,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn deliver_writes_the_auth_line_then_the_user_line_into_a_pipe_the_test_serves() {
-        let pipe = format!(r"\\.\pipe\LOCAL\cc-msg-foremantest-{}-wire", std::process::id());
+        let pipe = format!(r"\\.\pipe\LOCAL\cc-msg-supramantest-{}-wire", std::process::id());
         let server = serve_once(&pipe);
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(key_file_name(10, &pipe));
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(lines[0], serde_json::json!({"type": "auth", "token": "fixturetoken0001"}));
         assert_eq!(lines[1]["type"], "user");
         assert!(lines[1].get("from").is_none() && !text.contains("from-mode"), "{text}");
-        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"supraman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(text.ends_with('\n'));
     }
 
@@ -513,7 +513,7 @@ mod tests {
         assert!(v.get("from").is_none());
         assert_eq!(v["message"]["role"], "user");
         let content = v["message"]["content"].as_str().unwrap();
-        assert_eq!(content, "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(content, "<cross-session-message from-name=\"supraman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(!line.contains("from-mode") && !line.contains("from=\""), "{line}");
         let token = Token("abc123secret".into());
         assert_eq!(format!("{token:?}"), "Token(<redacted>)");
@@ -561,12 +561,12 @@ mod tests {
 
     #[test]
     fn a_ref_grows_past_six_digits_where_two_refs_share_them() {
-        // both hash to 03c977…: 03c9775f… and 03c9777f…
-        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-foremantest-001414", r"\\.\pipe\LOCAL\cc-msg-foremantest-005046");
-        assert_eq!(&ref_hash(a)[..7], "03c9775");
+        // both hash to 92bdcb…: 92bdcb95… and 92bdcb2f…
+        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-supramantest-000455", r"\\.\pipe\LOCAL\cc-msg-supramantest-006484");
+        assert_eq!(&ref_hash(a)[..7], "92bdcb9");
         let rows = [live(1, "s1", "x", Some(a), 10), live(2, "s2", "x", Some(b), 10)];
-        assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [03c9775]"));
-        assert_eq!(send_name(&rows, "s2").as_deref(), Some("x [03c9777]"));
+        assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [92bdcb9]"));
+        assert_eq!(send_name(&rows, "s2").as_deref(), Some("x [92bdcb2]"));
     }
 
     #[test]

@@ -234,7 +234,7 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
-        Mode::Selftest if std::env::var_os("FOREMAN_SHOTS").is_some() => Duration::from_secs(360),
+        Mode::Selftest if std::env::var_os("SUPRAMAN_SHOTS").is_some() => Duration::from_secs(360),
         Mode::Selftest => Duration::from_secs(200),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(420),
@@ -275,11 +275,11 @@ pub(crate) fn teardown_errors() -> Vec<String> {
 }
 
 pub(crate) fn log_offset() -> u64 {
-    std::fs::metadata(log_dir().join("foreman.log")).map_or(0, |m| m.len())
+    std::fs::metadata(log_dir().join(supraman_ui::LOG_FILE)).map_or(0, |m| m.len())
 }
 
 pub(crate) fn teardown_errors_since(offset: u64) -> Vec<String> {
-    teardown_lines(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default(), offset)
+    teardown_lines(&std::fs::read(log_dir().join(supraman_ui::LOG_FILE)).unwrap_or_default(), offset)
 }
 
 fn teardown_lines(bytes: &[u8], offset: u64) -> Vec<String> {
@@ -928,7 +928,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
                 return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
             }
             (v.loaded && !shown).then(|| {
-                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
+                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, crate::workman_setup::WorkmanStatus::Checking);
                 if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })
@@ -953,17 +953,17 @@ const PAINTED_AFTER_LIST: f64 = 150.0;
 
 /// The startup phase lines in the log, each source's line required; with how long the first list took to paint.
 fn startup_timeline() -> anyhow::Result<(String, f64)> {
-    let log = String::from_utf8_lossy(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default()).into_owned();
+    let log = String::from_utf8_lossy(&std::fs::read(log_dir().join(supraman_ui::LOG_FILE)).unwrap_or_default()).into_owned();
     let phases: Vec<&str> = log.lines().filter_map(|l| l.split_once("] startup ").map(|(_, phase)| phase)).collect();
     let at = |phase: &str| {
         phases.iter().find(|p| p.starts_with(phase)).and_then(|p| p.rsplit_once("(at +")?.1.strip_suffix(" ms)")?.parse::<f64>().ok())
     };
     let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
-        bail!("no list_sessions and first paint lines in foreman.log: {phases:?}");
+        bail!("no list_sessions and first paint lines in supraman.log: {phases:?}");
     };
-    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workstate status done", "every source done"];
+    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workman status done", "every source done"];
     if let Some(missing) = sources.iter().find(|s| at(s).is_none()) {
-        bail!("no \"startup {missing}\" line in foreman.log: {phases:?}");
+        bail!("no \"startup {missing}\" line in supraman.log: {phases:?}");
     }
     Ok((phases.join("; "), painted - listed))
 }

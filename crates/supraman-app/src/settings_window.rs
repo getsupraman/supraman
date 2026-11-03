@@ -16,11 +16,11 @@ use theme::ActiveTheme as _;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
-use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
+use crate::workman_setup::{RECHECK_EVERY, WorkmanStatus};
 
 pub mod page {
     pub const SESSIONS: &str = "sessions";
-    pub const WORKSTATE: &str = "workstate";
+    pub const WORKMAN: &str = "workman";
     pub const PLUGINS: &str = "plugins";
     pub const APPEARANCE: &str = "appearance";
     pub const ABOUT: &str = "about";
@@ -31,7 +31,7 @@ fn pages() -> SettingsPages<SettingsView> {
     let workman = |color| crate::brand::workman(gpui::rems(1.), color).into_any_element();
     SettingsPages::default()
         .register(page(page::SESSIONS, "Sessions", "\u{E7C4}", SettingsView::render_sessions))
-        .register(SettingsPage { mark: Some(workman), ..page(page::WORKSTATE, "Workman", "\u{E753}", SettingsView::render_workstate) })
+        .register(SettingsPage { mark: Some(workman), ..page(page::WORKMAN, "Workman", "\u{E753}", SettingsView::render_workman) })
         .register(page(page::PLUGINS, "Plugins", "\u{EA86}", SettingsView::render_plugins))
         .register(page(page::APPEARANCE, "Appearance", "\u{E790}", SettingsView::render_appearance))
         .register(page(page::ABOUT, "About", "\u{E946}", SettingsView::render_about))
@@ -47,7 +47,7 @@ pub struct SettingsView {
     focus: FocusHandle,
     hits: HitTargets,
     /// As last shown: a change re-reads settings.toml.
-    workstate: WsStatus,
+    workman: WorkmanStatus,
     catalog: Catalog,
     theme_problem: Option<String>,
     theme_picks: u64,
@@ -110,9 +110,9 @@ impl SettingsView {
     fn new(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         if let Some(fleet) = fleet.upgrade() {
             cx.observe(&fleet, |this, fleet, cx| {
-                let workstate = fleet.read(cx).workstate.clone();
-                if this.workstate != workstate {
-                    this.workstate = workstate;
+                let workman = fleet.read(cx).workman.clone();
+                if this.workman != workman {
+                    this.workman = workman;
                     this.reload(cx);
                     cx.notify();
                 } else if [page::ABOUT, page::APPEARANCE].contains(&this.page) {
@@ -121,7 +121,7 @@ impl SettingsView {
             })
             .detach();
         }
-        let workstate = fleet.upgrade().map_or(WsStatus::Checking, |f| f.read(cx).workstate.clone());
+        let workman = fleet.upgrade().map_or(WorkmanStatus::Checking, |f| f.read(cx).workman.clone());
         let url_input = cx.new(|cx| TextInput::new(DEFAULT_WORKMAN_URL, None, window, cx));
         let url_events = cx.subscribe_in(&url_input, window, |this: &mut Self, _, event: &InputEvent, _, cx| match event {
             InputEvent::Confirm => this.apply_url(cx),
@@ -142,7 +142,7 @@ impl SettingsView {
             page,
             focus: cx.focus_handle(),
             hits: HitTargets::default(),
-            workstate,
+            workman,
             catalog: Catalog::default(),
             theme_problem: None,
             theme_picks: 0,
@@ -241,7 +241,7 @@ impl SettingsView {
 
     pub fn apply_url(&mut self, cx: &mut Context<Self>) {
         let text = self.url_input.read(cx).text().to_string();
-        let result = self.fleet.update(cx, |fleet, cx| fleet.set_workstate_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));
+        let result = self.fleet.update(cx, |fleet, cx| fleet.set_workman_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));
         match result {
             Ok(()) => {
                 self.url_error = None;
@@ -322,7 +322,7 @@ impl SettingsView {
             }
             Err(e) => self.error = Some(format!("Cannot save settings.toml: {e}")),
         }
-        self.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
+        self.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
         cx.notify();
     }
 
@@ -421,7 +421,7 @@ impl SettingsView {
         ]
     }
 
-    fn render_workstate(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_workman(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
         let field = div()
@@ -442,7 +442,7 @@ impl SettingsView {
                 if self.settings.workman.url.is_none() { " (the default)" } else { "" }
             ))));
         vec![
-            self.render_workstate_status(cx),
+            self.render_workman_status(cx),
             row(
                 "Server URL",
                 format!(
@@ -458,7 +458,7 @@ impl SettingsView {
         ]
     }
 
-    fn render_workstate_status(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_workman_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let status = cx.theme().status().clone();
         let colors = cx.theme().colors().clone();
         let (signing_in, sign_in_error) = self
@@ -470,21 +470,21 @@ impl SettingsView {
             })
             .unwrap_or_default();
         let url = self.settings.workman.origin();
-        let (text, color) = match (&self.workstate, &self.auth) {
-            (WsStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
-            (WsStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
+        let (text, color) = match (&self.workman, &self.auth) {
+            (WorkmanStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
+            (WorkmanStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
                 (format!("Signed in on {url}, but {why}."), status.warning)
             }
-            (WsStatus::Ready { url, who }, _) => (
+            (WorkmanStatus::Ready { url, who }, _) => (
                 match who {
                     Some(who) => format!("Signed in on {url} as {who}."),
                     None => format!("Signed in on {url}."),
                 },
                 status.success,
             ),
-            (WsStatus::NotSignedIn { .. }, _) => ("Not signed in.".to_string(), status.warning),
-            (WsStatus::SignInAgain { why, .. }, _) => (format!("Sign in again: {why}."), status.warning),
-            (WsStatus::Unreachable { url, error }, Some(AuthStatus::SignedIn { .. })) => {
+            (WorkmanStatus::NotSignedIn { .. }, _) => ("Not signed in.".to_string(), status.warning),
+            (WorkmanStatus::SignInAgain { why, .. }, _) => (format!("Sign in again: {why}."), status.warning),
+            (WorkmanStatus::Unreachable { url, error }, Some(AuthStatus::SignedIn { .. })) => {
                 (format!("Signed in on {url}, but it is unreachable ({error})."), status.error)
             }
             (ws, _) => (ws.problem().unwrap_or_default(), status.error),
@@ -495,7 +495,7 @@ impl SettingsView {
             Some(_) => controls.child(button::small("ws-cancel", "Cancel sign-in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.fleet.update(cx, |fleet, _| fleet.cancel_sign_in()).ok();
             }))),
-            None if self.auth.is_some() && (!held || matches!(self.workstate, WsStatus::SignInAgain { .. })) => {
+            None if self.auth.is_some() && (!held || matches!(self.workman, WorkmanStatus::SignInAgain { .. })) => {
                 controls.child(button::small("ws-signin", "Sign in", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.fleet.update(cx, |fleet, cx| fleet.sign_in(cx)).ok();
                     cx.notify();
@@ -510,7 +510,7 @@ impl SettingsView {
             })));
         }
         controls = controls.child(button::small("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.fleet.update(cx, |fleet, _| fleet.recheck_workstate()).ok();
+            this.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
         })));
         row(
             "Status",
@@ -535,29 +535,29 @@ impl SettingsView {
                     }))
                     .children(sign_in_error.map(|e| div().text_xs().text_color(status.error).child(SharedString::from(e))))
                     .children(
-                        matches!(self.workstate, WsStatus::Unreachable { .. })
-                            .then(|| self.workstate.fix())
+                        matches!(self.workman, WorkmanStatus::Unreachable { .. })
+                            .then(|| self.workman.fix())
                             .flatten()
                             .map(|fix| div().text_xs().child(SharedString::from(fix))),
                     )
-                    .children((url != self.workstate_url()).then(|| div().text_xs().child(SharedString::from(format!("Checking {url}…")))))
+                    .children((url != self.workman_url()).then(|| div().text_xs().child(SharedString::from(format!("Checking {url}…")))))
                     .into_any_element(),
             ),
             cx,
         )
     }
 
-    fn workstate_url(&self) -> String {
-        match &self.workstate {
-            WsStatus::Ready { url, .. } | WsStatus::NotSignedIn { url } | WsStatus::SignInAgain { url, .. } | WsStatus::Unreachable { url, .. } => {
+    fn workman_url(&self) -> String {
+        match &self.workman {
+            WorkmanStatus::Ready { url, .. } | WorkmanStatus::NotSignedIn { url } | WorkmanStatus::SignInAgain { url, .. } | WorkmanStatus::Unreachable { url, .. } => {
                 url.clone()
             }
-            WsStatus::Checking => self.settings.workman.origin(),
+            WorkmanStatus::Checking => self.settings.workman.origin(),
         }
     }
 
-    pub fn workstate(&self) -> &WsStatus {
-        &self.workstate
+    pub fn workman(&self) -> &WorkmanStatus {
+        &self.workman
     }
 
     fn render_about(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -606,7 +606,7 @@ impl SettingsView {
                 .child(crate::brand::supraman(40.))
                 .child(crate::brand::wordmark(22., cx))
                 .into_any_element(),
-            row("Supraman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
+            row("Supraman", "This build.", value("about-supraman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
             row(
                 "Check for updates",
                 "At start and once a day Supraman asks GitHub whether a newer release is published, and shows it above the session list. Off sends no request.",
@@ -638,7 +638,7 @@ impl SettingsView {
             ),
             row(
                 "Supraman home",
-                "SUPRAMAN_HOME, else FOREMAN_HOME, else %APPDATA%\\Supraman: workspaces, desired state, settings.toml, hook events.",
+                "SUPRAMAN_HOME, else %APPDATA%\\Supraman: workspaces, desired state, settings.toml, hook events.",
                 div().max_w(px(300.)).text_xs().text_color(colors.text_muted).child(SharedString::from(home)).into_any_element(),
                 None,
                 cx,
@@ -922,7 +922,7 @@ impl Render for SettingsView {
 #[cfg(test)]
 mod tests {
     use supraman_term::terminal_settings::CAMPBELL;
-    use supraman_ui::themes::{DARK_MODERN, FOREMAN_DARK, hex, palette};
+    use supraman_ui::themes::{DARK_MODERN, SUPRAMAN_DARK, hex, palette};
 
     use super::*;
 
@@ -944,11 +944,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let start = painted(&Settings::default(), home.path());
 
-        Settings::update(home.path(), |s| choose_theme(s, FOREMAN_DARK, TerminalColors::Campbell)).unwrap();
+        Settings::update(home.path(), |s| choose_theme(s, SUPRAMAN_DARK, TerminalColors::Campbell)).unwrap();
         let saved = Settings::load(home.path()).unwrap();
-        assert_eq!((saved.appearance.theme.as_deref(), saved.appearance.terminal_colors.as_deref()), (Some(FOREMAN_DARK), Some("campbell")));
+        assert_eq!((saved.appearance.theme.as_deref(), saved.appearance.terminal_colors.as_deref()), (Some(SUPRAMAN_DARK), Some("campbell")));
         let dark = painted(&saved, home.path());
-        assert_eq!((dark.0.as_str(), dark.2.clone()), (FOREMAN_DARK, hex(gpui::rgb(CAMPBELL[8]).into())));
+        assert_eq!((dark.0.as_str(), dark.2.clone()), (SUPRAMAN_DARK, hex(gpui::rgb(CAMPBELL[8]).into())));
         assert_ne!(dark.1, start.1, "Supraman Dark's panel is not Dark Modern's");
 
         Settings::update(home.path(), |s| choose_theme(s, DARK_MODERN, TerminalColors::Theme)).unwrap();

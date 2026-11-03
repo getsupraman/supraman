@@ -21,6 +21,7 @@ supraman-core = { path = "../supraman-core" }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
 supraman-ui = { path = "../supraman-ui" }
+# `fake`: FakeWorkman serves the --selftest* modes, which ship in supraman.exe and run against the release build.
 supraman-workman = { path = "../supraman-workman", features = ["fake"] }
 futures = "0.3.34"
 log = "0.4"

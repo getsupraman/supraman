@@ -1,4 +1,4 @@
-//! Bounded retention for what sessions leave in the Foreman home: event logs and relay messages.
+//! Bounded retention for what sessions leave in the Supraman home: event logs and relay messages.
 
 use std::fs;
 use std::io::ErrorKind;

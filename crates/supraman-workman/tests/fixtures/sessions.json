@@ -28,7 +28,7 @@
             "ref": "1",
             "qualifiedRef": "m4/1",
             "kind": "task",
-            "title": "supraman-workstate: read API v1 client",
+            "title": "supraman-workman: read API v1 client",
             "status": "in_progress",
             "addedLater": "x"
           },

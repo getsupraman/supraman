@@ -34,11 +34,11 @@ pub(crate) fn raise_ui_thread() -> bool {
     false
 }
 
-/// `FOREMAN_SELFTEST_FRAME_SLEEP_MS=<n>`: every root render sleeps n ms, the red check for these checks.
+/// `SUPRAMAN_SELFTEST_FRAME_SLEEP_MS=<n>`: every root render sleeps n ms, the red check for these checks.
 pub(crate) fn injected_frame_sleep() {
     static SLEEP: OnceLock<Option<Duration>> = OnceLock::new();
     let sleep = SLEEP.get_or_init(|| {
-        std::env::var("FOREMAN_SELFTEST_FRAME_SLEEP_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis)
+        std::env::var("SUPRAMAN_SELFTEST_FRAME_SLEEP_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis)
     });
     if let Some(sleep) = sleep {
         std::thread::sleep(*sleep);

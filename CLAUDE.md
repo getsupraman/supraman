@@ -1,4 +1,4 @@
-# Foreman (AutoWork)
+# Supraman (AutoWork)
 
 Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work runs as a controller queue in Workman project `autowork`; `docs/LEARNINGS.md` holds what each unit found.
 
@@ -37,16 +37,16 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_core::fs::heavy_job_lock`: the machine-wide lock of one heavy job; every selftest mode holds it for its run, and `scripts/heavy-lock.ps1` runs a cargo build or test under the same file, so builds and selftests never overlap.
 - `supraman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `supraman_core::store::{JsonStore, Save}` and `supraman_ui::store::save_off_thread`: a small JSON state file held in memory (stars, the dismissed messages, runs and approvals, the Workman inbox's dismissals): `load` over `load_json_or_notice`, `edit` returns the `Save` of a change, written with `write_atomic` off the UI thread, the newest value last; never a store of your own.
-- `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
+- `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `supraman.log`).
 - `supraman_core::prune::prune`: the one retention rule for event logs and relay files left in the home; never a cleanup of your own.
 - `supraman_core::Settings::update`: every change to `settings.toml` (load, edit, save under `<home>/settings.lock`); `Settings::load_with_notices` when a bad key should be shown.
 - `supraman_core::Settings` sections (`sessions`, `workman`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `supraman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `supraman_workman::secret` re-exports it.
 - `supraman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.
-- `supraman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Foreman session name starts with `fm-`.
+- `supraman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Supraman session name starts with `fm-`.
 - `supraman_core::{name_char, is_session_name, is_safe_id}` (`slug.rs`): the name rules: a typed character of a `validate_name` name (a name field's filter), a session name safe in a file name (`mcp_config_path`), a session id as a file name (event logs).
 - `supraman_core::{discover, rescan, scan}`, the relay files (`send`, `tell`, `inbox_dir`, `outbox_dir`) and the hook events (`append_event`, `EventReader`): shared by `sm` and the app.
-- `supraman_core::home::{home_from_env, env_home, home_env, migrate_default_home, take_migration_notice}` (`HOME_VAR` `SUPRAMAN_HOME`, `LEGACY_HOME_VAR` `FOREMAN_HOME`): the Supraman home, `%APPDATA%\Supraman` by default; `env_home` for a hook's or session's home; `home_env` for a child's env (both names); the one-time copy of `%APPDATA%\Foreman` (the app's start; `Registry::from_env` refuses until it ran). Never read either var yourself.
+- `supraman_core::home::{home_from_env, env_home, home_env}` (`HOME_VAR` `SUPRAMAN_HOME`): the Supraman home, `%APPDATA%\Supraman` by default; `env_home` for a hook's or session's home; `home_env` for a child's env. Never read the var yourself.
 - `supraman_core::paths::{user_home, claude_dir}`: the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `supraman_core::paths::{normalize, path_key, within, git_at, main_checkout, linked_git_dir}`: path comparison (`within` for "this folder or below") and the `.git` file/dir walk without running git (`git_at`: the nearest `.git` at or above a folder; `branch_at`, `main_checkout` and a Details tab's worktree line use it).
 - `supraman_core::paths::pwsh_command`: the file pwsh runs for a bare command name (per `PATH` folder, `.ps1` first, then `PATHEXT`), what a [+] tab's `claude` resolves to.
@@ -59,9 +59,9 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `sm::fire::recover_if_dead`: a live file whose sm is gone, recovered as `interrupted` (stop, never rm; revoke) while no fire holds the lock; the app calls it each poll.
 - `crate::row_details` and `view/details.rs` (supraman-app): a session's and a workspace's Details tab (`TabKind::Details`, `open_details`, one tab per target): `row_details::{session, workspace}` say the facts as `Section`s, the poll refreshes them (`refresh_details`, which also reads `OnDisk`: branch, worktree, transcript), and the actions are the row's menu items run through `run_action`, so the page allows nothing the menu does not.
 - `crate::schedules` and `view/schedules.rs` (supraman-app): the Schedules group, a schedule's Details tab (`TabKind::Schedule`, `open_schedule`, the page's words in `schedules::sections`) with Approve (`approve_shown` → `approve_schedule`, the only `schedule::approve` caller), Run now, the Edit dialog and the schedule Inbox entries (failed runs, and `schedules::waiting` for a pending schedule); the window's `registrar` is `FakeRegistrar` in every selftest.
-- `supraman_core::schedule::{sync, Registrar, WindowsRegistrar, FakeRegistrar, task_xml, task_root}`: every Windows task of a schedule; `sync` makes `\Supraman\<ws>` (another home `\Supraman-<hex8>`) hold the active, approved schedules and nothing else, and empties this home's `legacy_task_root` folder (`\Foreman\<ws>`), never outside them; only the app calls it, after Approve, Pause and Remove (C100); tests and selftests use `FakeRegistrar` (C101). `supraman_claude::task_run_level` gives its run level.
-- `supraman_core::sm_allowed_tools`: the `--allowedTools` rules that keep `sm` (and, for one release, `fm`) from parking, for every Foreman-launched session and scheduled run.
-- `supraman_core::install_hook_exe` (`HOOK_EXE`, `COMPAT_HOOK_EXE`): the plugin's `bin/sm.exe` and its `bin/fm.exe` copy (docs/RELEASE.md, "The fm name").
+- `supraman_core::schedule::{sync, Registrar, WindowsRegistrar, FakeRegistrar, task_xml, task_root}`: every Windows task of a schedule; `sync` makes `\Supraman\<ws>` (another home `\Supraman-<hex8>`) hold the active, approved schedules and nothing else, never outside it; only the app calls it, after Approve, Pause and Remove (C100); tests and selftests use `FakeRegistrar` (C101). `supraman_claude::task_run_level` gives its run level.
+- `supraman_core::sm_allowed_tools`: the `--allowedTools` rules that keep `sm` from parking, for every Supraman-launched session and scheduled run.
+- `supraman_core::install_hook_exe` (`HOOK_EXE`): the plugin's `bin/sm.exe`, the hooks' copy.
 - `supraman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `supraman_core::time::{local, ago, clock, short, near, date_words, rfc3339_local}`: every time shown to the user (`5 min ago`, `09:00`, `Mon 09:00`, `Mon 3 Nov 2026 at 08:00`, a server's RFC 3339 time here); never a `format("%H:%M")` of your own.
 - `supraman_core::hex::{encode, decode}`: bytes as lowercase hex and back (digests, key file names, the approval MAC); never a `{b:02x}` loop of your own.
@@ -77,7 +77,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_claude::mcp_config_path`: the path of a session's Workman config file, with the session-name check; write, read and delete it through this.
 - `supraman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.
 - `supraman_claude::transcript::Usage`: a session's tokens from its transcript (input, output, cache creation and cache reads, each message once), read on incrementally; a scheduled run's token cap.
-- `supraman_supervisor::{AppTokens, bearer, workstate_role}`: the one `TokenProvider` of Foreman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
+- `supraman_supervisor::{AppTokens, bearer, workman_role}`: the one `TokenProvider` of Supraman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
 - `supraman_supervisor::LaunchConfig::launch_spec`: every supervised or scheduled `claude --bg` spec (name, cwd, prompt, mode, strict MCP, plugin dirs, add-dirs, `--settings` env, `--allowedTools`); the caller adds its token and its own flags. `session_env` is that env as pairs and `interactive_args` the plugin and `--allowedTools` flags, for a [+] session (`hand::extras`); `supraman-app` `supervise::launch_config` builds the app's `LaunchConfig` for both.
 - `supraman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `sm want`); `DesiredState::release` stops the sessions of folders taken away (stop, never rm).
 

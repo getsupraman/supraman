@@ -173,7 +173,7 @@ pub fn fire_cmd(args: &[&str], print: bool) -> u8 {
     fired_cmd(args, print, Fired::Task)
 }
 
-/// Run now from the Foreman window: `--home <home> <workspace> <id>`, the path of `sm schedule run`.
+/// Run now from the Supraman window: `--home <home> <workspace> <id>`, the path of `sm schedule run`.
 pub fn run_now_cmd(args: &[&str]) -> u8 {
     fired_cmd(args, false, Fired::RunNow)
 }
@@ -603,7 +603,7 @@ pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, ho
         retry_dead_session(home, workspace, id, &live, now, host);
     }
     let dead: Live = serde_json::from_slice(&fs::read(&live.json).ok()?).ok()?;
-    if fm_alive(&dead) {
+    if sm_alive(&dead) {
         return None;
     }
     let _lock = supraman_core::fs::try_lock_file(&live.lock).ok()??;
@@ -616,7 +616,7 @@ pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, ho
 }
 
 /// The live file's sm runs: its pid is up with the start time it recorded.
-pub fn fm_alive(live: &Live) -> bool {
+pub fn sm_alive(live: &Live) -> bool {
     match (process::started(live.fm_pid), live.fm_started) {
         (Some(now), Some(then)) => now == then,
         (running, _) => running.is_some(),
@@ -729,13 +729,13 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         let mut cmd = script_command(env.folder, script, &s.action.script_args, pwsh);
         cmd.current_dir(env.folder)
             .envs(supraman_core::home::home_env(env.home))
-            .env("FOREMAN_WORKSPACE", env.workspace)
-            .env("FOREMAN_SCHEDULE", env.id)
-            .env("FOREMAN_RUN", env.run)
-            .env("FOREMAN_FOLDER", env.folder)
-            .env("FOREMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
-            .env("FOREMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
-            .env("FOREMAN_STATE_DIR", &state)
+            .env("SUPRAMAN_WORKSPACE", env.workspace)
+            .env("SUPRAMAN_SCHEDULE", env.id)
+            .env("SUPRAMAN_RUN", env.run)
+            .env("SUPRAMAN_FOLDER", env.folder)
+            .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
+            .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
+            .env("SUPRAMAN_STATE_DIR", &state)
             .envs(secrets.iter().map(|(k, v)| (k, v)));
         ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
         let missing_pwsh = matches!(&ran, Err(e) if e.kind() == std::io::ErrorKind::NotFound);

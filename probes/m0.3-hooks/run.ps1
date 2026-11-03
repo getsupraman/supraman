@@ -96,7 +96,7 @@ try {
     # Phase 3: compact non-interactively, then ask for the nonce.
     Invoke-Resume $sid '/compact' | Out-Null
     $compactStart = Get-Events | Where-Object { $_.event -eq 'SessionStart' -and $_.payload.source -eq 'compact' } | Select-Object -Last 1
-    $reply = Invoke-Resume $sid 'List every FOREMAN-NONCE value present in your context, each with the SessionStart source it says it came from. Reply with text only, use no tools.'
+    $reply = Invoke-Resume $sid 'List every SUPRAMAN-NONCE value present in your context, each with the SessionStart source it says it came from. Reply with text only, use no tools.'
 
     $events = Get-Events
     $counts = $events | Group-Object event | ForEach-Object { "$($_.Name)=$($_.Count)" }

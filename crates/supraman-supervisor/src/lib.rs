@@ -41,7 +41,7 @@
 //! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
 //! minus this home's live `fm-` rows that are mid-turn ([`mid_turn`]: `status=busy`, not `state=working`), minus
 //! every wanted session still settling after a start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot.
-//! Another home's rows ([`is_foreign`]) take no slot: two Foremans do not share a budget. Tests
+//! Another home's rows ([`is_foreign`]) take no slot: two Supramans do not share a budget. Tests
 //! `two_started_workspaces_never_exceed_the_shared_budget_together`, `another_homes_busy_sessions_take_no_slot`.
 //!
 //! # Failures
@@ -61,7 +61,7 @@
 //! [`Supervisor::hold`] (the app's check before launching), or a launch failing with
 //! [`Failure::DaemonUnreachable`] that [`supraman_claude::daemon_mismatch`] confirms, holds every launch and
 //! resume of the workspace behind one `LaunchFailed` Inbox row (Restart as administrator). Tests
-//! `an_unreachable_service_foreman_cannot_reach_holds_with_one_row`,
+//! `an_unreachable_service_supraman_cannot_reach_holds_with_one_row`,
 //! `a_hold_from_the_apps_check_comes_before_any_launch`.
 
 mod budget;
@@ -86,4 +86,4 @@ pub use mint::{HttpMinter, MintError, MintRepo, MintRequest, Minted, MintedSessi
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};
 pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};
-pub use tokens::{AppTokens, bearer, workstate_role};
+pub use tokens::{AppTokens, bearer, workman_role};

@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, SupervisorError};
 
-/// What the human asked for on one workspace. Persisted at `<FOREMAN_HOME>/supervisor/<workspace>.toml`.
+/// What the human asked for on one workspace. Persisted at `<SUPRAMAN_HOME>/supervisor/<workspace>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesiredState {
     pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
     pub started: bool,
-    /// Names Foreman stopped wanting (`sm unwant`): a live row with one is stopped, never launched or
+    /// Names Supraman stopped wanting (`sm unwant`): a live row with one is stopped, never launched or
     /// resumed. A name wanted again leaves this list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired: Vec<String>,
@@ -83,7 +83,7 @@ pub fn relay_session_name(workspace: &str) -> String {
 }
 
 /// An `fm-` session this home neither wants (`wanted`: the names in its desired states) nor names
-/// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's.
+/// (`fm-<workspace>-…` of one of `workspaces`): another `SUPRAMAN_HOME`'s, e.g. a selftest's.
 pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>, mut wanted: impl Iterator<Item = &'a str>) -> bool {
     name.starts_with(FM_PREFIX) && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
 }
@@ -94,7 +94,7 @@ pub fn is_relay<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>) -
 }
 
 /// `fm-<workspace>-relay`: cwd = the workspace root (trusted: the workspace session runs there),
-/// `--add-dir` its relay dir (`<FOREMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
+/// `--add-dir` its relay dir (`<SUPRAMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
 /// on resume told to re-arm.
 pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl Into<PathBuf>, prompt: impl Into<String>) -> WantedSession {
     WantedSession {
@@ -142,14 +142,14 @@ pub fn adopted_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, pro
     })
 }
 
-/// What the copy of an adopted session is told: the role itself comes with its start (`sm hook`'s FOREMAN-ROLE).
+/// What the copy of an adopted session is told: the role itself comes with its start (`sm hook`'s SUPRAMAN-ROLE).
 pub fn adopt_prompt(workspace: &str, w: &WantedSession) -> String {
     let what = match &w.repo {
         Some(repo) => format!("the {} session for {repo} in the Supraman workspace {workspace}", w.role),
         None => format!("the {} session of the Supraman workspace {workspace}", w.role),
     };
     format!(
-        "Supraman adopted this conversation: from now on you are {}, {what}, supervised by Supraman. Follow the FOREMAN-ROLE instructions of this session's start as after a resume.",
+        "Supraman adopted this conversation: from now on you are {}, {what}, supervised by Supraman. Follow the SUPRAMAN-ROLE instructions of this session's start as after a resume.",
         w.name
     )
 }
@@ -257,7 +257,7 @@ impl DesiredState {
         }
     }
 
-    /// The permission mode Foreman launches the wanted session `name` with, if it wants one: what
+    /// The permission mode Supraman launches the wanted session `name` with, if it wants one: what
     /// `supraman_claude::human` needs to know before it writes into that session's pipe.
     pub fn launch_mode(home: &Path, workspace: &str, name: &str) -> Option<String> {
         let desired = Self::load(home, workspace).ok()??;
@@ -294,7 +294,7 @@ impl DesiredState {
         }
     }
 
-    /// `<FOREMAN_HOME>/supervisor/<workspace>.lock`, held by [`DesiredState::update`].
+    /// `<SUPRAMAN_HOME>/supervisor/<workspace>.lock`, held by [`DesiredState::update`].
     pub fn lock_path(home: &Path, workspace: &str) -> Result<PathBuf> {
         Ok(Self::path(home, workspace)?.with_extension("lock"))
     }
@@ -346,7 +346,7 @@ pub fn render_repo_role(template: &str, workspace: &str, repo: &str) -> String {
     render_role(&template.replace("{repo}", repo), workspace)
 }
 
-/// `{sm}` (this build's `sm.exe`) and `{home}` (`FOREMAN_HOME`) filled in, forward slashes: a role's
+/// `{sm}` (this build's `sm.exe`) and `{home}` (`SUPRAMAN_HOME`) filled in, forward slashes: a role's
 /// commands may run under Git Bash (m0/4). `{workspace}`/`{repo}` stay for [`render_role`] and the hook.
 pub fn fill_paths(template: &str, sm: &Path, home: &Path) -> String {
     let forward = |p: &Path| p.display().to_string().replace('\\', "/");
@@ -598,7 +598,7 @@ mod tests {
         let adopted = adopted_session("demo", "Alpha", r"C:\demo\Alpha", "p", from).unwrap();
         assert_eq!((adopted.name.as_str(), adopted.role.as_str(), adopted.fork_from.as_deref()), ("fm-demo-alpha", REPO_ROLE, Some(from)));
         let prompt = adopt_prompt("demo", &adopted);
-        assert!(prompt.contains("fm-demo-alpha") && prompt.contains("Alpha") && prompt.contains("FOREMAN-ROLE"), "{prompt}");
+        assert!(prompt.contains("fm-demo-alpha") && prompt.contains("Alpha") && prompt.contains("SUPRAMAN-ROLE"), "{prompt}");
         let (saved, _) = DesiredState::update(home.path(), "demo", |d| d.want(adopted.clone())).unwrap();
         assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(saved.clone()));
         let mut d = saved;

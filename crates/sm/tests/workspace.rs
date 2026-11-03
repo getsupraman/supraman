@@ -184,25 +184,3 @@ fn a_workspace_made_empty_takes_folders_a_home_and_scans_and_shows_kind_and_owne
     }
     assert!(!home.join("workspaces").join("x.toml").exists(), "a refused new writes nothing");
 }
-
-#[test]
-fn the_default_home_is_refused_until_the_foreman_home_is_copied() {
-    let appdata = tempfile::tempdir().unwrap();
-    fs::create_dir_all(appdata.path().join("Foreman").join("workspaces")).unwrap();
-    let run = || {
-        supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
-            .args(["workspace", "list"])
-            .env_remove("SUPRAMAN_HOME")
-            .env_remove("FOREMAN_HOME")
-            .env("APPDATA", appdata.path())
-            .output()
-            .unwrap()
-    };
-    let out = run();
-    assert_ne!(out.status.code(), Some(0), "{out:?}");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("start Supraman once"), "{out:?}");
-    assert!(!appdata.path().join("Supraman").exists(), "sm never starts an empty home beside the old one");
-
-    supraman_core::home::migrate_home(&appdata.path().join("Foreman"), &appdata.path().join("Supraman")).unwrap().unwrap();
-    assert_eq!(run().status.code(), Some(0));
-}

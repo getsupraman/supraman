@@ -58,24 +58,24 @@ pub trait TokenProvider {
 /// session gets the role's Workman server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
-    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
+    /// `<SUPRAMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `SUPRAMAN_HOME` and `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its
-    /// name, what `sm tell` signs with) and `FOREMAN_REPO` for a repo session, through
+    /// Passed to the session as `SUPRAMAN_HOME`, with `SUPRAMAN_ROLE`, `SUPRAMAN_WORKSPACE`, `SUPRAMAN_SESSION` (its
+    /// name, what `sm tell` signs with) and `SUPRAMAN_REPO` for a repo session, through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
-    pub foreman_home: Option<PathBuf>,
+    pub supraman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
     /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
     pub bg_isolation_none: bool,
-    /// `--allowedTools`: permission rules every session gets, so `sm` (Foreman's CLI, run by controllers
+    /// `--allowedTools`: permission rules every session gets, so `sm` (Supraman's CLI, run by controllers
     /// themselves) never parks for permission (m3/2: `Bash(sm:*)` matched; PowerShell rules did not).
     pub allowed_tools: Vec<String>,
 }
 
 impl LaunchConfig {
     /// The `claude --bg` of `w` in `workspace`, before its Workman token: what the supervisor launches and
-    /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `FOREMAN_*` env.
+    /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `SUPRAMAN_*` env.
     pub fn launch_spec(&self, workspace: &str, w: &WantedSession, env: &[(&str, &str)]) -> LaunchSpec {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
         spec.permission_mode = w.permission_mode.clone();
@@ -102,15 +102,15 @@ impl LaunchConfig {
         plugins.chain(self.allowed_tools_args()).collect()
     }
 
-    /// The session's `SUPRAMAN_HOME`/`FOREMAN_HOME` and `FOREMAN_*` vars; empty without a home.
+    /// The session's `SUPRAMAN_HOME` and `SUPRAMAN_*` vars; empty without a home.
     pub fn session_env(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
-        let Some(home) = &self.foreman_home else {
+        let Some(home) = &self.supraman_home else {
             return Vec::new();
         };
         let mut env: Vec<(String, String)> =
-            [("FOREMAN_ROLE", role), ("FOREMAN_WORKSPACE", workspace), ("FOREMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
+            [("SUPRAMAN_ROLE", role), ("SUPRAMAN_WORKSPACE", workspace), ("SUPRAMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
         env.extend(supraman_core::home::home_env(home).map(|(k, v)| (k.to_string(), v)));
-        env.extend(repo.map(|r| ("FOREMAN_REPO".to_string(), r.to_string())));
+        env.extend(repo.map(|r| ("SUPRAMAN_REPO".to_string(), r.to_string())));
         for (k, v) in extra {
             env.retain(|(have, _)| have != k);
             env.push((k.to_string(), v.to_string()));
@@ -125,8 +125,9 @@ impl LaunchConfig {
 
     fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
         let mut settings = serde_json::Map::new();
-        let env = self.session_env(workspace, name, role, repo, extra);
+        let mut env = self.session_env(workspace, name, role, repo, extra);
         if !env.is_empty() {
+            env.extend(sm_first_path());
             let env: serde_json::Map<String, serde_json::Value> = env.into_iter().map(|(k, v)| (k, v.into())).collect();
             settings.insert("env".into(), env.into());
         }
@@ -135,6 +136,13 @@ impl LaunchConfig {
         }
         (!settings.is_empty()).then(|| serde_json::Value::Object(settings).to_string())
     }
+}
+
+/// A background session's `PATH`: the folder of the `sm` beside this exe first, so its `sm` is this build's.
+fn sm_first_path() -> Option<(String, String)> {
+    let dir = supraman_core::install::exe_dir().ok()?;
+    let rest = std::env::var("PATH").unwrap_or_default();
+    Some(("PATH".to_string(), format!("{};{rest}", dir.display())))
 }
 
 /// One workspace's supervisor: desired state + memory, driven by [`Supervisor::tick`].
@@ -160,7 +168,7 @@ pub struct Supervisor<L, T> {
     /// Resumes whose output named no id ([`Resumed::Unknown`]): (name, id, when), settled against the
     /// next snapshots ([`Self::confirm_resumes`]).
     unconfirmed: Vec<(String, String, Millis)>,
-    /// The server Foreman is signed in to, as [`Self::server_changed`] last saw it.
+    /// The server Supraman is signed in to, as [`Self::server_changed`] last saw it.
     origin: Option<String>,
     /// The server [`Self::server_changed`] last scheduled re-mints for.
     checked: Option<String>,
@@ -173,9 +181,9 @@ pub struct Supervisor<L, T> {
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// Mints session tokens over HTTP ([`HttpMinter`]); the minted sessions are kept at
-    /// [`MintedSessions::path`] when `config.foreman_home` is set.
+    /// [`MintedSessions::path`] when `config.supraman_home` is set.
     pub fn new(desired: DesiredState, config: LaunchConfig, launcher: L, tokens: T) -> Self {
-        let path = config.foreman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
+        let path = config.supraman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
         let mut notices = Vec::new();
         let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
             let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
@@ -271,7 +279,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// The server Foreman is signed in to (`None`: not signed in), on every tick. The first time it is
+    /// The server Supraman is signed in to (`None`: not signed in), on every tick. The first time it is
     /// `origin`, every wanted session minted elsewhere (or on an unknown server) is stopped at the next
     /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
     /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
@@ -543,7 +551,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .collect();
         for (name, session_id) in landed {
             self.desired.forked(&name, &session_id);
-            if let Some(home) = &self.config.foreman_home
+            if let Some(home) = &self.config.supraman_home
                 && let Err(e) = DesiredState::update(home, &self.desired.workspace, |d| d.forked(&name, &session_id))
             {
                 self.notices.push(format!("Cannot record that {name} continues as {session_id}: {e}"));
@@ -791,7 +799,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 }
 
 /// What `w` tells Workman about itself: its name, `foreman/<workspace>` as launcher, the repo in its
-/// origin, its cwd and Foreman role.
+/// origin, its cwd and Supraman role.
 pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
     let launched_by = format!("foreman/{workspace}");
     SessionIdentity {
@@ -803,7 +811,7 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
         },
         launched_by,
         cwd: w.cwd.display().to_string(),
-        foreman_role: w.role.clone(),
+        supraman_role: w.role.clone(),
     }
 }
 
@@ -930,7 +938,7 @@ mod tests {
 
     fn static_token() -> Option<RoleToken> {
         Some(RoleToken {
-            url: "http://127.0.0.1:5290/mcp".into(),
+            url: "http://127.0.0.1:1/mcp".into(),
             token: STATIC.into(),
             role: String::new(),
         })
@@ -1082,7 +1090,7 @@ mod tests {
         assert_eq!(
             minter.take(),
             [MintCall::Mint {
-                base: "http://127.0.0.1:5290".into(),
+                base: "http://127.0.0.1:1".into(),
                 bearer: STATIC.into(),
                 request: MintRequest {
                     name: "fm-demo-workspace".into(),
@@ -1100,7 +1108,7 @@ mod tests {
         let text = config_text(&mcp, "fm-demo-workspace");
         assert!(!text.contains(STATIC), "the static token never reaches the file: {text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:5290/mcp");
+        assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:1/mcp");
         assert_eq!(v["mcpServers"]["workman"]["headers"], serde_json::json!({ "Authorization": "Bearer wss_fake1" }));
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 5 * SECOND), []);
@@ -1201,14 +1209,14 @@ mod tests {
         sup.launcher().take();
         minter.take();
 
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "minted there");
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "minted there");
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
         assert!(sup.server_changed(None).is_empty(), "not signed in: nothing to mint with");
         assert_eq!(
-            sup.server_changed(Some("https://workstate.example")),
-            [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:5290".to_string()))]
+            sup.server_changed(Some("https://workman.example")),
+            [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:1".to_string()))]
         );
-        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "once");
+        assert!(sup.server_changed(Some("https://workman.example")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "the live row is stopped");
         let stopped = row(SessionState::Stopped, None, None);
@@ -1217,14 +1225,14 @@ mod tests {
         assert!(matches!(calls.as_slice(), [Call::Resume { session_id, .. }] if *session_id == stopped.session_id), "{calls:?}");
         match minter.take().as_slice() {
             [MintCall::Mint { base, request, .. }] => {
-                assert_eq!(base, "https://workstate.example");
+                assert_eq!(base, "https://workman.example");
                 assert!(request.replace);
                 assert_eq!(request.claude_session_id, Some(stopped.session_id.clone()));
             }
             other => panic!("{other:?}"),
         }
         let text = config_text(&mcp, "fm-demo-workspace");
-        assert!(text.contains("https://workstate.example/mcp") && text.contains("wss_fake2"), "{text}");
+        assert!(text.contains("https://workman.example/mcp") && text.contains("wss_fake2"), "{text}");
     }
 
     /// A supervisor of `home` whose sessions file holds `json`, with the static role token.
@@ -1234,7 +1242,7 @@ mod tests {
         std::fs::write(&path, json).unwrap();
         let mut desired = DesiredState::workspace_controller("demo", r"C:\demo\cwd", "be the controller");
         desired.started = true;
-        let config = LaunchConfig { mcp_dir: home.join("mcp"), foreman_home: Some(home.into()), ..LaunchConfig::default() };
+        let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.into()), ..LaunchConfig::default() };
         let minter = FakeMinter::default();
         let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None))
             .with_minter(minter.clone())
@@ -1264,8 +1272,8 @@ mod tests {
         let live = row(SessionState::Working, Some(Status::Busy), Some(1));
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting_from(dir.path(), OLD);
-        assert_eq!(sup.server_changed(Some("http://127.0.0.1:5290")), [("fm-demo-workspace".to_string(), None)], "no config file: unknown");
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "once");
+        assert_eq!(sup.server_changed(Some("http://127.0.0.1:1")), [("fm-demo-workspace".to_string(), None)], "no config file: unknown");
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]));
         minter.take();
@@ -1274,16 +1282,16 @@ mod tests {
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
         let calls = minter.take();
         assert!(matches!(calls.as_slice(), [MintCall::Mint { .. }]), "{calls:?}");
-        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:5290"), "recorded now");
+        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "recorded now");
 
         let dir = tempfile::tempdir().unwrap();
-        supraman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        supraman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
         let (mut sup, _) = minting_from(dir.path(), OLD);
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "its config file already names the server");
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "its config file already names the server");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
         assert_eq!(sup.launcher().take(), []);
         let saved = std::fs::read_to_string(MintedSessions::path(dir.path(), "demo")).unwrap();
-        assert!(saved.contains(r#""origin": "http://127.0.0.1:5290""#), "{saved}");
+        assert!(saved.contains(r#""origin": "http://127.0.0.1:1""#), "{saved}");
     }
 
     #[test]
@@ -1294,9 +1302,9 @@ mod tests {
         sup.tick(&[], &mut free(), NOW);
         sup.launcher().take();
         minter.take();
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
         // checked while its row was not live: nothing to stop, and then it shows live with the old token
-        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        assert_eq!(sup.server_changed(Some("https://workman.example")).len(), 1);
         sup.tick(&[], &mut free(), NOW + SECOND);
         sup.launcher().take();
         let live = row(SessionState::Working, Some(Status::Busy), Some(1));
@@ -1304,7 +1312,7 @@ mod tests {
         let other: Vec<_> = needs.iter().filter(|n| n.kind == NeedsKind::OtherServer).collect();
         let [need] = other.as_slice() else { panic!("{needs:?}") };
         assert_eq!(need.action, Some(Remedy::Remint { id: live.id.clone() }));
-        assert!(need.detail.contains("http://127.0.0.1:5290") && need.detail.contains("https://workstate.example"), "{}", need.detail);
+        assert!(need.detail.contains("http://127.0.0.1:1") && need.detail.contains("https://workman.example"), "{}", need.detail);
         assert!(minter.take().is_empty(), "no PATCH of the old server's session on the new one");
 
         sup.retry("fm-demo-workspace");
@@ -1322,7 +1330,7 @@ mod tests {
     fn mint_without_a_bearer_now_fails_the_launch_with_why() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
-        sup.tokens_mut().1 = Some("sign in to Workman at http://127.0.0.1:5290 again: the server refused the refresh (invalid_grant)".into());
+        sup.tokens_mut().1 = Some("sign in to Workman at http://127.0.0.1:1 again: the server refused the refresh (invalid_grant)".into());
         let needs = sup.tick(&[], &mut free(), NOW);
         assert!(sup.launcher().take().is_empty(), "nothing launched without Workman");
         assert!(minter.take().is_empty());
@@ -1439,7 +1447,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
         sup.tick(&[], &mut free(), NOW);
-        minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:5290".into(), reason: "refused".into() });
+        minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:1".into(), reason: "refused".into() });
         sup.desired.started = false;
         sup.tick(&[], &mut free(), NOW + SECOND);
         let notices = sup.take_notices();
@@ -1453,7 +1461,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
-        sup.config.foreman_home = Some(home.clone());
+        sup.config.supraman_home = Some(home.clone());
         let config = sup.config.clone();
         sup.tick(&[], &mut free(), NOW);
         // no persistence without a home at construction: rebuild the way the app does
@@ -1565,7 +1573,7 @@ mod tests {
     fn session_gets_its_env_isolation_and_permission_mode_through_settings() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
-        sup.config.foreman_home = Some(r"C:\fm\home".into());
+        sup.config.supraman_home = Some(r"C:\fm\home".into());
         sup.config.bg_isolation_none = true;
         sup.config.allowed_tools = vec!["Bash(sm:*)".into(), "Bash(C:/fm/bin/sm.exe:*)".into()];
         sup.desired.sessions[0].permission_mode = "default".into();
@@ -1578,13 +1586,16 @@ mod tests {
         assert_eq!(at("--permission-mode").as_deref(), Some("default"));
         let tools = argv.iter().position(|a| a == "--allowedTools").unwrap();
         assert_eq!(argv[tools + 1..tools + 4], ["Bash(sm:*)", "Bash(C:/fm/bin/sm.exe:*)", "--"]);
-        let settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
+        let mut settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
+        let path = settings["env"].as_object_mut().unwrap().remove("PATH").expect("the session's PATH");
+        let first = path.as_str().unwrap().split(';').next().unwrap().to_string();
+        assert_eq!(first, supraman_core::install::exe_dir().unwrap().display().to_string(), "the sm beside this exe comes first");
         assert_eq!(
             settings,
             serde_json::json!({
                 "env": {
-                    "SUPRAMAN_HOME": r"C:\fm\home", "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "workspace", "FOREMAN_WORKSPACE": "demo",
-                    "FOREMAN_SESSION": "fm-demo-workspace",
+                    "SUPRAMAN_HOME": r"C:\fm\home", "SUPRAMAN_ROLE": "workspace", "SUPRAMAN_WORKSPACE": "demo",
+                    "SUPRAMAN_SESSION": "fm-demo-workspace",
                 },
                 "worktree": { "bgIsolation": "none" }
             })
@@ -1878,10 +1889,10 @@ mod tests {
         }
     }
 
-    /// An unelevated Foreman facing an elevated service gets one row saying why, at once, and
+    /// An unelevated Supraman facing an elevated service gets one row saying why, at once, and
     /// no more launches — not five 45 s failures.
     #[test]
-    fn an_unreachable_service_foreman_cannot_reach_holds_with_one_row() {
+    fn an_unreachable_service_supraman_cannot_reach_holds_with_one_row() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path()).with_daemon_check(|| Some("runs as administrator".into()));
         sup.launcher.errors.borrow_mut().push(unreachable());
@@ -2035,13 +2046,13 @@ mod tests {
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         sup.launcher().take();
         minter.take();
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
-        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
+        assert_eq!(sup.server_changed(Some("https://workman.example")).len(), 1);
         sup.launcher.stop_errors.borrow_mut().push(ClaudeError::CliFailed { code: Some(1), stderr: "busy".into() });
         let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
         assert!(needs.iter().any(|n| n.kind == NeedsKind::OtherServer), "still on the other server: {needs:?}");
-        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "not scheduled twice");
+        assert!(sup.server_changed(Some("https://workman.example")).is_empty(), "not scheduled twice");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 71 * SECOND);
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }], "tried again");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 72 * SECOND);
@@ -2049,7 +2060,7 @@ mod tests {
         let stopped = row(SessionState::Stopped, None, None);
         sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 130 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
-        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { base, .. }] if base == "https://workstate.example"));
+        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { base, .. }] if base == "https://workman.example"));
     }
 
     #[test]
@@ -2162,7 +2173,7 @@ mod tests {
         let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
         let (sup, minter) = minting(true, mcp.path());
         let mut sup = sup;
-        sup.config.foreman_home = Some(home.path().into());
+        sup.config.supraman_home = Some(home.path().into());
         sup.desired.sessions.clear();
         let adopted = crate::adopted_session("demo", "Alpha", r"C:\demo\Alpha", "the repo role", from).unwrap();
         sup.desired.sessions.push(adopted.clone());

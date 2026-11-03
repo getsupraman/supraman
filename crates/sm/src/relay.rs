@@ -53,11 +53,11 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
     }
 }
 
-/// `sm send` speaks as the human; every Supraman-launched session carries `FOREMAN_ROLE` (`supraman_supervisor` `session_settings`).
-pub fn refuse_inside_foreman() -> Result<(), Failure> {
-    match std::env::var_os("FOREMAN_ROLE") {
+/// `sm send` speaks as the human; every Supraman-launched session carries `SUPRAMAN_ROLE` (`supraman_supervisor` `session_settings`).
+pub fn refuse_inside_supraman() -> Result<(), Failure> {
+    match std::env::var_os("SUPRAMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
-            "sm send speaks as the human through the relay and is refused inside a Supraman session (FOREMAN_ROLE={}); use SendMessage to reach a session, sm tell to reach the human",
+            "sm send speaks as the human through the relay and is refused inside a Supraman session (SUPRAMAN_ROLE={}); use SendMessage to reach a session, sm tell to reach the human",
             role.to_string_lossy()
         ))),
         _ => Ok(()),
@@ -97,17 +97,17 @@ pub fn send_cmd(home: &Path, args: &[&str]) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Run by a Supraman session to reach the human: an outbox message in its workspace (its home, `FOREMAN_WORKSPACE`).
+/// Run by a Supraman session to reach the human: an outbox message in its workspace (its home, `SUPRAMAN_WORKSPACE`).
 pub fn tell_cmd(args: &[&str]) -> Result<(), Failure> {
     let body = body_arg(args).ok_or_else(|| Failure::Usage("tell needs <body> or --file <path>".into()))??;
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let (Some(home), Some(workspace)) = (supraman_core::env_home(), var("FOREMAN_WORKSPACE")) else {
+    let (Some(home), Some(workspace)) = (supraman_core::env_home(), var("SUPRAMAN_WORKSPACE")) else {
         return Err(Failure::Refused(
-            "sm tell runs inside a Supraman session (SUPRAMAN_HOME or FOREMAN_HOME, and FOREMAN_WORKSPACE, are not set); the human reads Supraman's Messages".into(),
+            "sm tell runs inside a Supraman session (SUPRAMAN_HOME and SUPRAMAN_WORKSPACE are not set); the human reads Supraman's Messages".into(),
         ));
     };
-    let from = var("FOREMAN_SESSION")
-        .ok_or_else(|| Failure::Refused("sm tell cannot tell which session this is: FOREMAN_SESSION is not set".into()))?;
+    let from = var("SUPRAMAN_SESSION")
+        .ok_or_else(|| Failure::Refused("sm tell cannot tell which session this is: SUPRAMAN_SESSION is not set".into()))?;
     let path = tell(&home, &workspace, &from, &body)?;
     println!("told the human ({workspace}): {}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     Ok(())
