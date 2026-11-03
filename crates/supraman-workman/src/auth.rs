@@ -708,6 +708,7 @@ fn answer(mut stream: TcpStream, status: &str, text: &str) {
     let _ = stream.flush();
 }
 
+#[cfg(feature = "fake")]
 /// Tests and the selftest only: `GET`s the authorize URL, then its redirect passed through `rewrite`.
 pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     move |url: &str| {
@@ -724,6 +725,7 @@ pub fn http_browser_with(rewrite: fn(String) -> String) -> impl Fn(&str) -> Resu
     }
 }
 
+#[cfg(feature = "fake")]
 pub fn http_browser() -> impl Fn(&str) -> Result<(), String> + Send + Sync {
     http_browser_with(|l| l)
 }
