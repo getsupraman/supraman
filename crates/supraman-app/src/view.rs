@@ -1618,42 +1618,69 @@ impl FleetView {
             return;
         };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
-        let result = if text.is_empty() { Err("Nothing to send.".to_string()) } else { self.answer(&workspace, &reply_to, &text) };
-        match (result, &mut self.compose) {
-            (Ok(_), _) => self.compose = None,
-            (Err(e), Some(c)) => c.error = Some(e),
-            (Err(_), None) => {}
+        if text.is_empty() {
+            if let Some(c) = &mut self.compose {
+                c.error = Some("Nothing to send.".into());
+            }
+            cx.notify();
+            return;
         }
-        cx.notify();
+        let sending = (workspace.clone(), reply_to.clone());
+        self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
+            let still = this.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
+            match result {
+                Ok(_) if still => this.compose = None,
+                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| c.error = Some(e.clone())),
+                _ => {}
+            }
+        });
     }
 
-    fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<Sent, String> {
-        let home = self.home.as_deref().ok_or("Not sent: no Supraman home.")?;
-        let to = workspace_session_name(workspace);
-        let mode = DesiredState::launch_mode(home, workspace, &to);
-        send_from_human(home, workspace, &to, mode.as_deref(), text, self.relay_refusal(workspace))
-            .map_err(|e| format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay))
-    }
-
-    pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<Sent, String> {
-        let sent = self.send_to_workspace(workspace, text)?;
-        self.answered_route.insert(format!("{workspace}/{file}"), sent.label());
-        let line = compose::first_line(text);
-        self.answered.entry(workspace.to_string()).or_default().insert(file.to_string(), line.clone());
-        if let Some(home) = &self.home
-            && let Err(e) = mark_answered(home, workspace, file, &line)
-        {
-            self.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
-        }
-        Ok(sent)
+    /// Sends `text` to `workspace`'s session as the human's answer to the outbox `file`, off the UI thread (a
+    /// stalled pipe holds a direct write for up to `DELIVER_TIMEOUT`); `done` gets the outcome on it.
+    pub fn answer(&mut self, workspace: &str, file: &str, text: &str, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<Sent, String>) + 'static) {
+        let Some(home) = self.home.clone() else {
+            done(self, Err("Not sent: no Supraman home.".into()));
+            cx.notify();
+            return;
+        };
+        let (workspace, file, text) = (workspace.to_string(), file.to_string(), text.to_string());
+        let no_relay = self.relay_refusal(&workspace);
+        let line = compose::first_line(&text);
+        cx.spawn(async move |this, cx| {
+            let (w, f, l) = (workspace.clone(), file.clone(), line.clone());
+            let (sent, saved) = cx
+                .background_executor()
+                .spawn(async move {
+                    let to = workspace_session_name(&w);
+                    let mode = DesiredState::launch_mode(&home, &w, &to);
+                    let sent = send_from_human(&home, &w, &to, mode.as_deref(), &text, no_relay).map_err(|e| not_sent(&to, &e));
+                    let saved = sent.as_ref().ok().map(|_| mark_answered(&home, &w, &f, &l));
+                    (sent, saved)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Ok(sent) = &sent {
+                    this.answered_route.insert(format!("{workspace}/{file}"), sent.label());
+                    this.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
+                }
+                if let Some(Err(e)) = saved {
+                    this.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
+                }
+                done(this, sent);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        match self.answer(workspace, file, "approve") {
-            Ok(_) => self.action_error = None,
-            Err(e) => self.action_error = Some(format!("Approve {workspace}: {e}")),
-        }
-        cx.notify();
+        let w = workspace.to_string();
+        self.answer(workspace, file, "approve", cx, move |this, result| match result {
+            Ok(_) => this.action_error = None,
+            Err(e) => this.action_error = Some(format!("Approve {w}: {e}")),
+        });
     }
 
     pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
@@ -2930,11 +2957,31 @@ pub mod tree_check {
     }
 }
 
+/// What the human reads when a send did not go through.
+fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
+    if e.may_arrive {
+        format!("Not confirmed: the direct write to {to} timed out ({}) and may still arrive; it was not sent again through the relay.", e.direct)
+    } else {
+        format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use supraman_term::PathLikeTarget;
 
     use super::*;
+
+    #[test]
+    fn a_timed_out_send_says_it_may_still_arrive_and_a_failed_one_says_not_sent() {
+        let late = supraman_claude::SendError { direct: "the pipe write timed out".into(), relay: "not tried".into(), may_arrive: true };
+        assert_eq!(
+            not_sent("fm-demo-workspace", &late),
+            "Not confirmed: the direct write to fm-demo-workspace timed out (the pipe write timed out) and may still arrive; it was not sent again through the relay."
+        );
+        let failed = supraman_claude::SendError { direct: "no pipe".into(), relay: "demo is stopped".into(), may_arrive: false };
+        assert_eq!(not_sent("fm-demo-workspace", &failed), "Not sent: direct delivery failed (no pipe), and the relay cannot take it: demo is stopped.");
+    }
 
     #[test]
     fn an_open_event_opens_web_mail_and_file_links_and_resolves_relative_paths() {
