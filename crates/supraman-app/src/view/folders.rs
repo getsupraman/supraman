@@ -364,7 +364,7 @@ impl FleetView {
                         .text_xs()
                         .text_color(colors.text_muted)
                         .child(clipped("edit-title", format!("EDIT FOLDERS · {}", w.name), false))
-                        .child(typed("edit-done", "Done", |this, cx| this.close_edit_folders(cx), cx)),
+                        .child(typed("edit-done", "Done", |this, _, cx| this.close_edit_folders(cx), cx)),
                 )
                 .child(
                     div()
