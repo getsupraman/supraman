@@ -26,7 +26,7 @@ No token values appear anywhere in this file.
 - Limits respected through `relay/<w>/direct.json` (direct sends of the last minute): keep ≥ 10 of the
   receiver's 30-token burst (refill 0.5/s), else the relay.
 - Session → human: `sm tell "<body>"` / `sm tell --file <path>` writes the workspace outbox
-  (`{from, from_name, body}`, `from` = the session name from `FOREMAN_SESSION`). No reply path over the pipe:
+  (`{from, from_name, body}`, `from` = the session name from `SUPRAMAN_SESSION`). No reply path over the pipe:
   Supraman never registers an inbox.
 - Under `cfg(test)`, `peer::deliver` refuses every pipe outside `\.\pipe\LOCAL\cc-msg-supramantest-*`.
 

@@ -26,7 +26,7 @@ fn write_fake(home: &Path) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(claude_dir(home))?;
     let seen = seen.display();
     let script = [
-        format!("@set FOREMAN_> \"{seen}\""),
+        format!("@set SUPRAMAN_> \"{seen}\""),
         format!("@set SUPRAMAN_HOME>> \"{seen}\""),
         format!("@where sm>> \"{seen}\""),
         format!("@sm --version>> \"{seen}\" 2>&1"),
@@ -75,11 +75,10 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     let session = crate::hand::plain_name(&folder);
     let home_line = format!("SUPRAMAN_HOME={}", home.display());
     let env = [
-        "FOREMAN_ROLE=hand".to_string(),
-        format!("FOREMAN_WORKSPACE={WORKSPACE}"),
-        format!("FOREMAN_SESSION={session}"),
-        format!("FOREMAN_REPO={repo}"),
-        format!("FOREMAN_HOME={}", home.display()),
+        "SUPRAMAN_ROLE=hand".to_string(),
+        format!("SUPRAMAN_WORKSPACE={WORKSPACE}"),
+        format!("SUPRAMAN_SESSION={session}"),
+        format!("SUPRAMAN_REPO={repo}"),
         home_line,
     ];
     for want in &env {
@@ -131,7 +130,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the hand session's row shows `{label}`, not its permission prompt");
     }
     Ok(format!(
-        "[+] in {WORKSPACE}/{repo}: FOREMAN_ROLE=hand FOREMAN_SESSION={session} and the home in its env, no missing-plugin notice, \
+        "[+] in {WORKSPACE}/{repo}: SUPRAMAN_ROLE=hand SUPRAMAN_SESSION={session} and the home in its env, no missing-plugin notice, \
          {} first on PATH ({version}), SessionStart injected `{tag}`, its row under {WORKSPACE}/{repo} shows `{label}`",
         sm.display()
     ))

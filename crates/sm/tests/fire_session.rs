@@ -316,7 +316,7 @@ fn fm_report(home: &Path, args: &[&str]) -> std::process::Output {
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
-        .env_remove("FOREMAN_WORKSPACE")
+        .env_remove("SUPRAMAN_WORKSPACE")
         .output()
         .unwrap()
 }
@@ -364,7 +364,7 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     }
     assert!(flag(&spec, "--disallowedTools").contains(&"Bash(claude rm:*)"));
     let settings: serde_json::Value = serde_json::from_str(flag(&spec, "--settings")[0]).unwrap();
-    assert_eq!((&settings["env"]["FOREMAN_SCHEDULE"], &settings["env"]["FOREMAN_RUN"]), (&"fix".into(), &run.clone().into()));
+    assert_eq!((&settings["env"]["SUPRAMAN_SCHEDULE"], &settings["env"]["SUPRAMAN_RUN"]), (&"fix".into(), &run.clone().into()));
     assert_eq!(settings["worktree"]["bgIsolation"], "none");
 
     let config = host.claude.config_at_launch.borrow().clone().expect("the run's mcp config");

@@ -15,14 +15,13 @@ fn hook_env(home: Option<&Path>, role: Option<&str>, env: &[(&str, &str)], args:
     let mut cmd = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
     cmd.arg("hook").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.env_remove("SUPRAMAN_HOME")
-        .env_remove("FOREMAN_HOME")
-        .env_remove("FOREMAN_ROLE")
-        .env_remove("FOREMAN_WORKSPACE");
+        .env_remove("SUPRAMAN_ROLE")
+        .env_remove("SUPRAMAN_WORKSPACE");
     if let Some(home) = home {
         cmd.env("SUPRAMAN_HOME", home);
     }
     if let Some(role) = role {
-        cmd.env("FOREMAN_ROLE", role);
+        cmd.env("SUPRAMAN_ROLE", role);
     }
     cmd.envs(env.iter().copied());
     let mut child = cmd.spawn().unwrap();
@@ -79,28 +78,9 @@ fn logs_each_event_and_injects_the_role_on_session_start() {
     assert!(events.iter().all(|e| e.session_id == SID && e.name == "aw-t" && e.cwd == r"C:\w" && e.ts > 0));
 
     fs::write(home.path().join("roles").join("workspace.md"), "Controller for {workspace}.\n").unwrap();
-    let workspace = hook_env(h, Some("workspace"), &[("FOREMAN_WORKSPACE", "nomos")], &["SessionStart"], &payload("SessionStart", r#","source":"resume""#));
+    let workspace = hook_env(h, Some("workspace"), &[("SUPRAMAN_WORKSPACE", "nomos")], &["SessionStart"], &payload("SessionStart", r#","source":"resume""#));
     let tag = role_tag("workspace", "Controller for nomos.");
     assert_eq!(String::from_utf8_lossy(&workspace.stdout), format!("{tag}\nController for nomos.\n"), "{{workspace}} is filled");
-}
-
-#[test]
-fn a_session_of_an_older_build_with_only_foreman_home_still_logs_and_gets_its_role() {
-    let (home, other) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    fs::create_dir_all(home.path().join("roles")).unwrap();
-    fs::write(home.path().join("roles").join("worker.md"), "You are the worker.
-").unwrap();
-    let legacy = [("FOREMAN_HOME", home.path().to_str().unwrap())];
-    let start = hook_env(None, Some("worker"), &legacy, &["SessionStart"], &payload("SessionStart", ""));
-    assert_eq!(String::from_utf8_lossy(&start.stdout), format!("{}
-You are the worker.
-", role_tag("worker", "You are the worker.")));
-    assert_eq!(EventReader::new(home.path()).poll().len(), 1, "logged under FOREMAN_HOME");
-
-    let both = [("FOREMAN_HOME", other.path().to_str().unwrap())];
-    silent_success(&hook_env(Some(home.path()), None, &both, &["Stop"], &payload("Stop", "")));
-    assert_eq!(EventReader::new(home.path()).poll().len(), 2, "SUPRAMAN_HOME wins");
-    assert!(fs::read_dir(other.path()).unwrap().next().is_none(), "nothing under the losing FOREMAN_HOME");
 }
 
 #[test]

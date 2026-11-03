@@ -413,9 +413,9 @@ pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `FOREMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
+/// `SUPRAMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
 pub(crate) fn shooting() -> bool {
-    std::env::var_os("FOREMAN_SHOTS").is_some()
+    std::env::var_os("SUPRAMAN_SHOTS").is_some()
 }
 
 pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
@@ -423,7 +423,7 @@ pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
 }
 
 pub(crate) async fn shot_window(name: &str, title: Option<&str>, cx: &mut AsyncWindowContext) {
-    let Some(dir) = std::env::var_os("FOREMAN_SHOTS").map(PathBuf::from) else {
+    let Some(dir) = std::env::var_os("SUPRAMAN_SHOTS").map(PathBuf::from) else {
         return;
     };
     sleep(cx, Duration::from_millis(300)).await;

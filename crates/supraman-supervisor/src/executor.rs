@@ -61,8 +61,8 @@ pub struct LaunchConfig {
     /// `<SUPRAMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
-    /// Passed to the session as `SUPRAMAN_HOME` and `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its
-    /// name, what `sm tell` signs with) and `FOREMAN_REPO` for a repo session, through
+    /// Passed to the session as `SUPRAMAN_HOME`, with `SUPRAMAN_ROLE`, `SUPRAMAN_WORKSPACE`, `SUPRAMAN_SESSION` (its
+    /// name, what `sm tell` signs with) and `SUPRAMAN_REPO` for a repo session, through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
     pub supraman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
@@ -75,7 +75,7 @@ pub struct LaunchConfig {
 
 impl LaunchConfig {
     /// The `claude --bg` of `w` in `workspace`, before its Workman token: what the supervisor launches and
-    /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `FOREMAN_*` env.
+    /// what a schedule's run launches (`sm schedule fire`). `env` adds to the session's `SUPRAMAN_*` env.
     pub fn launch_spec(&self, workspace: &str, w: &WantedSession, env: &[(&str, &str)]) -> LaunchSpec {
         let mut spec = LaunchSpec::new(&w.name, &w.cwd, &w.prompt);
         spec.permission_mode = w.permission_mode.clone();
@@ -102,15 +102,15 @@ impl LaunchConfig {
         plugins.chain(self.allowed_tools_args()).collect()
     }
 
-    /// The session's `SUPRAMAN_HOME`/`FOREMAN_HOME` and `FOREMAN_*` vars; empty without a home.
+    /// The session's `SUPRAMAN_HOME` and `SUPRAMAN_*` vars; empty without a home.
     pub fn session_env(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
         let Some(home) = &self.supraman_home else {
             return Vec::new();
         };
         let mut env: Vec<(String, String)> =
-            [("FOREMAN_ROLE", role), ("FOREMAN_WORKSPACE", workspace), ("FOREMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
+            [("SUPRAMAN_ROLE", role), ("SUPRAMAN_WORKSPACE", workspace), ("SUPRAMAN_SESSION", name)].map(|(k, v)| (k.to_string(), v.to_string())).into();
         env.extend(supraman_core::home::home_env(home).map(|(k, v)| (k.to_string(), v)));
-        env.extend(repo.map(|r| ("FOREMAN_REPO".to_string(), r.to_string())));
+        env.extend(repo.map(|r| ("SUPRAMAN_REPO".to_string(), r.to_string())));
         for (k, v) in extra {
             env.retain(|(have, _)| have != k);
             env.push((k.to_string(), v.to_string()));
@@ -1583,8 +1583,8 @@ mod tests {
             settings,
             serde_json::json!({
                 "env": {
-                    "SUPRAMAN_HOME": r"C:\fm\home", "FOREMAN_HOME": r"C:\fm\home", "FOREMAN_ROLE": "workspace", "FOREMAN_WORKSPACE": "demo",
-                    "FOREMAN_SESSION": "fm-demo-workspace",
+                    "SUPRAMAN_HOME": r"C:\fm\home", "SUPRAMAN_ROLE": "workspace", "SUPRAMAN_WORKSPACE": "demo",
+                    "SUPRAMAN_SESSION": "fm-demo-workspace",
                 },
                 "worktree": { "bgIsolation": "none" }
             })

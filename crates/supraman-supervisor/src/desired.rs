@@ -83,7 +83,7 @@ pub fn relay_session_name(workspace: &str) -> String {
 }
 
 /// An `fm-` session this home neither wants (`wanted`: the names in its desired states) nor names
-/// (`fm-<workspace>-…` of one of `workspaces`): another `FOREMAN_HOME`'s, e.g. a selftest's.
+/// (`fm-<workspace>-…` of one of `workspaces`): another `SUPRAMAN_HOME`'s, e.g. a selftest's.
 pub fn is_foreign<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>, mut wanted: impl Iterator<Item = &'a str>) -> bool {
     name.starts_with(FM_PREFIX) && !wanted.any(|w| w == name) && !workspaces.any(|w| name.starts_with(&format!("{FM_PREFIX}{w}-")))
 }
@@ -346,7 +346,7 @@ pub fn render_repo_role(template: &str, workspace: &str, repo: &str) -> String {
     render_role(&template.replace("{repo}", repo), workspace)
 }
 
-/// `{sm}` (this build's `sm.exe`) and `{home}` (`FOREMAN_HOME`) filled in, forward slashes: a role's
+/// `{sm}` (this build's `sm.exe`) and `{home}` (`SUPRAMAN_HOME`) filled in, forward slashes: a role's
 /// commands may run under Git Bash (m0/4). `{workspace}`/`{repo}` stay for [`render_role`] and the hook.
 pub fn fill_paths(template: &str, sm: &Path, home: &Path) -> String {
     let forward = |p: &Path| p.display().to_string().replace('\\', "/");

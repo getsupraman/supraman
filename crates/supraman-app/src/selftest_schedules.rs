@@ -62,9 +62,9 @@ async fn page_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &mut 
 }
 
 /// `<name>-dark` in the dark default and `<name>-light` in a light theme planted in the selftest home, when
-/// `FOREMAN_SHOTS` asks.
+/// `SUPRAMAN_SHOTS` asks.
 pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowContext) {
-    if std::env::var_os("FOREMAN_SHOTS").is_none() {
+    if std::env::var_os("SUPRAMAN_SHOTS").is_none() {
         return;
     }
     shot(&format!("{name}-dark"), cx).await;

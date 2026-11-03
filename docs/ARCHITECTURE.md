@@ -120,7 +120,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `Supervisor`, `tick_all`, `Budget` — one tick per snapshot; the rule table is the crate docs in `lib.rs`.
 - `HttpMinter`, `Minter`, `MintedSessions` (`mint.rs`) — per-session Workman tokens.
 - `AppTokens`, `bearer`, `workman_role` (`tokens.rs`) — the `TokenProvider` of the app and of `sm`: Supraman's OAuth sign-in as the mint's bearer.
-- `LaunchConfig::launch_spec` (`executor.rs`) — a wanted session's `claude --bg` spec before its token; `Supervisor::launch` and a scheduled run (`sm`'s `schedule::run_spec`) both build theirs with it. `LaunchConfig::session_env` (the `FOREMAN_*` and home vars of its `--settings`) and `interactive_args` (`--plugin-dir`, `--allowedTools`) are the same pieces for a [+] session.
+- `LaunchConfig::launch_spec` (`executor.rs`) — a wanted session's `claude --bg` spec before its token; `Supervisor::launch` and a scheduled run (`sm`'s `schedule::run_spec`) both build theirs with it. `LaunchConfig::session_env` (the `SUPRAMAN_*` and home vars of its `--settings`) and `interactive_args` (`--plugin-dir`, `--allowedTools`) are the same pieces for a [+] session.
 
 ## Shared vs app-only
 
@@ -138,7 +138,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 ### A tab starting a session
 1. `crates/supraman-app/src/view.rs` `FleetView::new_claude` → `hand_claude`: pushes a shell tab, then `Hands::launch_for` off the UI thread.
 2. `crates/supraman-app/src/hand.rs` `Hands::launch_for` picks the name (`session_name`, `next_name`), mints a token (below) and writes the config through `mcp_config_path`.
-3. `view.rs` `hand_extras` → `hand.rs` `extras`: from `supervise::launch_config` (the supervisor's pieces), the plugin flags and `sm_allowed_tools`, the hook env (`FOREMAN_ROLE=hand`, `FOREMAN_WORKSPACE` = the owning workspace, `FOREMAN_SESSION`, `FOREMAN_REPO` for a folder, the home vars) and the folder of `sm.exe`; with no plugin found, nothing and a notice.
+3. `view.rs` `hand_extras` → `hand.rs` `extras`: from `supervise::launch_config` (the supervisor's pieces), the plugin flags and `sm_allowed_tools`, the hook env (`SUPRAMAN_ROLE=hand`, `SUPRAMAN_WORKSPACE` = the owning workspace, `SUPRAMAN_SESSION`, `SUPRAMAN_REPO` for a folder, the home vars) and the folder of `sm.exe`; with no plugin found, nothing and a notice.
 4. `hand.rs` `Launch::script_with` builds `$env:Path = '<sm dir>;' + $env:Path; claude [--session-id <uuid>] --mcp-config <path> <plugin flags>` in a try/finally that deletes the config when claude exits; `shell_args_with` runs it as `pwsh -NoExit -EncodedCommand`.
 5. `view.rs` `start_terminal_env` builds the PTY with `supraman_term::TerminalBuilder` and the hook env; `supraman_ui::term_element::terminal_grid` paints it. The session's hooks (`sm hook`) append to the home like a supervised session's and its SessionStart injects `roles/hand.md`; the tree reads its events by session id (`HookSignal`). The supervisor never wants, stops or counts it (it is not `fm-`).
 6. When the config file is gone (`Hands::ended`), `Hands::release` revokes the token.

@@ -729,13 +729,13 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         let mut cmd = script_command(env.folder, script, &s.action.script_args, pwsh);
         cmd.current_dir(env.folder)
             .envs(supraman_core::home::home_env(env.home))
-            .env("FOREMAN_WORKSPACE", env.workspace)
-            .env("FOREMAN_SCHEDULE", env.id)
-            .env("FOREMAN_RUN", env.run)
-            .env("FOREMAN_FOLDER", env.folder)
-            .env("FOREMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
-            .env("FOREMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
-            .env("FOREMAN_STATE_DIR", &state)
+            .env("SUPRAMAN_WORKSPACE", env.workspace)
+            .env("SUPRAMAN_SCHEDULE", env.id)
+            .env("SUPRAMAN_RUN", env.run)
+            .env("SUPRAMAN_FOLDER", env.folder)
+            .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
+            .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
+            .env("SUPRAMAN_STATE_DIR", &state)
             .envs(secrets.iter().map(|(k, v)| (k, v)));
         ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
         let missing_pwsh = matches!(&ran, Err(e) if e.kind() == std::io::ErrorKind::NotFound);

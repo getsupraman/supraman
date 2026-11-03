@@ -2998,7 +2998,7 @@ mod tests {
 
     #[test]
     fn the_claude_dir_is_the_selftests_or_claudes_own_never_a_stray_env_var() {
-        unsafe { std::env::set_var("FOREMAN_CLAUDE_DIR", r"C:\elsewhere") };
+        unsafe { std::env::set_var("SUPRAMAN_CLAUDE_DIR", r"C:\elsewhere") };
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
         let fake = Path::new(r"C:\scratch\fake-claude");
         assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));

@@ -13,7 +13,7 @@ use supraman_supervisor::{LaunchConfig, WantedSession};
 
 use crate::{Failure, value};
 
-/// The `FOREMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
+/// The `SUPRAMAN_ROLE` a run's session carries: it works in one folder, as a repo session does.
 pub(crate) const RUN_ROLE: &str = "repo";
 
 pub fn schedule(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
@@ -651,7 +651,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         bg_isolation_none: true,
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
     };
-    let mut spec = config.launch_spec(&w.name, &wanted, &[("FOREMAN_SCHEDULE", &s.id), ("FOREMAN_RUN", &run)]);
+    let mut spec = config.launch_spec(&w.name, &wanted, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);
     spec.extra_args.push("--disallowedTools".into());
     spec.extra_args.extend(s.permissions.denied());
@@ -794,7 +794,7 @@ fn report(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
         _ => return Err(usage()),
     };
     let (all, _) = registry.load_all()?;
-    let preferred = std::env::var("FOREMAN_WORKSPACE").ok();
+    let preferred = std::env::var("SUPRAMAN_WORKSPACE").ok();
     let mut order: Vec<&Workspace> = all.iter().filter(|w| Some(&w.name) == preferred.as_ref()).collect();
     order.extend(all.iter().filter(|w| Some(&w.name) != preferred.as_ref()));
     for w in order {

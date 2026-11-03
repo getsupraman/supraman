@@ -49,7 +49,7 @@ impl Fixture {
             .env("SUPRAMAN_HOME", &self.home)
             .env("CLAUDE_CONFIG_DIR", &self.claude)
             .env_remove("APPDATA")
-            .env_remove("FOREMAN_ROLE")
+            .env_remove("SUPRAMAN_ROLE")
             .output()
             .unwrap()
     }
@@ -168,7 +168,7 @@ fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() 
             .env("EXEPATH", &git_root)
             .env_remove("MSYSTEM")
             .env_remove("APPDATA")
-            .env_remove("FOREMAN_ROLE")
+            .env_remove("SUPRAMAN_ROLE")
             .output()
             .unwrap()
     };

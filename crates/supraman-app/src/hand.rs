@@ -75,7 +75,7 @@ pub struct Extras {
     pub prompt: Option<PathBuf>,
 }
 
-/// `name` is the session's `FOREMAN_SESSION`; a cwd outside every workspace gets the home and no role.
+/// `name` is the session's `SUPRAMAN_SESSION`; a cwd outside every workspace gets the home and no role.
 pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name: &str, sm_dir: Option<&Path>) -> Extras {
     let owner = owners(workspaces)
         .get(&path_key(cwd))
@@ -501,7 +501,7 @@ mod tests {
     fn hand_script_carries_the_plugin_flags_after_the_token_and_sm_first_on_path() {
         let extras = Extras {
             args: vec!["--plugin-dir".into(), r"C:\fm\plugins\supraman".into(), "--allowedTools".into(), "Bash(sm:*)".into(), "Bash(C:/o'neil/sm.exe:*)".into()],
-            env: vec![("FOREMAN_ROLE".into(), "hand".into())],
+            env: vec![("SUPRAMAN_ROLE".into(), "hand".into())],
             path: Some(PathBuf::from(r"C:\Tools\supraman")),
             prompt: None,
         };
@@ -516,7 +516,7 @@ mod tests {
         assert!(script.ends_with(&format!("; {resume}{flags} }}")), "the stale branch gets them too: {script}");
         assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{on_path}claude{flags}"));
         assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{on_path}claude{flags}"));
-        assert!(!script.contains("FOREMAN_ROLE"), "the env goes on the PTY, not into the script");
+        assert!(!script.contains("SUPRAMAN_ROLE"), "the env goes on the PTY, not into the script");
     }
 
     #[test]
@@ -548,11 +548,10 @@ mod tests {
         assert_eq!(
             env,
             [
-                ("FOREMAN_HOME", r"C:\fm\home"),
-                ("FOREMAN_REPO", "Alpha"),
-                ("FOREMAN_ROLE", "hand"),
-                ("FOREMAN_SESSION", "hand-Alpha-1"),
-                ("FOREMAN_WORKSPACE", "demo"),
+                ("SUPRAMAN_REPO", "Alpha"),
+                ("SUPRAMAN_ROLE", "hand"),
+                ("SUPRAMAN_SESSION", "hand-Alpha-1"),
+                ("SUPRAMAN_WORKSPACE", "demo"),
                 ("SUPRAMAN_HOME", r"C:\fm\home"),
             ]
             .into()
@@ -564,10 +563,10 @@ mod tests {
         );
 
         let deeper = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo\Alpha\src"), "René's review", None);
-        assert!(deeper.env.contains(&("FOREMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("FOREMAN_REPO".into(), "Alpha".into())));
+        assert!(deeper.env.contains(&("SUPRAMAN_SESSION".into(), "René's review".into())) && deeper.env.contains(&("SUPRAMAN_REPO".into(), "Alpha".into())));
         assert_eq!(deeper.path, None);
         let home_only = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\demo"), "hand-demo", None);
-        assert!(home_only.env.contains(&("FOREMAN_WORKSPACE".into(), "demo".into())) && !home_only.env.iter().any(|(k, _)| k == "FOREMAN_REPO"));
+        assert!(home_only.env.contains(&("SUPRAMAN_WORKSPACE".into(), "demo".into())) && !home_only.env.iter().any(|(k, _)| k == "SUPRAMAN_REPO"));
         let outside = super::extras(&config, std::slice::from_ref(&ws), Path::new(r"C:\elsewhere"), "hand-elsewhere", None);
         assert_eq!(outside.env, home_env(&home).map(|(k, v)| (k.to_string(), v)).to_vec(), "outside every workspace: the home only, no role");
         assert_eq!(outside.args, want);

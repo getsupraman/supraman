@@ -20,10 +20,10 @@ const SCRIPTS: [(&str, &str); 7] = [
     ("slow.cmd", "@echo before the wait 1>&2\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
     (
         "env.cmd",
-        "@echo %FOREMAN_HOME%^|%FOREMAN_WORKSPACE%^|%FOREMAN_SCHEDULE%^|%FOREMAN_RUN%^|%FOREMAN_FOLDER%^|%FOREMAN_LAST_RUN%^|%FOREMAN_LAST_OUTCOME%^|%CD%> \"%FOREMAN_STATE_DIR%\\env.txt\"\r\n@exit /b 0\r\n",
+        "@echo %SUPRAMAN_HOME%^|%SUPRAMAN_WORKSPACE%^|%SUPRAMAN_SCHEDULE%^|%SUPRAMAN_RUN%^|%SUPRAMAN_FOLDER%^|%SUPRAMAN_LAST_RUN%^|%SUPRAMAN_LAST_OUTCOME%^|%CD%> \"%SUPRAMAN_STATE_DIR%\\env.txt\"\r\n@exit /b 0\r\n",
     ),
     ("secret.cmd", "@if \"%API_TOKEN%\"==\"s3cr3t-Value-81f2\" exit /b 10\r\n@exit /b 1\r\n"),
-    ("once.cmd", "@if exist \"%FOREMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%FOREMAN_STATE_DIR%\\once\"\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
+    ("once.cmd", "@if exist \"%SUPRAMAN_STATE_DIR%\\once\" exit /b 0\r\n@echo x> \"%SUPRAMAN_STATE_DIR%\\once\"\r\n@ping -n 30 127.0.0.1 >nul\r\n@exit /b 0\r\n"),
 ];
 
 struct Fixture {
@@ -595,7 +595,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
         .env("SUPRAMAN_HOME", &f.home)
         .env("CLAUDE_CONFIG_DIR", f.home.join("claude-config"))
         .env_remove("APPDATA")
-        .env_remove("FOREMAN_ROLE")
+        .env_remove("SUPRAMAN_ROLE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -533,8 +533,8 @@ async fn item_page(
     lines.push(format!("1 stream event → 1 item re-read; c3 painted checked {} ms after the push", live_after.as_millis()));
 
     crate::selftest_manage::shot("m5-14-work-item", cx).await;
-    if let Some(secs) = std::env::var("FOREMAN_SELFTEST_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
-        println!("step 7: holding the item page {secs} s (FOREMAN_SELFTEST_HOLD_SECS)");
+    if let Some(secs) = std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        println!("step 7: holding the item page {secs} s (SUPRAMAN_SELFTEST_HOLD_SECS)");
         sleep(cx, Duration::from_secs(secs)).await;
     }
 
@@ -666,8 +666,8 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
         live_after.as_millis()
     ));
     crate::selftest_manage::shot("m5-14-work-journal", cx).await;
-    if let Some(secs) = std::env::var("FOREMAN_SELFTEST_JOURNAL_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
-        println!("step 7: holding the journal {secs} s (FOREMAN_SELFTEST_JOURNAL_HOLD_SECS)");
+    if let Some(secs) = std::env::var("SUPRAMAN_SELFTEST_JOURNAL_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        println!("step 7: holding the journal {secs} s (SUPRAMAN_SELFTEST_JOURNAL_HOLD_SECS)");
         sleep(cx, Duration::from_secs(secs)).await;
     }
     click(view, "work-journal=open", cx).await?;

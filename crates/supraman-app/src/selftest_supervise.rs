@@ -1311,7 +1311,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     click(view, "compose-text", cx).await?;
     until_compose_focused(view, cx).await?;
     type_text(cx, "typed, not sent")?;
-    let hold = std::env::var("FOREMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse::<u64>().ok());
+    let hold = std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|s| s.parse::<u64>().ok());
     if let Some(secs) = hold {
         std::fs::write(tb.home.join("hold"), "")?;
         println!("step t: holding {secs} s for a screenshot");

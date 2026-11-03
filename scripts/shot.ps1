@@ -1,4 +1,4 @@
-# A PNG of the screen area 'x,y,w,h' in physical pixels (the selftest's tray icon on the taskbar, FOREMAN_SHOTS).
+# A PNG of the screen area 'x,y,w,h' in physical pixels (the selftest's tray icon on the taskbar, SUPRAMAN_SHOTS).
 param(
     [Parameter(Mandatory)][string]$Out,
     [Parameter(Mandatory)][string]$Screen
