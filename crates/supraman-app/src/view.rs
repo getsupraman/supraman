@@ -294,6 +294,7 @@ pub struct FleetView {
     pub answered:BTreeMap<String, BTreeMap<String, String>>,
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
+    sends: Serial,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -776,6 +777,7 @@ impl FleetView {
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
+            sends: Serial::default(),
             work_live: Rc::default(),
             work_inbox,
             menu: None,
@@ -1567,6 +1569,9 @@ impl FleetView {
             return;
         };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
+        if c.sending {
+            return;
+        }
         if text.is_empty() {
             if let Some(c) = &mut self.compose {
                 c.error = Some("Nothing to send.".into());
@@ -1574,12 +1579,18 @@ impl FleetView {
             cx.notify();
             return;
         }
+        if let Some(c) = &mut self.compose {
+            c.sending = true;
+        }
         let sending = (workspace.clone(), reply_to.clone());
         self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
             let still = this.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
             match result {
                 Ok(_) if still => this.compose = None,
-                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| c.error = Some(e.clone())),
+                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| {
+                    c.sending = false;
+                    c.error = Some(e.clone());
+                }),
                 _ => {}
             }
         });
@@ -1596,7 +1607,11 @@ impl FleetView {
         let (workspace, file, text) = (workspace.to_string(), file.to_string(), text.to_string());
         let no_relay = self.relay_refusal(&workspace);
         let line = compose::first_line(&text);
-        cx.spawn(async move |this, cx| {
+        let previous = self.sends.previous();
+        let task = cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
             let (w, f, l) = (workspace.clone(), file.clone(), line.clone());
             let (sent, saved) = cx
                 .background_executor()
@@ -1620,8 +1635,8 @@ impl FleetView {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        });
+        self.sends.push(task);
     }
 
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
@@ -2942,6 +2957,20 @@ fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
     next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
 }
 
+/// The human's sends, each started only after the one before it has finished, so they arrive in the order sent.
+#[derive(Default)]
+struct Serial(Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>>);
+
+impl Serial {
+    fn previous(&self) -> Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>> {
+        self.0.clone()
+    }
+
+    fn push(&mut self, next: impl std::future::Future<Output = ()> + 'static) {
+        self.0 = Some(next.boxed_local().shared());
+    }
+}
+
 pub const SEND_SECTION: &str = "compose send";
 pub const APPROVE_SECTION: &str = "approve";
 
@@ -2975,6 +3004,40 @@ mod tests {
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
         let fake = Path::new(r"C:\scratch\fake-claude");
         assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
+    }
+
+    #[test]
+    fn a_send_starts_only_after_the_one_queued_before_it_has_finished() {
+        use futures::task::LocalSpawnExt as _;
+        let mut pool = futures::executor::LocalPool::new();
+        let spawner = pool.spawner();
+        let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut sends = Serial::default();
+        for (n, yields) in [(1, 50), (2, 0)] {
+            let (previous, order) = (sends.previous(), order.clone());
+            let handle = spawner
+                .spawn_local_with_handle(async move {
+                    if let Some(previous) = previous {
+                        previous.await;
+                    }
+                    for _ in 0..yields {
+                        let mut yielded = false;
+                        futures::future::poll_fn(|cx| {
+                            if std::mem::replace(&mut yielded, true) {
+                                return std::task::Poll::Ready(());
+                            }
+                            cx.waker().wake_by_ref();
+                            std::task::Poll::Pending
+                        })
+                        .await;
+                    }
+                    order.borrow_mut().push(n);
+                })
+                .unwrap();
+            sends.push(handle);
+        }
+        pool.run_until(sends.previous().unwrap());
+        assert_eq!(*order.borrow(), [1, 2]);
     }
 
     #[test]
