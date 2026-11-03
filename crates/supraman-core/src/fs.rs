@@ -72,6 +72,23 @@ pub fn try_lock_file(path: &Path) -> io::Result<Option<fs::File>> {
     }
 }
 
+/// The machine-wide lock of one heavy job (a selftest, a cargo build or test): the file under the temp dir
+/// that `scripts/heavy-lock.ps1` locks too. Says once on stderr when it has to wait.
+pub fn heavy_job_lock(what: &str) -> io::Result<fs::File> {
+    lock_waiting(&std::env::temp_dir().join(HEAVY_JOB_LOCK), what)
+}
+
+fn lock_waiting(path: &Path, what: &str) -> io::Result<fs::File> {
+    if let Some(file) = try_lock_file(path)? {
+        return Ok(file);
+    }
+    eprintln!("{what} waits for another heavy job on this machine to finish (it holds {})", path.display());
+    lock_file(path)
+}
+
+/// The file name of [`heavy_job_lock`] under the temp dir.
+pub const HEAVY_JOB_LOCK: &str = "supraman-heavy.lock";
+
 /// `path` parsed as JSON. Missing: the default, no notice. Unreadable or not the expected JSON: the
 /// default and a notice naming the file, the error and `fallback` (what the default means to the user).
 pub fn load_json_or_notice<T: DeserializeOwned + Default>(path: &Path, fallback: &str) -> (T, Option<String>) {
@@ -104,6 +121,17 @@ pub fn rotated(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_held_heavy_job_lock_keeps_the_next_one_out_until_it_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(HEAVY_JOB_LOCK);
+        let held = lock_waiting(&path, "the first").unwrap();
+        assert!(try_lock_file(&path).unwrap().is_none(), "a second taker waits while the first holds it");
+        drop(held);
+        assert!(try_lock_file(&path).unwrap().is_some(), "free once the holder is gone");
+    }
+
     use super::*;
 
     fn tmp_files(dir: &Path) -> Vec<String> {
