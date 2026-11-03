@@ -123,6 +123,10 @@ From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`):
 `cargo deny check licenses` passes (`deny.toml`: only licences that allow shipping the whole as GPL-3.0-or-later)
 and `pwsh -File scripts/third-party.ps1 -Check` says `THIRD_PARTY.md is current`; `release.ps1` runs that check
 itself and stops on a stale file. After a dependency change, `pwsh -File scripts/third-party.ps1` regenerates it.
+`third-party.ps1` needs PowerShell 7 (`pwsh`). Supraman itself does not: its tabs, `.ps1` schedule scripts and
+selftests run `pwsh` when a `PATH` folder holds it and Windows PowerShell (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`)
+otherwise, each by its absolute path, so the gate passes on a machine with either. Supraman looks once, at start: a
+`pwsh` installed while it runs is used after a restart.
 The selftests run on a hidden desktop of their own (their first line names it, their last says no selftest window
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.

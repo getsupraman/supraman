@@ -5711,3 +5711,17 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **supraman-term is our code** (A-53, U10): no re-sync from Zed. Its hyperlink suite keeps URL, path, file:// and IRI
   detection; OSC 8 is covered in `links.rs`. The app passes no path regexes (`view.rs` `Vec::new()`), so only URLs,
   file:// IRIs and OSC 8 links are live.
+
+## 2026-11-03 — shells/2 one PowerShell resolution, by absolute path
+
+- **`supraman_core::paths::powershell(path, pathext, system_root) -> PowerShell { path, name, alias }`** answers an
+  absolute path: `pwsh` + a `PATHEXT` extension in the first absolute `PATH` folder, else
+  `<SystemRoot>\System32\WindowsPowerShell\v1.0\powershell.exe` (`C:\Windows` when unset). A bare name went through
+  CreateProcess's search, which tries the exe's folder and the cwd before `PATH`; a relative `PATH` entry is skipped for
+  the same reason. `name` (`pwsh`/`powershell`) is what tab titles and `hand.rs` `shells()` read.
+- **A Store pwsh is a reparse point that is not a symlink** (`FILE_ATTRIBUTE_REPARSE_POINT` and `!is_symlink()`): `alias`.
+  A tab runs it (the PTY just starts it); `sm fire` uses `script_powershell` (`job_powershell`), which takes Windows
+  PowerShell instead, because the real pwsh an alias starts is no descendant and `Kill::Tree` would miss it on a timeout.
+  Untested against a real alias: a test cannot make an App Execution Alias.
+- **`fire.rs` `a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up` fails on a machine with a live pid
+  4240**: Windows ignores a pid's low two bits, so `OpenProcess(4243)` opens 4240 and the "dead" run looks alive.

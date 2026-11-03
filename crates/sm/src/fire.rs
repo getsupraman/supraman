@@ -724,25 +724,18 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         next_check = Instant::now() + RESTART_POLL;
         restart.exists()
     };
-    let mut ran = Err(std::io::Error::from(std::io::ErrorKind::NotFound));
-    for pwsh in [true, false] {
-        let mut cmd = script_command(env.folder, script, &s.action.script_args, pwsh);
-        cmd.current_dir(env.folder)
-            .envs(supraman_core::home::home_env(env.home))
-            .env("SUPRAMAN_WORKSPACE", env.workspace)
-            .env("SUPRAMAN_SCHEDULE", env.id)
-            .env("SUPRAMAN_RUN", env.run)
-            .env("SUPRAMAN_FOLDER", env.folder)
-            .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
-            .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
-            .env("SUPRAMAN_STATE_DIR", &state)
-            .envs(secrets.iter().map(|(k, v)| (k, v)));
-        ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
-        let missing_pwsh = matches!(&ran, Err(e) if e.kind() == std::io::ErrorKind::NotFound);
-        if !(pwsh && missing_pwsh && extension(script) == "ps1") {
-            break;
-        }
-    }
+    let mut cmd = script_command(env.folder, script, &s.action.script_args);
+    cmd.current_dir(env.folder)
+        .envs(supraman_core::home::home_env(env.home))
+        .env("SUPRAMAN_WORKSPACE", env.workspace)
+        .env("SUPRAMAN_SCHEDULE", env.id)
+        .env("SUPRAMAN_RUN", env.run)
+        .env("SUPRAMAN_FOLDER", env.folder)
+        .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
+        .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
+        .env("SUPRAMAN_STATE_DIR", &state)
+        .envs(secrets.iter().map(|(k, v)| (k, v)));
+    let ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
     let ms = u64::try_from(host.now_ms() - started).unwrap_or(0);
     let (ended, out) = match ran {
         Ok(done) => done,
@@ -766,11 +759,11 @@ fn extension(script: &str) -> String {
 }
 
 /// The command per the script's extension (the script contract's table).
-fn script_command(folder: &Path, script: &str, args: &[String], pwsh: bool) -> Command {
+fn script_command(folder: &Path, script: &str, args: &[String]) -> Command {
     let path = folder.join(script);
     match extension(script).as_str() {
         "ps1" => {
-            let mut cmd = process::command(if pwsh { "pwsh" } else { "powershell" });
+            let mut cmd = process::command(supraman_core::paths::script_powershell().path);
             cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]).arg(&path).args(args);
             cmd
         }

@@ -264,6 +264,19 @@ fn fire_a_script_action_records_ok_for_0_and_10() {
     assert!(host.gates.is_empty() && host.busy_asked == 0 && host.slept.is_empty());
 }
 
+#[test]
+fn fire_runs_a_ps1_under_the_resolved_powershell() {
+    let f = fixture();
+    let body = "Set-Content -LiteralPath (Join-Path $env:SUPRAMAN_STATE_DIR 'shell.txt') -Value (Get-Process -Id $PID).Path\r\nexit 10\r\n";
+    fs::write(f.alpha.join("scripts").join("shell.ps1"), body).unwrap();
+    f.add_approved(script_schedule("ps", "shell.ps1", ActionKind::Script));
+    let report = run_now(&f, "ps", &mut TestHost::new(&f));
+    assert_eq!(report.outcome, Some(Outcome::Ok), "{report:?}");
+    let ran = fs::read_to_string(schedule::state_dir(&f.home, "demo", "ps").unwrap().join("shell.txt")).unwrap();
+    use supraman_core::paths::{path_key, script_powershell};
+    assert_eq!(path_key(Path::new(ran.trim())), path_key(&script_powershell().path));
+}
+
 /// The script runs in the folder's checkout with the doc's environment and its state dir.
 #[test]
 fn fire_gives_the_script_its_environment_and_state_dir() {

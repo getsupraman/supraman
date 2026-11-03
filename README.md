@@ -39,7 +39,9 @@ Supraman runs on your machine and is open source (GPL-3.0-or-later).
 - Claude Code's `claude` CLI on your `PATH`, version 2.1.308 or newer. Supraman is tested with 2.1.310; it
   refuses an older CLI and runs a newer one, with a warning in the toolbar when the minor version is newer than
   the tested one ([version policy](docs/RELEASE.md#claude-cli-version-policy)).
-- PowerShell 7 (`pwsh`) on your `PATH` for terminal tabs: **+** and "Open terminal here" start `pwsh`.
+- PowerShell for terminal tabs: **+** and "Open terminal here" start PowerShell 7 (`pwsh`) when it is on your
+  `PATH`, else the Windows PowerShell that comes with Windows. Supraman looks once, at start: a `pwsh` installed
+  while it runs is used after a restart.
 
 **Steps**
 
@@ -57,7 +59,7 @@ folder.
 1. **Add a workspace.** The window starts empty. Click the folder button at the top of the left panel and pick a
    folder that holds your repositories; Supraman finds the git repos in it. From a shell:
    `sm workspace add <dir>`.
-2. **Open a session.** Click **+** for a `pwsh` tab and run `claude` in it, or attach to a running session from
+2. **Open a session.** Click **+** for a PowerShell tab and run `claude` in it, or attach to a running session from
    the tree. Sessions you start elsewhere show up in the tree too.
 3. **Sign in to Workman** (optional): **Settings → Workman → Sign in** opens your browser. Without it everything
    above works, and sessions run without Workman.
