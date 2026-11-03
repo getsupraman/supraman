@@ -66,7 +66,7 @@ impl Stream {
             last_id: None,
         };
         let thread = std::thread::Builder::new()
-            .name("workstate-stream".into())
+            .name("workman-stream".into())
             .spawn(move || worker.run())
             .expect("spawn the Workman stream thread");
         (Self { stop, thread: Some(thread) }, rx)

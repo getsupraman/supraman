@@ -222,7 +222,7 @@ impl Section for UpdateSettings {
     const FIELDS: &'static [&'static str] = &["check"];
 }
 
-/// `<FOREMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
+/// `<SUPRAMAN_HOME>/settings.toml`, edited in the app and re-read by every supervisor tick. One table per
 /// [`Section`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {

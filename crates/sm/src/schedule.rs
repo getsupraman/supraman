@@ -647,7 +647,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
     let config = LaunchConfig {
         mcp_dir: home.join("mcp"),
         plugin_dirs: plugin_dir.map(Path::to_path_buf).into_iter().collect(),
-        foreman_home: Some(home.to_path_buf()),
+        supraman_home: Some(home.to_path_buf()),
         bg_isolation_none: true,
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
     };

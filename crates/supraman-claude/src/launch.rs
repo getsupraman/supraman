@@ -116,8 +116,8 @@ pub struct SessionIdentity {
     /// E.g. `foreman/nomos/Nomos.Extract`.
     pub origin: String,
     pub cwd: String,
-    /// Foreman's role (workspace, repo, …), not the token's.
-    pub foreman_role: String,
+    /// Supraman's role (workspace, repo, …), not the token's.
+    pub supraman_role: String,
 }
 
 /// The `mcpServers` key of a session's Workman server: its tools are `mcp__workman__*`, and a [+] session's entry
@@ -125,7 +125,7 @@ pub struct SessionIdentity {
 pub const MCP_SERVER: &str = "workman";
 
 /// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
-pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
+pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
     let mut map = serde_json::Map::new();
     map.insert("Authorization".into(), format!("Bearer {token}").into());
     for (k, v) in headers {
@@ -149,7 +149,7 @@ pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) 
 /// by anyone else and a session reading its config never sees it empty.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
-    supraman_core::fs::write_atomic_prepared(&path, workstate_mcp_config(url, token, headers), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config(url, token, headers), restrict_to_owner)?;
     Ok(path)
 }
 

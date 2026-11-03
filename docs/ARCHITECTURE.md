@@ -105,7 +105,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 
 - `list_sessions`, `parse`, `Session::health`/`supervised_health` — `claude agents --json --all` and the health table (crate docs in `lib.rs`).
 - `Claude` (`launch.rs`: `launch`, `resume`, `stop`, `rm`, `remove`, `find_by_name`), `LaunchSpec`, `resume_argv`, `new_session_id`, `name_taken` — the write side; every run goes through `supraman_core::process::run`.
-- `mcp_config_path`, `write_mcp_config`, `workstate_mcp_config` — a session's Workman config file under `<home>/mcp/`, with the session-name check; write, read and delete it through these.
+- `mcp_config_path`, `write_mcp_config`, `workman_mcp_config` — a session's Workman config file under `<home>/mcp/`, with the session-name check; write, read and delete it through these.
 - `check_supported`, `MIN_VERSION`, `TESTED_VERSION` (`cli.rs`) — the CLI version gate.
 - `daemon_status`, `daemon_mismatch`, `is_elevated` (`daemon.rs`) — whether this process can reach claude's background service. `service_pid` (the roster's `supervisorPid`, since `claude daemon status` reads `NotRunning` from an unelevated process facing an elevated service), `pid_elevated`, `service_elevated` and `task_run_level` give a scheduled task's run level.
 - `peer` — writing into a session's own message pipe (`docs/peer-messaging.md`); `human::send_from_human` picks the pipe or the relay.
@@ -119,7 +119,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `DesiredState` (`desired.rs`) — `<home>/supervisor/<workspace>.toml`; change it only through `update` (locked read-modify-write); `release` unwants the repo sessions of folders taken away, so the supervisor stops them.
 - `Supervisor`, `tick_all`, `Budget` — one tick per snapshot; the rule table is the crate docs in `lib.rs`.
 - `HttpMinter`, `Minter`, `MintedSessions` (`mint.rs`) — per-session Workman tokens.
-- `AppTokens`, `bearer`, `workstate_role` (`tokens.rs`) — the `TokenProvider` of the app and of `sm`: Supraman's OAuth sign-in as the mint's bearer.
+- `AppTokens`, `bearer`, `workman_role` (`tokens.rs`) — the `TokenProvider` of the app and of `sm`: Supraman's OAuth sign-in as the mint's bearer.
 - `LaunchConfig::launch_spec` (`executor.rs`) — a wanted session's `claude --bg` spec before its token; `Supervisor::launch` and a scheduled run (`sm`'s `schedule::run_spec`) both build theirs with it. `LaunchConfig::session_env` (the `FOREMAN_*` and home vars of its `--settings`) and `interactive_args` (`--plugin-dir`, `--allowedTools`) are the same pieces for a [+] session.
 
 ## Shared vs app-only
@@ -130,7 +130,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `FleetView` (`crates/supraman-app/src/view.rs`, `crates/supraman-app/src/view/`) — the left tree (design B: the workspace row is the workspace session, the relay a glyph; `row_details.rs` the sections of a session's and a workspace's Details tab, `view/details.rs` that tab), tabs, menus, delete flow; `crates/supraman-app/src/work_view.rs` and `crates/supraman-app/src/work_view/` — the Work tab and Inbox.
 - The tab lifecycle: open, attach, resume, and detach on close or quit (`view.rs` `close_tab`, `start_detach`, `quit_step`).
 - The supervisor policy and its driver: `supervise.rs`, the poll loop (`view.rs` `Poller`), `supraman-supervisor` itself.
-- Hand sessions (`hand.rs`), sign-in wiring (`signin.rs`), Workman setup wording (`workstate_setup.rs`).
+- Hand sessions (`hand.rs`), sign-in wiring (`signin.rs`), Workman setup wording (`workman_setup.rs`).
 - The tray (`tray.rs`), the single instance (`instance.rs`), elevation (`elevate.rs`), the titlebar, stars, dismissals, the selftests.
 
 ## Key flows
@@ -155,7 +155,7 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 
 ### Minting and re-minting
 - The supervisor mints for `fm-` sessions (`executor.rs` `Supervisor::mint`, from `launch`, and `remint` before every Resume); hands mint for tab sessions (`hand.rs` `Hands::launch_for`).
-- `crates/supraman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/supraman-supervisor/src/tokens.rs` `AppTokens`, role from `workstate_role`). A scheduled run mints its own token the same way (`crates/sm/src/run.rs`), keeps it out of `MintedSessions`, and revokes it when the run ends.
+- `crates/supraman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/supraman-supervisor/src/tokens.rs` `AppTokens`, role from `workman_role`). A scheduled run mints its own token the same way (`crates/sm/src/run.rs`), keeps it out of `MintedSessions`, and revokes it when the run ends.
 - Only the minted `wss_` token reaches a session, in the file `mcp_config_path` names (`crates/supraman-claude/src/launch.rs` `write_mcp_config`, owner-only ACL, `--strict-mcp-config` for supervised sessions).
 - Records: `<home>/supervisor/<workspace>.sessions.json` (`MintedSessions`) and `<home>/supervisor/hands.json`.
 - Re-mint: every Resume; the Re-mint remedy on a `TokenExpired` or `OtherServer` row (`Supervisor::retry` → `stop_for_remint`, then resume); a server change (`Supervisor::server_changed`). Unwanted tokens are revoked by `revoke_unwanted` and `Hands::release_all`.

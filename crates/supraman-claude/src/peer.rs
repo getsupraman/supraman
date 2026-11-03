@@ -26,7 +26,7 @@ pub const FROM_NAME: &str = "foreman";
 const CLOSE_TAG: &str = "</cross-session-message>";
 /// Under `cfg(test)`, [`deliver`] writes to no other pipe: a test can never reach a live session.
 #[cfg(test)]
-const TEST_PIPE_PREFIX: &str = r"\\.\pipe\local\cc-msg-foremantest-";
+const TEST_PIPE_PREFIX: &str = r"\\.\pipe\local\cc-msg-supramantest-";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PeerError {
@@ -323,7 +323,7 @@ mod tests {
         }
     }
 
-    const PIPE: &str = r"\\.\pipe\LOCAL\cc-msg-foremantest-nobody-serves-this";
+    const PIPE: &str = r"\\.\pipe\LOCAL\cc-msg-supramantest-nobody-serves-this";
 
     fn entry(pid: u32, name: &str, protocol: Option<i64>, start: u64) -> String {
         let mut v = serde_json::json!({
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn the_key_file_name_hashes_the_lowercased_canonical_pipe() {
-        assert_eq!(canonical_pipe(PIPE), r"\\.\pipe\local\cc-msg-foremantest-nobody-serves-this");
+        assert_eq!(canonical_pipe(PIPE), r"\\.\pipe\local\cc-msg-supramantest-nobody-serves-this");
         assert_eq!(canonical_pipe("//./pipe/LOCAL/cc-msg-AB"), r"\\.\pipe\local\cc-msg-ab");
         assert_eq!(canonical_pipe("/tmp/cc-socks-1000/42.sock"), "/tmp/cc-socks-1000/42.sock");
         let name = key_file_name(4242, PIPE);
@@ -439,7 +439,7 @@ mod tests {
         assert!(matches!(deliver(&unix, "hi"), Err(PeerError::Pipe { .. })));
     }
 
-    /// Serves one connection on a fresh `cc-msg-foremantest-…` pipe and returns what it read.
+    /// Serves one connection on a fresh `cc-msg-supramantest-…` pipe and returns what it read.
     #[cfg(windows)]
     fn serve_once(name: &str) -> std::thread::JoinHandle<Vec<u8>> {
         use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -475,7 +475,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn deliver_writes_the_auth_line_then_the_user_line_into_a_pipe_the_test_serves() {
-        let pipe = format!(r"\\.\pipe\LOCAL\cc-msg-foremantest-{}-wire", std::process::id());
+        let pipe = format!(r"\\.\pipe\LOCAL\cc-msg-supramantest-{}-wire", std::process::id());
         let server = serve_once(&pipe);
         let dir = tempfile::tempdir().unwrap();
         let key_file = dir.path().join(key_file_name(10, &pipe));
@@ -562,7 +562,7 @@ mod tests {
     #[test]
     fn a_ref_grows_past_six_digits_where_two_refs_share_them() {
         // both hash to 03c977…: 03c9775f… and 03c9777f…
-        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-foremantest-001414", r"\\.\pipe\LOCAL\cc-msg-foremantest-005046");
+        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-supramantest-001414", r"\\.\pipe\LOCAL\cc-msg-supramantest-005046");
         assert_eq!(&ref_hash(a)[..7], "03c9775");
         let rows = [live(1, "s1", "x", Some(a), 10), live(2, "s2", "x", Some(b), 10)];
         assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [03c9775]"));

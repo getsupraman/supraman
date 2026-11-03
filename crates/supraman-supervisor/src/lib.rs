@@ -86,4 +86,4 @@ pub use mint::{HttpMinter, MintError, MintRepo, MintRequest, Minted, MintedSessi
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};
 pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};
-pub use tokens::{AppTokens, bearer, workstate_role};
+pub use tokens::{AppTokens, bearer, workman_role};

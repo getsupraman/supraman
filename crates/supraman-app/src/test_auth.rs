@@ -80,7 +80,7 @@ mod tests {
         let auth = signed_in(&home, fake.base());
         let mut desired = DesiredState::workspace_controller("demo", r"C:\demo", "be the controller");
         desired.started = true;
-        let config = LaunchConfig { mcp_dir: home.join("mcp"), foreman_home: Some(home.clone()), ..LaunchConfig::default() };
+        let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.clone()), ..LaunchConfig::default() };
         let mut sup = Supervisor::new(desired, config, NoClaude(Default::default()), AppTokens { auth });
         let now = 1_800_000_000_000;
         sup.tick(&[], &mut Budget { max: 1, free: 1 }, now);
@@ -160,7 +160,7 @@ mod tests {
         let auth = signed_in(&home, a.base());
         let mut desired = DesiredState::workspace_controller("demo", r"C:\demo", "be the controller");
         desired.started = true;
-        let config = LaunchConfig { mcp_dir: home.join("mcp"), foreman_home: Some(home.clone()), ..LaunchConfig::default() };
+        let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.clone()), ..LaunchConfig::default() };
         let mut sup = Supervisor::new(desired, config, Recorder::default(), AppTokens { auth: auth.clone() });
         let now = 1_800_000_000_000;
         let budget = || Budget { max: 3, free: 3 };

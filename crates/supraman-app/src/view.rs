@@ -49,7 +49,7 @@ use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
-use crate::workstate_setup::{self, WsStatus};
+use crate::workman_setup::{self, WorkmanStatus};
 
 mod delete;
 pub(crate) mod details;
@@ -160,7 +160,7 @@ pub struct Tab {
     pub program_title: Option<String>,
     pub session: Option<String>,
     pub hand: bool,
-    pub workstate: Option<String>,
+    pub workman: Option<String>,
     pub hand_key: Option<String>,
     pub restart_to: Option<String>,
     pub opened_at: i64,
@@ -204,7 +204,7 @@ impl Tab {
             program_title: None,
             session: None,
             hand: false,
-            workstate: None,
+            workman: None,
             hand_key: None,
             restart_to: None,
             opened_at: now_ms(),
@@ -307,9 +307,9 @@ pub struct FleetView {
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
-    pub workstate: WsStatus,
-    workstate_dismissed: Option<String>,
-    workstate_recheck: Nudge,
+    pub workman: WorkmanStatus,
+    workman_dismissed: Option<String>,
+    workman_recheck: Nudge,
     pub start_warning: Option<String>,
     pub signing_in: Option<String>,
     pub sign_in_error: Option<String>,
@@ -695,8 +695,8 @@ impl FleetView {
         .detach();
         let (blink_nudge, blink_woken) = nudge::nudge();
         Self::blink_cursor(blink_woken, cx);
-        let (workstate_recheck, recheck) = nudge::nudge();
-        Self::watch_workstate(home.clone(), recheck, cx);
+        let (workman_recheck, recheck) = nudge::nudge();
+        Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
         cx.observe(&work_inbox, |this, _, cx| {
             this.check_loaded(cx);
@@ -793,9 +793,9 @@ impl FleetView {
                 Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
             },
-            workstate: WsStatus::Checking,
-            workstate_dismissed: None,
-            workstate_recheck,
+            workman: WorkmanStatus::Checking,
+            workman_dismissed: None,
+            workman_recheck,
             start_warning: None,
             signing_in: None,
             sign_in_error: None,
@@ -1029,7 +1029,7 @@ impl FleetView {
         }
         pending.extend(self.transcripts.pending());
         let inbox = self.work_inbox.read(cx);
-        if matches!(self.workstate, WsStatus::Checking) {
+        if matches!(self.workman, WorkmanStatus::Checking) {
             pending.push("Workman".to_string());
         } else if inbox.reads > 0 && inbox.applied == 0 {
             pending.push("Workman inbox".to_string());
@@ -1110,7 +1110,7 @@ impl FleetView {
         hands
     }
 
-    fn watch_workstate(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
+    fn watch_workman(home: Option<PathBuf>, mut recheck: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
             let mut first = Some(Instant::now());
@@ -1119,21 +1119,21 @@ impl FleetView {
                 let status = executor
                     .spawn(async move {
                         let auth = home.as_deref().map(crate::signin::auth);
-                        workstate_setup::detect(home.as_deref(), auth.as_deref())
+                        workman_setup::detect(home.as_deref(), auth.as_deref())
                     })
                     .await;
                 if let Some(started) = first.take() {
-                    timeline("workstate status done", started.elapsed());
+                    timeline("workman status done", started.elapsed());
                 }
                 let alive = this.update(cx, |this, cx| {
-                    if this.workstate != status {
-                        if matches!(status, WsStatus::Ready { .. }) {
+                    if this.workman != status {
+                        if matches!(status, WorkmanStatus::Ready { .. }) {
                             this.start_warning = None;
                         }
-                        this.workstate = status;
+                        this.workman = status;
                         cx.notify();
                     }
-                    if let WsStatus::Ready { url, .. } = &this.workstate
+                    if let WorkmanStatus::Ready { url, .. } = &this.workman
                         && this.synced_server.as_ref() != Some(url)
                     {
                         let url = url.clone();
@@ -1144,14 +1144,14 @@ impl FleetView {
                 if alive.is_err() {
                     return;
                 }
-                recheck.wait(&executor, workstate_setup::RECHECK_EVERY).await;
+                recheck.wait(&executor, workman_setup::RECHECK_EVERY).await;
             }
         })
         .detach();
     }
 
-    pub fn recheck_workstate(&self) {
-        self.workstate_recheck.wake();
+    pub fn recheck_workman(&self) {
+        self.workman_recheck.wake();
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) {
@@ -1183,7 +1183,7 @@ impl FleetView {
                     Ok(_) => {
                         this.left_servers.remove(&origin);
                         if let Some(from) = from {
-                            match save_workstate_url(&home, &origin) {
+                            match save_workman_url(&home, &origin) {
                                 Ok(()) => this.leave_servers(vec![from], cx),
                                 Err(e) => this.action_error = Some(e),
                             }
@@ -1192,8 +1192,8 @@ impl FleetView {
                     }
                     Err(e) => this.sign_in_error = Some(format!("Signing in to {origin} did not work: {e}")),
                 }
-                this.workstate = WsStatus::Checking;
-                this.recheck_workstate();
+                this.workman = WorkmanStatus::Checking;
+                this.recheck_workman();
                 WorkHub::reconfigure(Some(home), cx);
                 cx.notify();
             })
@@ -1220,8 +1220,8 @@ impl FleetView {
                 if let Err(e) = result {
                     this.hand_notices.push(e);
                 }
-                this.workstate = WsStatus::Checking;
-                this.recheck_workstate();
+                this.workman = WorkmanStatus::Checking;
+                this.recheck_workman();
                 WorkHub::reconfigure(Some(home), cx);
                 cx.notify();
             })
@@ -1230,7 +1230,7 @@ impl FleetView {
         .detach();
     }
 
-    pub fn set_workstate_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
+    pub fn set_workman_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Supraman home: settings cannot be saved.")?;
         let origin = supraman_core::validate_workman_url(text)?;
         let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workman.origin();
@@ -1248,11 +1248,11 @@ impl FleetView {
                     this.sign_in_to(origin, Some(current), cx);
                     return;
                 }
-                if let Err(e) = save_workstate_url(&home, &origin) {
+                if let Err(e) = save_workman_url(&home, &origin) {
                     this.action_error = Some(e);
                 }
-                this.workstate = WsStatus::Checking;
-                this.recheck_workstate();
+                this.workman = WorkmanStatus::Checking;
+                this.recheck_workman();
                 WorkHub::reconfigure(Some(home), cx);
                 cx.notify();
             })
@@ -1312,13 +1312,13 @@ impl FleetView {
         .detach();
     }
 
-    pub fn dismiss_workstate_notice(&mut self, cx: &mut Context<Self>) {
-        self.workstate_dismissed = self.workstate.problem();
+    pub fn dismiss_workman_notice(&mut self, cx: &mut Context<Self>) {
+        self.workman_dismissed = self.workman.problem();
         cx.notify();
     }
 
-    pub fn workstate_notice(&self) -> Option<String> {
-        self.workstate.problem().filter(|p| self.workstate_dismissed.as_ref() != Some(p))
+    pub fn workman_notice(&self) -> Option<String> {
+        self.workman.problem().filter(|p| self.workman_dismissed.as_ref() != Some(p))
     }
 
     fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
@@ -1506,7 +1506,7 @@ impl FleetView {
                             this.desired.insert(name.clone(), (true, names));
                             this.invalidate_tree();
                             this.action_error = None;
-                            this.start_warning = this.workstate.start_warning(&name);
+                            this.start_warning = this.workman.start_warning(&name);
                         }
                         Ok(None) => {
                             if let Some(entry) = this.desired.get_mut(&name) {
@@ -1895,7 +1895,7 @@ impl FleetView {
             this.update(cx, |this, cx| {
                 if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
                     if let Some(tab) = this.tab_mut(id) {
-                        tab.workstate = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
+                        tab.workman = Some(format!("Supraman token · {} · {session}", crate::hand::ROLE));
                         tab.hand_key = Some(name.clone());
                         if new_session.is_some() {
                             tab.launched_session = new_session.clone();
@@ -2193,7 +2193,7 @@ impl FleetView {
             branch: None,
             session,
             kind,
-            workstate: tab.workstate.clone().map(|w| match &tab.restart_to {
+            workman: tab.workman.clone().map(|w| match &tab.restart_to {
                 Some(to) => format!("{w} · restart to use {to}"),
                 None => w,
             }),
@@ -3220,7 +3220,7 @@ mod tests {
     }
 }
 
-fn save_workstate_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
+fn save_workman_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
     Settings::update(home, |settings| settings.workman.url = Some(origin.to_string()))
         .map(drop)
         .map_err(|e| format!("Cannot save settings.toml: {e}"))

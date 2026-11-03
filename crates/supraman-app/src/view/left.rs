@@ -416,8 +416,8 @@ impl FleetView {
             cx,
         );
         notices.extend(plain.into_iter().map(|n| n.mx_3().my_2().into_any_element()));
-        if let Some(problem) = self.workstate_notice() {
-            notices.push(self.render_workstate_notice(problem, cx));
+        if let Some(problem) = self.workman_notice() {
+            notices.push(self.render_workman_notice(problem, cx));
         }
         notices.extend(self.render_update_notice(cx));
         if let Some(warning) = &self.start_warning {
@@ -777,12 +777,12 @@ impl FleetView {
         Some(inbox.into_any_element())
     }
 
-    fn render_workstate_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
+    fn render_workman_notice(&self, problem: String, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let color = if self.workstate.unreachable() { status.error } else { status.warning };
+        let color = if self.workman.unreachable() { status.error } else { status.warning };
         let mut actions = div().flex().flex_wrap().gap_2().pt_1();
-        if self.workstate.signed_out() {
+        if self.workman.signed_out() {
             actions = match self.signing_in {
                 Some(_) => actions.child(button::bordered(&self.hits, "ws-setup-cancel", "Cancel sign-in", cx).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
@@ -798,24 +798,24 @@ impl FleetView {
                 ))),
             };
         }
-        if self.workstate.unreachable() {
+        if self.workman.unreachable() {
             actions = actions.child(button::bordered(&self.hits, "ws-setup-retry", "Retry", cx).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    this.recheck_workstate();
+                    this.recheck_workman();
                 },
             )));
         }
         actions = actions.child(button::bordered(&self.hits, "ws-setup-settings", "Settings…", cx).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.open_settings_at(Some(page::WORKSTATE), cx);
+                this.open_settings_at(Some(page::WORKMAN), cx);
             },
         )));
         let dismiss = glyph_button(&self.hits, "ws-setup-dismiss".into(), Icon::Close, "Hide until the problem changes", cx)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
-                this.dismiss_workstate_notice(cx);
+                this.dismiss_workman_notice(cx);
             }));
         banner::tinted(color)
             .id("ws-setup-notice")
@@ -826,7 +826,7 @@ impl FleetView {
                 div().flex().items_start().gap_2().child(crate::brand::workman(rems(1.), color).mt(px(2.))).child(SharedString::from(problem)),
                 dismiss,
             ))
-            .children(self.workstate.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
+            .children(self.workman.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
             .children(self.signing_in.as_ref().map(|url| {
                 div().text_xs().text_color(colors.text).child(SharedString::from(format!("Waiting for the sign-in to {url} in your browser…")))
             }))

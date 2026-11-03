@@ -81,7 +81,7 @@ pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name:
         .get(&path_key(cwd))
         .and_then(|n| workspaces.iter().find(|w| &w.name == n))
         .or_else(|| workspaces.iter().find(|w| w.contains(cwd)));
-    let env = match (owner, &config.foreman_home) {
+    let env = match (owner, &config.supraman_home) {
         (Some(w), _) => {
             let repo = w.folders.iter().find(|f| within(cwd, &f.path)).map(|f| f.name.as_str());
             config.session_env(&w.name, name, HAND_ROLE, repo, &[])
@@ -372,7 +372,7 @@ mod tests {
     }
 
     /// Each `POST` takes the next of `mints`, then mints `h<n>` with `wss_fake<n>`, n counting every `POST`.
-    fn fake_workstate(mints: Vec<(u16, &'static str)>) -> (String, Requests, Arc<FakeAuth>) {
+    fn fake_workman(mints: Vec<(u16, &'static str)>) -> (String, Requests, Arc<FakeAuth>) {
         let ids = 1..=mints.len() + MINTS;
         let fake = FakeWorkman::start(ids.clone().map(|n| (format!("DELETE /api/agent-sessions/h{n}"), Answer::status(204, ""))).collect());
         let queued = mints.iter().map(|(status, body)| Answer::status(*status, *body));
@@ -413,8 +413,8 @@ mod tests {
     #[test]
     fn a_hand_tab_minted_on_another_server_is_told_to_restart_and_left_to_its_grant() {
         let dir = tempfile::tempdir().unwrap();
-        let (a, seen_a, _) = fake_workstate(vec![]);
-        let (b, seen_b, _) = fake_workstate(vec![]);
+        let (a, seen_a, _) = fake_workman(vec![]);
+        let (b, seen_b, _) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&a));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demolpha"), None) else { panic!() };
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn hand_mint_carries_the_repo_and_none_outside_a_repo() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, notice) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn hand_config_file_is_owner_only() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, _seen, _oauth) = fake_workstate(vec![]);
+        let (url, _seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn hand_token_is_revoked_on_exit_close_quit_and_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -705,7 +705,7 @@ mod tests {
     }
 
     fn slow_hands(dir: &Path, revoke_takes: std::time::Duration) -> (PathBuf, Arc<Mutex<Hands>>, Arc<std::sync::atomic::AtomicUsize>, Arc<Auth>) {
-        let (url, _seen, _oauth) = fake_workstate(vec![]);
+        let (url, _seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir, Some(&url));
         let revoked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let minter = SlowRevokes { revoke_takes, revoked: revoked.clone(), minted: Default::default() };
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn deleting_a_resumed_session_revokes_only_its_own_token() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -775,9 +775,9 @@ mod tests {
     }
 
     #[test]
-    fn hand_without_workstate_is_plain_and_mints_nothing() {
+    fn hand_without_workman_is_plain_and_mints_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let (_url, seen, _oauth) = fake_workstate(vec![]);
+        let (_url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), None);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         assert_eq!(hands.launch(Path::new(r"C:\demo\alpha"), None), Launch::Plain);
@@ -789,7 +789,7 @@ mod tests {
     #[test]
     fn hand_with_a_broken_sign_in_opens_it_plain_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, oauth) = fake_workstate(vec![]);
+        let (url, seen, oauth) = fake_workman(vec![]);
         oauth.set_access_ttl(60);
         let (home, auth) = home_with(dir.path(), Some(&url));
         oauth.fail_refresh(true);
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn hand_mint_failure_opens_it_plain_with_one_notice() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn a_saved_session_named_before_slug_names_resumes_under_its_own_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         let folder = Path::new(r"C:\demo\Alpha");
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let alpha = Path::new(r"C:\demo\alpha");
@@ -883,7 +883,7 @@ mod tests {
     #[test]
     fn hand_name_held_by_another_launcher_falls_back_to_the_generated_one() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"the session name \"nomos-0c\" is held by a session launched by no launcher"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Minted { name, session, notice, .. } = hands.launch(Path::new(r"C:\demo\alpha"), Some("nomos-0c")) else { panic!() };
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn hand_refused_orchestrator_is_not_minted_as_a_worker() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workstate(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow")) else { panic!() };

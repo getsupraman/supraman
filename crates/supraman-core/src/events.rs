@@ -1,4 +1,4 @@
-//! `<FOREMAN_HOME>/events/<session_id>.jsonl`, appended by `sm hook`; payload facts in LEARNINGS m0/3, m2/2.
+//! `<SUPRAMAN_HOME>/events/<session_id>.jsonl`, appended by `sm hook`; payload facts in LEARNINGS m0/3, m2/2.
 
 use std::collections::HashMap;
 use std::fs::{self, File};

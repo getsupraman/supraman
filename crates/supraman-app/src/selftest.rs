@@ -928,7 +928,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
                 return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
             }
             (v.loaded && !shown).then(|| {
-                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
+                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workman, crate::workman_setup::WorkmanStatus::Checking);
                 if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })
@@ -961,7 +961,7 @@ fn startup_timeline() -> anyhow::Result<(String, f64)> {
     let (Some(listed), Some(painted)) = (at("list_sessions"), at("first paint with sessions")) else {
         bail!("no list_sessions and first paint lines in foreman.log: {phases:?}");
     };
-    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workstate status done", "every source done"];
+    let sources = ["list_sessions done", "desired state done", "supervisor tick done", "transcripts done", "workman status done", "every source done"];
     if let Some(missing) = sources.iter().find(|s| at(s).is_none()) {
         bail!("no \"startup {missing}\" line in foreman.log: {phases:?}");
     }

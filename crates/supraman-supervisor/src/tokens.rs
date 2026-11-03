@@ -13,7 +13,7 @@ pub struct AppTokens {
 
 impl TokenProvider for AppTokens {
     fn token(&self, role: &str) -> Result<Option<RoleToken>, String> {
-        let Some(ws_role) = workstate_role(role) else {
+        let Some(ws_role) = workman_role(role) else {
             return Ok(None);
         };
         Ok(bearer(&self.auth)?.map(|(url, token)| RoleToken { url, token, role: ws_role.into() }))
@@ -29,7 +29,7 @@ pub fn bearer(auth: &Auth) -> Result<Option<(String, String)>, String> {
     }
 }
 
-pub fn workstate_role(role: &str) -> Option<&'static str> {
+pub fn workman_role(role: &str) -> Option<&'static str> {
     match role {
         "workspace" => Some("controller"),
         "repo" | "repo-controller" => Some("orchestrator"),

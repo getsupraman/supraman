@@ -24,7 +24,7 @@ const FIND_POLL: Duration = Duration::from_secs(1);
 const GONE_POLLS: u32 = 2;
 /// The script's stdout in the prompt is cut here.
 pub const GATE_CAP: usize = 32 * 1024;
-const WORKSTATE_EXTERNAL_ROLE: &str = "schedule";
+const WORKMAN_EXTERNAL_ROLE: &str = "schedule";
 
 /// What `claude` the session stage needs: the supervisor's [`Launcher`] and the session list.
 pub trait Agents: Launcher {
@@ -240,7 +240,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         launched_by: origin.clone(),
         origin,
         cwd: spec.cwd.display().to_string(),
-        external_role: WORKSTATE_EXTERNAL_ROLE.into(),
+        external_role: WORKMAN_EXTERNAL_ROLE.into(),
         replace: false,
         repo: supraman_supervisor::git_repo(&spec.cwd),
         claude_session_id: None,

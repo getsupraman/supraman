@@ -31,8 +31,8 @@ pub struct Card {
     pub branch: Option<String>,
     pub session: Option<String>,
     pub kind: Option<Kind>,
-    /// Foreman's token overrides the user's `workstate` entry ([`crate::hand`]).
-    pub workstate: Option<String>,
+    /// Supraman's token overrides the user's `workman` entry ([`crate::hand`]).
+    pub workman: Option<String>,
     /// Epoch milliseconds.
     pub started: Option<i64>,
 }
@@ -51,7 +51,7 @@ impl Card {
         put("branch", self.branch.clone());
         put("session", self.session.clone());
         put("kind", self.kind.map(|k| k.label().to_string()));
-        put("Workman", self.workstate.clone());
+        put("Workman", self.workman.clone());
         put("started", self.started.and_then(|ms| supraman_core::time::short(ms, supraman_core::time::now_ms())));
         rows
     }
@@ -92,7 +92,7 @@ mod tests {
         let hand = Card {
             title: "✳ mw-workflow".into(),
             kind: Some(Kind::Hand),
-            workstate: Some("Supraman token · orchestrator · mw-workflow".into()),
+            workman: Some("Supraman token · orchestrator · mw-workflow".into()),
             ..Card::default()
         };
         assert_eq!(hand.hover_card().text(), "✳ mw-workflow\nkind  hand\nWorkman  Supraman token · orchestrator · mw-workflow");

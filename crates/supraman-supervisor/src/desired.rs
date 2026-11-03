@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Result, SupervisorError};
 
-/// What the human asked for on one workspace. Persisted at `<FOREMAN_HOME>/supervisor/<workspace>.toml`.
+/// What the human asked for on one workspace. Persisted at `<SUPRAMAN_HOME>/supervisor/<workspace>.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesiredState {
     pub workspace: String,
@@ -94,7 +94,7 @@ pub fn is_relay<'a>(name: &str, mut workspaces: impl Iterator<Item = &'a str>) -
 }
 
 /// `fm-<workspace>-relay`: cwd = the workspace root (trusted: the workspace session runs there),
-/// `--add-dir` its relay dir (`<FOREMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
+/// `--add-dir` its relay dir (`<SUPRAMAN_HOME>/relay/<workspace>`, outside the cwd), auto mode, and
 /// on resume told to re-arm.
 pub fn relay_session(workspace: &str, cwd: impl Into<PathBuf>, relay_dir: impl Into<PathBuf>, prompt: impl Into<String>) -> WantedSession {
     WantedSession {
@@ -294,7 +294,7 @@ impl DesiredState {
         }
     }
 
-    /// `<FOREMAN_HOME>/supervisor/<workspace>.lock`, held by [`DesiredState::update`].
+    /// `<SUPRAMAN_HOME>/supervisor/<workspace>.lock`, held by [`DesiredState::update`].
     pub fn lock_path(home: &Path, workspace: &str) -> Result<PathBuf> {
         Ok(Self::path(home, workspace)?.with_extension("lock"))
     }

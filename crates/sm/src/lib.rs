@@ -207,7 +207,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["sessions", rest @ ..] => sessions(rest),
         ["inbox", rest @ ..] => relay::inbox(rest),
         ["send", rest @ ..] => {
-            relay::refuse_inside_foreman()?;
+            relay::refuse_inside_supraman()?;
             relay::send_cmd(registry()?.home(), rest)
         }
         ["tell", rest @ ..] => relay::tell_cmd(rest),

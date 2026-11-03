@@ -24,7 +24,7 @@ use theme::ActiveTheme as _;
 use supraman_ui::clipped::clipped;
 use supraman_ui::{banner, button, fonts};
 use supraman_ui::hit::{HitTargets, hit_target};
-use crate::workstate_setup::WsStatus;
+use crate::workman_setup::WorkmanStatus;
 
 pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
 pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
@@ -187,14 +187,14 @@ fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let url = auth.configured_origin();
     match auth.status(&url) {
         AuthStatus::SignedIn { .. } => Ok(Client::with_source(url.as_str(), auth.bearer_for(&url))),
-        AuthStatus::NotSignedIn => Err(WsStatus::NotSignedIn { url }.message().unwrap_or_default()),
-        AuthStatus::SignInAgain(why) => Err(WsStatus::SignInAgain { url, why }.message().unwrap_or_default()),
+        AuthStatus::NotSignedIn => Err(WorkmanStatus::NotSignedIn { url }.message().unwrap_or_default()),
+        AuthStatus::SignInAgain(why) => Err(WorkmanStatus::SignInAgain { url, why }.message().unwrap_or_default()),
     }
 }
 
 fn read_failed(e: supraman_workman::Error) -> String {
     match e {
-        supraman_workman::Error::Transport { base, reason } => WsStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
+        supraman_workman::Error::Transport { base, reason } => WorkmanStatus::Unreachable { url: base, error: reason }.message().unwrap_or_default(),
         supraman_workman::Error::Auth(why) => format!("{why}. Sign in again in Settings → Workman."),
         e => format!("Cannot read Workman: {e}"),
     }

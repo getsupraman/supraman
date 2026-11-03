@@ -28,7 +28,7 @@ No token values appear anywhere in this file.
 - Session → human: `sm tell "<body>"` / `sm tell --file <path>` writes the workspace outbox
   (`{from, from_name, body}`, `from` = the session name from `FOREMAN_SESSION`). No reply path over the pipe:
   Supraman never registers an inbox.
-- Under `cfg(test)`, `peer::deliver` refuses every pipe outside `\.\pipe\LOCAL\cc-msg-foremantest-*`.
+- Under `cfg(test)`, `peer::deliver` refuses every pipe outside `\.\pipe\LOCAL\cc-msg-supramantest-*`.
 
 ## 1. Addressing
 - [measured] Registry dir: `~/.claude/sessions/`. Each live session writes:

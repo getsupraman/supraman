@@ -1,4 +1,4 @@
-//! The relay's files: `<FOREMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Foreman drops `{to, body}`
+//! The relay's files: `<SUPRAMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Foreman drops `{to, body}`
 //! into the inbox ([`send`]); the workspace's relay session watches it with `sm inbox` under its
 //! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
 //! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]), as does a

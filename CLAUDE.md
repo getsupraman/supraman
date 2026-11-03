@@ -77,7 +77,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_claude::mcp_config_path`: the path of a session's Workman config file, with the session-name check; write, read and delete it through this.
 - `supraman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.
 - `supraman_claude::transcript::Usage`: a session's tokens from its transcript (input, output, cache creation and cache reads, each message once), read on incrementally; a scheduled run's token cap.
-- `supraman_supervisor::{AppTokens, bearer, workstate_role}`: the one `TokenProvider` of Foreman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
+- `supraman_supervisor::{AppTokens, bearer, workman_role}`: the one `TokenProvider` of Foreman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
 - `supraman_supervisor::LaunchConfig::launch_spec`: every supervised or scheduled `claude --bg` spec (name, cwd, prompt, mode, strict MCP, plugin dirs, add-dirs, `--settings` env, `--allowedTools`); the caller adds its token and its own flags. `session_env` is that env as pairs and `interactive_args` the plugin and `--allowedTools` flags, for a [+] session (`hand::extras`); `supraman-app` `supervise::launch_config` builds the app's `LaunchConfig` for both.
 - `supraman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `sm want`); `DesiredState::release` stops the sessions of folders taken away (stop, never rm).
 

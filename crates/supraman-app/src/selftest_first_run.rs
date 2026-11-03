@@ -11,7 +11,7 @@ use crate::{
     selftest_manage::{shot, shot_window},
     settings_window::page,
     view::FleetView,
-    workstate_setup::WsStatus,
+    workman_setup::WorkmanStatus,
 };
 
 /// A recheck is picked up within 250 ms; `/health` gives up after 3 s; a sign-in is a few requests.
@@ -20,7 +20,7 @@ const WITHIN: Duration = Duration::from_secs(15);
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
     let result = crate::selftest::until(view, cx, WITHIN, what, f).await;
     result.map_err(|e| {
-        let now = view.read_with(cx, |v, _| format!("status {:?}, sign-in error {:?}", v.workstate, v.sign_in_error));
+        let now = view.read_with(cx, |v, _| format!("status {:?}, sign-in error {:?}", v.workman, v.sign_in_error));
         e.context(now)
     })
 }
@@ -37,18 +37,18 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let auth = crate::signin::auth(&home);
     let mut lines = Vec::new();
 
-    let who = until(view, cx, "Ready as the fake operator", |v| match &v.workstate {
-        WsStatus::Ready { url, who } if *url == base => who.clone(),
+    let who = until(view, cx, "Ready as the fake operator", |v| match &v.workman {
+        WorkmanStatus::Ready { url, who } if *url == base => who.clone(),
         _ => None,
     })
     .await?;
-    view.update(cx, |v, cx| v.open_settings_at(Some(page::WORKSTATE), cx));
+    view.update(cx, |v, cx| v.open_settings_at(Some(page::WORKMAN), cx));
     let handle = until(view, cx, "Settings opens on Workman", |v| v.settings_window).await?;
     let started = Instant::now();
     loop {
-        let (page, shown) = handle.read_with(cx, |s, _| (s.page(), s.workstate().clone())).map_err(|e| anyhow!("settings window: {e}"))?;
-        let fleet = view.read_with(cx, |v, _| v.workstate.clone());
-        if page == page::WORKSTATE && shown == fleet {
+        let (page, shown) = handle.read_with(cx, |s, _| (s.page(), s.workman().clone())).map_err(|e| anyhow!("settings window: {e}"))?;
+        let fleet = view.read_with(cx, |v, _| v.workman.clone());
+        if page == page::WORKMAN && shown == fleet {
             break;
         }
         if started.elapsed() > WITHIN {
@@ -61,8 +61,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     view.update(cx, |v, cx| v.sign_out(cx));
     let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
-        (matches!(v.workstate, WsStatus::NotSignedIn { .. }) && painted(v, "ws-setup-notice") && painted(v, "ws-setup-signin"))
-            .then(|| v.workstate_notice())
+        (matches!(v.workman, WorkmanStatus::NotSignedIn { .. }) && painted(v, "ws-setup-notice") && painted(v, "ws-setup-signin"))
+            .then(|| v.workman_notice())
             .flatten()
     })
     .await?;
@@ -75,7 +75,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let issued = oauth.issued().len();
     click(view, "ws-setup-signin", cx).await?;
     until(view, cx, "Ready after Sign in, the notice gone", |v| {
-        (matches!(&v.workstate, WsStatus::Ready { url, .. } if *url == base) && !painted(v, "ws-setup-notice")).then_some(())
+        (matches!(&v.workman, WorkmanStatus::Ready { url, .. } if *url == base) && !painted(v, "ws-setup-notice")).then_some(())
     })
     .await?;
     let fresh: Vec<String> = oauth.issued().into_iter().skip(issued).collect();
@@ -103,7 +103,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     handle.update(cx, |s, _, cx| s.set_url_text(other.base(), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     until(view, cx, "Ready on the other server", |v| {
-        matches!(&v.workstate, WsStatus::Ready { url, .. } if url == other.base()).then_some(())
+        matches!(&v.workman, WorkmanStatus::Ready { url, .. } if url == other.base()).then_some(())
     })
     .await?;
     if Settings::load(&home)?.workman.origin() != other.base() {
@@ -127,30 +127,30 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     view.update(cx, |v, cx| v.close_settings(cx));
 
     Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
-    view.update(cx, |v, _| v.recheck_workstate());
+    view.update(cx, |v, _| v.recheck_workman());
     let down = until(view, cx, "the unreachable notice", |v| {
-        (v.workstate.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workstate_notice()).flatten()
+        (v.workman.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workman_notice()).flatten()
     })
     .await?;
     if !down.contains(&closed) {
         bail!("the unreachable notice does not name {closed}: {down:?}");
     }
-    let warning = view.read_with(cx, |v, _| v.workstate.start_warning("w"));
+    let warning = view.read_with(cx, |v, _| v.workman.start_warning("w"));
     if !warning.as_deref().is_some_and(|w| w.contains("unreachable")) {
         bail!("Start would not warn while unreachable: {warning:?}");
     }
     shot("m5-3-unreachable", cx).await;
     click(view, "ws-setup-dismiss", cx).await?;
-    until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workstate.unreachable()).then_some(())).await?;
+    until(view, cx, "× hides the notice", |v| (!painted(v, "ws-setup-notice") && v.workman.unreachable()).then_some(())).await?;
     lines.push(format!("closed port: \"{down}\", Retry shown, × hid it"));
 
     auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
     saved.save(&home)?;
     crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
     view.update(cx, |v, cx| {
-        v.recheck_workstate();
+        v.recheck_workman();
         crate::work_view::WorkHub::reconfigure(Some(home.clone()), cx);
     });
-    until(view, cx, "the gate's fake Workman Ready again", |v| matches!(v.workstate, WsStatus::Ready { .. }).then_some(())).await?;
+    until(view, cx, "the gate's fake Workman Ready again", |v| matches!(v.workman, WorkmanStatus::Ready { .. }).then_some(())).await?;
     Ok(lines.join("; "))
 }

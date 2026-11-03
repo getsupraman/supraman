@@ -265,7 +265,7 @@ impl WorkInbox {
             let (overview, outcomes) = cx.background_executor().spawn(async move { read(&client, asks, overview) }).await;
             this.update(cx, |this, cx| {
                 if this.applied == 0 {
-                    crate::view::timeline("workstate inbox done", began.elapsed());
+                    crate::view::timeline("workman inbox done", began.elapsed());
                 }
                 this.applied += 1;
                 this.apply(overview, outcomes, cx);

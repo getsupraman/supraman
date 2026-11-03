@@ -213,7 +213,7 @@ pub struct MintedSession {
     pub origin: Option<String>,
 }
 
-/// Per session name, its [`MintedSession`]; persisted at `<FOREMAN_HOME>/supervisor/<workspace>.sessions.json`
+/// Per session name, its [`MintedSession`]; persisted at `<SUPRAMAN_HOME>/supervisor/<workspace>.sessions.json`
 /// so a restarted app still revokes what it minted. Without a path it lives in memory only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MintedSessions {

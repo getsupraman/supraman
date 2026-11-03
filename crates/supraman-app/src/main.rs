@@ -52,7 +52,7 @@ mod tray;
 mod updates;
 mod view;
 mod work_view;
-mod workstate_setup;
+mod workman_setup;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicI32, Ordering};

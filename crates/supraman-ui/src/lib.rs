@@ -117,7 +117,7 @@ pub fn log_panics() {
     std::panic::set_hook(Box::new(move |info| {
         let thread = std::thread::current();
         let backtrace = std::backtrace::Backtrace::force_capture();
-        log::error!(target: "foreman::panic", "thread '{}' {info}\nbacktrace:\n{backtrace}", thread.name().unwrap_or("<unnamed>"));
+        log::error!(target: "supraman::panic", "thread '{}' {info}\nbacktrace:\n{backtrace}", thread.name().unwrap_or("<unnamed>"));
         previous(info);
     }));
 }

@@ -58,13 +58,13 @@ pub trait TokenProvider {
 /// session gets the role's Workman server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
-    /// `<FOREMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
+    /// `<SUPRAMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
     /// Passed to the session as `SUPRAMAN_HOME` and `FOREMAN_HOME`, with `FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION` (its
     /// name, what `sm tell` signs with) and `FOREMAN_REPO` for a repo session, through
     /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
-    pub foreman_home: Option<PathBuf>,
+    pub supraman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
     /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
     pub bg_isolation_none: bool,
@@ -104,7 +104,7 @@ impl LaunchConfig {
 
     /// The session's `SUPRAMAN_HOME`/`FOREMAN_HOME` and `FOREMAN_*` vars; empty without a home.
     pub fn session_env(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Vec<(String, String)> {
-        let Some(home) = &self.foreman_home else {
+        let Some(home) = &self.supraman_home else {
             return Vec::new();
         };
         let mut env: Vec<(String, String)> =
@@ -173,9 +173,9 @@ pub struct Supervisor<L, T> {
 
 impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// Mints session tokens over HTTP ([`HttpMinter`]); the minted sessions are kept at
-    /// [`MintedSessions::path`] when `config.foreman_home` is set.
+    /// [`MintedSessions::path`] when `config.supraman_home` is set.
     pub fn new(desired: DesiredState, config: LaunchConfig, launcher: L, tokens: T) -> Self {
-        let path = config.foreman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
+        let path = config.supraman_home.as_deref().map(|home| MintedSessions::path(home, &desired.workspace));
         let mut notices = Vec::new();
         let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
             let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
@@ -543,7 +543,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .collect();
         for (name, session_id) in landed {
             self.desired.forked(&name, &session_id);
-            if let Some(home) = &self.config.foreman_home
+            if let Some(home) = &self.config.supraman_home
                 && let Err(e) = DesiredState::update(home, &self.desired.workspace, |d| d.forked(&name, &session_id))
             {
                 self.notices.push(format!("Cannot record that {name} continues as {session_id}: {e}"));
@@ -803,7 +803,7 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
         },
         launched_by,
         cwd: w.cwd.display().to_string(),
-        foreman_role: w.role.clone(),
+        supraman_role: w.role.clone(),
     }
 }
 
@@ -1234,7 +1234,7 @@ mod tests {
         std::fs::write(&path, json).unwrap();
         let mut desired = DesiredState::workspace_controller("demo", r"C:\demo\cwd", "be the controller");
         desired.started = true;
-        let config = LaunchConfig { mcp_dir: home.join("mcp"), foreman_home: Some(home.into()), ..LaunchConfig::default() };
+        let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.into()), ..LaunchConfig::default() };
         let minter = FakeMinter::default();
         let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None))
             .with_minter(minter.clone())
@@ -1453,7 +1453,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
-        sup.config.foreman_home = Some(home.clone());
+        sup.config.supraman_home = Some(home.clone());
         let config = sup.config.clone();
         sup.tick(&[], &mut free(), NOW);
         // no persistence without a home at construction: rebuild the way the app does
@@ -1565,7 +1565,7 @@ mod tests {
     fn session_gets_its_env_isolation_and_permission_mode_through_settings() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
-        sup.config.foreman_home = Some(r"C:\fm\home".into());
+        sup.config.supraman_home = Some(r"C:\fm\home".into());
         sup.config.bg_isolation_none = true;
         sup.config.allowed_tools = vec!["Bash(sm:*)".into(), "Bash(C:/fm/bin/sm.exe:*)".into()];
         sup.desired.sessions[0].permission_mode = "default".into();
@@ -2162,7 +2162,7 @@ mod tests {
         let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";
         let (sup, minter) = minting(true, mcp.path());
         let mut sup = sup;
-        sup.config.foreman_home = Some(home.path().into());
+        sup.config.supraman_home = Some(home.path().into());
         sup.desired.sessions.clear();
         let adopted = crate::adopted_session("demo", "Alpha", r"C:\demo\Alpha", "the repo role", from).unwrap();
         sup.desired.sessions.push(adopted.clone());

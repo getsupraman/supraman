@@ -603,7 +603,7 @@ pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, ho
         retry_dead_session(home, workspace, id, &live, now, host);
     }
     let dead: Live = serde_json::from_slice(&fs::read(&live.json).ok()?).ok()?;
-    if fm_alive(&dead) {
+    if sm_alive(&dead) {
         return None;
     }
     let _lock = supraman_core::fs::try_lock_file(&live.lock).ok()??;
@@ -616,7 +616,7 @@ pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, ho
 }
 
 /// The live file's sm runs: its pid is up with the start time it recorded.
-pub fn fm_alive(live: &Live) -> bool {
+pub fn sm_alive(live: &Live) -> bool {
     match (process::started(live.fm_pid), live.fm_started) {
         (Some(now), Some(then)) => now == then,
         (running, _) => running.is_some(),

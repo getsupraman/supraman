@@ -76,7 +76,7 @@ pub use supraman_core::process::Output;
 pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_session_id};
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
-    Claude, LaunchSpec, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workstate_mcp_config,
+    Claude, LaunchSpec, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workman_mcp_config,
     MCP_SERVER, mcp_config_path, mcp_config_url, write_mcp_config,
 };
 pub use session::{

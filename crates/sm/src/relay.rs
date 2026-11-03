@@ -54,7 +54,7 @@ pub fn inbox(args: &[&str]) -> Result<(), Failure> {
 }
 
 /// `sm send` speaks as the human; every Supraman-launched session carries `FOREMAN_ROLE` (`supraman_supervisor` `session_settings`).
-pub fn refuse_inside_foreman() -> Result<(), Failure> {
+pub fn refuse_inside_supraman() -> Result<(), Failure> {
     match std::env::var_os("FOREMAN_ROLE") {
         Some(role) if !role.is_empty() => Err(Failure::Refused(format!(
             "sm send speaks as the human through the relay and is refused inside a Supraman session (FOREMAN_ROLE={}); use SendMessage to reach a session, sm tell to reach the human",
