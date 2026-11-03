@@ -82,11 +82,16 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     if !outbox.join(&older).is_file() {
         bail!("× on {older} removed its outbox file");
     }
-    let (reloaded, notice) = DismissedMessages::load(Some(home));
+    let written = crate::selftest::until_with(cx, WITHIN, &format!("the × to be written to {FILE}"), |_| {
+        let (reloaded, notice) = DismissedMessages::load(Some(home));
+        (notice.is_some() || reloaded.hides(WORKSPACE, &older)).then_some((reloaded, notice))
+    })
+    .await;
+    let (reloaded, notice) = written.map_err(|e| e.context(format!("{FILE}: {:?}", std::fs::read_to_string(home.join(FILE)).unwrap_or_default())))?;
     if let Some(notice) = notice {
         bail!("{FILE}: {notice}");
     }
-    if !reloaded.hides(WORKSPACE, &older) || reloaded.hides(WORKSPACE, &newer) {
+    if reloaded.hides(WORKSPACE, &newer) {
         bail!("{FILE} read back as a restart does: {:?}", std::fs::read_to_string(home.join(FILE)).unwrap_or_default());
     }
     let ticks = view.read_with(cx, |v, _| v.ticks);

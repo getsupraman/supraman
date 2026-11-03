@@ -640,7 +640,7 @@ impl FleetView {
                 };
                 if this
                     .update(cx, |this, cx| {
-                        this.apply(refresh);
+                        this.apply(refresh, cx);
                         this.refresh_details(cx);
                         if this.other_scans == 0 {
                             this.scan_other_schedules(cx);
@@ -660,7 +660,7 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     if let Some(report) = report {
-                        this.apply_report(report);
+                        this.apply_report(report, cx);
                     }
                     this.refreshes += 1;
                     this.refreshes_answered = asks;
@@ -1053,21 +1053,28 @@ impl FleetView {
     }
 
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        let toggled = self.stars.toggle(session_id);
+        let (_, save) = self.stars.toggle(session_id);
         self.invalidate_tree();
-        match toggled {
-            Ok(_) => self.transcripts_nudge.wake(),
-            Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
-        }
+        self.transcripts_nudge.wake();
+        self.save_off_thread(save, "Cannot save the star", cx);
         cx.notify();
     }
 
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.dismissed_messages.dismiss(workspace, file) {
-            self.action_error = Some(format!("Cannot save the dismissed message: {e}"));
-        }
+        let save = self.dismissed_messages.dismiss(workspace, file);
+        self.save_off_thread(save, "Cannot save the dismissed message", cx);
         self.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
+    }
+
+    /// A store's save written off the UI thread; a failure is the action error `failed: <why>`.
+    pub fn save_off_thread(&self, save: Option<supraman_core::store::Save>, failed: &'static str, cx: &mut Context<Self>) {
+        supraman_ui::store::save_off_thread(save, cx, move |this, saved, cx| {
+            if let Err(e) = saved {
+                this.action_error = Some(format!("{failed}: {e}"));
+                cx.notify();
+            }
+        });
     }
 
     fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
@@ -1312,7 +1319,7 @@ impl FleetView {
         self.workstate.problem().filter(|p| self.workstate_dismissed.as_ref() != Some(p))
     }
 
-    fn apply(&mut self, refresh: Refresh) {
+    fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
         let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
         match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
@@ -1371,9 +1378,8 @@ impl FleetView {
             self.schedules = schedules;
             self.schedule_errors = errors;
             supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
-            if let Err(e) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules)) {
-                self.action_error = Some(format!("Cannot save the dismissed approvals: {e}"));
-            }
+            let (_, save) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules));
+            self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
@@ -1385,7 +1391,7 @@ impl FleetView {
         self.last_refresh_took = Some(refresh.took);
     }
 
-    fn apply_report(&mut self, report: Report) {
+    fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
         self.desired = report.desired;
         self.invalidate_tree();
         self.needs = report.needs;
@@ -1399,9 +1405,8 @@ impl FleetView {
         self.last_attempt = report.last_attempt.into_iter().collect();
         self.relays = report.relays;
         self.messages = report.messages;
-        if let Err(e) = self.dismissed_messages.prune(&self.messages) {
-            self.action_error = Some(format!("Cannot save the dismissed messages: {e}"));
-        }
+        let (_, save) = self.dismissed_messages.prune(&self.messages);
+        self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         for (workspace, on_disk) in report.answered {
             let answered = self.answered.entry(workspace).or_default();
             for (file, line) in on_disk {

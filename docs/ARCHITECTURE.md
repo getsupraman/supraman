@@ -36,6 +36,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `fs::write_atomic` — every write of a file another process or thread may read (settings, registry, desired state, minted sessions, relay files). A unique temp file renamed over the target.
 - `fs::lock_file` — an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`DesiredState::update`, `refresh.lock`). `fs::try_lock_file` takes it only when free (`None` while held): a schedule's overlap lock.
 - `fs::load_json_or_notice` — a JSON state file whose loss is a notice, not an error (stars, dismissals).
+- `store::{JsonStore, Save}` — a small JSON state file held in memory, each in its own format (`starred.json`, `messages-dismissed.json`, the schedules' dismissed runs and approvals, `workstate-dismissed.json`): `load` reads it with `load_json_or_notice`, `edit` changes the value and returns the `Save` of a change, `Save::write` writes the newest value with `write_atomic` (a save overtaken by a later one writes nothing); the app runs it with `supraman_ui::store::save_off_thread`.
 - `fs::append_capped` (with `fs::rotated`) — an append-only log rotated to `<file>.1` at a cap (event logs, `foreman.log`).
 - `paths::{user_home, claude_dir}` — the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
 - `paths::{normalize, path_key, within, key_within, git_at, main_checkout, linked_git_dir}` — path comparison (`within`: a folder or below it, never a sibling sharing a prefix) and the `.git` file/dir walk without running git; `git_at` is the nearest `.git` (a repo's folder or a linked worktree's file) at or above a folder, the walk `branch_at`, `main_checkout` and the Details tab's worktree line share.
@@ -77,6 +78,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.
 - `settings_page::{SettingsPages, SettingsPage, row}` — a settings window's pages, registered by id with a title, an icon and a render fn, and one setting's row.
+- `store::save_off_thread` — a `supraman_core::store::Save` written on the background executor, its outcome handed back to the owner.
 - `nudge::{nudge, Nudge, Nudged}` — a coalescing wake-up for a loop on a gpui executor, instead of polling a flag.
 - `themes` — Zed theme JSON over a base, the bundled themes, the terminal palette, `contrast` and the contrast floors (`fit_floors`).
 - `term_element` (`terminal_grid`, `TermFont`, `cell_metrics`) — the terminal grid painter for a `supraman_term::Terminal`; OSC 8 cells are underlined, and the pointer is a hand while Ctrl is held over a link.

@@ -858,14 +858,16 @@ mod tests {
         let (mut d, notice) = DismissedMessages::load_at(Some(file.clone()), "x");
         assert!(notice.is_none() && shown(&d, &rows) == 1);
         let w = &waiting(&rows)[0];
-        d.dismiss(&w.workspace, &w.key).unwrap();
+        d.dismiss(&w.workspace, &w.key).unwrap().write().unwrap();
         let (mut restarted, _) = DismissedMessages::load_at(Some(file.clone()), "x");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&rows)), Ok(false));
+        assert!(!restarted.prune_keys(&waiting_keys(&rows)).0);
         assert_eq!(shown(&restarted, &rows), 0, "still dismissed after a restart");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&BTreeMap::new())), Ok(false), "a workspace the poll did not read keeps it");
+        assert!(!restarted.prune_keys(&waiting_keys(&BTreeMap::new())).0, "a workspace the poll did not read keeps it");
         let edited = pending("f2");
         assert_eq!(shown(&restarted, &edited), 1, "a covered edit shows it again");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&edited)), Ok(true));
+        let (changed, save) = restarted.prune_keys(&waiting_keys(&edited));
+        assert!(changed);
+        save.unwrap().write().unwrap();
         let (again, _) = DismissedMessages::load_at(Some(file), "x");
         assert_eq!(shown(&again, &rows), 1, "the old fingerprint's dismissal is gone from the file");
     }

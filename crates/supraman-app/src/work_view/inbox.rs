@@ -1,12 +1,10 @@
 //! Foreman writes nothing to Workman (C21): dismissals are local ([`Dismissed`]).
 
-use std::{
-    collections::BTreeMap,
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::collections::BTreeMap;
+use std::path::Path;
 
-use supraman_core::fs::{load_json_or_notice, write_atomic};
+use serde::{Deserialize, Serialize};
+use supraman_core::store::{JsonStore, Save};
 use supraman_workman::{Inbox, InboxRow, Overview};
 
 use super::*;
@@ -14,18 +12,13 @@ use super::*;
 pub const DISMISSED_FILE: &str = "workstate-dismissed.json";
 
 /// Per workspace: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct Dismissed(BTreeMap<String, BTreeMap<String, String>>);
 
 impl Dismissed {
-    pub fn load(home: Option<&Path>) -> (Self, Option<String>) {
-        let Some(home) = home else { return (Self::default(), None) };
-        let (dismissed, notice) = load_json_or_notice(&home.join(DISMISSED_FILE), "every Workman inbox row shows");
-        (Dismissed(dismissed), notice)
-    }
-
-    pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(&self.0).unwrap_or_else(|_| "{}".into())
+    pub fn load(home: Option<&Path>) -> (JsonStore<Self>, Option<String>) {
+        JsonStore::load(home.map(|h| h.join(DISMISSED_FILE)), "every Workman inbox row shows")
     }
 
     pub fn hides(&self, workspace: &str, row: &InboxRow) -> bool {
@@ -121,15 +114,12 @@ fn read(client: &Client, asks: Vec<Ask>, overview: bool) -> (Option<Overview>, V
 
 pub struct WorkInbox {
     hub: Entity<WorkHub>,
-    home: Option<PathBuf>,
     workspaces: Vec<String>,
     projects: HashMap<String, ItemRef>,
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
-    pub dismissed: Dismissed,
-    /// The newest dismissals not yet on disk; one writer at a time takes them.
-    unsaved: Arc<Mutex<Option<String>>>,
+    pub dismissed: JsonStore<Dismissed>,
     pending: Option<Plan>,
     pub failures: HashMap<String, String>,
     pub notice: Option<String>,
@@ -152,13 +142,11 @@ impl WorkInbox {
             let (dismissed, notice) = Dismissed::load(home.as_deref());
             WorkInbox {
                 hub,
-                home,
                 workspaces: Vec::new(),
                 projects: HashMap::new(),
                 inboxes: HashMap::new(),
                 run_project: HashMap::new(),
                 dismissed,
-                unsaved: Arc::default(),
                 pending: None,
                 failures: HashMap::new(),
                 notice,
@@ -179,9 +167,8 @@ impl WorkInbox {
         self.inboxes.retain(|w, _| workspaces.contains(w));
         self.failures.retain(|w, _| workspaces.contains(w));
         self.workspaces = workspaces;
-        if self.dismissed.retain_workspaces(&self.workspaces) {
-            self.save(cx);
-        }
+        let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
+        Self::save(save, cx);
         let asks = added.into_iter().map(|workspace| Ask { workspace, project: None }).collect();
         self.read(asks, true, cx);
         cx.notify();
@@ -191,39 +178,25 @@ impl WorkInbox {
         self.workspaces
             .iter()
             .filter_map(|w| self.inboxes.get(w).map(|inbox| (w, inbox)))
-            .flat_map(|(w, inbox)| inbox.rows.iter().filter(|r| !self.dismissed.hides(w, r)).map(move |r| (w.as_str(), r)))
+            .flat_map(|(w, inbox)| inbox.rows.iter().filter(|r| !self.dismissed.get().hides(w, r)).map(move |r| (w.as_str(), r)))
             .collect()
     }
 
     pub fn dismiss(&mut self, workspace: &str, key: &str, cx: &mut Context<Self>) {
         let Some(row) = self.inboxes.get(workspace).and_then(|i| i.rows.iter().find(|r| r.key == key)) else { return };
-        self.dismissed.dismiss(workspace, row);
-        self.save(cx);
+        let save = self.dismissed.edit(|d| {
+            d.dismiss(workspace, row);
+            true
+        });
+        Self::save(save, cx);
         cx.notify();
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.home.as_ref().map(|h| h.join(DISMISSED_FILE)) else { return };
-        *self.unsaved.lock().unwrap_or_else(|e| e.into_inner()) = Some(self.dismissed.to_json());
-        let unsaved = self.unsaved.clone();
-        cx.spawn(async move |this, cx| {
-            let saved = cx
-                .background_executor()
-                .spawn(async move {
-                    // Held while writing, so the last state written is the newest one.
-                    let mut latest = unsaved.lock().unwrap_or_else(|e| e.into_inner());
-                    let json = latest.take()?;
-                    Some(write_atomic(&path, json).map_err(|e| format!("Cannot save {} ({e}): a dismissed row shows again after a restart", path.display())))
-                })
-                .await;
-            let Some(saved) = saved else { return };
-            this.update(cx, |this, cx| {
-                this.notice = saved.err();
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+    fn save(save: Option<Save>, cx: &mut Context<Self>) {
+        supraman_ui::store::save_off_thread(save, cx, |this, saved, cx| {
+            this.notice = saved.err().map(|e| format!("Cannot save the dismissed rows ({e}): a dismissed row shows again after a restart"));
+            cx.notify();
+        });
     }
 
     fn on_hub(&mut self, _: Entity<WorkHub>, event: &HubEvent, cx: &mut Context<Self>) {
@@ -310,7 +283,7 @@ impl WorkInbox {
                 .flat_map(|p| p.runs.iter().map(|r| (r.item.id.clone(), p.item.id.clone())))
                 .collect();
         }
-        let mut pruned = false;
+        let mut save = None;
         for (workspace, outcome) in outcomes {
             if !self.workspaces.contains(&workspace) {
                 continue;
@@ -322,7 +295,7 @@ impl WorkInbox {
                     if self.inboxes.get(&workspace).is_some_and(|shown| inbox.seq < shown.seq) {
                         continue;
                     }
-                    pruned |= self.dismissed.prune(&workspace, &inbox.rows);
+                    save = self.dismissed.edit(|d| d.prune(&workspace, &inbox.rows)).or(save);
                     self.inboxes.insert(workspace, inbox);
                 }
                 Outcome::NoProject => {
@@ -335,9 +308,7 @@ impl WorkInbox {
                 }
             }
         }
-        if pruned {
-            self.save(cx);
-        }
+        Self::save(save, cx);
         cx.notify();
     }
 }
@@ -394,13 +365,15 @@ mod tests {
         let mut d = Dismissed::default();
         d.dismiss("w", &row("blocked:t1", "s1"));
         d.dismiss("v", &row("question:t2", "s2"));
-        std::fs::write(home.path().join(DISMISSED_FILE), d.to_json()).unwrap();
-        assert_eq!(Dismissed::load(Some(home.path())), (d.clone(), None));
+        std::fs::write(home.path().join(DISMISSED_FILE), serde_json::to_string_pretty(&d).unwrap()).unwrap();
+        let (read, notice) = Dismissed::load(Some(home.path()));
+        assert_eq!((read.get(), notice), (&d, None));
         std::fs::write(home.path().join(DISMISSED_FILE), "not json").unwrap();
         let (none, notice) = Dismissed::load(Some(home.path()));
-        assert_eq!(none, Dismissed::default());
+        assert_eq!(none.get(), &Dismissed::default());
         assert!(notice.is_some_and(|n| n.contains(DISMISSED_FILE)), "an unreadable file says so");
-        assert_eq!(Dismissed::load(None), (Dismissed::default(), None));
+        let (none, notice) = Dismissed::load(None);
+        assert_eq!((none.get(), notice), (&Dismissed::default(), None));
         assert!(d.retain_workspaces(&["w".to_string()]));
         assert!(!d.hides("v", &row("question:t2", "s2")));
     }

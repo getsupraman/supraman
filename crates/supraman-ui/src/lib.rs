@@ -19,6 +19,7 @@ pub mod nudge;
 pub mod settings_page;
 pub mod split;
 pub mod stall;
+pub mod store;
 pub mod tabs;
 pub mod term_element;
 pub mod text_input;

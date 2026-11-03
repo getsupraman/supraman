@@ -531,9 +531,8 @@ impl FleetView {
     }
 
     pub fn dismiss_schedule_notice(&mut self, workspace: &str, run: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.runs_dismissed.dismiss(workspace, run) {
-            self.action_error = Some(e);
-        }
+        let save = self.runs_dismissed.dismiss(workspace, run);
+        self.save_off_thread(save, "Cannot save the dismissed run", cx);
         cx.notify();
     }
 
@@ -1072,9 +1071,8 @@ impl FleetView {
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
                 let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
-                    if let Err(e) = this.waiting_dismissed.dismiss(&ws, &dismissed) {
-                        this.action_error = Some(e);
-                    }
+                    let save = this.waiting_dismissed.dismiss(&ws, &dismissed);
+                    this.save_off_thread(save, "Cannot save the dismissed approval", cx);
                     cx.notify();
                 }
             }));
