@@ -21,7 +21,7 @@ fn skills_call_the_skill_tool_even_when_the_listing_omits_it() {
         assert!(text.contains("only a failed Skill call is a blocker") || text.contains("Only a failed Skill call is a blocker"), "{path}");
     }
     let repo = plugin("skills/repo-controller/SKILL.md");
-    assert!(repo.contains("`rlarch:controller` and `rlarch:nested-claude` even when the skill listing does not show them"));
+    assert!(repo.contains("`workman:controller` and `workman:agents` even when the skill listing does not show them"));
     assert!(!repo.contains("Not in your skill list"), "a missing listing entry is not a blocker");
     assert!(plugin("skills/workspace-controller/SKILL.md").contains("answer it yourself, never ask the human"));
 }

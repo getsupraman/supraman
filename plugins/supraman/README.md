@@ -16,8 +16,8 @@ writes `roles/{workspace,relay,repo}.md` to `<home>/roles/` at start (`{sm}`/`{h
 reaches the receiver from `fm-<w>-relay`, the human's voice, so a session reaches another one with `SendMessage` only.
 
 Skills: `skills/workspace-controller` (`/supraman:workspace-controller`, loaded by `roles/workspace.md`) and
-`skills/repo-controller` (`/supraman:repo-controller`, loaded by `roles/repo.md`; it runs `/rlarch:controller` from
-the user-installed rlarch plugin, which loads with no `extra_plugin_dirs`). The roles stay short: who the session is, which skill to
+`skills/repo-controller` (`/supraman:repo-controller`, loaded by `roles/repo.md`; it runs `/workman:controller` from
+the user-installed workman plugin, which loads with no `extra_plugin_dirs`). The roles stay short: who the session is, which skill to
 invoke, what to do on start and after a compaction; the skills hold the rules.
 
 Workman is https://work.supraman.ai, reached only through Supraman's OAuth sign-in (Settings → Workman →

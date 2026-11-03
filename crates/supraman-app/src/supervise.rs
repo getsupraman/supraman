@@ -459,7 +459,7 @@ mod tests {
         let launched = role_prompt(&plugin_dir(), WORKSPACE_ROLE, "demo").unwrap();
         assert!(launched.contains("/supraman:workspace-controller") && launched.contains("fm-demo-relay"), "{launched}");
         let repo = supraman_supervisor::render_repo_role(&std::fs::read_to_string(plugin_dir().join("roles").join("repo.md")).unwrap(), "demo", "Alpha");
-        assert!(repo.contains("/supraman:repo-controller") && repo.contains("/rlarch:controller"), "{repo}");
+        assert!(repo.contains("/supraman:repo-controller") && repo.contains("/workman:controller"), "{repo}");
     }
 
     #[test]

@@ -843,7 +843,7 @@ impl SettingsView {
         vec![row(
             "Extra plugin dirs",
             "Passed as --plugin-dir to every session Supraman launches, after Supraman's own plugin. A plugin \
-             installed for your user, such as rlarch, loads without being listed here. Change them in \
+             installed for your user, such as workman, loads without being listed here. Change them in \
              settings.toml ([sessions] extra_plugin_dirs = [\"…\"]); a running session keeps the plugins it was launched with.",
             div().into_any_element(),
             Some(div().flex().flex_col().gap_1().pt_2().children(lines).into_any_element()),
