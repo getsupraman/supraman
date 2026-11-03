@@ -20,8 +20,6 @@ use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
 pub const SUPRAMAN_DARK: &str = "Supraman Dark";
-/// The name an older `settings.toml` may hold for [`SUPRAMAN_DARK`].
-pub const SUPRAMAN_DARK_LEGACY: &str = "Foreman Dark";
 pub const DEFAULT_THEME: &str = DARK_MODERN;
 
 /// kevcamel/vscode_dark_modern.zed (MIT, © 2024 Kevin Camellini), `themes/vscode-dark-modern.json` as of
@@ -614,14 +612,9 @@ pub struct Resolved {
     pub problem: Option<String>,
 }
 
-/// A saved theme name as the catalog lists it.
-pub fn canonical(name: &str) -> &str {
-    if name == SUPRAMAN_DARK_LEGACY { SUPRAMAN_DARK } else { name }
-}
-
 /// `name` (None: [`DEFAULT_THEME`]) from the bundled themes or `<home>\themes`, with `terminal`'s ANSI.
 pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
-    let name = canonical(name.unwrap_or(DEFAULT_THEME));
+    let name = name.unwrap_or(DEFAULT_THEME);
     let (theme, adjusted, problem) = if name == SUPRAMAN_DARK {
         let loaded = supraman_dark();
         (loaded.theme, loaded.adjusted, None)
@@ -728,13 +721,6 @@ mod tests {
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
         assert_eq!(palette(&supraman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
-    }
-
-    #[test]
-    fn the_legacy_name_resolves_to_supraman_dark() {
-        let resolved = resolve(Some(SUPRAMAN_DARK_LEGACY), TerminalColors::Theme, None);
-        assert_eq!((resolved.theme.name.as_ref(), resolved.problem), (SUPRAMAN_DARK, None));
-        assert_eq!(canonical(SUPRAMAN_DARK_LEGACY), SUPRAMAN_DARK);
     }
 
     #[test]

@@ -661,7 +661,7 @@ impl SettingsView {
     fn render_appearance(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let colors = cx.theme().colors().clone();
         let status = cx.theme().status().clone();
-        let current = themes::canonical(self.settings.appearance.theme.as_deref().unwrap_or(themes::DEFAULT_THEME)).to_string();
+        let current = self.settings.appearance.theme.as_deref().unwrap_or(themes::DEFAULT_THEME).to_string();
         let terminal = TerminalColors::from_setting(self.settings.appearance.terminal_colors.as_deref());
         let mut list = div().flex().flex_col().gap_1().pt_2();
         for (ix, entry) in self.catalog.entries.iter().enumerate() {
