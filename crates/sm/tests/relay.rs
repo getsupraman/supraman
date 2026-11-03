@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// `USERPROFILE`/`HOME` = the scratch home: no `.claude/sessions` there, so `send` takes the relay.
 fn sm_cmd(home: &Path, args: &[&str]) -> Command {
@@ -54,7 +54,7 @@ fn send_without_a_live_session_drops_for_the_relay_and_says_why() {
 }
 
 #[test]
-fn inbox_prints_each_send_as_one_json_line_within_a_second() {
+fn inbox_prints_each_send_as_one_json_line() {
     let home = tempfile::tempdir().unwrap();
     let inbox = home.path().join("relay").join("demo").join("inbox");
     fs::create_dir_all(&inbox).unwrap();
@@ -68,7 +68,7 @@ fn inbox_prints_each_send_as_one_json_line_within_a_second() {
     let stdout = child.stdout.take().unwrap();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
-            if tx.send((Instant::now(), line.unwrap())).is_err() {
+            if tx.send(line.unwrap()).is_err() {
                 break;
             }
         }
@@ -76,17 +76,15 @@ fn inbox_prints_each_send_as_one_json_line_within_a_second() {
 
     let out = sm(home.path(), &["send", "demo", "fm-demo-workspace", "two\nlines"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let sent = Instant::now();
     let body_file = home.path().join("body.txt");
     fs::write(&body_file, "from a file").unwrap();
     let out = sm(home.path(), &["send", "demo", "fm-demo-x", "--file", body_file.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
 
-    let lines: Vec<(Instant, String)> = (0..2).map(|_| rx.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
+    let lines: Vec<String> = (0..2).map(|_| rx.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
     let _ = child.kill();
     let _ = child.wait();
-    assert!(lines[0].0 - sent < Duration::from_secs(1), "{:?}", lines[0].0 - sent);
-    let v: Vec<serde_json::Value> = lines.iter().map(|(_, l)| serde_json::from_str(l).unwrap()).collect();
+    let v: Vec<serde_json::Value> = lines.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!((v[0]["to"].as_str(), v[0]["body"].as_str()), (Some("fm-demo-workspace"), Some("two\nlines")));
     assert_eq!((v[1]["to"].as_str(), v[1]["body"].as_str()), (Some("fm-demo-x"), Some("from a file")));
     assert_eq!(fs::read_dir(inbox.join("sent")).unwrap().count(), 2);

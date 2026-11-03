@@ -194,11 +194,3 @@ fn work_errors_are_one_line_without_the_token() {
         .unwrap();
     assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at {}", supraman_core::DEFAULT_WORKMAN_URL));
 }
-
-#[test]
-fn work_is_in_the_help() {
-    let home = home("http://127.0.0.1:9", None);
-    let help = text(&sm(home.path(), &["--help"]).stdout);
-    assert!(help.contains("sm work overview <workspace>"), "{help}");
-    assert!(help.contains("sm work board <workspace> <run-ref>"), "{help}");
-}

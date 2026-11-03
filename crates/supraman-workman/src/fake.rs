@@ -227,7 +227,11 @@ impl FakeWorkman {
 
     /// One SSE frame `data: <data>` to every open stream; how many took it.
     pub fn push(&self, data: &str) -> usize {
-        let frame = format!("data: {data}\n\n");
+        self.push_frame(&format!("data: {data}\n\n"))
+    }
+
+    /// `frame` as written, to every open stream; how many took it.
+    pub fn push_frame(&self, frame: &str) -> usize {
         let mut streams = self.streams.lock().unwrap();
         streams.retain_mut(|s| s.write_all(frame.as_bytes()).and_then(|()| s.flush()).is_ok());
         streams.len()

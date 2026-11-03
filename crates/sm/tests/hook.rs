@@ -17,8 +17,7 @@ fn hook_env(home: Option<&Path>, role: Option<&str>, env: &[(&str, &str)], args:
     cmd.env_remove("SUPRAMAN_HOME")
         .env_remove("FOREMAN_HOME")
         .env_remove("FOREMAN_ROLE")
-        .env_remove("FOREMAN_WORKSPACE")
-        .env_remove("FOREMAN_PLATFORM");
+        .env_remove("FOREMAN_WORKSPACE");
     if let Some(home) = home {
         cmd.env("SUPRAMAN_HOME", home);
     }
@@ -78,26 +77,11 @@ fn logs_each_event_and_injects_the_role_on_session_start() {
         ]
     );
     assert!(events.iter().all(|e| e.session_id == SID && e.name == "aw-t" && e.cwd == r"C:\w" && e.ts > 0));
-}
 
-#[test]
-fn the_workspace_role_text_names_foreman_workspace_and_nothing_else() {
-    let home = tempfile::tempdir().unwrap();
-    fs::create_dir_all(home.path().join("roles")).unwrap();
     fs::write(home.path().join("roles").join("workspace.md"), "Controller for {workspace}.\n").unwrap();
-    let h = Some(home.path());
+    let workspace = hook_env(h, Some("workspace"), &[("FOREMAN_WORKSPACE", "nomos")], &["SessionStart"], &payload("SessionStart", r#","source":"resume""#));
     let tag = role_tag("workspace", "Controller for nomos.");
-    let expected = format!("{tag}\nController for nomos.\n");
-    let start = payload("SessionStart", r#","source":"resume""#);
-
-    let current = hook_env(h, Some("workspace"), &[("FOREMAN_WORKSPACE", "nomos")], &["SessionStart"], &start);
-    assert_eq!(String::from_utf8_lossy(&current.stdout), expected, "{current:?}");
-    let old = hook_env(h, Some("platform"), &[("FOREMAN_PLATFORM", "nomos")], &["SessionStart"], &start);
-    silent_success(&old);
-    assert_eq!(String::from_utf8_lossy(&old.stdout), "", "{old:?}");
-    let both = [("FOREMAN_WORKSPACE", "nomos"), ("FOREMAN_PLATFORM", "other")];
-    let both = hook_env(h, Some("workspace"), &both, &["SessionStart"], &start);
-    assert_eq!(String::from_utf8_lossy(&both.stdout), expected, "FOREMAN_PLATFORM is not read");
+    assert_eq!(String::from_utf8_lossy(&workspace.stdout), format!("{tag}\nController for nomos.\n"), "{{workspace}} is filled");
 }
 
 #[test]
