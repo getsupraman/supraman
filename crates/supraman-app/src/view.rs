@@ -37,7 +37,7 @@ use gpui::{
     WindowHandle, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
-use util::paths::PathStyle;
+use util::paths::{PathStyle, PathWithPosition};
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
@@ -2288,8 +2288,8 @@ impl FleetView {
             CursorShape::Bar,
             AlternateScroll::On,
             None,
-            Vec::new(),
-            Duration::ZERO,
+            supraman_term::terminal_settings::PATH_HYPERLINK_REGEXES.iter().map(|regex| regex.to_string()).collect(),
+            supraman_term::terminal_settings::PATH_HYPERLINK_TIMEOUT,
             false,
             self.window.window_id().as_u64(),
             cx,
@@ -2581,6 +2581,18 @@ impl FleetView {
 
     fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
         match link_target(target) {
+            Ok(Link::Path(path)) => {
+                let found = cx.background_executor().spawn(async move { missing(&path).map_or(Ok(path), Err) });
+                cx.spawn(async move |this, cx| {
+                    let found = found.await;
+                    this.update(cx, |this, cx| match found {
+                        Ok(path) => (this.open_link_with)(&Link::Path(path), cx),
+                        Err(why) => this.pane_toast.show_why(why, |v: &mut Self| &mut v.pane_toast, cx),
+                    })
+                    .ok();
+                })
+                .detach();
+            }
             Ok(link) => (self.open_link_with)(&link, cx),
             Err(scheme) => self.pane_toast.show_why(open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
@@ -2659,18 +2671,23 @@ pub enum Link {
     Path(PathBuf),
 }
 
-/// What a Ctrl+click on `target` opens, or the scheme it refuses.
+/// What a Ctrl+click on `target` opens, or the scheme it refuses; a path loses its `:line:column`.
 pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match target {
         MaybeNavigationTarget::Url(url) => open::allowed(url, &open::LINK_SCHEMES).map(|()| Link::Url(url.clone())),
         MaybeNavigationTarget::PathLike(link) => {
-            let path = Path::new(&link.maybe_path);
+            let path = PathWithPosition::parse_str(&link.maybe_path).path;
             Ok(Link::Path(match &link.working_directory {
                 Some(cwd) if path.is_relative() => cwd.join(path),
-                _ => path.to_path_buf(),
+                _ => path,
             }))
         }
     }
+}
+
+/// Why a path link opens nothing: no file or folder there. Reads the disk, so never on the UI thread.
+pub fn missing(path: &Path) -> Option<String> {
+    (!path.is_absolute() || !path.exists()).then(|| format!("Not opened: there is no file or folder {}.", path.display()))
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
@@ -3160,6 +3177,40 @@ mod tests {
         assert_eq!(link_target(&MaybeNavigationTarget::PathLike(relative)), Ok(Link::Path(PathBuf::from("C:/repo").join("src/x.rs"))));
         let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
         assert_eq!(link_target(&MaybeNavigationTarget::PathLike(absolute)), Ok(Link::Path(PathBuf::from("C:/tmp/a.txt"))));
+    }
+
+    #[test]
+    fn a_path_link_opens_the_file_without_its_line_and_column() {
+        let at = |maybe_path: &str| link_target(&MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path: maybe_path.into(), working_directory: Some(PathBuf::from(r"C:\repo")) }));
+        for (shown, file) in [
+            (r"C:\x\y.rs", r"C:\x\y.rs"),
+            (r"C:\x\y.rs:12", r"C:\x\y.rs"),
+            (r"C:\x\y.rs:12:3", r"C:\x\y.rs"),
+            ("C:/x/y.rs:12:3", "C:/x/y.rs"),
+            (r"C:\x\y.cpp(12,3)", r"C:\x\y.cpp"),
+            (r"src\x.rs:12:3", r"C:\repo\src\x.rs"),
+            ("src/x.rs:12", r"C:\repo\src/x.rs"),
+            (r"C:\x\folder", r"C:\x\folder"),
+        ] {
+            assert_eq!(at(shown), Ok(Link::Path(PathBuf::from(file))), "{shown}");
+        }
+    }
+
+    #[test]
+    fn a_path_that_names_nothing_on_disk_is_refused_with_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("x.rs");
+        std::fs::write(&file, "").unwrap();
+        let at = |maybe_path: &str| match link_target(&MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path: maybe_path.into(), working_directory: Some(tmp.path().into()) })) {
+            Ok(Link::Path(path)) => path,
+            other => panic!("{maybe_path}: {other:?}"),
+        };
+        assert_eq!(missing(&at("x.rs:12:3")), None);
+        assert_eq!(missing(&at(&format!("{}:4", file.display()))), None);
+        assert_eq!(missing(&at(&tmp.path().display().to_string())), None, "a folder opens");
+        let gone = at("gone.rs:1");
+        assert_eq!(missing(&gone), Some(format!("Not opened: there is no file or folder {}.", gone.display())));
+        assert!(missing(Path::new("relative.rs")).is_some(), "a path never resolved against a folder");
     }
 
     #[test]
