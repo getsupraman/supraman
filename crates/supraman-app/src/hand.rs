@@ -818,6 +818,22 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_session_named_before_slug_names_resumes_under_its_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&url));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let folder = Path::new(r"C:\demo\Alpha");
+        let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+        let Launch::Minted { session, .. } = hands.launch_for(folder, Some("hand-Alpha-1"), Some(sid)) else { panic!() };
+        assert_eq!(session, "hand-Alpha-1");
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!(body["name"].as_str(), Some("hand-Alpha-1"));
+        let Launch::Minted { session, .. } = hands.launch(folder, None) else { panic!() };
+        assert_eq!(session, "hand-alpha-2", "a new session's name is slugify's, numbered after the resumed one's key");
+    }
+
+    #[test]
     fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workstate(vec![]);
