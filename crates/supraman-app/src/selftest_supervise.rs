@@ -439,46 +439,59 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         .read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).max())
         .filter(|id| Some(*id) != tabs_before)
         .ok_or_else(|| anyhow!("step d: Run in terminal opened no tab"))?;
-    // The tab is closed whatever happened, so its shell lets go of the dir.
-    let typed: anyhow::Result<String> = async {
+    // The tab is closed whatever happened, so its claude and shell let go of the dir; the trust prompt is never answered.
+    let ran: anyhow::Result<String> = async {
         let terminal = wait_for_tab_terminal(view, tab, Duration::from_secs(10), cx).await?;
-        // PSReadLine may draw a history prediction after the typed text; it is display only.
         let typed_at = format!(" {command}");
         let screen = |cx: &mut AsyncWindowContext| terminal.read_with(cx, |t, _| t.get_content());
-        let last_line = |content: &str| content.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().trim().to_string();
         let started = Instant::now();
-        let before = loop {
+        loop {
             let content = screen(cx);
-            if last_line(&content).contains(&typed_at) {
-                break content;
+            let after_prompt = content.lines().skip_while(|l| !l.contains(&typed_at)).skip(1).collect::<Vec<_>>().join("\n");
+            if after_prompt.to_lowercase().contains("trust") {
+                break Ok(after_prompt.lines().find(|l| l.to_lowercase().contains("trust")).unwrap_or_default().trim().to_string());
             }
             if started.elapsed() > Duration::from_secs(25) {
-                bail!("`{command}` was not typed at the prompt within 25 s; last line {:?}", last_line(&content));
+                bail!("`{command}` was not run into claude's trust prompt within 25 s; screen {content:?}");
             }
             sleep(cx, Duration::from_millis(100)).await;
-        };
-        sleep(cx, Duration::from_secs(3)).await;
-        let after = screen(cx);
-        if after != before {
-            bail!("the screen changed after typing (was it run?): last line {:?}", last_line(&after));
         }
-        Ok(last_line(&after))
     }
     .await;
     click(view, &format!("close-tab-{tab}"), cx).await?;
     sleep(cx, Duration::from_millis(500)).await;
     let closed = view.read_with(cx, |v, _| v.tab(tab).is_none());
-    let line = typed.context("step d")?;
-    println!(
-        "step d: Start {} → Inbox `trust needed` after {}: {} | Run in terminal opened a pwsh tab in {} with `{command}` typed at the prompt and not run (screen unchanged 3 s; prompt line {line:?}, any text after `{command}` is PSReadLine's prediction); tab closed={closed}; no row named {u_ctrl}",
-        tb.u.0,
-        secs(clicked.elapsed()),
-        need.detail,
-        cwd.display()
-    );
+    let line = ran.context("step d")?;
     if !closed {
         bail!("step d: the Run in terminal tab did not close");
     }
+    let retry_key = format!("inbox-retry-{u_ctrl}");
+    if !view.read_with(cx, |v, _| v.hits.borrow().contains_key(&retry_key)) {
+        bail!("step d: the trust row shows no Retry ({retry_key})");
+    }
+    click(view, &retry_key, cx).await?;
+    let retried = Instant::now();
+    if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+        bail!("step d: Retry left the trust row");
+    }
+    // still untrusted: the supervisor's next launch is refused again and the row comes back
+    loop {
+        if view.read_with(cx, |v, _| v.needs.iter().any(|n| n.name == u_ctrl && n.kind == NeedsKind::TrustNeeded)) {
+            break;
+        }
+        if retried.elapsed() > Duration::from_secs(30) {
+            bail!("step d: after Retry no launch of {u_ctrl} came back as `trust needed` within 30 s");
+        }
+        sleep(cx, Duration::from_millis(100)).await;
+    }
+    println!(
+        "step d: Start {} → Inbox `trust needed` after {}: {} | Run in terminal opened a pwsh tab in {} that ran `{command}` into claude's trust prompt ({line:?}), never answered; tab closed; Retry cleared the row and the next launch, still untrusted, brought it back after {}; no row named {u_ctrl}",
+        tb.u.0,
+        secs(clicked.elapsed()),
+        need.detail,
+        cwd.display(),
+        secs(retried.elapsed())
+    );
 
     if RELEASE.load(Ordering::Relaxed) {
         adopt_step(tb, view, cx).await.context("step y")?;
