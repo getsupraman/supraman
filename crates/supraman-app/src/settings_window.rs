@@ -305,7 +305,7 @@ impl SettingsView {
             cx.notify();
             return;
         }
-        cx.open_with_system(&dir);
+        supraman_ui::open::open_off_thread(dir, cx).detach();
     }
 
     fn change(&mut self, edit: impl FnMut(&mut Settings), cx: &mut Context<Self>) {
@@ -338,7 +338,7 @@ impl SettingsView {
         if !path.exists() {
             self.change(|_| {}, cx);
         }
-        cx.open_with_system(&path);
+        supraman_ui::open::open_off_thread(path, cx).detach();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

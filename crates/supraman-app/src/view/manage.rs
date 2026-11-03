@@ -560,13 +560,12 @@ impl FleetView {
     }
 
     fn open_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // ShellExecuteW pumps its thread's messages: on the UI thread gpui re-enters inside the click's App borrow (m5/68).
         let open = self.open_with;
-        let task = cx.background_executor().spawn(async move { open(&path).map_err(|code| (path, code)) });
+        let task = cx.background_executor().spawn(async move { open(&path).map_err(|e| (path, e)) });
         cx.spawn(async move |this, cx| {
-            if let Err((path, code)) = task.await {
+            if let Err((path, e)) = task.await {
                 this.update(cx, |this, cx| {
-                    this.action_error = Some(format!("Cannot open {}: ShellExecuteW returned {code}", path.display()));
+                    this.action_error = Some(format!("Cannot open {}: {e}", path.display()));
                     cx.notify();
                 })
                 .ok();

@@ -21,6 +21,7 @@ use supraman_term::{
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use supraman_ui::nudge::{self, Nudge, Nudged};
+use supraman_ui::open;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::hover_card;
@@ -304,7 +305,7 @@ pub struct FleetView {
     pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
-    pub open_with: fn(&Path) -> Result<(), isize>,
+    pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workstate: WsStatus,
     workstate_dismissed: Option<String>,
@@ -787,10 +788,10 @@ impl FleetView {
             editing: None,
             removing: BTreeMap::new(),
             pick_folder: None,
-            open_with: |path| supraman_core::process::shell_execute("open", path.as_os_str(), None, None),
+            open_with: |path| open::open(path.as_os_str()),
             open_link_with: |link, cx| match link {
-                Link::Url(url) => cx.open_url(url),
-                Link::Path(path) => cx.open_with_system(path),
+                Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
+                Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
             },
             workstate: WsStatus::Checking,
             workstate_dismissed: None,
@@ -2545,7 +2546,7 @@ impl FleetView {
     fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
         match link_target(target) {
             Ok(link) => (self.open_link_with)(&link, cx),
-            Err(scheme) => self.pane_toast.show_why(link_refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
+            Err(scheme) => self.pane_toast.show_why(open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
     }
 
@@ -2622,16 +2623,10 @@ pub enum Link {
     Path(PathBuf),
 }
 
-/// A program's output must not reach any other protocol handler (sched2/11).
-pub const LINK_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
-
 /// What a Ctrl+click on `target` opens, or the scheme it refuses.
 pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match target {
-        MaybeNavigationTarget::Url(url) => {
-            let scheme = url.split_once(':').map_or("", |(scheme, _)| scheme).to_ascii_lowercase();
-            if LINK_SCHEMES.contains(&scheme.as_str()) { Ok(Link::Url(url.clone())) } else { Err(scheme) }
-        }
+        MaybeNavigationTarget::Url(url) => open::allowed(url, &open::LINK_SCHEMES).map(|()| Link::Url(url.clone())),
         MaybeNavigationTarget::PathLike(link) => {
             let path = Path::new(&link.maybe_path);
             Ok(Link::Path(match &link.working_directory {
@@ -2640,10 +2635,6 @@ pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
             }))
         }
     }
-}
-
-pub fn link_refused(scheme: &str) -> String {
-    format!("Not opened: a {scheme}: link. Only http, https, mailto and file links open.")
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
@@ -3080,7 +3071,6 @@ mod tests {
         ] {
             assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(scheme.into()), "{uri}");
         }
-        assert_eq!(link_refused("ms-settings"), "Not opened: a ms-settings: link. Only http, https, mailto and file links open.");
     }
 
     #[test]

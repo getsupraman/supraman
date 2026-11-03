@@ -82,6 +82,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.
 - `settings_page::{SettingsPages, SettingsPage, row}` — a settings window's pages, registered by id with a title, an icon and a render fn, and one setting's row.
+- `open::{scheme, allowed, refused, open, open_off_thread, LINK_SCHEMES, WEB_SCHEMES}` — every link or path opened with its handler: a terminal's Ctrl+click (`LINK_SCHEMES`), release notes and the sign-in page (`WEB_SCHEMES`), Open folder, Task Scheduler and the settings files; ShellExecuteW pumps its thread's messages, so `open` runs only off the UI thread (`open_off_thread`, or a thread of its own such as the sign-in's).
 - `store::save_off_thread` — a `supraman_core::store::Save` written on the background executor, its outcome handed back to the owner.
 - `nudge::{nudge, Nudge, Nudged}` — a coalescing wake-up for a loop on a gpui executor, instead of polling a flag.
 - `themes` — Zed theme JSON over a base, the bundled themes, the terminal palette, `contrast` and the contrast floors (`fit_floors`).

@@ -13,7 +13,7 @@ use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
 use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
-use crate::view::{Confirm, Confirmed, FleetView, Link, link_refused};
+use crate::view::{Confirm, Confirmed, FleetView, Link};
 
 /// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
@@ -214,11 +214,9 @@ impl FleetView {
 
     /// Opens an http(s) URL; anything else is refused with a toast.
     pub fn open_web(&mut self, url: &str, cx: &mut Context<Self>) {
-        let scheme = url.split_once(':').map_or("", |(s, _)| s).to_ascii_lowercase();
-        if scheme == "http" || scheme == "https" {
-            (self.open_link_with)(&Link::Url(url.to_string()), cx);
-        } else {
-            self.pane_toast.show_why(link_refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx);
+        match supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES) {
+            Ok(()) => (self.open_link_with)(&Link::Url(url.to_string()), cx),
+            Err(scheme) => self.pane_toast.show_why(supraman_ui::open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
     }
 

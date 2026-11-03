@@ -19,6 +19,7 @@ pub mod matcher;
 pub mod menu;
 pub mod notices;
 pub mod nudge;
+pub mod open;
 pub mod settings_page;
 pub mod split;
 pub mod stall;

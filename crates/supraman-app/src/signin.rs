@@ -42,15 +42,8 @@ pub fn forget_own_credentials() -> Vec<String> {
     issuers.iter().filter_map(|(home, issuer)| supraman_workman::secret::default_store(home).delete(issuer).err()).collect()
 }
 
-#[cfg(windows)]
 fn open_system_browser(url: &str) -> Result<(), String> {
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(format!("{url} is not a web address"));
-    }
-    supraman_core::process::shell_execute("open", url.as_ref(), None, None).map_err(|code| format!("ShellExecuteW returned {code}"))
-}
-
-#[cfg(not(windows))]
-fn open_system_browser(_url: &str) -> Result<(), String> {
-    Err("only Windows opens the browser".into())
+    use supraman_ui::open;
+    open::allowed(url, &open::WEB_SCHEMES).map_err(|_| format!("{url} is not a web address"))?;
+    open::open(std::ffi::OsStr::new(url))
 }

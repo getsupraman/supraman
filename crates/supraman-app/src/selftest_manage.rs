@@ -480,7 +480,7 @@ static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
 
 /// As ShellExecuteW does while Explorer answers a folder's open (m5/68: shell32, then gpui's window procedure
 /// running a foreground task): the calling thread's messages are dispatched. Then the real call.
-fn pumping_open(path: &Path) -> Result<(), isize> {
+fn pumping_open(path: &Path) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
     *OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
     let until = Instant::now() + Duration::from_millis(300);
@@ -495,7 +495,7 @@ fn pumping_open(path: &Path) -> Result<(), isize> {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    supraman_core::process::shell_execute("open", path.as_os_str(), None, None)
+    supraman_ui::open::open(path.as_os_str())
 }
 
 /// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Foreman; the

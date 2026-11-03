@@ -87,7 +87,7 @@ pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowCo
 
 static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-fn recording_open(path: &Path) -> Result<(), isize> {
+fn recording_open(path: &Path) -> Result<(), String> {
     *OPENED.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_path_buf());
     Ok(())
 }
