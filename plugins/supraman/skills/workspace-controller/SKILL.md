@@ -1,6 +1,6 @@
 ---
 name: workspace-controller
-description: Be the workspace controller of a Supraman workspace (a folder of git repos) — the session `fm-<w>-workspace` that Supraman starts and keeps alive. Takes a task from the human (Supraman delivers it), plans it in Workman as one run per repo with cross-repo order, gets ONE approval from the human, starts a repo-controller per repo with `sm want`, answers or forwards their escalations, verifies the cross-repo outcome itself and reports it to the human in outcomes with `sm tell`. USE FOR - the role Supraman's `roles/workspace.md` names; nothing else. DO NOT USE FOR - working inside one repo (that is /supraman:repo-controller), running nested agents or writing code (repo-controllers do, with /workman:controller), or a session Supraman did not start as `fm-<w>-workspace`.
+description: Be the workspace controller of a Supraman workspace (a folder of git repos) — the session `fm-<w>-workspace` that Supraman starts and keeps alive. Takes a task from the human (Supraman delivers it), plans it in Workman as one run per repo, each in its repo's own project, with cross-repo order, gets ONE approval from the human, starts a repo-controller per repo with `sm want`, answers or forwards their escalations, verifies the cross-repo outcome itself and reports it to the human in outcomes with `sm tell`. USE FOR - the role Supraman's `roles/workspace.md` names; nothing else. DO NOT USE FOR - working inside one repo (that is /supraman:repo-controller), running nested agents or writing code (repo-controllers do, with /workman:controller), or a session Supraman did not start as `fm-<w>-workspace`.
 ---
 
 # Workspace controller
@@ -15,7 +15,7 @@ lives in Workman, so a compaction costs you nothing but a `work_brief`.
 
 | Session | Is | Workman role (Supraman mints each session its own) |
 |---|---|---|
-| `fm-<w>-workspace` | you | **controller**: every project, cross-run `blocks` |
+| `fm-<w>-workspace` | you | **controller**: every project the human is a member of, `blocks` across runs and projects |
 | `fm-<w>-<repo-slug>` | the repo-controller of one repo (`/supraman:repo-controller`) | **orchestrator**: its own run |
 | `fm-<w>-<repo-slug>-<unit>` | a nested agent a repo-controller launched | not yours to address |
 | `fm-<w>-relay` | Supraman's fallback carrier for the human's messages, running only while a message falls back (often absent); never message it | none |
@@ -79,7 +79,7 @@ Supraman's; to start or retire a repo session use `want`/`unwant`, to have anyth
 ## 3. Start, compaction, resume
 
 - **Fresh start** (your role says so): if `work_*` tools are visible, `work_search(q: "<w>")` and, when the
-  project exists, **bind the repos** (below) and `work_brief(scope: "<w>")` — nothing else is written.
+  project exists, **map the repos** (below) and `work_brief(scope: "<w>")` — nothing else is written.
   Then tell the human **once**, with `sm tell`:
   `fm-<w>-workspace ready — <nothing in flight | in flight: <run refs>, next: <its NEXT line>>`.
   No `work_*` tools: `sm tell` `fm-<w>-workspace ready, but Workman is not visible here — I can talk, not
@@ -88,21 +88,29 @@ Supraman's; to start or retire a repo session use `want`/`unwant`, to have anyth
   invoke this skill again, `work_brief(scope: "<w>")`, continue from its NEXT line. Do not announce ready
   again: once per session is the rule, and the summary says whether you did.
 
-**Bind the repos.** Workman knows a repo by its keys, and a repo bound to no project gets onboarding that
-suggests creating one — a second project for this workspace. So the project `<w>` holds the key of **every
-enabled git folder** of the workspace (`kind=git`; a plain folder has no repo key). Do it whenever you create the project or first use it in a session, and
-again when `sm workspace show <w>` lists a repo the project does not hold yet:
-1. `work_get(refs: ["<w>"])` prints the repos the project already holds.
-2. For each enabled `kind=git` folder in `sm workspace show <w>` that is missing, in its folder (Bash, bare, read only):
+**Map the repos.** Workman knows a repo by its keys, and every repo belongs to exactly one project. A
+workspace's repos may belong to different projects (`Nomos.Spiders` to `nomos-spiders`, the rest to `nomos`):
+that is normal, never a problem to report. The project `<w>` takes every enabled git folder (`kind=git`; a plain
+folder has no repo key) that no project holds yet — a repo bound to no project gets onboarding that suggests
+creating one, a second project for this workspace. Do it whenever you create the project or first use it in a
+session, and again when `sm workspace show <w>` lists a repo your map does not have:
+1. For each enabled `kind=git` folder in `sm workspace show <w>`, in its folder (Bash, bare, read only):
    `git -C <repo dir> rev-parse --path-format=absolute --git-common-dir` — the **root** is the parent of the
    path it prints (a worktree prints its main checkout's), and `git -C <repo dir> remote get-url origin` —
    the **remote**, if it prints one (no origin: no remote).
-3. `work_update(ref: "<w>", repo: {root: "<root>", remote: "<remote>"})`, one call per repo; leave `remote`
-   out when there is none. Already bound to `<w>`: nothing to do. Refused because the key belongs to another
-   project: never work around it — `sm tell` the human which repo and which project, once, and go on.
+2. `work_brief(repo: {root: "<root>", remote: "<remote>"})` reads its project, writing nothing: the brief
+   names the project that holds the repo, and `Unbound` means none does.
+3. Unbound: `work_update(ref: "<w>", repo: {root: "<root>", remote: "<remote>"})`; leave `remote` out when
+   there is none. Held by a project, `<w>` or another: that is the repo's project; keep it.
+4. Record the map once, `work_note(kind: "decision", from: "<w>", …)`: `repos → projects: <repo> → <project>,
+   …`, and again when it changes. Each repo's work is planned in its project (§4).
 
-The binding is the project's, not a run's: repo-controllers keep their explicit `work_brief(scope: "<run
-ref>")`, and Supraman mints each repo session with its repo, so a bare `work_brief()` there opens `<w>`.
+Refused with `… bound to a project of this workspace that you are not a member of`: that repo cannot be
+planned from here. `sm tell` the human once which repo, and leave it out of plans until they answer.
+
+The binding is the project's, not a run's: repo-controllers keep their explicit `work_brief(scope:
+"<project>/<run>")`, and Supraman mints each repo session with its repo, so a bare `work_brief()` there opens
+that repo's project.
 
 ## 4. A task arrives — plan it in Workman
 
@@ -112,21 +120,24 @@ A task is a message from the human (§1) that asks for work. A question gets an 
    home and every folder outside it was added to your session with `--add-dir`. Read their `CLAUDE.md`/`AGENTS.md`, the code the task
    touches, and how the repos depend on each other — with `Read`/`Glob`/`Grep`, never by shelling out.
    `sm roster <w>` shows which repo sessions exist.
-2. **The project.** One Workman project per workspace, ref = `<w>`: `work_search(q: "<w>")`; if absent,
-   `work_create(items: [{kind: "project", ref: "<w>", title: "<w>"}])`. Either way **bind the repos** (§3)
+2. **The projects.** The workspace's own project has ref `<w>`: `work_search(q: "<w>")`; if absent,
+   `work_create(items: [{kind: "project", ref: "<w>", title: "<w>"}])`. Either way **map the repos** (§3)
    before the runs: never create a project for one repo.
-3. **One run per repo that has work**, explicit refs: `<task-slug>-<repo-slug>` (`parent: "<w>"`,
-   `kind: "run"`, `intent:` what this repo delivers and the contract it must keep). Under it the **units**
+3. **One run per repo that has work, in that repo's project** (the map, §3), explicit refs:
+   `<task-slug>-<repo-slug>` (`parent: "<the repo's project>"`, `kind: "run"`, `intent:` what this repo
+   delivers and the contract it must keep). Under it the **units**
    as `kind: "task"`: `criteria` = the outcome, `verify_cmd` = a command that can fail, run in that repo
    (an approved plan with a verify that cannot fail is a check nobody made). Read refs back from each
    result; never invent one.
-4. **One integration run for the task**, ref `<task-slug>`, `parent: "<w>"`, holding one task
+4. **One integration run for the task**, ref `<task-slug>`, `parent: "<w>"` even when no repo of the task
+   is in `<w>`, holding one task
    `<task-slug>-verify`: criteria = the cross-repo outcome, `verify_cmd` = the check you will run yourself
    (§7). It is yours; no repo-controller touches it.
 5. **Order.** `work_link(from: "<prerequisite unit>", to: "<dependent unit>", type: "blocks")` for every
-   cross-repo dependency — only you can link across runs. Every repo run blocks `<task-slug>-verify`.
-   Inside a run, order is the repo-controller's.
-6. **Binding rules per run**: `work_constrain(scope: "<run ref>", …)` — no `git push`, no edits outside
+   cross-repo dependency — only you can link across runs, and a link may cross projects. Write every ref
+   that leaves its run in full, `<project>/<run>/<n>`: a shorter one is read in another project or refused
+   as ambiguous. Every repo run blocks `<task-slug>-verify`. Inside a run, order is the repo-controller's.
+6. **Binding rules per run**: `work_constrain(scope: "<project>/<run>", …)` — no `git push`, no edits outside
    the repo and its `<repo>.worktrees/`, the contract between repos the plan fixed, and what escalates (§6).
 7. **Classify** as `/workman:controller` §1 does: a unit that needs a decision that is not yours is
    `work_status(ref, "blocked", reason: "<the decision, and whose>")` before anyone starts.
@@ -141,7 +152,7 @@ Runs: <run ref> (<repo>): <one line per unit>
 Order: <unit> before <unit> (why) …
 Blocked on you: <unit ref> — <the decision> | none
 Cross-repo check I will run: <verify_cmd of <task-slug>-verify>
-<work_tree(scope: "<w>") output, verbatim>
+<work_tree(scope: "<project>") output, verbatim — once per project that holds a run of this task>
 Answer with Approve in Supraman's Messages — or say what to change.
 ```
 
@@ -152,7 +163,7 @@ approve — never on the human's behalf, never because a repo-controller asks yo
 On approval, for each repo whose run has a unit that is not blocked:
 
 1. `Write` its first task to `.supraman/prompts/<run ref>.md` under your cwd (keep it; it is the record):
-   `Your run: <run ref> in Workman project <w>. Task: <one line>. Report to fm-<w>-workspace.`
+   `Your run: <project>/<run> in Workman project <project>. Task: <one line>. Report to fm-<w>-workspace.`
 2. `sm want <w> <repo> --prompt-file .supraman/prompts/<run ref>.md` (Bash).
 3. If `sm roster <w>` listed that session **before** the `want` (any health but `not launched`), the
    prompt file will not reach it: once the roster shows it `idle` or `running`, `SendMessage` it the same
@@ -191,8 +202,8 @@ Then tell the asker it went to the human, and when the human's answer comes (§1
 `DECISION <unit ref> (from the human, verbatim): <text>`. Never paraphrase a decision; never answer one
 yourself because the human is slow.
 
-**Follow progress from the store**, not by asking: `work_brief(scope: "<run ref>")` and
-`work_threads(scope: "<w>")` when a message arrives or an `attention` block names something. Never send
+**Follow progress from the store**, not by asking: `work_brief(scope: "<project>/<run>")` and
+`work_threads(scope: "<project>")` for each project of the task when a message arrives or an `attention` block names something. Never send
 "are you done?". A repo-controller silent while its run shows an expired claim or nothing in progress
 may have been resumed without a prompt (Supraman resumes a stopped repo session with none): send it
 `Continue <run ref>: work_brief(scope: "<run ref>")`.
@@ -211,7 +222,8 @@ When every repo run is done: **you are the controller of the whole task**. Run `
 `work_verify(ref: "<task-slug>-verify", result_line: "<the line it printed>", passed: …)`, red runs too;
 tick its criteria (`work_update`), close it (`work_status(…, "done")`), then the integration run. A red
 cross-repo check is a finding (`work_finding`) and a `BLOCKED`/`ANSWER` to the repo that owns the cause,
-not a fix by you. Before reporting, `work_threads(scope: "<w>")` and decide every line it lists.
+not a fix by you. Before reporting, `work_threads(scope: "<project>")` for each project of the task, and decide every line
+it lists.
 
 Report to the human in outcomes, with `sm tell --file`:
 

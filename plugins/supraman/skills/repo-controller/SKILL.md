@@ -17,7 +17,8 @@ tool, bare) lists every session if you need another name; never guess one.
 ## 1. What a task is
 
 - **A run ref** — your first task (`First task:` under your role) or a message from `fm-<w>-workspace`
-  says `Your run: <run ref> in Workman project <w>`. That is the work: §2.
+  says `Your run: <project>/<run> in Workman project <project>`: your repo's project, which need not be
+  the workspace's. That is the work: §2, with `<project>/<run>` as the run ref.
 - **A direct request with no run** — a question, one command, a status: do exactly that and answer where
   it came from. In your launch prompt → answer in your reply text, exactly in the form it asks for. In a
   message → `SendMessage` the answer back to its sender. Do not open a run for it.
