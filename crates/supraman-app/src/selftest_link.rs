@@ -172,8 +172,11 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     ctrl(false, cx)?;
     until_with(cx, WITHIN, "Ctrl released: no hand", |cx| terminal.read_with(cx, |t, _| (!t.hand_painted).then_some(()))).await?;
 
-    let at = cell_center(terminal, refused[1], cx);
+    let refused_now = link_cells(terminal, REFUSED, cx).get(1).copied().unwrap_or(refused[1]);
+    let at = cell_center(terminal, refused_now, cx);
+    ctrl(true, cx)?;
     move_to(at, Modifiers::control(), cx)?;
+    until_with(cx, WITHIN, "Ctrl over the refused link: a hand", |cx| terminal.read_with(cx, |t, _| t.hand_painted.then_some(()))).await?;
     click(at, Modifiers::control(), cx)?;
     let why = link_refused("ms-settings");
     until_with(cx, WITHIN, &format!("the toast {why:?}"), |cx| {
