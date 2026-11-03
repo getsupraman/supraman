@@ -127,6 +127,10 @@ The selftests run on a hidden desktop of their own (their first line names it, t
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.
 
+## Release notes
+
+- The release after 0.1.5: the old Foreman names are gone: no `fm.exe`/`fmw.exe`, no `FOREMAN_*` env (`FOREMAN_HOME` included; sessions and schedule scripts get `SUPRAMAN_*`), and no copy of `%APPDATA%\Foreman`.
+
 ## How Supraman updates itself
 
 The banner's **Update** (`crate::updates::install_update`) does the whole update; a build with no `VERSION` beside
