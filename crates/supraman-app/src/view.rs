@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -44,6 +44,7 @@ use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
+use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
@@ -274,8 +275,6 @@ pub struct FleetView {
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
-    pub poll_hold: Arc<PollHold>,
-    pub transcripts_hold: Arc<PollHold>,
     pub left_width: Pixels,
     pub term_font_size: Pixels,
     pub term_font_family: SharedString,
@@ -329,24 +328,16 @@ pub struct FleetView {
     reveal_pending: Option<(left::PendingReveal, Instant)>,
     left_rows: Rc<(Rc<Tree>, Vec<left::LeftRow>)>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub transcript_scans: u64,
     pub transcripts_nudge: Nudge,
     pub poll_nudge: Nudge,
     pub refresh_asks: u64,
     refreshes_answered: u64,
     /// The first poll's snapshot (or its failure) is applied.
     pub sessions_read: bool,
-    pub transcripts_read: bool,
-    /// `(read, of)` of the files the running transcript scan reads.
-    pub transcripts_progress: Option<(usize, usize)>,
+    pub transcripts: TranscriptsLoad,
     transcripts_answered: u64,
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
-    /// `transcript_scans` when `loaded` was set.
-    pub loaded_at_scan: u64,
-    /// Whether the saved transcript cache held files; `None` until it is read.
-    transcripts_cache: Option<bool>,
-    transcripts_restart: bool,
     pub stars: Stars,
     pub closed_expanded: HashSet<String>,
     pub claude_command: String,
@@ -400,9 +391,19 @@ enum DesiredWrite {
     Stop { home: PathBuf, name: String },
 }
 
-fn load_registry(registry: Result<Registry, String>) -> Result<(Vec<Workspace>, Vec<String>), String> {
+type RegistryRead = Result<(Vec<Workspace>, Vec<String>), String>;
+
+fn load_registry(registry: Result<Registry, String>) -> RegistryRead {
     let (workspaces, failed) = registry?.load_all().map_err(|e| e.to_string())?;
     Ok((workspaces, failed.iter().map(ToString::to_string).collect()))
+}
+
+/// A poll's registry read, or `None` when a registry write from this window came after it.
+fn fresh_registry(read: RegistryRead, read_at: u64, writes: u64) -> Option<RegistryRead> {
+    match read {
+        Ok(_) if read_at != writes => None,
+        read => Some(read),
+    }
 }
 
 pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
@@ -412,39 +413,9 @@ pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: 
         && (s.kind != supraman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
 }
 
-#[derive(Default)]
-pub struct PollHold {
-    pub armed: AtomicBool,
-    holding: Mutex<bool>,
-    released: std::sync::Condvar,
-}
-
-impl PollHold {
-    const MAX: Duration = Duration::from_secs(10);
-
-    pub fn holding(&self) -> bool {
-        *self.holding.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    pub fn release(&self) {
-        *self.holding.lock().unwrap_or_else(|e| e.into_inner()) = false;
-        self.released.notify_all();
-    }
-
-    fn wait(&self) {
-        if !self.armed.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        let mut held = self.holding.lock().unwrap_or_else(|e| e.into_inner());
-        *held = true;
-        let (mut held, _) = self.released.wait_timeout_while(held, Self::MAX, |held| *held).unwrap_or_else(|e| e.into_inner());
-        *held = false;
-    }
-}
-
 struct Refresh {
     registry_writes: u64,
-    workspaces: Result<(Vec<Workspace>, Vec<String>), String>,
+    workspaces: RegistryRead,
     sessions: Option<Result<Vec<Session>, String>>,
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
@@ -464,7 +435,6 @@ struct Poller {
     retries: Arc<Mutex<Vec<(String, String)>>>,
     injected: Arc<Mutex<Vec<Session>>>,
     registry_writes: Arc<AtomicU64>,
-    hold: Arc<PollHold>,
     snapshot: Option<(u64, Vec<Workspace>, Vec<Session>)>,
     first: bool,
     store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
@@ -493,7 +463,6 @@ impl Poller {
         let registry_writes = self.registry_writes.load(Ordering::SeqCst);
         let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
         let registry_took = started.elapsed();
-        self.hold.wait();
         let polled_at = now_ms();
         let listing = Instant::now();
         let sessions = with_sessions.then(|| {
@@ -601,7 +570,6 @@ impl FleetView {
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
-        let poll_hold: Arc<PollHold> = Arc::default();
         let (poll_nudge, mut woken) = nudge::nudge();
         let mut poller = Poller {
             home: home.clone(),
@@ -610,7 +578,6 @@ impl FleetView {
             retries: retries.clone(),
             injected: injected.clone(),
             registry_writes: registry_writes.clone(),
-            hold: poll_hold.clone(),
             snapshot: None,
             first: true,
             store: None,
@@ -744,8 +711,7 @@ impl FleetView {
         };
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
         let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
-        let transcripts_hold: Arc<PollHold> = Arc::default();
-        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
+        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
         let updates = crate::updates::Updates::start(home.clone(), cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
@@ -791,8 +757,6 @@ impl FleetView {
             retries,
             injected,
             registry_writes,
-            poll_hold,
-            transcripts_hold,
             left_width,
             term_font_size,
             term_font_family,
@@ -847,19 +811,14 @@ impl FleetView {
             reveal_pending: None,
             left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
             closed_repos: StdHashMap::new(),
-            transcript_scans: 0,
             transcripts_nudge,
             poll_nudge,
             refresh_asks: 0,
             refreshes_answered: 0,
             sessions_read: false,
-            transcripts_read: claude_dir.is_none(),
-            transcripts_progress: None,
+            transcripts: TranscriptsLoad::new(claude_dir.is_some()),
             transcripts_answered: 0,
             loaded: false,
-            loaded_at_scan: 0,
-            transcripts_cache: None,
-            transcripts_restart: false,
             action_error: stars_notice.or(dismissed_notice).or(runs_notice).or(waiting_notice),
             stars,
             closed_expanded: HashSet::new(),
@@ -898,7 +857,7 @@ impl FleetView {
         }
     }
 
-    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, hold: Arc<PollHold>, mut nudged: Nudged, cx: &mut Context<Self>) {
+    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
         let Some(claude_dir) = claude_dir else {
             return;
         };
@@ -906,7 +865,7 @@ impl FleetView {
             let executor = cx.background_executor().clone();
             let mut scanner: Option<Transcripts> = None;
             let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
-            let (mut from_cache, mut wait) = (false, true);
+            let mut from_cache = false;
             loop {
                 if scanner.is_none() {
                     let (claude_dir, cache) = (claude_dir.clone(), cache.clone());
@@ -919,25 +878,21 @@ impl FleetView {
                             }
                         })
                         .await;
-                    from_cache = opened.has_cache();
+                    let has_cache = opened.has_cache();
                     scanner = Some(opened);
-                    if this
-                        .update(cx, |this, cx| {
-                            this.transcripts_cache = Some(from_cache);
-                            this.check_loaded(cx);
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
+                    let Ok(cached_first) = this.update(cx, |this, cx| {
+                        let cached_first = this.transcripts.opened(has_cache);
+                        this.check_loaded(cx);
+                        cx.notify();
+                        cached_first
+                    }) else {
                         return;
-                    }
+                    };
+                    from_cache = cached_first;
                 }
                 // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
-                if std::mem::replace(&mut wait, true) {
-                    nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
-                }
+                nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
                 let Ok(asked) = this.update(cx, |this, _| {
-                    let restart = std::mem::take(&mut this.transcripts_restart);
                     this.sessions_read.then(|| {
                         let roots: Vec<PathBuf> = this
                             .workspaces
@@ -946,17 +901,12 @@ impl FleetView {
                             .collect();
                         let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
                         let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
-                        (roots, keep, live, this.refresh_asks, restart)
+                        (roots, keep, live, this.refresh_asks)
                     })
                 }) else {
                     return;
                 };
-                let Some((roots, keep, live, asks, restart)) = asked else { continue };
-                if restart {
-                    (scanner, wait) = (None, false);
-                    repos.clear();
-                    continue;
-                }
+                let Some((roots, keep, live, asks)) = asked else { continue };
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
                 let scanning = Instant::now();
                 if std::mem::take(&mut from_cache)
@@ -986,7 +936,7 @@ impl FleetView {
                             this.closed.extend(this.injected_closed.iter().cloned());
                             this.drop_deleted();
                             this.invalidate_tree();
-                            this.transcripts_read = true;
+                            this.transcripts.listed_cached();
                             this.check_loaded(cx);
                             cx.notify();
                         })
@@ -1001,7 +951,7 @@ impl FleetView {
                     while let Some(at) = progressed.next().await {
                         if shown
                             .update(cx, |this, cx| {
-                                this.transcripts_progress = Some(at);
+                                this.transcripts.reading(at);
                                 cx.notify();
                             })
                             .is_err()
@@ -1011,10 +961,8 @@ impl FleetView {
                     }
                 });
                 let Some(mut s) = scanner.take() else { continue };
-                let hold = hold.clone();
                 let (back, known, closed, read) = executor
                     .spawn(async move {
-                        hold.wait();
                         let read = AtomicUsize::new(0);
                         let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
                             read.store(of, Ordering::Relaxed);
@@ -1039,17 +987,14 @@ impl FleetView {
                     .update(cx, |this, cx| {
                         this.main_repos.extend(known.clone());
                         this.closed_repos = known;
-                        if this.transcript_scans == 0 {
+                        if this.transcripts.scanned() {
                             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
                         }
-                        this.transcripts_read = true;
                         this.closed = closed;
                         this.closed.extend(this.injected_closed.iter().cloned());
                         this.drop_deleted();
                         this.invalidate_tree();
-                        this.transcripts_progress = None;
                         this.transcripts_answered = asks;
-                        this.transcript_scans += 1;
                         this.check_loaded(cx);
                         cx.notify();
                     })
@@ -1078,12 +1023,7 @@ impl FleetView {
         } else if self.refreshes == 0 {
             pending.push("supervisor".to_string());
         }
-        if !self.transcripts_read && self.transcripts_cache != Some(true) {
-            pending.push(match self.transcripts_progress {
-                Some((read, of)) => format!("transcripts {read}/{of}"),
-                None => "transcripts".to_string(),
-            });
-        }
+        pending.extend(self.transcripts.pending());
         let inbox = self.work_inbox.read(cx);
         if matches!(self.workstate, WsStatus::Checking) {
             pending.push("Workman".to_string());
@@ -1096,21 +1036,8 @@ impl FleetView {
     fn check_loaded(&mut self, cx: &gpui::App) {
         if !self.loaded && self.loading(cx).is_empty() {
             self.loaded = true;
-            self.loaded_at_scan = self.transcript_scans;
             timeline("every source done", Duration::ZERO);
         }
-    }
-
-    /// The transcripts as a start reads them, from the saved cache when `warm`; for the selftests.
-    pub fn restart_transcripts(&mut self, warm: bool, cx: &mut Context<Self>) {
-        self.transcripts_restart = true;
-        self.transcripts_read = false;
-        self.closed.clear();
-        self.invalidate_tree();
-        self.transcripts_cache = Some(warm);
-        self.loaded = false;
-        self.transcripts_nudge.wake();
-        cx.notify();
     }
 
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
@@ -1386,9 +1313,9 @@ impl FleetView {
     fn apply(&mut self, refresh: Refresh) {
         let _stall = supraman_ui::stall::section("poll: apply");
         let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
-        match refresh.workspaces {
-            Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
-            Ok((workspaces, skipped)) => {
+        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
+            None => {}
+            Some(Ok((workspaces, skipped))) => {
                 if self.workspaces != workspaces {
                     self.transcripts_nudge.wake();
                 }
@@ -1396,7 +1323,7 @@ impl FleetView {
                 self.registry_skipped = skipped;
                 self.registry_error = None;
             }
-            Err(error) => self.registry_error = Some(error),
+            Some(Err(error)) => self.registry_error = Some(error),
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {
@@ -3038,33 +2965,6 @@ mod tests {
     }
 
     #[test]
-    fn a_held_poll_waits_until_released_and_an_unarmed_one_not_at_all() {
-        let hold = Arc::new(PollHold::default());
-        let started = Instant::now();
-        hold.wait();
-        assert!(started.elapsed() < Duration::from_secs(1) && !hold.holding());
-
-        hold.armed.store(true, Ordering::SeqCst);
-        let waiter = {
-            let hold = hold.clone();
-            std::thread::spawn(move || {
-                let at = Instant::now();
-                hold.wait();
-                at.elapsed()
-            })
-        };
-        while !hold.holding() {
-            std::thread::yield_now();
-        }
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(!waiter.is_finished(), "held while holding");
-        hold.release();
-        let held = waiter.join().unwrap();
-        assert!(held >= Duration::from_millis(50) && held < PollHold::MAX, "{held:?}");
-        assert!(!hold.holding() && !hold.armed.load(Ordering::SeqCst));
-    }
-
-    #[test]
     fn the_claude_dir_is_the_selftests_or_claudes_own_never_a_stray_env_var() {
         unsafe { std::env::set_var("FOREMAN_CLAUDE_DIR", r"C:\elsewhere") };
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
@@ -3213,7 +3113,6 @@ mod tests {
             retries: Arc::default(),
             injected: Arc::default(),
             registry_writes: writes,
-            hold: Arc::default(),
             snapshot: None,
             first: false,
             store: None,
@@ -3236,6 +3135,23 @@ mod tests {
 
         poller.snapshot = Some((1, Vec::new(), Vec::new()));
         assert!(poller.tick().is_some(), "the next read's snapshot ticks");
+    }
+
+    #[test]
+    fn a_poll_that_read_the_registry_before_a_save_keeps_the_saved_list() {
+        let writes = AtomicU64::new(0);
+        let read_at = writes.load(Ordering::SeqCst);
+        let before_save: RegistryRead = Ok((Vec::new(), vec!["read before Save".into()]));
+        writes.fetch_add(1, Ordering::SeqCst);
+        assert!(fresh_registry(before_save, read_at, writes.load(Ordering::SeqCst)).is_none(), "the list Save showed stays");
+
+        let read_at = writes.load(Ordering::SeqCst);
+        let after_save: RegistryRead = Ok((Vec::new(), vec!["read after Save".into()]));
+        let applied = fresh_registry(after_save, read_at, writes.load(Ordering::SeqCst)).and_then(Result::ok).map(|(_, skipped)| skipped);
+        assert_eq!(applied, Some(vec!["read after Save".to_string()]), "the next poll applies");
+
+        let failed = fresh_registry(Err("unreadable".into()), 0, 1);
+        assert!(matches!(failed, Some(Err(e)) if e == "unreadable"), "a failed read is shown even across a Save");
     }
 }
 
