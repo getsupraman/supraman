@@ -14,9 +14,10 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
-use super::icon::{Icon, Tooltip};
+use supraman_ui::icon::Icon;
+use supraman_ui::tooltip::Tooltip;
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};

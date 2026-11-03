@@ -1,5 +1,4 @@
 mod brand;
-mod clipped;
 mod compose;
 mod dismissed_messages;
 mod elevate;

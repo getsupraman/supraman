@@ -621,7 +621,7 @@ impl WorkView {
             .active(|s| s.bg(colors.ghost_element_active))
             .child(div().flex_none().text_color(colors.text_accent).child(SharedString::from(item.qualified_ref.clone())))
             .child(small(item.status.as_str(), status_color(item.status, cx)))
-            .child(crate::clipped::clipped(format!("{key}-title"), item.title.clone(), false).flex_1())
+            .child(supraman_ui::clipped::clipped(format!("{key}-title"), item.title.clone(), false).flex_1())
             .child(hit_target(&self.hits, key))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.navigate(id.clone(), cx)))
     }

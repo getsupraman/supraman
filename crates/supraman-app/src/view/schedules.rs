@@ -17,10 +17,10 @@ use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, MouseButton
 use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind};
-use super::icon::Icon;
+use supraman_ui::icon::Icon;
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::fleet::WorkspaceNode;
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 

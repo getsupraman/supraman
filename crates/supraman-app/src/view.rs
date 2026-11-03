@@ -24,9 +24,11 @@ use supraman_ui::nudge::{self, Nudge, Nudged};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::hover_card;
+use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
 use supraman_ui::tabs::{TabHeader, tab_strip};
 use supraman_ui::toast::ToastSlot;
+use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{FrameProbe, button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
@@ -48,7 +50,6 @@ use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
-pub(crate) mod icon;
 mod delete;
 pub(crate) mod details;
 mod drop;
@@ -2685,7 +2686,7 @@ impl FleetView {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
                 let cwd = tab.cwd.clone();
-                let clipped = crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
+                let clipped = supraman_ui::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
                 TabHeader {
                     id: tab.id,
                     label: match tab.kind {
@@ -2704,7 +2705,7 @@ impl FleetView {
             &self.hits,
             headers,
             self.active,
-            || icon::Icon::Close.svg(14., muted),
+            || Icon::Close.svg(14., muted),
             |this: &mut Self, id, cx| this.activate_tab(id, cx),
             |this: &mut Self, id, cx| this.close_tab(id, cx),
             |this: &mut Self, from, to, cx| {
@@ -2720,8 +2721,8 @@ impl FleetView {
                 .justify_center()
                 .h_full()
                 .w(px(36.))
-                .child(icon::Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
-                .tooltip(icon::Tooltip::text("New shell"))
+                .child(Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
+                .tooltip(Tooltip::text("New shell"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.new_shell(window, cx);
                 })),

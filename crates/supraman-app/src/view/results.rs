@@ -5,7 +5,7 @@ use supraman_ui::matcher::{count, highlighted};
 use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use super::icon::Icon;
+use supraman_ui::icon::Icon;
 use super::left::{disclosure, grid, home_text, icon_slot, quiet, repo_label, secondary, tree_label};
 use super::{FleetView, hit_target};
 use crate::fleet::{Open, Supervised, Tree};
@@ -102,7 +102,7 @@ impl FleetView {
                     .child(disclosure(None, secondary(cx)))
                     .child(icon_slot(&self.hits, &ws_key, None))
                     .child(tree_label(&self.hits, &ws_key, highlighted(format!("result-ws-name-{}", w.name), w.name.clone(), &w.name_marks, cx).flex_none().font_weight(FontWeight::BOLD)))
-                    .child(crate::clipped::clipped(format!("result-ws-root-{}", w.name), home_text(w.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
+                    .child(supraman_ui::clipped::clipped(format!("result-ws-root-{}", w.name), home_text(w.home.as_deref()), true).flex_1().text_xs().text_color(secondary(cx)))
                     .child(count(w.count(), cx))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.reveal(&name, None, cx))),
             );

@@ -75,6 +75,9 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `notices::{NoticeKind, render, keep_dismissed, remove_one}` — a list of plain notices with a × each; the owner keeps the kinds and sources.
 - `tabs::{tab_strip, TabHeader, DraggedTab, DraggedSession, reorder, cycled, sanitize}` — the tab strip with drag-to-reorder (`on_move(from, to)`; `DraggedTab { id }` is the payload any other drop target takes, `DraggedSession { session_id }` a session row's; a terminal pane takes both and pastes the session's SendMessage name), tab cycling, and a program's OSC title as a tab label; tab state and order stay with the owner.
 - `hover_card::{HoverCard, tooltip}` — a hover card of a title and `label  value` rows.
+- `icon::Icon` — Zed's Lucide icons (`assets/icons`, ISC, `THIRD_PARTY.md`) compiled in and tinted with a colour; `slotted` sizes one for a square slot so outlines and filled marks look one size.
+- `tooltip::{Tooltip, LAST_SHOWN}` — a plain text tooltip; `LAST_SHOWN` is the text last shown, for the selftests.
+- `clipped::{clipped, clipped_with, cut_at}` — a one-line label cut with an ellipsis (at the end or the middle) that carries its whole text as a tooltip while it is cut; `cut_at` is where a cut label was painted.
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.
 - `settings_page::{SettingsPages, SettingsPage, row}` — a settings window's pages, registered by id with a title, an icon and a render fn, and one setting's row.

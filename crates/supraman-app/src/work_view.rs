@@ -21,7 +21,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use supraman_ui::{banner, button, fonts};
 use supraman_ui::hit::{HitTargets, hit_target};
 use crate::workstate_setup::WsStatus;

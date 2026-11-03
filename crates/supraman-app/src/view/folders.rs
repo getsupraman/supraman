@@ -12,10 +12,10 @@ use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, SharedStrin
 use theme::ActiveTheme as _;
 
 use super::FleetView;
-use super::icon::Icon;
+use supraman_ui::icon::Icon;
 use super::left::{secondary, tag};
 use super::menu::{Confirm, Confirmed};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::fleet;
 
 const STATE_COLUMN: gpui::Pixels = px(16.);

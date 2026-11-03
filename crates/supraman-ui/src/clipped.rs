@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap};
 
 use gpui::{Bounds, Div, ElementId, Pixels, SharedString, Stateful, canvas, div, prelude::*};
 
-use crate::view::icon::Tooltip;
+use crate::tooltip::Tooltip;
 
 const KEPT: usize = 512;
 
