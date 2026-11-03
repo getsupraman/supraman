@@ -85,3 +85,20 @@ fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     assert!(verb_table.contains("| `sm schedule edit [<w>] <id> <options>` | change a schedule **you added in this conversation at the human's request**"), "{verb_table}");
     assert!(body.contains("Only for a schedule **you added in this conversation at the human's request**: `sm schedule edit"));
 }
+
+/// A workspace's repos may sit in different Workman projects: mapped by a read, planned each in its own project.
+#[test]
+fn the_workspace_controller_plans_each_repo_in_its_own_project() {
+    let skill = plugin("skills/workspace-controller/SKILL.md");
+    let role = plugin("roles/workspace.md");
+    let repo = plugin("skills/repo-controller/SKILL.md");
+    assert!(skill.contains("`work_brief(repo: {root: \"<root>\", remote: \"<remote>\"})` reads its project, writing nothing"));
+    assert!(skill.contains("that is normal, never a problem to report"));
+    assert!(!skill.contains("`sm tell` the human which repo and which project"), "a repo bound elsewhere is not reported");
+    assert!(skill.contains("you are not a member of`: that repo cannot be planned from here. `sm tell` the human once"));
+    assert!(skill.contains("`parent: \"<the repo's project>\"`") && skill.contains("`<project>/<run>/<n>`"));
+    assert!(skill.contains("once per project that holds a run of this task"));
+    assert!(skill.contains("`Your run: <project>/<run> in Workman project <project>."));
+    assert!(role.contains("map the workspace's repos to their projects (the unbound ones to {workspace})"));
+    assert!(repo.contains("`Your run: <project>/<run> in Workman project <project>`"));
+}
