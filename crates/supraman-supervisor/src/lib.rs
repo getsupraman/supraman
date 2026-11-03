@@ -6,7 +6,7 @@
 //!
 //! Per wanted session, by name, top to bottom; the first matching row wins. "live" is
 //! [`is_live`]: a pid, or the fresh pid-less row right after `--bg`. `state` is never consulted
-//! for liveness (m1/7: `done` on a live pid is Idle).
+//! for liveness (`done` on a live pid is Idle).
 //!
 //! | # | started | rows with the name | memory | action | test |
 //! |---|---|---|---|---|---|
@@ -21,7 +21,7 @@
 //! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |
 //! | R2 | yes | 0 | | `Launch` | `absent_is_launched` |
 //! | R2 | yes | 0, `fork_from` set (an Adopt) | | `Launch` with `--resume <fork_from>`: a copy under a new id that carries the conversation (claude cannot rename one); a live row of that uuid fails it; `fork_from` goes once the name's row shows another uuid; Remedy `Adopt` (Retry, Start fresh) | `an_adopted_session_is_launched_as_a_copy_and_a_failed_copy_offers_retry_or_start_fresh`, `an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once` |
-//! | R13 | yes | 1 not live | alive < `respawn_grace` (30 s) ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn, and a resume while it still counts a dead one running starts a copy (m2/4) | `a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace` |
+//! | R13 | yes | 1 not live | alive < `respawn_grace` (30 s) ago | `Wait(Respawn)`: the daemon respawns a session killed mid-turn, and a resume while it still counts a dead one running starts a copy | `a_session_that_just_died_is_left_to_the_daemon_for_the_respawn_grace` |
 //! | R3 | yes | 1 not live (stopped, done, orphaned) | | `Resume` from the row's cwd | `stopped_or_orphaned_is_resumed_from_its_own_cwd` |
 //! | R14 | any | 1 live, name in `retired` (not wanted) | | `Stop`, before the relay; never launched or resumed | `retired_sessions_are_stopped_before_the_relay_and_never_relaunched` |
 //!

@@ -9,7 +9,7 @@
 //! `startedAt` counts as old).
 //!
 //! `background` rows. `state` describes the turn, not the process: a session whose turn ended is
-//! `state=done, status=idle` on a live pid (m1/7). So liveness comes from `pid` first.
+//! `state=done, status=idle` on a live pid. So liveness comes from `pid` first.
 //!
 //! | # | `pid` | `state` | `status` | other | health |
 //! |---|---|---|---|---|---|
@@ -28,14 +28,14 @@
 //! | B13 | absent | anything else | | | `Unknown` |
 //!
 //! B3 takes `idle` because a turn that ends asking the human in plain text is `state=blocked,
-//! status=idle` with no `waitingFor` on a live pid (supervisor/1, claude 2.1.316).
+//! status=idle` with no `waitingFor` on a live pid (claude 2.1.316).
 //!
 //! B10 exists because a dead process can leave its row marked `working`/`blocked`; such a
 //! session must not reach the inbox, where Attach would target a process that is gone. Its
-//! threshold keeps B11 alive: m0/2 measured the legitimate no-pid `working` row for ~1.8 s.
+//! threshold keeps B11 alive: the legitimate no-pid `working` row lasts ~1.8 s.
 //!
 //! [`Session::supervised_health`] (the Inbox, the fleet panel, `sm roster`) reads B1/B3 without
-//! `waitingFor` on an `fm-…` row as `Idle`: a Supraman session waits on peers, not on the human (m3/8).
+//! `waitingFor` on an `fm-…` row as `Idle`: a Supraman session waits on peers, not on the human.
 //!
 //! Every other `kind` (interactive rows carry `status` and `pid`, no `state`):
 //!

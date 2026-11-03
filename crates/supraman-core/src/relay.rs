@@ -130,7 +130,7 @@ pub struct OutboxMessage {
     /// The sender's address (`uds:…` pipe, opaque), or `relay-notice` for a delivery notice or a
     /// failed `SendMessage`.
     pub from: String,
-    /// The sender's session name: what Supraman routes by (m0/4).
+    /// The sender's session name: what Supraman routes by.
     pub from_name: String,
     pub body: String,
     /// Arrival: the file's modification time, Unix epoch milliseconds.

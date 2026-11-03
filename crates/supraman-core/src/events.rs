@@ -222,7 +222,7 @@ mod tests {
 
     use super::*;
 
-    /// m0/3's SessionStart(compact) payload shape, values made up.
+    /// The SessionStart(compact) payload shape, values made up.
     const COMPACT: &str = r#"{"cwd":"C:\\w","hook_event_name":"SessionStart","model":"m","prompt_id":"p","session_id":"0a1b2c3d-0000-4000-8000-000000000001","session_title":"aw-x","source":"compact","transcript_path":"t"}"#;
     const STOP: &str = r#"{"session_id":"0a1b2c3d-0000-4000-8000-000000000001","hook_event_name":"Stop","cwd":"C:\\w","last_assistant_message":"SECRET-REPLY","prompt":"SECRET-PROMPT","stop_hook_active":false}"#;
     const SID: &str = "0a1b2c3d-0000-4000-8000-000000000001";

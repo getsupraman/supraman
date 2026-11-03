@@ -327,7 +327,7 @@ mod tests {
     use super::*;
 
     /// Every child of a crate or its tests starts through [`command`]: a console program started bare gets
-    /// a visible window when the parent has no console (refactor2/F-01).
+    /// a visible window when the parent has no console.
     #[test]
     fn no_crate_starts_a_process_without_command() {
         let needle = concat!("Command", "::new(");
