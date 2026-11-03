@@ -15,7 +15,7 @@
 //! | R5 | no | 0, or 1 not live | | nothing | same |
 //! | R4 | yes | 1, live, `Blocked` | | `NeedsYou::Blocked` (Attach), never restarted | `blocked_is_reported_and_never_restarted` |
 //! | R1 | yes | 1, live | | nothing (Running/Idle) | `started_and_live_needs_nothing_running_or_idle`, `done_with_live_pid_is_idle_and_never_relaunched`, `fresh_row_without_pid_is_starting_not_dead` |
-//! | R9 | yes | 0, or 1 not live | trust needed | `NeedsYou::TrustNeeded` (RunInTerminal); only Retry clears it | `trust_needed_shows_the_command_and_is_never_retried_automatically` |
+//! | R9 | yes | 0, or 1 not live | trust needed | `NeedsYou::TrustNeeded` (RunInTerminal, which runs `claude` there; the Inbox row also offers Retry); only Retry clears it | `trust_needed_shows_the_command_and_is_never_retried_automatically` |
 //! | R8 | yes | 0, or 1 not live | gave up | `NeedsYou::GaveUp` (Retry) | `gave_up_is_reported_and_not_attempted_until_retry` |
 //! | R10 | yes | 0, or 1 not live | started < `settle` ago | `Wait(Settling)` | `just_started_waits_to_settle_instead_of_launching_again` |
 //! | R7 | yes | 0, or 1 not live | before `next_allowed` | `Wait(Backoff)` + `NeedsYou::LaunchFailed` (Retry) | `backoff_defers_and_reports_launch_failed` |

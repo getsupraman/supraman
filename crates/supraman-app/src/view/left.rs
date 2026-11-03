@@ -130,6 +130,34 @@ pub fn inbox_key(need: &NeedsYou) -> Option<String> {
     Some(format!("inbox-{verb}-{}", need.name))
 }
 
+/// What one of an Inbox row's buttons does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InboxButton {
+    Remedy(Remedy),
+    Retry,
+    StartFresh,
+}
+
+/// An Inbox row's buttons, in order: hit key, label and what it does. A trust row's Retry follows its
+/// Run in terminal: Supraman never answers the trust prompt, so the human says when it is answered.
+pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)> {
+    let (Some(action), Some(key)) = (&need.action, inbox_key(need)) else { return Vec::new() };
+    let label = match action {
+        Remedy::Attach { .. } => "Attach",
+        Remedy::Retry | Remedy::Adopt { .. } => "Retry",
+        Remedy::RunInTerminal { .. } => "Run in terminal",
+        Remedy::Remint { .. } => "Re-mint",
+        Remedy::RestartElevated => "Restart as administrator",
+    };
+    let mut buttons = vec![(key, label, InboxButton::Remedy(action.clone()))];
+    match action {
+        Remedy::Adopt { .. } => buttons.push((format!("inbox-fresh-{}", need.name), "Start fresh", InboxButton::StartFresh)),
+        Remedy::RunInTerminal { .. } => buttons.push((format!("inbox-retry-{}", need.name), "Retry", InboxButton::Retry)),
+        _ => {}
+    }
+    buttons
+}
+
 fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
     match health {
@@ -702,38 +730,25 @@ impl FleetView {
             );
         for need in needs {
             let color = needs_color(need.kind, cx);
-            let remedy = match (&need.action, inbox_key(need)) {
-                (Some(action), Some(key)) => {
-                    let (label, action, workspace) = match action {
-                        Remedy::Attach { .. } => ("Attach", action.clone(), need.workspace.clone()),
-                        Remedy::Retry => ("Retry", action.clone(), need.workspace.clone()),
-                        Remedy::RunInTerminal { .. } => ("Run in terminal", action.clone(), need.workspace.clone()),
-                        Remedy::Remint { .. } => ("Re-mint", action.clone(), need.workspace.clone()),
-                        Remedy::RestartElevated => ("Restart as administrator", action.clone(), need.workspace.clone()),
-                        Remedy::Adopt { .. } => ("Retry", action.clone(), need.workspace.clone()),
-                    };
-                    let name = need.name.clone();
-                    let fresh = matches!(action, Remedy::Adopt { .. }).then(|| {
-                        let (workspace, name) = (workspace.clone(), name.clone());
-                        button::bordered(&self.hits, format!("inbox-fresh-{name}"), "Start fresh", cx)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.start_fresh(&workspace, &name, cx)))
-                    });
-                    let primary = button::bordered(&self.hits, key, label, cx).on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| match &action {
-                            Remedy::Attach { id } => {
-                                this.attach_by_id(&workspace, id, window, cx);
-                            }
-                            Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. } => this.retry(&workspace, &name, cx),
-                            Remedy::RunInTerminal { cwd, command } => {
-                                this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
-                            }
-                            Remedy::RestartElevated => this.restart_elevated(window, cx),
-                        },
-                    ));
-                    Some(div().flex().flex_none().gap_1().child(primary).children(fresh))
-                }
-                _ => None,
-            };
+            let buttons = inbox_buttons(need);
+            let remedy = (!buttons.is_empty()).then(|| {
+                div().flex().flex_none().gap_1().children(buttons.into_iter().map(|(key, label, does)| {
+                    let (workspace, name) = (need.workspace.clone(), need.name.clone());
+                    button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| match &does {
+                        InboxButton::Remedy(Remedy::Attach { id }) => {
+                            this.attach_by_id(&workspace, id, window, cx);
+                        }
+                        InboxButton::Remedy(Remedy::Retry | Remedy::Remint { .. } | Remedy::Adopt { .. }) | InboxButton::Retry => {
+                            this.retry(&workspace, &name, cx)
+                        }
+                        InboxButton::Remedy(Remedy::RunInTerminal { cwd, command }) => {
+                            this.run_in_terminal(cwd.clone(), command.clone(), window, cx);
+                        }
+                        InboxButton::Remedy(Remedy::RestartElevated) => this.restart_elevated(window, cx),
+                        InboxButton::StartFresh => this.start_fresh(&workspace, &name, cx),
+                    }))
+                }))
+            });
             inbox = inbox.child(
                 div()
                     .flex()
@@ -1962,6 +1977,33 @@ pub(crate) fn segments(lines: &[&str]) -> Vec<Segment> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn need(kind: NeedsKind, action: Option<Remedy>) -> NeedsYou {
+        NeedsYou { kind, workspace: "demo".into(), name: "fm-demo-workspace".into(), since: 0, detail: String::new(), action }
+    }
+
+    #[test]
+    fn a_trust_row_offers_run_in_terminal_then_retry_each_under_its_own_key() {
+        let run = Remedy::RunInTerminal { cwd: r"C:\demo".into(), command: "claude".into() };
+        let buttons = inbox_buttons(&need(NeedsKind::TrustNeeded, Some(run.clone())));
+        assert_eq!(
+            buttons,
+            [
+                ("inbox-run-fm-demo-workspace".to_string(), "Run in terminal", InboxButton::Remedy(run)),
+                ("inbox-retry-fm-demo-workspace".to_string(), "Retry", InboxButton::Retry),
+            ]
+        );
+        let adopt = Remedy::Adopt { from: "abcd".into() };
+        assert_eq!(
+            inbox_buttons(&need(NeedsKind::LaunchFailed, Some(adopt.clone()))),
+            [
+                ("inbox-retry-fm-demo-workspace".to_string(), "Retry", InboxButton::Remedy(adopt)),
+                ("inbox-fresh-fm-demo-workspace".to_string(), "Start fresh", InboxButton::StartFresh),
+            ]
+        );
+        assert_eq!(inbox_buttons(&need(NeedsKind::GaveUp, Some(Remedy::Retry))).len(), 1, "one Retry, never two");
+        assert!(inbox_buttons(&need(NeedsKind::Duplicate, None)).is_empty());
+    }
 
     #[test]
     fn a_childs_icon_starts_under_its_parents_label() {

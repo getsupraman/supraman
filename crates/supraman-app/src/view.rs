@@ -1745,13 +1745,10 @@ impl FleetView {
     }
 
     /// Typed, not run: the human presses Enter and answers the trust prompt; Supraman never answers it.
+    /// A PowerShell tab in `cwd` that runs `command` once its prompt is up (C113).
     pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let title = format!("trust · {}", cwd.display());
-        self.type_in_shell(cwd, title, command, window, cx)
-    }
-
-    fn type_in_shell(&mut self, cwd: PathBuf, title: String, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        self.type_in_shell_when(cwd, title, gpui::Task::ready(command), window, cx)
+        self.type_in_shell_when(cwd, title, gpui::Task::ready(entered(&command)), window, cx)
     }
 
     fn type_in_shell_when(&mut self, cwd: PathBuf, title: String, command: gpui::Task<String>, window: &mut Window, cx: &mut Context<Self>) -> u64 {
@@ -2728,6 +2725,11 @@ fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> 
         .collect()
 }
 
+/// `command` as typed at a shell's prompt and entered.
+fn entered(command: &str) -> String {
+    format!("{command}\r")
+}
+
 fn held_line(why: &str) -> String {
     format!("Write-Host -ForegroundColor Yellow '{}'", why.replace('\'', "''"))
 }
@@ -3219,6 +3221,11 @@ mod tests {
         let gone = at("gone.rs:1");
         assert_eq!(missing(&gone), Some(format!("Not opened: there is no file or folder {}.", gone.display())));
         assert!(missing(Path::new("relative.rs")).is_some(), "a path never resolved against a folder");
+    }
+
+    #[test]
+    fn run_in_terminal_enters_its_command_at_the_prompt() {
+        assert_eq!(entered("claude"), "claude\r");
     }
 
     #[test]
