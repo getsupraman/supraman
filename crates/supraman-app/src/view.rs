@@ -2853,10 +2853,11 @@ impl Render for FleetView {
             .child(crate::titlebar::render(
                 "Supraman",
                 Some(
-                    crate::titlebar::icon_button("open-settings", "\u{e713}", cx)
+                    crate::titlebar::icon_button(&self.hits, "open-settings", "\u{e713}", cx)
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx)))
                         .into_any_element(),
                 ),
+                &self.hits,
                 window,
                 cx,
             ))
