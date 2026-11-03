@@ -46,13 +46,13 @@ pub(crate) fn insert_terminal_env(
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
     env.insert("TERM_PROGRAM_VERSION".to_string(), version.to_string());
-    // claude gives synchronized output and strikethrough only to terminals it knows; see LEARNINGS m5/44.9.
+    // claude gives synchronized output and strikethrough only to terminals it knows.
     env.insert("CLAUDE_CODE_FORCE_SYNC_OUTPUT".to_string(), "1".to_string());
     env.insert(
         "CLAUDE_CODE_FORCE_STRIKETHROUGH".to_string(),
         "1".to_string(),
     );
-    // claude writes a markdown link as OSC 8 only with this set on Windows; see LEARNINGS sched2/11.
+    // claude writes a markdown link as OSC 8 only with this set on Windows.
     env.insert("FORCE_HYPERLINK".to_string(), "1".to_string());
 }
 
@@ -577,7 +577,6 @@ mod tests {
         assert_eq!(wait_for_exit(&terminal, cx).await, ExitStatus::default());
         assert_content_eventually(&terminal, "hello", cx).await;
 
-        // Inject additional output directly into the emulator (display-only path)
         terminal.update(cx, |term, cx| {
             term.write_output(b"\nfrom_injection", cx);
         });

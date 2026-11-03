@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 
-/// The mappings defined in this file where created from reading the alacritty source
 use gpui::Keystroke;
 
 use crate::Modes;

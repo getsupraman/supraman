@@ -71,10 +71,7 @@ impl Terminal {
         if let Some(e) = exit_status {
             self.child_exited = Some(e);
         }
-        // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
-        //    even if the shell exits with a non-zero code (e.g. after `false`).
-        // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
-        //    the error. Spawn failures never receive keyboard input.
+        // A shell that got input closes on any exit; one that never did stays open on failure, to show a spawn error.
         let should_close = if self.keyboard_input_sent {
             true
         } else {

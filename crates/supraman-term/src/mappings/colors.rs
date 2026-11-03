@@ -13,13 +13,10 @@ pub(crate) fn to_vte_rgb(color: impl Into<Rgba>) -> VteRgb {
     VteRgb { r, g, b }
 }
 
-/// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
-/// Other than that use case, should only be called with values in the `[0,255]` range
 pub fn get_color_at_index(index: usize, palette: &TerminalPalette) -> Hsla {
     match index {
         0..=15 => palette.ansi[index],
         // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
-        // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
         16..=231 => {
             let (r, g, b) = rgb_for_index(index as u8);
             rgba_color(
@@ -34,8 +31,7 @@ pub fn get_color_at_index(index: usize, palette: &TerminalPalette) -> Hsla {
             let value = i * 10 + 8;
             rgba_color(value, value, value)
         }
-        // For compatibility with the alacritty::Colors interface
-        // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+        // alacritty::Colors' named slots.
         256 => palette.foreground,
         257 => palette.background,
         258 => palette.cursor,

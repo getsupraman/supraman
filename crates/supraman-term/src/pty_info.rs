@@ -41,9 +41,7 @@ impl ProcessIdGetter {
 #[cfg(unix)]
 impl ProcessIdGetter {
     fn pid(&self) -> Option<Pid> {
-        // Negative pid means error.
-        // Zero pid means no foreground process group is set on the PTY yet.
-        // Avoid killing the current process by returning a zero pid.
+        // Negative is an error, zero is no foreground group yet; a zero pid would kill the current process.
         let pid = unsafe { libc::tcgetpgrp(self.handle) };
         if pid > 0 {
             return Some(Pid::from_u32(pid as u32));
@@ -90,16 +88,13 @@ pub(crate) struct PtyProcessInfo {
 
 impl PtyProcessInfo {
     pub fn new(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
-        // Task enumeration is on by default and would retain a `Process` entry
-        // per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` handle
-        // on Linux (#58651).
+        // Tasks would keep a `Process` per thread, each pinning an open `/proc/<pid>/task/<tid>/stat` on Linux.
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
             .with_exe(UpdateKind::Always)
             .without_tasks();
-        // `new_with_specifics` would snapshot every process into this `System` (#58651); only the child is
-        // refreshed, so `kill_child_process` works before the first foreground refresh.
+        // Only the child, not every process as `new_with_specifics` would; `kill_child_process` needs it before the first refresh.
         let mut system = System::new();
         system.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[pid_getter.fallback_pid()]),
@@ -122,7 +117,7 @@ impl PtyProcessInfo {
         let pid = self.pid_getter.pid()?;
         let fallback_pid = self.pid_getter.fallback_pid();
         let mut system = self.system.write();
-        // sysinfo never evicts absent pids, so the `System` is rebuilt when the foreground process changes (#58651).
+        // sysinfo never evicts absent pids, so the `System` is rebuilt when the foreground process changes.
         if self.last_foreground_pid.lock().replace(pid) != Some(pid) {
             *system = System::new();
         }

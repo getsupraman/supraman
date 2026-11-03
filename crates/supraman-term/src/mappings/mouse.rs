@@ -4,8 +4,6 @@
 use std::cmp::{self, min};
 use std::iter::repeat;
 
-/// Most of the code, and specifically the constants, in this are copied from Alacritty,
-/// with modifications for our circumstances
 use gpui::{Modifiers, MouseButton, Pixels, Point as GpuiPoint, ScrollEvent, px};
 
 use crate::{Modes, Point, TerminalBounds, mouse::SelectionSide};
