@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
+use crate::shells::ShellSetting;
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 20;
@@ -137,11 +138,17 @@ pub struct TerminalSettings {
     /// Unset or not a bool: on.
     #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
     pub ligatures: Option<bool>,
+    /// A plain shell tab's shell; unset is `auto`. Resolved through [`crate::shells::Shells::for_settings`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<ShellSetting>,
+    /// A custom `shell`'s arguments.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shell_args: Vec<String>,
 }
 
 impl Section for TerminalSettings {
     const KEY: &'static str = "terminal";
-    const FIELDS: &'static [&'static str] = &["font_size", "font_family", "ligatures"];
+    const FIELDS: &'static [&'static str] = &["font_size", "font_family", "ligatures", "shell", "shell_args"];
 }
 
 impl TerminalSettings {
@@ -182,6 +189,15 @@ impl TerminalSettings {
     /// On, the default, is stored as unset.
     pub fn set_ligatures(&mut self, on: bool) {
         self.ligatures = (!on).then_some(false);
+    }
+
+    pub fn shell(&self) -> ShellSetting {
+        self.shell.clone().unwrap_or_default()
+    }
+
+    /// `auto`, the default, is stored as unset.
+    pub fn set_shell(&mut self, shell: ShellSetting) {
+        self.shell = (shell != ShellSetting::Auto).then_some(shell);
     }
 }
 
@@ -466,7 +482,13 @@ mod tests {
             },
             workman: WorkmanSettings { url: Some("https://workman.example".into()) },
             appearance: AppearanceSettings { theme: Some("Supraman Dark".into()), terminal_colors: Some("campbell".into()) },
-            terminal: TerminalSettings { font_size: Some(20), font_family: Some("Lucida Console".into()), ligatures: Some(false) },
+            terminal: TerminalSettings {
+                font_size: Some(20),
+                font_family: Some("Lucida Console".into()),
+                ligatures: Some(false),
+                shell: Some(ShellSetting::Custom(r"C:\Program Files\Git\bin\bash.exe".into())),
+                shell_args: vec!["--login".into()],
+            },
             window: WindowSettings { left_width: Some(512) },
             updates: UpdateSettings { check: false },
             other: Table::new(),
@@ -757,6 +779,40 @@ url = "https://workman.example"
         s.terminal.set_ligatures(true);
         s.save(home.path()).unwrap();
         assert!(!saved(home.path()).contains_key("terminal"), "the defaults are saved as unset");
+    }
+
+    #[test]
+    fn settings_terminal_shell_parses_every_form_and_a_bad_one_is_a_notice_for_auto() {
+        let home = tempfile::tempdir().unwrap();
+        for (value, want) in [
+            ("auto", ShellSetting::Auto),
+            ("pwsh", ShellSetting::Pwsh),
+            ("powershell", ShellSetting::PowerShell),
+            ("cmd", ShellSetting::Cmd),
+            ("wsl:Ubuntu", ShellSetting::Wsl("Ubuntu".into())),
+            (r"C:\Program Files\Git\bin\bash.exe", ShellSetting::Custom(r"C:\Program Files\Git\bin\bash.exe".into())),
+        ] {
+            let (s, notices) = load_text(home.path(), &format!("[terminal]\nshell = '{value}'\nshell_args = ['--login', '-i']\n"));
+            assert_eq!((s.terminal.shell(), notices), (want, Vec::<String>::new()), "{value}");
+            assert_eq!(s.terminal.shell_args, ["--login", "-i"]);
+        }
+        for bad in ["'bash'", "'wsl:'", "3", "['cmd']"] {
+            let (s, notices) = load_text(home.path(), &format!("[sessions]\nmax_working = 3\n\n[terminal]\nshell = {bad}\nfont_size = 18\n"));
+            assert_eq!((s.terminal.shell(), s.terminal.font_size(), s.sessions.max_working), (ShellSetting::Auto, 18, 3), "{bad}");
+            assert_eq!(notices.len(), 1, "{bad}: {notices:?}");
+            assert!(notices[0].contains("terminal.shell is not valid"), "{bad}: {notices:?}");
+        }
+        let (_, notices) = load_text(home.path(), "[terminal]\nshell_args = '--login'\n");
+        assert!(notices.iter().any(|n| n.contains("terminal.shell_args is not valid")), "{notices:?}");
+
+        Settings::update(home.path(), |s| {
+            s.terminal.set_shell(ShellSetting::Wsl("Ubuntu".into()));
+            s.terminal.shell_args.clear();
+        })
+        .unwrap();
+        assert_eq!(saved(home.path())["terminal"]["shell"].as_str(), Some("wsl:Ubuntu"));
+        Settings::update(home.path(), |s| s.terminal.set_shell(ShellSetting::Auto)).unwrap();
+        assert!(!saved(home.path()).contains_key("terminal"), "auto is saved as unset");
     }
 
     #[test]
