@@ -292,9 +292,9 @@ impl Auth {
                     other => other.to_string(),
                 };
                 // the client or the grant is gone (a wiped server); the next sign-in registers afresh
-                if let AuthError::Refused { error, .. } = &e
-                    && matches!(error.as_str(), "invalid_client" | "invalid_grant")
-                {
+                let gone = matches!(&e, AuthError::Refused { error, .. } if matches!(error.as_str(), "invalid_client" | "invalid_grant"));
+                log::warn!("Workman at {origin}: {why}; sign in again{}", if gone { " (the stored sign-in is dropped)" } else { "" });
+                if gone {
                     self.store.delete(&meta.issuer).map_err(AuthError::Store)?;
                     let mut known = self.load_known()?;
                     known.clients.remove(&meta.issuer);
@@ -350,8 +350,19 @@ impl Auth {
     /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
     /// where Supraman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
-        self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);
+        let signed = self.sign_in_flow(&origin, browser);
+        match &signed {
+            Ok(AuthStatus::SignedIn { who, .. }) => log::info!("Workman at {origin}: signed in{}", who.as_ref().map(|w| format!(" as {w}")).unwrap_or_default()),
+            Ok(_) => {}
+            Err(e) => log::warn!("Workman at {origin}: the sign-in did not work: {e}"),
+        }
+        signed
+    }
+
+    fn sign_in_flow(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
+        self.cancel.store(false, Ordering::SeqCst);
+        let origin = origin.to_string();
         let meta = self.discover(&origin)?;
         {
             let _lock = self.refresh_lock()?;
@@ -397,6 +408,9 @@ impl Auth {
             .ok_or_else(|| AuthError::BadResponse("the server gave no refresh token (offline_access)".into()))?;
         {
             let _lock = self.refresh_lock()?;
+            if self.lock().unsaved.contains_key(&meta.issuer) || self.store.get(&meta.issuer).ok().flatten().is_some() {
+                log::info!("Workman at {origin}: the sign-in held before is replaced, not revoked");
+            }
             self.keep_refresh(&meta.issuer, &refresh);
             let mut known = self.load_known()?;
             known.servers.insert(origin.clone(), meta.clone());
@@ -414,6 +428,18 @@ impl Auth {
     /// Local tokens go before the revoke, so no other call waits on it. `Err` is a notice: the revoke failed.
     pub fn sign_out(&self, origin: &str) -> Result<(), String> {
         let origin = api_base(origin);
+        let revoked = self.sign_out_flow(&origin);
+        match &revoked {
+            Ok(true) => log::info!("Workman at {origin}: signed out; the grant is revoked, with every session token minted under it"),
+            Ok(false) => log::info!("Workman at {origin}: signed out; no stored sign-in, nothing to revoke"),
+            Err(e) => log::warn!("Workman at {origin}: signed out here, but the grant is not revoked: {e}"),
+        }
+        revoked.map(|_| ())
+    }
+
+    /// `Ok(true)`: the server revoked the grant.
+    fn sign_out_flow(&self, origin: &str) -> Result<bool, String> {
+        let origin = origin.to_string();
         let known = self.load_known().map_err(|e| e.to_string())?;
         let refresh = {
             let mut inner = self.lock();
@@ -421,7 +447,7 @@ impl Auth {
                 inner.held = None;
             }
             let Some(meta) = known.servers.get(&origin) else {
-                return Ok(());
+                return Ok(false);
             };
             inner.broken.remove(&meta.issuer);
             let unsaved = inner.unsaved.remove(&meta.issuer).map(|(rt, _)| rt);
@@ -433,7 +459,7 @@ impl Auth {
         };
         let meta = &known.servers[&origin];
         match (&refresh, &meta.revocation_endpoint, known.clients.get(&meta.issuer)) {
-            (None, _, _) => Ok(()),
+            (None, _, _) => Ok(false),
             (Some(_), None, _) => Err(format!("Workman at {origin} names no revocation endpoint; the grant lapses after 30 days")),
             (Some(rt), Some(endpoint), client) => {
                 let mut form = vec![("token", rt.as_str()), ("token_type_hint", "refresh_token")];
@@ -447,7 +473,7 @@ impl Auth {
                     .content_type("application/x-www-form-urlencoded")
                     .send(form_encode(&form).as_str());
                 match read(&origin, res) {
-                    Ok((status, _)) if (200..300).contains(&status) => Ok(()),
+                    Ok((status, _)) if (200..300).contains(&status) => Ok(true),
                     Ok((status, body)) => Err(format!("Workman at {origin} refused the sign-out: HTTP {status}{}", suffix(&oauth_error(&body)))),
                     Err(e) => Err(format!("{e}; the grant lapses after 30 days")),
                 }
