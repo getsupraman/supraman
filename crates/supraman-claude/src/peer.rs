@@ -561,12 +561,12 @@ mod tests {
 
     #[test]
     fn a_ref_grows_past_six_digits_where_two_refs_share_them() {
-        // both hash to 03c977…: 03c9775f… and 03c9777f…
-        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-supramantest-001414", r"\\.\pipe\LOCAL\cc-msg-supramantest-005046");
-        assert_eq!(&ref_hash(a)[..7], "03c9775");
+        // both hash to 92bdcb…: 92bdcb95… and 92bdcb2f…
+        let (a, b) = (r"\\.\pipe\LOCAL\cc-msg-supramantest-000455", r"\\.\pipe\LOCAL\cc-msg-supramantest-006484");
+        assert_eq!(&ref_hash(a)[..7], "92bdcb9");
         let rows = [live(1, "s1", "x", Some(a), 10), live(2, "s2", "x", Some(b), 10)];
-        assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [03c9775]"));
-        assert_eq!(send_name(&rows, "s2").as_deref(), Some("x [03c9777]"));
+        assert_eq!(send_name(&rows, "s1").as_deref(), Some("x [92bdcb9]"));
+        assert_eq!(send_name(&rows, "s2").as_deref(), Some("x [92bdcb2]"));
     }
 
     #[test]
