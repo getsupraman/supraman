@@ -17,6 +17,7 @@ mod relay;
 mod scan;
 pub mod schedule;
 pub mod secret;
+pub mod shells;
 pub mod store;
 mod settings;
 mod slug;
