@@ -313,7 +313,7 @@ const LEGACY_SCOPES: [&str; 2] = ["workstate.read", "workstate.sessions"];
 fn fresh_id(what: &str) -> String {
     let mut r = [0u8; 8];
     getrandom::fill(&mut r).expect("the OS random source");
-    format!("fake-{what}-{}", r.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!("fake-{what}-{}", supraman_core::hex::encode(&r))
 }
 
 #[derive(Default)]

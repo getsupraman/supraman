@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chrono::{Local, TimeZone};
 use supraman_core::Workspace;
 use supraman_core::schedule::{self, ActionKind, CatchUp, Change, Covered, Day, Fired, Foreign, ForeignTask, Live, Outcome, Overlap, Policy, Profile, Prompt, Run, Schedule, Span, Stage, Status, Trigger};
 use supraman_core::secret::SecretStore;
+use supraman_core::time::{self, date_words};
 use supraman_ui::details::Section;
 
 /// A row keeps at most this many runs.
@@ -101,20 +101,6 @@ impl ScheduleRow {
 
     pub fn last_result(&self) -> Option<Result> {
         self.last().map(|(_, o)| Result::of(o))
-    }
-}
-
-/// `Mon 09:00` this week, else `Mon 3 Nov 09:00`.
-pub fn local_text(ms: i64, now_ms: i64) -> String {
-    let (Some(at), Some(now)) = (Local.timestamp_millis_opt(ms).single(), Local.timestamp_millis_opt(now_ms).single()) else {
-        return ms.to_string();
-    };
-    if (ms - now_ms).abs() < 6 * 24 * 3_600_000 && at.date_naive() != now.date_naive() {
-        at.format("%a %H:%M").to_string()
-    } else if at.date_naive() == now.date_naive() {
-        at.format("%H:%M").to_string()
-    } else {
-        at.format("%a %-d %b %H:%M").to_string()
     }
 }
 
@@ -377,16 +363,11 @@ pub fn change_words(c: &Change) -> Option<String> {
 
 /// The local zone's name and offset, as the When section shows it.
 pub fn zone_words(now_ms: i64) -> String {
-    let offset = Local.timestamp_millis_opt(now_ms).single().map(|t| t.format("UTC%:z").to_string()).unwrap_or_default();
+    let offset = time::local(now_ms).map(|t| t.format("UTC%:z").to_string()).unwrap_or_default();
     match iana_time_zone::get_timezone() {
         Ok(name) => format!("This computer's time ({name}, {offset})"),
         Err(_) => format!("This computer's time ({offset})"),
     }
-}
-
-/// `Mon 3 Nov 2026 at 08:00`.
-pub fn date_words(ms: i64) -> String {
-    Local.timestamp_millis_opt(ms).single().map_or_else(|| ms.to_string(), |t| t.format("%a %-d %b %Y at %H:%M").to_string())
 }
 
 /// The status as the page's pill says it, and whether it asks for René.
@@ -504,7 +485,7 @@ pub fn sections(row: &ScheduleRow, zone: &str, dry_run: Option<&str>, now_ms: i6
         runs = runs.text("No run yet.");
     }
     for r in row.runs.iter().take(RUNS_SHOWN) {
-        let start = r.started.map_or("not started".to_string(), |(ts, _)| local_text(ts, now_ms));
+        let start = r.started.map_or("not started".to_string(), |(ts, _)| time::near(ts, now_ms));
         let outcome = match &r.ended {
             Some((_, o, why)) if why.is_empty() => outcome_text(*o).to_string(),
             Some((_, o, why)) => format!("{}: {why}", outcome_text(*o)),
@@ -662,7 +643,7 @@ pub fn other_summary(t: &ForeignTask, now_ms: i64) -> String {
         parts.push("disabled".into());
     }
     if let Some(next) = t.next_run_ms {
-        parts.push(format!("next {}", local_text(next, now_ms)));
+        parts.push(format!("next {}", time::near(next, now_ms)));
     }
     match t.result_text() {
         Some(r) => parts.push(format!("last {r}")),
@@ -877,14 +858,16 @@ mod tests {
         let (mut d, notice) = DismissedMessages::load_at(Some(file.clone()), "x");
         assert!(notice.is_none() && shown(&d, &rows) == 1);
         let w = &waiting(&rows)[0];
-        d.dismiss(&w.workspace, &w.key).unwrap();
+        d.dismiss(&w.workspace, &w.key).unwrap().write().unwrap();
         let (mut restarted, _) = DismissedMessages::load_at(Some(file.clone()), "x");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&rows)), Ok(false));
+        assert!(!restarted.prune_keys(&waiting_keys(&rows)).0);
         assert_eq!(shown(&restarted, &rows), 0, "still dismissed after a restart");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&BTreeMap::new())), Ok(false), "a workspace the poll did not read keeps it");
+        assert!(!restarted.prune_keys(&waiting_keys(&BTreeMap::new())).0, "a workspace the poll did not read keeps it");
         let edited = pending("f2");
         assert_eq!(shown(&restarted, &edited), 1, "a covered edit shows it again");
-        assert_eq!(restarted.prune_keys(&waiting_keys(&edited)), Ok(true));
+        let (changed, save) = restarted.prune_keys(&waiting_keys(&edited));
+        assert!(changed);
+        save.unwrap().write().unwrap();
         let (again, _) = DismissedMessages::load_at(Some(file), "x");
         assert_eq!(shown(&again, &rows), 1, "the old fingerprint's dismissal is gone from the file");
     }
@@ -947,7 +930,7 @@ mod tests {
         t.next_run_ms = Some(NOW + 3_600_000);
         t.last_run_ms = Some(NOW - 3_600_000);
         t.last_result = Some(0);
-        assert_eq!(other_summary(&t, NOW), format!("daily at 09:00 · next {} · last OK", local_text(NOW + 3_600_000, NOW)));
+        assert_eq!(other_summary(&t, NOW), format!("daily at 09:00 · next {} · last OK", time::near(NOW + 3_600_000, NOW)));
         t.last_result = Some(0x8007_0005_u32 as i32);
         t.enabled = false;
         t.next_run_ms = None;

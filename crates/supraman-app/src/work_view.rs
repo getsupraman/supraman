@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use supraman_core::time::rfc3339_local;
 use supraman_workman::{
     AuthStatus, Board, BoardRow, Client, ItemRef, ItemStatus, OverviewProject, OverviewRun, Resolved, Rollup, Stream,
     StreamEvent, StreamSignal,
@@ -20,7 +21,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use supraman_ui::{banner, button, fonts};
 use supraman_ui::hit::{HitTargets, hit_target};
 use crate::workstate_setup::WsStatus;
@@ -483,21 +484,6 @@ fn status_color(status: ItemStatus, cx: &App) -> Hsla {
     }
 }
 
-/// The server's times are UTC.
-pub(crate) fn short_time(at: &str) -> String {
-    short_time_in(at, &chrono::Local)
-}
-
-fn short_time_in<Tz: chrono::TimeZone>(at: &str, zone: &Tz) -> String
-where
-    Tz::Offset: std::fmt::Display,
-{
-    match chrono::DateTime::parse_from_rfc3339(at) {
-        Ok(t) => t.with_timezone(zone).format("%Y-%m-%d %H:%M").to_string(),
-        Err(_) => at.get(..16).unwrap_or(at).replace('T', " "),
-    }
-}
-
 fn last_segment(path: &str) -> &str {
     path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or(path)
 }
@@ -567,7 +553,7 @@ impl WorkView {
             .when(run.inbox_count > 0, |d| d.child(small(format!("inbox {}", run.inbox_count), status.warning)))
             .when_some(run.last_verification.as_ref(), |d, v| {
                 let (text, color) = if v.passed { ("✓ verified", status.success) } else { ("✗ failed", status.error) };
-                d.child(small(format!("{text} {}", short_time(&v.at)), color))
+                d.child(small(format!("{text} {}", rfc3339_local(&v.at)), color))
             })
             .child(hit_target(&self.hits, key))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_run(&id, cx)));
@@ -796,12 +782,6 @@ mod tests {
     fn small_formatters() {
         let r = Rollup { total: 14, done: 10, cancelled: 1, ..Default::default() };
         assert_eq!(done_text(&r), "10/13 done");
-        let cet = chrono::FixedOffset::east_opt(3600).unwrap();
-        assert_eq!(short_time_in("2026-10-26T18:46:12+00:00", &cet), "2026-10-26 19:46");
-        assert_eq!(short_time_in("2026-10-26T18:46:12.5Z", &cet), "2026-10-26 19:46");
-        assert_eq!(short_time_in("2026-10-26T23:30:00-02:00", &cet), "2026-10-27 02:30");
-        assert_eq!(short_time_in("2026-10-26T09:30", &cet), "2026-10-26 09:30");
-        assert_eq!(short_time("x"), "x");
         assert_eq!(last_segment(r"P:\w\m4-1\"), "m4-1");
         assert_eq!(last_segment("P:/w/m4-1"), "m4-1");
         assert_eq!(status_key("m4/2", ItemStatus::InProgress), "work-status-m4/2=in_progress");

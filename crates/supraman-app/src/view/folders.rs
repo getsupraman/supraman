@@ -12,10 +12,10 @@ use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, SharedStrin
 use theme::ActiveTheme as _;
 
 use super::FleetView;
-use super::icon::Icon;
+use supraman_ui::icon::Icon;
 use super::left::{secondary, tag};
 use super::menu::{Confirm, Confirmed};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::fleet;
 
 const STATE_COLUMN: gpui::Pixels = px(16.);
@@ -85,7 +85,7 @@ impl FleetView {
         };
         match event {
             InputEvent::Edited | InputEvent::Refused(_) => editing.error = None,
-            InputEvent::Confirm | InputEvent::ConfirmBack => self.add_typed(false, cx),
+            InputEvent::Confirm | InputEvent::ConfirmBack => self.add_typed(false, window, cx),
             InputEvent::Cancel if self.dismiss_popup() => {}
             InputEvent::Cancel => {
                 self.editing = None;
@@ -106,13 +106,13 @@ impl FleetView {
     }
 
     /// The path typed, as a folder (`scan` false) or a scan; an empty field opens the folder picker.
-    pub fn add_typed(&mut self, scan: bool, cx: &mut Context<Self>) {
+    pub fn add_typed(&mut self, scan: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(w) = self.editing.as_ref().map(|e| e.workspace.clone()) else {
             return;
         };
         match self.typed_path(cx) {
             Some(path) => self.add_path(&w, path, scan, cx),
-            None => self.browse(scan, cx),
+            None => self.browse(scan, window, cx),
         }
     }
 
@@ -132,7 +132,7 @@ impl FleetView {
     }
 
     /// The folder picker, or [`FleetView::pick_folder`] when a selftest set one.
-    pub fn browse(&mut self, scan: bool, cx: &mut Context<Self>) {
+    pub fn browse(&mut self, scan: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(w) = self.editing.as_ref().map(|e| e.workspace.clone()) else {
             return;
         };
@@ -140,21 +140,8 @@ impl FleetView {
             self.add_path(&w, path, scan, cx);
             return;
         }
-        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some(if scan { "Scan for repos" } else { "Add folder" }.into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            if let Some(path) = paths.into_iter().next() {
-                this.update(cx, |this, cx| this.add_path(&w, path, scan, cx)).ok();
-            }
-        })
-        .detach();
+        let prompt = if scan { "Scan for repos" } else { "Add folder" };
+        supraman_ui::folder_picker::pick_folder(prompt, window, cx, move |this, path, _, cx| this.add_path(&w, path, scan, cx));
     }
 
     /// Asks first when the edit stops a supervised session ([`stops`]).
@@ -263,12 +250,7 @@ impl FleetView {
                     let edit = Edit::SetEnabled { folder: f.name.clone(), enabled: !f.enabled };
                     let w = name.clone();
                     state.child(
-                        div()
-                            .id(SharedString::from(format!("edit-enable-{}", f.name)))
-                            .relative()
-                            .cursor_pointer()
-                            .child(if f.enabled { "☑" } else { "☐" })
-                            .child(hit_target(&self.hits, format!("edit-enable-{}", f.name)))
+                        button::checkbox(&self.hits, format!("edit-enable-{}", f.name), f.enabled)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.request_edit(&w, edit.clone(), cx);
@@ -350,10 +332,10 @@ impl FleetView {
             (None, Some(first)) => format!("home: the first folder, {}", first.display()),
             (None, None) => "home: none yet (the first folder added)".into(),
         };
-        let typed = |key: &'static str, label: &'static str, run: fn(&mut Self, &mut Context<Self>), cx: &mut Context<Self>| {
-            button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        let typed = |key: &'static str, label: &'static str, run: fn(&mut Self, &mut Window, &mut Context<Self>), cx: &mut Context<Self>| {
+            button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
-                run(this, cx);
+                run(this, window, cx);
             }))
         };
         let reset = w.home.is_some().then(|| edit_button("edit-reset-home".into(), "Reset", Edit::SetHome(None), cx));
@@ -382,7 +364,7 @@ impl FleetView {
                         .text_xs()
                         .text_color(colors.text_muted)
                         .child(clipped("edit-title", format!("EDIT FOLDERS · {}", w.name), false))
-                        .child(typed("edit-done", "Done", |this, cx| this.close_edit_folders(cx), cx)),
+                        .child(typed("edit-done", "Done", |this, _, cx| this.close_edit_folders(cx), cx)),
                 )
                 .child(
                     div()
@@ -419,9 +401,9 @@ impl FleetView {
                         .flex_wrap()
                         .gap_2()
                         .justify_end()
-                        .child(typed("edit-add-folder", "Add folder…", |this, cx| this.add_typed(false, cx), cx))
-                        .child(typed("edit-add-scan", "Add scan…", |this, cx| this.add_typed(true, cx), cx))
-                        .child(typed("edit-set-home", "Set as home", |this, cx| this.set_typed_home(cx), cx)),
+                        .child(typed("edit-add-folder", "Add folder…", |this, window, cx| this.add_typed(false, window, cx), cx))
+                        .child(typed("edit-add-scan", "Add scan…", |this, window, cx| this.add_typed(true, window, cx), cx))
+                        .child(typed("edit-set-home", "Set as home", |this, _, cx| this.set_typed_home(cx), cx)),
                 )
                 .child(div().text_xs().text_color(colors.text_muted).child("An empty path opens the folder picker. Enter adds the folder typed · Esc closes"))
                 .children(editing.error.clone().map(|e| {

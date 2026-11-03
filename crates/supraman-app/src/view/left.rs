@@ -14,9 +14,10 @@ use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::tabs::DraggedSession;
 use theme::ActiveTheme as _;
 
-use super::icon::{Icon, Tooltip};
+use supraman_ui::icon::Icon;
+use supraman_ui::tooltip::Tooltip;
 use super::{Cli, FleetView, MenuTarget, TabKind, INBOX_MAX_SHARE, MAX_WORKING_LIMIT, MESSAGE_LINES, MESSAGES_LISTED, MESSAGES_MAX_SHARE};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::settings_window::page;
 use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
@@ -115,7 +116,7 @@ fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
 }
 
 fn short_since(at: &str) -> String {
-    if at.is_empty() { String::new() } else { format!("since {}", work_view::short_time(at)) }
+    if at.is_empty() { String::new() } else { format!("since {}", supraman_core::time::rfc3339_local(at)) }
 }
 
 pub fn inbox_key(need: &NeedsYou) -> Option<String> {
@@ -761,7 +762,7 @@ impl FleetView {
                                         div()
                                             .text_xs()
                                             .text_color(colors.text_muted)
-                                            .child(SharedString::from(fleet::ago(now - need.since))),
+                                            .child(SharedString::from(supraman_core::time::ago(now - need.since))),
                                     ),
                             )
                             .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
@@ -1140,7 +1141,7 @@ impl FleetView {
                                         div()
                                             .text_xs()
                                             .text_color(quiet(cx))
-                                            .child(SharedString::from(fleet::ago(now - m.at))),
+                                            .child(SharedString::from(supraman_core::time::ago(now - m.at))),
                                     ),
                             )
                             .child(body)
@@ -1757,22 +1758,17 @@ impl FleetView {
             let key = format!("add-repo-{}", repo.name);
             let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
             repos = repos.child(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
+                button::checkbox(&self.hits, key, *on)
                     .flex()
                     .items_center()
                     .gap_2()
                     .px_1()
                     .rounded_sm()
                     .text_sm()
-                    .cursor_pointer()
                     .hover(|s| s.bg(colors.ghost_element_hover))
                     .when(!*on, |d| d.text_color(colors.text_muted))
-                    .child(if *on { "☑" } else { "☐" })
                     .child(SharedString::from(repo_label(&repo.name, &repo.path, Some(&draft.root))))
                     .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
-                    .child(hit_target(&self.hits, key))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.toggle_add_repo(i, cx);

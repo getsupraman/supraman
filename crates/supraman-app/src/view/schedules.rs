@@ -17,10 +17,10 @@ use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, MouseButton
 use theme::ActiveTheme as _;
 
 use super::{FleetView, Tab, TabKind};
-use super::icon::Icon;
+use supraman_ui::icon::Icon;
 use super::left::{REPO_ROW, SESSION_LINE, disclosure, grid, icon_slot, secondary, tree_label};
 use super::menu::{Confirm, Confirmed, MenuTarget};
-use crate::clipped::clipped;
+use supraman_ui::clipped::clipped;
 use crate::fleet::WorkspaceNode;
 use crate::schedules::{self, Primary, ScheduleRow, Waiting};
 
@@ -381,7 +381,7 @@ impl FleetView {
         let (ws, id) = (workspace.to_string(), id.to_string());
         let args = (ws.clone(), id.clone());
         let task = cx.background_executor().spawn(async move {
-            let sm = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(supraman_core::HOOK_EXE);
+            let sm = supraman_core::install::sm_exe().map_err(|e| e.to_string())?;
             let out = process::run(
                 process::command(&sm).args(["schedule", "dry-run", &args.0, &args.1]).env(supraman_core::HOME_VAR, &home),
                 DRY_RUN_WITHIN,
@@ -531,9 +531,8 @@ impl FleetView {
     }
 
     pub fn dismiss_schedule_notice(&mut self, workspace: &str, run: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.runs_dismissed.dismiss(workspace, run) {
-            self.action_error = Some(e);
-        }
+        let save = self.runs_dismissed.dismiss(workspace, run);
+        self.save_off_thread(save, "Cannot save the dismissed run", cx);
         cx.notify();
     }
 
@@ -966,7 +965,7 @@ impl FleetView {
                     .child(hit_target(&self.hits, format!("sched-state-{k}"))),
             )
             .children(row.next_fire.map(|t| {
-                div().flex_none().whitespace_nowrap().text_xs().text_color(secondary(cx)).child(SharedString::from(format!("next {}", schedules::local_text(t, now))))
+                div().flex_none().whitespace_nowrap().text_xs().text_color(secondary(cx)).child(SharedString::from(format!("next {}", supraman_core::time::near(t, now))))
             }))
             .child(div().flex_1())
             .child(div().flex().flex_none().items_center().child(action));
@@ -1072,9 +1071,8 @@ impl FleetView {
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-later-{k}"), "Dismiss", cx).on_click(cx.listener({
                 let (ws, dismissed) = (w.workspace.clone(), w.key.clone());
                 move |this, _: &ClickEvent, _, cx| {
-                    if let Err(e) = this.waiting_dismissed.dismiss(&ws, &dismissed) {
-                        this.action_error = Some(e);
-                    }
+                    let save = this.waiting_dismissed.dismiss(&ws, &dismissed);
+                    this.save_off_thread(save, "Cannot save the dismissed approval", cx);
                     cx.notify();
                 }
             }));
@@ -1100,7 +1098,7 @@ impl FleetView {
             }));
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-dismiss-{}", a.run), "Dismiss", cx)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss_schedule_notice(&w, &run, cx)));
-            out.push(card(color, label, format!("{} · {}", a.workspace, a.id), Some(crate::fleet::ago(now - a.at)), detail, div().flex().flex_none().gap_1().child(history).child(dismiss)));
+            out.push(card(color, label, format!("{} · {}", a.workspace, a.id), Some(supraman_core::time::ago(now - a.at)), detail, div().flex().flex_none().gap_1().child(history).child(dismiss)));
         }
         for (k, e) in syncs {
             let dismiss = button::bordered(&self.hits, format!("inbox-sync-dismiss-{k}"), "Dismiss", cx).on_click(cx.listener({

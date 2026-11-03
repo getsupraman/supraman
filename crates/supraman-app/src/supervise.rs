@@ -34,21 +34,20 @@ pub struct Setup {
 
 pub fn setup(home: &Path) -> Setup {
     let mut notices: Vec<String> = supraman_core::home::take_migration_notice(home).into_iter().collect();
-    let exe = match std::env::current_exe() {
-        Ok(exe) => exe,
+    let sm = match supraman_core::install::sm_exe() {
+        Ok(sm) => sm,
         Err(e) => {
             notices.push(format!("Cannot locate supraman.exe ({e}); Start is unavailable."));
             return Setup { plugin_dir: None, notices };
         }
     };
-    let plugin_dir = match find_plugin_dir(&exe) {
+    let plugin_dir = match find_plugin_dir(&sm) {
         Ok(dir) => dir,
         Err(e) => {
             notices.push(format!("{e}: sessions cannot be started from this build."));
             return Setup { plugin_dir: None, notices };
         }
     };
-    let sm = exe.with_file_name(HOOK_EXE);
     if sm.is_file() {
         if let Err(e) = install_hook_exe(&plugin_dir, &sm) {
             notices.push(format!("Cannot install {} into {}: {e}", sm.display(), plugin_dir.display()));

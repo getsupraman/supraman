@@ -1,7 +1,7 @@
 //! The update check's loop and what the window shows of it: a banner when a newer release is
 //! available (view/left.rs) and a line on Settings → About.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -13,7 +13,7 @@ use supraman_core::update::Version;
 use supraman_ui::nudge::{self, Nudge};
 use supraman_workman::updates::{self, Available, Checked, Downloaded, Outcome, Source};
 
-use crate::view::{Confirm, Confirmed, FleetView, Link, link_refused};
+use crate::view::{Confirm, Confirmed, FleetView, Link};
 
 /// What Update does with the release the banner names.
 pub type UpdateAction = fn(&mut FleetView, &Available, &mut Context<FleetView>);
@@ -69,7 +69,7 @@ pub struct Target {
 
 impl Target {
     fn this_install() -> Self {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+        let exe_dir = install::exe_dir().unwrap_or_default();
         Self { install: install::install_dir(&exe_dir), wait_pid: Some(std::process::id()), quit: true, restart_args: Vec::new() }
     }
 }
@@ -106,7 +106,7 @@ pub struct Updates {
 impl Updates {
     /// The check at start, after the window is up, then every [`updates::EVERY`] or when nudged; one at a time.
     pub fn start(home: Option<PathBuf>, cx: &mut Context<FleetView>) -> Self {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+        let exe_dir = install::exe_dir().ok();
         let running = updates::running_version(env!("CARGO_PKG_VERSION"), exe_dir.as_deref());
         let source = Arc::new(Mutex::new(Source::github(running.clone())));
         let (nudge, mut nudged) = nudge::nudge();
@@ -198,9 +198,7 @@ impl Updates {
             return "Checking…".into();
         }
         let Some(last) = &self.last else { return "Not checked yet.".into() };
-        let at = chrono::DateTime::from_timestamp_millis(last.at_ms)
-            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
-            .unwrap_or_default();
+        let at = supraman_core::time::clock(last.at_ms);
         match &last.outcome {
             Outcome::Available(a) if a.manifest.semver() > self.running() => format!("Supraman {} is available", a.version()),
             Outcome::Available(_) | Outcome::UpToDate => format!("Up to date, checked {at}"),
@@ -216,11 +214,9 @@ impl FleetView {
 
     /// Opens an http(s) URL; anything else is refused with a toast.
     pub fn open_web(&mut self, url: &str, cx: &mut Context<Self>) {
-        let scheme = url.split_once(':').map_or("", |(s, _)| s).to_ascii_lowercase();
-        if scheme == "http" || scheme == "https" {
-            (self.open_link_with)(&Link::Url(url.to_string()), cx);
-        } else {
-            self.pane_toast.show_why(link_refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx);
+        match supraman_ui::open::allowed(url, &supraman_ui::open::WEB_SCHEMES) {
+            Ok(()) => (self.open_link_with)(&Link::Url(url.to_string()), cx),
+            Err(scheme) => self.pane_toast.show_why(supraman_ui::open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
     }
 

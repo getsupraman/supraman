@@ -87,8 +87,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
             bail!("the [+] claude's env has no {want}: {text}");
         }
     }
-    let exe_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).ok_or_else(|| anyhow!("supraman.exe has no folder"))?;
-    let sm = exe_dir.join(supraman_core::HOOK_EXE);
+    let sm = supraman_core::install::sm_exe()?;
     let found = lines.iter().find(|l| l.to_ascii_lowercase().ends_with("sm.exe")).copied().unwrap_or_default();
     if !found.eq_ignore_ascii_case(&sm.display().to_string()) {
         bail!("`where sm` found `{found}` first, not {}: {text}", sm.display());

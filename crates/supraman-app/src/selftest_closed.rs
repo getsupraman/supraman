@@ -59,7 +59,8 @@ pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
         format!("@echo %*> \"{}\"\r\n@cd>> \"{}\"\r\n@echo fake claude resumed\r\n", seen.display(), seen.display()),
     )?;
     let (mut stars, _) = Stars::load(Some(home));
-    stars.toggle(OLD).map_err(|e| anyhow!("cannot star {OLD}: {e}"))?;
+    let (_, save) = stars.toggle(OLD);
+    save.ok_or_else(|| anyhow!("no home to star {OLD} in"))?.write().map_err(|e| anyhow!("cannot star {OLD}: {e}"))?;
     println!("step 1h: fake claude dir {} with transcripts {RECENT} (1 h old) and {OLD} (20 days, starred)", claude_dir(home).display());
     Ok(())
 }
@@ -159,10 +160,10 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     click(view, &format!("star-{RECENT}"), cx).await?;
     until(view, cx, WITHIN, "unstar hides it with stopped hidden", |v| row(v, RECENT).is_none().then_some(())).await?;
-    let (on_disk, _) = Stars::load(Some(home));
-    if on_disk.ids().contains(RECENT) {
-        bail!("unstar left {RECENT} in starred.json");
-    }
+    crate::selftest::until_with(cx, WITHIN, &format!("unstar to take {RECENT} out of starred.json"), |_| {
+        (!Stars::load(Some(home)).0.ids().contains(RECENT)).then_some(())
+    })
+    .await?;
     Ok(format!(
         "starred 20-day-old {OLD} shown with stopped hidden {} ms in; {RECENT} only with stopped shown, as \"{RECENT_TITLE}\"; \
          a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden; unstar hid it and left starred.json",

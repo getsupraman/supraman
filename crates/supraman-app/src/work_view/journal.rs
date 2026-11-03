@@ -265,7 +265,7 @@ impl WorkView {
                 .gap_2()
                 .text_xs()
                 .text_color(colors.text_muted)
-                .child(div().flex_none().child(SharedString::from(short_time(&e.at))))
+                .child(div().flex_none().child(SharedString::from(rfc3339_local(&e.at))))
                 .child(
                     div()
                         .flex_none()
@@ -273,7 +273,7 @@ impl WorkView {
                         .child(SharedString::from(target.map(|t| t.qualified_ref.clone()).unwrap_or_else(|| "—".into()))),
                 )
                 .child(div().flex_none().child(SharedString::from(e.kind.clone())))
-                .child(crate::clipped::clipped(format!("{key}-who"), who, false).flex_1());
+                .child(supraman_ui::clipped::clipped(format!("{key}-who"), who, false).flex_1());
             let row = div()
                 .id(SharedString::from(key.clone()))
                 .relative()
@@ -284,7 +284,7 @@ impl WorkView {
                 .border_b_1()
                 .border_color(colors.border_variant)
                 .child(meta)
-                .child(crate::clipped::clipped(format!("{key}-summary"), e.summary.clone().unwrap_or_default(), false).text_sm())
+                .child(supraman_ui::clipped::clipped(format!("{key}-summary"), e.summary.clone().unwrap_or_default(), false).text_sm())
                 .child(hit_target(&self.hits, key));
             list = list.child(match e.item.as_ref() {
                 Some(item) => {

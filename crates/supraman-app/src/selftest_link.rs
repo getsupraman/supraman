@@ -10,7 +10,7 @@ use supraman_term::Terminal;
 use supraman_ui::term_element;
 
 use crate::selftest::{sleep, until_with};
-use crate::view::{FleetView, Link, link_refused};
+use crate::view::{FleetView, Link};
 
 const WITHIN: Duration = Duration::from_secs(10);
 const URL: &str = "https://example.com/sched2-11?a=1&b=2";
@@ -178,7 +178,7 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     move_to(at, Modifiers::control(), cx)?;
     until_with(cx, WITHIN, "Ctrl over the refused link: a hand", |cx| terminal.read_with(cx, |t, _| t.hand_painted.then_some(()))).await?;
     click(at, Modifiers::control(), cx)?;
-    let why = link_refused("ms-settings");
+    let why = supraman_ui::open::refused("ms-settings");
     until_with(cx, WITHIN, &format!("the toast {why:?}"), |cx| {
         view.read_with(cx, |v, _| (v.pane_toast.text() == Some(why.as_str())).then_some(()))
     })

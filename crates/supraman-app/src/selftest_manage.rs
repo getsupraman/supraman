@@ -168,15 +168,15 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
     let started = Instant::now();
     let bounds = loop {
         let inside = |b: &gpui::Bounds<gpui::Pixels>| b.size.width > px(40.) && b.center().y > row.top() && b.center().y < row.bottom();
-        if let Some(b) = crate::clipped::cut_at(&key).filter(inside) {
+        if let Some(b) = supraman_ui::clipped::cut_at(&key).filter(inside) {
             break b;
         }
         if started.elapsed() > WITHIN {
-            bail!("{ADDED}'s root path {full:?} was not painted cut, 40 px or wider: {:?}", crate::clipped::cut_at(&key));
+            bail!("{ADDED}'s root path {full:?} was not painted cut, 40 px or wider: {:?}", supraman_ui::clipped::cut_at(&key));
         }
         sleep(cx, Duration::from_millis(50)).await;
     };
-    crate::view::icon::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
     let position = bounds.center();
     let started = Instant::now();
     loop {
@@ -185,7 +185,7 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
             window.dispatch_event(PlatformInput::MouseMove(event), cx);
         })?;
         sleep(cx, Duration::from_millis(100)).await;
-        let shown = crate::view::icon::LAST_SHOWN.with(|l| l.borrow().clone());
+        let shown = supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().clone());
         if shown.as_deref() == Some(full.as_str()) {
             break;
         }
@@ -311,12 +311,12 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
         bail!("resting on {row} at {position:?} showed the card {card:?}");
     }
     let at = crate::selftest::scrolled_into_view(view, icon, cx).await?.center();
-    crate::view::icon::LAST_SHOWN.with(|l| l.borrow_mut().take());
+    supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow_mut().take());
     let started = Instant::now();
     loop {
         crate::selftest_left::move_to(at, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
-        if crate::view::icon::LAST_SHOWN.with(|l| l.borrow().is_some()) {
+        if supraman_ui::tooltip::LAST_SHOWN.with(|l| l.borrow().is_some()) {
             break;
         }
         if started.elapsed() > WITHIN {
@@ -388,7 +388,7 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
     })?;
     let cut = [format!("edit-folder-path-{long_name}"), format!("edit-branch-{long_name}")];
     for key in &cut {
-        until(view, cx, WITHIN, &format!("{key} painted cut"), |_| crate::clipped::cut_at(key).map(|_| ())).await?;
+        until(view, cx, WITHIN, &format!("{key} painted cut"), |_| supraman_ui::clipped::cut_at(key).map(|_| ())).await?;
     }
     if !view.read_with(cx, |v, _| painted(v, "edit-elsewhere-alpha")) {
         bail!("alpha in {workspace} shows no `supervised in` badge");
@@ -480,7 +480,7 @@ static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
 
 /// As ShellExecuteW does while Explorer answers a folder's open (m5/68: shell32, then gpui's window procedure
 /// running a foreground task): the calling thread's messages are dispatched. Then the real call.
-fn pumping_open(path: &Path) -> Result<(), isize> {
+fn pumping_open(path: &Path) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};
     *OPENED_ON.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current().id());
     let until = Instant::now() + Duration::from_millis(300);
@@ -495,7 +495,7 @@ fn pumping_open(path: &Path) -> Result<(), isize> {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    supraman_core::process::shell_execute("open", path.as_os_str(), None, None)
+    supraman_ui::open::open(path.as_os_str())
 }
 
 /// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Foreman; the

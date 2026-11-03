@@ -62,11 +62,11 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
         Title = 'Lucide icons'
         Text = @'
 - Source: Zed's `assets/icons` @ 03efd49220ba06703d04f9c4732fdf814f9c523c, which are Lucide's (https://lucide.dev)
-- In Supraman: `crates/supraman-app/assets/icons/*.svg`, compiled into `supraman.exe`
+- In Supraman: `crates/supraman-ui/assets/icons/*.svg`, compiled into `supraman.exe`
 - Licence: ISC, © Lucide Contributors 2022; portions MIT, © Cole Bemis 2013-2022 (Feather). Full text:
-  `crates/supraman-app/assets/icons/LICENSES`, in a release `licenses\lucide-icons.LICENSE`
+  `crates/supraman-ui/assets/icons/LICENSES`, in a release `licenses\lucide-icons.LICENSE`
 '@
-        Files = @(@{ From = 'crates/supraman-app/assets/icons/LICENSES'; To = 'lucide-icons.LICENSE' })
+        Files = @(@{ From = 'crates/supraman-ui/assets/icons/LICENSES'; To = 'lucide-icons.LICENSE' })
     }
     [pscustomobject]@{
         Title = 'Archivo'

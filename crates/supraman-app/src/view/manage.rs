@@ -4,7 +4,7 @@ use std::{
 };
 
 use supraman_claude::{Claude, Session, now_ms};
-use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, rescan, validate_name};
+use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, name_char, rescan, validate_name};
 use supraman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
@@ -29,10 +29,6 @@ pub struct AddDraft {
 pub struct Removing {
     pub requested_at: i64,
     pub wanted: Vec<String>,
-}
-
-fn name_char(c: char) -> Option<char> {
-    (c.is_ascii_alphanumeric() || c == '-').then(|| c.to_ascii_lowercase())
 }
 
 impl AddDraft {
@@ -111,32 +107,13 @@ fn supervised_elsewhere(taken: &[(String, String)]) -> String {
 }
 
 impl FleetView {
-    /// The window is activated after the picker returns, so the keys reach the review whatever Windows gave the activation to.
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         if let Some(path) = self.pick_folder.take() {
             self.begin_add(path, window, cx);
             return;
         }
-        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add as a Supraman workspace".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            if let Some(path) = paths.into_iter().next() {
-                this.update_in(cx, |this, window, cx| {
-                    window.activate_window();
-                    this.begin_add(path, window, cx);
-                })
-                .ok();
-            }
-        })
-        .detach();
+        supraman_ui::folder_picker::pick_folder("Add as a Supraman workspace", window, cx, |this, path, window, cx| this.begin_add(path, window, cx));
     }
 
     pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {
@@ -583,13 +560,12 @@ impl FleetView {
     }
 
     fn open_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // ShellExecuteW pumps its thread's messages: on the UI thread gpui re-enters inside the click's App borrow (m5/68).
         let open = self.open_with;
-        let task = cx.background_executor().spawn(async move { open(&path).map_err(|code| (path, code)) });
+        let task = cx.background_executor().spawn(async move { open(&path).map_err(|e| (path, e)) });
         cx.spawn(async move |this, cx| {
-            if let Err((path, code)) = task.await {
+            if let Err((path, e)) = task.await {
                 this.update(cx, |this, cx| {
-                    this.action_error = Some(format!("Cannot open {}: ShellExecuteW returned {code}", path.display()));
+                    this.action_error = Some(format!("Cannot open {}: {e}", path.display()));
                     cx.notify();
                 })
                 .ok();

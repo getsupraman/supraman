@@ -4,7 +4,7 @@ use std::path::Path;
 use chrono::NaiveDate;
 use sha2::{Digest, Sha256};
 
-use super::approval::hex;
+use crate::hex::encode as hex;
 use super::{CatchUp, Day, Schedule, Span, Trigger};
 
 /// The `<RunLevel>` of a schedule's task: the claude service's elevation (docs/research/scheduler.md, Decision 5).

@@ -6,24 +6,30 @@
 pub mod banner;
 mod builtin_glyphs;
 pub mod button;
+pub mod clipped;
 pub mod confirm;
 pub mod details;
+pub mod folder_picker;
 pub mod fonts;
 pub mod hit;
 pub mod hover_card;
+pub mod icon;
 pub mod keyed_list;
 pub mod matcher;
 pub mod menu;
 pub mod notices;
 pub mod nudge;
+pub mod open;
 pub mod settings_page;
 pub mod split;
 pub mod stall;
+pub mod store;
 pub mod tabs;
 pub mod term_element;
 pub mod text_input;
 pub mod themes;
 pub mod toast;
+pub mod tooltip;
 
 use std::{
     cell::{Cell, RefCell},

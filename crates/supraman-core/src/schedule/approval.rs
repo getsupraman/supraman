@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::store::{edit_raw, schedules_dir};
 use super::{Action, ActionKind, Approval, Caps, Permissions, Policy, Profile, Prompt, Schedule, Span, Status, Trigger};
+use crate::hex::{decode as unhex, encode as hex};
 use crate::secret::SecretStore;
 use crate::{CoreError, Result, Workspace};
 
@@ -322,13 +323,3 @@ pub fn approve(home: &Path, store: &dyn SecretStore, workspace: &Workspace, id: 
     })
 }
 
-pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..s.len()).step_by(2).map(|i| s.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok())).collect()
-}

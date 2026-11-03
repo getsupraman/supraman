@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use supraman_claude::{Health, Kind, Session, assign_with, main_repo};
 use supraman_core::paths::{normalize, path_key};
+use supraman_core::time::ago;
 use supraman_core::{Event, FolderKind, Workspace, owners};
 use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
 
@@ -132,15 +133,6 @@ impl HookSignal {
             text.push_str(&format!(" · compacted {}", ago(now_ms - t)));
         }
         text
-    }
-}
-
-pub fn ago(ms: i64) -> String {
-    let s = (ms / 1000).max(0);
-    match s {
-        0..60 => format!("{s} s ago"),
-        60..3600 => format!("{} min ago", s / 60),
-        _ => format!("{} h ago", s / 3600),
     }
 }
 

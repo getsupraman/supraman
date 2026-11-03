@@ -21,12 +21,15 @@ use supraman_term::{
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use supraman_ui::nudge::{self, Nudge, Nudged};
+use supraman_ui::open;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::hover_card;
+use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
 use supraman_ui::tabs::{TabHeader, tab_strip};
 use supraman_ui::toast::ToastSlot;
+use supraman_ui::tooltip::Tooltip;
 use supraman_ui::{FrameProbe, button, term_element};
 use gpui::{
     AnyElement, AnyWindowHandle, App, ClickEvent, Context, Entity, FocusHandle,
@@ -48,7 +51,6 @@ use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
-pub(crate) mod icon;
 mod delete;
 pub(crate) mod details;
 mod drop;
@@ -303,7 +305,7 @@ pub struct FleetView {
     pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
-    pub open_with: fn(&Path) -> Result<(), isize>,
+    pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
     pub workstate: WsStatus,
     workstate_dismissed: Option<String>,
@@ -640,7 +642,7 @@ impl FleetView {
                 };
                 if this
                     .update(cx, |this, cx| {
-                        this.apply(refresh);
+                        this.apply(refresh, cx);
                         this.refresh_details(cx);
                         if this.other_scans == 0 {
                             this.scan_other_schedules(cx);
@@ -660,7 +662,7 @@ impl FleetView {
                 poller = done;
                 let alive = this.update(cx, |this, cx| {
                     if let Some(report) = report {
-                        this.apply_report(report);
+                        this.apply_report(report, cx);
                     }
                     this.refreshes += 1;
                     this.refreshes_answered = asks;
@@ -786,10 +788,10 @@ impl FleetView {
             editing: None,
             removing: BTreeMap::new(),
             pick_folder: None,
-            open_with: |path| supraman_core::process::shell_execute("open", path.as_os_str(), None, None),
+            open_with: |path| open::open(path.as_os_str()),
             open_link_with: |link, cx| match link {
-                Link::Url(url) => cx.open_url(url),
-                Link::Path(path) => cx.open_with_system(path),
+                Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
+                Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
             },
             workstate: WsStatus::Checking,
             workstate_dismissed: None,
@@ -1053,21 +1055,28 @@ impl FleetView {
     }
 
     pub fn toggle_star(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        let toggled = self.stars.toggle(session_id);
+        let (_, save) = self.stars.toggle(session_id);
         self.invalidate_tree();
-        match toggled {
-            Ok(_) => self.transcripts_nudge.wake(),
-            Err(e) => self.action_error = Some(format!("Cannot save the star: {e}")),
-        }
+        self.transcripts_nudge.wake();
+        self.save_off_thread(save, "Cannot save the star", cx);
         cx.notify();
     }
 
     pub fn dismiss_message(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        if let Err(e) = self.dismissed_messages.dismiss(workspace, file) {
-            self.action_error = Some(format!("Cannot save the dismissed message: {e}"));
-        }
+        let save = self.dismissed_messages.dismiss(workspace, file);
+        self.save_off_thread(save, "Cannot save the dismissed message", cx);
         self.expanded.remove(&format!("{workspace}/{file}"));
         cx.notify();
+    }
+
+    /// A store's save written off the UI thread; a failure is the action error `failed: <why>`.
+    pub fn save_off_thread(&self, save: Option<supraman_core::store::Save>, failed: &'static str, cx: &mut Context<Self>) {
+        supraman_ui::store::save_off_thread(save, cx, move |this, saved, cx| {
+            if let Err(e) = saved {
+                this.action_error = Some(format!("{failed}: {e}"));
+                cx.notify();
+            }
+        });
     }
 
     fn open_hands(home: &std::path::Path, cx: &mut Context<Self>) -> Arc<Mutex<Hands>> {
@@ -1312,7 +1321,7 @@ impl FleetView {
         self.workstate.problem().filter(|p| self.workstate_dismissed.as_ref() != Some(p))
     }
 
-    fn apply(&mut self, refresh: Refresh) {
+    fn apply(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: apply");
         let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
         match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
@@ -1371,9 +1380,8 @@ impl FleetView {
             self.schedules = schedules;
             self.schedule_errors = errors;
             supraman_ui::notices::keep_dismissed(&mut self.schedule_errors_dismissed, &self.schedule_errors);
-            if let Err(e) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules)) {
-                self.action_error = Some(format!("Cannot save the dismissed approvals: {e}"));
-            }
+            let (_, save) = self.waiting_dismissed.prune_keys(&crate::schedules::waiting_keys(&self.schedules));
+            self.save_off_thread(save, "Cannot save the dismissed approvals", cx);
             self.find_asked_schedules();
         }
         let (workspaces, sessions, main_repos, hooks, desired, polled_at) = &before;
@@ -1385,7 +1393,7 @@ impl FleetView {
         self.last_refresh_took = Some(refresh.took);
     }
 
-    fn apply_report(&mut self, report: Report) {
+    fn apply_report(&mut self, report: Report, cx: &mut Context<Self>) {
         self.desired = report.desired;
         self.invalidate_tree();
         self.needs = report.needs;
@@ -1399,9 +1407,8 @@ impl FleetView {
         self.last_attempt = report.last_attempt.into_iter().collect();
         self.relays = report.relays;
         self.messages = report.messages;
-        if let Err(e) = self.dismissed_messages.prune(&self.messages) {
-            self.action_error = Some(format!("Cannot save the dismissed messages: {e}"));
-        }
+        let (_, save) = self.dismissed_messages.prune(&self.messages);
+        self.save_off_thread(save, "Cannot save the dismissed messages", cx);
         for (workspace, on_disk) in report.answered {
             let answered = self.answered.entry(workspace).or_default();
             for (file, line) in on_disk {
@@ -1959,7 +1966,7 @@ impl FleetView {
         };
         let settings = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default();
         let config = crate::supervise::launch_config(self.home.clone(), Some(&plugin_dir), &settings);
-        let sm_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
+        let sm_dir = supraman_core::install::exe_dir().ok().filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
         crate::hand::extras(&config, &self.workspaces, cwd, &name, sm_dir.as_deref())
     }
 
@@ -2539,7 +2546,7 @@ impl FleetView {
     fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
         match link_target(target) {
             Ok(link) => (self.open_link_with)(&link, cx),
-            Err(scheme) => self.pane_toast.show_why(link_refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
+            Err(scheme) => self.pane_toast.show_why(open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
         }
     }
 
@@ -2616,16 +2623,10 @@ pub enum Link {
     Path(PathBuf),
 }
 
-/// A program's output must not reach any other protocol handler (sched2/11).
-pub const LINK_SCHEMES: [&str; 4] = ["http", "https", "mailto", "file"];
-
 /// What a Ctrl+click on `target` opens, or the scheme it refuses.
 pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match target {
-        MaybeNavigationTarget::Url(url) => {
-            let scheme = url.split_once(':').map_or("", |(scheme, _)| scheme).to_ascii_lowercase();
-            if LINK_SCHEMES.contains(&scheme.as_str()) { Ok(Link::Url(url.clone())) } else { Err(scheme) }
-        }
+        MaybeNavigationTarget::Url(url) => open::allowed(url, &open::LINK_SCHEMES).map(|()| Link::Url(url.clone())),
         MaybeNavigationTarget::PathLike(link) => {
             let path = Path::new(&link.maybe_path);
             Ok(Link::Path(match &link.working_directory {
@@ -2634,10 +2635,6 @@ pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
             }))
         }
     }
-}
-
-pub fn link_refused(scheme: &str) -> String {
-    format!("Not opened: a {scheme}: link. Only http, https, mailto and file links open.")
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {
@@ -2680,7 +2677,7 @@ impl FleetView {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
                 let cwd = tab.cwd.clone();
-                let clipped = crate::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
+                let clipped = supraman_ui::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
                 TabHeader {
                     id: tab.id,
                     label: match tab.kind {
@@ -2699,7 +2696,7 @@ impl FleetView {
             &self.hits,
             headers,
             self.active,
-            || icon::Icon::Close.svg(14., muted),
+            || Icon::Close.svg(14., muted),
             |this: &mut Self, id, cx| this.activate_tab(id, cx),
             |this: &mut Self, id, cx| this.close_tab(id, cx),
             |this: &mut Self, from, to, cx| {
@@ -2715,8 +2712,8 @@ impl FleetView {
                 .justify_center()
                 .h_full()
                 .w(px(36.))
-                .child(icon::Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
-                .tooltip(icon::Tooltip::text("New shell"))
+                .child(Icon::Plus.svg(16., colors.text_muted).group_hover("new-shell", |s| s.text_color(colors.text)))
+                .tooltip(Tooltip::text("New shell"))
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.new_shell(window, cx);
                 })),
@@ -2856,10 +2853,11 @@ impl Render for FleetView {
             .child(crate::titlebar::render(
                 "Supraman",
                 Some(
-                    crate::titlebar::icon_button("open-settings", "\u{e713}", cx)
+                    crate::titlebar::icon_button(&self.hits, "open-settings", "\u{e713}", cx)
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_settings(cx)))
                         .into_any_element(),
                 ),
+                &self.hits,
                 window,
                 cx,
             ))
@@ -3074,7 +3072,6 @@ mod tests {
         ] {
             assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(scheme.into()), "{uri}");
         }
-        assert_eq!(link_refused("ms-settings"), "Not opened: a ms-settings: link. Only http, https, mailto and file links open.");
     }
 
     #[test]

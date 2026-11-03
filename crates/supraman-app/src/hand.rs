@@ -98,11 +98,8 @@ pub fn plain_name(cwd: &Path) -> String {
 }
 
 fn folder_slug(cwd: &Path) -> String {
-    let folder: String = cwd
-        .file_name()
-        .map(|f| f.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect())
-        .unwrap_or_default();
-    if folder.trim_matches('-').is_empty() { "session".to_string() } else { folder }
+    let folder = supraman_core::slugify(&cwd.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+    if folder.is_empty() { "session".to_string() } else { folder }
 }
 
 pub fn encoded_command(script: &str) -> String {
@@ -818,6 +815,22 @@ mod tests {
         assert_eq!(launch.script(), "claude");
         assert!(oauth(&seen.recv_timeout(WAIT).unwrap().1));
         assert!(hands.names().is_empty());
+    }
+
+    #[test]
+    fn a_saved_session_named_before_slug_names_resumes_under_its_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen, _oauth) = fake_workstate(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&url));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let folder = Path::new(r"C:\demo\Alpha");
+        let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+        let Launch::Minted { session, .. } = hands.launch_for(folder, Some("hand-Alpha-1"), Some(sid)) else { panic!() };
+        assert_eq!(session, "hand-Alpha-1");
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!(body["name"].as_str(), Some("hand-Alpha-1"));
+        let Launch::Minted { session, .. } = hands.launch(folder, None) else { panic!() };
+        assert_eq!(session, "hand-alpha-2", "a new session's name is slugify's, numbered after the resumed one's key");
     }
 
     #[test]

@@ -13,6 +13,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
+use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
 use crate::workstate_setup::{RECHECK_EVERY, WsStatus};
@@ -44,6 +45,7 @@ pub struct SettingsView {
     pages: SettingsPages<SettingsView>,
     page: &'static str,
     focus: FocusHandle,
+    hits: HitTargets,
     /// As last shown: a change re-reads settings.toml.
     workstate: WsStatus,
     catalog: Catalog,
@@ -139,6 +141,7 @@ impl SettingsView {
             pages,
             page,
             focus: cx.focus_handle(),
+            hits: HitTargets::default(),
             workstate,
             catalog: Catalog::default(),
             theme_problem: None,
@@ -305,7 +308,7 @@ impl SettingsView {
             cx.notify();
             return;
         }
-        cx.open_with_system(&dir);
+        supraman_ui::open::open_off_thread(dir, cx).detach();
     }
 
     fn change(&mut self, edit: impl FnMut(&mut Settings), cx: &mut Context<Self>) {
@@ -338,7 +341,7 @@ impl SettingsView {
         if !path.exists() {
             self.change(|_| {}, cx);
         }
-        cx.open_with_system(&path);
+        supraman_ui::open::open_off_thread(path, cx).detach();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -867,17 +870,14 @@ impl Render for SettingsView {
             .border_color(colors.border);
         nav = nav.children(self.pages.nav(self.page, |this, page, cx| this.show(page, cx), cx));
         nav = nav.child(div().flex_1()).child(
-            div()
-                .id("open-file")
+            button::ghost(&self.hits, "open-file", cx)
                 .mx_2()
                 .px_2()
                 .py_1()
                 .rounded_sm()
                 .text_xs()
                 .text_color(colors.text_muted)
-                .cursor_pointer()
                 .hover(|s| s.bg(colors.ghost_element_hover).text_color(colors.text))
-                .active(|s| s.bg(colors.ghost_element_active))
                 .child("Open settings.toml")
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_file(cx))),
         );
@@ -914,7 +914,7 @@ impl Render for SettingsView {
             .text_color(colors.text)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .child(crate::titlebar::render("Settings", None, window, cx))
+            .child(crate::titlebar::render("Settings", None, &self.hits, window, cx))
             .child(div().flex().flex_1().min_h_0().child(nav).child(content))
     }
 }

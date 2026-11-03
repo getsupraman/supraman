@@ -33,7 +33,7 @@ pub fn folder() -> PathBuf {
 }
 
 pub(crate) fn sm(args: &[&str]) -> anyhow::Result<String> {
-    let exe = std::env::current_exe()?.with_file_name(supraman_core::HOOK_EXE);
+    let exe = supraman_core::install::sm_exe()?;
     let out = supraman_core::process::run(supraman_core::process::command(&exe).args(args), WITHIN, supraman_core::process::Kill::Tree)
         .with_context(|| format!("run {}", exe.display()))?;
     if !out.success() {
@@ -87,7 +87,7 @@ pub(crate) async fn themed_shots(home: &Path, name: &str, cx: &mut AsyncWindowCo
 
 static OPENED: Mutex<Option<PathBuf>> = Mutex::new(None);
 
-fn recording_open(path: &Path) -> Result<(), isize> {
+fn recording_open(path: &Path) -> Result<(), String> {
     *OPENED.lock().unwrap_or_else(|e| e.into_inner()) = Some(path.to_path_buf());
     Ok(())
 }

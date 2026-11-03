@@ -59,6 +59,17 @@ pub fn unpack(zip: &Path, dir: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// The folder of the running exe; `supraman.exe`, `sm.exe` and `smw.exe` ship side by side in it.
+pub fn exe_dir() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    exe.parent().map(Path::to_path_buf).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{} has no folder", exe.display())))
+}
+
+/// `sm.exe` beside the running exe.
+pub fn sm_exe() -> io::Result<PathBuf> {
+    Ok(exe_dir()?.join(crate::HOOK_EXE))
+}
+
 /// The install folder of an exe in `exe_dir`: the folder itself, or the install above `plugins\supraman\bin`.
 pub fn install_dir(exe_dir: &Path) -> PathBuf {
     let names: Vec<_> = exe_dir.components().rev().take(3).map(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase()).collect();
@@ -516,5 +527,12 @@ mod tests {
         assert_eq!(install_dir(&root.join(r"plugins\supraman\bin")), root);
         assert_eq!(install_dir(root), root);
         assert_eq!(install_dir(&root.join("bin")), root.join("bin"));
+    }
+
+    #[test]
+    fn exe_dir_is_the_running_exes_folder_and_sm_exe_sits_in_it() {
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(exe_dir().unwrap(), exe.parent().unwrap());
+        assert_eq!(sm_exe().unwrap(), exe.with_file_name("sm.exe"));
     }
 }

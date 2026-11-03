@@ -177,8 +177,8 @@ pub fn smw(args: Vec<String>) -> ExitCode {
 
 /// The leftovers of an update in the install this exe runs from (`supraman_core::install::cleanup`).
 fn clean_install() {
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(supraman_core::install::install_dir)) {
-        supraman_core::install::cleanup(&dir);
+    if let Ok(dir) = supraman_core::install::exe_dir() {
+        supraman_core::install::cleanup(&supraman_core::install::install_dir(&dir));
     }
 }
 

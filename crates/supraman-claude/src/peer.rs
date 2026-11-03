@@ -81,8 +81,7 @@ pub fn canonical_pipe(path: &str) -> String {
 
 pub fn key_file_name(pid: u32, pipe: &str) -> String {
     let hash = Sha256::digest(canonical_pipe(pipe).as_bytes());
-    let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{pid}.{hex}.key")
+    format!("{pid}.{}.key", supraman_core::hex::encode(&hash))
 }
 
 /// One `<pid>.json`, as far as delivery needs it.
@@ -161,7 +160,7 @@ const REF_MIN: usize = 6;
 /// registered (measured on 2.1.312 for 7 live sessions; with the `tengu_session_stable_address` flag on,
 /// claude hashes `session:sid:<sessionId>` instead).
 pub fn ref_hash(pipe: &str) -> String {
-    Sha256::digest(format!("session:{pipe}").as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    supraman_core::hex::encode(&Sha256::digest(format!("session:{pipe}").as_bytes()))
 }
 
 /// What SendMessage takes for the session `session_id`: its registered name, or `name [ref]` when

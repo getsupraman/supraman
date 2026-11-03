@@ -52,20 +52,13 @@ impl Card {
         put("session", self.session.clone());
         put("kind", self.kind.map(|k| k.label().to_string()));
         put("Workman", self.workstate.clone());
-        put("started", self.started.and_then(local_time));
+        put("started", self.started.and_then(|ms| supraman_core::time::short(ms, supraman_core::time::now_ms())));
         rows
     }
 
     pub fn hover_card(&self) -> HoverCard {
         HoverCard { title: self.title.clone(), rows: self.rows() }
     }
-}
-
-fn local_time(ms: i64) -> Option<String> {
-    use chrono::TimeZone as _;
-    let at = chrono::Local.timestamp_millis_opt(ms).single()?;
-    let today = chrono::Local::now().date_naive() == at.date_naive();
-    Some(if today { at.format("%H:%M") } else { at.format("%Y-%m-%d %H:%M") }.to_string())
 }
 
 pub fn session_label(name: &str, id: &str) -> String {
