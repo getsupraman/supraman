@@ -141,22 +141,10 @@ fn client_resolve_encodes_the_typed_ref() {
 }
 
 #[test]
-fn client_reads_x_workman_api_and_refuses_a_server_without_it() {
-    let (_fake, c) = server(vec![
-        ("/api/v1/overview".into(), Answer::json(fixture("overview.json")).api(None).header("X-Workman-Api", "1")),
-        ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None).header("X-WorkState-Api", "1")),
-        ("/api/v1/journal".into(), Answer::json(fixture("journal.json")).api(None)),
-    ]);
-    assert!(c.overview().is_ok(), "X-Workman-Api alone");
-    assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")), "Workman 1.x's header alone");
-    assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")));
-}
-
-#[test]
 fn client_maps_errors_and_never_says_the_token() {
     let (_fake, c) = server(vec![
         ("/api/v1/overview".into(), Answer::status(401, r#"{"error":"bad token fake-reader-token"}"#)),
-        ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None)),
+        ("/api/v1/inbox".into(), Answer::json(fixture("inbox.json")).api(None).header("X-WorkState-Api", "1")),
         ("/api/v1/journal".into(), Answer::json(fixture("journal.json")).api(Some("2"))),
         ("/api/v1/backlog?project=x".into(), Answer::json("not json")),
         ("/api/v1/sessions".into(), Answer::status(500, "").api(None)),
@@ -165,7 +153,7 @@ fn client_maps_errors_and_never_says_the_token() {
     assert_eq!(e, Error::Http { status: 401, reason: "bad token <redacted>".into() });
     let e404 = c.item("no-such-id").unwrap_err();
     assert_eq!(e404, Error::Http { status: 404, reason: "no route /api/v1/items/no-such-id".into() });
-    assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")));
+    assert!(matches!(c.inbox(None).unwrap_err(), Error::Api(m) if m.contains("without X-Workman-Api")), "Workman 1.x's header alone");
     assert!(matches!(c.journal(&JournalQuery::default()).unwrap_err(), Error::Api(m) if m.contains("speaks read API 2")));
     assert!(matches!(c.backlog("x").unwrap_err(), Error::Decode(_)));
     assert_eq!(c.sessions(&SessionsQuery::default()).unwrap_err(), Error::Http { status: 500, reason: String::new() });

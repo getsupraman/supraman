@@ -66,6 +66,9 @@ fn sign_in_discovers_registers_and_reads_with_pkce_and_one_resource() {
     assert_eq!(url.matches("resource=").count(), 1, "exactly one resource");
     assert_eq!(q["resource"], format!("{}/api", fake.base()));
     assert_eq!(q["scope"], "workman.read workman.sessions offline_access");
+    assert_eq!(oauth.grant_scopes(), ["workman.read workman.sessions offline_access"]);
+    let register = fake.seen().into_iter().find(|s| s.target == "/connect/register").unwrap();
+    assert!(register.body.contains(r#""scope":"workman.read workman.sessions offline_access""#), "{}", register.body);
     assert_eq!((q["code_challenge_method"].as_str(), q["response_type"].as_str()), ("S256", "code"));
     assert!(q["redirect_uri"].starts_with("http://127.0.0.1:") && q["redirect_uri"].ends_with("/callback"));
     assert!(q["state"].len() >= 16 && q["code_challenge"].len() == 43);
@@ -120,15 +123,6 @@ fn refresh_rotates_and_stores_the_new_refresh_token() {
     oauth.set_access_ttl(3600);
     let a3 = auth.access_token(fake.base()).unwrap();
     assert_eq!(auth.access_token(fake.base()).unwrap(), a3);
-}
-
-#[test]
-fn sign_in_asks_for_the_workman_scopes() {
-    let (_dir, fake, oauth, _store, auth) = setup();
-    auth.sign_in(fake.base(), &http_browser()).unwrap();
-    assert_eq!(oauth.grant_scopes(), ["workman.read workman.sessions offline_access"]);
-    let register = fake.seen().into_iter().find(|s| s.target == "/connect/register").unwrap();
-    assert!(register.body.contains(r#""scope":"workman.read workman.sessions offline_access""#), "{}", register.body);
 }
 
 #[test]

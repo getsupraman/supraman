@@ -5683,3 +5683,16 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   before this one reading a saved file finds no `[workstate]` and uses the default server (work.supraman.ai).
 - **No `LEGACY_MCP_SERVER`:** its only reader was `MintedSessions::adopt_origins`, for records minted without an
   origin; such a session now has an unknown origin, and the supervisor re-mints it once (`server_changed`).
+
+## 2026-11-03 — refactor2/4 (U5) the cargo tests by the audit's verdicts
+
+- **F-05 no longer reproduces.** `sm --test work work_errors_are_one_line_without_the_token` passed 20 of 20 alone, 10 of 10
+  with the file's tests in parallel, and 3 of 3 full `sm` runs (refactor2-u5, 2026-11-03). Its recorded cause (Credential
+  Manager losing concurrent writes, `CREDENTIAL_WRITERS`) predates m5/44.18, which moved refresh tokens to the DPAPI
+  `FileStore` (`write_atomic` with retries); the test needs no change.
+- **What went:** the phrase checks in `skills.rs` (one lint keeps the cross-file contract), tests that passed without
+  checking anything (`.claude/briefs` absent) or guarded a removed flag or env var, the fake's own tests, and the ignored
+  transcript benchmarks; the wall-clock asserts of `fire_restart_interrupts_the_running_script` (flakes/F-01) and the relay
+  inbox are outcome asserts now. `tests/stream.rs` runs on FakeWorkman (`push_frame` for an `id:` frame).
+- **Left:** `supraman-app/src/hand.rs` tests still answer mints from a hand-rolled server, because each mint needs its
+  own answer and FakeWorkman answers a route the same way every time.

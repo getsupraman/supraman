@@ -910,31 +910,6 @@ mod tests {
         assert_eq!(scanner.listed.keys().collect::<Vec<_>>(), [&gaia], "a removed project dir's listing is dropped");
     }
 
-    #[test]
-    #[ignore = "a timing over a real claude dir, read only: FM_BENCH_CLAUDE_DIR=<dir> cargo test --release -p supraman-claude scan_timing_on_a -- --ignored --nocapture"]
-    fn scan_timing_on_a_real_claude_dir() {
-        let Some(claude) = std::env::var_os("FM_BENCH_CLAUDE_DIR").map(PathBuf::from) else { return };
-        let since = epoch_ms(SystemTime::now()) - 14 * 24 * 3_600_000;
-        let none = HashSet::new();
-        let cache = tempfile::tempdir().unwrap().keep().join("transcripts.json");
-        READ_BYTES.store(0, Ordering::Relaxed);
-        let started = std::time::Instant::now();
-        let found = Transcripts::in_claude_dir(&claude).with_cache(cache.clone()).scan(&[PathBuf::new()], since, &none, &none);
-        let (cold, cold_bytes) = (started.elapsed(), READ_BYTES.swap(0, Ordering::Relaxed));
-        let restarted = std::time::Instant::now();
-        Transcripts::in_claude_dir(&claude).with_cache(cache.clone()).scan(&[PathBuf::new()], since, &none, &none);
-        println!(
-            "{} listable transcripts of the last 14 days: {} ms reading {} MB; restart from the cache ({} MB) {} ms reading {} MB",
-            found.len(),
-            cold.as_millis(),
-            cold_bytes / 1_000_000,
-            std::fs::metadata(&cache).map_or(0, |m| m.len()) / 1_000_000,
-            restarted.elapsed().as_millis(),
-            READ_BYTES.load(Ordering::Relaxed) / 1_000_000
-        );
-        let _ = std::fs::remove_file(&cache);
-    }
-
     /// Transcripts shaped like claude's (type-first meta lines among message lines, long tool results), sized
     /// by `size(i)`. Their names vary: no custom title, the latest one near the end, or one only early; some
     /// open with a command before the first prompt, some end in a half-written line.
@@ -999,66 +974,6 @@ mod tests {
             let whole = read(path).unwrap();
             let t = found.iter().find(|t| t.session_id == whole.session_id).unwrap();
             assert_eq!(named(t), named(&whole), "{}", path.display());
-        }
-    }
-
-    #[test]
-    #[ignore = "a check over a real claude dir, read only: FM_BENCH_CLAUDE_DIR=<dir> cargo test --release -p supraman-claude names_as_the_whole_read -- --ignored --nocapture"]
-    fn a_real_claude_dir_names_as_the_whole_read_does() {
-        let Some(claude) = std::env::var_os("FM_BENCH_CLAUDE_DIR").map(PathBuf::from) else { return };
-        let since = epoch_ms(SystemTime::now()) - 14 * 24 * 3_600_000;
-        let none = HashSet::new();
-        let found = Transcripts::in_claude_dir(&claude).scan(&[PathBuf::new()], since, &none, &none);
-        let mut differ = 0;
-        for t in &found {
-            let path = std::fs::read_dir(claude.join("projects"))
-                .unwrap()
-                .flatten()
-                .map(|d| d.path().join(format!("{}.jsonl", t.session_id)))
-                .find(|p| p.is_file())
-                .unwrap();
-            if named(&read(&path).unwrap()) != named(t) {
-                differ += 1;
-                println!("differs: {}", path.display());
-            }
-        }
-        println!("{} transcripts, {differ} named differently", found.len());
-        assert_eq!(differ, 0);
-    }
-
-    #[test]
-    #[ignore = "a timing, not a check: cargo test --release -p supraman-claude scan_timing -- --ignored --nocapture"]
-    fn scan_timing_on_four_hundred_transcripts() {
-        let claude = tempfile::tempdir().unwrap();
-        let files = transcripts(&claude.path().join("projects"), 400, |i| match i % 10 {
-            _ if i < 2 => 60_000_000,
-            0 => 5_000_000,
-            1..=4 => 1_000_000,
-            _ => 300_000,
-        });
-        let bytes: u64 = files.iter().map(|f| std::fs::metadata(f).unwrap().len()).sum();
-        let roots = [PathBuf::from(r"C:\bench\Repo")];
-        let none = HashSet::new();
-        for run in 0..3 {
-            let cache = claude.path().join(format!("cache-{run}.json"));
-            let mut scanner = Transcripts::in_claude_dir(claude.path()).with_cache(cache.clone());
-            let started = std::time::Instant::now();
-            let found = scanner.scan(&roots, 0, &none, &none);
-            let first = started.elapsed();
-            let again = std::time::Instant::now();
-            scanner.scan(&roots, 0, &none, &none);
-            let second = again.elapsed();
-            let restarted = std::time::Instant::now();
-            let mut scanner = Transcripts::in_claude_dir(claude.path()).with_cache(cache);
-            assert_eq!(scanner.scan(&roots, 0, &none, &none).len(), found.len());
-            println!(
-                "run {run}: {} transcripts, {} MB: first scan {} ms, second {} ms, restart from the cache {} ms",
-                found.len(),
-                bytes / 1_000_000,
-                first.as_millis(),
-                second.as_millis(),
-                restarted.elapsed().as_millis()
-            );
         }
     }
 

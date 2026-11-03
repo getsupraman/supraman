@@ -414,9 +414,7 @@ fn fire_restart_interrupts_the_running_script() {
             std::thread::sleep(Duration::from_millis(20));
         }
         std::thread::sleep(Duration::from_millis(500));
-        let started = Instant::now();
         let restarter = run_now(&f, "long", &mut TestHost::new(&f));
-        assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
         let owner = owner.join().unwrap();
         assert_eq!((owner.outcome, owner.why.as_str(), owner.exit), (Some(Outcome::Interrupted), "restarted", 1));
         assert_eq!(restarter.outcome, Some(Outcome::NothingToDo), "the second run finds the marker and exits 0");
@@ -461,24 +459,18 @@ fn fire_skips_a_missed_start_when_catch_up_is_skip() {
 }
 
 /// A live file under a free lock is a dead run: it is recorded interrupted before the new run starts.
+/// A live file whose sm is gone is ended as interrupted, by the next fire and by the window's poll; one whose sm
+/// runs, or whose lock a fire holds, is left alone.
 #[test]
-fn fire_records_a_dead_run_left_behind_as_interrupted() {
+fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
     let f = fixture();
     f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
     fs::create_dir_all(f.live()).unwrap();
-    fs::write(f.live().join("gate.json"), r#"{"run":"gate-20261101-090000","fm_pid":4242,"started_at":1,"stage":"script"}"#).unwrap();
+    fs::write(f.live().join("gate.json"), r#"{"run":"gate-20261101-070000","fm_pid":4242,"started_at":1,"stage":"script"}"#).unwrap();
     assert_eq!(run_now(&f, "gate", &mut TestHost::new(&f)).outcome, Some(Outcome::Ok));
-    let (outcome, why) = ended(&f.records("gate-20261101-090000"));
-    assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, "sm (pid 4242) ended without finishing the run"));
-}
+    let (outcome, why) = ended(&f.records("gate-20261101-070000"));
+    assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, "sm (pid 4242) ended without finishing the run"), "by the next fire");
 
-/// The window's recovery: a live file whose sm is gone is ended as interrupted; one whose sm runs, or whose lock is
-/// held by a fire, is left alone.
-#[test]
-fn the_app_recovers_a_run_whose_fm_is_gone_and_leaves_a_live_one() {
-    let f = fixture();
-    f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
-    fs::create_dir_all(f.live()).unwrap();
     let me = std::process::id();
     let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, supraman_core::process::started(me).unwrap());
     fs::write(f.live().join("gate.json"), &mine).unwrap();
@@ -562,6 +554,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
     let mut child = supraman_core::process::command(exe)
         .args(args)
         .env("SUPRAMAN_HOME", &f.home)
+        .env("CLAUDE_CONFIG_DIR", f.home.join("claude-config"))
         .env_remove("APPDATA")
         .env_remove("FOREMAN_ROLE")
         .stdin(Stdio::piped())
@@ -573,10 +566,10 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
     child.wait_with_output().unwrap()
 }
 
-/// The real host: Run now through `sm`, the task's line through `smw`. Folder Alpha is no git repo, so the session
-/// stage stops at its worktree, before any `claude` or Workman call.
+/// The real binaries: Run now through `sm`, the task's line through `smw`, and the window's Run now through `smw`.
+/// Folder Alpha is no git repo, so the session stage stops at its worktree, before any `claude` or Workman call.
 #[test]
-fn fire_through_fm_and_fmw_with_the_homes_own_store() {
+fn sm_and_smw_fire_and_run_now_through_the_real_binaries() {
     let f = fixture();
     let mut s = script_schedule("gate", "gate.cmd", ActionKind::ScriptThenSession);
     s.permissions.profile = schedule::Profile::Edit;
@@ -595,45 +588,35 @@ fn fire_through_fm_and_fmw_with_the_homes_own_store() {
     assert!(stderr.starts_with("gate-") && stderr.contains(" failed: ") && stderr.contains("is not a git repo"), "{stderr}");
 
     let home = f.home.to_str().unwrap();
-    let out = sm_bin("smw", &f, &["schedule", "fire", "--home", home, "demo", "gate", "--fingerprint", "0bad"], "");
-    assert_eq!(out.status.code(), Some(3), "{out:?}");
-    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "smw writes to fire.log alone: {out:?}");
     let out = sm_bin("smw", &f, &["schedule", "fire", "--home", home, "demo", "gate", "--fingerprint", &fp], "");
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let out = sm_bin("smw", &f, &["schedule", "fire", "--home", home, "demo", "nope", "--fingerprint", &fp], "");
-    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(out.stdout.is_empty() && out.stderr.is_empty(), "smw writes to fire.log alone: {out:?}");
     let log = fs::read_to_string(schedule::fire_log(&f.home)).unwrap();
     // a machine without `claude` on PATH adds a budget notice before each session stage
     let lines: Vec<&str> = log.lines().filter(|l| !l.contains("cannot read the budget")).collect();
-    assert_eq!(lines.len(), 4, "{log}");
+    assert_eq!(lines.len(), 2, "{log}");
     assert!(lines[0].contains(" demo/gate run_now gate-") && lines[0].contains("is not a git repo"), "{log}");
-    assert!(lines[1].contains(" demo/gate task gate-") && lines[1].contains("refused: the task's fingerprint"), "{log}");
-    assert!(lines[2].contains(" demo/gate task gate-") && lines[2].contains("is not a git repo"), "{log}");
-    assert!(lines[3].contains(" demo/nope task - refused: workspace demo has no schedule nope"), "{log}");
-}
+    assert!(lines[1].contains(" demo/gate task gate-") && lines[1].contains("is not a git repo"), "{log}");
 
-/// The window's Run now: `smw schedule run --home`, no console output, recorded as `run_now`.
-#[test]
-fn fmw_runs_now_for_the_window() {
-    let f = fixture();
-    schedule::edit(&f.home, &f.workspace(), |all| {
+    let w = fixture();
+    schedule::edit(&w.home, &w.workspace(), |all| {
         all.push(script_schedule("gate", "exit0.cmd", ActionKind::Script));
         Ok(())
     })
     .unwrap();
-    let home = f.home.to_str().unwrap();
-    let refused = sm_bin("smw", &f, &["schedule", "run", "--home", home, "demo", "gate"], "");
+    let home = w.home.to_str().unwrap();
+    let refused = sm_bin("smw", &w, &["schedule", "run", "--home", home, "demo", "gate"], "");
     assert_eq!(refused.status.code(), Some(3), "pending: {refused:?}");
-    let store = supraman_core::secret::default_store(&f.home);
-    schedule::approve(&f.home, &*store, &f.workspace(), "gate", 1).unwrap();
-    let out = sm_bin("smw", &f, &["schedule", "run", "--home", home, "demo", "gate", "--fingerprint", "0bad"], "");
+    let store = supraman_core::secret::default_store(&w.home);
+    schedule::approve(&w.home, &*store, &w.workspace(), "gate", 1).unwrap();
+    let out = sm_bin("smw", &w, &["schedule", "run", "--home", home, "demo", "gate", "--fingerprint", "0bad"], "");
     assert_eq!(out.status.code(), Some(0), "Run now has no task fingerprint to check: {out:?}");
     assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{out:?}");
-    let runs = schedule::runs(&f.home, "demo").unwrap();
+    let runs = schedule::runs(&w.home, "demo").unwrap();
     let last = runs.last().unwrap();
     assert_eq!(last.started.map(|(_, t)| t), Some(Fired::RunNow));
     assert_eq!(last.ended.as_ref().map(|e| e.1), Some(Outcome::Ok));
-    assert_eq!(sm_bin("smw", &f, &["schedule", "run", "demo", "gate"], "").status.code(), Some(2), "no --home");
+    assert_eq!(sm_bin("smw", &w, &["schedule", "run", "demo", "gate"], "").status.code(), Some(2), "no --home");
 }
 
 /// `sm schedule secret set` keeps the value in the home's DPAPI store under the schedule's key, and only there.

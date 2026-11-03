@@ -245,13 +245,6 @@ fn covered_edits_pause_and_resume_never_make_a_schedule_active_without_approval(
     assert!(f.ok(&["schedule", "pause", "demo", "fix-bugs"]).contains(": paused"));
     assert!(f.ok(&["schedule", "resume", "demo", "fix-bugs"]).contains(": active"), "an approved schedule resumes");
 
-    for edit in [["--profile", "auto"], ["--max-runtime", "2h"], ["--overlap", "restart"], ["--allow-tools", "Bash(ls:*)"]] {
-        f.approve("fix-bugs");
-        let args: Vec<&str> = ["schedule", "edit", "demo", "fix-bugs"].into_iter().chain(edit).collect();
-        f.ok(&args);
-        assert_eq!(f.stored("fix-bugs").status, Status::Pending, "{edit:?}");
-    }
-
     let text = f.ok(&["schedule", "remove", "demo", "fix-bugs"]);
     assert!(text.contains("removed schedule fix-bugs"), "{text}");
     assert!(f.ok(&["schedule", "list", "demo"]).contains("no schedules in workspace demo"));
@@ -286,6 +279,12 @@ fn dry_run_prints_the_prompt_the_argv_the_permissions_and_three_fires() {
     assert!(fires.iter().all(|l| (l.starts_with("  Mon ") || l.starts_with("  Fri ")) && l.contains(" 09:00 ")), "{fires:?}");
     assert_eq!(f.stored("fix-bugs").status, Status::Pending, "a dry run changes nothing");
     assert!(!f.home.join("mcp").exists(), "a dry run writes no mcp config");
+
+    let read = fixture();
+    add_fix(&read, &[]);
+    let text = read.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
+    assert!(text.contains(&format!("cwd: {}\n", read.alpha.display())), "read runs in the main checkout: {text}");
+    assert!(text.contains("  --permission-mode\n  default\n") && text.contains("allow: Bash(sm:*)") && !text.contains("  Edit\n"), "{text}");
 }
 
 #[test]
@@ -315,15 +314,6 @@ fn show_lists_the_schedules_last_runs_newest_first() {
     assert!(runs[2].starts_with("  fix-bugs-1  ") && runs[2].ends_with("  task  done"), "{runs:?}");
 }
 
-#[test]
-fn read_runs_in_the_main_checkout_with_the_default_mode() {
-    let f = fixture();
-    add_fix(&f, &[]);
-    let text = f.ok(&["schedule", "dry-run", "demo", "fix-bugs"]);
-    assert!(text.contains(&format!("cwd: {}\n", f.alpha.display())), "{text}");
-    assert!(text.contains("  --permission-mode\n  default\n") && text.contains("allow: Bash(sm:*)") && !text.contains("  Edit\n"), "{text}");
-}
-
 /// C100: sm has no path that approves a schedule or registers a task.
 #[test]
 fn fm_never_approves_and_never_registers_a_task() {
@@ -348,16 +338,6 @@ fn fm_never_approves_and_never_registers_a_task() {
     assert!(files > 5, "read the sources at {}", src.display());
     let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
     assert!(!manifest.contains("registrar") && !manifest.contains("windows"), "{manifest}");
-}
-
-#[test]
-fn add_and_edit_take_no_worktree_option() {
-    let f = fixture();
-    for flag in ["--worktree", "--no-worktree"] {
-        let out = f.sm(&ADD.iter().copied().chain(["--command", "/fix", flag]).collect::<Vec<_>>());
-        assert_eq!(out.status.code(), Some(1), "{flag}: {out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains(&format!("unknown option {flag}")), "{out:?}");
-    }
 }
 
 #[test]

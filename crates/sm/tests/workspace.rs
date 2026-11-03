@@ -94,6 +94,10 @@ fn user_errors_exit_1() {
         vec!["workspace", "add", dir, "--name", "Bad.Name"],
         vec!["workspace", "add", dir, "--bogus"],
         vec!["workspace", "add", "Z:/definitely/missing/dir"],
+        vec!["sessions", "--bogus"],
+        vec!["sessions", "--workspace"],
+        vec!["sessions", "--workspace", "Bad.Name"],
+        vec!["sessions", "--workspace", "missing"],
     ] {
         assert_eq!(sm(home.path(), &args).status.code(), Some(1), "{args:?}");
     }
@@ -104,7 +108,7 @@ fn user_errors_exit_1() {
 fn io_errors_exit_2() {
     let ws = workspace();
     let home = tempfile::tempdir().unwrap();
-    // FOREMAN_HOME is a file, so the workspaces directory cannot be created.
+    // SUPRAMAN_HOME is a file, so the workspaces directory cannot be created.
     let blocker = home.path().join("file");
     fs::write(&blocker, "x").unwrap();
     let dir = ws.path().join("My.Workspace");

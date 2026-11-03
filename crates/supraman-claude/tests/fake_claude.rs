@@ -28,10 +28,11 @@ fn log(dir: &Path) -> Vec<String> {
     std::fs::read_to_string(dir.join("log.txt")).unwrap().lines().map(str::to_string).collect()
 }
 
+/// `launch` lists rows first; the fake's list is empty, so the name is free (NameTaken is the unit test `name_taken`).
 #[test]
 fn launch_runs_in_cwd_with_env_and_argv() {
     let dir = tempfile::tempdir().unwrap();
-    let out = fake().launch_unchecked(&spec(dir.path(), "")).unwrap();
+    let out = fake().launch(&spec(dir.path(), "")).unwrap();
     assert_eq!(out, "backgrounded · abcd1234 · aw-test-a");
     let log = log(dir.path());
     let cwd = PathBuf::from(log[0].strip_prefix("cwd=").unwrap());
@@ -45,38 +46,14 @@ fn launch_runs_in_cwd_with_env_and_argv() {
 }
 
 #[test]
-fn trust_refusal_from_the_process_is_typed() {
-    let dir = tempfile::tempdir().unwrap();
-    match fake().launch_unchecked(&spec(dir.path(), "trust")) {
-        Err(ClaudeError::TrustNeeded { cwd }) => {
-            assert_eq!(cwd.canonicalize().unwrap(), dir.path().canonicalize().unwrap())
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn other_failures_keep_code_and_stderr() {
+fn a_failed_launch_keeps_the_exit_code_and_stderr_and_a_missing_exe_is_not_installed() {
     let dir = tempfile::tempdir().unwrap();
     match fake().launch_unchecked(&spec(dir.path(), "fail")) {
         Err(ClaudeError::CliFailed { code, stderr }) => assert_eq!((code, stderr.as_str()), (Some(7), "boom")),
         other => panic!("{other:?}"),
     }
-}
-
-#[test]
-fn not_installed_is_typed() {
-    let dir = tempfile::tempdir().unwrap();
     let missing = Claude::new(dir.path().join("no-such-claude.exe"));
     assert!(matches!(missing.launch_unchecked(&spec(dir.path(), "")), Err(ClaudeError::NotInstalled)));
-}
-
-/// `launch` lists rows first. The fake's list is empty (no env reaches `agents`), so the name is
-/// free; the NameTaken branch itself is `name_taken` in the unit tests.
-#[test]
-fn launch_checks_the_list_then_launches() {
-    let dir = tempfile::tempdir().unwrap();
-    assert_eq!(fake().launch(&spec(dir.path(), "")).unwrap(), "backgrounded · abcd1234 · aw-test-a");
 }
 
 #[test]

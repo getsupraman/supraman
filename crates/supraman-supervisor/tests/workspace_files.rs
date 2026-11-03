@@ -1,7 +1,7 @@
 //! Running sessions are matched by name, so a workspace file in the root-based shape must derive the same
 //! session names when it loads into the folders model and after it is saved in the new shape.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use supraman_core::{FolderKind, Registry, Workspace};
 use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
@@ -94,18 +94,4 @@ fn check(text: &str) {
 #[test]
 fn a_root_based_file_keeps_its_session_names_through_load_and_save() {
     check(LEGACY);
-}
-
-/// Copies of the user's real files, kept untracked beside the unit's brief; absent on other machines.
-#[test]
-fn the_users_workspace_files_keep_their_session_names() {
-    let briefs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.claude/briefs");
-    let mut checked = 0;
-    for name in ["larchsys.toml", "nomos.toml"] {
-        if let Ok(text) = std::fs::read_to_string(briefs.join(name)) {
-            check(&text);
-            checked += 1;
-        }
-    }
-    eprintln!("checked {checked} of the user's workspace files");
 }
