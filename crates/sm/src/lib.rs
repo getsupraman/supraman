@@ -47,10 +47,6 @@ usage:
       pending until Approve in the Supraman window; sm never approves and never registers a task.
   sm work overview <workspace>         (its Workman project: runs with rollups, who works, the inbox)
   sm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
-  sm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
-  sm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
-  sm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
-  sm probe session-id                  (does --bg --session-id <uuid> keep the uuid, and --bg --resume)
   sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
       (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
   sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
@@ -61,13 +57,35 @@ usage:
   sm plugin install <plugin-dir>  (copies this sm.exe to <plugin-dir>/bin, where the hooks run it)
   sm hook <event>                 (run by plugins/supraman; reads the hook payload on stdin)";
 
+#[cfg(feature = "probes")]
+const PROBE_USAGE: &str = "\
+  sm probe hooks [--root <repo>]       (scratch cwd under <repo>/target; default: this build's checkout)
+  sm probe isolation [--root <repo>]   (<repo>: a main checkout; default: this build's main checkout)
+  sm probe rm-transcript               (what claude rm leaves of a stopped --bg session; resume after it)
+  sm probe session-id                  (does --bg --session-id <uuid> keep the uuid, and --bg --resume)";
+
+#[cfg(feature = "probes")]
+fn usage() -> String {
+    format!("{USAGE}\n{PROBE_USAGE}")
+}
+
+#[cfg(not(feature = "probes"))]
+fn usage() -> String {
+    USAGE.to_string()
+}
+
 mod edit;
 pub mod fire;
 mod hook;
+#[cfg(feature = "probes")]
 mod probe;
+#[cfg(feature = "probes")]
 mod probe_hooks;
+#[cfg(feature = "probes")]
 mod probe_isolation;
+#[cfg(feature = "probes")]
 mod probe_rm;
+#[cfg(feature = "probes")]
 mod probe_session_id;
 mod relay;
 mod release;
@@ -82,6 +100,7 @@ enum Failure {
     Core(CoreError),
     Claude(ClaudeError),
     Supervisor(Box<supraman_supervisor::SupervisorError>),
+    #[cfg(feature = "probes")]
     Probe(&'static str),
     /// Printed as is, exit 1.
     Refused(String),
@@ -117,6 +136,7 @@ fn failure_text(f: Failure) -> String {
         Failure::Core(e) => e.to_string(),
         Failure::Claude(e) => e.to_string(),
         Failure::Supervisor(e) => e.to_string(),
+        #[cfg(feature = "probes")]
         Failure::Probe(what) => what.to_string(),
         Failure::Refused(line) => line.trim_start_matches("error: ").to_string(),
         Failure::Exit(code) => format!("exit {code}"),
@@ -152,6 +172,7 @@ pub fn cli(args: Vec<String>) -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+        #[cfg(feature = "probes")]
         Err(Failure::Probe(what)) => {
             eprintln!("error: {what} (see the probe lines above)");
             ExitCode::from(1)
@@ -186,7 +207,7 @@ fn run(args: &[String]) -> Result<(), Failure> {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["-h" | "--help" | "help"] => {
-            println!("{USAGE}");
+            println!("{}", usage());
             Ok(())
         }
         ["-V" | "--version"] => {
@@ -221,40 +242,8 @@ fn run(args: &[String]) -> Result<(), Failure> {
         },
         ["schedule", rest @ ..] => schedule::schedule(&registry()?, rest),
         ["work", rest @ ..] => work::work(registry()?.home(), rest),
-        ["probe", "hooks", rest @ ..] => {
-            let root = probe_root(rest)?;
-            check_claude()?;
-            if probe_hooks::run(root) {
-                Ok(())
-            } else {
-                Err(Failure::Probe("a hook signal was not observed"))
-            }
-        }
-        ["probe", "isolation", rest @ ..] => {
-            let root = probe_root(rest)?;
-            check_claude()?;
-            if probe_isolation::run(root) {
-                Ok(())
-            } else {
-                Err(Failure::Probe("an isolation session did not finish its turn"))
-            }
-        }
-        ["probe", "rm-transcript"] => {
-            check_claude()?;
-            if probe_rm::run() {
-                Ok(())
-            } else {
-                Err(Failure::Probe("the rm-transcript probe did not finish"))
-            }
-        }
-        ["probe", "session-id"] => {
-            check_claude()?;
-            if probe_session_id::run() {
-                Ok(())
-            } else {
-                Err(Failure::Probe("the session-id probe did not finish"))
-            }
-        }
+        #[cfg(feature = "probes")]
+        ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),
         ["update", rest @ ..] => update::update(rest),
         ["plugin", "install", dir] => {
@@ -271,6 +260,47 @@ fn run(args: &[String]) -> Result<(), Failure> {
     }
 }
 
+#[cfg(feature = "probes")]
+fn probe_cmd(args: &[&str]) -> Result<(), Failure> {
+    match args {
+        ["hooks", rest @ ..] => {
+            let root = probe_root(rest)?;
+            check_claude()?;
+            if probe_hooks::run(root) {
+                Ok(())
+            } else {
+                Err(Failure::Probe("a hook signal was not observed"))
+            }
+        }
+        ["isolation", rest @ ..] => {
+            let root = probe_root(rest)?;
+            check_claude()?;
+            if probe_isolation::run(root) {
+                Ok(())
+            } else {
+                Err(Failure::Probe("an isolation session did not finish its turn"))
+            }
+        }
+        ["rm-transcript"] => {
+            check_claude()?;
+            if probe_rm::run() {
+                Ok(())
+            } else {
+                Err(Failure::Probe("the rm-transcript probe did not finish"))
+            }
+        }
+        ["session-id"] => {
+            check_claude()?;
+            if probe_session_id::run() {
+                Ok(())
+            } else {
+                Err(Failure::Probe("the session-id probe did not finish"))
+            }
+        }
+        _ => Err(Failure::Usage(format!("unrecognised arguments: probe {}", args.join(" ")))),
+    }
+}
+
 /// [`check_supported`], warning on stderr about a claude newer than tested; only one too old fails.
 pub(crate) fn check_claude() -> Result<(), Failure> {
     if let Some(warning) = check_supported()?.untested() {
@@ -279,6 +309,7 @@ pub(crate) fn check_claude() -> Result<(), Failure> {
     Ok(())
 }
 
+#[cfg(feature = "probes")]
 fn probe_root(args: &[&str]) -> Result<Option<PathBuf>, Failure> {
     match args {
         [] => Ok(None),
