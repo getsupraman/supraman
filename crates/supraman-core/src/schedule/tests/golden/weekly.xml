@@ -2,7 +2,7 @@
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Source>Supraman</Source>
-    <Version>d410b7734e6a6ffd</Version>
+    <Version>d25ca5f57d641d63</Version>
     <Description>Supraman schedule demo/autofix-prod-bugs; Supraman rewrites this task.</Description>
   </RegistrationInfo>
   <Triggers>
@@ -36,9 +36,9 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Program Files\Foreman\smw.exe</Command>
-      <Arguments>schedule fire --home &quot;C:\Users\rene\AppData\Roaming\Foreman&quot; demo autofix-prod-bugs --fingerprint 9f2c00000000000000000000000000000000000000000000000000000000beef</Arguments>
-      <WorkingDirectory>C:\Users\rene\AppData\Roaming\Foreman</WorkingDirectory>
+      <Command>C:\Program Files\Supraman\smw.exe</Command>
+      <Arguments>schedule fire --home &quot;C:\Users\rene\AppData\Roaming\Supraman&quot; demo autofix-prod-bugs --fingerprint 9f2c00000000000000000000000000000000000000000000000000000000beef</Arguments>
+      <WorkingDirectory>C:\Users\rene\AppData\Roaming\Supraman</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
