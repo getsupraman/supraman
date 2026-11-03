@@ -620,7 +620,7 @@ mod tests {
         let Launch::Minted { config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         #[cfg(windows)]
         {
-            let out = std::process::Command::new("icacls").arg(&config).output().unwrap();
+            let out = supraman_core::process::command("icacls").arg(&config).output().unwrap();
             let acl = String::from_utf8_lossy(&out.stdout);
             let user = std::env::var("USERNAME").unwrap();
             let aces: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();
@@ -896,7 +896,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn hand_launch_deletes_the_config_when_claude_exits_and_shows_no_script() {
-        let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
+        let Ok(probe) = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
             return;
         };
         assert!(probe.status.success());
@@ -909,7 +909,7 @@ mod tests {
         let path = format!("{};{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
         let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None };
         // -NoExit's prompt reads stdin; a closed one ends it like a human typing `exit`.
-        let out = std::process::Command::new("pwsh")
+        let out = supraman_core::process::command("pwsh")
             .args(["-NoLogo", "-NoProfile"])
             .args(launch.shell_args())
             .env("PATH", path)
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn hand_launch_runs_plain_claude_once_the_config_is_gone() {
-        let Ok(probe) = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
+        let Ok(probe) = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
             return;
         };
         assert!(probe.status.success());
@@ -938,7 +938,7 @@ mod tests {
             "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
             seen.display(),
         );
-        let out = std::process::Command::new("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
+        let out = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
         let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();
         assert_eq!(runs, [format!("[--mcp-config {}]", config.display()), "[]".to_string()]);
         assert!(String::from_utf8_lossy(&out.stdout).contains("Workman token was revoked"), "{out:?}");

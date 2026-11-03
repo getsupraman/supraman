@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use supraman_supervisor::DesiredState;
 
 fn sm(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sm"))
+    supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")

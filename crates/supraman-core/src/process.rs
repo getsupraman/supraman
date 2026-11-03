@@ -297,6 +297,38 @@ pub fn wait_any_exit(pids: &[u32], timeout: Duration) -> bool {
 mod tests {
     use super::*;
 
+    /// Every child of a crate or its tests starts through [`command`]: a console program started bare gets
+    /// a visible window when the parent has no console (refactor2/F-01).
+    #[test]
+    fn no_crate_starts_a_process_without_command() {
+        let needle = concat!("Command", "::new(");
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let own = Path::new("supraman-core").join("src").join("process.rs");
+        let mut found = Vec::new();
+        let mut dirs = vec![crates.to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n != "target") {
+                        dirs.push(path);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let at = path.strip_prefix(crates).unwrap().to_path_buf();
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (i, line) in text.lines().enumerate() {
+                        if line.contains(needle) && !line.trim_start().starts_with("//") {
+                            found.push((at.clone(), i + 1));
+                        }
+                    }
+                }
+            }
+        }
+        let (own_uses, bare): (Vec<_>, Vec<_>) = found.into_iter().partition(|(at, _)| *at == own);
+        assert!(bare.is_empty(), "start these through supraman_core::process::command: {bare:?}");
+        assert_eq!(own_uses.len(), 1, "only `command` itself: {own_uses:?}");
+    }
+
     /// Windows PowerShell, a real exe: `pwsh` can be a Store alias whose process is no descendant of the caller.
     fn powershell(script: &str) -> Command {
         let mut cmd = command("powershell");
@@ -357,7 +389,7 @@ mod tests {
             }
             assert_eq!(alive(pid), grandchild_left, "{kill:?}");
             if grandchild_left {
-                let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+                let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
             }
         }
     }

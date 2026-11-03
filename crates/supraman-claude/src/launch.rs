@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(mcp_config_url(&mcp, "fm-demo-beta"), None);
         #[cfg(windows)]
         {
-            let acl = std::process::Command::new("icacls").arg(&path).output().unwrap();
+            let acl = supraman_core::process::command("icacls").arg(&path).output().unwrap();
             let acl = String::from_utf8_lossy(&acl.stdout);
             let user = std::env::var("USERNAME").unwrap();
             let grants: Vec<&str> = acl.lines().filter(|l| l.contains(":(")).collect();

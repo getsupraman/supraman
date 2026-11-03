@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 /// `USERPROFILE`/`HOME` = the scratch home: no `.claude/sessions` there, so `send` takes the relay.
 fn sm_cmd(home: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sm"));
+    let mut cmd = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
     cmd.args(args)
         .env("SUPRAMAN_HOME", home)
         .env("USERPROFILE", home)
@@ -58,7 +58,7 @@ fn inbox_prints_each_send_as_one_json_line_within_a_second() {
     let home = tempfile::tempdir().unwrap();
     let inbox = home.path().join("relay").join("demo").join("inbox");
     fs::create_dir_all(&inbox).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_sm"))
+    let mut child = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(["inbox", "--dir", inbox.to_str().unwrap()])
         .stdout(Stdio::piped())
         .stdin(Stdio::null())

@@ -1,7 +1,6 @@
-use std::process::Command;
 
 fn sm(home: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_sm"))
+    supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")

@@ -311,7 +311,7 @@ fn flag<'s>(spec: &'s LaunchSpec, name: &str) -> Vec<&'s str> {
 }
 
 fn fm_report(home: &Path, args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_sm"))
+    supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(["schedule", "report"])
         .args(args)
         .env("SUPRAMAN_HOME", home)

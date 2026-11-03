@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use supraman_core::install::{self, Apply, FILES, Failed, LEFTOVERS};
@@ -100,9 +100,8 @@ fn hold(install: &Path) -> Holder {
     fs::copy(env!("CARGO_BIN_EXE_sm"), &exe).unwrap();
     let inbox = install.parent().unwrap().join("inbox");
     fs::create_dir_all(&inbox).unwrap();
-    let mut cmd = Command::new(&exe);
+    let mut cmd = supraman_core::process::command(&exe);
     cmd.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    supraman_core::process::no_window(&mut cmd);
     let child = Holder(cmd.spawn().unwrap());
     let deadline = Instant::now() + Duration::from_secs(10);
     while !supraman_core::process::alive(child.id()) && Instant::now() < deadline {
@@ -250,11 +249,10 @@ fn a_file_that_cannot_even_be_renamed_rolls_the_whole_apply_back() {
 #[test]
 fn a_supraman_that_does_not_exit_changes_nothing_and_starts_nothing() {
     let c = case();
-    let mut sleeper = Command::new(env!("CARGO_BIN_EXE_sm"));
+    let mut sleeper = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
     let inbox = c.install.parent().unwrap().join("inbox-wait");
     fs::create_dir_all(&inbox).unwrap();
     sleeper.args(["inbox", "--dir"]).arg(&inbox).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    supraman_core::process::no_window(&mut sleeper);
     let child = Holder(sleeper.spawn().unwrap());
     let marker = marker(&c);
     let out = install::apply(&Apply {
@@ -278,13 +276,13 @@ fn a_supraman_that_does_not_exit_changes_nothing_and_starts_nothing() {
 #[test]
 fn the_cli_waits_for_the_pid_applies_and_starts_the_restart_exe() {
     let c = case();
-    let mut quick = Command::new(env!("CARGO_BIN_EXE_sm"));
+    let mut quick = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
     quick.arg("--version").stdout(Stdio::null());
     let mut gone = quick.spawn().unwrap();
     let pid = gone.id();
     gone.wait().unwrap();
     let marker = marker(&c);
-    let out = Command::new(env!("CARGO_BIN_EXE_sm"))
+    let out = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(["update", "apply", "--from"])
         .arg(&c.release)
         .arg("--to")

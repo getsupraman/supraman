@@ -148,7 +148,7 @@ pub fn pid_elevated(_pid: u32) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     use std::thread;
 
     use super::*;
@@ -197,6 +197,7 @@ mod tests {
     /// reachable service that was itself started elevated; read-only, it starts and stops nothing.
     #[cfg(windows)]
     #[test]
+    #[ignore = "runas opens a console window of its own; run elevated with --ignored"]
     fn a_medium_il_process_cannot_reach_an_elevated_service() {
         if !is_elevated() || daemon_status() != DaemonReach::Reachable {
             eprintln!("skipped: needs an elevated test process and a running service it reaches");
@@ -206,7 +207,7 @@ mod tests {
         let out = dir.path().join("status.txt");
         let script = dir.path().join("status.cmd");
         std::fs::write(&script, format!("@claude daemon status > \"{}\" 2>&1\r\n", out.display())).unwrap();
-        let ran = Command::new("runas")
+        let ran = supraman_core::process::command("runas")
             .arg("/trustlevel:0x20000")
             .arg(format!("cmd /c \"{}\"", script.display()))
             .stdin(Stdio::null())

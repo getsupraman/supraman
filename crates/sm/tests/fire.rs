@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use sm::fire::{self, Host, Report, Request, RunCtx};
@@ -559,7 +559,7 @@ fn sm_bin(name: &str, f: &Fixture, args: &[&str], stdin: &str) -> std::process::
         "sm" => env!("CARGO_BIN_EXE_sm"),
         _ => env!("CARGO_BIN_EXE_smw"),
     };
-    let mut child = Command::new(exe)
+    let mut child = supraman_core::process::command(exe)
         .args(args)
         .env("SUPRAMAN_HOME", &f.home)
         .env_remove("APPDATA")
