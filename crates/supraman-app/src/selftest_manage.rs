@@ -575,7 +575,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     shot("add-review", cx).await;
     let hold = view.read_with(cx, |v, _| v.poll_hold.clone());
     hold.armed.store(true, Ordering::SeqCst);
-    until(view, cx, WITHIN, "a poll held after its registry read", |_| hold.holding.load(Ordering::SeqCst).then_some(())).await?;
+    until(view, cx, WITHIN, "a poll held after its registry read", |_| hold.holding().then_some(())).await?;
     post_keys(&["enter"], cx).await?;
     until(view, cx, WITHIN, "the review closed on Enter", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
@@ -587,7 +587,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let in_tree = |v: &FleetView, repo: &str| v.tree().workspaces.iter().find(|w| w.name == ADDED).is_some_and(|w| w.repos.iter().any(|r| r.name == repo));
     until(view, cx, WITHIN, "alpha in the tree, the disabled beta not", |v| (painted(v, &alpha) && !in_tree(v, "beta")).then_some(())).await?;
     let applied = view.read_with(cx, |v, _| v.refreshes);
-    hold.holding.store(false, Ordering::SeqCst);
+    hold.release();
     until(view, cx, WITHIN, "the held poll applied", |v| (v.refreshes > applied).then_some(())).await?;
     if !view.read_with(cx, |v, _| v.workspaces.iter().any(|w| w.name == ADDED)) {
         bail!("a poll that read the registry before Save took {ADDED} out of the tree when it applied");

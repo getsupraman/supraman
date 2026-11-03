@@ -84,7 +84,16 @@ pub fn bind_keys(cx: &mut gpui::App) {
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
 const TRANSCRIPTS_CACHE: &str = "cache/transcripts.json";
-pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
+static CLAUDE_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A selftest's fake claude dir, read and confined to by Delete in place of [`supraman_core::paths::claude_dir`].
+pub fn use_claude_dir(dir: PathBuf) {
+    CLAUDE_DIR_OVERRIDE.set(dir).ok();
+}
+
+fn claude_dir_or(over: Option<&Path>) -> Option<PathBuf> {
+    over.map(Path::to_path_buf).or_else(supraman_core::paths::claude_dir)
+}
 /// Ctrl+Z: `claude attach`'s own detach, which leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
@@ -345,7 +354,9 @@ pub struct FleetView {
     search_marks: StdHashMap<String, crate::search::Marks>,
     tabs_resolving: bool,
     tabs_again: bool,
-    pub tab_resolves: u64,
+    blink_nudge: Nudge,
+    /// The cursor-blink loop sleeps until `blink_nudge`: no terminal tab is active.
+    blink_parked: bool,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
@@ -404,22 +415,30 @@ pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: 
 #[derive(Default)]
 pub struct PollHold {
     pub armed: AtomicBool,
-    pub holding: AtomicBool,
+    holding: Mutex<bool>,
+    released: std::sync::Condvar,
 }
 
 impl PollHold {
     const MAX: Duration = Duration::from_secs(10);
 
+    pub fn holding(&self) -> bool {
+        *self.holding.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn release(&self) {
+        *self.holding.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        self.released.notify_all();
+    }
+
     fn wait(&self) {
         if !self.armed.swap(false, Ordering::SeqCst) {
             return;
         }
-        self.holding.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + Self::MAX;
-        while self.holding.load(Ordering::SeqCst) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        self.holding.store(false, Ordering::SeqCst);
+        let mut held = self.holding.lock().unwrap_or_else(|e| e.into_inner());
+        *held = true;
+        let (mut held, _) = self.released.wait_timeout_while(held, Self::MAX, |held| *held).unwrap_or_else(|e| e.into_inner());
+        *held = false;
     }
 }
 
@@ -654,6 +673,7 @@ impl FleetView {
                 if this
                     .update(cx, |this, cx| {
                         this.apply(refresh);
+                        this.refresh_details(cx);
                         if this.other_scans == 0 {
                             this.scan_other_schedules(cx);
                         }
@@ -703,7 +723,8 @@ impl FleetView {
             }
         })
         .detach();
-        Self::blink_cursor(cx);
+        let (blink_nudge, blink_woken) = nudge::nudge();
+        Self::blink_cursor(blink_woken, cx);
         let (workstate_recheck, recheck) = nudge::nudge();
         Self::watch_workstate(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
@@ -722,7 +743,7 @@ impl FleetView {
             None => Arc::new(supraman_core::secret::MemoryStore::default()),
         };
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
-        let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(supraman_claude::claude_dir);
+        let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
         let transcripts_hold: Arc<PollHold> = Arc::default();
         Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
@@ -847,7 +868,8 @@ impl FleetView {
             search_marks: StdHashMap::new(),
             tabs_resolving: false,
             tabs_again: false,
-            tab_resolves: 0,
+            blink_nudge,
+            blink_parked: false,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
             updates,
@@ -1431,7 +1453,6 @@ impl FleetView {
         if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
             self.invalidate_tree();
         }
-        self.refresh_details();
         self.last_refresh_took = Some(refresh.took);
     }
 
@@ -1710,15 +1731,28 @@ impl FleetView {
 
     /// After a failed Adopt: `name` drops the conversation it forks from and launches as a new session.
     pub fn start_fresh(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        let result = match &self.home {
-            Some(home) => DesiredState::update(home, workspace, |d| d.start_fresh(name)).map(drop).map_err(|e| e.to_string()),
-            None => Err("no Supraman home".into()),
+        let Some(home) = self.home.clone() else {
+            self.action_error = Some(format!("Cannot start {name} fresh: no Supraman home"));
+            cx.notify();
+            return;
         };
-        match result {
-            Ok(()) => self.retry(workspace, name, cx),
-            Err(e) => self.action_error = Some(format!("Cannot start {name} fresh: {e}")),
-        }
-        cx.notify();
+        let (workspace, name) = (workspace.to_string(), name.to_string());
+        let task = {
+            let (workspace, name) = (workspace.clone(), name.clone());
+            cx.background_executor().spawn(async move { DesiredState::update(&home, &workspace, |d| d.start_fresh(&name)).map(drop).map_err(|e| e.to_string()) })
+        };
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.retry(&workspace, &name, cx),
+                    Err(e) => this.action_error = Some(format!("Cannot start {name} fresh: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
@@ -1996,27 +2030,42 @@ impl FleetView {
         pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
-    fn blink_cursor(cx: &mut Context<Self>) {
+    fn blink_cursor(mut woken: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
             loop {
                 let wait = this.update(cx, |this, cx| {
                     let now = Instant::now();
-                    let terminal = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone());
-                    let next = terminal.and_then(|t| t.read(cx).cursor_blink(now).1);
-                    if next.is_some() {
+                    let terminal = this.active_terminal();
+                    let next = terminal.map(|t| t.read(cx).cursor_blink(now).1);
+                    if next.is_some_and(|n| n.is_some()) {
                         cx.notify();
                     }
-                    next
+                    let wait = blink_wait(next);
+                    this.blink_parked = wait.is_none();
+                    wait
                 });
-                let Ok(wait) = wait else {
-                    return;
-                };
-                // a cursor move restarts the blink
-                let wait = wait.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL);
-                cx.background_executor().timer(wait + Duration::from_millis(5)).await;
+                match wait {
+                    Err(_) => return,
+                    Ok(Some(wait)) => executor.timer(wait).await,
+                    Ok(None) => {
+                        woken.wait(&executor, BLINK_PARKED_MAX).await;
+                    }
+                }
             }
         })
         .detach();
+    }
+
+    fn active_terminal(&self) -> Option<Entity<Terminal>> {
+        self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
+    }
+
+    fn wake_blink(&mut self) {
+        if self.blink_parked && self.active_terminal().is_some() {
+            self.blink_parked = false;
+            self.blink_nudge.wake();
+        }
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -2054,7 +2103,6 @@ impl FleetView {
             let found = found.await;
             this.update(cx, |this, cx| {
                 this.tabs_resolving = false;
-                this.tab_resolves += 1;
                 let mut changed = false;
                 let mut unlisted = false;
                 for tab in &mut this.tabs {
@@ -2829,6 +2877,7 @@ impl Render for FleetView {
         }
         crate::selftest::injected_frame_sleep();
         self.persist_tabs(cx);
+        self.wake_blink();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
         div()
@@ -2957,6 +3006,13 @@ pub mod tree_check {
     }
 }
 
+const BLINK_PARKED_MAX: Duration = Duration::from_secs(60);
+
+/// The blink loop's sleep: to the next blink (a cursor move restarts it), or parked (`None`) with no terminal active.
+fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
+    next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
+}
+
 /// What the human reads when a send did not go through.
 fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
     if e.may_arrive {
@@ -2971,6 +3027,50 @@ mod tests {
     use supraman_term::PathLikeTarget;
 
     use super::*;
+
+    #[test]
+    fn the_blink_loop_parks_without_an_active_terminal_and_never_sleeps_past_a_blink() {
+        assert_eq!(blink_wait(None), None);
+        let gap = Duration::from_millis(5);
+        assert_eq!(blink_wait(Some(None)), Some(CURSOR_BLINK_INTERVAL + gap), "a steady cursor may start blinking");
+        assert_eq!(blink_wait(Some(Some(Duration::from_millis(10)))), Some(Duration::from_millis(10) + gap));
+        assert_eq!(blink_wait(Some(Some(CURSOR_BLINK_INTERVAL * 3))), Some(CURSOR_BLINK_INTERVAL + gap));
+    }
+
+    #[test]
+    fn a_held_poll_waits_until_released_and_an_unarmed_one_not_at_all() {
+        let hold = Arc::new(PollHold::default());
+        let started = Instant::now();
+        hold.wait();
+        assert!(started.elapsed() < Duration::from_secs(1) && !hold.holding());
+
+        hold.armed.store(true, Ordering::SeqCst);
+        let waiter = {
+            let hold = hold.clone();
+            std::thread::spawn(move || {
+                let at = Instant::now();
+                hold.wait();
+                at.elapsed()
+            })
+        };
+        while !hold.holding() {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!waiter.is_finished(), "held while holding");
+        hold.release();
+        let held = waiter.join().unwrap();
+        assert!(held >= Duration::from_millis(50) && held < PollHold::MAX, "{held:?}");
+        assert!(!hold.holding() && !hold.armed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_claude_dir_is_the_selftests_or_claudes_own_never_a_stray_env_var() {
+        unsafe { std::env::set_var("FOREMAN_CLAUDE_DIR", r"C:\elsewhere") };
+        assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
+        let fake = Path::new(r"C:\scratch\fake-claude");
+        assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
+    }
 
     #[test]
     fn a_timed_out_send_says_it_may_still_arrive_and_a_failed_one_says_not_sent() {

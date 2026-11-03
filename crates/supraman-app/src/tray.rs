@@ -60,6 +60,9 @@ fn started(fleet: &Entity<FleetView>, cx: &App) -> Vec<String> {
     fleet.read(cx).desired.iter().filter(|(_, (started, _))| *started).map(|(name, _)| name.clone()).collect()
 }
 
+/// gpui reports no change of the taskbar's mode alone, so the icon looks this often.
+pub const FOLLOW_TASKBAR_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The tray icon's resource in `assets/foreman.rc`: the kit's on-dark or on-light tray mark.
 #[cfg(windows)]
 fn icon_resource(light_taskbar: bool) -> u16 {

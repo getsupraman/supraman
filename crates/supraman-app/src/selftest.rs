@@ -129,7 +129,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
-    unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
+    crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     unsafe { std::env::set_var(supraman_workman::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };

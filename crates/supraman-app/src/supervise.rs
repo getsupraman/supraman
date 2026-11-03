@@ -70,12 +70,6 @@ pub fn setup(home: &Path) -> Setup {
     }
 }
 
-/// The relay's Monitor runs its command under Git Bash (LEARNINGS m0/4).
-#[cfg(test)]
-fn forward(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
 pub fn write_role_template(home: &Path, plugin_dir: &Path, role: &str) -> anyhow::Result<()> {
     let file = format!("{role}.md");
     let template = fill_paths(
@@ -413,6 +407,11 @@ impl Supervision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The relay's Monitor runs its command under Git Bash (LEARNINGS m0/4).
+    fn forward(path: &Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
 
     fn plugin_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/supraman")

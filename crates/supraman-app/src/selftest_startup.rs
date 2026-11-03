@@ -33,7 +33,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, main_repo: &Path, cx: &m
     let result = check(view, home, &path, cx).await;
     let hold = view.read_with(cx, |v, _| v.transcripts_hold.clone());
     hold.armed.store(false, Ordering::SeqCst);
-    hold.holding.store(false, Ordering::SeqCst);
+    hold.release();
     let _ = std::fs::remove_file(&path);
     view.update(cx, |v, _| v.transcripts_nudge.wake());
     result
@@ -62,7 +62,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, path: &Path, cx: &mut Asyn
             if painted(v, "loading-sessions") {
                 return Some(Err("the loading line painted on a start with a saved cache".to_string()));
             }
-            (hold.holding.load(Ordering::SeqCst) && v.loaded && v.transcripts_read).then(|| match title(v) {
+            (hold.holding() && v.loaded && v.transcripts_read).then(|| match title(v) {
                 Some(t) if t == BEFORE => Ok(()),
                 t => Err(format!("the cached row reads {t:?}, not {BEFORE:?}")),
             })
@@ -74,7 +74,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, path: &Path, cx: &mut Asyn
     if view.read_with(cx, |v, _| (v.loaded_at_scan, v.transcript_scans)) != (scans, scans) {
         bail!("a warm start waited for the transcript scan");
     }
-    hold.holding.store(false, Ordering::SeqCst);
+    hold.release();
     until(view, cx, WITHIN, "the changed transcript renamed by the background scan", |v| {
         (v.transcript_scans > scans && title(v).as_deref() == Some(AFTER)).then_some(())
     })
@@ -90,12 +90,12 @@ async fn check(view: &Entity<FleetView>, home: &Path, path: &Path, cx: &mut Asyn
     let cold = Instant::now();
     until_with(cx, WITHIN, "a cold start: the loading line naming the transcripts while the scan is held", |cx| {
         view.read_with(cx, |v, cx| {
-            (hold.holding.load(Ordering::SeqCst) && painted(v, "loading-sessions") && v.loading(cx).iter().any(|p| p.starts_with("transcripts")))
+            (hold.holding() && painted(v, "loading-sessions") && v.loading(cx).iter().any(|p| p.starts_with("transcripts")))
                 .then_some(())
         })
     })
     .await?;
-    hold.holding.store(false, Ordering::SeqCst);
+    hold.release();
     until(view, cx, WITHIN, "the loading line gone once the scan is applied", |v| {
         (v.loaded && !painted(v, "loading-sessions") && title(v).as_deref() == Some(AFTER)).then_some(())
     })
