@@ -111,7 +111,7 @@ fn client_inbox_journal_backlog_sessions_take_ids_in_the_query() {
     assert_eq!(inbox.rows[1].kind, "a_future_kind");
     c.inbox(Some(PROJECT)).unwrap();
 
-    let q = JournalQuery { scope: Some(RUN), since: Some(1200), limit: Some(50), kinds: &["transition", "note"] };
+    let q = JournalQuery { scope: Some(RUN), since: Some(1200), limit: Some(50), kinds: &["transition", "note"], ..Default::default() };
     let j = c.journal(&q).unwrap();
     assert_eq!((j.cursor, j.has_more, j.events.len()), (1234, false, 2));
     assert_eq!((j.events[1].item.as_ref(), j.events[1].session.as_ref()), (None, None));
@@ -165,4 +165,25 @@ fn client_maps_errors_and_never_says_the_token() {
     for e in [e.to_string(), format!("{e:?}"), format!("{dead:?}")] {
         assert!(!e.contains(TOKEN), "{e}");
     }
+}
+
+#[test]
+fn a_before_page_is_the_newest_below_it_ascending_with_its_lowest_seq_as_the_cursor() {
+    let (fake, c) = server(Vec::new());
+    let journal = fake.enable_journal();
+    journal.add("r", 1..=10);
+    journal.add("other", 11..=12);
+    let page = |before: Option<i64>, limit: u32| c.journal(&JournalQuery { scope: Some("r"), before, limit: Some(limit), ..Default::default() }).unwrap();
+    let seqs = |j: &supraman_workman::Journal| j.events.iter().map(|e| e.seq).collect::<Vec<_>>();
+
+    let j = page(Some(8), 3);
+    assert_eq!((seqs(&j), j.cursor, j.has_more, j.seq), (vec![5, 6, 7], 5, true, 12));
+    let j = page(Some(j.cursor), 10);
+    assert_eq!((seqs(&j), j.cursor, j.has_more), (vec![1, 2, 3, 4], 1, false));
+    let j = page(Some(1), 3);
+    assert_eq!((seqs(&j), j.cursor, j.has_more), (vec![], 1, false), "an empty page echoes before=");
+    assert_eq!(seqs(&page(Some(99), 2)), [9, 10], "before= past the newest is the newest page");
+    assert_eq!(fake.seen()[0].target, "/api/v1/journal?scope=r&before=8&limit=3");
+    let both = c.journal(&JournalQuery { since: Some(1), before: Some(5), ..Default::default() }).unwrap_err();
+    assert!(both.to_string().contains("400"), "{both}");
 }

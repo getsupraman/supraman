@@ -49,6 +49,8 @@ pub enum BriefFor {
 pub struct JournalQuery<'a> {
     pub scope: Option<&'a str>,
     pub since: Option<i64>,
+    /// The newest `limit` events below this `seq`, ascending; past the newest seq it is the newest page.
+    pub before: Option<i64>,
     pub limit: Option<u32>,
     /// `transition,verification,report,finding,note,claim,link,created,carried`.
     pub kinds: &'a [&'a str],
@@ -145,11 +147,12 @@ impl Client {
 
     pub fn journal(&self, q: &JournalQuery<'_>) -> Result<Journal> {
         let since = q.since.map(|s| s.to_string());
+        let before = q.before.map(|b| b.to_string());
         let limit = q.limit.map(|l| l.to_string());
         let kinds = (!q.kinds.is_empty()).then(|| q.kinds.join(","));
         self.json(&with_query(
             "/api/v1/journal",
-            &[("scope", q.scope), ("since", since.as_deref()), ("limit", limit.as_deref()), ("kinds", kinds.as_deref())],
+            &[("scope", q.scope), ("since", since.as_deref()), ("before", before.as_deref()), ("limit", limit.as_deref()), ("kinds", kinds.as_deref())],
         ))
     }
 
