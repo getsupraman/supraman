@@ -263,12 +263,7 @@ impl FleetView {
                     let edit = Edit::SetEnabled { folder: f.name.clone(), enabled: !f.enabled };
                     let w = name.clone();
                     state.child(
-                        div()
-                            .id(SharedString::from(format!("edit-enable-{}", f.name)))
-                            .relative()
-                            .cursor_pointer()
-                            .child(if f.enabled { "☑" } else { "☐" })
-                            .child(hit_target(&self.hits, format!("edit-enable-{}", f.name)))
+                        button::checkbox(&self.hits, format!("edit-enable-{}", f.name), f.enabled)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
                                 this.request_edit(&w, edit.clone(), cx);

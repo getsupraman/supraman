@@ -1758,22 +1758,17 @@ impl FleetView {
             let key = format!("add-repo-{}", repo.name);
             let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
             repos = repos.child(
-                div()
-                    .id(SharedString::from(key.clone()))
-                    .relative()
+                button::checkbox(&self.hits, key, *on)
                     .flex()
                     .items_center()
                     .gap_2()
                     .px_1()
                     .rounded_sm()
                     .text_sm()
-                    .cursor_pointer()
                     .hover(|s| s.bg(colors.ghost_element_hover))
                     .when(!*on, |d| d.text_color(colors.text_muted))
-                    .child(if *on { "☑" } else { "☐" })
                     .child(SharedString::from(repo_label(&repo.name, &repo.path, Some(&draft.root))))
                     .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
-                    .child(hit_target(&self.hits, key))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
                         this.toggle_add_repo(i, cx);

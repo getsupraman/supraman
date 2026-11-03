@@ -129,6 +129,12 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .child(label.into())
 }
 
+/// A tick box, `☑` while `on`, else `☐`; the caller adds its label, its click and any hover.
+pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool) -> Stateful<Div> {
+    let key = key.into();
+    div().id(key.clone()).relative().cursor_pointer().child(if on { "☑" } else { "☐" }).child(hit_target(hits, key.to_string()))
+}
+
 /// A bordered button sized by its text; no hit key.
 pub fn small(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
