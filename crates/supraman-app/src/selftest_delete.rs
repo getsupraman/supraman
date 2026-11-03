@@ -99,6 +99,10 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncW
     if let Some(s) = listed.iter().find(|s| s.session_id == sid) {
         bail!("{own} is still listed by claude agents after Delete: {}", crate::selftest::raw(s));
     }
+    // removed by this step: cleanup has no row left to stop or rm
+    if let Some(scratch) = crate::selftest::lock().as_mut() {
+        scratch.session_name = None;
+    }
     if fixture.exists() || fixture_dir.exists() {
         bail!("{own}'s transcript {} or its dir is still there", fixture.display());
     }

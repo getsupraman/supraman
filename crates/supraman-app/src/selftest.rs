@@ -1510,17 +1510,6 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
-    let (phases, painted) = step("startup", async { startup_timeline() }).await?;
-    if painted > PAINTED_AFTER_LIST {
-        bail!("the first list painted {painted:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {phases}");
-    }
-    println!("startup: the first list painted {painted:.0} ms after claude agents returned (at most {PAINTED_AFTER_LIST} ms)");
-    println!("work frames: {}", step("work frames", crate::selftest_work::board_frames(view, cx)).await?);
-    let before = frames::baseline(view, cx).await;
-    let idle = frames::record(view, Duration::from_secs(6), cx).await;
-    println!("idle frames: {}", step("idle frames", frames::judge("idle", &before, &idle, view, cx)).await?);
-    println!("7+r: {}", step("7+r", crate::selftest_responsive::run(view, cx)).await?);
     view.update(cx, |v, _| v.shell_args = vec!["-NoLogo".into(), "-NoProfile".into()]);
     let (base_private, base_ws) = memory();
     println!("0 tabs: private bytes {} (working set {})", mib(base_private), mib(base_ws));
@@ -1554,6 +1543,17 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
     });
     sleep(cx, Duration::from_millis(500)).await;
+    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    let (phases, painted) = step("startup", async { startup_timeline() }).await?;
+    if painted > PAINTED_AFTER_LIST {
+        bail!("the first list painted {painted:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {phases}");
+    }
+    println!("startup: the first list painted {painted:.0} ms after claude agents returned (at most {PAINTED_AFTER_LIST} ms)");
+    println!("work frames: {}", step("work frames", crate::selftest_work::board_frames(view, cx)).await?);
+    let before = frames::baseline(view, cx).await;
+    let idle = frames::record(view, Duration::from_secs(6), cx).await;
+    println!("idle frames: {}", step("idle frames", frames::judge("idle", &before, &idle, view, cx)).await?);
+    println!("7+r: {}", step("7+r", crate::selftest_responsive::run(view, cx)).await?);
     Ok(())
 }
 
