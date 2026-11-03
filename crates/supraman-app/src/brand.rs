@@ -76,7 +76,7 @@ mod tests {
     }
 
     fn sha256(path: &Path) -> String {
-        Sha256::digest(std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))).iter().map(|b| format!("{b:02x}")).collect()
+        supraman_core::hex::encode(&Sha256::digest(std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))))
     }
 
     #[test]

@@ -107,7 +107,7 @@ pub fn role_injection_for(home: &Path, role: &str, workspace: Option<&str>, repo
 
 pub fn role_tag(role: &str, text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
-    let sha8: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    let sha8 = crate::hex::encode(&digest[..4]);
     format!("FOREMAN-ROLE {role} v{sha8}")
 }
 

@@ -119,7 +119,7 @@ pub fn take_migration_notice(home: &Path) -> Option<String> {
 /// In the temp folder, so neither `%APPDATA%` nor the old home gets a file of the copy's.
 fn lock_path(new: &Path) -> PathBuf {
     let digest = Sha256::digest(crate::paths::path_key(new).as_bytes());
-    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hex = crate::hex::encode(&digest[..8]);
     std::env::temp_dir().join(format!("supraman-migrate-{hex}.lock"))
 }
 

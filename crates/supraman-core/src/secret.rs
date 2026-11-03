@@ -67,7 +67,7 @@ impl FileStore {
 
     pub fn path(&self, key: &str) -> std::path::PathBuf {
         use sha2::{Digest, Sha256};
-        self.dir.join(format!("{:x}.bin", Sha256::digest(key.as_bytes())))
+        self.dir.join(format!("{}.bin", crate::hex::encode(&Sha256::digest(key.as_bytes()))))
     }
 }
 

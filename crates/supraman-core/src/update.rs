@@ -150,7 +150,7 @@ pub fn sha256_file(path: &Path) -> Result<(String, u64)> {
         hasher.update(&buf[..n]);
         size += n as u64;
     }
-    let hex = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let hex = crate::hex::encode(&hasher.finalize());
     Ok((hex, size))
 }
 

@@ -44,7 +44,7 @@ fn root_named(name: &str, home: &Path, defaults: &[Option<&Path>]) -> String {
     if defaults.iter().flatten().any(|d| crate::paths::path_key(d) == key) {
         return format!(r"\{name}");
     }
-    format!(r"\{name}-{}", &super::approval::hex(&Sha256::digest(key.as_bytes()))[..8])
+    format!(r"\{name}-{}", &crate::hex::encode(&Sha256::digest(key.as_bytes()))[..8])
 }
 
 /// Task Scheduler as [`sync`] sees it. Folders are `\`-separated paths from the root, such as `\Supraman\demo`.
