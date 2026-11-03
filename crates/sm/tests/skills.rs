@@ -47,7 +47,7 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
     assert!(skill.contains("**Never run `sm send`.**"));
 }
 
-/// sched/8: the scheduler skill runs only these `sm schedule` verbs, and pre-allows nothing else.
+/// The scheduler skill runs only these `sm schedule` verbs, and pre-allows nothing else.
 #[test]
 fn the_scheduler_skill_runs_only_the_allowed_fm_schedule_verbs() {
     const ALLOWED: [&str; 7] = ["add", "edit", "list", "show", "pause", "resume", "dry-run"];
