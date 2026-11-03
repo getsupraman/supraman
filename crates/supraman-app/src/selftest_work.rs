@@ -648,7 +648,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
         journal_event(20, None, "created", "run created"),
         journal_event(40, Some(item(SHIPPED, "sw1/1", "task", "Ship it", "done")), "report", "reported done"),
     ];
-    fake.set(journal_target(Some(1), 500), Answer::json(journal(40, false, older)));
+    fake.set(format!("/api/v1/journal?scope={PROJECT}&before=150&limit=200"), Answer::json(journal(20, false, older)));
     click(view, "journal-older", cx).await?;
     painted(view, &["journal-event-20", "journal-event-40"], LOADED_WITHIN, "the older page", cx).await?;
     sleep(cx, Duration::from_millis(100)).await;
