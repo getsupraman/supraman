@@ -72,10 +72,10 @@ pub struct Foreign {
     pub unreadable: usize,
 }
 
-/// `\Supraman…` and `\Foreman…`: what [`super::sync`] owns, any home.
+/// `\Supraman…`: what [`super::sync`] owns, any home.
 pub fn is_own_root(folder: &str) -> bool {
     let top = folder.trim_start_matches('\\').split('\\').next().unwrap_or_default().to_ascii_lowercase();
-    top.starts_with("supraman") || top.starts_with("foreman")
+    top.starts_with("supraman")
 }
 
 /// Every task outside [`is_own_root`] that runs `claude`, its scripts read from disk.

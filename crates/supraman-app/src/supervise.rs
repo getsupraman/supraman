@@ -33,7 +33,7 @@ pub struct Setup {
 }
 
 pub fn setup(home: &Path) -> Setup {
-    let mut notices: Vec<String> = supraman_core::home::take_migration_notice(home).into_iter().collect();
+    let mut notices: Vec<String> = Vec::new();
     let sm = match supraman_core::install::sm_exe() {
         Ok(sm) => sm,
         Err(e) => {

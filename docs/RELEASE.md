@@ -74,7 +74,7 @@ Supraman\
 ```
 
 The folder is self-contained: it runs from any path, no junction to a repo. Supraman's state stays in
-`%APPDATA%\Supraman` (or `SUPRAMAN_HOME`, else `FOREMAN_HOME`), not in this folder.
+`%APPDATA%\Supraman` (or `SUPRAMAN_HOME`), not in this folder.
 
 ## How the exes find the plugin
 
@@ -126,29 +126,6 @@ itself and stops on a stale file. After a dependency change, `pwsh -File scripts
 The selftests run on a hidden desktop of their own (their first line names it, their last says no selftest window
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.
-
-## Updating from a Foreman install
-
-A Foreman install (`C:\Tools\foreman`, home `%APPDATA%\Foreman`) stays where it is: sessions it started keep running
-its `plugins\foreman\bin\fm.exe` until they restart. Quit Foreman (tray, Quit) first: Supraman does not start while
-a Foreman runs on its home or on `%APPDATA%\Foreman`, and brings that Foreman's window forward instead. Then extract
-the zip to `C:\Tools\supraman` and start `supraman.exe`.
-
-- **Home.** With neither `SUPRAMAN_HOME` nor `FOREMAN_HOME` set, the first start finds no `%APPDATA%\Supraman` and
-  copies the whole of `%APPDATA%\Foreman` there (settings, registry, supervisor state, minted records, `oauth` with
-  its DPAPI secrets, stars, dismissals, tabs, schedules with their runs and state, logs), writes
-  `migrated-from.toml`, and says so once. The old folder is only read, never moved or deleted. Until that copy
-  exists, `sm` refuses to run on the default home rather than start an empty one.
-- **Tasks.** A workspace's next `sync` (Approve, Pause, Resume, Remove) registers its tasks under `\Supraman\<ws>`
-  (another home: `\Supraman-<hex8>`) and deletes that home's old ones under `\Foreman\<ws>`, then that folder and
-  `\Foreman` itself when they are left empty.
-- **Env.** `SUPRAMAN_HOME` wins over `FOREMAN_HOME`; sessions and schedule scripts get both. The other session
-  variables (`FOREMAN_ROLE`, `FOREMAN_WORKSPACE`, `FOREMAN_SESSION`, `FOREMAN_REPO`, `FOREMAN_SCHEDULE`, `FOREMAN_RUN`,
-  a script's `FOREMAN_*`) keep their names: running sessions and scripts written against them keep working.
-- **Sessions.** A session Foreman started keeps its saved `--settings`, so `FOREMAN_HOME=%APPDATA%\Foreman` stays with it
-  through every resume: its hook events, relay messages and `fm tell` go to the old home, which Supraman does not read.
-  After switching, stop each such session and start it fresh from Supraman (a new conversation, not a resume); until
-  then it shows no status or messages in Supraman.
 
 ## How Supraman updates itself
 

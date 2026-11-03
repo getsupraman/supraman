@@ -31,8 +31,6 @@ pub enum CoreError {
     Tasks(String),
     #[error("cannot locate the Supraman home: set SUPRAMAN_HOME or APPDATA")]
     NoHome,
-    #[error("{} is not copied to {} yet: start Supraman once, which copies it", old.display(), new.display())]
-    NotMigrated { old: PathBuf, new: PathBuf },
     #[error("{}: {source}", path.display())]
     Io {
         path: PathBuf,

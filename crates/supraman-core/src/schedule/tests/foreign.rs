@@ -128,8 +128,6 @@ fn the_scan_reads_every_folder_but_supramans_and_writes_nothing() {
     fake.plant_task(planted(r"\Mine", "backup", task_xml(DAILY, &[("robocopy.exe", "C:\\a D:\\a", "")])));
     fake.plant_task(planted(r"\Supraman\demo", "gate", claude.clone()));
     fake.plant_task(planted(r"\Supraman-0a1b2c3d\demo", "gate", claude.clone()));
-    fake.plant_task(planted(r"\Foreman\demo", "old", claude.clone()));
-    fake.plant_task(planted(r"\Foreman-0a1b2c3d\demo", "old", claude.clone()));
     fake.plant_unreadable(r"\Locked");
     fake.plant_task(planted(r"\Locked", "hidden", claude.clone()));
     fake.plant_unreadable(r"\Supraman\other");
@@ -151,11 +149,11 @@ fn the_scan_reads_every_folder_but_supramans_and_writes_nothing() {
 }
 
 #[test]
-fn own_roots_are_supramans_and_foremans_of_any_home() {
-    for own in [r"\Supraman", r"\Supraman-0a1b2c3d\ws", r"\Foreman\ws", r"\foreman-99"] {
+fn own_roots_are_supramans_of_any_home() {
+    for own in [r"\Supraman", r"\Supraman-0a1b2c3d\ws", r"\supraman-99"] {
         assert!(is_own_root(own), "{own}");
     }
-    for other in [r"\", r"\Microsoft\Windows", r"\Mine\Supraman", r"\Claude"] {
+    for other in [r"\", r"\Microsoft\Windows", r"\Mine\Supraman", r"\Claude", r"\Foreman\ws"] {
         assert!(!is_own_root(other), "{other}");
     }
 }
