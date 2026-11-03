@@ -61,7 +61,7 @@
 //! [`Supervisor::hold`] (the app's check before launching), or a launch failing with
 //! [`Failure::DaemonUnreachable`] that [`supraman_claude::daemon_mismatch`] confirms, holds every launch and
 //! resume of the workspace behind one `LaunchFailed` Inbox row (Restart as administrator). Tests
-//! `an_unreachable_service_foreman_cannot_reach_holds_with_one_row`,
+//! `an_unreachable_service_supraman_cannot_reach_holds_with_one_row`,
 //! `a_hold_from_the_apps_check_comes_before_any_launch`.
 
 mod budget;

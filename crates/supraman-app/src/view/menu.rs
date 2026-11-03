@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn session_menu_asks_before_stopping_a_session_foreman_did_not_launch() {
+    fn session_menu_asks_before_stopping_a_session_supraman_did_not_launch() {
         let live = r#"{"id":"aaaa0001","sessionId":"aaaa0001-x","name":"mine","cwd":"C:\\demo","kind":"background","startedAt":1,"state":"working","status":"busy","pid":1}"#;
         let items = session_items("demo", "Alpha", &row(live, Health::Running), false, Some("item-1".into()), None, false, None);
         assert_eq!(keys(&items), ["attach", "stop-session", "copy-name", "copy-id", "show-in-work", "star", "details"]);

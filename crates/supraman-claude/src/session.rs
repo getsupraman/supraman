@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_and_idle_with_pid_is_blocked_and_a_foreman_session_idle() {
+    fn blocked_and_idle_with_pid_is_blocked_and_a_supraman_session_idle() {
         let json = format!(
             r#"[{{"id":"aaaa0011","sessionId":"aaaa0011-x","name":"asks","cwd":"C:\\x","kind":"background","startedAt":{NOW},"state":"blocked","status":"idle","pid":27305}}]"#
         );

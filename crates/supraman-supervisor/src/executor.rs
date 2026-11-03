@@ -1881,7 +1881,7 @@ mod tests {
     /// An unelevated Foreman facing an elevated service gets one row saying why, at once, and
     /// no more launches — not five 45 s failures.
     #[test]
-    fn an_unreachable_service_foreman_cannot_reach_holds_with_one_row() {
+    fn an_unreachable_service_supraman_cannot_reach_holds_with_one_row() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path()).with_daemon_check(|| Some("runs as administrator".into()));
         sup.launcher.errors.borrow_mut().push(unreachable());

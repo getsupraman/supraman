@@ -202,7 +202,7 @@ pub fn one_dark() -> Theme {
 
 /// Supraman Dark: One Dark with Campbell's ANSI colours; only the backgrounds of the
 /// marked row and the search matches are faded to [`BACKGROUND_FLOORS`].
-pub fn foreman_dark() -> Loaded {
+pub fn supraman_dark() -> Loaded {
     let mut theme = one_dark();
     theme.name = SUPRAMAN_DARK.into();
     theme.id = fresh_id(SUPRAMAN_DARK);
@@ -623,7 +623,7 @@ pub fn canonical(name: &str) -> &str {
 pub fn resolve(name: Option<&str>, terminal: TerminalColors, home: Option<&Path>) -> Resolved {
     let name = canonical(name.unwrap_or(DEFAULT_THEME));
     let (theme, adjusted, problem) = if name == SUPRAMAN_DARK {
-        let loaded = foreman_dark();
+        let loaded = supraman_dark();
         (loaded.theme, loaded.adjusted, None)
     } else if name == DARK_MODERN {
         let loaded = dark_modern();
@@ -727,7 +727,7 @@ mod tests {
         let c = palette(&campbell_theme);
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
-        assert_eq!(palette(&foreman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
+        assert_eq!(palette(&supraman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
     }
 
     #[test]
@@ -769,7 +769,7 @@ mod tests {
     /// Every key the loader had to change is printed (`cargo test -- --nocapture`) and pinned.
     #[test]
     fn the_contrast_floors_hold_under_each_bundled_theme() {
-        let (modern, dark) = (dark_modern(), foreman_dark());
+        let (modern, dark) = (dark_modern(), supraman_dark());
         for theme in [&modern.theme, &dark.theme] {
             let text = theme.colors().text;
             let ratio = |alpha: f32| worst_contrast(theme, text, alpha, On::Panel);
@@ -804,7 +804,7 @@ mod tests {
     /// and its workspace and age (quiet) on the row's info or warning tint, resting and under the pointer.
     #[test]
     fn the_newer_elements_read_under_each_bundled_theme() {
-        for mut theme in [dark_modern().theme, foreman_dark().theme] {
+        for mut theme in [dark_modern().theme, supraman_dark().theme] {
             let (c, s) = (theme.colors().clone(), theme.status().clone());
             let marked: Hsla = over(c.ghost_element_selected, c.panel_background).into();
             let mut checks = vec![
@@ -837,7 +837,7 @@ mod tests {
     /// opaque; a theme whose placeholder is as bright as its text, or too dim, is moved into the range.
     #[test]
     fn the_placeholder_reads_as_a_hint_under_each_bundled_theme() {
-        for theme in [dark_modern().theme, foreman_dark().theme] {
+        for theme in [dark_modern().theme, supraman_dark().theme] {
             let c = theme.colors();
             let (low, high) = placeholder_contrast(&theme, c.text_placeholder);
             println!("{}: placeholder {} {low:.2}..{high:.2}", theme.name, hex(c.text_placeholder));

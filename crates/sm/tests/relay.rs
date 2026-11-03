@@ -26,7 +26,7 @@ fn sm(home: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
-fn send_is_refused_inside_a_foreman_session_before_touching_the_home() {
+fn send_is_refused_inside_a_supraman_session_before_touching_the_home() {
     let home = tempfile::tempdir().unwrap();
     let out = sm_cmd(home.path(), &["send", "demo", "fm-demo-workspace", "hello"]).env("SUPRAMAN_ROLE", "workspace").output().unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");

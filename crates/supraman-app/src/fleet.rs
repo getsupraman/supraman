@@ -778,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn foreman_session_waiting_on_a_peer_is_idle_a_parked_one_blocked() {
+    fn supraman_session_waiting_on_a_peer_is_idle_a_parked_one_blocked() {
         let old = NOW - 3_600_000;
         let rows = parse(&format!(
             r#"[
