@@ -417,7 +417,7 @@ mod tests {
         let (b, seen_b, _) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), Some(&a));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
-        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demolpha"), None) else { panic!() };
+        let Launch::Minted { name, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
         seen_a.recv_timeout(WAIT).unwrap();
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
 

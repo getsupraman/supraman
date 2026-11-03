@@ -676,8 +676,8 @@ mod tests {
     #[test]
     fn an_unreachable_service_holds_a_started_workspace_before_any_launch() {
         let home = tempfile::tempdir().unwrap();
-        let workspaces = [Workspace::new("beta", r"C:", Vec::new())];
-        let mut d = DesiredState::workspace_controller("beta", r"C:", "p");
+        let workspaces = [Workspace::new("beta", r"C:\b", Vec::new())];
+        let mut d = DesiredState::workspace_controller("beta", r"C:\b", "p");
         d.started = true;
         d.save(home.path()).unwrap();
         let mut s = Supervision::new(home.path().to_path_buf(), None);
