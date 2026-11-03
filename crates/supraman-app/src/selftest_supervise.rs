@@ -1,4 +1,4 @@
-//! `--selftest-supervise`: the M2 gate; every session is `fm-selftest-<hex>-…`, and cleanup acts only on those (`selftest::cleanup`).
+//! `--selftest-supervise`: the supervisor against real sessions; every session is `fm-selftest-<hex>-…`, and cleanup acts only on those (`selftest::cleanup`).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
