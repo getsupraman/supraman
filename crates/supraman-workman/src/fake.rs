@@ -1,5 +1,5 @@
 //! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`] and
-//! its agent-session mints behind [`FakeWorkman::enable_sessions`].
+//! its agent-session mints behind [`FakeWorkman::enable_sessions`] and a journal behind [`FakeWorkman::enable_journal`].
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -141,6 +141,7 @@ pub struct FakeWorkman {
     streams: Arc<Mutex<Vec<TcpStream>>>,
     oauth: Arc<Mutex<Option<Arc<FakeAuth>>>>,
     sessions: Arc<Mutex<Option<Arc<FakeSessions>>>>,
+    journal: Arc<Mutex<Option<Arc<FakeJournal>>>>,
 }
 
 fn read_seen(stream: &TcpStream) -> Option<Seen> {
@@ -182,11 +183,14 @@ impl FakeWorkman {
         let streams: Arc<Mutex<Vec<TcpStream>>> = Arc::default();
         let oauth: Arc<Mutex<Option<Arc<FakeAuth>>>> = Arc::default();
         let sessions: Arc<Mutex<Option<Arc<FakeSessions>>>> = Arc::default();
-        let (table, waiting, log, open, guard, rows) = (routes.clone(), queued.clone(), seen.clone(), streams.clone(), oauth.clone(), sessions.clone());
+        let journal: Arc<Mutex<Option<Arc<FakeJournal>>>> = Arc::default();
+        let (table, waiting, log, open, guard, rows, events) =
+            (routes.clone(), queued.clone(), seen.clone(), streams.clone(), oauth.clone(), sessions.clone(), journal.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let (routes, queued, log, open, guard, rows) = (table.clone(), waiting.clone(), log.clone(), open.clone(), guard.clone(), rows.clone());
+                let (routes, queued, log, open, guard, rows, events) =
+                    (table.clone(), waiting.clone(), log.clone(), open.clone(), guard.clone(), rows.clone(), events.clone());
                 std::thread::spawn(move || {
                     let Some(seen) = read_seen(&stream) else { return };
                     let (method, target, authorization, body) = (&seen.method, &seen.target, &seen.authorization, &seen.body);
@@ -202,6 +206,10 @@ impl FakeWorkman {
                     if answer.is_none() {
                         let rows = rows.lock().unwrap().clone();
                         answer = rows.and_then(|r| r.handle(method, target, body));
+                    }
+                    if answer.is_none() && method == "GET" {
+                        let events = events.lock().unwrap().clone();
+                        answer = events.and_then(|j| j.handle(target));
                     }
                     let keyed = format!("{method} {target}");
                     let answer = answer.or_else(|| {
@@ -234,11 +242,19 @@ impl FakeWorkman {
                 });
             }
         });
-        Self { base, seen, routes, queued, streams, oauth, sessions }
+        Self { base, seen, routes, queued, streams, oauth, sessions, journal }
     }
 
     /// From now on the fake mints and revokes agent sessions (`POST /api/agent-sessions`,
     /// `DELETE /api/agent-sessions/{id}`) as Workman 2.3.0 does; queued answers for them are not used.
+    /// From now on the fake serves `GET /api/v1/journal` from [`FakeJournal`]'s events (`since=`, `before=`,
+    /// neither for the newest page; `scope=`, `kinds=`, `limit=`); queued answers for it are not used.
+    pub fn enable_journal(&self) -> Arc<FakeJournal> {
+        let journal = Arc::new(FakeJournal::default());
+        *self.journal.lock().unwrap() = Some(journal.clone());
+        journal
+    }
+
     pub fn enable_sessions(&self) -> Arc<FakeSessions> {
         let sessions = Arc::new(FakeSessions::default());
         *self.sessions.lock().unwrap() = Some(sessions.clone());
@@ -737,5 +753,63 @@ impl FakeSessions {
         row.token = Some(token.clone());
         row.revoked = false;
         Answer::status(201, serde_json::json!({ "sessionId": row.id, "token": token }).to_string())
+    }
+}
+
+/// A journal of `(seq, scope, kind)` events, paged as `GET /api/v1/journal` pages them.
+#[derive(Default)]
+pub struct FakeJournal {
+    events: Mutex<Vec<(i64, String, String)>>,
+}
+
+impl FakeJournal {
+    /// Appends events `seqs` under `scope`, of kind `transition`.
+    pub fn add(&self, scope: &str, seqs: impl IntoIterator<Item = i64>) {
+        let mut events = self.events.lock().unwrap();
+        events.extend(seqs.into_iter().map(|seq| (seq, scope.to_string(), "transition".to_string())));
+        events.sort_by_key(|e| e.0);
+    }
+
+    fn handle(&self, target: &str) -> Option<Answer> {
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        if path != "/api/v1/journal" {
+            return None;
+        }
+        let q = form_decode(query);
+        let num = |k: &str| q.get(k).and_then(|v| v.parse::<i64>().ok());
+        let limit = num("limit").unwrap_or(50).clamp(1, 500) as usize;
+        let kinds: Vec<&str> = q.get("kinds").map(|k| k.split(',').collect()).unwrap_or_default();
+        let events = self.events.lock().unwrap();
+        let newest = events.last().map_or(0, |e| e.0);
+        let shown: Vec<&(i64, String, String)> = events
+            .iter()
+            .filter(|e| q.get("scope").is_none_or(|s| *s == e.1) && (kinds.is_empty() || kinds.contains(&e.2.as_str())))
+            .collect();
+        if q.contains_key("since") && q.contains_key("before") {
+            return Some(Answer::status(400, r#"{"error":"since and before cannot be combined"}"#));
+        }
+        let (page, more, cursor) = match num("since") {
+            Some(since) => {
+                let after: Vec<_> = shown.into_iter().filter(|e| e.0 > since).collect();
+                let page: Vec<_> = after.iter().take(limit).copied().collect();
+                let cursor = page.last().map_or(since, |e| e.0);
+                (page, after.len() > limit, cursor)
+            }
+            None => {
+                let before = num("before");
+                let below: Vec<_> = shown.into_iter().filter(|e| before.is_none_or(|b| e.0 < b)).collect();
+                let page: Vec<_> = below[below.len().saturating_sub(limit)..].to_vec();
+                // a before= page names its lowest seq, the next before=; the newest page its highest
+                let cursor = match before {
+                    Some(b) => page.first().map_or(b, |e| e.0),
+                    None => page.last().map_or(newest, |e| e.0),
+                };
+                (page, below.len() > limit, cursor)
+            }
+        };
+        let events: Vec<serde_json::Value> =
+            page.iter().map(|e| serde_json::json!({ "seq": e.0, "at": "2026-11-03T12:00:00+00:00", "kind": e.2, "actor": "fake" })).collect();
+        let body = serde_json::json!({ "asOf": "2026-11-03T12:00:00+00:00", "seq": newest, "cursor": cursor, "hasMore": more, "events": events });
+        Some(Answer::json(body.to_string()))
     }
 }

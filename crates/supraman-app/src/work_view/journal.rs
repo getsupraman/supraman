@@ -1,4 +1,4 @@
-//! The v1 journal pages only forward: `since` is exclusive, and no `since` is the newest page.
+//! The v1 journal pages forward from `since` and back from `before`, both exclusive; neither is the newest page.
 
 use supraman_workman::{Journal, JournalEvent, JournalQuery};
 use gpui::ScrollHandle;
@@ -9,7 +9,7 @@ pub const PAGE: u32 = 50;
 /// Forward reads take the server's maximum page.
 const FORWARD_LIMIT: u32 = 500;
 const FORWARD_PAGES: usize = 20;
-pub const OLDER_SPAN: i64 = 200;
+const OLDER_LIMIT: u32 = 200;
 const KEPT: usize = 2000;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -56,7 +56,7 @@ pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workman::Resu
     let mut events = Vec::new();
     let mut cursor = since;
     for _ in 0..FORWARD_PAGES {
-        let page = client.journal(&JournalQuery { scope: Some(scope), since: Some(cursor.max(1)), limit: Some(FORWARD_LIMIT), kinds: &[] })?;
+        let page = client.journal(&JournalQuery { scope: Some(scope), since: Some(cursor.max(1)), limit: Some(FORWARD_LIMIT), ..Default::default() })?;
         cursor = cursor.max(page.cursor);
         events.extend(page.events);
         if !page.has_more {
@@ -66,28 +66,10 @@ pub fn after(client: &Client, scope: &str, since: i64) -> supraman_workman::Resu
     Ok((events, cursor))
 }
 
-/// `since=0` would be the newest page, so `seq` 1, the workspace's first event, is never shown.
+/// The page just below `oldest`, ascending, and whether older events exist below it.
 pub fn older(client: &Client, scope: &str, oldest: i64) -> supraman_workman::Result<(Vec<JournalEvent>, bool)> {
-    let mut span = OLDER_SPAN;
-    loop {
-        let low = (oldest - span).max(1);
-        let mut got: Vec<JournalEvent> = Vec::new();
-        let mut since = low;
-        for _ in 0..FORWARD_PAGES {
-            let page = client.journal(&JournalQuery { scope: Some(scope), since: Some(since), limit: Some(FORWARD_LIMIT), kinds: &[] })?;
-            got.extend(page.events.into_iter().filter(|e| e.seq < oldest));
-            if !page.has_more || page.cursor >= oldest - 1 || page.cursor <= since {
-                break;
-            }
-            since = page.cursor;
-        }
-        if got.len() >= PAGE as usize || low == 1 {
-            let cut = got.len().saturating_sub(FORWARD_LIMIT as usize);
-            got.drain(..cut);
-            return Ok((got, low > 1 || cut > 0));
-        }
-        span *= 4;
-    }
+    let page = client.journal(&JournalQuery { scope: Some(scope), before: Some(oldest), limit: Some(OLDER_LIMIT), ..Default::default() })?;
+    Ok((page.events, page.has_more))
 }
 
 pub struct JournalView {
@@ -152,7 +134,7 @@ impl WorkView {
                 .spawn(async move {
                     match since {
                         None => client
-                            .journal(&JournalQuery { scope: Some(&project), since: None, limit: Some(PAGE), kinds: &[] })
+                            .journal(&JournalQuery { scope: Some(&project), limit: Some(PAGE), ..Default::default() })
                             .map(|page| (Some(page), Vec::new(), 0)),
                         Some(since) => after(&client, &project, since).map(|(events, cursor)| (None, events, cursor)),
                     }
@@ -351,24 +333,25 @@ mod tests {
     }
 
     #[test]
-    fn older_widens_its_window_until_it_holds_a_page_or_the_start() {
-        let scope = "p1";
-        let target = |since: i64| format!("/api/v1/journal?scope={scope}&since={since}&limit=500");
-        // 10 events in (400, 600), then 60 in (1, 600): the window widens from 200 to 800 (→ since=1).
-        let near: Vec<i64> = (590..600).collect();
-        let far: Vec<i64> = (540..600).collect();
-        let fake = FakeWorkman::start(vec![(target(400), page(&near, 599, false)), (target(1), page(&far, 599, false))]);
+    fn older_pages_back_by_the_cursor_down_to_the_first_event() {
+        let fake = FakeWorkman::start(Vec::new());
+        let journal = fake.enable_journal();
+        journal.add("p1", 1..=300);
+        journal.add("other", (301..=700).step_by(2));
+        journal.add("p1", (302..=700).step_by(2));
         let client = Client::new(fake.base(), "fake-test-reader");
-        let (events, more) = older(&client, scope, 600).unwrap();
-        assert_eq!(events.len(), far.len());
-        assert!(!more, "the window reached since=1");
-        let asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).collect();
-        assert_eq!(asked, [target(400), target(1)]);
 
-        let full: Vec<i64> = (1000..1060).collect();
-        fake.set(target(860), page(&full, 1059, false));
-        let (events, more) = older(&client, scope, 1060).unwrap();
-        assert_eq!((events.len(), more), (60, true));
+        let (events, more) = older(&client, "p1", 650).unwrap();
+        assert_eq!(events.len(), OLDER_LIMIT as usize);
+        assert_eq!((events.first().map(|e| e.seq), events.last().map(|e| e.seq), more), (Some(275), Some(648), true), "ascending, gaps of the other scope skipped");
+        let (events, more) = older(&client, "p1", 275).unwrap();
+        assert_eq!((seqs(&events), more), ((75..275).collect::<Vec<_>>(), true));
+        let (events, more) = older(&client, "p1", 75).unwrap();
+        assert_eq!((seqs(&events), more), ((1..75).collect::<Vec<_>>(), false), "seq 1 is shown");
+        let (events, more) = older(&client, "p1", 1).unwrap();
+        assert_eq!((events.len(), more), (0, false));
+        let asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).collect();
+        assert_eq!(asked[0], "/api/v1/journal?scope=p1&before=650&limit=200");
     }
 
     #[test]
