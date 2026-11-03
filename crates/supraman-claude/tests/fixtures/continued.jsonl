@@ -1,0 +1,12 @@
+{"type":"custom-title","customTitle":"demo","sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"parentUuid":null,"isSidechain":false,"promptId":"p-1","type":"user","message":{"role":"user","content":"run the queue"},"uuid":"u-1","timestamp":"2026-11-03T20:00:00.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\alpha","sessionId":"0a000000-0000-4000-8000-00000000000a","version":"2.1.317","gitBranch":"main"}
+{"parentUuid":"u-1","isSidechain":false,"message":{"model":"claude-opus-5-5","id":"m-1","type":"message","role":"assistant","content":[{"type":"text","text":"working"}],"stop_reason":"end_turn"},"requestId":"r-1","type":"assistant","uuid":"a-1","timestamp":"2026-11-03T20:00:05.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\alpha","sessionId":"0a000000-0000-4000-8000-00000000000a","version":"2.1.317","gitBranch":"main"}
+{"type":"last-prompt","lastPrompt":"run the queue","leafUuid":"a-1","sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"type":"custom-title","customTitle":"demo","sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"type":"permission-mode","permissionMode":"auto","sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"type":"tools-used","tools":["Bash","Read"],"sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"parentUuid":"a-1","isSidechain":false,"attachment":{"type":"session_cron_carry","tasks":[]},"type":"attachment","uuid":"t-1","timestamp":"2026-11-03T20:01:00.000Z","userType":"external","entrypoint":"cli","cwd":"C:\\demo\\alpha","sessionId":"0a000000-0000-4000-8000-00000000000a","version":"2.1.317","gitBranch":"main","slug":"some-three-words"}
+{"type":"cost-state","sessionId":"0a000000-0000-4000-8000-00000000000a","totalCostUSD":1.5,"totalAPIDuration":1000,"totalAPIDurationWithoutRetries":1000,"totalToolDuration":10,"totalLinesAdded":1,"totalLinesRemoved":0,"totalDuration":2000,"startTime":1793736000000,"modelUsage":{},"hasUnknownModelCost":false}
+{"type":"continued-in","timestamp":"2026-11-03T20:01:00.800Z","sessionId":"0a000000-0000-4000-8000-00000000000a","continuedInSessionId":"0b000000-0000-4000-8000-00000000000b"}
+{"type":"last-prompt","lastPrompt":"run the queue","leafUuid":"t-1","sessionId":"0a000000-0000-4000-8000-00000000000a"}
+{"type":"cost-state","sessionId":"0a000000-0000-4000-8000-00000000000a","totalCostUSD":1.5,"totalAPIDuration":1000,"totalAPIDurationWithoutRetries":1000,"totalToolDuration":10,"totalLinesAdded":1,"totalLinesRemoved":0,"totalDuration":2100,"startTime":1793736000000,"modelUsage":{},"hasUnknownModelCost":false}

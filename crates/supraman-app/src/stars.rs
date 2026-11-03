@@ -38,11 +38,38 @@ impl Stars {
         });
         (on, save)
     }
+
+    /// Each starred session that continued (`continued`: to the newest of its chain) is starred under the newest instead.
+    pub fn follow(&mut self, continued: &std::collections::HashMap<String, String>) -> Option<Save> {
+        self.0.edit(|f| {
+            let moved: Vec<(String, String)> =
+                f.sessions.iter().filter_map(|sid| continued.get(sid).filter(|newest| *newest != sid).map(|newest| (sid.clone(), newest.clone()))).collect();
+            for (sid, newest) in &moved {
+                f.sessions.remove(sid);
+                f.sessions.insert(newest.clone());
+            }
+            !moved.is_empty()
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_star_moves_to_the_newest_session_of_its_chain_and_survives_a_reload() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut stars, _) = Stars::load(Some(home.path()));
+        assert!(toggled(&mut stars, "old-1"));
+        assert!(toggled(&mut stars, "kept-2"));
+        let continued = std::collections::HashMap::from([("old-1".to_string(), "new-3".to_string()), ("gone-4".to_string(), "new-5".to_string())]);
+        stars.follow(&continued).expect("a change").write().unwrap();
+        assert_eq!(stars.ids().iter().map(String::as_str).collect::<Vec<_>>(), ["kept-2", "new-3"]);
+        assert!(stars.follow(&continued).is_none(), "nothing left to move");
+        let (again, _) = Stars::load(Some(home.path()));
+        assert_eq!(again.ids(), stars.ids());
+    }
 
     fn toggled(stars: &mut Stars, session_id: &str) -> bool {
         let (on, save) = stars.toggle(session_id);

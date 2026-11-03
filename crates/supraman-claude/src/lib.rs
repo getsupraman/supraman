@@ -84,4 +84,4 @@ pub use plugin_server::plugin_server;
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };
-pub use transcript::{Launcher, Transcript, Transcripts, Usage, claude_dir, first_prompt};
+pub use transcript::{Launcher, Transcript, Transcripts, Usage, chains, claude_dir, continued_in, first_prompt, newest, newest_in};
