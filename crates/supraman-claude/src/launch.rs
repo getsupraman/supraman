@@ -131,9 +131,21 @@ pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) ->
     workman_mcp_config_with(url, token, headers, &[])
 }
 
+/// How a session's Workman server authenticates: a static header, or a command claude runs at each connect.
+enum Authorization<'a> {
+    Token(&'a str),
+    Helper(&'a str),
+}
+
 fn workman_mcp_config_with(url: &str, token: &str, headers: &[(&str, String)], servers: &[(String, String)]) -> String {
+    workman_mcp_config_auth(url, Authorization::Token(token), headers, servers)
+}
+
+fn workman_mcp_config_auth(url: &str, auth: Authorization, headers: &[(&str, String)], servers: &[(String, String)]) -> String {
     let mut map = serde_json::Map::new();
-    map.insert("Authorization".into(), format!("Bearer {token}").into());
+    if let Authorization::Token(token) = auth {
+        map.insert("Authorization".into(), format!("Bearer {token}").into());
+    }
     for (k, v) in headers {
         map.insert((*k).into(), v.clone().into());
     }
@@ -146,6 +158,9 @@ fn workman_mcp_config_with(url: &str, token: &str, headers: &[(&str, String)], s
             }
         }
     });
+    if let Authorization::Helper(command) = auth {
+        config["mcpServers"][MCP_SERVER]["headersHelper"] = command.into();
+    }
     for (name, server) in servers.iter().filter(|(n, _)| n != MCP_SERVER) {
         if let Ok(server) = serde_json::from_str::<serde_json::Value>(server) {
             config["mcpServers"][name] = server;
@@ -167,6 +182,34 @@ pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, he
     let path = mcp_config_path(dir, agent)?;
     supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_with(url, token, headers, servers), restrict_to_owner)?;
     Ok(path)
+}
+
+/// [`write_mcp_config`] whose `Authorization` comes from `helper`, a command claude runs at each connect and on a
+/// 401 (its `headersHelper`, LEARNINGS restart-keeps-hands): no token in the file.
+pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str) -> std::io::Result<PathBuf> {
+    let path = mcp_config_path(dir, agent)?;
+    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], &[]), restrict_to_owner)?;
+    Ok(path)
+}
+
+/// The secret-store key of `agent`'s Workman token, which [`mcp_header`] prints.
+pub fn mcp_token_key(agent: &str) -> String {
+    format!("mcp-token/{agent}")
+}
+
+/// The `headersHelper` command for `agent`: `sm mcp-header`, with the home its token is kept in.
+pub fn mcp_header_command(sm: &Path, home: &Path, agent: &str) -> String {
+    format!("\"{}\" mcp-header --home \"{}\" {agent}", sm.display(), home.display())
+}
+
+/// What `sm mcp-header` prints for `agent`: `{"Authorization":"Bearer <token>"}` from `store`. The error never
+/// carries the token.
+pub fn mcp_header(store: &dyn supraman_core::secret::SecretStore, agent: &str) -> std::result::Result<String, String> {
+    mcp_config_path(Path::new("."), agent).map_err(|e| e.to_string())?;
+    match store.get(&mcp_token_key(agent))? {
+        Some(token) => Ok(serde_json::json!({ "Authorization": format!("Bearer {token}") }).to_string()),
+        None => Err(format!("no Workman token is kept for {agent}")),
+    }
 }
 
 /// `<dir>/workstate-<agent>.json`, the one file of `agent`'s Workman config; `agent` must be a plain session name.
@@ -473,6 +516,26 @@ mod tests {
         let argv = strs(&spec.argv());
         assert_eq!(argv[..5], ["--bg", "--name", "fm-demo-a", "--resume", "fc5bf027-48e3-4510-90b2-63a00eb76df8"]);
         assert_eq!(argv[5..], strs(&full().argv())[3..]);
+    }
+
+    #[test]
+    fn a_helped_config_has_the_helper_and_no_authorization() {
+        let dir = tempfile::tempdir().unwrap();
+        let helper = r#""C:\sm.exe" mcp-header --home "C:\h" hand-alpha-1"#;
+        let helped = write_mcp_config_helped(dir.path(), "hand-alpha-1", "http://127.0.0.1:1/mcp", helper).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&helped).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["workman"], serde_json::json!({ "type": "http", "url": "http://127.0.0.1:1/mcp", "headers": {}, "headersHelper": helper }));
+        assert_eq!(helped, mcp_config_path(dir.path(), "hand-alpha-1").unwrap());
+        assert!(write_mcp_config_helped(dir.path(), "../x", "http://127.0.0.1:1/mcp", "sm").is_err());
+        assert_eq!(
+            mcp_header_command(Path::new(r"C:\Tools\sm.exe"), Path::new(r"C:\Users\a b\Supraman"), "hand-x-1"),
+            r#""C:\Tools\sm.exe" mcp-header --home "C:\Users\a b\Supraman" hand-x-1"#
+        );
+        let store = supraman_core::secret::MemoryStore::default();
+        assert!(mcp_header(&store, "hand-x-1").is_err());
+        supraman_core::secret::SecretStore::set(&store, &mcp_token_key("hand-x-1"), "wss_t").unwrap();
+        assert_eq!(mcp_header(&store, "hand-x-1").unwrap(), r#"{"Authorization":"Bearer wss_t"}"#);
+        assert!(mcp_header(&store, "../x").is_err());
     }
 
     #[test]
