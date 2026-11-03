@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use supraman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
+use supraman_core::AGENTS_SERVER;
 
 use crate::{
     Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
@@ -835,9 +836,8 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
 
 /// From this many failed `claude stop`s in a row, the name gets a [`NeedsKind::StopFailed`] row.
 pub const STOP_FAILURES_SHOWN: u32 = 3;
-/// The plugin whose MCP server every supervised session gets in its own config, and that server.
+/// The plugin whose MCP server ([`AGENTS_SERVER`]) every supervised session gets in its own config.
 const AGENTS_PLUGIN: &str = "workman";
-const AGENTS_SERVER: &str = "agents";
 
 /// This tick's `claude stop`s by name: the row id and how it went.
 type Stops = BTreeMap<String, (String, Result<(), String>)>;
