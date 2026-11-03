@@ -58,6 +58,7 @@ pub mod forget;
 pub mod human;
 mod launch;
 pub mod peer;
+mod plugin_server;
 pub mod proc_tree;
 mod session;
 pub mod transcript;
@@ -77,8 +78,9 @@ pub use forget::{ForgetError, Forgotten, find_transcript, forget_transcript, is_
 pub use human::{Route, SendError, Sent, Sender, send_from_human};
 pub use launch::{
     Claude, LaunchSpec, Removal, RmRefusal, SessionIdentity, WRITE_TIMEOUT, classify, name_taken, new_session_id, resume_argv, workman_mcp_config,
-    MCP_SERVER, mcp_config_path, mcp_config_url, write_mcp_config,
+    MCP_SERVER, mcp_config_path, mcp_config_url, write_mcp_config, write_mcp_config_with,
 };
+pub use plugin_server::plugin_server;
 pub use session::{
     Health, Kind, ORPHAN_AFTER, Session, SessionState, Status, now_ms, parse,
 };

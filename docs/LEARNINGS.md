@@ -5725,3 +5725,18 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   Untested against a real alias: a test cannot make an App Execution Alias.
 - **`fire.rs` `a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up` fails on a machine with a live pid
   4240**: Windows ignores a pid's low two bits, so `OpenProcess(4243)` opens 4240 and the "dead" run looks alive.
+
+## 2026-11-03 — workman-2/6 `--strict-mcp-config` and a plugin's MCP servers
+
+- **`--strict-mcp-config` starts no plugin MCP server**, the workman plugin's `agents` (`mcp__plugin_workman_agents__*`)
+  included, and no user-scope or claude.ai one; only `--mcp-config`'s servers and the built-in `claude-in-chrome` run.
+  Measured with claude 2.1.317, four throwaway `--bg` sessions in a trusted worktree, an empty `--mcp-config` and
+  `--plugin-dir plugins/supraman` as the supervisor passes it: the strict session's MCP logs
+  (`%LOCALAPPDATA%\claude-cli-nodejs\Cache\<project>\mcp-logs-*`, by `sessionId`) show `claude-in-chrome` only; the same
+  launch without the flag starts every server, `plugin-workman-agents` among them (stdio, connected in about 2 s).
+- **The first turn's tool list is no measure**: MCP servers connect while the first turn runs, so its
+  `deferred_tools_delta` held 2 of 16 servers and a model asked for its tools names only those. The MCP logs per session
+  are the evidence; the plugin's tools appear in no transcript record by name.
+- **`claude --bg --resume <id>` of a session still running starts a copy that drops `--strict-mcp-config`**: the copy of
+  the strict probe started every user and plugin server. The supervisor resumes only a session it saw stopped, which
+  wakes in place with its saved options.

@@ -650,6 +650,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         supraman_home: Some(home.to_path_buf()),
         bg_isolation_none: true,
         allowed_tools: s.permissions.allowed(&always, run_branch.as_deref()),
+        claude_dir: supraman_core::paths::claude_dir(),
     };
     let mut spec = config.launch_spec(&w.name, &wanted, &[("SUPRAMAN_SCHEDULE", &s.id), ("SUPRAMAN_RUN", &run)]);
     spec.mcp_config = Some(mcp_config_path(&config.mcp_dir, &name).map_err(|e| Failure::Refused(format!("error: {e}")))?);

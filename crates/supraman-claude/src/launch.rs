@@ -33,6 +33,8 @@ pub struct LaunchSpec {
     /// `--resume <sessionId>`: beside the other flags it starts a copy under a new id that carries that
     /// session's transcript; the original keeps its id and name. claude cannot rename a session.
     pub resume: Option<String>,
+    /// More servers for the session's own config beside Workman's: (name, its JSON object).
+    pub mcp_servers: Vec<(String, String)>,
 }
 
 impl LaunchSpec {
@@ -48,7 +50,7 @@ impl LaunchSpec {
 
     /// A per-session `wss_` token in an owner-only `<dir>/workstate-<agent>.json`, under `--strict-mcp-config`.
     pub fn with_minted_token(mut self, dir: &Path, agent: &str, url: &str, token: &str) -> std::io::Result<Self> {
-        self.mcp_config = Some(write_mcp_config(dir, agent, url, token, &[])?);
+        self.mcp_config = Some(write_mcp_config_with(dir, agent, url, token, &[], &self.mcp_servers)?);
         self.strict_mcp_config = true;
         Ok(self)
     }
@@ -126,12 +128,16 @@ pub const MCP_SERVER: &str = "workman";
 
 /// The [`MCP_SERVER`] entry with the token and `headers` written in, shaped like the workman plugin's `plugin.mcp.json`.
 pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) -> String {
+    workman_mcp_config_with(url, token, headers, &[])
+}
+
+fn workman_mcp_config_with(url: &str, token: &str, headers: &[(&str, String)], servers: &[(String, String)]) -> String {
     let mut map = serde_json::Map::new();
     map.insert("Authorization".into(), format!("Bearer {token}").into());
     for (k, v) in headers {
         map.insert((*k).into(), v.clone().into());
     }
-    serde_json::json!({
+    let mut config = serde_json::json!({
         "mcpServers": {
             (MCP_SERVER): {
                 "type": "http",
@@ -139,8 +145,13 @@ pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) ->
                 "headers": map
             }
         }
-    })
-    .to_string()
+    });
+    for (name, server) in servers.iter().filter(|(n, _)| n != MCP_SERVER) {
+        if let Ok(server) = serde_json::from_str::<serde_json::Value>(server) {
+            config["mcpServers"][name] = server;
+        }
+    }
+    config.to_string()
 }
 
 /// Writes `<dir>/workstate-<agent>.json` with `headers` beside the `Authorization` one. Its new content is
@@ -148,8 +159,13 @@ pub fn workman_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) ->
 /// control; unix: 0600) before the token goes in, then renamed over the old one, so the token is never readable
 /// by anyone else and a session reading its config never sees it empty.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
+    write_mcp_config_with(dir, agent, url, token, headers, &[])
+}
+
+/// [`write_mcp_config`] with `servers` beside Workman's, never in its place.
+pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)], servers: &[(String, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
-    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config(url, token, headers), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_with(url, token, headers, servers), restrict_to_owner)?;
     Ok(path)
 }
 
@@ -427,6 +443,7 @@ mod tests {
             cwd: PathBuf::from(r"C:\demo"),
             prompt: "--looks-like-a-flag but is the prompt".into(),
             permission_mode: "auto".into(),
+            mcp_servers: Vec::new(),
             mcp_config: Some(PathBuf::from(r"C:\fm\ws.json")),
             strict_mcp_config: true,
             plugin_dirs: vec![PathBuf::from(r"C:\p1"), PathBuf::from(r"C:\p2")],
@@ -592,5 +609,20 @@ mod tests {
             Some(ClaudeError::CliFailed { stderr, .. }) => assert_eq!(stderr, "only stdout"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn more_servers_go_beside_workman_never_in_its_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = r#"{"command":"node","args":["C:/p/agents.mjs"]}"#.to_string();
+        let servers = [("agents".to_string(), agents), (MCP_SERVER.to_string(), r#"{"command":"evil"}"#.to_string())];
+        let path = write_mcp_config_with(dir.path(), "fm-demo-a", "http://x/mcp", "fake-token", &[], &servers).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["agents"], serde_json::json!({ "command": "node", "args": ["C:/p/agents.mjs"] }));
+        assert_eq!(v["mcpServers"][MCP_SERVER]["url"], "http://x/mcp", "a server named like Workman's is dropped");
+        let spec = LaunchSpec { mcp_servers: servers.to_vec(), ..LaunchSpec::new("fm-demo-b", dir.path(), "p") };
+        let spec = spec.with_minted_token(dir.path(), "fm-demo-b", "http://x/mcp", "fake-token").unwrap();
+        let text = std::fs::read_to_string(spec.mcp_config.unwrap()).unwrap();
+        assert!(text.contains("agents.mjs") && spec.strict_mcp_config, "{text}");
     }
 }

@@ -71,6 +71,9 @@ pub struct LaunchConfig {
     /// `--allowedTools`: permission rules every session gets, so `sm` (Supraman's CLI, run by controllers
     /// themselves) never parks for permission (`Bash(sm:*)` matches; PowerShell rules do not).
     pub allowed_tools: Vec<String>,
+    /// Claude Code's config dir, where the workman plugin's `agents` server is looked up for each session's own
+    /// config ([`supraman_claude::plugin_server`]); `None` gives no plugin server.
+    pub claude_dir: Option<PathBuf>,
 }
 
 impl LaunchConfig {
@@ -81,12 +84,27 @@ impl LaunchConfig {
         spec.permission_mode = w.permission_mode.clone();
         spec.strict_mcp_config = true;
         spec.plugin_dirs = self.plugin_dirs.clone();
+        spec.mcp_servers = self.plugin_servers(&w.name);
         spec.add_dirs = w.add_dirs.clone();
         if let Some(settings) = self.settings_with(workspace, &w.name, &w.role, w.repo.as_deref(), env) {
             spec.extra_args = vec!["--settings".into(), settings];
         }
         spec.extra_args.extend(self.allowed_tools_args());
         spec
+    }
+
+    /// The plugin servers `--strict-mcp-config` would leave out, for `name`'s own config; a miss is logged, not failed.
+    pub fn plugin_servers(&self, name: &str) -> Vec<(String, String)> {
+        let Some(dir) = &self.claude_dir else {
+            return Vec::new();
+        };
+        match supraman_claude::plugin_server(dir, AGENTS_PLUGIN, AGENTS_SERVER) {
+            Ok(server) => vec![(AGENTS_SERVER.to_string(), server)],
+            Err(why) => {
+                log::info!("{name}: no {AGENTS_SERVER} MCP server in its config: {why}");
+                Vec::new()
+            }
+        }
     }
 
     fn allowed_tools_args(&self) -> Vec<String> {
@@ -531,7 +549,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// Before the resume of `claude_session_id`: a fresh token into the session's config file.
     fn remint(&mut self, w: &WantedSession, claude_session_id: &str, now: Millis) -> Result<(), Failure> {
         if let Some((url, token)) = self.mint(w, Some(claude_session_id), now)? {
-            supraman_claude::write_mcp_config(&self.config.mcp_dir, &w.name, &url, &token, &[])
+            supraman_claude::write_mcp_config_with(&self.config.mcp_dir, &w.name, &url, &token, &[], &self.config.plugin_servers(&w.name))
                 .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
         }
         Ok(())
@@ -817,6 +835,9 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
 
 /// From this many failed `claude stop`s in a row, the name gets a [`NeedsKind::StopFailed`] row.
 pub const STOP_FAILURES_SHOWN: u32 = 3;
+/// The plugin whose MCP server every supervised session gets in its own config, and that server.
+const AGENTS_PLUGIN: &str = "workman";
+const AGENTS_SERVER: &str = "agents";
 
 /// This tick's `claude stop`s by name: the row id and how it went.
 type Stops = BTreeMap<String, (String, Result<(), String>)>;
@@ -1167,6 +1188,45 @@ mod tests {
         let repo = config_text(&mcp, "fm-demo-alpha");
         assert!(ws.contains("wss_fake1") && repo.contains("wss_fake2"), "{ws} {repo}");
         assert!(["X-WorkState-", "X-Workman-"].iter().all(|h| !ws.contains(h) && !repo.contains(h)), "identity is on the row, not in headers: {repo}");
+    }
+
+    /// A Claude config dir with the workman plugin installed under `dir`, declaring its `agents` server.
+    fn claude_with_agents(dir: &Path) -> (PathBuf, String) {
+        let root = dir.join("cache").join("workman").join("2.3.0");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(".mcp.json"), r#"{"mcpServers":{"agents":{"command":"node","args":["${CLAUDE_PLUGIN_ROOT}/agents.mjs"]}}}"#).unwrap();
+        let claude = dir.join("claude");
+        std::fs::create_dir_all(claude.join("plugins")).unwrap();
+        let installed = serde_json::json!({ "version": 2, "plugins": { "workman@supraman": [{ "installPath": root }] } });
+        std::fs::write(claude.join("plugins").join("installed_plugins.json"), installed.to_string()).unwrap();
+        (claude, format!("{}/agents.mjs", root.display()))
+    }
+
+    #[test]
+    fn a_launch_and_a_resume_put_the_workman_plugins_agents_server_beside_workman() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
+        let (claude, script) = claude_with_agents(dir.path());
+        let (mut sup, _minter) = minting(true, &mcp);
+        sup.config.claude_dir = Some(claude);
+        sup.tick(&[], &mut free(), NOW);
+        assert!(launch_argv(&sup.launcher().take()).contains("--strict-mcp-config"));
+        let servers = |text: String| serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"].clone();
+        let want = serde_json::json!({ "command": "node", "args": [script] });
+        let launched = servers(config_text(&mcp, "fm-demo-workspace"));
+        assert_eq!((&launched["agents"], &launched["workman"]["url"]), (&want, &serde_json::json!("http://127.0.0.1:1/mcp")));
+
+        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(1))], &mut free(), NOW + 61 * SECOND);
+        sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + 100 * SECOND);
+        assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
+        let resumed = servers(config_text(&mcp, "fm-demo-workspace"));
+        assert_eq!(resumed["agents"], want, "the re-mint keeps it");
+        assert_eq!(resumed["workman"]["headers"]["Authorization"], "Bearer wss_fake2");
+
+        let (mut plain, _) = minting(true, &dir.path().join("plain"));
+        plain.tick(&[], &mut free(), NOW);
+        let only = servers(config_text(&dir.path().join("plain"), "fm-demo-workspace"));
+        assert_eq!(only.as_object().unwrap().keys().collect::<Vec<_>>(), ["workman"], "no claude dir, no plugin server");
     }
 
     #[test]

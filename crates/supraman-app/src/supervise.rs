@@ -260,6 +260,7 @@ pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings:
         supraman_home: home,
         bg_isolation_none: true,
         allowed_tools: plugin_dir.map(sm_allowed_tools).unwrap_or_default(),
+        claude_dir: supraman_core::paths::claude_dir(),
     }
 }
 
