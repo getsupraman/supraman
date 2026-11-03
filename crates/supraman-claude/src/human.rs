@@ -51,12 +51,25 @@ impl Sent {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("not sent: direct delivery failed ({direct}) and the relay cannot take it ({relay})")]
+#[derive(Debug)]
 pub struct SendError {
     pub direct: String,
     pub relay: String,
+    /// The direct write timed out and can still land; the relay was not tried, so it never arrives twice.
+    pub may_arrive: bool,
 }
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.may_arrive {
+            write!(f, "not confirmed: the direct write timed out ({}) and may still arrive; not sent again through the relay", self.direct)
+        } else {
+            write!(f, "not sent: direct delivery failed ({}) and the relay cannot take it ({})", self.direct, self.relay)
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Ledger {
@@ -183,16 +196,16 @@ impl<L: Liveness> Sender<L> {
         let reason = match direct {
             Ok(id) => return Ok(Sent { to: to.into(), id: Some(id), route: Route::Direct }),
             Err(NotDirect { reason, may_arrive: true }) => {
-                return Err(SendError { direct: reason, relay: "not tried: the direct write may still arrive, and the relay would deliver it twice".into() });
+                return Err(SendError { direct: reason, relay: "not tried".into(), may_arrive: true });
             }
             Err(NotDirect { reason, .. }) => reason,
         };
         if let Some(why) = &self.no_relay {
-            return Err(SendError { direct: reason, relay: why.clone() });
+            return Err(SendError { direct: reason, relay: why.clone(), may_arrive: false });
         }
         match supraman_core::send(home, workspace, to, body) {
             Ok(drop) => Ok(Sent { to: to.into(), id: None, route: Route::Relay { reason, drop } }),
-            Err(relay) => Err(SendError { direct: reason, relay: relay.to_string() }),
+            Err(relay) => Err(SendError { direct: reason, relay: relay.to_string(), may_arrive: false }),
         }
     }
 

@@ -316,9 +316,7 @@ pub fn remove_mcp_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener;
-
-    use supraman_workman::fake::{Answer, FakeWorkman};
+    use supraman_workman::fake::{Answer, FakeWorkman, closed_base};
 
     use super::*;
 
@@ -466,9 +464,7 @@ mod tests {
         assert_eq!(e.to_string(), "Workman answered HTTP 409: a live token exists for fm-demo-workspace");
         ws.set(MINT, Answer::status(201, r#"{"token":"wss_x"}"#));
         assert_eq!(m.mint(ws.base(), "fake-static", &request()).unwrap_err(), MintError::BadResponse("no sessionId".into()));
-        // nothing listens on a port just freed
-        let free = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-        let e = m.mint(&format!("http://{free}"), "fake-static", &request()).unwrap_err();
+        let e = m.mint(&closed_base(), "fake-static", &request()).unwrap_err();
         assert!(matches!(e, MintError::Unreachable { .. }), "{e:?}");
         assert!(!e.to_string().contains("fake-static"), "{e}");
     }

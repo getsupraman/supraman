@@ -135,6 +135,7 @@ pub struct ScheduleEdit {
     pub max_runtime: Entity<TextInput>,
     pub max_tokens: Entity<TextInput>,
     pub error: Option<String>,
+    saving: bool,
     _events: Vec<Subscription>,
 }
 
@@ -447,6 +448,7 @@ impl FleetView {
             max_runtime,
             max_tokens,
             error: None,
+            saving: false,
             _events: events,
         });
         cx.notify();
@@ -468,47 +470,63 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Saved through `schedule::edit`: a covered change makes the schedule pending, so it needs Approve again.
+    /// Saved through `schedule::edit` off the UI thread: a covered change makes the schedule pending, so it needs
+    /// Approve again.
     pub fn save_schedule_edit(&mut self, cx: &mut Context<Self>) {
         let Some(edit) = &self.schedule_edit else {
             return;
         };
+        if edit.saving {
+            return;
+        }
         let (Some(home), Some(w)) = (self.home.clone(), self.registered_workspace(&edit.workspace)) else {
             return;
         };
         let (form, id) = (edit.form(cx), edit.id.clone());
-        let saved = schedule::edit(&home, &w, |all| {
-            let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { workspace: w.name.clone(), id: id.clone() })?;
-            form.apply(s).map_err(|why| supraman_core::CoreError::InvalidSchedule { id: id.clone(), why })?;
-            Ok(s.status)
-        });
-        match saved {
-            Ok(status) => {
-                self.schedule_edit = None;
-                let pending = if status == Status::Pending { "; it is pending until you Approve it" } else { "" };
-                self.show_toast(format!("Saved schedule {id} of {}{pending}.", w.name), cx);
-                let (registrar, store, ws) = (self.registrar.clone(), self.schedule_store.clone(), w.clone());
-                let key = key(&w.name, &id);
-                let task = cx.background_executor().spawn(async move { sync_now(&home, &*registrar, &*store, &ws) });
-                cx.spawn(async move |this, cx| {
-                    let synced = task.await;
-                    this.update(cx, |this, cx| {
+        if let Some(edit) = &mut self.schedule_edit {
+            edit.saving = true;
+        }
+        let (registrar, store) = (self.registrar.clone(), self.schedule_store.clone());
+        let task = {
+            let (w, id) = (w.clone(), id.clone());
+            cx.background_executor().spawn(async move {
+                let status = schedule::edit(&home, &w, |all| {
+                    let s = all.iter_mut().find(|s| s.id == id).ok_or_else(|| supraman_core::CoreError::NoSchedule { workspace: w.name.clone(), id: id.clone() })?;
+                    form.apply(s).map_err(|why| supraman_core::CoreError::InvalidSchedule { id: id.clone(), why })?;
+                    Ok(s.status)
+                })
+                .map_err(|e| e.to_string())?;
+                Ok::<_, String>((status, sync_now(&home, &*registrar, &*store, &w)))
+            })
+        };
+        cx.spawn(async move |this, cx| {
+            let saved = task.await;
+            this.update(cx, |this, cx| {
+                let editing = this.schedule_edit.as_ref().is_some_and(|e| e.workspace == w.name && e.id == id);
+                match saved {
+                    Ok((status, synced)) => {
+                        if editing {
+                            this.schedule_edit = None;
+                        }
+                        let pending = if status == Status::Pending { "; it is pending until you Approve it" } else { "" };
+                        this.show_toast(format!("Saved schedule {id} of {}{pending}.", w.name), cx);
                         if let Err(e) = synced {
-                            this.sync_errors.insert(key, e);
+                            this.sync_errors.insert(key(&w.name, &id), e);
                         }
                         this.poll_nudge.wake();
-                        cx.notify();
-                    })
-                    .ok();
-                })
-                .detach();
-            }
-            Err(e) => {
-                if let Some(edit) = &mut self.schedule_edit {
-                    edit.error = Some(e.to_string());
+                    }
+                    Err(e) => {
+                        if let Some(edit) = this.schedule_edit.as_mut().filter(|_| editing) {
+                            edit.saving = false;
+                            edit.error = Some(e);
+                        }
+                    }
                 }
-            }
-        }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 

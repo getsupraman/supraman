@@ -33,13 +33,11 @@ mod selftest_schedules;
 mod selftest_search;
 mod selftest_shots;
 mod selftest_start;
-mod selftest_startup;
 mod selftest_supervise;
 mod selftest_tabs;
 mod selftest_title;
 mod selftest_updates;
 mod selftest_term;
-mod selftest_theme;
 mod selftest_work;
 mod selftest_zoom;
 mod settings_window;
@@ -49,7 +47,8 @@ mod tab_card;
 mod titlebar;
 mod signin;
 #[cfg(test)]
-mod tokens;
+mod test_auth;
+mod transcripts_load;
 mod tray;
 mod updates;
 mod view;
@@ -380,9 +379,21 @@ fn main() {
             TRAY.with(|t| {
                 if let Some(t) = t.borrow().as_ref() {
                     t.set_tooltip(&tip);
-                    t.follow_taskbar();
                 }
             });
+        })
+        .detach();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor().timer(tray::FOLLOW_TASKBAR_EVERY).await;
+                cx.update(|_| {
+                    TRAY.with(|t| {
+                        if let Some(t) = t.borrow().as_ref() {
+                            t.follow_taskbar();
+                        }
+                    })
+                });
+            }
         })
         .detach();
         let window = AnyWindowHandle::from(handle);

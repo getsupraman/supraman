@@ -27,6 +27,16 @@ pub struct DetailsPage {
     pub folder: Option<(String, PathBuf)>,
     pub listed: bool,
     pub disk: OnDisk,
+    /// An [`OnDisk::read`] for it runs on the background executor.
+    reading: bool,
+}
+
+/// One session page's [`OnDisk::read`]: its tab, cwd, session id and the transcript found before.
+struct DiskRead {
+    tab: u64,
+    cwd: PathBuf,
+    session_id: String,
+    known: Option<PathBuf>,
 }
 
 impl DetailsPage {
@@ -82,22 +92,45 @@ impl FleetView {
             }
             MenuTarget::Repo { .. } | MenuTarget::Schedule { .. } | MenuTarget::Schedules(_) | MenuTarget::OtherSchedule(_) => return None,
         };
-        let disk = seen.as_ref().map(|r| self.on_disk(r, None)).unwrap_or_default();
-        let page = DetailsPage { target, scroll: ScrollHandle::new(), seen, folder, listed: true, disk };
         let tab = self.next_tab_id;
         self.next_tab_id += 1;
+        let read = seen.as_ref().map(|r| DiskRead { tab, cwd: r.session.cwd.clone(), session_id: r.session.session_id.clone(), known: None });
+        let page = DetailsPage { target, scroll: ScrollHandle::new(), seen, folder, listed: true, disk: OnDisk::default(), reading: read.is_some() };
         self.tabs.push(Tab::new(tab, title, TabKind::Details(page), cwd));
         self.active = Some(tab);
+        self.read_disk(read.into_iter().collect(), cx);
         cx.notify();
         Some(tab)
     }
 
-    fn on_disk(&self, row: &SessionRow, known: Option<&std::path::Path>) -> OnDisk {
-        OnDisk::read(&row.session.cwd, &row.session.session_id, self.claude_dir.as_deref(), known)
+    fn read_disk(&mut self, reads: Vec<DiskRead>, cx: &mut Context<Self>) {
+        if reads.is_empty() {
+            return;
+        }
+        let claude_dir = self.claude_dir.clone();
+        let read = cx.background_executor().spawn(async move {
+            reads
+                .into_iter()
+                .map(|r| {
+                    let disk = OnDisk::read(&r.cwd, &r.session_id, claude_dir.as_deref(), r.known.as_deref());
+                    (r.tab, r.session_id, disk)
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            this.update(cx, |this, cx| {
+                if apply_disk(&mut this.tabs, read) {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
-    /// Each session page takes its row from this poll's tree, or keeps the last one seen.
-    pub(super) fn refresh_details(&mut self) {
+    /// Each session page takes its row from this poll's tree, or keeps the last one seen; its disk is read off the UI thread.
+    pub(super) fn refresh_details(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section("poll: refresh_details");
         if !self.tabs.iter().any(|t| matches!(&t.kind, TabKind::Details(p) if matches!(p.target, MenuTarget::Session { .. }))) {
             return;
@@ -110,21 +143,29 @@ impl FleetView {
             let node = tree.workspaces.iter().find(|n| &n.name == workspace);
             let row = node.and_then(|n| n.rows().find(|r| &r.session.session_id == session_id)).cloned();
             let folder = node.and_then(|n| folder_of(n, session_id));
-            let disk = row.as_ref().or(page.seen.as_ref()).map(|r| self.on_disk(r, page.disk.transcript.as_deref()));
-            fresh.push((i, row, folder, disk));
+            let read = row.as_ref().or(page.seen.as_ref()).filter(|_| !page.reading).map(|r| DiskRead {
+                tab: t.id,
+                cwd: r.session.cwd.clone(),
+                session_id: r.session.session_id.clone(),
+                known: page.disk.transcript.clone(),
+            });
+            fresh.push((i, row, folder, read));
         }
-        for (i, row, folder, disk) in fresh {
+        let mut reads = Vec::new();
+        for (i, row, folder, read) in fresh {
             if let TabKind::Details(page) = &mut self.tabs[i].kind {
                 page.listed = row.is_some();
                 if row.is_some() {
                     page.seen = row;
                     page.folder = folder;
                 }
-                if let Some(disk) = disk {
-                    page.disk = disk;
+                if let Some(read) = read {
+                    page.reading = true;
+                    reads.push(read);
                 }
             }
         }
+        self.read_disk(reads, cx);
     }
 
     fn started_by(&self, workspace: &str, row: &SessionRow) -> StartedBy {
@@ -273,6 +314,54 @@ impl FleetView {
     }
 }
 
+/// Each read lands on its tab while that tab still shows the session it was read for; whether any did.
+fn apply_disk(tabs: &mut [Tab], read: Vec<(u64, String, OnDisk)>) -> bool {
+    let mut applied = false;
+    for (tab, session_id, disk) in read {
+        let page = tabs.iter_mut().find(|t| t.id == tab).and_then(|t| match &mut t.kind {
+            TabKind::Details(page) => Some(page),
+            _ => None,
+        });
+        if let Some(page) = page {
+            page.reading = false;
+            if matches!(&page.target, MenuTarget::Session { session_id: s, .. } if *s == session_id) {
+                applied |= page.disk != disk;
+                page.disk = disk;
+            }
+        }
+    }
+    applied
+}
+
 fn folder_of(node: &WorkspaceNode, session_id: &str) -> Option<(String, PathBuf)> {
     node.repos.iter().find(|r| r.sessions.iter().any(|s| s.session.session_id == session_id)).map(|r| (r.name.clone(), r.path.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(tab: u64, session_id: &str) -> Tab {
+        let target = MenuTarget::Session { workspace: "demo".into(), repo: "api".into(), session_id: session_id.into() };
+        let page = DetailsPage { target, scroll: ScrollHandle::new(), seen: None, folder: None, listed: true, disk: OnDisk::default(), reading: true };
+        Tab::new(tab, format!("Details · {session_id}"), TabKind::Details(page), None)
+    }
+
+    fn disk_of(tabs: &[Tab], tab: u64) -> (OnDisk, bool) {
+        match &tabs.iter().find(|t| t.id == tab).unwrap().kind {
+            TabKind::Details(p) => (p.disk.clone(), p.reading),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_disk_read_lands_on_its_tab_while_it_shows_that_session_and_frees_the_next_read() {
+        let mut tabs = vec![page(1, "a"), page(2, "b")];
+        let read = OnDisk { branch: Some("main".into()), ..OnDisk::default() };
+        let landed = apply_disk(&mut tabs, vec![(1, "a".into(), read.clone()), (2, "elsewhere".into(), read.clone()), (9, "gone".into(), read.clone())]);
+        assert!(landed);
+        assert_eq!(disk_of(&tabs, 1), (read.clone(), false));
+        assert_eq!(disk_of(&tabs, 2), (OnDisk::default(), false), "read for another session: dropped, the next poll reads again");
+        assert!(!apply_disk(&mut tabs, vec![(1, "a".into(), read)]), "unchanged: no repaint");
+    }
 }

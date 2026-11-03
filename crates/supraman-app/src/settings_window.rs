@@ -65,8 +65,17 @@ static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 
 pub fn apply_theme(home: Option<&Path>, cx: &mut App) -> Option<String> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+    themes::apply_resolved(cx, saved_theme(&settings, home)).problem
+}
+
+fn saved_theme(settings: &Settings, home: Option<&Path>) -> themes::Resolved {
     let terminal = TerminalColors::from_setting(settings.appearance.terminal_colors.as_deref());
-    themes::apply(cx, settings.appearance.theme.as_deref(), terminal, home).problem
+    themes::resolve(settings.appearance.theme.as_deref(), terminal, home)
+}
+
+fn choose_theme(settings: &mut Settings, name: &str, terminal: TerminalColors) {
+    settings.appearance.theme = Some(name.to_string());
+    settings.appearance.terminal_colors = terminal.setting();
 }
 
 pub fn open(home: Option<PathBuf>, fleet: WeakEntity<FleetView>, page: Option<&str>, cx: &mut App) -> Option<WindowHandle<SettingsView>> {
@@ -243,14 +252,8 @@ impl SettingsView {
         cx.notify();
     }
 
-    pub fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
-        self.change(
-            |s| {
-                s.appearance.theme = Some(name.clone());
-                s.appearance.terminal_colors = terminal.setting();
-            },
-            cx,
-        );
+    fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
+        self.change(|s| choose_theme(s, &name, terminal), cx);
         self.theme_picks += 1;
         let (pick, home) = (self.theme_picks, self.home.clone());
         let resolving = cx.background_spawn(async move { themes::resolve(Some(&name), terminal, home.as_deref()) });
@@ -913,5 +916,44 @@ impl Render for SettingsView {
             .on_key_down(cx.listener(Self::key_down))
             .child(crate::titlebar::render("Settings", None, window, cx))
             .child(div().flex().flex_1().min_h_0().child(nav).child(content))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use supraman_term::terminal_settings::CAMPBELL;
+    use supraman_ui::themes::{DARK_MODERN, FOREMAN_DARK, hex, palette};
+
+    use super::*;
+
+    fn painted(settings: &Settings, home: &Path) -> (String, String, String) {
+        let theme = saved_theme(settings, Some(home)).theme;
+        (theme.name.to_string(), hex(theme.colors().panel_background), hex(palette(&theme).ansi[8]))
+    }
+
+    #[test]
+    fn without_a_saved_theme_the_app_paints_vs_code_dark_modern() {
+        let home = tempfile::tempdir().unwrap();
+        let fresh = Settings::load(home.path()).unwrap();
+        assert_eq!((fresh.appearance.theme.as_deref(), fresh.appearance.terminal_colors.as_deref()), (None, None));
+        assert_eq!(painted(&fresh, home.path()), (DARK_MODERN.to_string(), "#181818".to_string(), "#666666".to_string()));
+    }
+
+    #[test]
+    fn a_theme_choice_is_saved_to_settings_toml_and_painted_from_it() {
+        let home = tempfile::tempdir().unwrap();
+        let start = painted(&Settings::default(), home.path());
+
+        Settings::update(home.path(), |s| choose_theme(s, FOREMAN_DARK, TerminalColors::Campbell)).unwrap();
+        let saved = Settings::load(home.path()).unwrap();
+        assert_eq!((saved.appearance.theme.as_deref(), saved.appearance.terminal_colors.as_deref()), (Some(FOREMAN_DARK), Some("campbell")));
+        let dark = painted(&saved, home.path());
+        assert_eq!((dark.0.as_str(), dark.2.clone()), (FOREMAN_DARK, hex(gpui::rgb(CAMPBELL[8]).into())));
+        assert_ne!(dark.1, start.1, "Supraman Dark's panel is not Dark Modern's");
+
+        Settings::update(home.path(), |s| choose_theme(s, DARK_MODERN, TerminalColors::Theme)).unwrap();
+        let back = Settings::load(home.path()).unwrap();
+        assert_eq!((back.appearance.theme.as_deref(), back.appearance.terminal_colors.as_deref()), (Some(DARK_MODERN), None));
+        assert_eq!(painted(&back, home.path()), start);
     }
 }

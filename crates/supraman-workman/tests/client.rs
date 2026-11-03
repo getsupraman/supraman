@@ -1,4 +1,4 @@
-use supraman_workman::fake::{Answer, FakeWorkman};
+use supraman_workman::fake::{Answer, FakeWorkman, closed_base};
 use supraman_workman::{
     BriefFor, Client, Error, ItemResolution, ItemStatus, JournalQuery, SessionsQuery,
 };
@@ -159,8 +159,7 @@ fn client_maps_errors_and_never_says_the_token() {
     assert_eq!(c.sessions(&SessionsQuery::default()).unwrap_err(), Error::Http { status: 500, reason: String::new() });
     assert_eq!(e.to_string(), "Workman answered HTTP 401: bad token <redacted>");
 
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let dead = Client::new(format!("http://{free}"), TOKEN);
+    let dead = Client::new(closed_base(), TOKEN);
     let e = dead.overview().unwrap_err();
     assert!(matches!(e, Error::Transport { .. }), "{e:?}");
     for e in [e.to_string(), format!("{e:?}"), format!("{dead:?}")] {

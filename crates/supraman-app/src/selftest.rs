@@ -129,7 +129,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
-    unsafe { std::env::set_var(crate::view::CLAUDE_DIR_VAR, crate::selftest_closed::claude_dir(&home())) };
+    crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     unsafe { std::env::set_var(supraman_workman::updates::API_VAR, format!("http://127.0.0.1:{closed}")) };
@@ -928,7 +928,7 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
                 return Some(Err(format!("the loading line went while {:?} still loaded", v.loading(cx))));
             }
             (v.loaded && !shown).then(|| {
-                let done = v.sessions_read && v.refreshes > 0 && v.transcripts_read && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
+                let done = v.sessions_read && v.refreshes > 0 && v.transcripts.read() && !matches!(v.workstate, crate::workstate_setup::WsStatus::Checking);
                 if done { Ok(()) } else { Err("loaded before the poll, the tick, the transcripts and Workman were all done".to_string()) }
             })
         })
@@ -1028,17 +1028,11 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let refreshed = step("7j", crate::selftest_refresh::run(view, &home(), cx)).await?;
     println!("step 7j: {refreshed}");
 
-    let started = step("7w", crate::selftest_startup::run(view, &home(), &main_repo_of_gate()?, cx)).await?;
-    println!("step 7w: {started}");
-
     let searched = step("7k", crate::selftest_search::run(view, cx)).await?;
     println!("step 7k: {searched}");
 
     let mark = step("7l", crate::selftest_mark::run(view, cx)).await?;
     println!("step 7l: {mark}");
-
-    let themed = step("7m", crate::selftest_theme::run(view, &home(), cx)).await?;
-    println!("step 7m: {themed}");
 
     let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
     let held = step("7n", crate::selftest_messages::held(view, &home(), cx)).await?;

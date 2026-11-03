@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -44,6 +44,7 @@ use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
+use crate::transcripts_load::TranscriptsLoad;
 use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workstate_setup::{self, WsStatus};
 
@@ -84,7 +85,16 @@ pub fn bind_keys(cx: &mut gpui::App) {
 pub const REFRESH_EVERY: Duration = Duration::from_secs(2);
 pub const TRANSCRIPTS_EVERY: Duration = Duration::from_secs(10);
 const TRANSCRIPTS_CACHE: &str = "cache/transcripts.json";
-pub const CLAUDE_DIR_VAR: &str = "FOREMAN_CLAUDE_DIR";
+static CLAUDE_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// A selftest's fake claude dir, read and confined to by Delete in place of [`supraman_core::paths::claude_dir`].
+pub fn use_claude_dir(dir: PathBuf) {
+    CLAUDE_DIR_OVERRIDE.set(dir).ok();
+}
+
+fn claude_dir_or(over: Option<&Path>) -> Option<PathBuf> {
+    over.map(Path::to_path_buf).or_else(supraman_core::paths::claude_dir)
+}
 /// Ctrl+Z: `claude attach`'s own detach, which leaves the session running (LEARNINGS m1/7).
 pub const DETACH_INPUT: &[u8] = b"\x1a";
 pub const DETACH_WITHIN: Duration = Duration::from_secs(5);
@@ -265,8 +275,6 @@ pub struct FleetView {
     pub injected: Arc<Mutex<Vec<Session>>>,
     /// Bumped by every registry write from this window; a poll that read the registry before one is not applied.
     registry_writes: Arc<AtomicU64>,
-    pub poll_hold: Arc<PollHold>,
-    pub transcripts_hold: Arc<PollHold>,
     pub left_width: Pixels,
     pub term_font_size: Pixels,
     pub term_font_family: SharedString,
@@ -286,6 +294,7 @@ pub struct FleetView {
     pub answered:BTreeMap<String, BTreeMap<String, String>>,
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
+    sends: Serial,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -320,24 +329,16 @@ pub struct FleetView {
     reveal_pending: Option<(left::PendingReveal, Instant)>,
     left_rows: Rc<(Rc<Tree>, Vec<left::LeftRow>)>,
     closed_repos: StdHashMap<PathBuf, Option<PathBuf>>,
-    pub transcript_scans: u64,
     pub transcripts_nudge: Nudge,
     pub poll_nudge: Nudge,
     pub refresh_asks: u64,
     refreshes_answered: u64,
     /// The first poll's snapshot (or its failure) is applied.
     pub sessions_read: bool,
-    pub transcripts_read: bool,
-    /// `(read, of)` of the files the running transcript scan reads.
-    pub transcripts_progress: Option<(usize, usize)>,
+    pub transcripts: TranscriptsLoad,
     transcripts_answered: u64,
     /// Every source of the tree has completed once (`loading`); until then the action bar says what is loading.
     pub loaded: bool,
-    /// `transcript_scans` when `loaded` was set.
-    pub loaded_at_scan: u64,
-    /// Whether the saved transcript cache held files; `None` until it is read.
-    transcripts_cache: Option<bool>,
-    transcripts_restart: bool,
     pub stars: Stars,
     pub closed_expanded: HashSet<String>,
     pub claude_command: String,
@@ -345,7 +346,9 @@ pub struct FleetView {
     search_marks: StdHashMap<String, crate::search::Marks>,
     tabs_resolving: bool,
     tabs_again: bool,
-    pub tab_resolves: u64,
+    blink_nudge: Nudge,
+    /// The cursor-blink loop sleeps until `blink_nudge`: no terminal tab is active.
+    blink_parked: bool,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
@@ -389,9 +392,19 @@ enum DesiredWrite {
     Stop { home: PathBuf, name: String },
 }
 
-fn load_registry(registry: Result<Registry, String>) -> Result<(Vec<Workspace>, Vec<String>), String> {
+type RegistryRead = Result<(Vec<Workspace>, Vec<String>), String>;
+
+fn load_registry(registry: Result<Registry, String>) -> RegistryRead {
     let (workspaces, failed) = registry?.load_all().map_err(|e| e.to_string())?;
     Ok((workspaces, failed.iter().map(ToString::to_string).collect()))
+}
+
+/// A poll's registry read, or `None` when a registry write from this window came after it.
+fn fresh_registry(read: RegistryRead, read_at: u64, writes: u64) -> Option<RegistryRead> {
+    match read {
+        Ok(_) if read_at != writes => None,
+        read => Some(read),
+    }
 }
 
 pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: Option<i64>, now: i64) -> bool {
@@ -401,31 +414,9 @@ pub fn offers_resume(s: &Session, health: &supraman_claude::Health, last_alive: 
         && (s.kind != supraman_claude::Kind::Background || last_alive.is_none_or(|t| now - t > RESUME_GRACE_MS))
 }
 
-#[derive(Default)]
-pub struct PollHold {
-    pub armed: AtomicBool,
-    pub holding: AtomicBool,
-}
-
-impl PollHold {
-    const MAX: Duration = Duration::from_secs(10);
-
-    fn wait(&self) {
-        if !self.armed.swap(false, Ordering::SeqCst) {
-            return;
-        }
-        self.holding.store(true, Ordering::SeqCst);
-        let deadline = Instant::now() + Self::MAX;
-        while self.holding.load(Ordering::SeqCst) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        self.holding.store(false, Ordering::SeqCst);
-    }
-}
-
 struct Refresh {
     registry_writes: u64,
-    workspaces: Result<(Vec<Workspace>, Vec<String>), String>,
+    workspaces: RegistryRead,
     sessions: Option<Result<Vec<Session>, String>>,
     main_repos: StdHashMap<PathBuf, Option<PathBuf>>,
     polled_at: i64,
@@ -445,7 +436,6 @@ struct Poller {
     retries: Arc<Mutex<Vec<(String, String)>>>,
     injected: Arc<Mutex<Vec<Session>>>,
     registry_writes: Arc<AtomicU64>,
-    hold: Arc<PollHold>,
     snapshot: Option<(u64, Vec<Workspace>, Vec<Session>)>,
     first: bool,
     store: Option<Arc<dyn supraman_core::secret::SecretStore>>,
@@ -474,7 +464,6 @@ impl Poller {
         let registry_writes = self.registry_writes.load(Ordering::SeqCst);
         let workspaces = load_registry(Registry::from_env().map_err(|e| e.to_string()));
         let registry_took = started.elapsed();
-        self.hold.wait();
         let polled_at = now_ms();
         let listing = Instant::now();
         let sessions = with_sessions.then(|| {
@@ -582,7 +571,6 @@ impl FleetView {
         let retries: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let injected: Arc<Mutex<Vec<Session>>> = Arc::default();
         let registry_writes: Arc<AtomicU64> = Arc::default();
-        let poll_hold: Arc<PollHold> = Arc::default();
         let (poll_nudge, mut woken) = nudge::nudge();
         let mut poller = Poller {
             home: home.clone(),
@@ -591,7 +579,6 @@ impl FleetView {
             retries: retries.clone(),
             injected: injected.clone(),
             registry_writes: registry_writes.clone(),
-            hold: poll_hold.clone(),
             snapshot: None,
             first: true,
             store: None,
@@ -654,6 +641,7 @@ impl FleetView {
                 if this
                     .update(cx, |this, cx| {
                         this.apply(refresh);
+                        this.refresh_details(cx);
                         if this.other_scans == 0 {
                             this.scan_other_schedules(cx);
                         }
@@ -703,7 +691,8 @@ impl FleetView {
             }
         })
         .detach();
-        Self::blink_cursor(cx);
+        let (blink_nudge, blink_woken) = nudge::nudge();
+        Self::blink_cursor(blink_woken, cx);
         let (workstate_recheck, recheck) = nudge::nudge();
         Self::watch_workstate(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
@@ -722,9 +711,8 @@ impl FleetView {
             None => Arc::new(supraman_core::secret::MemoryStore::default()),
         };
         let (transcripts_nudge, transcripts_nudged) = nudge::nudge();
-        let claude_dir = std::env::var_os(CLAUDE_DIR_VAR).filter(|d| !d.is_empty()).map(PathBuf::from).or_else(supraman_claude::claude_dir);
-        let transcripts_hold: Arc<PollHold> = Arc::default();
-        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_hold.clone(), transcripts_nudged, cx);
+        let claude_dir = claude_dir_or(CLAUDE_DIR_OVERRIDE.get().map(PathBuf::as_path));
+        Self::watch_transcripts(claude_dir.clone(), home.as_deref().map(|h| h.join(TRANSCRIPTS_CACHE)), transcripts_nudged, cx);
         let desired_writes = Self::desired_writer(cx);
         let updates = crate::updates::Updates::start(home.clone(), cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
@@ -770,8 +758,6 @@ impl FleetView {
             retries,
             injected,
             registry_writes,
-            poll_hold,
-            transcripts_hold,
             left_width,
             term_font_size,
             term_font_family,
@@ -791,6 +777,7 @@ impl FleetView {
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
+            sends: Serial::default(),
             work_live: Rc::default(),
             work_inbox,
             menu: None,
@@ -826,19 +813,14 @@ impl FleetView {
             reveal_pending: None,
             left_rows: Rc::new((Rc::new(Tree { workspaces: Vec::new(), hidden_stopped: 0 }), Vec::new())),
             closed_repos: StdHashMap::new(),
-            transcript_scans: 0,
             transcripts_nudge,
             poll_nudge,
             refresh_asks: 0,
             refreshes_answered: 0,
             sessions_read: false,
-            transcripts_read: claude_dir.is_none(),
-            transcripts_progress: None,
+            transcripts: TranscriptsLoad::new(claude_dir.is_some()),
             transcripts_answered: 0,
             loaded: false,
-            loaded_at_scan: 0,
-            transcripts_cache: None,
-            transcripts_restart: false,
             action_error: stars_notice.or(dismissed_notice).or(runs_notice).or(waiting_notice),
             stars,
             closed_expanded: HashSet::new(),
@@ -847,7 +829,8 @@ impl FleetView {
             search_marks: StdHashMap::new(),
             tabs_resolving: false,
             tabs_again: false,
-            tab_resolves: 0,
+            blink_nudge,
+            blink_parked: false,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
             updates,
@@ -876,7 +859,7 @@ impl FleetView {
         }
     }
 
-    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, hold: Arc<PollHold>, mut nudged: Nudged, cx: &mut Context<Self>) {
+    fn watch_transcripts(claude_dir: Option<PathBuf>, cache: Option<PathBuf>, mut nudged: Nudged, cx: &mut Context<Self>) {
         let Some(claude_dir) = claude_dir else {
             return;
         };
@@ -884,7 +867,7 @@ impl FleetView {
             let executor = cx.background_executor().clone();
             let mut scanner: Option<Transcripts> = None;
             let mut repos: StdHashMap<PathBuf, Option<PathBuf>> = StdHashMap::new();
-            let (mut from_cache, mut wait) = (false, true);
+            let mut from_cache = false;
             loop {
                 if scanner.is_none() {
                     let (claude_dir, cache) = (claude_dir.clone(), cache.clone());
@@ -897,25 +880,21 @@ impl FleetView {
                             }
                         })
                         .await;
-                    from_cache = opened.has_cache();
+                    let has_cache = opened.has_cache();
                     scanner = Some(opened);
-                    if this
-                        .update(cx, |this, cx| {
-                            this.transcripts_cache = Some(from_cache);
-                            this.check_loaded(cx);
-                            cx.notify();
-                        })
-                        .is_err()
-                    {
+                    let Ok(cached_first) = this.update(cx, |this, cx| {
+                        let cached_first = this.transcripts.opened(has_cache);
+                        this.check_loaded(cx);
+                        cx.notify();
+                        cached_first
+                    }) else {
                         return;
-                    }
+                    };
+                    from_cache = cached_first;
                 }
                 // the first scan waits for the first poll's apply, which wakes it with the workspaces and sessions
-                if std::mem::replace(&mut wait, true) {
-                    nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
-                }
+                nudged.wait(&executor, TRANSCRIPTS_EVERY).await;
                 let Ok(asked) = this.update(cx, |this, _| {
-                    let restart = std::mem::take(&mut this.transcripts_restart);
                     this.sessions_read.then(|| {
                         let roots: Vec<PathBuf> = this
                             .workspaces
@@ -924,17 +903,12 @@ impl FleetView {
                             .collect();
                         let keep: std::collections::HashSet<String> = this.stars.ids().iter().cloned().collect();
                         let live: std::collections::HashSet<String> = this.sessions.iter().map(|s| s.session_id.clone()).collect();
-                        (roots, keep, live, this.refresh_asks, restart)
+                        (roots, keep, live, this.refresh_asks)
                     })
                 }) else {
                     return;
                 };
-                let Some((roots, keep, live, asks, restart)) = asked else { continue };
-                if restart {
-                    (scanner, wait) = (None, false);
-                    repos.clear();
-                    continue;
-                }
+                let Some((roots, keep, live, asks)) = asked else { continue };
                 let since = now_ms() - fleet::CLOSED_WINDOW_MS;
                 let scanning = Instant::now();
                 if std::mem::take(&mut from_cache)
@@ -964,7 +938,7 @@ impl FleetView {
                             this.closed.extend(this.injected_closed.iter().cloned());
                             this.drop_deleted();
                             this.invalidate_tree();
-                            this.transcripts_read = true;
+                            this.transcripts.listed_cached();
                             this.check_loaded(cx);
                             cx.notify();
                         })
@@ -979,7 +953,7 @@ impl FleetView {
                     while let Some(at) = progressed.next().await {
                         if shown
                             .update(cx, |this, cx| {
-                                this.transcripts_progress = Some(at);
+                                this.transcripts.reading(at);
                                 cx.notify();
                             })
                             .is_err()
@@ -989,10 +963,8 @@ impl FleetView {
                     }
                 });
                 let Some(mut s) = scanner.take() else { continue };
-                let hold = hold.clone();
                 let (back, known, closed, read) = executor
                     .spawn(async move {
-                        hold.wait();
                         let read = AtomicUsize::new(0);
                         let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
                             read.store(of, Ordering::Relaxed);
@@ -1017,17 +989,14 @@ impl FleetView {
                     .update(cx, |this, cx| {
                         this.main_repos.extend(known.clone());
                         this.closed_repos = known;
-                        if this.transcript_scans == 0 {
+                        if this.transcripts.scanned() {
                             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
                         }
-                        this.transcripts_read = true;
                         this.closed = closed;
                         this.closed.extend(this.injected_closed.iter().cloned());
                         this.drop_deleted();
                         this.invalidate_tree();
-                        this.transcripts_progress = None;
                         this.transcripts_answered = asks;
-                        this.transcript_scans += 1;
                         this.check_loaded(cx);
                         cx.notify();
                     })
@@ -1056,12 +1025,7 @@ impl FleetView {
         } else if self.refreshes == 0 {
             pending.push("supervisor".to_string());
         }
-        if !self.transcripts_read && self.transcripts_cache != Some(true) {
-            pending.push(match self.transcripts_progress {
-                Some((read, of)) => format!("transcripts {read}/{of}"),
-                None => "transcripts".to_string(),
-            });
-        }
+        pending.extend(self.transcripts.pending());
         let inbox = self.work_inbox.read(cx);
         if matches!(self.workstate, WsStatus::Checking) {
             pending.push("Workman".to_string());
@@ -1074,21 +1038,8 @@ impl FleetView {
     fn check_loaded(&mut self, cx: &gpui::App) {
         if !self.loaded && self.loading(cx).is_empty() {
             self.loaded = true;
-            self.loaded_at_scan = self.transcript_scans;
             timeline("every source done", Duration::ZERO);
         }
-    }
-
-    /// The transcripts as a start reads them, from the saved cache when `warm`; for the selftests.
-    pub fn restart_transcripts(&mut self, warm: bool, cx: &mut Context<Self>) {
-        self.transcripts_restart = true;
-        self.transcripts_read = false;
-        self.closed.clear();
-        self.invalidate_tree();
-        self.transcripts_cache = Some(warm);
-        self.loaded = false;
-        self.transcripts_nudge.wake();
-        cx.notify();
     }
 
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
@@ -1364,9 +1315,9 @@ impl FleetView {
     fn apply(&mut self, refresh: Refresh) {
         let _stall = supraman_ui::stall::section("poll: apply");
         let before = (self.workspaces.clone(), self.sessions.clone(), self.main_repos.clone(), self.hooks.clone(), self.desired.clone(), self.polled_at);
-        match refresh.workspaces {
-            Ok(_) if refresh.registry_writes != self.registry_writes.load(Ordering::SeqCst) => {}
-            Ok((workspaces, skipped)) => {
+        match fresh_registry(refresh.workspaces, refresh.registry_writes, self.registry_writes.load(Ordering::SeqCst)) {
+            None => {}
+            Some(Ok((workspaces, skipped))) => {
                 if self.workspaces != workspaces {
                     self.transcripts_nudge.wake();
                 }
@@ -1374,7 +1325,7 @@ impl FleetView {
                 self.registry_skipped = skipped;
                 self.registry_error = None;
             }
-            Err(error) => self.registry_error = Some(error),
+            Some(Err(error)) => self.registry_error = Some(error),
         }
         match refresh.sessions {
             Some(Ok(sessions)) => {
@@ -1431,7 +1382,6 @@ impl FleetView {
         if prompted || self.workspaces != *workspaces || self.sessions != *sessions || self.main_repos != *main_repos || self.hooks != *hooks || self.desired != *desired {
             self.invalidate_tree();
         }
-        self.refresh_details();
         self.last_refresh_took = Some(refresh.took);
     }
 
@@ -1614,46 +1564,88 @@ impl FleetView {
     }
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
+        let _stall = supraman_ui::stall::section(SEND_SECTION);
         let Some(c) = &self.compose else {
             return;
         };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
-        let result = if text.is_empty() { Err("Nothing to send.".to_string()) } else { self.answer(&workspace, &reply_to, &text) };
-        match (result, &mut self.compose) {
-            (Ok(_), _) => self.compose = None,
-            (Err(e), Some(c)) => c.error = Some(e),
-            (Err(_), None) => {}
+        if c.sending {
+            return;
         }
-        cx.notify();
+        if text.is_empty() {
+            if let Some(c) = &mut self.compose {
+                c.error = Some("Nothing to send.".into());
+            }
+            cx.notify();
+            return;
+        }
+        if let Some(c) = &mut self.compose {
+            c.sending = true;
+        }
+        let sending = (workspace.clone(), reply_to.clone());
+        self.answer(&workspace, &reply_to, &text, cx, move |this, result| {
+            let still = this.compose.as_ref().is_some_and(|c| (c.workspace.clone(), c.reply_to.clone()) == sending);
+            match result {
+                Ok(_) if still => this.compose = None,
+                Err(e) if still => this.compose.as_mut().into_iter().for_each(|c| {
+                    c.sending = false;
+                    c.error = Some(e.clone());
+                }),
+                _ => {}
+            }
+        });
     }
 
-    fn send_to_workspace(&self, workspace: &str, text: &str) -> Result<Sent, String> {
-        let home = self.home.as_deref().ok_or("Not sent: no Supraman home.")?;
-        let to = workspace_session_name(workspace);
-        let mode = DesiredState::launch_mode(home, workspace, &to);
-        send_from_human(home, workspace, &to, mode.as_deref(), text, self.relay_refusal(workspace))
-            .map_err(|e| format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay))
-    }
-
-    pub fn answer(&mut self, workspace: &str, file: &str, text: &str) -> Result<Sent, String> {
-        let sent = self.send_to_workspace(workspace, text)?;
-        self.answered_route.insert(format!("{workspace}/{file}"), sent.label());
-        let line = compose::first_line(text);
-        self.answered.entry(workspace.to_string()).or_default().insert(file.to_string(), line.clone());
-        if let Some(home) = &self.home
-            && let Err(e) = mark_answered(home, workspace, file, &line)
-        {
-            self.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
-        }
-        Ok(sent)
+    /// Sends `text` to `workspace`'s session as the human's answer to the outbox `file`, off the UI thread (a
+    /// stalled pipe holds a direct write for up to `DELIVER_TIMEOUT`); `done` gets the outcome on it.
+    pub fn answer(&mut self, workspace: &str, file: &str, text: &str, cx: &mut Context<Self>, done: impl FnOnce(&mut Self, Result<Sent, String>) + 'static) {
+        let Some(home) = self.home.clone() else {
+            done(self, Err("Not sent: no Supraman home.".into()));
+            cx.notify();
+            return;
+        };
+        let (workspace, file, text) = (workspace.to_string(), file.to_string(), text.to_string());
+        let no_relay = self.relay_refusal(&workspace);
+        let line = compose::first_line(&text);
+        let previous = self.sends.previous();
+        let task = cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
+            }
+            let (w, f, l) = (workspace.clone(), file.clone(), line.clone());
+            let (sent, saved) = cx
+                .background_executor()
+                .spawn(async move {
+                    let to = workspace_session_name(&w);
+                    let mode = DesiredState::launch_mode(&home, &w, &to);
+                    let sent = send_from_human(&home, &w, &to, mode.as_deref(), &text, no_relay).map_err(|e| not_sent(&to, &e));
+                    let saved = sent.as_ref().ok().map(|_| mark_answered(&home, &w, &f, &l));
+                    (sent, saved)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Ok(sent) = &sent {
+                    this.answered_route.insert(format!("{workspace}/{file}"), sent.label());
+                    this.answered.entry(workspace.clone()).or_default().insert(file.clone(), line);
+                }
+                if let Some(Err(e)) = saved {
+                    this.action_error = Some(format!("Answered {file}, but cannot save that: {e}"));
+                }
+                done(this, sent);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.sends.push(task);
     }
 
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
-        match self.answer(workspace, file, "approve") {
-            Ok(_) => self.action_error = None,
-            Err(e) => self.action_error = Some(format!("Approve {workspace}: {e}")),
-        }
-        cx.notify();
+        let _stall = supraman_ui::stall::section(APPROVE_SECTION);
+        let w = workspace.to_string();
+        self.answer(workspace, file, "approve", cx, move |this, result| match result {
+            Ok(_) => this.action_error = None,
+            Err(e) => this.action_error = Some(format!("Approve {w}: {e}")),
+        });
     }
 
     pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
@@ -1683,15 +1675,28 @@ impl FleetView {
 
     /// After a failed Adopt: `name` drops the conversation it forks from and launches as a new session.
     pub fn start_fresh(&mut self, workspace: &str, name: &str, cx: &mut Context<Self>) {
-        let result = match &self.home {
-            Some(home) => DesiredState::update(home, workspace, |d| d.start_fresh(name)).map(drop).map_err(|e| e.to_string()),
-            None => Err("no Supraman home".into()),
+        let Some(home) = self.home.clone() else {
+            self.action_error = Some(format!("Cannot start {name} fresh: no Supraman home"));
+            cx.notify();
+            return;
         };
-        match result {
-            Ok(()) => self.retry(workspace, name, cx),
-            Err(e) => self.action_error = Some(format!("Cannot start {name} fresh: {e}")),
-        }
-        cx.notify();
+        let (workspace, name) = (workspace.to_string(), name.to_string());
+        let task = {
+            let (workspace, name) = (workspace.clone(), name.clone());
+            cx.background_executor().spawn(async move { DesiredState::update(&home, &workspace, |d| d.start_fresh(&name)).map(drop).map_err(|e| e.to_string()) })
+        };
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.retry(&workspace, &name, cx),
+                    Err(e) => this.action_error = Some(format!("Cannot start {name} fresh: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn attach_by_id(&mut self, workspace: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<u64> {
@@ -1969,27 +1974,42 @@ impl FleetView {
         pwsh(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
-    fn blink_cursor(cx: &mut Context<Self>) {
+    fn blink_cursor(mut woken: Nudged, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
             loop {
                 let wait = this.update(cx, |this, cx| {
                     let now = Instant::now();
-                    let terminal = this.active.and_then(|id| this.tab(id)).and_then(|t| t.terminal.clone());
-                    let next = terminal.and_then(|t| t.read(cx).cursor_blink(now).1);
-                    if next.is_some() {
+                    let terminal = this.active_terminal();
+                    let next = terminal.map(|t| t.read(cx).cursor_blink(now).1);
+                    if next.is_some_and(|n| n.is_some()) {
                         cx.notify();
                     }
-                    next
+                    let wait = blink_wait(next);
+                    this.blink_parked = wait.is_none();
+                    wait
                 });
-                let Ok(wait) = wait else {
-                    return;
-                };
-                // a cursor move restarts the blink
-                let wait = wait.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL);
-                cx.background_executor().timer(wait + Duration::from_millis(5)).await;
+                match wait {
+                    Err(_) => return,
+                    Ok(Some(wait)) => executor.timer(wait).await,
+                    Ok(None) => {
+                        woken.wait(&executor, BLINK_PARKED_MAX).await;
+                    }
+                }
             }
         })
         .detach();
+    }
+
+    fn active_terminal(&self) -> Option<Entity<Terminal>> {
+        self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
+    }
+
+    fn wake_blink(&mut self) {
+        if self.blink_parked && self.active_terminal().is_some() {
+            self.blink_parked = false;
+            self.blink_nudge.wake();
+        }
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -2027,7 +2047,6 @@ impl FleetView {
             let found = found.await;
             this.update(cx, |this, cx| {
                 this.tabs_resolving = false;
-                this.tab_resolves += 1;
                 let mut changed = false;
                 let mut unlisted = false;
                 for tab in &mut this.tabs {
@@ -2802,6 +2821,7 @@ impl Render for FleetView {
         }
         crate::selftest::injected_frame_sleep();
         self.persist_tabs(cx);
+        self.wake_blink();
         self.hits.borrow_mut().clear();
         let colors = cx.theme().colors().clone();
         div()
@@ -2930,11 +2950,106 @@ pub mod tree_check {
     }
 }
 
+const BLINK_PARKED_MAX: Duration = Duration::from_secs(60);
+
+/// The blink loop's sleep: to the next blink (a cursor move restarts it), or parked (`None`) with no terminal active.
+fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
+    next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
+}
+
+/// The human's sends, each started only after the one before it has finished, so they arrive in the order sent.
+#[derive(Default)]
+struct Serial(Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>>);
+
+impl Serial {
+    fn previous(&self) -> Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>> {
+        self.0.clone()
+    }
+
+    fn push(&mut self, next: impl std::future::Future<Output = ()> + 'static) {
+        self.0 = Some(next.boxed_local().shared());
+    }
+}
+
+pub const SEND_SECTION: &str = "compose send";
+pub const APPROVE_SECTION: &str = "approve";
+
+/// What the human reads when a send did not go through.
+fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {
+    if e.may_arrive {
+        format!("Not confirmed: the direct write to {to} timed out ({}) and may still arrive; it was not sent again through the relay.", e.direct)
+    } else {
+        format!("Not sent: direct delivery failed ({}), and the relay cannot take it: {}.", e.direct, e.relay)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use supraman_term::PathLikeTarget;
 
     use super::*;
+
+    #[test]
+    fn the_blink_loop_parks_without_an_active_terminal_and_never_sleeps_past_a_blink() {
+        assert_eq!(blink_wait(None), None);
+        let gap = Duration::from_millis(5);
+        assert_eq!(blink_wait(Some(None)), Some(CURSOR_BLINK_INTERVAL + gap), "a steady cursor may start blinking");
+        assert_eq!(blink_wait(Some(Some(Duration::from_millis(10)))), Some(Duration::from_millis(10) + gap));
+        assert_eq!(blink_wait(Some(Some(CURSOR_BLINK_INTERVAL * 3))), Some(CURSOR_BLINK_INTERVAL + gap));
+    }
+
+    #[test]
+    fn the_claude_dir_is_the_selftests_or_claudes_own_never_a_stray_env_var() {
+        unsafe { std::env::set_var("FOREMAN_CLAUDE_DIR", r"C:\elsewhere") };
+        assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
+        let fake = Path::new(r"C:\scratch\fake-claude");
+        assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
+    }
+
+    #[test]
+    fn a_send_starts_only_after_the_one_queued_before_it_has_finished() {
+        use futures::task::LocalSpawnExt as _;
+        let mut pool = futures::executor::LocalPool::new();
+        let spawner = pool.spawner();
+        let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut sends = Serial::default();
+        for (n, yields) in [(1, 50), (2, 0)] {
+            let (previous, order) = (sends.previous(), order.clone());
+            let handle = spawner
+                .spawn_local_with_handle(async move {
+                    if let Some(previous) = previous {
+                        previous.await;
+                    }
+                    for _ in 0..yields {
+                        let mut yielded = false;
+                        futures::future::poll_fn(|cx| {
+                            if std::mem::replace(&mut yielded, true) {
+                                return std::task::Poll::Ready(());
+                            }
+                            cx.waker().wake_by_ref();
+                            std::task::Poll::Pending
+                        })
+                        .await;
+                    }
+                    order.borrow_mut().push(n);
+                })
+                .unwrap();
+            sends.push(handle);
+        }
+        pool.run_until(sends.previous().unwrap());
+        assert_eq!(*order.borrow(), [1, 2]);
+    }
+
+    #[test]
+    fn a_timed_out_send_says_it_may_still_arrive_and_a_failed_one_says_not_sent() {
+        let late = supraman_claude::SendError { direct: "the pipe write timed out".into(), relay: "not tried".into(), may_arrive: true };
+        assert_eq!(
+            not_sent("fm-demo-workspace", &late),
+            "Not confirmed: the direct write to fm-demo-workspace timed out (the pipe write timed out) and may still arrive; it was not sent again through the relay."
+        );
+        let failed = supraman_claude::SendError { direct: "no pipe".into(), relay: "demo is stopped".into(), may_arrive: false };
+        assert_eq!(not_sent("fm-demo-workspace", &failed), "Not sent: direct delivery failed (no pipe), and the relay cannot take it: demo is stopped.");
+    }
 
     #[test]
     fn an_open_event_opens_web_mail_and_file_links_and_resolves_relative_paths() {
@@ -3066,7 +3181,6 @@ mod tests {
             retries: Arc::default(),
             injected: Arc::default(),
             registry_writes: writes,
-            hold: Arc::default(),
             snapshot: None,
             first: false,
             store: None,
@@ -3089,6 +3203,23 @@ mod tests {
 
         poller.snapshot = Some((1, Vec::new(), Vec::new()));
         assert!(poller.tick().is_some(), "the next read's snapshot ticks");
+    }
+
+    #[test]
+    fn a_poll_that_read_the_registry_before_a_save_keeps_the_saved_list() {
+        let writes = AtomicU64::new(0);
+        let read_at = writes.load(Ordering::SeqCst);
+        let before_save: RegistryRead = Ok((Vec::new(), vec!["read before Save".into()]));
+        writes.fetch_add(1, Ordering::SeqCst);
+        assert!(fresh_registry(before_save, read_at, writes.load(Ordering::SeqCst)).is_none(), "the list Save showed stays");
+
+        let read_at = writes.load(Ordering::SeqCst);
+        let after_save: RegistryRead = Ok((Vec::new(), vec!["read after Save".into()]));
+        let applied = fresh_registry(after_save, read_at, writes.load(Ordering::SeqCst)).and_then(Result::ok).map(|(_, skipped)| skipped);
+        assert_eq!(applied, Some(vec!["read after Save".to_string()]), "the next poll applies");
+
+        let failed = fresh_registry(Err("unreadable".into()), 0, 1);
+        assert!(matches!(failed, Some(Err(e)) if e == "unreadable"), "a failed read is shown even across a Save");
     }
 }
 

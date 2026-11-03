@@ -63,10 +63,11 @@ impl Workspace {
 }
 
 impl Registry {
-    /// Applies `edit` to workspace `name` and saves it; nothing is written when it is refused.
+    /// Applies `edit` to workspace `name` and saves it; nothing is written when it is refused. The lock is the
+    /// registry's, not the workspace's: an enable reads every other workspace's folders.
     pub fn edit(&self, name: &str, edit: Edit) -> Result<Edited> {
         let path = self.path_of(name)?;
-        let lock = path.with_extension("toml.lock");
+        let lock = path.with_file_name("registry.lock");
         let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
         let mut w = self.load(name)?;
         let mut out = Edited { workspace: w.clone(), added: Vec::new(), removed: Vec::new(), claimed: Vec::new() };
@@ -202,6 +203,35 @@ mod tests {
         assert!(matches!(&refused, Err(CoreError::SupervisedElsewhere { owner, .. }) if owner == "a"), "{refused:?}");
         assert!(refused.unwrap_err().is_user_error());
         assert!(!reg.load("v").unwrap().folders[0].enabled, "nothing written");
+    }
+
+    #[test]
+    fn two_workspaces_enabling_one_folder_at_once_leave_it_supervised_by_one() {
+        let (tmp, reg) = setup();
+        let shared = tmp.path().join("Skills");
+        repo_dir(&shared);
+        for w in ["a", "b"] {
+            let mut ws = Workspace::new(w, tmp.path(), vec![Folder::new("Skills", &shared)]);
+            ws.folders[0].enabled = false;
+            reg.save(&ws, false).unwrap();
+        }
+        for _ in 0..20 {
+            for w in ["a", "b"] {
+                reg.edit(w, Edit::SetEnabled { folder: "Skills".into(), enabled: false }).unwrap();
+            }
+            let results: Vec<Result<Edited>> = std::thread::scope(|scope| {
+                let enable = |w: &'static str| {
+                    let reg = &reg;
+                    scope.spawn(move || reg.edit(w, Edit::SetEnabled { folder: "Skills".into(), enabled: true }))
+                };
+                let (a, b) = (enable("a"), enable("b"));
+                vec![a.join().unwrap(), b.join().unwrap()]
+            });
+            assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+            assert!(results.iter().any(|r| matches!(r, Err(CoreError::SupervisedElsewhere { .. }))), "{results:?}");
+            let enabled = ["a", "b"].iter().filter(|w| reg.load(w).unwrap().folders[0].enabled).count();
+            assert_eq!(enabled, 1, "one supervisor for the folder");
+        }
     }
 
     #[test]

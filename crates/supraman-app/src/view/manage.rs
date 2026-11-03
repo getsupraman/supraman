@@ -421,7 +421,7 @@ impl FleetView {
             MenuAction::NewClaude { cwd, title } => {
                 self.new_claude(cwd, title, window, cx);
             }
-            MenuAction::SetRepoEnabled { workspace, repo, enabled } => self.set_repo_enabled(&workspace, &repo, enabled),
+            MenuAction::SetRepoEnabled { workspace, repo, enabled } => self.request_edit(&workspace, supraman_core::Edit::SetEnabled { folder: repo, enabled }, cx),
             MenuAction::Attach { workspace, repo, session } => {
                 self.attach(&workspace, &repo, &session, window, cx);
             }
@@ -580,17 +580,6 @@ impl FleetView {
             .ok();
         })
         .detach();
-    }
-
-    fn set_repo_enabled(&mut self, workspace: &str, repo: &str, enabled: bool) {
-        let result = registry(self.home.as_deref()).and_then(|r| {
-            r.update(workspace, |w| w.folders.iter_mut().filter(|r| r.name == repo).for_each(|r| r.enabled = enabled))
-                .map_err(|e| e.to_string())
-        });
-        match result {
-            Ok(_) => self.reload_workspaces(),
-            Err(e) => self.action_error = Some(format!("Cannot change {workspace} / {repo}: {e}")),
-        }
     }
 
     fn open_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {

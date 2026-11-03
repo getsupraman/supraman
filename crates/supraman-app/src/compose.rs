@@ -8,12 +8,13 @@ pub struct Compose {
     pub reply_to: String,
     pub input: Entity<TextInput>,
     pub error: Option<String>,
+    pub sending: bool,
     _events: Subscription,
 }
 
 impl Compose {
     pub fn new(workspace: &str, reply_to: String, input: Entity<TextInput>, events: Subscription) -> Self {
-        Self { workspace: workspace.to_string(), reply_to, input, error: None, _events: events }
+        Self { workspace: workspace.to_string(), reply_to, input, error: None, sending: false, _events: events }
     }
 
     pub fn text(&self, cx: &App) -> String {
