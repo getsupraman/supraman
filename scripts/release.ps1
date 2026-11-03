@@ -5,7 +5,7 @@
     cargo build --release --workspace, then assembles
 
         <OutDir>\supraman.exe
-        <OutDir>\supraman.pdb                (names the frames of a panic's backtrace in foreman.log)
+        <OutDir>\supraman.pdb                (names the frames of a panic's backtrace in supraman.log)
         <OutDir>\sm.exe, smw.exe
         <OutDir>\fm.exe, fmw.exe               (copies of sm.exe and smw.exe for one release, docs/RELEASE.md)
         <OutDir>\plugins\supraman\**          (hooks, roles, skills)

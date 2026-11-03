@@ -37,7 +37,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_core::fs::heavy_job_lock`: the machine-wide lock of one heavy job; every selftest mode holds it for its run, and `scripts/heavy-lock.ps1` runs a cargo build or test under the same file, so builds and selftests never overlap.
 - `supraman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `supraman_core::store::{JsonStore, Save}` and `supraman_ui::store::save_off_thread`: a small JSON state file held in memory (stars, the dismissed messages, runs and approvals, the Workman inbox's dismissals): `load` over `load_json_or_notice`, `edit` returns the `Save` of a change, written with `write_atomic` off the UI thread, the newest value last; never a store of your own.
-- `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
+- `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `supraman.log`).
 - `supraman_core::prune::prune`: the one retention rule for event logs and relay files left in the home; never a cleanup of your own.
 - `supraman_core::Settings::update`: every change to `settings.toml` (load, edit, save under `<home>/settings.lock`); `Settings::load_with_notices` when a bad key should be shown.
 - `supraman_core::Settings` sections (`sessions`, `workman`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.

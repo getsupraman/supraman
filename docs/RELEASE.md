@@ -59,7 +59,7 @@ sha256 against the manifest.
 ```
 Supraman\
   supraman.exe
-  supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in foreman.log
+  supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in supraman.log
   sm.exe                       the CLI controllers and users run
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
   fm.exe, fmw.exe              copies of sm.exe and smw.exe (see "The fm name" below)
