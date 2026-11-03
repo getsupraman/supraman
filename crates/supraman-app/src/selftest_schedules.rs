@@ -106,7 +106,7 @@ fn other_task(folder: &str, name: &str, exec: &str, now: i64) -> TaskState {
     }
 }
 
-/// sched2/7: Task Scheduler's tasks that run claude outside Supraman, under the workspace holding their working
+/// Task Scheduler's tasks that run claude outside Supraman, under the workspace holding their working
 /// directory or at the top, read only: a menu of Open in Task Scheduler and Copy action, and no write.
 async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const FOLDER: &str = r"\SelftestOther";

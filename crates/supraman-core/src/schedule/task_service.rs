@@ -14,7 +14,7 @@ use crate::{CoreError, Result};
 const NOT_FOUND: [HRESULT; 2] = [HRESULT(0x8007_0002_u32 as i32), HRESULT(0x8007_0003_u32 as i32)];
 
 /// Task Scheduler through COM `ITaskService`. Each call runs on a thread of its own in the MTA, never
-/// the caller's: an STA call pumps the UI thread's messages (m5/68).
+/// the caller's: an STA call pumps the UI thread's messages.
 #[derive(Debug, Default)]
 pub struct WindowsRegistrar;
 

@@ -322,7 +322,7 @@ fn field_words(field: &str) -> String {
     .to_string()
 }
 
-/// A covered value as the page shows it: `worktree-edit` is `edit` (sched2/F-03).
+/// A covered value as the page shows it: `worktree-edit` is `edit`.
 fn value_words(field: &str, value: &str) -> String {
     if field == "permissions.profile" && value == "worktree-edit" {
         return "edit".into();

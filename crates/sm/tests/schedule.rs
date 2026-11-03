@@ -153,7 +153,7 @@ fn a_missing_slash_command_names_the_folder() {
     assert!(err.contains("no slash command /fix in folder") && err.contains(s(&f.alpha)), "{err}");
 }
 
-/// sched2/4: Git Bash's `/fix` → `<Git root>/fix` is refused with the fix, on add and on edit.
+/// Git Bash's `/fix` → `<Git root>/fix` is refused with the fix, on add and on edit.
 #[test]
 fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() {
     let f = fixture();

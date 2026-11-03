@@ -142,7 +142,7 @@ impl Session {
 
     /// [`Self::health`] for what needs the human: a Supraman session (`fm-…`) on a live pid that is
     /// `Blocked` with no `waitingFor` ended a turn that read as a question and waits on a peer's
-    /// message, so it is `Idle` (m3/8). A `waitingFor` (a permission prompt) keeps it `Blocked`.
+    /// message, so it is `Idle`. A `waitingFor` (a permission prompt) keeps it `Blocked`.
     pub fn supervised_health(&self, now_ms: i64) -> Health {
         match self.health(now_ms) {
             Health::Blocked { waiting_for: None } if self.pid.is_some() && self.name.starts_with(supraman_core::FM_PREFIX) => Health::Idle,
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(done.health(NOW), Health::Stopped);
     }
 
-    /// m1/7: a `--bg` session whose turn ended is `state=done, status=idle` on a live pid.
+    /// A `--bg` session whose turn ended is `state=done, status=idle` on a live pid.
     #[test]
     fn done_with_pid_is_idle() {
         let json = format!(

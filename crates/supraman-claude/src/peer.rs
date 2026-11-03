@@ -21,7 +21,7 @@ pub const PEER_PROTOCOL: i64 = 1;
 /// The sender side's own bound (SendMessage uses the same).
 pub const DELIVER_TIMEOUT: Duration = Duration::from_secs(5);
 /// What the receiver shows as the sender's name; its wrapper is only honoured when it re-renders
-/// byte-identical, which `from-name` alone does (measured, m5/4).
+/// byte-identical, which `from-name` alone does (measured).
 pub const FROM_NAME: &str = "supraman";
 const CLOSE_TAG: &str = "</cross-session-message>";
 /// Under `cfg(test)`, [`deliver`] writes to no other pipe: a test can never reach a live session.
