@@ -34,24 +34,32 @@ impl Launch {
 
     /// It deletes the config file once claude exits, however it exits, which is how [`Hands::ended`] sees it.
     pub fn script_with(&self, claude: &str, extras: &Extras) -> String {
-        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-        let mut flags: String = extras.args.iter().map(|a| format!(" {}", quote(a))).collect();
+        let mut flags: Vec<String> = extras.args.iter().map(|a| quote(a)).collect();
         let mut on_path = extras.path.as_ref().map(|d| format!("$env:Path = {} + $env:Path; ", quote(&format!("{};", d.display())))).unwrap_or_default();
         if let Some(file) = &extras.prompt {
             let file = quote(&file.to_string_lossy());
             on_path = format!("$supramanPrompt = [IO.File]::ReadAllText({file}); Remove-Item -LiteralPath {file} -ErrorAction SilentlyContinue; {on_path}");
-            flags.push_str(" -- $supramanPrompt");
+            flags.extend(["'--'".into(), "$supramanPrompt".into()]);
         }
-        match self {
+        let run = |head: Vec<String>| {
+            let argv: Vec<String> = head.into_iter().chain(flags.iter().cloned()).collect();
+            if argv.is_empty() { claude.to_string() } else { format!("supramanClaude @({})", argv.join(", ")) }
+        };
+        let script = match self {
             Launch::Minted { config, new_session, .. } => {
                 let path = quote(&config.to_string_lossy());
-                let id = new_session.as_ref().map(|id| format!(" --session-id {}", quote(id))).unwrap_or_default();
+                let mut head: Vec<String> = new_session.iter().flat_map(|id| ["'--session-id'".into(), quote(id)]).collect();
+                head.extend(["'--mcp-config'".into(), path.clone()]);
                 format!(
-                    "{on_path}if (Test-Path -LiteralPath {path}) {{ try {{ {claude}{id} --mcp-config {path}{flags} }} finally {{ Remove-Item -LiteralPath {path} -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {claude}{flags} }}"
+                    "{on_path}if (Test-Path -LiteralPath {path}) {{ try {{ {} }} finally {{ Remove-Item -LiteralPath {path} -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; {} }}",
+                    run(head),
+                    run(Vec::new())
                 )
             }
-            Launch::Plain | Launch::Unminted(_) => format!("{on_path}{claude}{flags}"),
-        }
+            Launch::Plain | Launch::Unminted(_) => format!("{on_path}{}", run(Vec::new())),
+        };
+        let passes_args = !flags.is_empty() || matches!(self, Launch::Minted { .. });
+        if passes_args { format!("{}{script}", runner(claude)) } else { script }
     }
 
     #[cfg(test)]
@@ -62,6 +70,44 @@ impl Launch {
     pub fn shell_args_with(&self, claude: &str, extras: &Extras) -> [String; 3] {
         ["-NoExit".into(), "-EncodedCommand".into(), encoded_command(&self.script_with(claude, extras))]
     }
+}
+
+fn quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// Under legacy arg passing (5.1, pwsh < 7.3) a native claude gets its args as one MSVC-quoted command line through `--%`.
+const RUNNER: &str = r#"function supramanClaude($supramanArgv) {
+    $c = Get-Command -Name <command> -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ("$PSNativeCommandArgumentPassing" -in '', 'Legacy' -and $c.CommandType -eq 'Application' -and $c.Extension -notin '.cmd', '.bat') {
+        $env:SUPRAMAN_ARGV = @($supramanArgv | ForEach-Object { if ($_ -ne '' -and $_ -notmatch '[\s"]') { $_ } else { '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } }) -join ' '
+        try {
+            <claude> --% %SUPRAMAN_ARGV%
+        } finally { Remove-Item Env:SUPRAMAN_ARGV -ErrorAction SilentlyContinue }
+    } else { <claude> @supramanArgv }
+}
+"#;
+
+fn runner(claude: &str) -> String {
+    RUNNER.replace("<command>", command_word(claude)).replace("<claude>", claude)
+}
+
+/// The path of `& '<path>' …`, still quoted, else the first word.
+fn command_word(claude: &str) -> &str {
+    let claude = claude.trim_start();
+    if let Some(rest) = claude.strip_prefix("& '") {
+        let mut chars = rest.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c == '\'' {
+                if chars.peek().is_some_and(|(_, n)| *n == '\'') {
+                    chars.next();
+                } else {
+                    return &claude[2..3 + i + 1];
+                }
+            }
+        }
+    }
+    claude.split_whitespace().next().unwrap_or(claude)
 }
 
 /// `env` goes on the PTY, not into `--settings`: LEARNINGS sched2/1.
@@ -481,7 +527,7 @@ mod tests {
                 "claudeSessionId": sid
             })
         );
-        assert!(launch.script().contains(&format!("try {{ claude --session-id '{sid}' --mcp-config '")), "{}", launch.script());
+        assert!(launch.script().contains(&format!("try {{ supramanClaude @('--session-id', '{sid}', '--mcp-config', '")), "{}", launch.script());
         assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid.as_str()));
         let text = std::fs::read_to_string(&config).unwrap();
         assert!(text.contains("Bearer wss_fake1") && text.contains(&format!("{url}/mcp")), "the minted token, not the sign-in's");
@@ -505,17 +551,18 @@ mod tests {
             path: Some(PathBuf::from(r"C:\Tools\supraman")),
             prompt: None,
         };
-        let flags = r" '--plugin-dir' 'C:\fm\plugins\supraman' '--allowedTools' 'Bash(sm:*)' 'Bash(C:/o''neil/sm.exe:*)'";
+        let flags = r"'--plugin-dir', 'C:\fm\plugins\supraman', '--allowedTools', 'Bash(sm:*)', 'Bash(C:/o''neil/sm.exe:*)'";
         let on_path = r"$env:Path = 'C:\Tools\supraman;' + $env:Path; ";
         let config = PathBuf::from(r"C:\fm\mcp\workstate-hand-alpha-1.json");
         let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
         let resume = "claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'";
         let script = launch.script_with(resume, &extras);
-        assert!(script.starts_with(&format!("{on_path}if (Test-Path")), "{script}");
-        assert!(script.contains(&format!("try {{ {resume} --mcp-config 'C:\\fm\\mcp\\workstate-hand-alpha-1.json'{flags} }} finally")), "{script}");
-        assert!(script.ends_with(&format!("; {resume}{flags} }}")), "the stale branch gets them too: {script}");
-        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{on_path}claude{flags}"));
-        assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{on_path}claude{flags}"));
+        assert!(script.starts_with(&format!("{}{on_path}if (Test-Path", runner(resume))), "{script}");
+        assert!(runner(resume).contains(&format!("{resume} @supramanArgv")) && runner(resume).contains(&format!("{resume} --% %SUPRAMAN_ARGV%")), "{script}");
+        assert!(script.contains(&format!("try {{ supramanClaude @('--mcp-config', 'C:\\fm\\mcp\\workstate-hand-alpha-1.json', {flags}) }} finally")), "{script}");
+        assert!(script.ends_with(&format!("; supramanClaude @({flags}) }}")), "the stale branch gets them too: {script}");
+        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{}{on_path}supramanClaude @({flags})", runner("claude")));
+        assert_eq!(Launch::Unminted("x".into()).script_with("claude", &extras), format!("{}{on_path}supramanClaude @({flags})", runner("claude")));
         assert!(!script.contains("SUPRAMAN_ROLE"), "the env goes on the PTY, not into the script");
     }
 
@@ -523,13 +570,13 @@ mod tests {
     fn a_first_prompt_is_read_from_its_file_and_passed_last_after_the_option_end() {
         let extras = Extras { args: vec!["--allowedTools".into(), "Bash(sm:*)".into(), "--permission-mode".into(), "plan".into()], prompt: Some(PathBuf::from(r"C:\fm\prompts\o'neil.txt")), ..Extras::default() };
         let read = r"$supramanPrompt = [IO.File]::ReadAllText('C:\fm\prompts\o''neil.txt'); Remove-Item -LiteralPath 'C:\fm\prompts\o''neil.txt' -ErrorAction SilentlyContinue; ";
-        let flags = " '--allowedTools' 'Bash(sm:*)' '--permission-mode' 'plan' -- $supramanPrompt";
-        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{read}claude{flags}"));
+        let flags = "'--allowedTools', 'Bash(sm:*)', '--permission-mode', 'plan', '--', $supramanPrompt";
+        assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{}{read}supramanClaude @({flags})", runner("claude")));
         let launch = Launch::Minted { name: "hand-a-1".into(), session: "hand-a-1".into(), config: PathBuf::from(r"C:\fm\mcp\w.json"), notice: None, new_session: None };
         let script = launch.script_with("claude", &extras);
-        assert!(script.starts_with(read), "{script}");
-        assert!(script.contains(&format!(r"--mcp-config 'C:\fm\mcp\w.json'{flags} }} finally")), "{script}");
-        assert!(script.ends_with(&format!("; claude{flags} }}")), "the stale branch sends it too: {script}");
+        assert!(script.starts_with(&format!("{}{read}", runner("claude"))), "{script}");
+        assert!(script.contains(&format!(r"'--mcp-config', 'C:\fm\mcp\w.json', {flags}) }} finally")), "{script}");
+        assert!(script.ends_with(&format!("; supramanClaude @({flags}) }}")), "the stale branch sends it too: {script}");
     }
 
     #[test]
@@ -582,14 +629,17 @@ mod tests {
         assert_eq!(
             script,
             format!(
-                "if (Test-Path -LiteralPath '{path}') {{ try {{ claude --mcp-config '{path}' }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
+                "{}if (Test-Path -LiteralPath '{path}') {{ try {{ supramanClaude @('--mcp-config', '{path}') }} finally {{ Remove-Item -LiteralPath '{path}' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}",
+                runner("claude")
             )
         );
         assert!(!script.contains("--strict-mcp-config") && !script.contains("wss_"));
         assert_eq!(launch.shell_args(), ["-NoExit".to_string(), "-EncodedCommand".into(), encoded_command(&script)]);
-        assert_eq!(Launch::Plain.script(), "claude");
-        let resume = launch.script_with("claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'", &Extras::default());
-        assert!(resume.contains("try { claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' --mcp-config '"), "{resume}");
+        assert_eq!(Launch::Plain.script(), "claude", "no args: claude alone, no runner");
+        let head = "claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'";
+        let resume = launch.script_with(head, &Extras::default());
+        assert!(resume.starts_with(&runner(head)) && runner(head).contains(&format!("{head} @supramanArgv")), "{resume}");
+        assert!(resume.contains("try { supramanClaude @('--mcp-config', '"), "{resume}");
         assert!(resume.ends_with("; claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff' }"), "the stale branch resumes too: {resume}");
         assert_eq!(Launch::Plain.script_with("claude --resume 'x'", &Extras::default()), "claude --resume 'x'");
         let fresh = Launch::Minted {
@@ -602,7 +652,8 @@ mod tests {
         assert_eq!(
             fresh.script(),
             format!(
-                "if (Test-Path -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json') {{ try {{ claude --session-id 'aaaa0001-0000-4000-8000-000000000001' --mcp-config 'C:\\fm\\mcp\\workstate-hand-alpha-1.json' }} finally {{ Remove-Item -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}"
+                "{}if (Test-Path -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json') {{ try {{ supramanClaude @('--session-id', 'aaaa0001-0000-4000-8000-000000000001', '--mcp-config', 'C:\\fm\\mcp\\workstate-hand-alpha-1.json') }} finally {{ Remove-Item -LiteralPath 'C:\\fm\\mcp\\workstate-hand-alpha-1.json' -ErrorAction SilentlyContinue }} }} else {{ Write-Host '{STALE}'; claude }}",
+                runner("claude")
             )
         );
         assert_eq!(Launch::Unminted("x".into()).script(), "claude");
@@ -908,55 +959,140 @@ mod tests {
         assert!(hands.names().is_empty());
     }
 
+    #[test]
+    fn the_runner_resolves_the_command_word_of_a_bare_or_quoted_claude() {
+        assert_eq!(command_word("claude"), "claude");
+        assert_eq!(command_word("claude --resume 'x'"), "claude");
+        assert_eq!(command_word(r"& 'C:\o''neil\claude.exe' --selftest-argv 'out'"), r"'C:\o''neil\claude.exe'");
+        assert!(runner(r"& 'C:\x\c.exe' -a").contains(r"Get-Command -Name 'C:\x\c.exe' "));
+    }
+
+    /// `powershell` always, `pwsh` too when a tab would find it.
+    #[cfg(windows)]
+    fn shells() -> Vec<&'static str> {
+        let mut shells = vec!["powershell"];
+        if supraman_core::paths::terminal_powershell() == "pwsh" {
+            shells.push("pwsh");
+        }
+        shells
+    }
+
+    /// A tab's PowerShell running `args` with `path` first on PATH; -NoExit's prompt reads stdin, and a closed one ends it.
+    #[cfg(windows)]
+    fn tab(shell: &str, args: Vec<String>, path: &Path, env: &[(&str, &Path)]) -> std::process::Output {
+        let path = format!("{};{}", path.display(), std::env::var("PATH").unwrap_or_default());
+        let mut command = supraman_core::process::command(shell);
+        command.args(args).env("PATH", path).stdin(std::process::Stdio::null());
+        env.iter().for_each(|(k, v)| {
+            command.env(k, v);
+        });
+        command.output().unwrap()
+    }
+
+    #[cfg(windows)]
+    fn tab_args(launch_args: impl IntoIterator<Item = String>) -> Vec<String> {
+        crate::view::powershell_args(["-NoLogo".to_string(), "-NoProfile".into()].into_iter().chain(launch_args).collect())
+    }
+
     #[cfg(windows)]
     #[test]
     fn hand_launch_deletes_the_config_when_claude_exits_and_shows_no_script() {
-        let Ok(probe) = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
-            return;
-        };
-        assert!(probe.status.success());
-        let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("workstate-hand-alpha-1.json");
-        std::fs::write(&config, "{}").unwrap();
-        let seen = dir.path().join("argv.txt");
-        let fake = format!("@echo %*> \"{}\"\r\n@echo fake claude ran\r\n@exit /b 3\r\n", seen.display());
-        std::fs::write(dir.path().join("claude.cmd"), fake).unwrap();
-        let path = format!("{};{}", dir.path().display(), std::env::var("PATH").unwrap_or_default());
-        let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None };
-        // -NoExit's prompt reads stdin; a closed one ends it like a human typing `exit`.
-        let out = supraman_core::process::command("pwsh")
-            .args(["-NoLogo", "-NoProfile"])
-            .args(launch.shell_args())
-            .env("PATH", path)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .unwrap();
-        assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), format!("--mcp-config {}", config.display()));
-        assert!(!config.exists(), "deleted even though claude failed");
-        let shown = String::from_utf8_lossy(&out.stdout);
-        assert!(shown.contains("fake claude ran"), "{out:?}");
-        assert!(!shown.contains("Test-Path") && !shown.contains("mcp-config"), "the script is not shown: {shown}");
+        for shell in shells() {
+            let dir = tempfile::tempdir().unwrap();
+            let config = dir.path().join("workstate-hand-alpha-1.json");
+            std::fs::write(&config, "{}").unwrap();
+            let seen = dir.path().join("argv.txt");
+            let fake = format!("@echo %*> \"{}\"\r\n@echo fake claude ran\r\n@exit /b 3\r\n", seen.display());
+            std::fs::write(dir.path().join("claude.cmd"), fake).unwrap();
+            let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None };
+            let out = tab(shell, tab_args(launch.shell_args()), dir.path(), &[]);
+            assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), format!("--mcp-config {}", config.display()), "{shell}");
+            assert!(!config.exists(), "{shell}: deleted even though claude failed");
+            let shown = String::from_utf8_lossy(&out.stdout);
+            assert!(shown.contains("fake claude ran"), "{shell}: {out:?}");
+            assert!(!shown.contains("Test-Path") && !shown.contains("mcp-config"), "{shell}: the script is not shown: {shown}");
+        }
     }
 
+    #[cfg(windows)]
     #[test]
     fn hand_launch_runs_plain_claude_once_the_config_is_gone() {
-        let Ok(probe) = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", "exit 0"]).output() else {
-            return;
-        };
-        assert!(probe.status.success());
+        for shell in shells() {
+            let dir = tempfile::tempdir().unwrap();
+            let config = dir.path().join("workstate-hand-alpha-1.json");
+            std::fs::write(&config, "{}").unwrap();
+            let seen = dir.path().join("argv.txt");
+            let line = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None }.script();
+            let script = format!(
+                "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
+                seen.display(),
+            );
+            let out = supraman_core::process::command(shell).args(["-NoProfile", "-Command", &script]).output().unwrap();
+            let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();
+            assert_eq!(runs, [format!("[--mcp-config {}]", config.display()), "[]".to_string()], "{shell}");
+            assert!(String::from_utf8_lossy(&out.stdout).contains("Workman token was revoked"), "{shell}: {out:?}");
+            assert!(!config.exists(), "{shell}");
+        }
+    }
+
+    /// `examples/argv.rs`, which `cargo test` builds beside the test binary's `deps` folder.
+    #[cfg(windows)]
+    fn native_recorder() -> PathBuf {
+        let exe = std::env::current_exe().unwrap();
+        let built = exe.parent().and_then(Path::parent).unwrap().join("examples").join("argv.exe");
+        assert!(built.is_file(), "{} is missing: cargo test builds examples/argv.rs", built.display());
+        built
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_prompt_and_flags_reach_a_native_claude_and_a_claude_ps1_as_the_same_argv_under_every_powershell() {
+        let prompt = "fix the \"voice menu\" bug in C:\\dir\\ now\nthen say \"done\" | 100% %PATH% `tick` $env:X é 中 C:\\end\\";
+        let flags = ["--plugin-dir", r"C:\Program Files\x\", "--empty", "", r#"say \"hi\" and a\"b"#, r"Bash(C:/o'neil/sm.exe:*)"];
+        let session = "aaaa0001-0000-4000-8000-000000000001";
         let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("workstate-hand-alpha-1.json");
-        std::fs::write(&config, "{}").unwrap();
-        let seen = dir.path().join("argv.txt");
-        let line = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: None }.script();
-        let script = format!(
-            "function claude {{ Add-Content -LiteralPath '{}' -Value ('[' + ($args -join ' ') + ']') }}; {line}; {line}",
-            seen.display(),
-        );
-        let out = supraman_core::process::command("pwsh").args(["-NoProfile", "-Command", &script]).output().unwrap();
-        let runs: Vec<String> = std::fs::read_to_string(&seen).unwrap().lines().map(str::to_string).collect();
-        assert_eq!(runs, [format!("[--mcp-config {}]", config.display()), "[]".to_string()]);
-        assert!(String::from_utf8_lossy(&out.stdout).contains("Workman token was revoked"), "{out:?}");
-        assert!(!config.exists());
+        let (native, script) = (dir.path().join("native"), dir.path().join("script"));
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::create_dir_all(&script).unwrap();
+        std::fs::copy(native_recorder(), native.join("claude.exe")).unwrap();
+        std::fs::write(script.join("claude.ps1"), "[IO.File]::AppendAllText($env:SUPRAMAN_ARGV_OUT, (ConvertTo-Json -InputObject @($args) -Compress) + \"`n\")\n").unwrap();
+        for shell in shells() {
+            for target in [&native, &script] {
+                let config = dir.path().join("workstate-hand-alpha-1.json");
+                std::fs::write(&config, "{}").unwrap();
+                let prompt_file = dir.path().join("prompt.txt");
+                std::fs::write(&prompt_file, prompt).unwrap();
+                let out = dir.path().join("argv.json");
+                let _ = std::fs::remove_file(&out);
+                let extras = Extras { args: flags.iter().map(|f| f.to_string()).collect(), prompt: Some(prompt_file.clone()), ..Extras::default() };
+                let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: Some(session.into()) };
+                let ran = tab(shell, tab_args(launch.shell_args_with("claude", &extras)), target, &[("SUPRAMAN_ARGV_OUT", &out)]);
+                let got = std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("{shell} {}: no argv ({e}): {ran:?}", target.display()));
+                let got: Vec<String> = serde_json::from_str(got.trim()).unwrap();
+                let mut want: Vec<String> = ["--session-id", session, "--mcp-config"].map(String::from).to_vec();
+                want.push(config.display().to_string());
+                want.extend(flags.iter().map(|f| f.to_string()));
+                want.extend(["--".to_string(), prompt.to_string()]);
+                assert_eq!(got, want, "{shell} {}", target.display());
+                assert!(!config.exists() && !prompt_file.exists(), "{shell}");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_claude_ps1_first_on_path_runs_under_a_restricted_policy_only_with_the_tabs_bypass() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran.txt");
+        std::fs::write(dir.path().join("claude.ps1"), format!("Set-Content -LiteralPath '{}' -Value ran\n", ran.display())).unwrap();
+        for shell in shells() {
+            let restricted: &[(&str, &Path)] = &[("PSExecutionPolicyPreference", Path::new("Restricted"))];
+            let _ = std::fs::remove_file(&ran);
+            let without = ["-NoLogo".to_string(), "-NoProfile".into()].into_iter().chain(Launch::Plain.shell_args()).collect();
+            let out = tab(shell, without, dir.path(), restricted);
+            assert!(!ran.exists(), "{shell}: Restricted refuses the script without -ExecutionPolicy Bypass: {out:?}");
+            let out = tab(shell, tab_args(Launch::Plain.shell_args()), dir.path(), restricted);
+            assert!(ran.exists(), "{shell}: a tab runs claude.ps1 under Restricted: {out:?}");
+        }
     }
 }
