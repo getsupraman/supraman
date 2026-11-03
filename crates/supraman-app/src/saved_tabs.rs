@@ -24,6 +24,16 @@ pub enum SavedTab {
 }
 
 impl SavedTab {
+    /// A hand tab's session as the newest of its `continued-in` chain (`newest`), where a resume or attach finds it.
+    pub fn followed(self, newest: impl Fn(&str) -> String) -> Self {
+        match self {
+            SavedTab::Claude { title, cwd, session_id: Some(sid), name } if is_session_id(&sid) => {
+                SavedTab::Claude { title, cwd, session_id: Some(newest(&sid)), name }
+            }
+            other => other,
+        }
+    }
+
     pub fn title(&self) -> &str {
         match self {
             SavedTab::Shell { title, .. } | SavedTab::Claude { title, .. } | SavedTab::Attach { title, .. } | SavedTab::Work { title, .. } => title,
@@ -122,8 +132,13 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
         SavedTab::Claude { title, .. } => {
-            let session = resumable(saved.session())?;
-            if world.sessions.iter().any(|s| s.session_id == session.session_id && fleet::is_alive(&s.health(world.now))) {
+            let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;
+            let live = world.sessions.iter().find(|s| s.session_id == session.session_id && fleet::is_alive(&s.health(world.now)));
+            if let Some(live) = live.filter(|s| s.kind == Kind::Background) {
+                return Ok(Reopen::Attach { title: title.clone(), session: live.clone() });
+            }
+            let session = resumable(Some(session))?;
+            if live.is_some() {
                 return Err("it runs in another terminal".into());
             }
             Ok(if world.resume_on_click { Reopen::Placeholder(saved.clone()) } else { Reopen::Resume { title: title.clone(), session } })
@@ -219,6 +234,30 @@ mod tests {
         assert!(plan(&short, &world(&[], &ws, false, &|_, _| true)).is_err(), "never a short id: it would start a new session");
         let fresh = SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: None, name: String::new() };
         assert!(plan(&fresh, &world(&[], &ws, false, has)).is_err());
+    }
+
+    #[test]
+    fn a_hand_tab_follows_its_sessions_chain_and_attaches_to_a_running_continuation() {
+        const NEXT: &str = "0a0b0c0d-0000-4000-8000-000000000002";
+        let ws = ["w".to_string()];
+        let saved = SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(SID.into()), name: "workman".into() };
+        let newest = |sid: &str| if sid == SID { NEXT.to_string() } else { sid.to_string() };
+        let followed = saved.clone().followed(newest);
+        assert_eq!(followed, SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(NEXT.into()), name: "workman".into() });
+        assert_eq!(followed.clone().followed(newest), followed);
+        let shell = SavedTab::Shell { title: "s".into(), cwd: "C:/a".into(), shell: None };
+        assert_eq!(shell.clone().followed(|_| NEXT.to_string()), shell, "only a hand tab's session follows");
+
+        let continuation = Session { id: NEXT[..8].into(), session_id: NEXT.into(), ..row(SessionState::Blocked, Some(9)) };
+        let none: &dyn Fn(&str, &Path) -> bool = &|_, _| false;
+        assert_eq!(
+            plan(&followed, &world(std::slice::from_ref(&continuation), &ws, false, none)),
+            Ok(Reopen::Attach { title: "c".into(), session: continuation.clone() }),
+            "the running background continuation is attached, never resumed a second time"
+        );
+        let has: &dyn Fn(&str, &Path) -> bool = &|sid, _| sid == NEXT;
+        let Ok(Reopen::Resume { session, .. }) = plan(&followed, &world(&[], &ws, false, has)) else { panic!("a stopped continuation resumes") };
+        assert_eq!(session.session_id, NEXT);
     }
 
     #[test]

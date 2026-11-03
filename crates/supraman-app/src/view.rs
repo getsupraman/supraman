@@ -332,6 +332,8 @@ pub struct FleetView {
     left_servers: std::collections::HashSet<String>,
     left_pending: Vec<String>,
     pub closed: Vec<Session>,
+    /// Each continued closed session to the newest session of its chain ([`supraman_claude::chains`]).
+    pub continued: StdHashMap<String, String>,
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
     tree_cache: RefCell<Option<CachedTree>>,
@@ -821,6 +823,7 @@ impl FleetView {
             left_servers: Default::default(),
             left_pending: Vec::new(),
             closed: Vec::new(),
+            continued: StdHashMap::new(),
             injected_closed: Vec::new(),
             tree_cache: RefCell::new(None),
             left_list: Default::default(),
@@ -929,7 +932,7 @@ impl FleetView {
                     && let Some(s) = scanner.take()
                 {
                     let (roots, keep) = (roots.clone(), keep.clone());
-                    let (back, known, closed) = executor
+                    let (back, known, (closed, continued)) = executor
                         .spawn(async move {
                             let mut repos = StdHashMap::new();
                             let found = s.cached(&roots, since, &keep);
@@ -938,7 +941,7 @@ impl FleetView {
                                     repos.entry(cwd.clone()).or_insert_with(|| main_repo(cwd));
                                 }
                             }
-                            (s, repos, found.iter().map(|t| t.to_session()).collect::<Vec<Session>>())
+                            (s, repos, (found.iter().map(|t| t.to_session()).collect::<Vec<Session>>(), supraman_claude::chains(&found)))
                         })
                         .await;
                     scanner = Some(back);
@@ -948,10 +951,7 @@ impl FleetView {
                             timeline(&format!("transcripts from the cache done ({} listed)", closed.len()), scanning.elapsed());
                             this.main_repos.extend(known.clone());
                             this.closed_repos = known;
-                            this.closed = closed;
-                            this.closed.extend(this.injected_closed.iter().cloned());
-                            this.drop_deleted();
-                            this.invalidate_tree();
+                            this.set_closed(closed, continued, cx);
                             this.transcripts.listed_cached();
                             this.check_loaded(cx);
                             cx.notify();
@@ -977,7 +977,7 @@ impl FleetView {
                     }
                 });
                 let Some(mut s) = scanner.take() else { continue };
-                let (back, known, closed, read) = executor
+                let (back, known, (closed, continued), read) = executor
                     .spawn(async move {
                         let read = AtomicUsize::new(0);
                         let found = s.scan_with(&roots, since, &keep, &live, &|done, of| {
@@ -993,7 +993,7 @@ impl FleetView {
                             }
                         }
                         let closed: Vec<Session> = found.iter().map(|t| t.to_session()).collect();
-                        (s, repos, closed, read.into_inner())
+                        (s, repos, (closed, supraman_claude::chains(&found)), read.into_inner())
                     })
                     .await;
                 showing.await;
@@ -1006,10 +1006,7 @@ impl FleetView {
                         if this.transcripts.scanned() {
                             timeline(&format!("transcripts done ({read} files read, {} listed)", closed.len()), scanning.elapsed());
                         }
-                        this.closed = closed;
-                        this.closed.extend(this.injected_closed.iter().cloned());
-                        this.drop_deleted();
-                        this.invalidate_tree();
+                        this.set_closed(closed, continued, cx);
                         this.transcripts_answered = asks;
                         this.check_loaded(cx);
                         cx.notify();
@@ -1021,6 +1018,17 @@ impl FleetView {
             }
         })
         .detach();
+    }
+
+    /// The closed sessions a transcript scan found, without the ones a known session continues; their stars move on.
+    fn set_closed(&mut self, closed: Vec<Session>, continued: StdHashMap<String, String>, cx: &mut Context<Self>) {
+        let save = self.stars.follow(&continued);
+        self.save_off_thread(save, "Cannot save the starred sessions", cx);
+        self.closed = fleet::without_continued(closed, &continued, &self.sessions);
+        self.continued = continued;
+        self.closed.extend(self.injected_closed.iter().cloned());
+        self.drop_deleted();
+        self.invalidate_tree();
     }
 
     /// Until every source has loaded once, and from a Refresh until the poll and the transcript scan it woke are applied.
@@ -1098,7 +1106,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let mut notices = cx
                 .background_executor()
-                .spawn(async move { stale.lock().unwrap_or_else(|e| e.into_inner()).release_all() })
+                .spawn(async move { stale.lock().unwrap_or_else(|e| e.into_inner()).release_last_run() })
                 .await;
             notices.extend(notice);
             this.update(cx, |this, cx| {

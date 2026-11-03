@@ -240,6 +240,18 @@ fn sort(rows: &mut [SessionRow]) {
     });
 }
 
+/// `closed` without each session that continued (`continued`: to the newest of its chain) in one listed or closed:
+/// that one is its row.
+pub fn without_continued(closed: Vec<Session>, continued: &HashMap<String, String>, listed: &[Session]) -> Vec<Session> {
+    let known: HashSet<&str> = listed.iter().chain(&closed).map(|s| s.session_id.as_str()).collect();
+    let gone: HashSet<String> = closed
+        .iter()
+        .filter(|s| continued.get(&s.session_id).is_some_and(|newest| *newest != s.session_id && known.contains(newest.as_str())))
+        .map(|s| s.session_id.clone())
+        .collect();
+    closed.into_iter().filter(|s| !gone.contains(&s.session_id)).collect()
+}
+
 /// The first instant after `now_ms` at which [`build`] would say something else of the same inputs: a background
 /// session turns orphaned (`Session::health`), a closed one leaves [`CLOSED_WINDOW_MS`].
 pub fn next_change(sessions: &[Session], closed: &[Session], now_ms: i64) -> Option<i64> {
@@ -849,6 +861,21 @@ mod tests {
             ..Default::default()
         }
         .to_session()
+    }
+
+    #[test]
+    fn a_continued_session_shows_as_one_row_its_newest() {
+        const OLD: &str = "0a000000-0000-4000-8000-00000000000a";
+        const NEW: &str = "0b000000-0000-4000-8000-00000000000b";
+        const LOST: &str = "0c000000-0000-4000-8000-00000000000c";
+        let continued = HashMap::from([(OLD.to_string(), NEW.to_string()), (LOST.to_string(), "0d000000-0000-4000-8000-00000000000d".to_string())]);
+        let rows = vec![closed(OLD, "workman", r"C:\demo\alpha", 0), closed(LOST, "other", r"C:\demo\alpha", 0)];
+        let live = Session { kind: Kind::Background, state: Some(supraman_claude::SessionState::Blocked), ..closed(NEW, "workman", r"C:\demo\alpha", 0) };
+        let shown: Vec<String> = without_continued(rows.clone(), &continued, std::slice::from_ref(&live)).into_iter().map(|s| s.session_id).collect();
+        assert_eq!(shown, [LOST], "the old row goes while its continuation is listed; a chain to no known session keeps its row");
+        assert_eq!(without_continued(rows.clone(), &continued, &[]).len(), 2, "its continuation not listed: the row stays");
+        let both = vec![rows[0].clone(), closed(NEW, "workman", r"C:\demo\alpha", 0)];
+        assert_eq!(without_continued(both, &continued, &[]).iter().map(|s| s.session_id.as_str()).collect::<Vec<_>>(), [NEW], "both closed: the newest");
     }
 
     #[test]

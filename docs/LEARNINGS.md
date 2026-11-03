@@ -5740,3 +5740,26 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **`claude --bg --resume <id>` of a session still running starts a copy that drops `--strict-mcp-config`**: the copy of
   the strict probe started every user and plugin server. The supervisor resumes only a session it saw stopped, which
   wakes in place with its saved options.
+
+## 2026-11-03 — backlog/workman-row-twice what makes claude write `continued-in`
+
+- **claude 2.1.317 writes `continued-in` when an interactive session moves to the background**, the ← key or a slash
+  command, without keeping the parent: its daemon spawns a `bg` job with a new session id and appends
+  `{"type":"continued-in","continuedInSessionId":"<new>"}` to the parent's transcript (the CLI's `T0e`, skipped when the
+  move fails or forks with `keepParent`). Measured on the one transcript holding it of all `~/.claude/projects/*/*.jsonl`
+  (5e12fc2d, 94 MB, 30 406 lines, 18 compactions): `daemon.log` `[bg] bg spawned 18edc2f0 (slash)` at 21:26:51.137Z,
+  the record at 21:26:51.172Z, the last line before it an `attachment` `session_cron_carry`. No prompt was typed then
+  (`history.jsonl`), so the trigger was a key or a slash command history does not keep. Size and `/compact` are not it:
+  the session had compacted 18 times without one. Not reproduced: the move needs the interactive REPL's key.
+- **The record is not the file's last line**: `last-prompt` and `cost-state` lines follow it, so a reader takes the last
+  `continued-in` of the tail; a user or assistant line after it means the session was resumed and runs on.
+- **The continuation inherits the parent's launch flags**: `~/.claude/jobs/<short>/state.json` holds
+  `respawnFlags` with the parent's `--mcp-config <home>\mcp\workstate-<hand>.json`, `template: bg`,
+  `interactiveLineage: true`. It runs on the hand's static token, so a revoke of that hand at Supraman's quit or start,
+  or a mint with `replace` for its name, cuts it off (HTTP 401, OAuth fallback disabled while `headers.Authorization`
+  is set). Its transcript starts from the parent's last compaction, its rows `entrypoint: cli`, `sessionKind: bg`.
+- **What Supraman does with it** (`supraman_claude::transcript::{continued_in, newest, newest_in, chains}`): a closed
+  row whose chain ends in a listed or closed session is not shown, its star moves to the newest id, a saved hand tab
+  follows the chain and attaches to a running background continuation, and a hand whose claude continued keeps its token:
+  never revoked at quit, kept at start while claude's session registry lists the newest session running, and never
+  replaced by a mint for that name. Every hand mint is logged: name, replace, claude session id, never the token.

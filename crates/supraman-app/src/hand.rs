@@ -167,6 +167,10 @@ pub struct Hands {
     sessions: std::collections::HashMap<String, String>,
     /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
     left: Vec<String>,
+    /// Where `continued-in` chains and claude's live sessions are read; without it a session is its own newest.
+    claude_dir: Option<PathBuf>,
+    /// Names whose token a continuation of their claude session holds: never revoked here, they lapse unused.
+    carried: std::collections::HashSet<String>,
 }
 
 pub fn restart_notice(n: usize, to: &str) -> Option<String> {
@@ -196,7 +200,9 @@ impl Hands {
     }
 
     pub fn open(home: &Path) -> (Self, Option<String>) {
-        Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo)
+        let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo);
+        hands.claude_dir = supraman_core::paths::claude_dir();
+        (hands, notice)
     }
 
     pub fn with(
@@ -222,6 +228,8 @@ impl Hands {
             minted,
             sessions: Default::default(),
             left: Vec::new(),
+            claude_dir: None,
+            carried: Default::default(),
         };
         (hands, notice)
     }
@@ -252,11 +260,52 @@ impl Hands {
         (1..).map(move |n| format!("hand-{folder}-{n}")).filter(|n| self.minted.get(n).is_none())
     }
 
-    /// The claude that last held `claude_session`'s token here has exited (its config is gone): taking that token is safe.
+    /// The claude that last held `claude_session`'s token here has exited (its config is gone) and no live
+    /// continuation of it holds the token: taking that token is safe.
     fn holder_exited(&self, claude_session: Option<&str>) -> bool {
         claude_session.is_some_and(|sid| {
-            self.minted.names().any(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id.as_deref() == Some(sid)) && self.ended(n))
+            self.newest(sid) == sid
+                && !self.runs(sid)
+                && self.minted.names().any(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id.as_deref() == Some(sid)) && self.ended(n))
         })
+    }
+
+    fn newest(&self, claude_session: &str) -> String {
+        match &self.claude_dir {
+            Some(dir) => supraman_claude::newest_in(dir, claude_session),
+            None => claude_session.to_string(),
+        }
+    }
+
+    /// claude's session registry lists `claude_session` with a running pid.
+    fn runs(&self, claude_session: &str) -> bool {
+        self.claude_dir.as_ref().is_some_and(|dir| {
+            supraman_claude::peer::live_entries(&dir.join("sessions"), &supraman_claude::peer::System)
+                .iter()
+                .any(|e| e.session_id.as_deref() == Some(claude_session))
+        })
+    }
+
+    /// `name`'s claude session follows its `continued-in` chain to the newest session, which holds the token
+    /// from then on; whether it moved.
+    fn follow(&mut self, name: &str) -> bool {
+        let Some(sid) = self.minted.get(name).and_then(|m| m.claude_session_id.clone()) else { return false };
+        let newest = self.newest(&sid);
+        if newest == sid {
+            return false;
+        }
+        log::info!("hand {name}: claude session {sid} continues in {newest}, which holds its token");
+        if let Some(m) = self.minted.get_mut(name) {
+            m.claude_session_id = Some(newest);
+        }
+        self.carried.insert(name.to_string());
+        true
+    }
+
+    fn follow_chains(&mut self) -> Option<String> {
+        let names: Vec<String> = self.minted.names().cloned().collect();
+        let moved = names.iter().fold(false, |moved, n| self.follow(n) | moved);
+        moved.then(|| self.save()).flatten()
     }
 
     #[cfg(test)]
@@ -271,6 +320,7 @@ impl Hands {
             Ok(None) => return Launch::Plain,
             Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: {e}")),
         };
+        let mut notice = self.follow_chains();
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
         let claude_session = claude_session
             .filter(|s| supraman_claude::is_session_id(s))
@@ -290,7 +340,6 @@ impl Hands {
             repo: (self.repo_of)(cwd),
             claude_session_id: claude_session.clone(),
         };
-        let mut notice = None;
         if self.sessions.values().any(|s| *s == request.name) {
             notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
@@ -299,7 +348,15 @@ impl Hands {
         let wanted = request.name.clone();
         let mut fresh = self.free_names(cwd).filter(|n| *n != wanted).take(FRESH_TRIES).collect::<Vec<_>>().into_iter();
         let minted = loop {
-            match self.minter.mint(&base, &bearer, &request) {
+            let minted = self.minter.mint(&base, &bearer, &request);
+            log::info!(
+                "hand mint {name} as {}: replace {}, claude session {}: {}",
+                request.name,
+                request.replace,
+                request.claude_session_id.as_deref().unwrap_or("none"),
+                minted.as_ref().map_or_else(ToString::to_string, |m| format!("Workman session {}", m.session_id))
+            );
+            match minted {
                 Err(MintError::Refused { status: 409, reason }) => {
                     let Some(next) = fresh.next() else {
                         break Err(MintError::Refused { status: 409, reason });
@@ -346,7 +403,13 @@ impl Hands {
         self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
+    /// Revokes `name`'s token, unless a continuation of its claude session holds it ([`Self::follow`]).
     pub fn release(&mut self, name: &str) -> Option<String> {
+        if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name)) {
+            log::info!("hand {name} kept: a continuation of its claude session holds its token");
+            self.sessions.remove(name);
+            return self.save();
+        }
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
         if let Ok(config) = self.config_path(name) {
@@ -390,6 +453,22 @@ impl Hands {
     pub fn release_all(&mut self) -> Vec<String> {
         let names: Vec<String> = self.minted.names().cloned().collect();
         names.iter().filter_map(|n| self.release(n)).collect()
+    }
+
+    /// At start, the tokens of the last run: a claude that still runs holding one (the newest of its chain)
+    /// keeps it; every other is revoked.
+    pub fn release_last_run(&mut self) -> Vec<String> {
+        let names: Vec<String> = self.minted.names().cloned().collect();
+        for name in &names {
+            self.follow(name);
+            let holder = self.minted.get(name).and_then(|m| m.claude_session_id.clone());
+            if holder.is_some_and(|sid| self.runs(&sid)) {
+                self.carried.insert(name.clone());
+            } else {
+                self.carried.remove(name);
+            }
+        }
+        self.release_all()
     }
 
     pub fn elsewhere(&self, origin: &str) -> Vec<(String, Option<String>)> {
@@ -1132,6 +1211,120 @@ mod tests {
     }
 
     const SID: &str = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+    const NEXT: &str = "0b000000-0000-4000-8000-00000000000b";
+
+    /// A claude dir where `SID`'s transcript ends in `continued-in` NEXT, and NEXT runs (this process's pid) while `runs`.
+    fn continued_claude(dir: &Path, runs: bool) -> PathBuf {
+        let claude = dir.join("claude");
+        let project = claude.join("projects").join(supraman_claude::transcript::slug(Path::new(r"C:\demo\alpha")));
+        std::fs::create_dir_all(&project).unwrap();
+        let lines = [
+            format!(r#"{{"parentUuid":null,"type":"user","message":{{"role":"user","content":"go"}},"cwd":"C:\\demo\\alpha","sessionId":"{SID}"}}"#),
+            format!(r#"{{"type":"continued-in","timestamp":"2026-11-03T21:26:51.172Z","sessionId":"{SID}","continuedInSessionId":"{NEXT}"}}"#),
+            format!(r#"{{"type":"cost-state","sessionId":"{SID}","totalCostUSD":1.0}}"#),
+        ];
+        std::fs::write(project.join(format!("{SID}.jsonl")), lines.join("\n") + "\n").unwrap();
+        std::fs::create_dir_all(claude.join("sessions")).unwrap();
+        if runs {
+            let pid = std::process::id();
+            std::fs::write(claude.join("sessions").join(format!("{pid}.json")), format!(r#"{{"pid":{pid},"sessionId":"{NEXT}","name":"workman","kind":"bg"}}"#)).unwrap();
+        }
+        claude
+    }
+
+    struct Capture;
+
+    static CAPTURED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            if record.target().ends_with("hand") {
+                CAPTURED.lock().unwrap().push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn captured() -> Vec<String> {
+        if log::set_logger(&Capture).is_ok() {
+            log::set_max_level(log::LevelFilter::Info);
+        }
+        CAPTURED.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn a_continuation_of_a_hands_claude_keeps_its_token_through_quit_start_and_a_re_mint() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        before.claude_dir = Some(continued_claude(dir.path(), true));
+        let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-workflow").unwrap();
+
+        assert!(before.release_all().is_empty(), "the quit");
+        assert!(sessions.live(&held) && config.exists(), "the continuation keeps its token and its config");
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Hands::path(&home)).unwrap()).unwrap();
+        assert_eq!(saved["hand-alpha-1"]["claudeSessionId"], NEXT, "hands.json follows the chain");
+
+        let (mut reopened, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        reopened.claude_dir = Some(dir.path().join("claude"));
+        assert!(reopened.release_last_run().is_empty(), "the start");
+        assert!(sessions.live(&held), "NEXT still runs: the start leaves its token");
+
+        std::fs::remove_file(&config).unwrap();
+        for resumed in [SID, NEXT] {
+            let Launch::Minted { session, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(resumed)) else { panic!() };
+            assert_ne!(session, "mw-workflow", "{resumed}: a fresh name, never the continuation's");
+            assert!(sessions.live(&held), "{resumed}: the re-mint for that name leaves the live continuation's token");
+        }
+    }
+
+    #[test]
+    fn at_start_a_token_whose_continuation_no_longer_runs_is_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        before.claude_dir = Some(continued_claude(dir.path(), false));
+        let Launch::Minted { .. } = before.launch_for(Path::new(r"C:\demo\alpha"), Some("mw-workflow"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-workflow").unwrap();
+        drop(before);
+
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        reopened.claude_dir = Some(dir.path().join("claude"));
+        assert!(reopened.release_last_run().is_empty());
+        assert!(!sessions.live(&held), "nothing runs holding it");
+        assert!(reopened.minted.get("hand-alpha-1").is_none());
+    }
+
+    #[test]
+    fn every_hand_mint_is_logged_with_its_name_replace_and_claude_session_and_never_its_token() {
+        captured();
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-logged"), Some(SID)) else { panic!() };
+        let first = sessions.token_of("mw-logged").unwrap();
+        std::fs::remove_file(&config).unwrap();
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let Launch::Minted { .. } = reopened.launch_for(alpha, Some("mw-logged"), Some(SID)) else { panic!() };
+        let second = sessions.token_of("mw-logged").unwrap();
+
+        let lines: Vec<String> = captured().into_iter().filter(|l| l.contains("as mw-logged:")).collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("hand mint ") && lines[0].contains(&format!(" as mw-logged: replace false, claude session {SID}: Workman session ")), "{lines:?}");
+        assert!(lines[1].starts_with("hand mint ") && lines[1].contains(&format!(" as mw-logged: replace true, claude session {SID}: Workman session ")), "{lines:?}");
+        assert!(lines.iter().all(|l| !l.contains(&first) && !l.contains(&second) && !l.contains("wss_")), "{lines:?}");
+    }
 
     #[test]
     fn a_reopened_tab_never_takes_a_token_its_earlier_claude_still_uses() {

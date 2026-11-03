@@ -67,7 +67,7 @@ impl FleetView {
             TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,
             TabKind::Work(view) => SavedTab::Work { title, workspace: view.read(cx).workspace.clone() },
             TabKind::Shell if tab.hand => {
-                let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone());
+                let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone()).map(|sid| self.continued.get(&sid).cloned().unwrap_or(sid));
                 let name = session_id.as_deref().and_then(named).or_else(|| tab.session_name.clone()).unwrap_or_default();
                 SavedTab::Claude { title, cwd: tab.cwd.clone()?, session_id, name }
             }
@@ -116,7 +116,10 @@ impl FleetView {
             if !settings.reopen_tabs {
                 return None;
             }
-            let (saved, notice) = saved_tabs::load(&home);
+            let (mut saved, notice) = saved_tabs::load(&home);
+            if let Some(dir) = &claude_dir {
+                saved.tabs = saved.tabs.into_iter().map(|t| t.followed(|sid| supraman_claude::newest_in(dir, sid))).collect();
+            }
             let has_transcript = |sid: &str, cwd: &Path| claude_dir.as_deref().is_some_and(|dir| find_transcript(dir, sid, Some(cwd)).is_some());
             let world = World {
                 sessions: &sessions,

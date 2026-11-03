@@ -32,12 +32,15 @@ pub struct Transcript {
     pub last_prompt: Option<String>,
     /// The file's mtime, epoch milliseconds: its last activity.
     pub modified_ms: i64,
+    /// The session claude moved it on to (its `continued-in` record), unless it ran on after that.
+    #[serde(default)]
+    pub continued_in: Option<String>,
 }
 
 /// A name longer than this is cut, with `…`.
 const TITLE_CHARS: usize = 80;
 /// The line types read for a name.
-const META: [&str; 5] = ["custom-title", "agent-name", "ai-title", "summary", "last-prompt"];
+const META: [&str; 6] = ["custom-title", "agent-name", "ai-title", "summary", "last-prompt", "continued-in"];
 /// A meta line not opening with its type is looked for only in lines up to this long.
 const SHORT_LINE: usize = 16 * 1024;
 
@@ -96,6 +99,7 @@ impl Transcript {
                 Some("ai-title") => ("aiTitle", &mut self.ai_title),
                 Some("summary") => ("summary", &mut self.summary),
                 Some("last-prompt") => ("lastPrompt", &mut self.last_prompt),
+                Some("continued-in") => ("continuedInSessionId", &mut self.continued_in),
                 _ => return,
             };
             if let Some(text) = v.get(key).and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
@@ -106,6 +110,9 @@ impl Transcript {
         // the other type-first lines (mode, api-request, cost-state, …) carry neither a cwd nor a prompt
         if lead.is_some_and(|k| !matches!(k, "user" | "assistant" | "system")) {
             return;
+        }
+        if self.continued_in.is_some() && lead.map_or_else(|| line_type(line), |k| Some(k.to_string())).is_some_and(|k| k == "user" || k == "assistant") {
+            self.continued_in = None;
         }
         // A user/assistant line can carry a whole tool result: parse it only while something is missing.
         let wants_prompt = self.first_prompt.is_none() && lead.map_or_else(|| line_type(line).as_deref() == Some("user"), |k| k == "user");
@@ -273,10 +280,44 @@ fn read_head_and_tail(path: &Path, len: u64, t: &mut Transcript) -> std::io::Res
                     *slot = later;
                 }
             }
+            t.continued_in = tail.continued_in;
             return Ok(end.max(head));
         }
         block *= 4;
     }
+}
+
+/// The session `session_id` continues in, from its transcript's tail; `None` when it has no transcript or ran on.
+pub fn continued_in(claude_dir: &Path, session_id: &str) -> Option<String> {
+    let path = crate::find_transcript(claude_dir, session_id, None)?;
+    let start = std::fs::metadata(&path).ok()?.len().saturating_sub(TAIL_BLOCK);
+    let mut t = Transcript::default();
+    feed_lines(&path, start, start > 0, &mut t, |_| false).ok()?;
+    t.continued_in
+}
+
+/// The newest session of `session_id`'s `continued-in` chain, one step at a time by `next`; itself when it continued in none.
+pub fn newest(session_id: &str, mut next: impl FnMut(&str) -> Option<String>) -> String {
+    let mut seen = HashSet::new();
+    let mut at = session_id.to_string();
+    while seen.insert(at.clone()) {
+        match next(&at) {
+            Some(later) => at = later,
+            None => break,
+        }
+    }
+    at
+}
+
+/// [`newest`] read from the transcripts under `claude_dir`.
+pub fn newest_in(claude_dir: &Path, session_id: &str) -> String {
+    newest(session_id, |sid| continued_in(claude_dir, sid))
+}
+
+/// Each continued session among `transcripts`, to the newest session of its chain.
+pub fn chains(transcripts: &[Transcript]) -> HashMap<String, String> {
+    let next: HashMap<&str, &str> = transcripts.iter().filter_map(|t| Some((t.session_id.as_str(), t.continued_in.as_deref()?))).collect();
+    next.keys().map(|sid| (sid.to_string(), newest(sid, |at| next.get(at).map(|n| n.to_string())))).collect()
 }
 
 /// The first prompt of a transcript, read only as far as it (at most [`FIRST_PROMPT_WITHIN`] bytes).
@@ -479,7 +520,7 @@ struct CacheFile {
 }
 
 /// Bump whenever [`Transcript::feed`] reads something a cached transcript lacks.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 
 struct Listed {
     modified: Option<SystemTime>,
@@ -751,6 +792,65 @@ mod tests {
 
     /// Sanitised from a real transcript (claude 2.1.306): its line shapes, none of its text.
     const FIXTURE: &str = include_str!("../tests/fixtures/transcript.jsonl");
+    /// The end of a session claude 2.1.317 moved to the background: its line shapes, none of its text.
+    const CONTINUED: &str = include_str!("../tests/fixtures/continued.jsonl");
+    const FIRST: &str = "0a000000-0000-4000-8000-00000000000a";
+    const SECOND: &str = "0b000000-0000-4000-8000-00000000000b";
+    const THIRD: &str = "0c000000-0000-4000-8000-00000000000c";
+
+    #[test]
+    fn a_transcript_ending_in_continued_in_resolves_through_its_chain_to_the_newest_session() {
+        let claude = tempfile::tempdir().unwrap();
+        let dir = claude.path().join("projects").join(slug(Path::new(r"C:\demo\alpha")));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = write(&dir, &format!("{FIRST}.jsonl"), CONTINUED);
+        let t = read(&first).unwrap();
+        assert_eq!((t.continued_in.as_deref(), t.title().as_str()), (Some(SECOND), "demo"));
+        assert_eq!(continued_in(claude.path(), FIRST).as_deref(), Some(SECOND));
+
+        let second = CONTINUED.replace(FIRST, SECOND).replace(&format!(r#""continuedInSessionId":"{SECOND}""#), &format!(r#""continuedInSessionId":"{THIRD}""#));
+        write(&dir, &format!("{SECOND}.jsonl"), &second);
+        assert_eq!(newest_in(claude.path(), FIRST), THIRD, "through the chain");
+        assert_eq!(newest_in(claude.path(), THIRD), THIRD, "a session without a transcript is its own newest");
+        assert_eq!(newest(FIRST, |at| Some(if at == FIRST { SECOND } else { FIRST }.to_string())), FIRST, "a loop ends");
+
+        let (a, b) = (read(&first).unwrap(), read(&dir.join(format!("{SECOND}.jsonl"))).unwrap());
+        let map = chains(&[a, b, Transcript { session_id: THIRD.into(), ..Transcript::default() }]);
+        assert_eq!(map, HashMap::from([(FIRST.to_string(), THIRD.to_string()), (SECOND.to_string(), THIRD.to_string())]));
+    }
+
+    #[test]
+    fn a_session_resumed_after_its_continued_in_runs_on_and_a_grown_read_sees_the_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ran_on = format!(
+            "{CONTINUED}{}\n",
+            r#"{"parentUuid":"t-1","isSidechain":false,"type":"user","message":{"role":"user","content":"again"},"uuid":"u-2","cwd":"C:\\demo\\alpha","sessionId":"0a000000-0000-4000-8000-00000000000a"}"#
+        );
+        assert_eq!(read(&write(tmp.path(), &format!("{FIRST}.jsonl"), &ran_on)).unwrap().continued_in, None);
+
+        let (head, tail) = CONTINUED.split_at(CONTINUED.find(r#"{"type":"continued-in""#).unwrap());
+        let path = write(tmp.path(), &format!("{FIRST}.jsonl"), head);
+        let mut t = Transcript::default();
+        let offset = feed_from(&path, 0, &mut t).unwrap();
+        assert_eq!(t.continued_in, None);
+        std::fs::write(&path, CONTINUED).unwrap();
+        feed_from(&path, offset, &mut t).unwrap();
+        assert_eq!((t.continued_in.as_deref(), tail.is_empty()), (Some(SECOND), false));
+    }
+
+    #[test]
+    fn the_head_and_tail_read_of_a_long_transcript_finds_its_continued_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (head, tail) = CONTINUED.split_at(CONTINUED.find(r#"{"type":"last-prompt""#).unwrap());
+        let filler = r#"{"parentUuid":"a-1","isSidechain":false,"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]},"sessionId":"0a000000-0000-4000-8000-00000000000a"}"#;
+        let body = format!("{head}{}{tail}", format!("{filler}\n").repeat((WHOLE_UNDER as usize / filler.len()) + 10));
+        let path = write(tmp.path(), &format!("{FIRST}.jsonl"), &body);
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert!(len > WHOLE_UNDER);
+        let mut t = Transcript { session_id: FIRST.into(), ..Transcript::default() };
+        read_head_and_tail(&path, len, &mut t).unwrap();
+        assert_eq!(t.continued_in.as_deref(), Some(SECOND));
+    }
     const ID: &str = "0f3e8b52-6c1d-4a7e-9b20-5d4c3a2b1e0f";
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
