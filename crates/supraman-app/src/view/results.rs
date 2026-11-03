@@ -9,7 +9,7 @@ use super::icon::Icon;
 use super::left::{disclosure, grid, home_text, icon_slot, quiet, repo_label, secondary, tree_label};
 use super::{FleetView, hit_target};
 use crate::fleet::{Open, Supervised, Tree};
-use crate::search::{self, Results, SessionHit};
+use crate::search::{self, SessionHit};
 
 impl FleetView {
     pub fn search_tree(&self) -> Tree {
@@ -26,10 +26,6 @@ impl FleetView {
             own_prefix: self.own_prefix.as_deref(),
         };
         crate::fleet::build(&self.workspaces, &self.sessions, now_ms(), true, &sup)
-    }
-
-    pub fn search_results(&self, cx: &gpui::App) -> Results {
-        search::search(&self.search_tree(), &self.search_query(cx))
     }
 
     pub(super) fn render_search_box(&self) -> AnyElement {

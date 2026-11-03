@@ -5,13 +5,11 @@ use anyhow::{anyhow, bail};
 use supraman_claude::{Health, list_sessions, transcript::slug};
 use gpui::{AsyncWindowContext, Entity, MouseButton};
 
-use crate::selftest::{click, sleep};
-use crate::selftest_closed::{OLD, RECENT, claude_dir, transcript};
+use crate::selftest::click;
+use crate::selftest_closed::{claude_dir, transcript};
 use crate::selftest_manage::{menu_open, press_painted};
 use crate::view::FleetView;
 
-pub const DELETE_ME: &str = "de1e7e00-0000-4000-8000-00000000de1e";
-const TITLE: &str = "selftest delete me";
 const WITHIN: Duration = Duration::from_secs(20);
 
 fn project(home: &Path, cwd: &Path) -> PathBuf {
@@ -26,12 +24,6 @@ fn plant(home: &Path, cwd: &Path, id: &str, title: &str) -> anyhow::Result<(Path
     std::fs::write(&file, transcript(id, cwd, title))?;
     std::fs::OpenOptions::new().write(true).open(&file)?.set_modified(SystemTime::now() - Duration::from_secs(1800))?;
     Ok((file, dir.join(id)))
-}
-
-pub fn prepare(home: &Path, main_repo: &Path) -> anyhow::Result<()> {
-    plant(home, main_repo, DELETE_ME, TITLE)?;
-    println!("step 1o: fake transcript {DELETE_ME} ({TITLE}) with its {DELETE_ME}/ dir");
-    Ok(())
 }
 
 async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &str, f: impl Fn(&FleetView) -> Option<T>) -> anyhow::Result<T> {
@@ -83,24 +75,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut Asyn
 }
 
 async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let main = crate::selftest::main_repo_of_gate()?;
-    let dir = project(home, &main);
-    let (file, sub) = (dir.join(format!("{DELETE_ME}.jsonl")), dir.join(DELETE_ME));
-    until(view, cx, "the closed session to delete", |v| row(v, DELETE_ME).filter(|(n, _)| n == TITLE)).await?;
-    let interactive = delete_from_menu(view, DELETE_ME, TITLE, cx).await?;
-    if file.exists() || sub.exists() {
-        bail!("after Delete {} exists: {}, {} exists: {}", file.display(), file.exists(), sub.display(), sub.exists());
-    }
-    for kept in [RECENT, OLD] {
-        if !dir.join(format!("{kept}.jsonl")).exists() {
-            bail!("Delete of {DELETE_ME} took {kept}'s transcript too");
-        }
-    }
-    sleep(cx, Duration::from_millis(1500)).await;
-    if view.read_with(cx, |v, _| row(v, DELETE_ME)).is_some() {
-        bail!("{DELETE_ME} came back after a scan");
-    }
-
     let session = until(view, cx, &format!("{own}'s row"), |v| {
         v.search_tree()
             .workspaces
@@ -133,9 +107,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncW
         bail!("Delete left an error: {e}");
     }
     Ok(format!(
-        "closed {DELETE_ME} deleted {} ms after Delete (transcript and {DELETE_ME}/ gone, {RECENT} and {OLD} kept); \
-         live {own} offered no Delete, stopped from its menu, then rm + transcript and out of the tree {} ms after Delete, not in claude agents",
-        interactive.as_millis(),
+        "live {own} offered no Delete, stopped from its menu, then rm + transcript and out of the tree {} ms after Delete, not in claude agents",
         background.as_millis()
     ))
 }

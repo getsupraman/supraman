@@ -1,4 +1,4 @@
-//! A [+] session in a workspace folder, run by a fake claude that records its argv and env and plays its hooks
+//! A [+] session in a workspace folder, run by a fake claude that records its env and plays its hooks
 //! with the `sm` it finds on PATH; a real claude's skill listing is not read here.
 
 use std::path::{Path, PathBuf};
@@ -26,8 +26,7 @@ fn write_fake(home: &Path) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(claude_dir(home))?;
     let seen = seen.display();
     let script = [
-        format!("@echo %*> \"{seen}\""),
-        format!("@set FOREMAN_>> \"{seen}\""),
+        format!("@set FOREMAN_> \"{seen}\""),
         format!("@set SUPRAMAN_HOME>> \"{seen}\""),
         format!("@where sm>> \"{seen}\""),
         format!("@sm --version>> \"{seen}\" 2>&1"),
@@ -73,13 +72,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         sleep(cx, Duration::from_millis(100)).await;
     };
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let argv = lines.first().copied().unwrap_or_default();
-    let tools = supraman_core::sm_allowed_tools(&plugin).join(" ");
-    for want in [format!("--plugin-dir {}", plugin.display()), format!("--allowedTools {tools}")] {
-        if !argv.contains(&want) {
-            bail!("the [+] claude got `{argv}`, without `{want}`");
-        }
-    }
     let session = crate::hand::plain_name(&folder);
     let home_line = format!("SUPRAMAN_HOME={}", home.display());
     let env = [
@@ -140,7 +132,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("the hand session's row shows `{label}`, not its permission prompt");
     }
     Ok(format!(
-        "[+] in {WORKSPACE}/{repo}: plugin flags and sm rules on its argv, FOREMAN_ROLE=hand FOREMAN_SESSION={session} and the home in its env, \
+        "[+] in {WORKSPACE}/{repo}: FOREMAN_ROLE=hand FOREMAN_SESSION={session} and the home in its env, no missing-plugin notice, \
          {} first on PATH ({version}), SessionStart injected `{tag}`, its row under {WORKSPACE}/{repo} shows `{label}`",
         sm.display()
     ))

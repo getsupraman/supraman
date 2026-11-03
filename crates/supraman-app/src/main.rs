@@ -11,8 +11,6 @@ mod saved_tabs;
 mod schedules;
 mod search;
 mod selftest;
-mod selftest_box;
-mod selftest_brand;
 mod selftest_capture;
 mod selftest_clipboard;
 mod selftest_closed;
@@ -26,7 +24,6 @@ mod selftest_left;
 mod selftest_link;
 mod selftest_manage;
 mod selftest_mark;
-mod selftest_paste;
 mod selftest_messages;
 mod selftest_notices;
 mod selftest_refresh;
@@ -34,7 +31,6 @@ mod selftest_reopen;
 mod selftest_responsive;
 mod selftest_schedules;
 mod selftest_search;
-mod selftest_shell;
 mod selftest_shots;
 mod selftest_start;
 mod selftest_startup;
@@ -74,17 +70,6 @@ use crate::view::FleetView;
 thread_local! {
     /// Dropped after the event loop, so the icon leaves the notification area with the process.
     static TRAY: RefCell<Option<Tray>> = const { RefCell::new(None) };
-}
-
-/// The tray icon's screen rect and whether it shows the light-taskbar mark.
-#[cfg(windows)]
-pub(crate) fn tray_state() -> Option<(tray_icon::Rect, bool)> {
-    TRAY.with(|t| t.borrow().as_ref().and_then(|t| Some((t.rect()?, t.light()))))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn tray_state() -> Option<((), bool)> {
-    None
 }
 
 pub static EXIT_CODE: AtomicI32 = AtomicI32::new(0);

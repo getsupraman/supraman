@@ -113,14 +113,6 @@ impl Tray {
         }
     }
 
-    pub fn rect(&self) -> Option<tray_icon::Rect> {
-        self.0.rect()
-    }
-
-    pub fn light(&self) -> bool {
-        self.2.get()
-    }
-
     /// The icon's tooltip: the scheduled runs that need René (`FleetView::tray_tooltip`).
     pub fn set_tooltip(&self, text: &str) {
         if *self.1.borrow() != text {

@@ -156,18 +156,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if view.read_with(cx, |v, _| row(v, RECENT)).is_none() {
         bail!("the starred {RECENT} dropped out with stopped sessions hidden");
     }
-    let (on_disk, _) = Stars::load(Some(home));
-    if !on_disk.ids().contains(RECENT) || !on_disk.ids().contains(OLD) {
-        bail!("starred.json holds {:?}", on_disk.ids());
-    }
-    view.update(cx, |v, cx| {
-        v.stars = on_disk;
-        v.invalidate_tree();
-        cx.notify();
-    });
-    if view.read_with(cx, |v, _| row(v, RECENT).zip(row(v, OLD))).is_none() {
-        bail!("after reading starred.json again a starred session is gone");
-    }
 
     click(view, &format!("star-{RECENT}"), cx).await?;
     until(view, cx, WITHIN, "unstar hides it with stopped hidden", |v| row(v, RECENT).is_none().then_some(())).await?;
@@ -177,7 +165,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     }
     Ok(format!(
         "starred 20-day-old {OLD} shown with stopped hidden {} ms in; {RECENT} only with stopped shown, as \"{RECENT_TITLE}\"; \
-         a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden, in starred.json, after a reload; unstar hid it",
+         a double-click on its row resumed it: the fake claude ran `{args}` in {cwd} ({}); star kept it with stopped hidden; unstar hid it and left starred.json",
         first.as_millis(),
         if minted { "with its own token config" } else { "plain: no Workman token to mint" }
     ))

@@ -342,6 +342,22 @@ fn escape(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The runs and the live run's board the Work tab paints from the fake.
+const BOARD: [&str; 5] = ["work-run-sw2", "work-run-sw1", "work-row-sw2/1", "work-row-sw2/2", "work-row-sw2/2.1"];
+
+/// `--selftest-perf`: the frame budget while the Work tab loads the fake's board.
+pub async fn board_frames(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let before = frames::baseline(view, cx).await;
+    let recording = frames::start(view, cx);
+    click(view, &format!("work-{WORKSPACE}"), cx).await?;
+    let loaded = painted(view, &BOARD, LOADED_WITHIN, "runs and the live run's board", cx).await;
+    sleep(cx, Duration::from_millis(200)).await;
+    let during = recording.stop(view, cx);
+    let loaded = loaded?;
+    let stats = frames::judge("Work tab board load", &before, &during, view, cx).await?;
+    Ok(format!("the board painted {} ms after the click; {stats}", loaded.as_millis()))
+}
+
 pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let fake = FAKE.get().ok_or_else(|| anyhow!("no fake Workman (prepare did not run)"))?;
     let mut lines = Vec::new();
@@ -351,8 +367,6 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     crate::selftest_manage::shot("m5-14-inbox", cx).await;
     lines.push(format!("Inbox painted the fake's 2 Workman rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
-    let before = frames::baseline(view, cx).await;
-    let recording = frames::start(view, cx);
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
     let (tab, work) = view
         .read_with(cx, |v, _| {
@@ -362,11 +376,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
             })
         })
         .ok_or_else(|| anyhow!("clicking work-{WORKSPACE} opened no active Work tab"))?;
-    let loaded = painted(view, &["work-run-sw2", "work-run-sw1", "work-row-sw2/1", "work-row-sw2/2", "work-row-sw2/2.1"], LOADED_WITHIN, "runs and the live run's board", cx).await;
-    sleep(cx, Duration::from_millis(200)).await;
-    let during = recording.stop(view, cx);
-    let loaded = loaded?;
-    let stats = frames::judge("step 7 board load", &before, &during, view, cx).await?;
+    let loaded = painted(view, &BOARD, LOADED_WITHIN, "runs and the live run's board", cx).await?;
     crate::selftest_manage::shot("m5-14-work-board", cx).await;
     for absent in ["work-row-13", "work-row-sw1/1"] {
         if is_painted(view, absent, cx) {
@@ -374,7 +384,7 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
         }
     }
     let title = view.read_with(cx, |v, _| v.tab(tab).map(|t| t.title.clone()).unwrap_or_default());
-    lines.push(format!("tab \"{title}\" painted 2 runs and sw2's 3 rows (depth 1, 1, 2) {} ms after the click; run row as header, sw1 collapsed; frames while loading: {stats}", loaded.as_millis()));
+    lines.push(format!("tab \"{title}\" painted 2 runs and sw2's 3 rows (depth 1, 1, 2) {} ms after the click; run row as header, sw1 collapsed", loaded.as_millis()));
 
     click(view, "work-run-sw1", cx).await?;
     let expanded = painted(view, &["work-row-sw1/1", "work-row-sw1/2", &status_key("sw1/1", ItemStatus::Done)], LOADED_WITHIN, "sw1 expanded", cx).await?;
@@ -467,8 +477,6 @@ async fn item_page(
 ) -> anyhow::Result<String> {
     let mut lines = Vec::new();
     fake.set(item_target(TASK_1), Answer::json(task1_page(110, launched, false)));
-    let before = frames::baseline(view, cx).await;
-    let recording = frames::start(view, cx);
 
     click(view, "work-row-sw2/1", cx).await?;
     let attach_key = format!("item-attach-{}", launched.id);
@@ -560,10 +568,7 @@ async fn item_page(
     if painted_any(view, "item-", cx) {
         bail!("Escape left the item page open");
     }
-    sleep(cx, Duration::from_millis(200)).await;
-    let during = recording.stop(view, cx);
-    let stats = frames::judge("step 7 item page", &before, &during, view, cx).await?;
-    lines.push(format!("Escape closed it; frames on the item page: {stats}"));
+    lines.push("Escape closed it".into());
 
     click(view, "work-row-sw2/1", cx).await?;
     painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Attach", cx).await?;
@@ -578,8 +583,6 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     let mut lines = Vec::new();
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let question = format!("inbox-ws-question:{TASK_1}");
-    let before = frames::baseline(view, cx).await;
-    let recording = frames::start(view, cx);
 
     click(view, &blocked, cx).await?;
     painted(view, &["item-header-sw2/2"], LOADED_WITHIN, "sw2/2's page from the Inbox", cx).await?;
@@ -658,11 +661,8 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     }
     click(view, "journal-event-40", cx).await?;
     painted(view, &["item-header-sw1/1"], LOADED_WITHIN, "sw1/1 from its journal event", cx).await?;
-    sleep(cx, Duration::from_millis(200)).await;
-    let during = recording.stop(view, cx);
-    let stats = frames::judge("step 7 inbox and journal", &before, &during, view, cx).await?;
     lines.push(format!(
-        "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page; frames: {stats}",
+        "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page",
         live_after.as_millis()
     ));
     crate::selftest_manage::shot("m5-14-work-journal", cx).await;

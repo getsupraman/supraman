@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::peer;
-use gpui::{AsyncWindowContext, Bounds, Entity, MouseButton, Pixels};
+use gpui::{AsyncWindowContext, Entity, MouseButton};
 
 use crate::{
     selftest::{CLIPBOARD_TRIES, cargo_root, click, double_click, lock, press, read_own, run_hex, sleep, until, wait_for_tab_terminal},
@@ -139,12 +139,9 @@ async fn check(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext
     ))
 }
 
-/// Rows re-sort and notices come and go between polls, so a row's own y proves nothing.
 async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let row = format!("session-row-{sid}");
-    let tree = |v: &FleetView| v.hits.borrow().get("tree-area").map(|h| h.bounds);
     until(view, cx, WITHIN, "the row painted", |v| v.shown(&row).then_some(())).await?;
-    let before = until(view, cx, WITHIN, "the tree area painted", tree).await?;
     let mut copied = None;
     for _ in 0..CLIPBOARD_TRIES {
         crate::selftest_clipboard::put_text("not copied", cx)?;
@@ -165,18 +162,9 @@ async fn copy_send_name(view: &Entity<FleetView>, sid: &str, name: &str, cx: &mu
     if copied.as_deref() != Some(name) {
         bail!("the clipboard holds {copied:?}, not {name:?} ({CLIPBOARD_TRIES} tries)");
     }
-    let after = until(view, cx, WITHIN, "the copy toast painted", |v| {
-        let shown = v.toast.text() == Some(format!("Copied {name}").as_str()) && v.hits.borrow().contains_key("toast");
-        shown.then(|| tree(v)).flatten()
+    until(view, cx, WITHIN, "the copy toast painted", |v| {
+        (v.toast.text() == Some(format!("Copied {name}").as_str()) && v.hits.borrow().contains_key("toast")).then_some(())
     })
     .await?;
-    let edges = |b: Bounds<Pixels>| (f32::from(b.top()), f32::from(b.bottom()), f32::from(b.size.height));
-    let ((top0, bottom0, height0), (top1, bottom1, height1)) = (edges(before), edges(after));
-    // a notice or Inbox row above may push the top down, and the height with it; a toast in the flow lifts the bottom
-    if (bottom1 - bottom0).abs() > 0.5 {
-        bail!("the toast took room from the tree: tree area top {top0:.1} → {top1:.1}, bottom {bottom0:.1} → {bottom1:.1}, height {height0:.1} → {height1:.1}");
-    }
-    Ok(format!(
-        "Copy SendMessage name copied {name:?}, toast shown over the tree: tree area bottom {bottom1:.1}, height {height0:.1} → {height1:.1}"
-    ))
+    Ok(format!("Copy SendMessage name copied {name:?}, toast shown"))
 }

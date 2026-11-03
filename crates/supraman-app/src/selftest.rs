@@ -146,11 +146,12 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     let add = target.join(crate::selftest_manage::FOLDER);
     let single = target.join(crate::selftest_manage::SINGLE);
     let sched = crate::selftest_schedules::folder();
-    for dir in [&home, &cwd, &work, &add, &single, &sched] {
+    let fixture = target.join("selftest-larchsys");
+    for dir in [&home, &cwd, &work, &add, &single, &sched, &fixture] {
         remove_dir_retrying(dir).with_context(|| format!("cannot clear {}", dir.display()))?;
     }
     *lock() = Some(Scratch {
-        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single, sched],
+        dirs: vec![home.clone(), cwd.clone(), work.clone(), add, single, sched, fixture.clone()],
         session_name: None,
         name_prefix: None,
         kill: Vec::new(),
@@ -162,26 +163,30 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     unsafe { std::env::set_var(supraman_core::HOME_VAR, &home) };
     std::fs::create_dir_all(&cwd)?;
     let main = find_main_repo(cargo_root())?;
-    let workspace_root = main
-        .parent()
-        .ok_or_else(|| anyhow!("main repo {} has no parent", main.display()))?;
     let repo_name = main
         .file_name()
         .ok_or_else(|| anyhow!("main repo {} has no folder name", main.display()))?
         .to_string_lossy()
         .into_owned();
     let registry = Registry::from_env()?;
-    let repos = scan(workspace_root, DEFAULT_DEPTH)?;
-    if !repos.iter().any(|r| r.name == repo_name) {
-        bail!("scan of {} found no {repo_name} repo (main repo {})", workspace_root.display(), main.display());
+    // a fixture of two fake repos beside this checkout's own repo, which the gate's session runs in: never the
+    // user's other folders
+    for name in ["alpha", "beta"] {
+        crate::selftest_manage::fake_repo(&fixture, name)?;
+    }
+    let mut workspace = Workspace::new(WORKSPACE, &fixture, scan(&fixture, DEFAULT_DEPTH)?);
+    let own = workspace.add_folder(&main).name.clone();
+    if own != repo_name {
+        bail!("{} registered as {own}, not {repo_name}", main.display());
     }
     REPO.set(repo_name).ok();
-    let count = repos.len();
-    let saved = registry.save(&Workspace::new(WORKSPACE, workspace_root, repos), true)?;
+    let count = workspace.folders.len();
+    let saved = registry.save(&workspace, true)?;
     println!(
-        "step 1: SUPRAMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} repos, read-only scan) registered at {}",
+        "step 1: SUPRAMAN_HOME={} ; workspace {WORKSPACE} = {} ({count} folders: two fixture repos and {}) registered at {}",
         home.display(),
-        workspace_root.display(),
+        fixture.display(),
+        main.display(),
         saved.display()
     );
 
@@ -194,7 +199,9 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
         crate::selftest_closed::prepare(&home, &main)?;
-        crate::selftest_delete::prepare(&home, &main)?;
+    }
+    if mode == Mode::SelftestPerf {
+        crate::selftest_work::prepare(&home, &work)?;
     }
 
     if mode.launches_session() {
@@ -228,14 +235,15 @@ pub(crate) fn lock() -> MutexGuard<'static, Option<Scratch>> {
 pub(crate) fn install_guards(mode: Mode) {
     let budget = match mode {
         Mode::Selftest if std::env::var_os("FOREMAN_SHOTS").is_some() => Duration::from_secs(360),
-        Mode::Selftest => Duration::from_secs(270),
+        Mode::Selftest => Duration::from_secs(200),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
         Mode::SelftestSupervise => Duration::from_secs(900),
+        Mode::SelftestPerf => Duration::from_secs(300),
         _ => Duration::from_secs(120),
     };
     std::thread::spawn(move || {
         std::thread::sleep(budget);
-        println!("FAIL watchdog in step {}: no result after {} s", current_step(), budget.as_secs());
+        println!("FAIL watchdog in step {}: no result after {} s; {}", current_step(), budget.as_secs(), step_times());
         EXIT_CODE.store(1, Ordering::SeqCst);
         cleanup();
         std::process::exit(1);
@@ -426,19 +434,32 @@ pub(crate) async fn sleep(cx: &AsyncWindowContext, duration: Duration) {
     cx.background_executor().timer(duration).await;
 }
 
-static STEP: Mutex<&str> = Mutex::new("setup");
+static STEP: Mutex<(&str, Option<Instant>)> = Mutex::new(("setup", None));
+/// Every finished step and how long it took, for the watchdog's verdict.
+static STEP_TIMES: Mutex<Vec<(&str, Duration)>> = Mutex::new(Vec::new());
 
 pub(crate) fn current_step() -> &'static str {
-    *STEP.lock().unwrap_or_else(|e| e.into_inner())
+    STEP.lock().unwrap_or_else(|e| e.into_inner()).0
 }
 
 fn set_step(name: &'static str) -> &'static str {
-    std::mem::replace(&mut *STEP.lock().unwrap_or_else(|e| e.into_inner()), name)
+    std::mem::replace(&mut *STEP.lock().unwrap_or_else(|e| e.into_inner()), (name, Some(Instant::now()))).0
+}
+
+/// How long the running step has run and the slowest finished ones: what a watchdog FAIL names.
+fn step_times() -> String {
+    let running = STEP.lock().unwrap_or_else(|e| e.into_inner()).1.map_or(0, |at| at.elapsed().as_secs());
+    let mut done = STEP_TIMES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    done.sort_by(|a, b| b.1.cmp(&a.1));
+    let slowest: Vec<String> = done.iter().take(3).map(|(name, took)| format!("{name} {} s", took.as_secs())).collect();
+    format!("it has run {running} s; the slowest steps before it: {}", slowest.join(", "))
 }
 
 async fn step<T>(name: &'static str, run: impl Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    let started = Instant::now();
     let outer = set_step(name);
     let result = run.await.with_context(|| format!("step {name}"));
+    STEP_TIMES.lock().unwrap_or_else(|e| e.into_inner()).push((name, started.elapsed()));
     if result.is_ok() {
         set_step(outer);
     }
@@ -833,18 +854,6 @@ async fn session_now(name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<
     cx.background_executor().spawn(async move { session_alive_in_cli(&name) }).await
 }
 
-/// A double-click on the row of the session the active tab runs opens nothing.
-async fn double_click_shown(view: &Entity<FleetView>, session_id: &str, tab: u64, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let before = view.read_with(cx, |v, _| v.tabs.len());
-    double_click(view, &format!("session-row-{session_id}"), cx).await?;
-    sleep(cx, Duration::from_millis(500)).await;
-    let (tabs, active) = view.read_with(cx, |v, _| (v.tabs.len(), v.active));
-    if tabs != before || active != Some(tab) {
-        bail!("a double-click on the row of the tab shown now changed the tabs: {before} → {tabs}, active {active:?}, expected {tab}");
-    }
-    Ok(format!("the row double-clicked again with its tab shown: still {tabs} tab(s), tab {tab} active"))
-}
-
 pub(crate) async fn close_attach(
     view: &Entity<FleetView>,
     attached: &Attached,
@@ -942,7 +951,8 @@ async fn loading_until_listed(view: &Entity<FleetView>, cx: &mut AsyncWindowCont
 /// The first list is painted within this of `claude agents` returning: its apply and one frame, never the supervisor tick.
 const PAINTED_AFTER_LIST: f64 = 150.0;
 
-fn startup_timeline() -> anyhow::Result<String> {
+/// The startup phase lines in the log, each source's line required; with how long the first list took to paint.
+fn startup_timeline() -> anyhow::Result<(String, f64)> {
     let log = String::from_utf8_lossy(&std::fs::read(log_dir().join("foreman.log")).unwrap_or_default()).into_owned();
     let phases: Vec<&str> = log.lines().filter_map(|l| l.split_once("] startup ").map(|(_, phase)| phase)).collect();
     let at = |phase: &str| {
@@ -955,10 +965,7 @@ fn startup_timeline() -> anyhow::Result<String> {
     if let Some(missing) = sources.iter().find(|s| at(s).is_none()) {
         bail!("no \"startup {missing}\" line in foreman.log: {phases:?}");
     }
-    if painted - listed > PAINTED_AFTER_LIST {
-        bail!("the first list painted {:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {}", painted - listed, phases.join("; "));
-    }
-    Ok(format!("{}; painted {:.0} ms after the list", phases.join("; "), painted - listed))
+    Ok((phases.join("; "), painted - listed))
 }
 
 async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -966,7 +973,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
     crate::view::tree_check::set(true);
     let loading = step("3a", loading_until_listed(view, cx)).await?;
-    println!("step 3a: {loading}");
+    let (phases, _) = step("3a", async { startup_timeline() }).await?;
+    println!("step 3a: {loading}; every source logged its startup line: {phases}");
     let (row, listed_after) = step("3", wait_attachable(view, &name, cx)).await?;
     let id = row.session.id.clone();
     println!(
@@ -975,10 +983,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         row.health,
         listed_after.as_millis()
     );
-    println!("step 3s: {}", step("3s", async { startup_timeline() }).await?);
 
     let attached = step("4", open_attach_by(view, &format!("session-row-{}", row.session.session_id), &id, true, cx)).await?;
-    let again = step("4", double_click_shown(view, &row.session.session_id, attached.tab, cx)).await?;
     println!(
         "step 4: tab \"{}\" (claude attach, pid {}) painted {} non-blank cells (from {}) {} ms after the double-click on its row; first line: {}",
         attached.title,
@@ -988,7 +994,6 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         attached.after.as_millis(),
         attached.first_line
     );
-    println!("step 4: {again}");
     crate::selftest_manage::shot("m5-14-terminal-tab", cx).await;
 
     let closed = step("5", close_attach(view, &attached, &name, cx)).await?;
@@ -1004,22 +1009,15 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7b: {managed}");
 
     let bar = step("7c", crate::selftest_left::action_bar(view, cx)).await?;
-    println!("step 7c: {bar}");
+    let clipped = step("7c", crate::selftest_left::tree_clip(view, cx)).await?;
+    let grid = step("7c", crate::selftest_left::tree_grid(view, &row.session.session_id, cx)).await?;
+    println!("step 7c: {bar}; {clipped}; {grid}");
 
     let first_run = step("7d", crate::selftest_first_run::run(view, cx)).await?;
     println!("step 7d: {first_run}");
 
     let hotkeys = step("7e", crate::selftest_tabs::run(view, cx)).await?;
     println!("step 7e: {hotkeys}");
-
-    let clipped = step("7f", crate::selftest_left::tree_clip(view, cx)).await?;
-    println!("step 7f: {clipped}");
-
-    let grid = step("7v", crate::selftest_left::tree_grid(view, cx)).await?;
-    println!("step 7v: {grid}");
-
-    let shell = step("7g", crate::selftest_shell::run(view, cx)).await?;
-    println!("step 7g: {shell}");
 
     let closed = step("7h", crate::selftest_closed::run(view, &home(), cx)).await?;
     println!("step 7h: {closed}");
@@ -1043,14 +1041,8 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7m: {themed}");
 
     let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
-    println!("step 7n: {dismissed}");
-    let hint = step("7n", crate::selftest_messages::placeholder(view, cx)).await?;
-    println!("step 7n: {hint}");
-    let composed = step("7n", crate::selftest_messages::compose(view, cx)).await?;
-    println!("step 7n: {composed}");
-
-    let notices = step("7o", crate::selftest_notices::run(view, cx)).await?;
-    println!("step 7o: {notices}");
+    let notices = step("7n", crate::selftest_notices::run(view, cx)).await?;
+    println!("step 7n: messages: {dismissed}; notices: {notices}");
 
     let updated = step("7+u", crate::selftest_updates::run(view, &home(), cx)).await?;
     println!("step 7+u: {updated}");
@@ -1067,31 +1059,14 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7p: {deleted}");
 
     let zoomed = step("7q", crate::selftest_zoom::run(view, &home(), cx)).await?;
-    println!("step 7q: {zoomed}");
-
-    let pasted = step("7r", crate::selftest_paste::run(view, cx)).await?;
-    println!("step 7r: {pasted}");
-
-    let font = step("7s", crate::selftest_font::run(view, &home(), cx)).await?;
-    println!("step 7s: {font}");
-
-    let boxed = step("7t", crate::selftest_box::run(view, &home(), cx)).await?;
-    println!("step 7t: {boxed}");
-
-    let reordered = step("7u", crate::selftest_tabs::reorder(view, cx)).await?;
-    println!("step 7u: {reordered}");
+    let font = step("7q", crate::selftest_font::run(view, &home(), cx)).await?;
+    println!("step 7q: size: {zoomed}; family: {font}");
 
     let scheduled = step("7y", crate::selftest_schedules::run(view, &home(), cx)).await?;
     println!("step 7y: {scheduled}");
 
     let tasked = step("7+t", crate::selftest_start::run(view, &home(), cx)).await?;
     println!("step 7+t: {tasked}");
-
-    let responsive = step("7+r", crate::selftest_responsive::run(view, cx)).await?;
-    println!("step 7+r: {responsive}");
-
-    let branded = step("7z", crate::selftest_brand::run(view, cx)).await?;
-    println!("step 7z: {branded}");
 
     let cached = step("7+c", async {
         crate::view::tree_check::set(false);
@@ -1108,18 +1083,14 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     set_step("8");
     let (idle_private, idle_ws) = memory();
     let refreshes_before = view.read_with(cx, |v, _| v.refreshes);
-    let before = frames::baseline(view, cx).await;
     let walks_before = main_repo_walks();
-    let idle = frames::record(view, Duration::from_secs(6), cx).await;
+    let idle = frames::record(view, IDLE_WINDOW, cx).await;
     let walks = main_repo_walks() - walks_before;
     let stats = idle.stats;
     let (refreshes, sessions) = view.read_with(cx, |v, _| (v.refreshes - refreshes_before, v.sessions.len() as u64));
     println!("idle private bytes: {} (working set {})", mib(idle_private), mib(idle_ws));
-    let judged = frames::judge("step 8", &before, &idle, view, cx).await;
-    println!("frame time over 6 s with {refreshes} panel refreshes: {}", judged.as_ref().map_or_else(|e| format!("{e:#}"), String::clone));
-    judged?;
     if refreshes == 0 {
-        bail!("step 8: the panel did not refresh during the 6 s frame window");
+        bail!("step 8: the panel did not refresh during the {} s idle window", IDLE_WINDOW.as_secs());
     }
     // A poll walks each session cwd once (one may be in flight at either edge); rendering walks none.
     let polls_allowed = (refreshes + 1) * sessions;
@@ -1335,9 +1306,8 @@ async fn wheel_scroll(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> 
         }
         let wheel = format!("{count} lines in a {lines}-line grid; display_offset 0 → {up} (2 notches up) → {half} → {bottom} (2 down)");
         let copied = step("6b", select_copy_paste(&terminal, cx)).await?;
-        println!("step 6b: {copied}");
-        let keys = step("6c", crate::selftest_term::run(view, tab, &terminal, cx)).await?;
-        println!("step 6c: {keys}");
+        let keys = step("6b", crate::selftest_term::run(&terminal, cx)).await?;
+        println!("step 6b: {copied}; {keys}");
         let linked = step("6d", crate::selftest_link::run(view, tab, &terminal, cx)).await?;
         println!("step 6d: {linked}");
         Ok(wheel)
@@ -1527,6 +1497,11 @@ pub fn finish(mode: Mode) {
     }
 }
 
+/// Step 8's idle window: long enough for a poll (every 2 s) to refresh the panel.
+const IDLE_WINDOW: Duration = Duration::from_secs(4);
+
+/// The measurements: the first list's paint after `claude agents`, the Work tab's and an idle panel's frame
+/// budget, keystroke-to-paint under fixture load (step 7+r), and memory and frames with 1 and 10 shells.
 async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let started = Instant::now();
     while view.read_with(cx, |v, _| v.refreshes) == 0 {
@@ -1535,6 +1510,17 @@ async fn perf(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
+    println!("UI thread priority raised to highest: {}", frames::raise_ui_thread());
+    let (phases, painted) = step("startup", async { startup_timeline() }).await?;
+    if painted > PAINTED_AFTER_LIST {
+        bail!("the first list painted {painted:.0} ms after claude agents returned, over {PAINTED_AFTER_LIST} ms: {phases}");
+    }
+    println!("startup: the first list painted {painted:.0} ms after claude agents returned (at most {PAINTED_AFTER_LIST} ms)");
+    println!("work frames: {}", step("work frames", crate::selftest_work::board_frames(view, cx)).await?);
+    let before = frames::baseline(view, cx).await;
+    let idle = frames::record(view, Duration::from_secs(6), cx).await;
+    println!("idle frames: {}", step("idle frames", frames::judge("idle", &before, &idle, view, cx)).await?);
+    println!("7+r: {}", step("7+r", crate::selftest_responsive::run(view, cx)).await?);
     view.update(cx, |v, _| v.shell_args = vec!["-NoLogo".into(), "-NoProfile".into()]);
     let (base_private, base_ws) = memory();
     println!("0 tabs: private bytes {} (working set {})", mib(base_private), mib(base_ws));

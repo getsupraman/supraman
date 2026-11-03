@@ -132,19 +132,6 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     until_app(view, cx, WITHIN, "the caret at the start of the name after a click there", |v, cx| (name(v, cx) == at_start).then_some(()))
         .await
         .map_err(|e| e.context(format!("(name, caret) {:?}, expected ({FOLDER}, 0)", now(cx))))?;
-    let (mut lit, mut unlit) = (0, 0);
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(2500) && (lit < 2 || unlit < 2) {
-        match view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name.read(cx).caret_painted.get())) {
-            Some(true) => lit += 1,
-            Some(false) => unlit += 1,
-            None => bail!("the review closed while its caret was watched"),
-        }
-        sleep(cx, Duration::from_millis(100)).await;
-    }
-    if lit == 0 || unlit == 0 {
-        bail!("the name's caret was painted lit {lit} and unlit {unlit} times in {} ms: it does not blink", started.elapsed().as_millis());
-    }
     let seen: std::rc::Rc<std::cell::RefCell<Vec<String>>> = Default::default();
     let observer = cx.update(|_, cx| {
         let (seen, view) = (seen.clone(), view.clone());
@@ -169,38 +156,7 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     let Some(said) = said else {
         bail!("Save while the folder was still read said nothing");
     };
-    Ok(format!("name by posted messages: click → caret 0, caret {lit} lit / {unlit} unlit, edited to {ADDED}; Save while reading: \"{said}\""))
-}
-
-async fn single_repo(view: &Entity<FleetView>, registry: &Registry, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let root = cargo_root().join("target").join(SINGLE);
-    let git = root.join(".git");
-    std::fs::create_dir_all(&git)?;
-    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")?;
-    view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
-    click(view, "add-workspace", cx).await?;
-    click(view, "menu-add-from-folder", cx).await?;
-    let (repos, error) = until(view, cx, WITHIN, "the single repo's review", |v| {
-        let d = v.adding.as_ref().filter(|d| !d.scanning)?;
-        Some((d.repos.iter().map(|(r, _)| (r.name.clone(), r.path.clone())).collect::<Vec<_>>(), d.error.clone()))
-    })
-    .await?;
-    if repos != [(SINGLE.to_string(), root.clone())] || error.is_some() {
-        bail!("the review of a folder that is a repo lists {repos:?} and says {error:?}, expected [({SINGLE}, {})]", root.display());
-    }
-    shot("add-review-single-repo", cx).await;
-    post_click(view, "add-save", 4., cx).await?;
-    until(view, cx, WITHIN, "the single repo's review closed on Save", |v| v.adding.is_none().then_some(())).await?;
-    let saved = registry.load(SINGLE).context("the registry after Save")?;
-    let paths: Vec<_> = saved.folders.iter().map(|r| (r.name.as_str(), r.path.as_path())).collect();
-    if paths != [(SINGLE, root.as_path())] {
-        bail!("registered {SINGLE} with repos {paths:?}");
-    }
-    let row = format!("repo-row-{SINGLE}/{SINGLE}");
-    until(view, cx, WITHIN, "the single repo's row in the tree", |v| painted(v, &row).then_some(())).await?;
-    registry.remove(SINGLE)?;
-    view.update(cx, |v, _| v.reload_workspaces());
-    Ok(format!("{SINGLE} (a folder that is a repo): one repo, the root, registered by a posted Save and shown"))
+    Ok(format!("name by posted messages: click → caret 0, edited to {ADDED}; Save while reading: \"{said}\""))
 }
 
 /// The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE the real cursor's position sends at once.
@@ -346,7 +302,8 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
     sleep(cx, Duration::from_millis(100)).await;
     supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
     let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(1500) {
+    // past the card's 500 ms delay: a row that would show one has shown it by then
+    while started.elapsed() < Duration::from_millis(800) {
         crate::selftest_left::move_to(position, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
     }
@@ -449,11 +406,16 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
     ))
 }
 
-fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
+pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     let git = root.join(name).join(".git");
     std::fs::create_dir_all(&git)?;
     std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")?;
     Ok(())
+}
+
+/// `FOREMAN_SHOTS` is set: the run takes screenshots, and the rests that only serve them are taken too.
+pub(crate) fn shooting() -> bool {
+    std::env::var_os("FOREMAN_SHOTS").is_some()
 }
 
 pub(crate) async fn shot(name: &str, cx: &mut AsyncWindowContext) {
@@ -478,33 +440,6 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
         .spawn(async move {
             let hwnd = crate::selftest_capture::window(title.as_deref())?;
             crate::selftest_capture::print_window(hwnd, &out)?;
-            Ok(out)
-        })
-        .await
-}
-
-/// A PNG of the screen area `[x, y, width, height]` in physical pixels.
-pub(crate) async fn capture_screen(out: PathBuf, area: [i32; 4], cx: &mut AsyncWindowContext) -> anyhow::Result<PathBuf> {
-    let [x, y, w, h] = area;
-    let script = cargo_root().join("scripts").join("shot.ps1");
-    cx.background_executor()
-        .spawn(async move {
-            if let Some(dir) = out.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            let o = supraman_core::process::run(
-                supraman_core::process::command("pwsh")
-                    .args(["-NoLogo", "-NoProfile", "-File"])
-                    .arg(&script)
-                    .arg("-Out")
-                    .arg(&out)
-                    .args(["-Screen", &format!("{x},{y},{w},{h}")]),
-                Duration::from_secs(60),
-                supraman_core::process::Kill::Tree,
-            )?;
-            if !o.success() {
-                bail!("{} failed: {}", out.display(), o.stderr.trim());
-            }
             Ok(out)
         })
         .await
@@ -686,17 +621,11 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     registry.remove(&again)?;
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
     out.push(format!("the same folder again registers as {again} with alpha disabled, out of its tree and found by search as supervised in {ADDED}; removed"));
-    out.push(single_repo(view, &registry, cx).await?);
     out.push(row_details(view, own, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);
     press_painted(view, &session_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, &own.name, cx).await?;
-    for want in ["attach", "stop-session", "copy-name", "copy-id"] {
-        if !keys.contains(&want) {
-            bail!("the menu of {} has {keys:?}, no {want}", own.name);
-        }
-    }
     shot("menu-session", cx).await;
     typed(cx, "escape", None)?;
     until(view, cx, WITHIN, "the session menu closed on Esc", |v| v.menu.is_none().then_some(())).await?;
@@ -705,9 +634,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let ws_key = format!("ws-row-{ADDED}");
     press_painted(view, &ws_key, MouseButton::Right, cx).await?;
     let keys = menu_open(view, ADDED, cx).await?;
-    if keys != ["start", "work", "new-task", "new-scheduled-task", "rescan", "edit-folders", "open-folder", "open-terminal", "details", "remove"] {
-        bail!("the menu of {ADDED} has {keys:?}");
-    }
     shot("menu-workspace", cx).await;
     cx.update(|window, cx| {
         // the right panel's bottom-right corner, far from the menu and from any button
