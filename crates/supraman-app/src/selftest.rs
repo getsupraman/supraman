@@ -237,7 +237,7 @@ pub(crate) fn install_guards(mode: Mode) {
         Mode::Selftest if std::env::var_os("FOREMAN_SHOTS").is_some() => Duration::from_secs(360),
         Mode::Selftest => Duration::from_secs(200),
         Mode::SelftestDetach(cycles) => Duration::from_secs(90 + 15 * u64::from(cycles)),
-        Mode::SelftestSupervise => Duration::from_secs(900),
+        Mode::SelftestSupervise => Duration::from_secs(420),
         Mode::SelftestPerf => Duration::from_secs(300),
         _ => Duration::from_secs(120),
     };
@@ -1041,8 +1041,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     println!("step 7m: {themed}");
 
     let dismissed = step("7n", crate::selftest_messages::run(view, &home(), cx)).await?;
+    let held = step("7n", crate::selftest_messages::held(view, &home(), cx)).await?;
     let notices = step("7n", crate::selftest_notices::run(view, cx)).await?;
-    println!("step 7n: messages: {dismissed}; notices: {notices}");
+    println!("step 7n: messages: {dismissed}; hold: {held}; notices: {notices}");
 
     let updated = step("7+u", crate::selftest_updates::run(view, &home(), cx)).await?;
     println!("step 7+u: {updated}");

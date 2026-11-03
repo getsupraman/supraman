@@ -92,7 +92,7 @@ impl Mode {
 }
 
 const USAGE: &str =
-    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise | --selftest-shots] [--visible]";
+    "usage: supraman [--selftest | --selftest-detach <n> | --selftest-detach-shutdown | --selftest-perf | --selftest-supervise [--release] | --selftest-shots] [--visible]";
 
 fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -121,6 +121,10 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
         ["--selftest-detach-shutdown"] => Mode::SelftestDetachShutdown,
         ["--selftest-perf"] => Mode::SelftestPerf,
         ["--selftest-supervise"] => Mode::SelftestSupervise,
+        ["--selftest-supervise", "--release"] => {
+            selftest_supervise::RELEASE.store(true, Ordering::Relaxed);
+            Mode::SelftestSupervise
+        }
         ["--selftest-shots"] => Mode::SelftestShots,
         other => {
             eprintln!("unknown arguments {other:?}; {USAGE}");

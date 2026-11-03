@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Modifiers, MouseMoveEvent, PlatformInput, Pixels, WindowHandle};
 
 use crate::{
-    selftest::{WORKSPACE, click, double_click, log_offset, sleep, teardown_errors_since, until, until_with},
+    selftest::{WORKSPACE, click, log_offset, sleep, teardown_errors_since, until, until_with},
     selftest_manage::{shot, shot_window},
     settings_window::{SettingsView, page},
     view::FleetView,
@@ -14,7 +14,7 @@ use crate::{
 const ICONS: [&str; 5] = ["add-workspace", "expand-all", "collapse-all", "refresh", "bar-settings"];
 const WITHIN: Duration = Duration::from_secs(5);
 
-fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
+pub(crate) fn bounds(v: &FleetView, key: &str) -> Option<Bounds<Pixels>> {
     v.shown(key).then(|| v.hits.borrow().get(key).map(|h| h.bounds)).flatten()
 }
 
@@ -161,100 +161,6 @@ async fn close_settings_by_wm_close(_view: &Entity<FleetView>, _cx: &mut AsyncWi
     Ok(String::new())
 }
 
-pub async fn foreign_row(
-    view: &Entity<FleetView>,
-    workspace: &str,
-    cwd: &std::path::Path,
-    own_park: &str,
-    hex: &str,
-    cx: &mut AsyncWindowContext,
-) -> anyhow::Result<String> {
-    let other: String = hex.chars().rev().collect();
-    let name = format!("fm-selftest-{other}x-park");
-    let session_id = format!("ffff{hex}-foreign");
-    let json = serde_json::json!([{
-        "id": format!("ffff{hex}"),
-        "sessionId": session_id,
-        "name": name,
-        "cwd": cwd,
-        "kind": "background",
-        "startedAt": supraman_claude::now_ms() - 60_000,
-        "state": "blocked",
-        "status": "waiting",
-        "waitingFor": "permission prompt",
-        "pid": std::process::id(),
-    }]);
-    let rows = supraman_claude::parse(&json.to_string())?;
-    view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(rows));
-    let result = check_foreign(view, workspace, &name, &session_id, own_park, cx).await;
-    view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).clear());
-    result
-}
-
-async fn check_foreign(
-    view: &Entity<FleetView>,
-    workspace: &str,
-    name: &str,
-    session_id: &str,
-    own_park: &str,
-    cx: &mut AsyncWindowContext,
-) -> anyhow::Result<String> {
-    let ticks = view.read_with(cx, |v, _| v.ticks);
-    let started = Instant::now();
-    let row = loop {
-        let row = view.read_with(cx, |v, _| {
-            let tree = v.tree();
-            let ws = tree.workspaces.clone().into_iter().find(|w| w.name == workspace)?;
-            ws.repos.into_iter().flat_map(|r| r.sessions.into_iter().map(move |s| (r.name.clone(), s))).find(|(_, s)| s.session.name == name)
-        });
-        if let Some(row) = row
-            && view.read_with(cx, |v, _| v.ticks >= ticks + 2)
-        {
-            break row;
-        }
-        if started.elapsed() > Duration::from_secs(30) {
-            bail!("{name} not in {workspace}'s tree after two ticks within 30 s");
-        }
-        sleep(cx, Duration::from_millis(100)).await;
-    };
-    let (repo, row) = row;
-    if !row.foreign {
-        bail!("{name} under {workspace}/{repo} is not marked as another Supraman's: {:?}", row.health);
-    }
-    let label = format!("foreign-{session_id}");
-    crate::selftest::scrolled_into_view(view, &label, cx).await?;
-    let short = &row.session.id;
-    let actions = [format!("attach-{short}"), format!("resume-{short}"), format!("tab-link-{short}")];
-    if let Some(key) = view.read_with(cx, |v, _| actions.iter().find(|k| v.hits.borrow().contains_key(*k)).cloned()) {
-        bail!("{name}, another Supraman's, paints the action {key}");
-    }
-    let (tabs, toast) = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
-    double_click(view, &format!("session-row-{session_id}"), cx).await?;
-    sleep(cx, Duration::from_millis(500)).await;
-    let after = view.read_with(cx, |v, _| (v.tabs.len(), v.toast.text().map(String::from)));
-    if after != (tabs, toast.clone()) {
-        bail!("a double-click on {name}, another Supraman's, did something: tabs {tabs} → {}, toast {toast:?} → {:?}", after.0, after.1);
-    }
-    let (needs, own) = view.read_with(cx, |v, _| {
-        (
-            v.needs.iter().filter(|n| n.name == name).count(),
-            v.needs.iter().any(|n| n.name == own_park && n.kind == supraman_supervisor::NeedsKind::Blocked),
-        )
-    });
-    if needs != 0 {
-        bail!("{name}, another Supraman's, raised {needs} Inbox row(s)");
-    }
-    if !own {
-        bail!("this home's own {own_park} is no longer Blocked in the Inbox");
-    }
-    shot("m5-10-another-foreman", cx).await;
-    Ok(format!(
-        "{name} (blocked on a permission prompt, injected) listed under {workspace}/{repo} as another Supraman's (its name muted under foreign-<id>, no action, a double-click opens nothing), \
-         0 Inbox rows for it over {} ticks; this home's {own_park} still Blocked in the Inbox",
-        view.read_with(cx, |v, _| v.ticks) - ticks
-    ))
-}
-
 fn painted_part(h: &supraman_ui::hit::Hit) -> Option<Bounds<Pixels>> {
     let b = h.bounds.intersect(&h.visible);
     (b.size.width > Pixels::ZERO && b.size.height > Pixels::ZERO).then_some(b)
@@ -359,159 +265,10 @@ pub async fn tree_clip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) ->
     ))
 }
 
-const TABLE: [&str; 5] = [
-    "selftest\tproj\topen\tselftest\t—\t0/6 done",
-    "  selftest-shout-textkit     run    open    shout: textkit.shout(text)    —    0/1 done",
-    "    selftest-shout-textkit-fn  task  open  Add textkit.shout(text) with unit tests  ✗0/3",
-    "  selftest-shout-textcli     run    open    shout: textcli greet --shout    —    0/1 done",
-    "    selftest-shout-textcli-flag  task  open  greet --shout prints textkit.shout(greet(name))  ✗0/3",
-];
-
-static TABLE_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
 pub(crate) fn move_to(position: gpui::Point<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
     })
-}
-
-pub async fn steady_click(
-    view: &Entity<FleetView>,
-    key: &str,
-    outbox: &std::path::Path,
-    from_name: &str,
-    cx: &mut AsyncWindowContext,
-) -> anyhow::Result<(String, Bounds<Pixels>)> {
-    let mut void = Vec::new();
-    for _ in 0..3 {
-        match held_arrival(view, key, outbox, from_name, cx).await? {
-            Ok((said, aimed)) if void.is_empty() => return Ok((said, aimed)),
-            Ok((said, aimed)) => return Ok((format!("{said} (retaken: {})", void.join("; ")), aimed)),
-            Err(why) => void.push(why),
-        }
-    }
-    bail!("the hold under the pointer was released and armed again before the message was read, in each of 3 tries: {}", void.join("; "))
-}
-
-/// `Err` when the hold was armed again meanwhile: the panel saw the pointer leave (an OS mouse message, or a rest), which shows held rows by design.
-async fn held_arrival(
-    view: &Entity<FleetView>,
-    key: &str,
-    outbox: &std::path::Path,
-    from_name: &str,
-    cx: &mut AsyncWindowContext,
-) -> anyhow::Result<Result<(String, Bounds<Pixels>), String>> {
-    let aimed = crate::selftest::scrolled_into_view(view, key, cx).await?;
-    let target = aimed.center();
-    move_to(target, cx)?;
-    let armed = view.read_with(cx, |v, _| v.left_holds);
-    let file = format!("{:013}-selftest-table.json", supraman_claude::now_ms());
-    let mut body = vec!["Plan for the selftest (a work_tree, not a question):".to_string()];
-    body.extend(TABLE.iter().map(|l| l.to_string()));
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": from_name, "body": body.join("\n")}).to_string();
-    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
-    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
-    *TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(file.clone());
-    // a hand still aiming moves a little; the hold lasts while it does
-    let started = Instant::now();
-    let mut nudge = 0.;
-    loop {
-        let read = view.read_with(cx, |v, _| v.messages.values().flatten().any(|m| m.file == file));
-        if read {
-            break;
-        }
-        if started.elapsed() > Duration::from_secs(15) {
-            bail!("the app did not read {file} from the outbox within 15 s");
-        }
-        nudge = if nudge == 0. { 1. } else { 0. };
-        move_to(gpui::point(target.x + gpui::px(nudge), target.y), cx)?;
-        sleep(cx, Duration::from_millis(250)).await;
-    }
-    let read_after = started.elapsed();
-    move_to(target, cx)?;
-    sleep(cx, Duration::from_millis(300)).await;
-    let (now, held, header, holds) =
-        view.read_with(cx, |v, _| (bounds(v, key), v.left_held(), v.hits.borrow().contains_key("messages-area"), v.left_holds));
-    if holds != armed {
-        return Ok(Err(format!("{file} read {} ms in, the hold armed {} more time(s)", read_after.as_millis(), holds - armed)));
-    }
-    let now = now.ok_or_else(|| anyhow!("{key} is no longer painted after the message arrived"))?;
-    shot("m5-18-hover-hold", cx).await;
-    if now != aimed {
-        bail!(
-            "a Messages row arrived {} ms in and moved {key} from y {:.1} to y {:.1} under the pointer (held: {held})",
-            read_after.as_millis(),
-            f32::from(aimed.top()),
-            f32::from(now.top())
-        );
-    }
-    cx.update(|window, cx| {
-        let modifiers = Modifiers::default();
-        window.dispatch_event(
-            PlatformInput::MouseDown(gpui::MouseDownEvent { button: gpui::MouseButton::Left, position: target, modifiers, click_count: 1, first_mouse: false }),
-            cx,
-        );
-        window.dispatch_event(PlatformInput::MouseUp(gpui::MouseUpEvent { button: gpui::MouseButton::Left, position: target, modifiers, click_count: 1 }), cx);
-    })?;
-    let said = format!(
-        "pointer on {key} at y {:.1}; {file} read {} ms later and held back (Messages section {}), {key} still at y {:.1}; clicked there",
-        f32::from(aimed.top()),
-        read_after.as_millis(),
-        if header { "showing older rows only" } else { "not shown" },
-        f32::from(now.top())
-    );
-    Ok(Ok((said, aimed)))
-}
-
-pub async fn table_lines(view: &Entity<FleetView>, key: &str, aimed: Bounds<Pixels>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let button = key.to_string();
-    let file = TABLE_FILE.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or_else(|| anyhow!("no table message written"))?;
-    let right = view.read_with(cx, |v, _| v.left_width) + gpui::px(200.);
-    move_to(gpui::point(right, gpui::px(300.)), cx)?;
-    let key = until(view, cx, WITHIN, "the held message once the pointer left", |v| {
-        (!v.left_held()).then(|| v.messages.iter().find_map(|(w, msgs)| msgs.iter().any(|m| m.file == file).then(|| format!("{w}/{file}")))).flatten()
-    })
-    .await?;
-    sleep(cx, Duration::from_millis(300)).await;
-    let moved = view.read_with(cx, |v, _| bounds(v, &button)).ok_or_else(|| anyhow!("{button} gone once the pointer left"))?;
-    if moved == aimed {
-        bail!("{button} stayed at y {:.1} after the held row appeared too: the arrival never moved it, so the hold was not tested", f32::from(aimed.top()));
-    }
-    view.update(cx, |v, cx| {
-        v.expanded.insert(key.clone());
-        cx.notify();
-    });
-    let prefix = format!("msg-table-{key}#");
-    let lines = until(view, cx, WITHIN, "the table's lines painted", |v| {
-        let hits = v.hits.borrow();
-        let mut lines: Vec<(String, Bounds<Pixels>)> = hits.iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(k, h)| (k.clone(), h.bounds)).collect();
-        (lines.len() >= TABLE.len()).then(|| {
-            lines.sort_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap_or(std::cmp::Ordering::Equal));
-            lines
-        })
-    })
-    .await?;
-    crate::selftest::scrolled_into_view(view, &lines[0].0, cx).await?;
-    shot("m5-18-messages-table", cx).await;
-    if lines.len() != TABLE.len() {
-        bail!("{} table lines painted for {} rows: {:?}", lines.len(), TABLE.len(), lines.iter().map(|l| &l.0).collect::<Vec<_>>());
-    }
-    let heights: Vec<f32> = lines.iter().map(|(_, b)| f32::from(b.size.height)).collect();
-    let (low, high) = heights.iter().fold((f32::MAX, 0f32), |(l, h), x| (l.min(*x), h.max(*x)));
-    if high - low > 0.5 || high > 24. {
-        bail!("table rows painted {heights:?} px high: a row wrapped");
-    }
-    for pair in lines.windows(2) {
-        if (f32::from(pair[1].1.top() - pair[0].1.bottom())).abs() > 0.5 {
-            bail!("table rows {} and {} are not consecutive lines", pair[0].0, pair[1].0);
-        }
-    }
-    Ok(format!(
-        "pointer left: the held row appeared and moved {button} to y {:.1} (what the hold kept from under the pointer); its {}-row table painted {} lines, each {low:.1} px, unwrapped",
-        f32::from(moved.top()),
-        TABLE.len(),
-        lines.len()
-    ))
 }
 
 /// The painted icon slot and label of each `(key, level)` row sit on `view::grid`.
