@@ -5395,6 +5395,7 @@ dependencies = [
 name = "supraman-supervisor"
 version = "0.1.6"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "supraman-claude",
