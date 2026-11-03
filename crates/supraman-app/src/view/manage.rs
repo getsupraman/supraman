@@ -21,6 +21,8 @@ pub struct AddDraft {
     pub name: Entity<TextInput>,
     pub repos: Vec<(Folder, bool)>,
     pub scanning: bool,
+    /// Save's registry write runs; the dialog closes when it lands.
+    pub saving: bool,
     pub error: Option<String>,
     pub hint: Option<String>,
     _name_events: Subscription,
@@ -36,7 +38,7 @@ impl AddDraft {
         let name = cx.new(|cx| TextInput::new("workspace name", Some(name_char), window, cx));
         let events = cx.subscribe_in(&name, window, |this: &mut FleetView, _, event: &InputEvent, window, cx| this.on_name_event(event, window, cx));
         name.update(cx, |name, cx| name.focus_all(window, cx));
-        Self { empty: false, root, name, repos: Vec::new(), scanning: true, error: None, hint: None, _name_events: events }
+        Self { empty: false, root, name, repos: Vec::new(), scanning: true, saving: false, error: None, hint: None, _name_events: events }
     }
 
     pub fn name_text(&self, cx: &gpui::App) -> String {
@@ -104,6 +106,28 @@ fn supervised_elsewhere(taken: &[(String, String)]) -> String {
             format!(" {names} {verb} supervised in {owner}, disabled here.")
         })
         .collect()
+}
+
+/// Add workspace's Save: a new workspace of `repos` under `root` (none when `empty`), checked and claimed under the registry.
+fn add(registry: Registry, name: String, empty: bool, root: PathBuf, repos: Vec<Folder>) -> Result<(Workspace, Vec<(String, String)>), String> {
+    if empty {
+        validate_name(&name).map_err(|e| add_error(&e))?;
+        let mut workspace = Workspace::new(name, PathBuf::new(), Vec::new());
+        workspace.home = None;
+        registry.check_new(&workspace).map_err(|e| add_error(&e))?;
+        registry.save(&workspace, false).map_err(|e| add_error(&e))?;
+        return Ok((workspace, Vec::new()));
+    }
+    if repos.is_empty() {
+        return Err(format!("No git repos found directly under {}.", root.display()));
+    }
+    validate_name(&name).map_err(|e| add_error(&e))?;
+    let mut workspace = Workspace::new(name, root.clone(), repos);
+    workspace.scans.push(Scan::new(root, DEFAULT_DEPTH));
+    registry.check_new(&workspace).map_err(|e| add_error(&e))?;
+    let taken = registry.claim_folders(&mut workspace, |_| true).map_err(|e| add_error(&e))?;
+    registry.save(&workspace, false).map_err(|e| add_error(&e))?;
+    Ok((workspace, taken))
 }
 
 impl FleetView {
@@ -201,44 +225,44 @@ impl FleetView {
             cx.notify();
             return;
         }
-        let name = draft.name_text(cx);
-        let empty = draft.empty;
-        let result = (|| {
-            if empty {
-                validate_name(&name).map_err(|e| add_error(&e))?;
-                let mut workspace = Workspace::new(name, PathBuf::new(), Vec::new());
-                workspace.home = None;
-                let registry = registry(self.home.as_deref())?;
-                registry.check_new(&workspace).map_err(|e| add_error(&e))?;
-                registry.save(&workspace, false).map_err(|e| add_error(&e))?;
-                return Ok((workspace.name, Vec::new()));
-            }
-            if draft.repos.is_empty() {
-                return Err(format!("No git repos found directly under {}.", draft.root.display()));
-            }
-            validate_name(&name).map_err(|e| add_error(&e))?;
-            let folders = draft.repos.iter().map(|(r, on)| Folder { enabled: *on, ..r.clone() }).collect();
-            let mut workspace = Workspace::new(name, draft.root.clone(), folders);
-            workspace.scans.push(Scan::new(draft.root.clone(), DEFAULT_DEPTH));
-            let registry = registry(self.home.as_deref())?;
-            registry.check_new(&workspace).map_err(|e| add_error(&e))?;
-            let taken = registry.claim_folders(&mut workspace, |_| true).map_err(|e| add_error(&e))?;
-            registry.save(&workspace, false).map_err(|e| add_error(&e))?;
-            Ok((workspace.name, taken))
-        })();
-        match result {
-            Ok((name, taken)) => {
-                self.adding = None;
-                self.collapsed.remove(&format!("workspace:{name}"));
-                self.reveal_new(super::left::PendingReveal::Row(format!("ws:{name}")));
-                self.reload_workspaces();
-                self.show_toast(format!("Added workspace {name}.{}", supervised_elsewhere(&taken)), cx);
-                if empty {
-                    self.edit_folders(&name, window, cx);
-                }
-            }
-            Err(e) => draft.error = Some(e),
+        if draft.saving {
+            return;
         }
+        let (name, empty, root) = (draft.name_text(cx), draft.empty, draft.root.clone());
+        let repos: Vec<Folder> = draft.repos.iter().map(|(r, on)| Folder { enabled: *on, ..r.clone() }).collect();
+        draft.saving = true;
+        let registry = registry(self.home.as_deref());
+        let save = cx.background_executor().spawn(async move { add(registry?, name, empty, root, repos) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = save.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok((workspace, taken)) => {
+                        let name = workspace.name.clone();
+                        if this.adding.as_ref().is_some_and(|d| d.saving) {
+                            this.adding = None;
+                        }
+                        this.collapsed.remove(&format!("workspace:{name}"));
+                        this.reveal_new(super::left::PendingReveal::Row(format!("ws:{name}")));
+                        this.put_workspace(workspace);
+                        this.reload_workspaces(cx);
+                        this.show_toast(format!("Added workspace {name}.{}", supervised_elsewhere(&taken)), cx);
+                        if empty {
+                            this.edit_folders(&name, window, cx);
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(draft) = &mut this.adding {
+                            draft.saving = false;
+                            draft.error = Some(e);
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -247,9 +271,27 @@ impl FleetView {
         cx.notify();
     }
 
-    pub(crate) fn reload_workspaces(&mut self) {
-        self.registry_writes.fetch_add(1, Ordering::SeqCst);
-        match super::load_registry(registry(self.home.as_deref())) {
+    /// Reads the registry off the UI thread after a write of this window; a poll read before it, or a reload started
+    /// before a later one, is not applied (`registry_writes`).
+    pub(crate) fn reload_workspaces(&mut self, cx: &mut Context<Self>) {
+        let generation = self.registry_writes.fetch_add(1, Ordering::SeqCst) + 1;
+        let registry = registry(self.home.as_deref());
+        let read = cx.background_executor().spawn(async move { super::load_registry(registry) });
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            this.update(cx, |this, cx| {
+                if this.registry_writes.load(Ordering::SeqCst) == generation {
+                    this.apply_registry(read);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn apply_registry(&mut self, read: super::RegistryRead) {
+        match read {
             Ok((workspaces, skipped)) => {
                 if self.workspaces != workspaces {
                     self.transcripts_nudge.wake();
@@ -263,6 +305,15 @@ impl FleetView {
         }
         let names: Vec<String> = self.workspaces.iter().map(|w| w.name.clone()).collect();
         self.removing.retain(|name, _| names.contains(name));
+    }
+
+    /// `workspace` as just saved, in the list at once; the reload behind it brings the registry's own.
+    pub(crate) fn put_workspace(&mut self, workspace: Workspace) {
+        match self.workspaces.iter_mut().find(|w| w.name == workspace.name) {
+            Some(w) => *w = workspace,
+            None => self.workspaces.push(workspace),
+        }
+        self.invalidate_tree();
     }
 
     pub fn show_toast(&mut self, text: String, cx: &mut Context<Self>) {
@@ -522,7 +573,8 @@ impl FleetView {
                     if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
                         self.compose = None;
                     }
-                    self.reload_workspaces();
+                    self.workspaces.retain(|w| w.name != name);
+                    self.reload_workspaces(cx);
                     self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
                 }
                 Err(e) => self.action_error = Some(format!("Cannot remove {name}: {e}")),
@@ -551,7 +603,7 @@ impl FleetView {
                     Ok((name, added, removed)) => {
                         let list = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.join(", ") };
                         this.show_toast(format!("Rescanned {name}: added {}; gone {}.", list(&added), list(&removed)), cx);
-                        this.reload_workspaces();
+                        this.reload_workspaces(cx);
                     }
                     Err(e) => this.action_error = Some(format!("Cannot rescan: {e}")),
                 }
@@ -627,6 +679,27 @@ impl FleetView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_saves_the_workspace_with_its_folders_claimed_and_refuses_a_taken_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry = Registry::at(tmp.path());
+        let repo = |n: &str| Folder::new(n, tmp.path().join("root").join(n));
+        let (first, taken) = add(Registry::at(tmp.path()), "one".into(), false, tmp.path().join("root"), vec![repo("alpha")]).unwrap();
+        assert_eq!((first.folders.len(), taken.len()), (1, 0));
+        assert_eq!(registry.load("one").unwrap(), first, "the value shown at once is the one saved");
+
+        let (second, taken) = add(Registry::at(tmp.path()), "two".into(), false, tmp.path().join("root"), vec![repo("alpha")]).unwrap();
+        assert_eq!(taken.len(), 1, "alpha stays supervised in one");
+        assert!(!second.folders[0].enabled);
+
+        let e = add(Registry::at(tmp.path()), "one".into(), false, tmp.path().join("root"), vec![repo("beta")]).unwrap_err();
+        assert_eq!(e, "The name one is taken: choose another.");
+        let e = add(Registry::at(tmp.path()), "Bad Name".into(), false, tmp.path().join("root"), Vec::new()).unwrap_err();
+        assert!(e.starts_with("No git repos found directly under"), "the folder before the name: {e}");
+        let (empty, _) = add(Registry::at(tmp.path()), "three".into(), true, PathBuf::new(), Vec::new()).unwrap();
+        assert_eq!((empty.folders.len(), empty.home.is_none()), (0, true));
+    }
 
     #[test]
     fn the_name_takes_only_what_a_workspace_name_allows() {

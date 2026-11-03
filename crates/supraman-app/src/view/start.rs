@@ -36,6 +36,8 @@ pub struct StartPage {
     pub mode: &'static str,
     pub input: Entity<TextInput>,
     pub error: Option<String>,
+    /// Send's PATH lookup and prompt file are being made; a second Send waits for them.
+    pub sending: bool,
     pub scroll: ScrollHandle,
     _events: Subscription,
 }
@@ -92,6 +94,16 @@ pub fn cmd_refusal(file: Option<&Path>, prompt: &str) -> Option<String> {
     ))
 }
 
+/// The prompt file a Send launches with, or why it does not: `claude` resolved on PATH and the file written whole.
+fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBuf, String> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_default();
+    if let Some(why) = cmd_refusal(launched_file(claude, &path, &pathext).as_deref(), prompt) {
+        return Err(why);
+    }
+    write_prompt(home, prompt).map_err(|e| format!("Not sent: cannot write the prompt to the home ({e})."))
+}
+
 /// Written whole before the launch; the launch script deletes it once read.
 fn write_prompt(home: Option<&Path>, text: &str) -> std::io::Result<PathBuf> {
     let dir = home.map_or_else(|| std::env::temp_dir().join("supraman-prompts"), |h| h.join("prompts"));
@@ -125,7 +137,7 @@ impl FleetView {
             InputEvent::ConfirmBack | InputEvent::Cancel | InputEvent::Refused(_) => {}
         });
         let title = if scheduled { format!("New scheduled task · {workspace}") } else { format!("New task · {workspace}") };
-        let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, scroll: ScrollHandle::new(), _events: events };
+        let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, sending: false, scroll: ScrollHandle::new(), _events: events };
         self.tabs.push(Tab::new(tab, title, TabKind::Start(page), Some(folder)));
         self.active = Some(tab);
         input.update(cx, |input, cx| input.focus(window, cx));
@@ -164,7 +176,7 @@ impl FleetView {
 
     /// The tab becomes a [+] session tab in the chosen folder, titled by the text's first line.
     pub fn send_start(&mut self, tab: u64, cx: &mut Context<Self>) {
-        let Some(page) = self.start_page(tab) else { return };
+        let Some(page) = self.start_page(tab).filter(|p| !p.sending) else { return };
         let text = page.input.read(cx).text().trim().to_string();
         let (workspace, scheduled, folder, mode) = (page.workspace.clone(), page.scheduled, page.folder.clone(), page.mode);
         if text.is_empty() {
@@ -175,32 +187,39 @@ impl FleetView {
             return;
         }
         let prompt = first_prompt(&text, scheduled);
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let pathext = std::env::var("PATHEXT").unwrap_or_default();
-        if let Some(why) = cmd_refusal(launched_file(&self.claude_command, &path, &pathext).as_deref(), &prompt) {
-            if let Some(page) = self.start_page_mut(tab) {
-                page.error = Some(why);
-            }
-            cx.notify();
-            return;
+        let since = supraman_core::time::now_ms();
+        let claude = self.claude_command.clone();
+        let (home, command) = (self.home.clone(), claude.clone());
+        if let Some(page) = self.start_page_mut(tab) {
+            page.sending = true;
         }
-        let file = match write_prompt(self.home.as_deref(), &prompt) {
-            Ok(file) => file,
-            Err(e) => {
-                if let Some(page) = self.start_page_mut(tab) {
-                    page.error = Some(format!("Not sent: cannot write the prompt to the home ({e})."));
+        let ready = cx.background_executor().spawn(async move { prompt_file(&command, home.as_deref(), &prompt) });
+        cx.spawn(async move |this, cx| {
+            let ready = ready.await;
+            this.update(cx, |this, cx| {
+                let Some(page) = this.start_page_mut(tab) else {
+                    if let Ok(file) = ready {
+                        let _ = std::fs::remove_file(file);
+                    }
+                    return;
+                };
+                page.sending = false;
+                match ready {
+                    Ok(file) => {
+                        let first = super::FirstPrompt { file, mode };
+                        this.hand_claude_in(Some(tab), folder, crate::compose::first_line(&text), claude, None, None, Some(first), cx);
+                        if scheduled && let Some(t) = this.tab_mut(tab) {
+                            t.asks_schedule = Some(AsksSchedule { workspace, since, found: None });
+                        }
+                    }
+                    Err(why) => page.error = Some(why),
                 }
                 cx.notify();
-                return;
-            }
-        };
-        let since = supraman_core::time::now_ms();
-        let first = super::FirstPrompt { file, mode };
-        let claude = self.claude_command.clone();
-        self.hand_claude_in(Some(tab), folder, crate::compose::first_line(&text), claude, None, None, Some(first), cx);
-        if scheduled && let Some(t) = self.tab_mut(tab) {
-            t.asks_schedule = Some(AsksSchedule { workspace, since, found: None });
-        }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
     }
 
     /// After each schedule poll: a scheduled task's tab finds the pending schedule its session added.
