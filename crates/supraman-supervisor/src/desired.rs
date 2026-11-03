@@ -27,7 +27,7 @@ pub struct DesiredState {
 pub struct WantedSession {
     pub name: String,
     pub role: String,
-    /// Chosen by the app, not derived: `claude --bg` refuses an untrusted workspace (m1/5), and a
+    /// Chosen by the app, not derived: `claude --bg` refuses an untrusted workspace, and a
     /// workspace root is usually not a git repo, so it is usually not trusted.
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,17 +40,17 @@ pub struct WantedSession {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub add_dirs: Vec<PathBuf>,
     /// The prompt a resume passes (`--bg --resume <id> -- <prompt>`). A resumed session gets no turn
-    /// without one (m2/4), and a relay must re-arm its watcher.
+    /// without one, and a relay must re-arm its watcher.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_prompt: Option<String>,
     /// The full uuid of an adopted session: its launch passes `--resume <uuid>` with the supervised flags, a copy
-    /// under a new id that carries the conversation (m5/61). Cleared once its row shows ([`DesiredState::forked`]).
+    /// under a new id that carries the conversation. Cleared once its row shows ([`DesiredState::forked`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_from: Option<String>,
 }
 
 impl WantedSession {
-    /// The relay costs nothing while it waits on its watcher but may show `working` throughout (m0/4):
+    /// The relay costs nothing while it waits on its watcher but may show `working` throughout:
     /// it neither takes nor waits for a slot of the busy budget.
     pub fn exempt_from_budget(&self) -> bool {
         self.role == RELAY_ROLE
@@ -347,7 +347,7 @@ pub fn render_repo_role(template: &str, workspace: &str, repo: &str) -> String {
 }
 
 /// `{sm}` (this build's `sm.exe`) and `{home}` (`SUPRAMAN_HOME`) filled in, forward slashes: a role's
-/// commands may run under Git Bash (m0/4). `{workspace}`/`{repo}` stay for [`render_role`] and the hook.
+/// commands may run under Git Bash. `{workspace}`/`{repo}` stay for [`render_role`] and the hook.
 pub fn fill_paths(template: &str, sm: &Path, home: &Path) -> String {
     let forward = |p: &Path| p.display().to_string().replace('\\', "/");
     template.replace("{sm}", &forward(sm)).replace("{home}", &forward(home))

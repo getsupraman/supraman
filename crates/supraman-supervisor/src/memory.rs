@@ -15,7 +15,7 @@ pub struct Policy {
     /// Consecutive failures after which the supervisor stops trying until Retry.
     pub give_up_after: u32,
     /// After a successful launch/resume, how long a missing or pid-less row is "still starting"
-    /// (the row trails `--bg` by ~1 s and the pid by up to ~6 s, m0/2, m1/7).
+    /// (the row trails `--bg` by ~1 s and the pid by up to ~6 s).
     pub settle: Millis,
     /// A session that is dead again this soon after a successful start counts as a failure; one
     /// alive this long clears the failure count.
@@ -23,7 +23,7 @@ pub struct Policy {
     /// A row that lost its pid this soon after it was last seen alive is not resumed yet: the daemon
     /// respawns a session killed mid-turn by itself (~12 s), and for a few seconds after the death of
     /// an idle one still counts it as running, so a resume then starts a copy (5 s: copy, 10 s: woke
-    /// the original; m2/4).
+    /// the original).
     pub respawn_grace: Millis,
     /// A minted token's idle window: its expiry slides to last use + this (rlarch 2.2.0, 72 h).
     pub token_window: Millis,

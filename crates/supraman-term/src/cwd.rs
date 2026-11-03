@@ -73,8 +73,7 @@ impl Terminal {
     }
 
     pub(crate) fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
-        // Once the scrollback cap is reached, evictions move retained lines without changing
-        // `history_size`, so stored row offsets no longer identify their original lines.
+        // Past the scrollback cap, evictions shift lines without changing `history_size`: stored offsets go stale.
         if self.is_remote_terminal
             || self.cwd_history.is_empty()
             || history_size >= self.term_config.scrolling_history
@@ -135,12 +134,10 @@ mod tests {
             working_directory: working_directory_a.clone(),
         });
 
-        // click_pos = history_size(5) + line(3) = 8 >= 5
         assert_eq!(
             terminal.cwd_at_line(3, 5),
             Some(working_directory_a.clone())
         );
-        // click_pos = history_size(5) + line(0) = 5 == 5 (exact match)
         assert_eq!(terminal.cwd_at_line(0, 5), Some(working_directory_a));
     }
 
@@ -164,7 +161,6 @@ mod tests {
             working_directory: PathBuf::from("/home/user/project_a"),
         });
 
-        // click_pos = 0 + 3 = 3 < 10, no match, falls back to working_directory (None)
         assert_eq!(terminal.cwd_at_line(3, 0), None);
     }
 
@@ -187,11 +183,8 @@ mod tests {
             working_directory: working_directory_c.clone(),
         });
 
-        // click_pos=5: between 0 and 10, working_directory_a
         assert_eq!(terminal.cwd_at_line(5, 0), Some(working_directory_a));
-        // click_pos=15: between 10 and 20, working_directory_b
         assert_eq!(terminal.cwd_at_line(15, 0), Some(working_directory_b));
-        // click_pos=25: after 20, working_directory_c
         assert_eq!(terminal.cwd_at_line(25, 0), Some(working_directory_c));
     }
 

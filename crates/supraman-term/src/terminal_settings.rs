@@ -66,8 +66,7 @@ impl Default for TerminalPalette {
     }
 }
 
-/// The subset of Zed's `TerminalSettings` the terminal itself reads. Set it as a gpui global;
-/// absent, the defaults below (Zed's `default.json` values) apply.
+/// What the terminal reads as a gpui global; absent, the defaults below apply.
 #[derive(Clone, Debug)]
 pub struct TerminalConfig {
     pub copy_on_select: bool,

@@ -121,8 +121,6 @@ impl Terminal {
     pub(crate) fn process_event(&mut self, event: TerminalBackendEvent, cx: &mut Context<Self>) {
         match event {
             TerminalBackendEvent::Title(title) => {
-                // ConPTY names the console after the running executable whenever nothing else names
-                // it (at start, and when a program clears its title): that is no title
                 #[cfg(windows)]
                 let title = if is_default_title(self.shell_program.as_deref(), &title) {
                     String::new()

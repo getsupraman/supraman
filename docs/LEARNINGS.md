@@ -5696,3 +5696,18 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   inbox are outcome asserts now. `tests/stream.rs` runs on FakeWorkman (`push_frame` for an `id:` frame).
 - **Left:** `supraman-app/src/hand.rs` tests still answer mints from a hand-rolled server, because each mint needs its
   own answer and FakeWorkman answers a route the same way every time.
+
+## 2026-11-03 — refactor2/6, refactor2/7 and refactor2/11 (U3, U4, U10) the selftest suites after the trim
+
+- **`--selftest`** (U3, 224 s → ~128 s) checks only what a unit test cannot see; the step list and the 200 s watchdog
+  (it names the running step and the slowest ones) are in docs/ARCHITECTURE.md "Selftests". Step 1 registers a fixture
+  workspace, never a scan of the user's parent folder.
+- **`--selftest-perf`** holds what needs a quiet machine: memory per tab, the startup paint bound, the Work tab and idle
+  frame budgets and 7+r. It is not in the merge gate, so no `--selftest` step waits for the machine to settle.
+- **`--selftest-supervise`** (U4, 400 s → ~160 s, 12 → 5 real sessions) runs a, b, c, d, e, g, h, w, r, t under a 420 s
+  watchdog; step y (a real `--fork-session`) runs only with `--release`, in the release gate (docs/RELEASE.md).
+- **A supervised session's `sm` is the one beside the app** (U9): with the old installed `sm` first on PATH, step r's
+  replies went by the inherited env to the human's real home; `--settings` now puts the app's folder first on PATH.
+- **supraman-term is our code** (A-53, U10): no re-sync from Zed. Its hyperlink suite keeps URL, path, file:// and IRI
+  detection; OSC 8 is covered in `links.rs`. The app passes no path regexes (`view.rs` `Vec::new()`), so only URLs,
+  file:// IRIs and OSC 8 links are live.

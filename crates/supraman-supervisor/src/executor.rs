@@ -11,7 +11,7 @@ use crate::{
 /// The three `claude` writes the supervisor performs. Implemented for [`Claude`]; tests use a fake.
 pub trait Launcher {
     fn launch(&self, spec: &LaunchSpec) -> supraman_claude::Result<String>;
-    /// Must pass no flag but `--bg --resume <session_id> [-- <prompt>]` (any flag forks a copy, m2/1).
+    /// Must pass no flag but `--bg --resume <session_id> [-- <prompt>]` (any flag forks a copy).
     fn resume(&self, session_id: &str, cwd: &Path, prompt: Option<&str>) -> supraman_claude::Result<String>;
     fn stop(&self, id: &str) -> supraman_claude::Result<String>;
 }
@@ -63,13 +63,13 @@ pub struct LaunchConfig {
     pub plugin_dirs: Vec<PathBuf>,
     /// Passed to the session as `SUPRAMAN_HOME`, with `SUPRAMAN_ROLE`, `SUPRAMAN_WORKSPACE`, `SUPRAMAN_SESSION` (its
     /// name, what `sm tell` signs with) and `SUPRAMAN_REPO` for a repo session, through
-    /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it, m2/1).
+    /// `--settings {"env":…}` (env on `claude --bg` itself does not reach it).
     pub supraman_home: Option<PathBuf>,
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
-    /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
+    /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete.
     pub bg_isolation_none: bool,
     /// `--allowedTools`: permission rules every session gets, so `sm` (Supraman's CLI, run by controllers
-    /// themselves) never parks for permission (m3/2: `Bash(sm:*)` matched; PowerShell rules did not).
+    /// themselves) never parks for permission (`Bash(sm:*)` matches; PowerShell rules do not).
     pub allowed_tools: Vec<String>,
 }
 
@@ -316,7 +316,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     /// Wanted sessions started less than `settle` ago that the snapshot does not show mid-turn: each
     /// holds a slot of the shared [`Budget`] until it is counted as working, or `settle` passes. A fresh
-    /// process shows `status=idle` for a second before its first prompt (m3/2), so "live" is not enough.
+    /// process shows `status=idle` for a second before its first prompt, so "live" is not enough.
     pub fn starting(&self, observed: &[Session], now: Millis) -> usize {
         if !self.desired.started {
             return 0;
@@ -488,7 +488,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// minted token; `None` when the role has no Workman (not signed in). A failed mint fails the launch.
     ///
     /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
-    /// ignores `--session-id` (m5/40 probe), so a launch sends none and its row's id is PATCHed later
+    /// ignores `--session-id`, so a launch sends none and its row's id is PATCHed later
     /// ([`Self::bind_claude_sessions`]).
     fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, String)>, Failure> {
         let Some(t) = self
@@ -629,7 +629,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     /// The Re-mint: stops the single live row of each name whose Re-mint was pressed. The supervisor
     /// resumes it after the respawn grace (R13, R3), and the resume mints a fresh token ([`Self::remint`]);
-    /// a `--bg --resume` of a live row would start a copy instead (m2/4). Returns the names stopped.
+    /// a `--bg --resume` of a live row would start a copy instead. Returns the names stopped.
     fn stop_for_remint(&mut self, observed: &[Session], stops: &mut Stops, now: Millis) -> Vec<String> {
         let mut stopped = Vec::new();
         for name in std::mem::take(&mut self.remint_due) {
@@ -833,7 +833,7 @@ struct StopFailure {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Resumed {
     InPlace,
-    /// A session the daemon still counts as running starts a copy under a new id instead (m2/4).
+    /// A session the daemon still counts as running starts a copy under a new id instead.
     Copy(String),
     /// No `backgrounded · <id8>`: [`Supervisor::confirm_resumes`] asks the next snapshot.
     Unknown,
@@ -2165,7 +2165,6 @@ mod tests {
         assert_eq!(sup.launcher().take().len(), 1);
     }
 
-    // m5/61
     #[test]
     fn an_adopted_session_launches_a_copy_of_its_uuid_with_the_supervised_flags_and_forks_once() {
         let mcp = tempfile::tempdir().unwrap();

@@ -2755,7 +2755,6 @@ impl FleetView {
                         .min_h_0()
                         .child(hit_target(&self.hits, format!("terminal-{tab_id}")))
                         .on_scroll({
-                            // as Zed's TerminalView::scroll_wheel
                             let terminal = terminal.clone();
                             cx.listener(move |this, e: &ScrollEvent, _, cx| {
                                 if e.modifiers.control {

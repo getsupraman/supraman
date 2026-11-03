@@ -876,7 +876,6 @@ fn convert_color(fg: &Color, theme: &Theme) -> Hsla {
             | NamedColor::DimMagenta
             | NamedColor::DimCyan
             | NamedColor::DimWhite => palette.dim[*color as usize - NamedColor::DimBlack as usize],
-            // Black..=BrightWhite are 0..=15
             _ => palette.ansi[*color as usize],
         },
         Color::Spec(rgb) => supraman_term::rgba_color(rgb.r, rgb.g, rgb.b),
@@ -917,7 +916,6 @@ mod tests {
 
     #[test]
     fn selection_is_clipped_to_the_viewport_and_block_selection_keeps_its_columns() {
-        // starts in scrollback above the viewport, ends below it
         let rects = selection_rects((-5, 7), (12, 1), false, 3, 20, Hsla::default());
         assert_eq!(spans(&rects), [(0, 0, 20), (1, 0, 20), (2, 0, 20)]);
         let rects = selection_rects((0, 6), (1, 2), true, 3, 20, Hsla::default());

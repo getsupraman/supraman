@@ -183,7 +183,7 @@ fn ended(events: &[RunEvent]) -> (Outcome, String) {
     }
 }
 
-/// c1: exit 0 is nothing to do; the run is recorded started, script stage, ended.
+/// Exit 0 is nothing to do; the run is recorded started, script stage, ended.
 #[test]
 fn fire_exit_0_records_nothing_to_do() {
     let f = fixture();
@@ -201,7 +201,7 @@ fn fire_exit_0_records_nothing_to_do() {
     assert!(log.contains("demo/gate task gate-") && log.contains(" nothing_to_do"), "{log}");
 }
 
-/// c1: exit 10 hands stdout to the session stage, whose outcome ends the run.
+/// Exit 10 hands stdout to the session stage, whose outcome ends the run.
 #[test]
 fn fire_exit_10_hands_stdout_to_the_session_stage() {
     let f = fixture();
@@ -226,7 +226,7 @@ fn fire_exit_10_hands_stdout_to_the_session_stage() {
     assert_eq!(host.gates.pop(), Some(None), "a session action has no gate output");
 }
 
-/// c1: any other exit and a timeout are failed, with the tail of stderr.
+/// Any other exit and a timeout are failed, with the tail of stderr.
 #[test]
 fn fire_exit_1_and_a_timeout_record_failed_with_the_stderr_tail() {
     let f = fixture();
@@ -286,7 +286,7 @@ fn fire_gives_the_script_its_environment_and_state_dir() {
     assert_eq!((fields[5], fields[6]), (first_start.to_string().as_str(), "ok"));
 }
 
-/// c2: unapproved, paused, changed since approval and a stale task fingerprint are refused and recorded.
+/// Unapproved, paused, changed since approval and a stale task fingerprint are refused and recorded.
 #[test]
 fn fire_refuses_and_records_unapproved_paused_and_changed_schedules() {
     let f = fixture();
@@ -346,7 +346,7 @@ fn with_overlap(id: &str, script: &str, overlap: Overlap) -> Schedule {
     s
 }
 
-/// c3, skip: a held lock skips the fire and names the run in flight.
+/// Skip: a held lock skips the fire and names the run in flight.
 #[test]
 fn fire_overlap_skip_records_skipped_while_the_lock_is_held() {
     let f = fixture();
@@ -360,7 +360,7 @@ fn fire_overlap_skip_records_skipped_while_the_lock_is_held() {
     drop(held);
 }
 
-/// c3, queue: one waiter takes the lock once it is free; a second one skips.
+/// Queue: one waiter takes the lock once it is free; a second one skips.
 #[test]
 fn fire_overlap_queue_waits_for_the_lock_and_a_second_waiter_skips() {
     let f = fixture();
@@ -383,7 +383,7 @@ fn fire_overlap_queue_waits_for_the_lock_and_a_second_waiter_skips() {
     });
 }
 
-/// c3, restart: the fire asks the owner to stop and runs once the lock is free.
+/// Restart: the fire asks the owner to stop and runs once the lock is free.
 #[test]
 fn fire_overlap_restart_asks_the_owner_and_runs_after_it() {
     let f = fixture();
@@ -404,7 +404,7 @@ fn fire_overlap_restart_asks_the_owner_and_runs_after_it() {
     assert!(!f.live().join("gate.restart").exists(), "the request is spent");
 }
 
-/// c3, restart, the owner's side: a running script is killed and its run ends interrupted.
+/// Restart, the owner's side: a running script is killed and its run ends interrupted.
 #[test]
 fn fire_restart_interrupts_the_running_script() {
     let f = fixture();
@@ -548,7 +548,7 @@ fn files_holding(dir: &Path, needle: &str) -> Vec<PathBuf> {
     found
 }
 
-/// c4: the secrets reach the script's environment; stderr tails and the gate output are masked; no file
+/// The secrets reach the script's environment; stderr tails and the gate output are masked; no file
 /// Supraman writes holds them.
 #[test]
 fn fire_passes_secrets_to_the_script_and_writes_them_nowhere() {

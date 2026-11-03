@@ -9,7 +9,7 @@ pub enum Action {
     /// The wanted name has no row: `claude --bg`.
     Launch(WantedSession),
     /// The row exists but its process is gone: `claude --bg --resume <session_id>` from `cwd`,
-    /// which keeps the transcript, `id`, `sessionId` and name (m2/1).
+    /// which keeps the transcript, `id`, `sessionId` and name.
     Resume {
         name: String,
         id: String,
@@ -35,13 +35,13 @@ pub enum WaitReason {
     Backoff,
     Cap,
     /// Lost its pid moments ago: the daemon may respawn it, and until it notices the death a
-    /// resume starts a copy (m2/4).
+    /// resume starts a copy.
     Respawn,
 }
 
 /// A process is there: a pid, or the fresh pid-less row right after `--bg` (`Running`/`Blocked`
 /// without pid only before [`supraman_claude::ORPHAN_AFTER`]). Such a session is never launched or
-/// resumed — whatever its `state` says (m1/7: `done` on a live pid is Idle).
+/// resumed — whatever its `state` says (`done` on a live pid is Idle).
 pub fn is_live(s: &Session, now: Millis) -> bool {
     s.pid.is_some() || matches!(s.health(now), Health::Running | Health::Blocked { .. })
 }
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(run(&d, &[idle]), []);
     }
 
-    // R1, m1/7
+    // R1
     #[test]
     fn done_with_live_pid_is_idle_and_never_relaunched() {
         let d = desired(true, &["fm-demo-workspace"]);
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(run(&d, &[running("fm-demo-workspace", 1), park]), []);
     }
 
-    // R4, m3/8: a Supraman session blocked with nothing it waits for waits on a peer, not on the human
+    // R4: a Supraman session blocked with nothing it waits for waits on a peer, not on the human
     #[test]
     fn blocked_without_waiting_for_is_not_reported() {
         let d = desired(true, &["fm-demo-workspace"]);
@@ -524,10 +524,10 @@ mod tests {
         );
     }
 
-    // R11, m3/2: `state` is not the turn
+    // R11: `state` is not the turn
     #[test]
     fn an_idle_working_row_takes_no_slot() {
-        // m3/1, measured m3/2: a session that ended its turn waiting for messages stays `state=working`
+        // a session that ended its turn waiting for messages stays `state=working`
         let waiting = row("fm-x-1", 1, Some(SessionState::Working), Some(Status::Idle), Some(7));
         assert_eq!(Budget::new(1, std::slice::from_ref(&waiting), &["x"], NOW).free, 1);
         assert!(!crate::mid_turn(&waiting, NOW));
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(run(&d, &[running("fm-demo-x", 2)]), []);
     }
 
-    // R2 for an adoption (m5/61)
+    // R2 for an adoption
     #[test]
     fn an_adopted_session_is_launched_as_a_copy_and_a_failed_copy_offers_retry_or_start_fresh() {
         let from = "fc5bf027-48e3-4510-90b2-63a00eb76df8";

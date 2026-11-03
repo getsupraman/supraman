@@ -11,7 +11,7 @@ use supraman_core::process::{self, Kill, Output, RunError};
 
 use crate::{ClaudeError, Result, Session, parse};
 
-/// `--bg` returns in ~0.8 s (m0/2); `stop`/`rm` likewise. Generous, the daemon may be cold.
+/// `--bg` returns in ~0.8 s; `stop`/`rm` likewise. Generous, the daemon may be cold.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// What `claude --bg` should start. Fields map 1:1 onto CLI flags, see [`LaunchSpec::argv`].
@@ -27,11 +27,11 @@ pub struct LaunchSpec {
     /// `--add-dir`: dirs outside `cwd` the session's tools may use.
     pub add_dirs: Vec<PathBuf>,
     /// Set on the `claude --bg` process only. The session does NOT inherit it: the daemon spawns
-    /// the session (m2/1). Use `--settings {"env":…}` in `extra_args` for env the session must see.
+    /// the session. Use `--settings {"env":…}` in `extra_args` for env the session must see.
     pub env: Vec<(String, String)>,
     pub extra_args: Vec<String>,
     /// `--resume <sessionId>`: beside the other flags it starts a copy under a new id that carries that
-    /// session's transcript; the original keeps its id and name (m5/61). claude cannot rename a session.
+    /// session's transcript; the original keeps its id and name. claude cannot rename a session.
     pub resume: Option<String>,
 }
 
@@ -88,13 +88,13 @@ impl LaunchSpec {
 }
 
 /// A fresh v4 uuid for `--session-id`. A foreground `claude` takes it; `claude --bg` accepts the flag
-/// and ignores it (m5/40 probe), so a background session's id is known only from its row.
+/// and ignores it, so a background session's id is known only from its row.
 pub fn new_session_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
 /// `--bg --resume <sessionId> [-- <prompt>]` and nothing else: with any other flag the CLI starts a
-/// copy under a new id; without, it wakes the same session "with its saved options" (m2/1).
+/// copy under a new id; without, it wakes the same session "with its saved options".
 pub fn resume_argv(session_id: &str, prompt: Option<&str>) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["--bg".into(), "--resume".into(), session_id.into()];
     if let Some(prompt) = prompt {
@@ -220,7 +220,7 @@ impl Claude {
     }
 
     /// Refuses with [`ClaudeError::NameTaken`] when any row (stopped ones included) already carries
-    /// the name — the CLI itself accepts duplicates (m2/1), but names are Supraman's join key — then
+    /// the name — the CLI itself accepts duplicates, but names are Supraman's join key — then
     /// [`Claude::launch_unchecked`].
     pub fn launch(&self, spec: &LaunchSpec) -> Result<String> {
         if name_taken(&self.list_sessions()?, &spec.name) {
@@ -283,7 +283,7 @@ impl Claude {
     }
 
     /// Every row named `name`, newest first. Polls until one exists or `within` passes, because the
-    /// row trails `--bg` by about a second (m0/2).
+    /// row trails `--bg` by about a second.
     pub fn find_by_name(&self, name: &str, within: Duration) -> Result<Vec<Session>> {
         let deadline = Instant::now() + within;
         loop {
@@ -343,7 +343,7 @@ pub enum Removal {
 }
 
 /// rm's "kept <id> — its worktree is still at “<path>” / N unpushed commits on “<branch>” … claude rm
-/// <id> --discard-unpushed <sha>@<token>" (m2/2, CLI 2.1.309).
+/// <id> --discard-unpushed <sha>@<token>" (CLI 2.1.309).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RmRefusal {
     /// The whole text, trimmed.
@@ -401,7 +401,7 @@ pub fn classify(out: &Output) -> Option<ClaudeError> {
     })
 }
 
-/// m1/5: ``Workspace not trusted. Run `claude` in <dir> once and accept the trust prompt, then retry.``
+/// ``Workspace not trusted. Run `claude` in <dir> once and accept the trust prompt, then retry.``
 fn trust_refusal(text: &str) -> Option<PathBuf> {
     let line = text.lines().find(|l| l.contains("Workspace not trusted"))?;
     let rest = line.split_once("` in ")?.1;
@@ -413,7 +413,7 @@ fn trust_refusal(text: &str) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    /// m1/5, verbatim.
+    /// claude's refusal, verbatim.
     const TRUST: &str =
         "Workspace not trusted. Run `claude` in P:\\Projects\\x\\nested once and accept the trust prompt, then retry.\n";
 
@@ -552,7 +552,7 @@ mod tests {
         assert!(!name_taken(&rows, "aw-y"));
     }
 
-    /// René's Inbox row on 2ae06cd (m5/25), verbatim.
+    /// claude's output, verbatim.
     #[test]
     fn unreachable_background_service_is_its_own_error() {
         let text = "Starting background service… Couldn't reach the background service (background service did not become reachable within 45s) — run 'claude daemon status'\n";
@@ -566,7 +566,7 @@ mod tests {
         }
     }
 
-    /// `claude rm` on a session whose worktree has commits (m2/2, CLI 2.1.309), verbatim.
+    /// `claude rm` on a session whose worktree has commits (CLI 2.1.309), verbatim.
     const KEPT: &str = "kept 202c9998 — its worktree is still at “P:\\Projects\\LarchSys\\AutoWork\\.claude\\worktrees\\iso-probe”\n  39 unpushed commits on “worktree-iso-probe”: 3ccd48a “probe: add iso.txt” and 38 more. They exist on no remote, so deleting the worktree would lose them.\n  push them and run 'claude rm 202c9998' again, or discard the worktree and its commits: claude rm 202c9998 --discard-unpushed 3ccd48a1bb9d660d38c0fabd2f5e63bd64be737a@d71f54d85da4468315a1efd780272116\n";
 
     #[test]

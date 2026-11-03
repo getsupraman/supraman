@@ -198,7 +198,7 @@ async fn cut_label_tooltip(view: &Entity<FleetView>, cx: &mut AsyncWindowContext
 }
 
 /// Resting on a workspace, a folder and a session row shows no card while each row's icon keeps its tooltip;
-/// Details in the row's menu opens the row's Details tab, and a second Details focuses it (m5/71, sched2/5).
+/// Details in the row's menu opens the row's Details tab, and a second Details focuses it.
 async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let folder = until(view, cx, WITHIN, &format!("a folder row of {ADDED}"), |v| {
         v.hits.borrow().keys().find_map(|k| k.strip_prefix(&format!("repo-row-{ADDED}/")).map(str::to_string))
@@ -331,7 +331,7 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
 }
 
 /// Details from the row's menu: its report's text, once painted; OK closes it.
-/// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width (m5/63).
+/// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width.
 async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspace: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const LONG: &str = "a-folder-with-a-rather-long-name-for-edit-folders";
     const BRANCH: &str = "copilot/fix-the-edit-folders-dialog-overflowing-its-box";
@@ -478,7 +478,7 @@ pub(crate) async fn press_painted(view: &Entity<FleetView>, key: &str, button: M
 
 static OPENED_ON: Mutex<Option<ThreadId>> = Mutex::new(None);
 
-/// As ShellExecuteW does while Explorer answers a folder's open (m5/68: shell32, then gpui's window procedure
+/// As ShellExecuteW does while Explorer answers a folder's open (shell32, then gpui's window procedure
 /// running a foreground task): the calling thread's messages are dispatched. Then the real call.
 fn pumping_open(path: &Path) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage};

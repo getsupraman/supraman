@@ -58,8 +58,7 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, SelectionSide)>,
-    /// Window-relative position of the most recent left mouse-down. Used to
-    /// apply a drag threshold before starting a selection (see #58970).
+    /// Window-relative position of the last left mouse-down, for the drag threshold.
     mouse_down_position: Option<GpuiPoint<Pixels>>,
     pub matches: Vec<Range>,
     pub last_content: Content,

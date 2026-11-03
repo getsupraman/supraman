@@ -23,8 +23,6 @@ pub const TERMINAL_FONT_PREFERENCE: [&str; 3] = ["Cascadia Code", "Cascadia Mono
 pub trait Section: Serialize + DeserializeOwned + Default {
     const KEY: &'static str;
     const FIELDS: &'static [&'static str];
-    /// The table an older file keeps it in: read when [`Self::KEY`] is absent, never written.
-    const LEGACY_KEY: Option<&'static str> = None;
 }
 
 /// `[sessions]`: what the supervisor launches and how many may work at once.
@@ -94,7 +92,6 @@ pub struct WorkmanSettings {
 impl Section for WorkmanSettings {
     const KEY: &'static str = "workman";
     const FIELDS: &'static [&'static str] = &["url"];
-    const LEGACY_KEY: Option<&'static str> = Some("workstate");
 }
 
 impl WorkmanSettings {
@@ -238,10 +235,9 @@ pub struct Settings {
 }
 
 /// The tables [`Settings`] owns, which [`Settings::section`] refuses.
-const OWNED: [&str; 7] = [
+const OWNED: [&str; 6] = [
     SessionSettings::KEY,
     WorkmanSettings::KEY,
-    "workstate",
     AppearanceSettings::KEY,
     TerminalSettings::KEY,
     WindowSettings::KEY,
@@ -423,8 +419,7 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
 /// `table` for [`Settings::other`].
 fn take<S: Section>(table: &mut Table, path: &Path, notices: &mut Vec<String>) -> S {
     let at = path.display();
-    let legacy = S::LEGACY_KEY.and_then(|key| table.remove(key));
-    let mut own = match table.remove(S::KEY).or(legacy) {
+    let mut own = match table.remove(S::KEY) {
         None => Table::new(),
         Some(Value::Table(own)) => own,
         Some(_) => {
@@ -470,7 +465,7 @@ mod tests {
                 resume_tabs_on_click: true,
             },
             workman: WorkmanSettings { url: Some("https://workman.example".into()) },
-            appearance: AppearanceSettings { theme: Some("Foreman Dark".into()), terminal_colors: Some("campbell".into()) },
+            appearance: AppearanceSettings { theme: Some("Supraman Dark".into()), terminal_colors: Some("campbell".into()) },
             terminal: TerminalSettings { font_size: Some(20), font_family: Some("Lucida Console".into()), ligatures: Some(false) },
             window: WindowSettings { left_width: Some(512) },
             updates: UpdateSettings { check: false },
@@ -583,7 +578,7 @@ url = "https://workman.example"
         assert!(notices.iter().any(|n| n.ends_with("max_working is not in a table; it is ignored")), "{notices:?}");
         assert!(notices.iter().any(|n| n.ends_with("workstate_env is not in a table; it is ignored")), "{notices:?}");
         assert!(notices.iter().all(|n| n.contains("settings.toml")), "{notices:?}");
-        let (s, _) = load_text(home.path(), "theme = \"Foreman Dark\"\nleft_width = 300\n");
+        let (s, _) = load_text(home.path(), "theme = \"Supraman Dark\"\nleft_width = 300\n");
         assert_eq!((s.appearance.theme.clone(), s.window.left_width), (None, None), "a flat file is all defaults");
         s.save(home.path()).unwrap();
         assert_eq!(saved(home.path())["left_width"].as_integer(), Some(300), "nothing is dropped");
@@ -626,8 +621,8 @@ url = "https://workman.example"
     #[test]
     fn a_bad_section_falls_back_alone() {
         let home = tempfile::tempdir().unwrap();
-        let (s, notices) = load_text(home.path(), "terminal = 5\nwindow = \"wide\"\n\n[sessions]\nmax_working = 3\n\n[appearance]\ntheme = \"Foreman Dark\"\n");
-        assert_eq!((s.sessions.max_working, s.appearance.theme.as_deref()), (3, Some("Foreman Dark")));
+        let (s, notices) = load_text(home.path(), "terminal = 5\nwindow = \"wide\"\n\n[sessions]\nmax_working = 3\n\n[appearance]\ntheme = \"Supraman Dark\"\n");
+        assert_eq!((s.sessions.max_working, s.appearance.theme.as_deref()), (3, Some("Supraman Dark")));
         assert_eq!((s.terminal.clone(), s.window.clone()), (TerminalSettings::default(), WindowSettings::default()));
         assert_eq!(notices.len(), 2, "{notices:?}");
         assert!(notices.iter().any(|n| n.ends_with("[terminal] is not a table; its defaults are used")), "{notices:?}");
@@ -635,26 +630,6 @@ url = "https://workman.example"
         s.save(home.path()).unwrap();
         let (again, quiet) = Settings::load_with_notices(home.path()).unwrap();
         assert_eq!((again, quiet), (s, Vec::new()), "the save writes the defaults in their place");
-    }
-
-    #[test]
-    fn a_workstate_table_loads_as_workman_and_is_saved_as_it() {
-        let home = tempfile::tempdir().unwrap();
-        let (s, notices) = load_text(home.path(), "[workstate]\nurl = \"https://old.example/mcp\"\nnewer = 1\n\n[sessions]\nmax_working = 3\n");
-        assert!(notices.is_empty(), "{notices:?}");
-        assert_eq!(s.workman.origin(), "https://old.example");
-        s.save(home.path()).unwrap();
-        let file = saved(home.path());
-        assert!(!file.contains_key("workstate"), "{file:?}");
-        assert_eq!(file["workman"]["url"].as_str(), Some("https://old.example/mcp"));
-        assert_eq!(file["workman"]["newer"].as_integer(), Some(1), "a key this build does not know moves with its table");
-        assert_eq!(Settings::load(home.path()).unwrap(), s);
-
-        let (s, _) = load_text(home.path(), "[workman]\nurl = \"https://new.example\"\n\n[workstate]\nurl = \"https://old.example\"\n");
-        assert_eq!(s.workman.origin(), "https://new.example", "[workman] wins");
-        s.save(home.path()).unwrap();
-        assert!(!saved(home.path()).contains_key("workstate"));
-        assert!(std::panic::catch_unwind(|| Settings::default().section::<Table>("workstate")).is_err(), "[workstate] is Settings' own");
     }
 
     #[test]
@@ -812,9 +787,9 @@ url = "https://workman.example"
         })
         .unwrap();
         assert_eq!((s.window.left_width, out), (Some(400), 7));
-        Settings::update(home.path(), |s| s.appearance.theme = Some("Foreman Dark".into())).unwrap();
+        Settings::update(home.path(), |s| s.appearance.theme = Some("Supraman Dark".into())).unwrap();
         let back = Settings::load(home.path()).unwrap();
-        assert_eq!((back.window.left_width, back.appearance.theme.as_deref()), (Some(400), Some("Foreman Dark")));
+        assert_eq!((back.window.left_width, back.appearance.theme.as_deref()), (Some(400), Some("Supraman Dark")));
         fs::write(Settings::path(home.path()), "left_width = = 1").unwrap();
         assert!(Settings::update(home.path(), |s| s.window.left_width = Some(1)).is_err(), "a file that is not TOML is not overwritten");
         assert_eq!(fs::read_to_string(Settings::path(home.path())).unwrap(), "left_width = = 1");

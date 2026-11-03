@@ -32,9 +32,7 @@ impl TerminalBounds {
     }
 
     pub fn num_lines(&self) -> usize {
-        // Tolerance to prevent f32 precision from losing a row:
-        // `N * line_height / line_height` can be N-epsilon, which floor()
-        // would round down, pushing the first line into invisible scrollback.
+        // `N * line_height / line_height` can be N-epsilon, which floor() would turn into a lost row.
         let raw = self.bounds.size.height / self.line_height;
         raw.next_up().floor() as usize
     }
@@ -90,8 +88,7 @@ impl Terminal {
         let old_bounds = self.last_content.terminal_bounds;
         self.last_content.terminal_bounds = new_bounds;
 
-        // Avoid spamming PTY resizes on pixel-level size changes (e.g. while dragging edges),
-        // since those can generate excessive SIGWINCH/reflows and cause visible flicker.
+        // A pixel-level change (dragging an edge) would flood the PTY with resizes and reflows.
         let requires_resize = old_bounds.num_lines() != new_bounds.num_lines()
             || old_bounds.num_columns() != new_bounds.num_columns()
             || old_bounds.cell_width != new_bounds.cell_width

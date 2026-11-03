@@ -169,8 +169,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         .to_string_lossy()
         .into_owned();
     let registry = Registry::from_env()?;
-    // a fixture of two fake repos beside this checkout's own repo, which the gate's session runs in: never the
-    // user's other folders
+    // two fake repos beside this checkout's own repo, which the gate's session runs in: never the user's other folders
     for name in ["alpha", "beta"] {
         crate::selftest_manage::fake_repo(&fixture, name)?;
     }

@@ -10,7 +10,7 @@ use super::{Schedule, Status, Trigger, next_fire, verify_approval};
 use crate::secret::SecretStore;
 use crate::{CoreError, Result, Workspace};
 
-/// The windowless fire binary (sched/5); it ships next to `sm.exe` and `supraman.exe`.
+/// The windowless fire binary; it ships next to `sm.exe` and `supraman.exe`.
 pub const SMW_EXE: &str = "smw.exe";
 
 /// `smw.exe` next to the running exe.

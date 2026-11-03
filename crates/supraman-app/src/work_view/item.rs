@@ -159,7 +159,6 @@ impl WorkView {
                 .spawn(async move { client.item(&asked).map_err(|e| format!("Cannot read this item: {e}")) })
                 .await;
             this.update(cx, |this, cx| {
-                // The pane moved on to another item meanwhile.
                 let Some(open) = this.item.as_mut().filter(|o| o.id == id) else { return };
                 match (read, &open.state) {
                     (Ok(page), ItemState::Ready(shown)) if page.seq < shown.seq => {}

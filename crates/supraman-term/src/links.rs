@@ -12,15 +12,13 @@ use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathLikeTarget {
-    /// File system path, absolute or relative, existing or not.
-    /// Might have line and column number(s) attached as `file.rs:1:23`
+    /// A path, absolute or relative, existing or not, maybe with a `:line:column` suffix.
     pub maybe_path: String,
     pub working_directory: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaybeNavigationTarget {
-    /// HTTP, git, etc. string determined by the `URL_REGEX` regex.
     Url(String),
     PathLike(PathLikeTarget),
 }
@@ -922,11 +920,9 @@ mod tests {
         update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
             cx.assert_display_offset(0);
             cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV, OUTPUT_ZED_DEV]);
-            // Existing hovered_word IS reused when viewport is static
             cx.assert_hovered_word(Some(&expected_hovered_word));
             cx.write_output_lines(OUTPUT_ZED_DEV, 8);
-            // Explicitly sync here, because the next sync will emit a wake up, which will
-            // trigger another sync, and we need to check in-between them.
+            // Sync now, to check between this sync and the one its wakeup triggers.
             cx.sync();
             cx.assert_display_offset(0);
             cx.assert_visible_lines_match(vec![
@@ -936,12 +932,8 @@ mod tests {
                 OUTPUT_ZED_DEV,
                 OUTPUT_ZED_DEV,
             ]);
-            // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
-            // but display offset did not have a corresponding change)
             cx.assert_hovered_word(None);
-            // NOTE: 16 of these wakeups are from write_output() (2x8). The 17th is the important
-            // one we are testing that comes from sync() and results in the hovered word being
-            // set again, which we asserted below.
+            // 16 wakeups are write_output()'s (2x8); the 17th is sync() setting the hovered word again.
             Some(Expected(Wakeups(17), Notifies(1)))
         });
         update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
@@ -958,11 +950,9 @@ mod tests {
         });
         for _ in 0..5 {
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-                // Should not have a hovered word from previous iteration
                 cx.assert_hovered_word(None);
                 cx.write_output_lines(OUTPUT_ZED_DEV, 1);
-                // Explicitly sync here, because the next sync will emit a wake up, which will
-                // trigger another sync, and we need to check in-between them.
+                // Sync now, to check between this sync and the one its wakeup triggers.
                 cx.sync();
                 cx.assert_hovered_word(None);
                 None
@@ -971,8 +961,7 @@ mod tests {
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
                 cx.write_output_lines(OUTPUT_NONE, 1);
-                // Explicitly sync here, because the next sync will emit a wake up, which will
-                // trigger another sync, and we need to check in-between them.
+                // Sync now, to check between this sync and the one its wakeup triggers.
                 cx.sync();
                 cx.assert_hovered_word(None);
                 None
@@ -985,7 +974,6 @@ mod tests {
         );
         update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
             cx.scroll_up_by_and_sync(3);
-            // Existing hovered word IS NOT reused when scrolling
             cx.assert_hovered_word(None);
             cx.ctrl_mouse_move_to(ZED_DEV_PT);
             Some(Expected(Wakeups(0), Notifies(2)))
@@ -1006,10 +994,8 @@ mod tests {
             expected_hovered_word =
                 expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
             cx.assert_hovered_word(Some(&expected_hovered_word));
-            // Use an odd number of lines so the previous grid coordinate contains
-            // OUTPUT_NONE after the scrollback coordinates shift.
+            // An odd number of lines leaves OUTPUT_NONE at the old grid coordinate after the shift.
             cx.write_output_lines(OUTPUT_ZED_DEV, 1);
-            // All wakeups here are from write_output()
             Some(Expected(Wakeups(2), Notifies(0)))
         });
         update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
@@ -1022,8 +1008,6 @@ mod tests {
                 OUTPUT_ZED_DEV,
                 OUTPUT_NONE,
             ]);
-            // Existing hovered word IS reused (and adjusted) when total lines changed, but
-            // visible lines unchanged
             expected_hovered_word = expected_hovered_word.with_line(-4);
             cx.assert_hovered_word(Some(&expected_hovered_word));
             None
@@ -1048,7 +1032,6 @@ mod tests {
             ));
             cx.assert_display_offset(0);
             cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
-            // Existing hovered word IS NOT reused when bounds change
             cx.assert_hovered_word(None);
             Some(Expected(Wakeups(1), Notifies(2)))
         });

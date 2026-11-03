@@ -80,10 +80,7 @@ pub enum MouseInputMode {
     LocalSelection,
 }
 
-/// Minimum pointer movement before a left click begins a selection. This keeps
-/// a click that jitters by a pixel or two (such as the window-focusing click)
-/// from starting a selection and, with `copy_on_select` enabled, clobbering the
-/// clipboard.
+/// Pointer movement below this keeps a jittery left click from selecting, and `copy_on_select` from clobbering the clipboard.
 pub(crate) const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 #[cfg(test)]
@@ -197,8 +194,6 @@ impl Terminal {
             }
 
             self.selection_phase = SelectionPhase::Selecting;
-            // Alacritty has the same ordering, of first updating the selection
-            // then scrolling 15ms later
             self.events
                 .push_back(InternalEvent::UpdateSelection(position));
 
@@ -283,9 +278,7 @@ impl Terminal {
                             self.events
                                 .push_back(InternalEvent::UpdateSelection(position));
                         } else {
-                            // With no selection yet, Shift is the escape hatch for
-                            // selecting text while an app has mouse tracking enabled,
-                            // so anchor a selection here for the drag to extend.
+                            // Shift selects under mouse tracking: anchor a selection for the drag to extend.
                             self.events.push_back(InternalEvent::BeginSelection(
                                 SelectionType::Simple,
                                 position,
@@ -362,7 +355,7 @@ impl Terminal {
                 self.copy(Some(true));
             }
 
-            // Links open only on Ctrl+click, for any scheme (m5/44 decision 5).
+            // Links open only on Ctrl+click, for any scheme.
             if self.selection_phase == SelectionPhase::Ended && e.modifiers.secondary() {
                 self.events
                     .push_back(InternalEvent::FindHyperlink(position, true));
@@ -399,9 +392,6 @@ mod tests {
     use rand::Rng as _;
     use util::paths::PathStyle;
 
-    /// A left click that jitters by a pixel or two (e.g. the window-focusing
-    /// click) must not begin a selection, otherwise `copy_on_select` would
-    /// overwrite the clipboard. Regression test for #58970.
     #[gpui::test]
     async fn test_terminal_click_jitter_does_not_start_selection(cx: &mut TestAppContext) {
         let terminal = init_terminal_test(cx, b"hello world\r\n");
@@ -410,7 +400,6 @@ mod tests {
             left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
             terminal.events.clear();
 
-            // One pixel of movement is below the drag threshold.
             left_mouse_drag_to(terminal, point(px(51.0), px(10.0)), cx);
 
             assert!(
@@ -424,7 +413,6 @@ mod tests {
         });
     }
 
-    /// A deliberate drag past the threshold must still start a selection.
     #[gpui::test]
     async fn test_terminal_deliberate_drag_starts_selection(cx: &mut TestAppContext) {
         let terminal = init_terminal_test(cx, b"hello world\r\n");
@@ -598,9 +586,7 @@ mod tests {
         });
     }
 
-    /// With mouse tracking active (e.g. htop), Shift is the escape hatch to
-    /// select terminal text. Shift+drag must start a selection rather than being
-    /// swallowed as a "extend existing selection" no-op. Regression test for #60254.
+    /// Under mouse tracking (htop), Shift+drag starts a selection instead of extending none.
     #[gpui::test]
     async fn test_terminal_shift_drag_selects_while_mouse_tracking(cx: &mut TestAppContext) {
         // `?1002h` enables button-event mouse tracking, `?1006h` selects SGR encoding.
@@ -628,8 +614,6 @@ mod tests {
                 cx,
             );
 
-            // With no selection yet, the shift press must anchor a new selection
-            // so the following drag has something to extend.
             assert!(
                 terminal.events.iter().any(|event| matches!(
                     event,
@@ -662,8 +646,6 @@ mod tests {
         });
     }
 
-    /// Shift+click with a selection already on screen must keep extending it
-    /// (the behavior added in #25143), not re-anchor a fresh one.
     #[gpui::test]
     async fn test_terminal_shift_click_extends_existing_selection(cx: &mut TestAppContext) {
         let terminal = init_terminal_test(cx, b"hello world\r\n");

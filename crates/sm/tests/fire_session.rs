@@ -336,7 +336,7 @@ fn report_done_after(after_ms: i64) -> OnSleep {
     })
 }
 
-/// c1: a session-only schedule the earlier release saved with `worktree = true` starts one `fm-<ws>-sched-*`
+/// A session-only schedule the earlier release saved with `worktree = true` starts one `fm-<ws>-sched-*`
 /// session in a fresh worktree, with the profile, the prompt and a minted token; DONE ends it, and the end stops
 /// (never rm) and revokes.
 #[test]
@@ -393,7 +393,7 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert!(!all.contains(MINTED), "never a token in a run record");
 }
 
-/// c1: a script that exits 10 hands its stdout to one session's prompt.
+/// A script that exits 10 hands its stdout to one session's prompt.
 #[test]
 fn fire_session_after_a_script_gets_its_stdout_in_the_prompt() {
     let f = fixture(true);
@@ -411,7 +411,7 @@ fn fire_session_after_a_script_gets_its_stdout_in_the_prompt() {
     assert!(matches!(events.iter().find_map(|e| match e { RunEvent::Stage(Stage::Script { code, .. }) => Some(*code), _ => None }), Some(Some(10))));
 }
 
-/// c2: max_runtime stops the session (stop, never rm) and revokes; the record says why.
+/// max_runtime stops the session (stop, never rm) and revokes; the record says why.
 #[test]
 fn fire_session_max_runtime_stops_and_revokes() {
     let f = fixture(true);
@@ -431,7 +431,7 @@ fn fire_session_max_runtime_stops_and_revokes() {
     assert!(host.now - T0 >= 5 * 60 * 1000 && host.now - T0 < 6 * 60 * 1000, "ended within a poll of max_runtime");
 }
 
-/// c2: the transcript's input + output + cache-creation tokens over max_tokens stop the session and revoke.
+/// The transcript's input + output + cache-creation tokens over max_tokens stop the session and revoke.
 #[test]
 fn fire_session_token_cap_stops_and_revokes_with_the_totals() {
     let f = fixture(true);
@@ -464,7 +464,7 @@ fn fire_session_token_cap_stops_and_revokes_with_the_totals() {
     assert_eq!(ends[0].2, Some(schedule::Tokens { input: 600, output: 200, cache_creation: 400, cache_read: 180_000 }), "cache reads recorded, not capped");
 }
 
-/// c3: idle after work, with no report, ends the run as done.
+/// Idle after work, with no report, ends the run as done.
 #[test]
 fn fire_session_idle_after_work_ends_the_run_done() {
     let f = fixture(true);
@@ -476,7 +476,7 @@ fn fire_session_idle_after_work_ends_the_run_done() {
     assert_eq!(f.api("DELETE").len(), 1);
 }
 
-/// c3: a blocked run is recorded `needs_you` at once, stays parked until max_runtime, then is stopped.
+/// A blocked run is recorded `needs_you` at once, stays parked until max_runtime, then is stopped.
 #[test]
 fn fire_session_blocked_is_needs_you_at_once_and_parked_until_max_runtime() {
     let f = fixture(true);
