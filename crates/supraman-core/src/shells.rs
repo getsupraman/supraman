@@ -81,6 +81,21 @@ pub struct Shell {
     pub setting: Option<ShellSetting>,
 }
 
+impl Shell {
+    /// The name a tab title starts with: `pwsh`, `powershell`, `cmd`, a distro, a custom exe's stem, or a
+    /// developer shell's label without its `for <Visual Studio>`.
+    pub fn short(&self) -> String {
+        match &self.setting {
+            Some(ShellSetting::Pwsh) => "pwsh".into(),
+            Some(ShellSetting::PowerShell | ShellSetting::Auto) => "powershell".into(),
+            Some(ShellSetting::Cmd) => "cmd".into(),
+            Some(ShellSetting::Wsl(distro)) => distro.clone(),
+            Some(ShellSetting::Custom(_)) => self.label.clone(),
+            None => self.label.split(" for ").next().unwrap_or(&self.label).to_string(),
+        }
+    }
+}
+
 /// The environment detection reads: `PATH`, `PATHEXT`, `SystemRoot` and `ProgramFiles(x86)`.
 #[derive(Clone, Debug, Default)]
 pub struct Machine {
@@ -417,6 +432,18 @@ mod tests {
     fn shells_real_probe_of_a_missing_tool_is_none() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(probe(&tmp.path().join("vswhere.exe"), &[]), None);
+    }
+
+    #[test]
+    fn shells_short_names_title_a_tab() {
+        let f = fake(true);
+        touch(&f.vs.join(r"18\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"));
+        touch(&f.vs.join(r"18\Common7\Tools\VsDevCmd.bat"));
+        let shells = detect_on(&f.machine, &mut tools(Some(vswhere_json(&f.vs)), Some(WSL_UTF16)));
+        let shorts: Vec<String> = shells.list.iter().map(Shell::short).collect();
+        assert_eq!(shorts, ["pwsh", "powershell", "cmd", "Developer PowerShell", "Developer Command Prompt", "Ubuntu"]);
+        let custom = Shell { label: "bash".into(), program: r"C:\Git\bin\bash.exe".into(), args: vec![], setting: Some(ShellSetting::Custom(r"C:\Git\bin\bash.exe".into())) };
+        assert_eq!(custom.short(), "bash");
     }
 
     #[test]

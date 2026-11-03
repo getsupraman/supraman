@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKMAN_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
+use supraman_core::shells::ShellSetting;
 use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use supraman_ui::{banner, button, term_element};
 use supraman_workman::AuthStatus;
@@ -772,6 +773,7 @@ impl SettingsView {
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_term_font(family.as_deref(), on, cx))),
             );
         }
+        let shell = self.render_shell(cx);
         vec![
             row(
                 "Theme",
@@ -821,7 +823,45 @@ impl SettingsView {
                 None,
                 cx,
             ),
+            shell,
         ]
+    }
+
+    pub fn set_shell(&mut self, shell: ShellSetting, cx: &mut Context<Self>) {
+        self.change(|s| s.terminal.set_shell(shell.clone()), cx);
+    }
+
+    fn render_shell(&self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
+        let current = self.settings.terminal.shell();
+        let shells = self.fleet.upgrade().and_then(|f| f.read(cx).shells.clone());
+        let mut choices = div().flex().flex_wrap().gap_1().pt_2();
+        let mut notes = Vec::new();
+        match &shells {
+            Some(shells) => {
+                let named = shells.list.iter().filter_map(|s| s.setting.clone().map(|setting| (s.label.clone(), setting)));
+                let custom = matches!(current, ShellSetting::Custom(_)).then(|| (format!("{current} ([terminal] shell)"), current.clone()));
+                for (ix, (label, setting)) in [("Automatic".to_string(), ShellSetting::Auto)].into_iter().chain(named).chain(custom).enumerate() {
+                    let selected = setting == current;
+                    choices = choices.child(
+                        button::choice(("term-shell", ix), SharedString::from(label), selected, cx)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_shell(setting.clone(), cx))),
+                    );
+                }
+                notes.extend(shells.for_settings(&self.settings.terminal).1);
+            }
+            None => choices = choices.child(div().text_xs().text_color(colors.text_muted).child("finding this machine's shells…")),
+        }
+        let notes = notes.into_iter().map(|n| div().w_full().text_xs().text_color(cx.theme().status().warning).child(SharedString::from(n)).into_any_element());
+        row(
+            "Shell of new tabs",
+            "The shell + and Open terminal here start. Automatic is PowerShell 7 (pwsh), else Windows PowerShell. \
+             The ⌄ beside + opens any shell of this machine, Visual Studio's developer shells too. Tabs that start or \
+             attach claude always run PowerShell. Kept in settings.toml ([terminal] shell).",
+            div().into_any_element(),
+            Some(choices.children(notes).into_any_element()),
+            cx,
+        )
     }
 
     fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

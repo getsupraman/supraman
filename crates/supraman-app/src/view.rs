@@ -61,6 +61,7 @@ mod menu;
 pub(crate) mod notices;
 mod reopen;
 mod results;
+mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
@@ -169,6 +170,8 @@ pub struct Tab {
     pub launched_session: Option<String>,
     pub session_name: Option<String>,
     pub asks_schedule: Option<start::AsksSchedule>,
+    /// The program and arguments its terminal was started with.
+    pub started: Option<crate::saved_tabs::SavedShell>,
     watchers: Vec<Nudge>,
 }
 
@@ -212,6 +215,7 @@ impl Tab {
             launched_session: None,
             session_name: None,
             asks_schedule: None,
+            started: None,
             watchers: Vec::new(),
         }
     }
@@ -253,6 +257,8 @@ pub struct FleetView {
     pub active: Option<u64>,
     next_tab_id: u64,
     pub shell_args: Vec<String>,
+    /// This machine's shells, once detected.
+    pub shells: Option<Arc<supraman_core::shells::Shells>>,
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
@@ -718,6 +724,7 @@ impl FleetView {
         let desired_writes = Self::desired_writer(cx);
         let updates = crate::updates::Updates::start(home.clone(), cx);
         let tabs_writes = Self::tabs_writer(home.clone(), cx);
+        Self::detect_shells(cx);
         cx.on_focus_lost(window, |this, window, cx| this.focus.focus(window, cx)).detach();
         let search = cx.new(|cx| TextInput::new("Search sessions, workspaces, repos (Ctrl+Shift+E)", None, window, cx));
         cx.subscribe_in(&search, window, Self::on_search_event).detach();
@@ -738,6 +745,7 @@ impl FleetView {
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
+            shells: None,
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
@@ -2201,14 +2209,22 @@ impl FleetView {
         }
     }
 
-    pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), Some(cwd), window, cx)
+    pub fn open_shell_in(&mut self, cwd: PathBuf, title: String, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let (_, shell) = self.default_shell();
+        self.open_plain(title, Some(cwd), shell, cx)
     }
 
-    pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let title = format!("{} {}", supraman_core::paths::terminal_powershell().name, self.next_tab_id);
+    /// Open terminal here: `place` and the default shell's short name.
+    pub fn open_terminal_here(&mut self, cwd: PathBuf, place: &str, cx: &mut Context<Self>) -> u64 {
+        let (short, shell) = self.default_shell();
+        self.open_plain(format!("{place} · {short}"), Some(cwd), shell, cx)
+    }
+
+    pub fn new_shell(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> u64 {
+        let (short, shell) = self.default_shell();
+        let title = format!("{short} {}", self.next_tab_id);
         let cwd = self.new_shell_cwd();
-        self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), cwd, window, cx)
+        self.open_plain(title, cwd, shell, cx)
     }
 
     pub fn new_shell_cwd(&self) -> Option<PathBuf> {
@@ -2244,6 +2260,9 @@ impl FleetView {
     }
 
     fn start_terminal_env(&mut self, id: u64, shell: util::shell::Shell, cwd: Option<PathBuf>, extras: &Extras, cx: &mut Context<Self>) {
+        if let (Some(tab), util::shell::Shell::WithArguments { program, args, .. }) = (self.tab_mut(id), &shell) {
+            tab.started = Some(crate::saved_tabs::SavedShell { program: program.into(), args: args.clone() });
+        }
         let build = TerminalBuilder::new(
             cwd,
             TerminalMode::interactive(),
@@ -2722,6 +2741,17 @@ impl FleetView {
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.new_shell(window, cx);
                 })),
+        );
+        bar = bar.child(
+            button::ghost(&self.hits, "new-shell-menu", cx)
+                .flex()
+                .items_center()
+                .justify_center()
+                .h_full()
+                .w(px(22.))
+                .child(Icon::ChevronDown.svg(14., colors.text_muted).group_hover("new-shell-menu", |s| s.text_color(colors.text)))
+                .tooltip(Tooltip::text("New shell of…"))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx))),
         );
 
         let active = self.active.and_then(|id| self.tab(id));
