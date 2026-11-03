@@ -366,6 +366,8 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     let settings: serde_json::Value = serde_json::from_str(flag(&spec, "--settings")[0]).unwrap();
     assert_eq!((&settings["env"]["SUPRAMAN_SCHEDULE"], &settings["env"]["SUPRAMAN_RUN"]), (&"fix".into(), &run.clone().into()));
     assert_eq!(settings["worktree"]["bgIsolation"], "none");
+    let first = settings["env"]["PATH"].as_str().expect("the run's PATH").split(';').next().unwrap().to_string();
+    assert_eq!(first, supraman_core::install::exe_dir().unwrap().display().to_string(), "the run's sm is the one beside its sm");
 
     let config = host.claude.config_at_launch.borrow().clone().expect("the run's mcp config");
     assert!(config.contains(&format!("Bearer {MINTED}")), "{config}");

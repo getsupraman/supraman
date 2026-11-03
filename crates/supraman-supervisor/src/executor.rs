@@ -125,8 +125,9 @@ impl LaunchConfig {
 
     fn settings_with(&self, workspace: &str, name: &str, role: &str, repo: Option<&str>, extra: &[(&str, &str)]) -> Option<String> {
         let mut settings = serde_json::Map::new();
-        let env = self.session_env(workspace, name, role, repo, extra);
+        let mut env = self.session_env(workspace, name, role, repo, extra);
         if !env.is_empty() {
+            env.extend(sm_first_path());
             let env: serde_json::Map<String, serde_json::Value> = env.into_iter().map(|(k, v)| (k, v.into())).collect();
             settings.insert("env".into(), env.into());
         }
@@ -135,6 +136,13 @@ impl LaunchConfig {
         }
         (!settings.is_empty()).then(|| serde_json::Value::Object(settings).to_string())
     }
+}
+
+/// A background session's `PATH`: the folder of the `sm` beside this exe first, so its `sm` is this build's.
+fn sm_first_path() -> Option<(String, String)> {
+    let dir = supraman_core::install::exe_dir().ok()?;
+    let rest = std::env::var("PATH").unwrap_or_default();
+    Some(("PATH".to_string(), format!("{};{rest}", dir.display())))
 }
 
 /// One workspace's supervisor: desired state + memory, driven by [`Supervisor::tick`].
@@ -1578,7 +1586,10 @@ mod tests {
         assert_eq!(at("--permission-mode").as_deref(), Some("default"));
         let tools = argv.iter().position(|a| a == "--allowedTools").unwrap();
         assert_eq!(argv[tools + 1..tools + 4], ["Bash(sm:*)", "Bash(C:/fm/bin/sm.exe:*)", "--"]);
-        let settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
+        let mut settings: serde_json::Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
+        let path = settings["env"].as_object_mut().unwrap().remove("PATH").expect("the session's PATH");
+        let first = path.as_str().unwrap().split(';').next().unwrap().to_string();
+        assert_eq!(first, supraman_core::install::exe_dir().unwrap().display().to_string(), "the sm beside this exe comes first");
         assert_eq!(
             settings,
             serde_json::json!({
