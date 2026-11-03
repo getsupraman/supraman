@@ -90,7 +90,7 @@ async fn check(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow:
     if !same(Path::new(&in_first), &first) {
         bail!("with no tab the new shell is in {in_first}, not the first workspace's {}", first.display());
     }
-    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+    let exe_dir = supraman_core::install::exe_dir().ok();
     if exe_dir.is_some_and(|d| same(&d, Path::new(&in_first)) || same(&d, Path::new(&in_work))) {
         bail!("a new shell started in the exe's folder");
     }

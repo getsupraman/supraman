@@ -381,7 +381,7 @@ impl FleetView {
         let (ws, id) = (workspace.to_string(), id.to_string());
         let args = (ws.clone(), id.clone());
         let task = cx.background_executor().spawn(async move {
-            let sm = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(supraman_core::HOOK_EXE);
+            let sm = supraman_core::install::sm_exe().map_err(|e| e.to_string())?;
             let out = process::run(
                 process::command(&sm).args(["schedule", "dry-run", &args.0, &args.1]).env(supraman_core::HOME_VAR, &home),
                 DRY_RUN_WITHIN,

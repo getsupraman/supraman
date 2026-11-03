@@ -754,7 +754,7 @@ const FM_WITHIN: Duration = Duration::from_secs(60);
 
 /// `sm.exe` built beside this `supraman.exe`, run with this process's home (the testbed's).
 fn sm(args: &[&str]) -> anyhow::Result<String> {
-    let exe = std::env::current_exe()?.with_file_name(supraman_core::HOOK_EXE);
+    let exe = supraman_core::install::sm_exe()?;
     let out = supraman_core::process::run(supraman_core::process::command(&exe).args(args), FM_WITHIN, supraman_core::process::Kill::Tree)
         .with_context(|| format!("run {}", exe.display()))?;
     let text = format!("{}{}", out.stdout, out.stderr);

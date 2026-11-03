@@ -1959,7 +1959,7 @@ impl FleetView {
         };
         let settings = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default();
         let config = crate::supervise::launch_config(self.home.clone(), Some(&plugin_dir), &settings);
-        let sm_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
+        let sm_dir = supraman_core::install::exe_dir().ok().filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
         crate::hand::extras(&config, &self.workspaces, cwd, &name, sm_dir.as_deref())
     }
 

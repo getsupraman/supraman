@@ -1,7 +1,7 @@
 //! The update check's loop and what the window shows of it: a banner when a newer release is
 //! available (view/left.rs) and a line on Settings → About.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -69,7 +69,7 @@ pub struct Target {
 
 impl Target {
     fn this_install() -> Self {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+        let exe_dir = install::exe_dir().unwrap_or_default();
         Self { install: install::install_dir(&exe_dir), wait_pid: Some(std::process::id()), quit: true, restart_args: Vec::new() }
     }
 }
@@ -106,7 +106,7 @@ pub struct Updates {
 impl Updates {
     /// The check at start, after the window is up, then every [`updates::EVERY`] or when nudged; one at a time.
     pub fn start(home: Option<PathBuf>, cx: &mut Context<FleetView>) -> Self {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+        let exe_dir = install::exe_dir().ok();
         let running = updates::running_version(env!("CARGO_PKG_VERSION"), exe_dir.as_deref());
         let source = Arc::new(Mutex::new(Source::github(running.clone())));
         let (nudge, mut nudged) = nudge::nudge();

@@ -138,8 +138,8 @@ fn stage_painted(v: &FleetView) -> bool {
 /// the old FILES named, and starts the release's supraman.exe: a stub, a copy of sm.exe, whose
 /// `plugin install <marker>` leaves the marker.
 pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let exe_dir = std::env::current_exe()?.parent().map(Path::to_path_buf).ok_or_else(|| anyhow!("no exe folder"))?;
-    let sm = std::fs::read(exe_dir.join("sm.exe")).map_err(|e| anyhow!("{}: {e}", exe_dir.join("sm.exe").display()))?;
+    let sm_exe = supraman_core::install::sm_exe()?;
+    let sm = std::fs::read(&sm_exe).map_err(|e| anyhow!("{}: {e}", sm_exe.display()))?;
     let root = home.join("update-test");
     let _ = std::fs::remove_dir_all(&root);
     let install = root.join("install");

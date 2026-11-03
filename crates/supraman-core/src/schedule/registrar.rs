@@ -15,8 +15,7 @@ pub const SMW_EXE: &str = "smw.exe";
 
 /// `smw.exe` next to the running exe.
 pub fn smw_exe() -> PathBuf {
-    let dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_default();
-    dir.join(SMW_EXE)
+    crate::install::exe_dir().unwrap_or_default().join(SMW_EXE)
 }
 
 /// `\Supraman` for the default home (`%APPDATA%\Supraman`), `\Supraman-<hex8>` for any other.
