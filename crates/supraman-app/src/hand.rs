@@ -445,15 +445,15 @@ mod tests {
         let home = dir.path().join("home");
         std::fs::create_dir_all(home.join("supervisor")).unwrap();
         std::fs::write(Hands::path(&home), r#"{"hand-alpha-1":{"sessionId":"h1","role":"hand"},"hand-beta-1":{"sessionId":"h2","role":"hand"}}"#).unwrap();
-        supraman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        supraman_claude::write_mcp_config(&home.join("mcp"), "hand-alpha-1", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
         let (_, auth) = home_with(dir.path(), None);
         let (hands, notice) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         assert_eq!(notice, None);
         assert_eq!(hands.elsewhere("https://b.example"), [
-            ("hand-alpha-1".to_string(), Some("http://127.0.0.1:5290".to_string())),
+            ("hand-alpha-1".to_string(), Some("http://127.0.0.1:1".to_string())),
             ("hand-beta-1".to_string(), None),
         ]);
-        assert!(std::fs::read_to_string(Hands::path(&home)).unwrap().contains("http://127.0.0.1:5290"), "saved");
+        assert!(std::fs::read_to_string(Hands::path(&home)).unwrap().contains("http://127.0.0.1:1"), "saved");
     }
 
     #[test]

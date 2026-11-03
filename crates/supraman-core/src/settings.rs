@@ -675,16 +675,16 @@ url = "https://workman.example"
         let home = tempfile::tempdir().unwrap();
         assert_eq!(Settings::default().workman.origin(), DEFAULT_WORKMAN_URL);
         assert_eq!(Settings::default().workman.mcp_url(), format!("{DEFAULT_WORKMAN_URL}/mcp"));
-        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://127.0.0.1:5290/mcp\"\n");
-        assert_eq!(s.workman.origin(), "http://127.0.0.1:5290");
-        assert_eq!(s.workman.mcp_url(), "http://127.0.0.1:5290/mcp");
+        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://127.0.0.1:1/mcp\"\n");
+        assert_eq!(s.workman.origin(), "http://127.0.0.1:1");
+        assert_eq!(s.workman.mcp_url(), "http://127.0.0.1:1/mcp");
     }
 
     #[test]
     fn validate_workman_url_keeps_an_origin_and_https_off_this_machine() {
         assert_eq!(validate_workman_url(" https://Work.Supraman.ai/ ").as_deref(), Ok("https://work.supraman.ai"));
         assert_eq!(validate_workman_url("https://work.supraman.ai/mcp").as_deref(), Ok("https://work.supraman.ai"));
-        assert_eq!(validate_workman_url("http://127.0.0.1:5290").as_deref(), Ok("http://127.0.0.1:5290"));
+        assert_eq!(validate_workman_url("http://127.0.0.1:1").as_deref(), Ok("http://127.0.0.1:1"));
         assert_eq!(validate_workman_url("http://localhost:9/api").as_deref(), Ok("http://localhost:9"));
         assert_eq!(validate_workman_url("http://[::1]:9").as_deref(), Ok("http://[::1]:9"));
         for bad in ["work.supraman.ai", "ftp://x", "http://work.supraman.ai", "https://", "https://a b", "https://x:port", "https://u@x"] {

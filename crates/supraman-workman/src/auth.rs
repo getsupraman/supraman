@@ -744,7 +744,7 @@ mod tests {
         for (issuer, origin, path) in [
             ("https://ws.example/tenant", "https://ws.example", "/tenant"),
             ("https://ws.example", "https://ws.example", ""),
-            ("http://127.0.0.1:5290/a/b", "http://127.0.0.1:5290", "/a/b"),
+            ("http://127.0.0.1:1/a/b", "http://127.0.0.1:1", "/a/b"),
             ("ws.example/x", "ws.example", "/x"),
         ] {
             assert_eq!(split_origin(issuer), (origin.to_string(), path), "{issuer}");

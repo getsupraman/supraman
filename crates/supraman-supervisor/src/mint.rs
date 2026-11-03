@@ -482,7 +482,7 @@ mod tests {
                 role: "workspace".into(),
                 claude_session_id: None,
                 last_active: Some(42),
-                origin: Some("http://127.0.0.1:5290".into()),
+                origin: Some("http://127.0.0.1:1".into()),
             },
         );
         s.save().unwrap();
@@ -504,17 +504,17 @@ mod tests {
                 "fm-demo-beta":{"sessionId":"9","role":"repo","origin":"https://b.example"}}"#,
         )
         .unwrap();
-        supraman_claude::write_mcp_config(&mcp, "fm-demo-workspace", "http://127.0.0.1:5290/mcp", "wss_fake", &[]).unwrap();
+        supraman_claude::write_mcp_config(&mcp, "fm-demo-workspace", "http://127.0.0.1:1/mcp", "wss_fake", &[]).unwrap();
         let mut s = MintedSessions::load(Some(path.clone())).unwrap();
         assert_eq!(s.get("fm-demo-workspace").unwrap().origin, None, "a file from before m5/48");
         s.adopt_origins(&mcp).unwrap();
         let back = MintedSessions::load(Some(path)).unwrap();
-        assert_eq!(back.get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:5290"), "saved");
+        assert_eq!(back.get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "saved");
         assert_eq!(back.get("fm-demo-alpha").unwrap().origin, None, "no config file: unknown");
         assert_eq!(
             back.elsewhere("https://b.example/"),
-            [("fm-demo-alpha".to_string(), None), ("fm-demo-workspace".to_string(), Some("http://127.0.0.1:5290".to_string()))]
+            [("fm-demo-alpha".to_string(), None), ("fm-demo-workspace".to_string(), Some("http://127.0.0.1:1".to_string()))]
         );
-        assert_eq!(back.elsewhere("http://127.0.0.1:5290").len(), 2, "alpha unknown, beta on b");
+        assert_eq!(back.elsewhere("http://127.0.0.1:1").len(), 2, "alpha unknown, beta on b");
     }
 }

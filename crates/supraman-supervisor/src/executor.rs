@@ -930,7 +930,7 @@ mod tests {
 
     fn static_token() -> Option<RoleToken> {
         Some(RoleToken {
-            url: "http://127.0.0.1:5290/mcp".into(),
+            url: "http://127.0.0.1:1/mcp".into(),
             token: STATIC.into(),
             role: String::new(),
         })
@@ -1082,7 +1082,7 @@ mod tests {
         assert_eq!(
             minter.take(),
             [MintCall::Mint {
-                base: "http://127.0.0.1:5290".into(),
+                base: "http://127.0.0.1:1".into(),
                 bearer: STATIC.into(),
                 request: MintRequest {
                     name: "fm-demo-workspace".into(),
@@ -1100,7 +1100,7 @@ mod tests {
         let text = config_text(&mcp, "fm-demo-workspace");
         assert!(!text.contains(STATIC), "the static token never reaches the file: {text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:5290/mcp");
+        assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:1/mcp");
         assert_eq!(v["mcpServers"]["workman"]["headers"], serde_json::json!({ "Authorization": "Bearer wss_fake1" }));
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 5 * SECOND), []);
@@ -1201,12 +1201,12 @@ mod tests {
         sup.launcher().take();
         minter.take();
 
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "minted there");
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "minted there");
         sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
         assert!(sup.server_changed(None).is_empty(), "not signed in: nothing to mint with");
         assert_eq!(
             sup.server_changed(Some("https://workstate.example")),
-            [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:5290".to_string()))]
+            [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:1".to_string()))]
         );
         assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
@@ -1264,8 +1264,8 @@ mod tests {
         let live = row(SessionState::Working, Some(Status::Busy), Some(1));
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting_from(dir.path(), OLD);
-        assert_eq!(sup.server_changed(Some("http://127.0.0.1:5290")), [("fm-demo-workspace".to_string(), None)], "no config file: unknown");
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "once");
+        assert_eq!(sup.server_changed(Some("http://127.0.0.1:1")), [("fm-demo-workspace".to_string(), None)], "no config file: unknown");
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]));
         minter.take();
@@ -1274,16 +1274,16 @@ mod tests {
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
         let calls = minter.take();
         assert!(matches!(calls.as_slice(), [MintCall::Mint { .. }]), "{calls:?}");
-        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:5290"), "recorded now");
+        assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some("http://127.0.0.1:1"), "recorded now");
 
         let dir = tempfile::tempdir().unwrap();
-        supraman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:5290/mcp", "wss_old", &[]).unwrap();
+        supraman_claude::write_mcp_config(&dir.path().join("mcp"), "fm-demo-workspace", "http://127.0.0.1:1/mcp", "wss_old", &[]).unwrap();
         let (mut sup, _) = minting_from(dir.path(), OLD);
-        assert!(sup.server_changed(Some("http://127.0.0.1:5290")).is_empty(), "its config file already names the server");
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "its config file already names the server");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
         assert_eq!(sup.launcher().take(), []);
         let saved = std::fs::read_to_string(MintedSessions::path(dir.path(), "demo")).unwrap();
-        assert!(saved.contains(r#""origin": "http://127.0.0.1:5290""#), "{saved}");
+        assert!(saved.contains(r#""origin": "http://127.0.0.1:1""#), "{saved}");
     }
 
     #[test]
@@ -1304,7 +1304,7 @@ mod tests {
         let other: Vec<_> = needs.iter().filter(|n| n.kind == NeedsKind::OtherServer).collect();
         let [need] = other.as_slice() else { panic!("{needs:?}") };
         assert_eq!(need.action, Some(Remedy::Remint { id: live.id.clone() }));
-        assert!(need.detail.contains("http://127.0.0.1:5290") && need.detail.contains("https://workstate.example"), "{}", need.detail);
+        assert!(need.detail.contains("http://127.0.0.1:1") && need.detail.contains("https://workstate.example"), "{}", need.detail);
         assert!(minter.take().is_empty(), "no PATCH of the old server's session on the new one");
 
         sup.retry("fm-demo-workspace");
@@ -1322,7 +1322,7 @@ mod tests {
     fn mint_without_a_bearer_now_fails_the_launch_with_why() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
-        sup.tokens_mut().1 = Some("sign in to Workman at http://127.0.0.1:5290 again: the server refused the refresh (invalid_grant)".into());
+        sup.tokens_mut().1 = Some("sign in to Workman at http://127.0.0.1:1 again: the server refused the refresh (invalid_grant)".into());
         let needs = sup.tick(&[], &mut free(), NOW);
         assert!(sup.launcher().take().is_empty(), "nothing launched without Workman");
         assert!(minter.take().is_empty());
@@ -1439,7 +1439,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
         sup.tick(&[], &mut free(), NOW);
-        minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:5290".into(), reason: "refused".into() });
+        minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:1".into(), reason: "refused".into() });
         sup.desired.started = false;
         sup.tick(&[], &mut free(), NOW + SECOND);
         let notices = sup.take_notices();
