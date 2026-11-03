@@ -10,7 +10,13 @@ use crate::fleet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SavedTab {
-    Shell { title: String, cwd: PathBuf },
+    /// `shell` is what the tab ran; without it the tab reopens with the default shell.
+    Shell {
+        title: String,
+        cwd: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell: Option<SavedShell>,
+    },
     /// A hand tab; `session_id` is the full uuid of the claude it runs.
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
@@ -53,6 +59,13 @@ impl SavedTab {
     }
 }
 
+/// A plain tab's program and the arguments it was started with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedShell {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedTabs {
     pub tabs: Vec<SavedTab>,
@@ -76,7 +89,7 @@ pub fn save(home: &Path, tabs: &SavedTabs) -> Result<(), String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reopen {
-    Shell { title: String, cwd: PathBuf },
+    Shell { title: String, cwd: PathBuf, shell: Option<SavedShell> },
     Attach { title: String, session: Session },
     Resume { title: String, session: Session },
     /// A tab with a Resume button; nothing runs until it is clicked.
@@ -90,6 +103,7 @@ pub struct World<'a> {
     pub workspaces: &'a [String],
     pub resume_on_click: bool,
     pub is_dir: &'a dyn Fn(&Path) -> bool,
+    pub is_file: &'a dyn Fn(&Path) -> bool,
     pub has_transcript: &'a dyn Fn(&str, &Path) -> bool,
 }
 
@@ -104,7 +118,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         session.filter(|s| (world.has_transcript)(&s.session_id, &s.cwd)).ok_or_else(|| "it has no conversation to resume".to_string())
     };
     match saved {
-        SavedTab::Shell { title, cwd } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone() }),
+        SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
         SavedTab::Claude { title, .. } => {
@@ -137,7 +151,7 @@ mod tests {
     const SID: &str = "0a0b0c0d-0000-4000-8000-000000000001";
 
     fn world<'a>(sessions: &'a [Session], workspaces: &'a [String], on_click: bool, has: &'a dyn Fn(&str, &Path) -> bool) -> World<'a> {
-        World { sessions, now: 1_000_000, workspaces, resume_on_click: on_click, is_dir: &|p| !p.ends_with("gone"), has_transcript: has }
+        World { sessions, now: 1_000_000, workspaces, resume_on_click: on_click, is_dir: &|p| !p.ends_with("gone"), is_file: &|p| !p.ends_with("gone.exe"), has_transcript: has }
     }
 
     fn attach(name: &str) -> SavedTab {
@@ -165,7 +179,7 @@ mod tests {
         assert_eq!(load(home.path()), (SavedTabs::default(), None), "no file, nothing to reopen and no notice");
         let tabs = SavedTabs {
             tabs: vec![
-                SavedTab::Shell { title: "pwsh 1".into(), cwd: "C:/a".into() },
+                SavedTab::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None },
                 SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: Some(SID.into()), name: "hand".into() },
                 attach("worker"),
                 SavedTab::Work { title: "Work · w".into(), workspace: "w".into() },
@@ -185,9 +199,9 @@ mod tests {
         let has: &dyn Fn(&str, &Path) -> bool = &|sid, _| sid == SID;
         let none: &dyn Fn(&str, &Path) -> bool = &|_, _| false;
         let ws = ["w".to_string()];
-        let shell = SavedTab::Shell { title: "s".into(), cwd: "C:/a".into() };
-        assert_eq!(plan(&shell, &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "s".into(), cwd: "C:/a".into() }));
-        let gone = SavedTab::Shell { title: "s".into(), cwd: "C:/gone".into() };
+        let shell = SavedTab::Shell { title: "s".into(), cwd: "C:/a".into(), shell: None };
+        assert_eq!(plan(&shell, &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "s".into(), cwd: "C:/a".into(), shell: None }));
+        let gone = SavedTab::Shell { title: "s".into(), cwd: "C:/gone".into(), shell: None };
         assert!(plan(&gone, &world(&[], &ws, false, has)).unwrap_err().contains("folder"));
 
         let work = SavedTab::Work { title: "t".into(), workspace: "w".into() };
@@ -205,6 +219,26 @@ mod tests {
         assert!(plan(&short, &world(&[], &ws, false, &|_, _| true)).is_err(), "never a short id: it would start a new session");
         let fresh = SavedTab::Claude { title: "c".into(), cwd: "C:/b".into(), session_id: None, name: String::new() };
         assert!(plan(&fresh, &world(&[], &ws, false, has)).is_err());
+    }
+
+    #[test]
+    fn a_plain_tab_reopens_with_the_shell_it_had_and_an_old_file_with_the_default() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(path(home.path()), r#"{"tabs":[{"kind":"shell","title":"pwsh 1","cwd":"C:/a"}],"active":0}"#).unwrap();
+        let (old, notice) = load(home.path());
+        assert_eq!((old.tabs.as_slice(), notice), (&[SavedTab::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None }][..], None), "a file without the shell loads");
+        let ws = ["w".to_string()];
+        let has: &dyn Fn(&str, &Path) -> bool = &|_, _| false;
+        assert_eq!(plan(&old.tabs[0], &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "pwsh 1".into(), cwd: "C:/a".into(), shell: None }));
+
+        let cmd = SavedShell { program: r"C:\Windows\System32\cmd.exe".into(), args: vec!["/k".into(), r#""C:\VS 18\VsDevCmd.bat""#.into()] };
+        let tabs = SavedTabs { tabs: vec![SavedTab::Shell { title: "cmd 4".into(), cwd: "C:/a".into(), shell: Some(cmd.clone()) }], active: None };
+        save(home.path(), &tabs).unwrap();
+        let (back, _) = load(home.path());
+        assert_eq!(back, tabs);
+        assert_eq!(plan(&back.tabs[0], &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "cmd 4".into(), cwd: "C:/a".into(), shell: Some(cmd) }));
+        let uninstalled = SavedTab::Shell { title: "x 5".into(), cwd: "C:/a".into(), shell: Some(SavedShell { program: r"C:\x\gone.exe".into(), args: vec![] }) };
+        assert_eq!(plan(&uninstalled, &world(&[], &ws, false, has)), Ok(Reopen::Shell { title: "x 5".into(), cwd: "C:/a".into(), shell: None }), "a shell no longer installed: the default");
     }
 
     #[test]

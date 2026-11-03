@@ -29,6 +29,7 @@ mod selftest_refresh;
 mod selftest_reopen;
 mod selftest_responsive;
 mod selftest_schedules;
+mod selftest_shells;
 mod selftest_search;
 mod selftest_shots;
 mod selftest_start;

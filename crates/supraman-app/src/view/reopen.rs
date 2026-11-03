@@ -6,7 +6,7 @@ use futures::StreamExt as _;
 use gpui::{AnyElement, App, ClickEvent, Context, SharedString, div, prelude::*};
 use theme::ActiveTheme as _;
 
-use super::{FleetView, Tab, TabKind, powershell};
+use super::{FleetView, Tab, TabKind};
 use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
 use crate::{fleet, tab_card};
 
@@ -71,7 +71,7 @@ impl FleetView {
                 let name = session_id.as_deref().and_then(named).or_else(|| tab.session_name.clone()).unwrap_or_default();
                 SavedTab::Claude { title, cwd: tab.cwd.clone()?, session_id, name }
             }
-            TabKind::Shell => SavedTab::Shell { title, cwd: tab.cwd.clone()? },
+            TabKind::Shell => SavedTab::Shell { title, cwd: tab.cwd.clone()?, shell: tab.started.clone() },
             TabKind::Attach { session_id: id } => {
                 let listed = self.sessions.iter().find(|s| &s.id == id);
                 SavedTab::Attach {
@@ -124,6 +124,7 @@ impl FleetView {
                 workspaces: &workspaces,
                 resume_on_click: settings.resume_tabs_on_click,
                 is_dir: &|p| p.is_dir(),
+                is_file: &|p| p.is_file(),
                 has_transcript: &has_transcript,
             };
             let plans = saved.tabs.iter().map(|t| (t.title().to_string(), saved_tabs::plan(t, &world))).collect();
@@ -173,10 +174,9 @@ impl FleetView {
 
     fn open_reopened(&mut self, reopen: Reopen, cx: &mut Context<Self>) -> u64 {
         match reopen {
-            Reopen::Shell { title, cwd } => {
-                let id = self.push_tab(title, TabKind::Shell, Some(cwd.clone()), cx);
-                self.start_terminal(id, powershell(self.shell_args.clone()), Some(cwd), cx);
-                id
+            Reopen::Shell { title, cwd, shell } => {
+                let shell = shell.unwrap_or_else(|| self.default_shell().1);
+                self.open_plain(title, Some(cwd), shell, cx)
             }
             Reopen::Attach { title, session } => self.attach_titled(title, &session, cx),
             Reopen::Resume { title, session } => self.resume_titled(title, &session, cx),

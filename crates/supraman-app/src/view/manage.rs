@@ -392,8 +392,11 @@ impl FleetView {
                 ));
             }
             MenuAction::OpenFolder(path) => self.open_folder(path, cx),
-            MenuAction::OpenTerminal { cwd, title } => {
-                self.open_shell_in(cwd, title, window, cx);
+            MenuAction::OpenTerminal { cwd, place } => {
+                self.open_terminal_here(cwd, &place, cx);
+            }
+            MenuAction::NewShell(shell) => {
+                self.new_shell_of(&shell, cx);
             }
             MenuAction::NewClaude { cwd, title } => {
                 self.new_claude(cwd, title, window, cx);
