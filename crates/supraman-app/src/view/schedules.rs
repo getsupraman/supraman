@@ -156,7 +156,6 @@ impl ScheduleEdit {
     }
 }
 
-/// `sync` for `workspace` against the schedules on disk now.
 fn sync_now(home: &Path, registrar: &dyn Registrar, store: &dyn SecretStore, workspace: &Workspace) -> Result<schedule::Synced, String> {
     let schedules = schedule::load(home, &workspace.name).map_err(|e| e.to_string())?;
     let smw = schedule::smw_exe();
@@ -341,7 +340,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// `smw schedule run --home <home> <ws> <id>`, detached and off the UI thread (m5/68); the row shows the run from
+    /// `smw schedule run --home <home> <ws> <id>`, detached and off the UI thread; the row shows the run from
     /// its live file.
     pub fn run_schedule_now(&mut self, workspace: &str, id: &str, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {

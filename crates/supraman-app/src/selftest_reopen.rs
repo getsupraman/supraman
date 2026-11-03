@@ -130,7 +130,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
             let work = v.open_work(crate::selftest_work::WORKSPACE, cx);
             let attach = v.attach(WORKSPACE, "reopen", &live, window, cx);
             let doomed = v.open_shell_in(gone.to_path_buf(), "reopen gone".into(), window, cx);
-            // the order a drag leaves (m5/53): Work first
+            // the order a drag leaves: Work first
             supraman_ui::tabs::reorder(&mut v.tabs, 2, 0);
             v.activate_tab(hand, cx);
             (shell, hand, work, attach, doomed)

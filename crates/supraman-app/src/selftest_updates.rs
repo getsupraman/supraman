@@ -64,7 +64,7 @@ fn painted(v: &FleetView) -> bool {
     v.hits.borrow().contains_key("update-notice")
 }
 
-/// public/8: a newer signed release on a fake endpoint shows the banner; What's new and Update open its pages; × hides
+/// A newer signed release on a fake endpoint shows the banner; What's new and Update open its pages; × hides
 /// it and the home keeps it dismissed; Settings → About shows the last check.
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     OPENED.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -133,7 +133,7 @@ fn stage_painted(v: &FleetView) -> bool {
     v.hits.borrow().contains_key("update-stage")
 }
 
-/// public/9: Update on a fake endpoint over a temp install, never this build's folder (C109). The zip shows its
+/// Update on a fake endpoint over a temp install, never this build's folder (C109). The zip shows its
 /// progress, `sm update apply` (the release's own sm.exe, copied out) swaps it in, removes the file
 /// the old FILES named, and starts the release's supraman.exe: a stub, a copy of sm.exe, whose
 /// `plugin install <marker>` leaves the marker.

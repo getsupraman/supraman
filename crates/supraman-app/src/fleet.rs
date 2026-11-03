@@ -1123,7 +1123,6 @@ mod tests {
         assert_eq!(tree.workspaces[1].rows().count(), 5);
     }
 
-    // m5/61
     #[test]
     fn adopt_is_offered_for_an_unmanaged_background_session_of_an_enabled_folder_without_a_supervised_one() {
         let all = sessions();
