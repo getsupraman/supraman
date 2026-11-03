@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use supraman_core::schedule::{self, Status};
 use supraman_core::{Registry, secret};
@@ -43,7 +43,7 @@ impl Fixture {
     }
 
     fn fm_in(&self, cwd: &Path, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_sm"))
+        supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
             .args(args)
             .current_dir(cwd)
             .env("SUPRAMAN_HOME", &self.home)
@@ -160,7 +160,7 @@ fn a_command_git_bash_rewrote_into_its_install_folder_is_refused_with_the_fix() 
     let git_root = f.outside.join("Fake Git");
     let rewritten = format!("{}/fix", git_root.to_string_lossy().replace('\\', "/"));
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_sm"))
+        supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
             .args(args)
             .current_dir(&f.outside)
             .env("SUPRAMAN_HOME", &f.home)

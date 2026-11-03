@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 use supraman_core::{Event, EventReader, role_tag};
 
@@ -12,7 +12,7 @@ fn hook(home: Option<&Path>, role: Option<&str>, args: &[&str], stdin: &str) -> 
 }
 
 fn hook_env(home: Option<&Path>, role: Option<&str>, env: &[(&str, &str)], args: &[&str], stdin: &str) -> Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sm"));
+    let mut cmd = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"));
     cmd.arg("hook").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.env_remove("SUPRAMAN_HOME")
         .env_remove("FOREMAN_HOME")

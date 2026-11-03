@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use supraman_workman::auth::{form_decode, http_browser};
@@ -27,7 +27,7 @@ url = '{url}'
 }
 
 fn sm(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sm"))
+    supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
@@ -186,7 +186,7 @@ fn work_errors_are_one_line_without_the_token() {
     assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at http://{free}"));
 
     let none = tempfile::tempdir().unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_sm"))
+    let out = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(["work", "overview", "autowork"])
         .env("SUPRAMAN_HOME", none.path())
         .env_remove("APPDATA")

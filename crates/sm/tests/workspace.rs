@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn sm(home: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_sm"))
+    supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
         .args(args)
         .env("SUPRAMAN_HOME", home)
         .env_remove("APPDATA")
@@ -186,7 +186,7 @@ fn the_default_home_is_refused_until_the_foreman_home_is_copied() {
     let appdata = tempfile::tempdir().unwrap();
     fs::create_dir_all(appdata.path().join("Foreman").join("workspaces")).unwrap();
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_sm"))
+        supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))
             .args(["workspace", "list"])
             .env_remove("SUPRAMAN_HOME")
             .env_remove("FOREMAN_HOME")

@@ -183,7 +183,7 @@ mod tests {
 
     #[cfg(windows)]
     fn junction(link: &Path, target: &Path) {
-        let out = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output().unwrap();
+        let out = supraman_core::process::command("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output().unwrap();
         assert!(out.status.success(), "mklink /J: {out:?}");
     }
 

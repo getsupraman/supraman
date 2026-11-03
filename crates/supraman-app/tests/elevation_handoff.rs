@@ -1,6 +1,6 @@
 #![cfg(windows)]
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 fn wait_for(within: Duration, mut done: impl FnMut() -> bool) -> bool {
@@ -15,6 +15,7 @@ fn wait_for(within: Duration, mut done: impl FnMut() -> bool) -> bool {
 }
 
 #[test]
+#[ignore = "starts Supraman windows and a runas console; run elevated with --ignored"]
 fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
     if !supraman_claude::is_elevated() {
         eprintln!("skipped: needs an elevated test process");
@@ -23,7 +24,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
     let exe = env!("CARGO_BIN_EXE_supraman");
     let home = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
-    let mut first = Command::new(exe)
+    let mut first = supraman_core::process::command(exe)
         .env("SUPRAMAN_HOME", home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -47,7 +48,7 @@ fn an_unelevated_second_launch_hands_off_to_an_elevated_foreman() {
         ),
     )
     .unwrap();
-    let ran = Command::new("runas")
+    let ran = supraman_core::process::command("runas")
         .arg("/trustlevel:0x20000")
         .arg(format!("cmd /c \"{}\"", script.display()))
         .stdin(Stdio::null())

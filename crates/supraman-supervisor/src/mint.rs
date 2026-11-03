@@ -382,7 +382,7 @@ mod tests {
         let main = dir.path().join("main");
         std::fs::create_dir(&main).unwrap();
         let run = |cwd: &Path, args: &[&str]| {
-            let ok = std::process::Command::new("git")
+            let ok = supraman_core::process::command("git")
                 .arg("-C")
                 .arg(cwd)
                 .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
