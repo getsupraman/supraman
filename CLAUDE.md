@@ -1,6 +1,6 @@
 # Supraman (AutoWork)
 
-Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work runs as a controller queue in Workman project `autowork`; `docs/LEARNINGS.md` holds what each unit found.
+Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work runs as a controller queue in Workman project `supraman`; `docs/LEARNINGS.md` holds what each unit found.
 
 ## Use shared components, never hidden hand-rolled ones
 
