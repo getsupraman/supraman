@@ -76,24 +76,25 @@ fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Under legacy arg passing (5.1, pwsh < 7.3) a native claude gets its args as one MSVC-quoted command line through `--%`.
+/// Under legacy arg passing (5.1, pwsh < 7.3) a native claude is started with its args as one MSVC-quoted command
+/// line of the process's own, so the line never sits in claude's environment.
 const RUNNER: &str = r#"function supramanClaude($supramanArgv) {
     $c = Get-Command -Name <command> -ErrorAction SilentlyContinue | Select-Object -First 1
     if ("$PSNativeCommandArgumentPassing" -in '', 'Legacy' -and $c.CommandType -eq 'Application' -and $c.Extension -notin '.cmd', '.bat') {
-        $env:SUPRAMAN_ARGV = @($supramanArgv | ForEach-Object { if ($_ -ne '' -and $_ -notmatch '[\s"]') { $_ } else { '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } }) -join ' '
-        try {
-            <claude> --% %SUPRAMAN_ARGV%
-        } finally { Remove-Item Env:SUPRAMAN_ARGV -ErrorAction SilentlyContinue }
+        $line = @(@(& { $args }<args>) + $supramanArgv | ForEach-Object { if ($_ -ne '' -and $_ -notmatch '[\s"]') { $_ } else { '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' } }) -join ' '
+        $p = [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{ FileName = $c.Path; Arguments = $line; UseShellExecute = $false; WorkingDirectory = (Get-Location -PSProvider FileSystem).ProviderPath }))
+        $p.WaitForExit(); $global:LASTEXITCODE = $p.ExitCode
     } else { <claude> @supramanArgv }
 }
 "#;
 
 fn runner(claude: &str) -> String {
-    RUNNER.replace("<command>", command_word(claude)).replace("<claude>", claude)
+    let (word, args) = command_split(claude);
+    RUNNER.replace("<command>", word).replace("<args>", args).replace("<claude>", claude)
 }
 
-/// The path of `& '<path>' …`, still quoted, else the first word.
-fn command_word(claude: &str) -> &str {
+/// The path of `& '<path>' …`, still quoted, else the first word; then the args after it, as PowerShell source.
+fn command_split(claude: &str) -> (&str, &str) {
     let claude = claude.trim_start();
     if let Some(rest) = claude.strip_prefix("& '") {
         let mut chars = rest.char_indices().peekable();
@@ -102,12 +103,13 @@ fn command_word(claude: &str) -> &str {
                 if chars.peek().is_some_and(|(_, n)| *n == '\'') {
                     chars.next();
                 } else {
-                    return &claude[2..3 + i + 1];
+                    return (&claude[2..3 + i + 1], &claude[3 + i + 1..]);
                 }
             }
         }
     }
-    claude.split_whitespace().next().unwrap_or(claude)
+    let end = claude.find(char::is_whitespace).unwrap_or(claude.len());
+    (&claude[..end], &claude[end..])
 }
 
 /// `env` goes on the PTY, not into `--settings`: LEARNINGS sched2/1.
@@ -558,7 +560,7 @@ mod tests {
         let resume = "claude --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff'";
         let script = launch.script_with(resume, &extras);
         assert!(script.starts_with(&format!("{}{on_path}if (Test-Path", runner(resume))), "{script}");
-        assert!(runner(resume).contains(&format!("{resume} @supramanArgv")) && runner(resume).contains(&format!("{resume} --% %SUPRAMAN_ARGV%")), "{script}");
+        assert!(runner(resume).contains(&format!("{resume} @supramanArgv")) && runner(resume).contains("@(& { $args } --resume 'fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff')"), "{script}");
         assert!(script.contains(&format!("try {{ supramanClaude @('--mcp-config', 'C:\\fm\\mcp\\workstate-hand-alpha-1.json', {flags}) }} finally")), "{script}");
         assert!(script.ends_with(&format!("; supramanClaude @({flags}) }}")), "the stale branch gets them too: {script}");
         assert_eq!(Launch::Plain.script_with("claude", &extras), format!("{}{on_path}supramanClaude @({flags})", runner("claude")));
@@ -961,9 +963,9 @@ mod tests {
 
     #[test]
     fn the_runner_resolves_the_command_word_of_a_bare_or_quoted_claude() {
-        assert_eq!(command_word("claude"), "claude");
-        assert_eq!(command_word("claude --resume 'x'"), "claude");
-        assert_eq!(command_word(r"& 'C:\o''neil\claude.exe' --selftest-argv 'out'"), r"'C:\o''neil\claude.exe'");
+        assert_eq!(command_split("claude"), ("claude", ""));
+        assert_eq!(command_split("claude --resume 'x'"), ("claude", " --resume 'x'"));
+        assert_eq!(command_split(r"& 'C:\o''neil\claude.exe' --selftest-argv 'out'"), (r"'C:\o''neil\claude.exe'", " --selftest-argv 'out'"));
         assert!(runner(r"& 'C:\x\c.exe' -a").contains(r"Get-Command -Name 'C:\x\c.exe' "));
     }
 
@@ -1064,6 +1066,7 @@ mod tests {
                 std::fs::write(&prompt_file, prompt).unwrap();
                 let out = dir.path().join("argv.json");
                 let _ = std::fs::remove_file(&out);
+                let _ = std::fs::remove_file(out.with_extension("env"));
                 let extras = Extras { args: flags.iter().map(|f| f.to_string()).collect(), prompt: Some(prompt_file.clone()), ..Extras::default() };
                 let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config: config.clone(), notice: None, new_session: Some(session.into()) };
                 let ran = tab(shell, tab_args(launch.shell_args_with("claude", &extras)), target, &[("SUPRAMAN_ARGV_OUT", &out)]);
@@ -1075,6 +1078,10 @@ mod tests {
                 want.extend(["--".to_string(), prompt.to_string()]);
                 assert_eq!(got, want, "{shell} {}", target.display());
                 assert!(!config.exists() && !prompt_file.exists(), "{shell}");
+                if target == &native {
+                    let env = std::fs::read_to_string(out.with_extension("env")).unwrap();
+                    assert!(env.contains("SUPRAMAN_ARGV_OUT=") && !env.contains("voice menu"), "{shell}: the prompt is in claude's environment");
+                }
             }
         }
     }
