@@ -18,6 +18,8 @@ use supraman_supervisor::{AppTokens, HttpMinter, Launcher, Minter, TokenProvider
 use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{Auth, auth::http_browser};
 
+mod common;
+
 const T0: i64 = 1_793_595_600_000;
 const UUID: &str = "aaaa0001-0000-4000-8000-000000000001";
 const MINTED: &str = "wss_run_token_7f3c";
@@ -556,7 +558,7 @@ fn fire_session_of_a_dead_fm_is_stopped_and_revoked_by_the_next_fire() {
     fs::create_dir_all(&live).unwrap();
     let dead = schedule::Live {
         run: "crash-20261101-090000".into(),
-        fm_pid: 999_999,
+        fm_pid: common::exited_pid(),
         fm_started: None,
         started_at: T0 - 60_000,
         stage: "session".into(),

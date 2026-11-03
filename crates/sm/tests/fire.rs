@@ -10,6 +10,8 @@ use supraman_core::schedule::{self, Action, ActionKind, Fired, Outcome, Overlap,
 use supraman_core::secret::{MemoryStore, SecretStore};
 use supraman_core::{Folder, Registry, Workspace};
 
+mod common;
+
 const SECRET: &str = "s3cr3t-Value-81f2";
 
 /// One `.cmd` per behaviour, in folder Alpha's `scripts/`.
@@ -482,7 +484,8 @@ fn a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up() {
     f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
     fs::create_dir_all(f.live()).unwrap();
     let session = r#"{"name":"fm-demo-sched-gate-x","id":"abcd1234"}"#;
-    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":4243,"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
+    let pid = common::exited_pid();
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":{pid},"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
     let dead = f.live().join("gate.dead.json");
     let mut host = TestHost::at(&f, 1_000_000);
     host.ends = VecDeque::from([Err("claude stop abcd1234: unreachable".to_string())]);
@@ -497,7 +500,7 @@ fn a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up() {
     assert_eq!(fire::recover_if_dead_with(&f.home, "demo", "gate", 1_000_000 + 60_000, &mut host), None);
     assert_eq!((host.ended, dead.exists()), (2, false), "ended on the second try");
 
-    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-080000","fm_pid":4243,"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-080000","fm_pid":{pid},"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
     host.ends = (0..5).map(|_| Err("gone".to_string())).collect();
     let mut at = 2_000_000;
     fire::recover_if_dead_with(&f.home, "demo", "gate", at, &mut host);
@@ -518,10 +521,11 @@ fn a_run_whose_sm_is_gone_is_recovered_as_interrupted_and_a_live_one_is_left() {
     let f = fixture();
     f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
     fs::create_dir_all(f.live()).unwrap();
-    fs::write(f.live().join("gate.json"), r#"{"run":"gate-20261101-070000","fm_pid":4242,"started_at":1,"stage":"script"}"#).unwrap();
+    let pid = common::exited_pid();
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":{pid},"started_at":1,"stage":"script"}}"#)).unwrap();
     assert_eq!(run_now(&f, "gate", &mut TestHost::new(&f)).outcome, Some(Outcome::Ok));
     let (outcome, why) = ended(&f.records("gate-20261101-070000"));
-    assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, "sm (pid 4242) ended without finishing the run"), "by the next fire");
+    assert_eq!((outcome, why.as_str()), (Outcome::Interrupted, format!("sm (pid {pid}) ended without finishing the run").as_str()), "by the next fire");
 
     let me = std::process::id();
     let mine = format!(r#"{{"run":"gate-20261101-080000","fm_pid":{me},"fm_started":{},"started_at":1,"stage":"script"}}"#, supraman_core::process::started(me).unwrap());
