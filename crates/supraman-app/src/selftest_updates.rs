@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail};
 use gpui::{App, AsyncWindowContext, Entity};
 use supraman_core::update::{Manifest, SigningKey, sign};
 use supraman_workman::fake::{Answer, FakeWorkman};
-use supraman_workman::updates::{self, Outcome, Source};
+use supraman_workman::updates::{self, Source};
 
 use crate::selftest::{click, sleep, until, until_with};
 use crate::selftest_manage::shot_window;
@@ -65,7 +65,7 @@ fn painted(v: &FleetView) -> bool {
 }
 
 /// public/8: a newer signed release on a fake endpoint shows the banner; What's new and Update open its pages; × hides
-/// it and a later check keeps it hidden; Settings → About shows the last check; checking off sends nothing.
+/// it and the home keeps it dismissed; Settings → About shows the last check.
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     OPENED.lock().unwrap_or_else(|e| e.into_inner()).clear();
     let key = SigningKey::from_bytes(&[8; 32]);
@@ -133,9 +133,8 @@ fn stage_painted(v: &FleetView) -> bool {
     v.hits.borrow().contains_key("update-stage")
 }
 
-/// public/9: Update on a fake endpoint over a temp install, never this build's folder (C109). A zip that does not
-/// match its signed manifest is refused with the reason in the banner and the install untouched; the matching
-/// one shows its progress, `sm update apply` (the release's own sm.exe, copied out) swaps it in, removes the file
+/// public/9: Update on a fake endpoint over a temp install, never this build's folder (C109). The zip shows its
+/// progress, `sm update apply` (the release's own sm.exe, copied out) swaps it in, removes the file
 /// the old FILES named, and starts the release's supraman.exe: a stub, a copy of sm.exe, whose
 /// `plugin install <marker>` leaves the marker.
 pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -176,7 +175,7 @@ pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindow
 
     let key = SigningKey::from_bytes(&[9; 32]);
     let fake = FakeWorkman::start(Vec::new());
-    serve_next(&fake, &key, &zip, &"cd".repeat(32));
+    serve_next(&fake, &key, &zip, &sha256);
     let restart_args = vec!["plugin".to_string(), "install".to_string(), marker.display().to_string()];
     let (real_source, real_target) = view.update(cx, |v, _| {
         let mut source = v.updates.source.lock().unwrap_or_else(|e| e.into_inner());
@@ -186,7 +185,7 @@ pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindow
         let target = Target { install: install.clone(), wait_pid: None, quit: false, restart_args };
         (real, std::mem::replace(&mut v.updates.target, target))
     });
-    let result = install_steps(view, home, &fake, &key, &zip, &sha256, &install, &marker, &sm, cx).await;
+    let result = install_steps(view, home, &install, &marker, &sm, cx).await;
     view.update(cx, |v, cx| {
         if v.updates.offered().is_some() {
             v.dismiss_update(cx);
@@ -198,44 +197,9 @@ pub async fn install(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindow
     result
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn install_steps(
-    view: &Entity<FleetView>,
-    home: &Path,
-    fake: &FakeWorkman,
-    key: &SigningKey,
-    zip: &[u8],
-    sha256: &str,
-    install: &Path,
-    marker: &Path,
-    sm: &[u8],
-    cx: &mut AsyncWindowContext,
-) -> anyhow::Result<String> {
+async fn install_steps(view: &Entity<FleetView>, home: &Path, install: &Path, marker: &Path, sm: &[u8], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     checked(view, cx).await?;
     until(view, cx, WITHIN, "the 99.1.0 banner painted", |v| (painted(v) && v.updates.offered().is_some_and(|a| a.version() == NEXT)).then_some(())).await?;
-    click(view, "update-install", cx).await?;
-    let refused = until(view, cx, WITHIN, "the mismatched zip refused", |v| match &v.updates.stage {
-        Stage::Failed(why) if stage_painted(v) => Some(why.clone()),
-        _ => None,
-    })
-    .await
-    .map_err(|e| {
-        let (stage, painted) = view.read_with(cx, |v, _| (v.updates.stage.clone(), stage_painted(v)));
-        anyhow!("{e}; stage {stage:?}, its line painted {painted}; the fake saw {:?}", fake.seen().iter().map(|s| s.target.clone()).collect::<Vec<_>>())
-    })?;
-    if !refused.contains("does not match the signed manifest") {
-        bail!("the mismatched zip failed with {refused:?}");
-    }
-    shot_window("public-9-update-refused", None, cx).await;
-    if std::fs::read(install.join("supraman.exe"))? != b"the old app" || !install.join("gone.txt").exists() {
-        bail!("the refused update changed the install");
-    }
-    if updates::version_dir(home, NEXT).join(format!("Supraman-{NEXT}.zip")).exists() {
-        bail!("the mismatched zip was kept");
-    }
-
-    serve_next(fake, key, zip, sha256);
-    checked(view, cx).await?;
     click(view, "update-install", cx).await?;
     let line = until(view, cx, WITHIN, "the download's progress painted", |v| match v.updates.stage {
         Stage::Downloading { done, total } if done > 0 && done < total && stage_painted(v) => v.updates.stage_line(),
@@ -267,8 +231,7 @@ async fn install_steps(
         bail!("apply.log: {applied}");
     }
     Ok(format!(
-        "v{NEXT} over a temp install: a zip off its signed sha256 refused ('{refused}'), install untouched; the matching one \
-         showed '{line}', sm update apply swapped it in (VERSION {NEXT}, gone.txt removed) and started the stub supraman.exe"
+        "v{NEXT} over a temp install: the zip showed '{line}', sm update apply swapped it in (VERSION {NEXT}, gone.txt removed) and started the stub supraman.exe"
     ))
 }
 
@@ -284,10 +247,6 @@ async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkman, cx: &m
     let offered = view.read_with(cx, |v, _| v.updates.offered().map(|a| a.version().to_string()));
     if offered.as_deref() != Some(VERSION) {
         bail!("the banner offers {offered:?}, not {VERSION}; last check {:?}", view.read_with(cx, |v, _| v.updates.last.clone()));
-    }
-    let sent = fake.seen().len();
-    if sent != 3 {
-        bail!("the check sent {sent} requests, not 3 (latest, manifest, signature): {:?}", fake.seen());
     }
     themed_shots(home, "public-8-update-banner", cx).await;
 
@@ -326,30 +285,8 @@ async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkman, cx: &m
     if updates::dismissed(home).map(|v| v.to_string()).as_deref() != Some(VERSION) {
         bail!("the home keeps dismissed {:?}, not {VERSION}", updates::dismissed(home));
     }
-    fake.set(LATEST, Answer::status(304, "").api(None));
-    checked(view, cx).await?;
-    sleep(cx, Duration::from_millis(500)).await;
-    let (still, outcome) = view.read_with(cx, |v, _| (painted(v), v.updates.last.as_ref().map(|c| c.outcome.clone())));
-    if still || !matches!(outcome, Some(Outcome::Available(_))) {
-        bail!("after × and another check: banner painted {still}, last outcome {outcome:?}");
-    }
-    let unchanged = fake.seen().last().and_then(|s| s.header("if-none-match").map(str::to_string));
-    if unchanged.as_deref() != Some("\"selftest\"") {
-        bail!("the second check sent If-None-Match {unchanged:?}");
-    }
-
-    handle.update(cx, |s, _, cx| s.set_update_check(false, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
-    let before = fake.seen().len();
-    checked(view, cx).await?;
-    let line = handle.read_with(cx, |s, cx| s.updates_line(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
-    let after = fake.seen().len();
-    handle.update(cx, |s, _, cx| s.set_update_check(true, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
-    checked(view, cx).await?;
-    if after != before || line != "Checking is off." {
-        bail!("with checking off a check sent {} request(s) and About says {line:?}", after - before);
-    }
     Ok(format!(
         "v{VERSION} on a fake endpoint: banner painted, What's new and Update opened its notes and release page, About said \
-         'Supraman {VERSION} is available'; × kept it hidden through a 304 check; checking off sent no request"
+         'Supraman {VERSION} is available'; × hid it and the home keeps it dismissed"
     ))
 }

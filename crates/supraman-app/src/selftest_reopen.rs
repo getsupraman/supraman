@@ -19,7 +19,7 @@ const CLOSED_WITHIN: Duration = Duration::from_secs(20);
 
 pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let saved = view.update(cx, |v, _| std::mem::replace(&mut v.claude_command, format!("& '{}'", fake_claude(home).display())));
-    let gone = std::env::temp_dir().join(format!("fm-selftest-reopen-{}", hex6()));
+    let gone = crate::selftest::home().join(format!("fm-selftest-reopen-{}", hex6()));
     let result = check(view, home, own, &gone, cx).await;
     let closed = close_all(view, false, cx).await;
     view.update(cx, |v, cx| {
@@ -122,7 +122,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     })
     .await?;
     let closed: Session = until(view, cx, WITHIN, &format!("{RECENT} among the closed sessions"), |v| v.closed.iter().find(|s| s.session_id == RECENT).cloned()).await?;
-    let cwd = std::env::temp_dir();
+    let cwd = crate::selftest::home();
     let (shell, hand, work, attach, doomed) = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             let shell = v.open_shell_in(cwd.clone(), "reopen shell".into(), window, cx);
@@ -185,8 +185,19 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, gone: &Path, cx
     let Some(placeholder) = placeholder else {
         bail!("with Resume on a click the claude tab is not a placeholder");
     };
-    sleep(cx, Duration::from_millis(1000)).await;
-    if seen_file(home).exists() {
+    let others: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().filter(|t| matches!(t.kind, TabKind::Shell | TabKind::Attach { .. })).map(|t| t.id).collect());
+    for id in others {
+        let terminal = wait_for_tab_terminal(view, id, WITHIN, cx).await?;
+        let started = Instant::now();
+        while terminal.read_with(cx, |t, _| t.get_content()).trim().is_empty() {
+            if started.elapsed() > WITHIN {
+                bail!("the reopened tab {id} printed nothing within {} s", WITHIN.as_secs());
+            }
+            sleep(cx, Duration::from_millis(50)).await;
+        }
+    }
+    let ran = view.read_with(cx, |v, _| v.tab(placeholder).is_none_or(|t| t.terminal.is_some()));
+    if ran || seen_file(home).exists() {
         bail!("the placeholder ran claude before its Resume was clicked");
     }
     if view.read_with(cx, |v, cx| v.saved_tabs(cx)) != expected {

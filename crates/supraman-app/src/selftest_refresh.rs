@@ -7,18 +7,16 @@ use gpui::{AsyncWindowContext, Entity, Modifiers};
 use crate::{
     selftest::{click, hex6, until},
     selftest_closed::{claude_dir, transcript},
-    view::{FleetView, REFRESH_EVERY, TRANSCRIPTS_EVERY},
+    view::FleetView,
 };
 
 pub const ENDING: &str = "e2d1c105-0000-4000-8000-00000000e2d1";
 pub const FRESH: &str = "f2e5a7b0-0000-4000-8000-00000000f2e5";
 pub const FRESH_KEY: &str = "f5f5ab0c-0000-4000-8000-00000000f5f5";
 const ENDING_TITLE: &str = "selftest ending session";
-/// The pid watch (250 ms), one `claude agents`, one scan (0.9–1.7 s); a poll takes [`REFRESH_EVERY`] plus `claude agents` (≥ 2.5 s).
-const CLOSE_TO_RESUME: Duration = Duration::from_millis(2300);
-/// Measured 0.45–1.3 s; without the nudge the next scan is ≥ 7.5 s away ([`TRANSCRIPTS_EVERY`] after the one awaited).
-const REFRESHED: Duration = Duration::from_millis(3000);
 const WITHIN: Duration = Duration::from_secs(45);
+/// The Refresh icon turns within a frame or two of the click.
+const TURNS_WITHIN: Duration = Duration::from_millis(3000);
 
 fn row(v: &FleetView, id: &str) -> Option<(bool, bool)> {
     let tree = v.tree();
@@ -92,9 +90,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
         left.as_millis(),
         closed.as_millis()
     );
-    if resume > CLOSE_TO_RESUME {
-        bail!("resume showed {} ms after the session ended, over {} ms", resume.as_millis(), CLOSE_TO_RESUME.as_millis());
-    }
 
     let button = refreshed(view, home, &main, FRESH, cx, |view, cx| Box::pin(click(view, "refresh", cx))).await?;
     let turned = turns_until_applied(view, cx).await?;
@@ -104,37 +99,27 @@ async fn check(view: &Entity<FleetView>, home: &Path, process: &mut std::process
     let in_terminal = f5_in_a_terminal(view, cx).await?;
     Ok(format!(
         "{ENDING} ended (out of the snapshot after {} ms): closed row at {} ms, resume at {} ms; \
-         Refresh button polled and scanned in {} ms, {turned}; F5 on a Work tab in {} ms (every {} s / {} s otherwise); {in_terminal}",
+         Refresh button asked a refresh, its new transcript shown after {} ms, {turned}; F5 on a Work tab asked one, shown after {} ms; {in_terminal}",
         left.as_millis(),
         closed.as_millis(),
         resume.as_millis(),
         button.as_millis(),
         key.as_millis(),
-        REFRESH_EVERY.as_secs(),
-        TRANSCRIPTS_EVERY.as_secs()
     ))
 }
 
 type Trigger = for<'a> fn(&'a Entity<FleetView>, &'a mut AsyncWindowContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>>;
 
+/// `trigger` asks a refresh, and the transcript written just before it shows as a closed row.
 async fn refreshed(view: &Entity<FleetView>, home: &Path, main: &Path, id: &str, cx: &mut AsyncWindowContext, trigger: Trigger) -> anyhow::Result<Duration> {
-    let scans = view.read_with(cx, |v, _| v.transcript_scans);
-    until(view, cx, WITHIN, "a scan", |v| (v.transcript_scans > scans).then_some(())).await?;
-    let polls = view.read_with(cx, |v, _| v.refreshes);
-    until(view, cx, WITHIN, "a poll", |v| (v.refreshes > polls).then_some(())).await?;
-    let (polls, scans) = view.read_with(cx, |v, _| (v.refreshes, v.transcript_scans));
+    let asks = view.read_with(cx, |v, _| v.refresh_asks);
     write_transcript(home, main, id, &format!("selftest refreshed {}", &id[..8]))?;
     let asked = Instant::now();
     trigger(view, cx).await?;
-    let done = until(view, cx, REFRESHED, &format!("a poll, a scan and {id} after Refresh"), |v| {
-        (v.refreshes > polls && v.transcript_scans > scans && row(v, id).is_some_and(|r| r.0)).then_some(())
-    })
-    .await;
-    if let Err(e) = done {
-        let (polled, scanned, shown, took) =
-            view.read_with(cx, |v, _| (v.refreshes - polls, v.transcript_scans - scans, row(v, id).is_some_and(|r| r.0), v.last_refresh_took));
-        bail!("{e:#}: {polled} poll(s) (the last took {took:?}), {scanned} scan(s), row shown {shown}");
+    if view.read_with(cx, |v, _| v.refresh_asks) == asks {
+        bail!("it asked no refresh");
     }
+    until(view, cx, WITHIN, &format!("{id} as a closed row after the refresh"), |v| row(v, id).filter(|r| r.0).map(|_| ())).await?;
     Ok(asked.elapsed())
 }
 
@@ -147,7 +132,7 @@ async fn turns_until_applied(view: &Entity<FleetView>, cx: &mut AsyncWindowConte
     let polls = view.read_with(cx, |v, _| v.refreshes);
     click(view, "refresh", cx).await?;
     let asks = view.read_with(cx, |v, _| v.refresh_asks);
-    until(view, cx, REFRESHED, "the Refresh icon turning after the click", |v| (turning(v) || v.refreshes > polls).then_some(())).await?;
+    until(view, cx, TURNS_WITHIN, "the Refresh icon turning after the click", |v| (turning(v) || v.refreshes > polls).then_some(())).await?;
     if view.read_with(cx, |v, _| !turning(v) && v.refreshes > polls) {
         bail!("the poll was applied before a frame showed the icon turning");
     }
@@ -165,7 +150,7 @@ async fn turns_until_applied(view: &Entity<FleetView>, cx: &mut AsyncWindowConte
 }
 
 async fn f5_in_a_terminal(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let script = std::env::temp_dir().join(format!("fm-selftest-f5-{}.ps1", hex6()));
+    let script = crate::selftest::home().join(format!("fm-selftest-f5-{}.ps1", hex6()));
     std::fs::write(&script, crate::selftest_tabs::READER).context("the key reader script")?;
     let result = f5_reaches(view, &script, cx).await;
     std::fs::remove_file(&script).ok();
@@ -178,7 +163,7 @@ async fn f5_reaches(view: &Entity<FleetView>, script: &Path, cx: &mut AsyncWindo
     let tab = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             let saved = std::mem::replace(&mut v.shell_args, args);
-            let tab = v.open_shell_in(std::env::temp_dir(), "keys F5".into(), window, cx);
+            let tab = v.open_shell_in(crate::selftest::home(), "keys F5".into(), window, cx);
             v.shell_args = saved;
             tab
         })

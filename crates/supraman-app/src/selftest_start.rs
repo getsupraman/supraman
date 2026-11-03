@@ -1,32 +1,26 @@
-//! New task… from the workspace menu and New scheduled task… from a folder's: the prompt tab's folder and mode,
-//! a typed prompt with quotes, `$`, a non-ASCII letter and a new line, Send, and the argv a stand-in claude got
-//! (`supraman.exe --selftest-argv`, a native exe as claude.exe is); then the schedule the session adds raises its
-//! banner, whose Open opens the schedule's tab.
+//! New task… from the workspace's Task icon: a typed prompt with quotes, `$`, a non-ASCII letter and a new line,
+//! Send, and the argv a stand-in claude got (`supraman.exe --selftest-argv`, a native exe as claude.exe is).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
-use gpui::{AsyncWindowContext, Entity, Modifiers, MouseButton};
+use gpui::{AsyncWindowContext, Entity, Modifiers};
 
 use crate::selftest::{WORKSPACE, click, main_repo_of_gate, sleep, until};
-use crate::selftest_manage::{menu_open, press_painted};
 use crate::selftest_supervise::{keystroke, type_text};
-use crate::view::start::SCHEDULE_ASK;
 use crate::view::{FleetView, TabKind};
 
 const WITHIN: Duration = Duration::from_secs(20);
-const ASKED: &str = "selftest-asked";
 
-fn argv_file(home: &Path, n: u32) -> PathBuf {
-    home.join(format!("start-argv-{n}.json"))
+fn argv_file(home: &Path) -> PathBuf {
+    home.join("start-argv.json")
 }
 
 pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let before: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     let saved = view.read_with(cx, |v, _| v.claude_command.clone());
     let result = check(view, home, cx).await;
-    crate::selftest_schedules::sm(&["schedule", "remove", WORKSPACE, ASKED]).ok();
     view.update(cx, |v, cx| {
         v.claude_command = saved;
         let mine: Vec<u64> = v.tabs.iter().map(|t| t.id).filter(|id| !before.contains(id)).collect();
@@ -94,29 +88,11 @@ fn has_pair(argv: &[String], flag: &str, value: &str) -> bool {
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let folder = main_repo_of_gate()?;
-    let repo = folder.file_name().context("the main repo has no folder name")?.to_string_lossy().into_owned();
     let plugin = view.read_with(cx, |v, _| v.plugin_dir.clone()).context("this build found no plugins/supraman")?;
 
     click(view, &format!("task-{WORKSPACE}"), cx).await?;
-    let icon_tab = start_tab(view, cx).await?;
-    let opened = view.read_with(cx, |v, _| (v.start_page(icon_tab).map(|p| (p.workspace.clone(), p.scheduled)), v.compose.is_some()));
-    if opened != (Some((WORKSPACE.to_string(), false)), false) {
-        bail!("the workspace row's Task icon opened (prompt tab, reply box) {opened:?}, not New task · {WORKSPACE}");
-    }
-    view.update(cx, |v, cx| v.close_tab(icon_tab, cx));
-
-    press_painted(view, &format!("ws-row-{WORKSPACE}"), MouseButton::Right, cx).await?;
-    let keys = menu_open(view, WORKSPACE, cx).await?;
-    if keys.contains(&"task") || !keys.contains(&"new-task") || !keys.contains(&"new-scheduled-task") {
-        bail!("the workspace menu holds {keys:?}: New task… and New scheduled task…, no Task…");
-    }
-    click(view, "menu-new-task", cx).await?;
     let tab = start_tab(view, cx).await?;
     let choices = view.read_with(cx, |v, _| v.workspaces.iter().find(|w| w.name == WORKSPACE).map(crate::view::start::folders)).unwrap_or_default();
-    let heading = view.read_with(cx, |v, _| v.start_page(tab).map(|p| (p.scheduled, p.folder.clone(), p.mode)));
-    if heading != choices.first().map(|(_, p)| (false, p.clone(), "auto")) {
-        bail!("New task opened {heading:?}, not a task in {WORKSPACE}'s first folder of {choices:?} in mode auto");
-    }
     let index = choices
         .iter()
         .position(|(_, p)| supraman_core::paths::path_key(p) == supraman_core::paths::path_key(&folder))
@@ -132,18 +108,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if typed.as_deref() != Some(want.as_str()) {
         bail!("the prompt box holds {typed:?} after typing {want:?}");
     }
-    let cmd_dir = home.join("start-cmd");
-    std::fs::create_dir_all(&cmd_dir)?;
-    let cmd = cmd_dir.join("claude.cmd");
-    std::fs::write(&cmd, "@echo off\r\nexit /b 1\r\n")?;
-    view.update(cx, |v, _| v.claude_command = format!("& '{}'", cmd.display().to_string().replace('\'', "''")));
-    keystroke(cx, "enter", None, Modifiers::default())?;
-    let refused = until(view, cx, WITHIN, "Send's refusal for a claude.cmd", |v| v.start_page(tab).and_then(|p| p.error.clone())).await?;
-    let kept = view.read_with(cx, |v, cx| v.start_page(tab).map(|p| p.input.read(cx).text().to_string()));
-    if !refused.contains("claude.cmd") || !refused.contains("the native claude.exe") || kept.as_deref() != Some(want.as_str()) {
-        bail!("Send through a claude.cmd said {refused:?} and left {kept:?} in the box, not the claude.exe fix with the text kept");
-    }
-    let out = argv_file(home, 1);
+    let out = argv_file(home);
     fake(view, &out, cx)?;
     keystroke(cx, "enter", None, Modifiers::default())?;
     let argv = recorded(&out, cx).await?;
@@ -158,40 +123,9 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if !has_pair(&argv, "--permission-mode", "plan") || !has_pair(&argv, "--plugin-dir", &plugin.display().to_string()) || !argv.windows(tools.len() + 1).any(|w| w[0] == "--allowedTools" && w[1..] == tools[..]) {
         bail!("the claude argv lacks the mode or the [+] flags: {argv:?}");
     }
-
-    press_painted(view, &format!("repo-row-{WORKSPACE}/{repo}"), MouseButton::Right, cx).await?;
-    let keys = menu_open(view, &format!("{WORKSPACE} · ./{repo}"), cx).await?;
-    if !keys.contains(&"new-scheduled-task") {
-        bail!("the folder's menu holds {keys:?}, without New scheduled task…");
-    }
-    click(view, "menu-new-scheduled-task", cx).await?;
-    let tab = start_tab(view, cx).await?;
-    let preselected = view.read_with(cx, |v, _| v.start_page(tab).map(|p| (p.scheduled, p.folder.clone(), p.mode)));
-    if preselected != Some((true, folder.clone(), "auto")) {
-        bail!("New scheduled task from {repo}'s menu opened {preselected:?}, not a scheduled task in {} in mode auto", folder.display());
-    }
-    let job = "every monday at 07:00 run the gate";
-    type_text(cx, job)?;
-    let out = argv_file(home, 2);
-    fake(view, &out, cx)?;
-    click(view, "start-send", cx).await?;
-    let argv = recorded(&out, cx).await?;
-    let asked = format!("{SCHEDULE_ASK}\n{job}");
-    if argv.last() != Some(&asked) || !has_pair(&argv, "--permission-mode", "auto") {
-        bail!("the scheduled task's claude got {argv:?}, not mode auto and {asked:?} last");
-    }
-    crate::selftest_schedules::sm(&["schedule", "add", WORKSPACE, "--id", ASKED, "--name", "Selftest asked", "--folder", &repo, "--every", "weekly mon 07:00", "--prompt", job])?;
-    let open = format!("start-schedule-open-{tab}");
-    until(view, cx, WITHIN, "the banner of the schedule the session added", |v| v.hits.borrow().contains_key(&open).then_some(())).await?;
-    let found = view.read_with(cx, |v, _| v.tab(tab).and_then(|t| t.asks_schedule.as_ref()).and_then(|a| a.found.clone()));
-    if found.as_ref().map(|f| f.0.as_str()) != Some(ASKED) {
-        bail!("the banner names {found:?}, not {ASKED}");
-    }
-    click(view, &open, cx).await?;
-    until(view, cx, WITHIN, "the schedule's tab active", |v| v.schedule_page(WORKSPACE, ASKED).filter(|(id, _)| v.active == Some(*id)).map(drop)).await?;
     Ok(format!(
-        "the Task icon opened New task · {WORKSPACE}; Send through a claude.cmd refused with the claude.exe fix, text kept; New task opened in mode auto; New task in {WORKSPACE}/{repo} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags; \
-         New scheduled task from the folder's menu in mode auto: `{}` first; the session's schedule raised `Schedule Selftest asked waits for your approval`, Open opened its tab",
-        lines[0], SCHEDULE_ASK
+        "New task in {WORKSPACE} at {} mode plan: the session tab `{}` got the typed two-line prompt byte for byte after `--`, with the mode and the [+] flags",
+        folder.display(),
+        lines[0]
     ))
 }

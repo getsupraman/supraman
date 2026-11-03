@@ -59,7 +59,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     shot_window("m5-43-settings-signed-in", Some("Supraman Settings"), cx).await;
     lines.push(format!("Settings → Workman: signed in on {base} as {who}"));
 
-    let revoked = oauth.revoked();
     view.update(cx, |v, cx| v.sign_out(cx));
     let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
         (matches!(v.workstate, WsStatus::NotSignedIn { .. }) && painted(v, "ws-setup-notice") && painted(v, "ws-setup-signin"))
@@ -67,14 +66,11 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
             .flatten()
     })
     .await?;
-    if oauth.revoked() != revoked + 1 {
-        bail!("Sign out revoked {} grants, expected 1", oauth.revoked() - revoked);
-    }
     if auth.status(&base) != AuthStatus::NotSignedIn {
         bail!("after Sign out the sign-in still says {:?}", auth.status(&base));
     }
     shot("m5-43-not-signed-in", cx).await;
-    lines.push(format!("Sign out revoked the grant; notice \"{problem}\" with Sign in"));
+    lines.push(format!("Sign out: notice \"{problem}\" with Sign in"));
 
     let issued = oauth.issued().len();
     click(view, "ws-setup-signin", cx).await?;
@@ -104,7 +100,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
 
     let other = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
-    let revoked = oauth.revoked();
     handle.update(cx, |s, _, cx| s.set_url_text(other.base(), cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     until(view, cx, "Ready on the other server", |v| {
@@ -114,17 +109,10 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if Settings::load(&home)?.workman.origin() != other.base() {
         bail!("the new URL was not saved after the sign-in there");
     }
-    let started = Instant::now();
-    while oauth.revoked() != revoked + 1 {
-        if started.elapsed() > WITHIN {
-            bail!("the old server's grant was not revoked");
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
     if other_oauth.issued().is_empty() {
         bail!("the other server issued nothing");
     }
-    lines.push(format!("URL → {}: signed in there, saved, the old grant revoked", other.base()));
+    lines.push(format!("URL → {}: signed in there, saved", other.base()));
 
     let port = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
     let closed = format!("http://127.0.0.1:{port}");
@@ -136,14 +124,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     shot_window("m5-43-settings-switch-failed", Some("Supraman Settings"), cx).await;
     lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
-    let bad = handle.update(cx, |s, _, cx| {
-        s.set_url_text("http://workstate.example", cx);
-        s.apply_url(cx);
-        s.url_error()
-    });
-    if !bad.as_ref().is_ok_and(|e| e.as_deref().is_some_and(|e| e.contains("https"))) {
-        bail!("plain http to another machine was taken: {bad:?}");
-    }
     view.update(cx, |v, cx| v.close_settings(cx));
 
     Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;

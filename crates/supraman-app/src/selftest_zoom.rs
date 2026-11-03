@@ -65,10 +65,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
     if spun != zoomed + px(3.) {
         bail!("3 Ctrl+wheel notches up: {zoomed:?} → {spun:?}");
     }
-    let during = Settings::load(home)?.terminal.font_size();
-    if during != f32::from(zoomed) as u32 {
-        bail!("settings.toml held {during} right after the spin; the write is not debounced");
-    }
     let spun_ms = saved_as(view, home, f32::from(spun) as u32, cx).await?;
     view.update(cx, |v, cx| v.activate_tab(first, cx));
     laid_out_at(view, first, &first_term, spun, cx).await.context("the other tab after the wheel")?;

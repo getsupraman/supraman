@@ -72,8 +72,10 @@ pub async fn action_bar(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }), cx);
     })?;
-    sleep(cx, Duration::from_millis(900)).await;
-    shot("m5-13-bar-tooltip", cx).await;
+    if crate::selftest_manage::shooting() {
+        sleep(cx, Duration::from_millis(900)).await;
+        shot("m5-13-bar-tooltip", cx).await;
+    }
 
     click(view, "bar-settings", cx).await?;
     until(view, cx, WITHIN, "Settings opens its window", |v| v.settings_window).await?;
@@ -545,10 +547,13 @@ pub fn on_grid(v: &FleetView, rows: &[(String, usize)]) -> anyhow::Result<String
     Ok(format!("{} rows on the grid ({})", rows.len(), xs.join(", ")))
 }
 
-/// Every painted row of the gate workspace is laid out on the one grid, levels 0 to 2 at least.
-pub async fn tree_grid(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+/// Every painted row of the gate workspace is laid out on the one grid, levels 0 to 2 at least; the gate's own
+/// session row (`own`, level 2) is scrolled into view, so the levels are painted wherever the rows sort.
+pub async fn tree_grid(view: &Entity<FleetView>, own: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     view.update(cx, |v, cx| v.collapse_all(false, cx));
+    let own = format!("session-row-{own}");
     let rows = until(view, cx, WITHIN, "the gate workspace's rows at three levels", |v| {
+        v.shown(&own);
         let rows = tree_rows(v);
         let levels: std::collections::HashSet<usize> = rows.iter().map(|(_, l)| *l).collect();
         (levels.len() >= 3).then_some(rows)

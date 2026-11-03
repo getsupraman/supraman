@@ -20,17 +20,24 @@ pub(crate) const READER: &str = "[Console]::TreatControlCAsInput = $true\n\
 Write-Host 'fm-keys ready'\n\
 while ($true) { $k = [Console]::ReadKey($true); Write-Host ('fm-key ' + $k.Key + ' ' + [int]$k.Modifiers) }\n";
 
+/// Ctrl+Tab and friends cycle three tabs both ways and never reach a shell; then the same tabs dragged: below the
+/// strip (nothing), the second before the first, and to the end, with the chords following the new order.
 pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let script = std::env::temp_dir().join(format!("fm-selftest-keys-{}.ps1", hex6()));
+    let script = crate::selftest::home().join(format!("fm-selftest-keys-{}.ps1", hex6()));
     std::fs::write(&script, READER).context("the key reader script")?;
-    let result = cycle(view, &script, cx).await;
+    let result = async {
+        let (cycled, tabs) = cycle(view, &script, cx).await?;
+        let dragged = drags(view, tabs, cx).await?;
+        Ok(format!("{cycled}; {dragged}"))
+    }
+    .await;
     let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| mine.into_iter().for_each(|id| v.close_tab(id, cx)));
     std::fs::remove_file(&script).ok();
     result
 }
 
-async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut AsyncWindowContext) -> anyhow::Result<(String, [u64; 3])> {
     // the earlier steps' tabs go, so every tab cycled through is one of these three
     let before: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
     view.update(cx, |v, cx| before.into_iter().for_each(|id| v.close_tab(id, cx)));
@@ -38,7 +45,7 @@ async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Asyn
 
     let args = ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"].map(String::from).into_iter();
     let args: Vec<String> = args.chain([script.display().to_string()]).collect();
-    let cwd = std::env::temp_dir();
+    let cwd = crate::selftest::home();
     let (a, b) = cx.update(|window, cx| {
         view.update(cx, |v, cx| {
             let saved = std::mem::replace(&mut v.shell_args, args);
@@ -96,32 +103,8 @@ async fn cycle(view: &Entity<FleetView>, script: &std::path::Path, cx: &mut Asyn
         bail!("the readers got A {got_a:?} and B {got_b:?}; expected only Tab, Shift+Tab on A and Tab on B");
     }
     crate::selftest_manage::shot("m5-17-tab-hotkeys", cx).await;
-    Ok(format!(
-        "{} chords cycled [{a}, {b}, {work}] both ways with wraps; readers saw none of them, A got {got_a:?}, B got {got_b:?}",
-        steps.len()
-    ))
-}
-
-/// Three tabs; the second dragged out of the strip, then before the first, then the first to the end.
-pub(crate) async fn reorder(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let before: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
-    view.update(cx, |v, cx| before.into_iter().for_each(|id| v.close_tab(id, cx)));
-    until(view, cx, WITHIN, "the earlier tabs closed", |v| v.tabs.is_empty().then_some(())).await?;
-    let cwd = std::env::temp_dir();
-    let (a, b) = cx.update(|window, cx| {
-        view.update(cx, |v, cx| {
-            let saved = std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]);
-            let a = v.open_shell_in(cwd.clone(), "drag A".into(), window, cx);
-            let b = v.open_shell_in(cwd, "drag B".into(), window, cx);
-            v.shell_args = saved;
-            (a, b)
-        })
-    })?;
-    let work = view.update(cx, |v, cx| v.open_work(WORKSPACE, cx));
-    let result = drags(view, [a, b, work], cx).await;
-    let mine: Vec<u64> = view.read_with(cx, |v, _| v.tabs.iter().map(|t| t.id).collect());
-    view.update(cx, |v, cx| mine.into_iter().for_each(|id| v.close_tab(id, cx)));
-    result
+    let cycled = format!("{} chords cycled [{a}, {b}, {work}] both ways with wraps; readers saw none of them, A got {got_a:?}, B got {got_b:?}", steps.len());
+    Ok((cycled, [a, b, work]))
 }
 
 async fn drags(view: &Entity<FleetView>, [a, b, work]: [u64; 3], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

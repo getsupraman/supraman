@@ -19,12 +19,6 @@ const WITHIN: Duration = Duration::from_secs(15);
 const PRINTED: &str = "◯x a->b";
 const TRIANGLES: &str = "⏵⏵ auto mode on";
 const CASCADIA: &str = "Cascadia Code";
-const PROBED: [char; 5] = ['⏵', '◯', '≥', '≤', '→'];
-/// The families DirectWrite falls back to for symbols.
-const FALLBACKS: [&str; 12] = [
-    "Segoe UI Symbol", "Segoe UI", "Segoe UI Emoji", "Cambria Math", "Cambria", "Segoe Fluent Icons", "Arial",
-    "Lucida Sans Unicode", "Malgun Gothic", "Yu Gothic UI", "MS Gothic", "Microsoft YaHei",
-];
 
 pub(crate) async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let saved = view.update(cx, |v, _| std::mem::replace(&mut v.shell_args, vec!["-NoLogo".into(), "-NoProfile".into()]));
@@ -56,9 +50,8 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
 
     let ligated = (start.family == CASCADIA).then_some(true);
     let first = painted_fits(view, &terminal, &start, ligated, cx).await.context(start.family.to_string())?;
-    let probed = probe(&start, &installed, cx)?;
     shot("m5-49-term-fallback-glyphs", cx).await;
-    let triangles = triangles_fit(view, &terminal, &start, cx).await.with_context(|| format!("{}; {probed}", start.family))?;
+    let triangles = triangles_fit(view, &terminal, &start, cx).await.context(start.family.to_string())?;
     shot("m5-47-term-default-font", cx).await;
 
     let handle = open_appearance(view, cx).await?;
@@ -84,7 +77,6 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("settings.toml does not hold [terminal] font_family = \"Consolas\"");
     }
     let second = painted_fits(view, &terminal, &consolas, None, cx).await.context("Consolas")?;
-    let probed_consolas = probe(&consolas, &installed, cx)?;
     shot("m5-47-term-consolas", cx).await;
 
     handle.update(cx, |s, _, cx| s.set_term_font(Some(&start.family), false, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
@@ -100,7 +92,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("Default did not put the terminals back in {start:?}");
     }
     Ok(format!(
-        "{first}; {triangles}; {probed}; Appearance → Consolas: cells {:?} → {:?}, {} → {} columns, laid out in {ms} ms, saved; {second}; {probed_consolas}; ligatures off: {third}; Default: unset again",
+        "{first}; {triangles}; Appearance → Consolas: cells {:?} → {:?}, {} → {} columns, laid out in {ms} ms, saved; {second}; ligatures off: {third}; Default: unset again",
         before.cell_width,
         after.cell_width,
         before.num_columns(),
@@ -177,37 +169,6 @@ async fn painted_fits(view: &Entity<FleetView>, terminal: &Entity<Terminal>, fon
         f32::from(x.x),
         f32::from(b.x)
     ))
-}
-
-fn probe(font: &TermFont, installed: &[String], cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    cx.update(|window, cx| {
-        let ts = cx.text_system();
-        let own = ts.resolve_font(&font.font());
-        let candidates: Vec<(&str, gpui::FontId)> = FALLBACKS
-            .into_iter()
-            .filter(|f| installed.iter().any(|i| i == f))
-            .map(|f| (f, ts.resolve_font(&gpui::font(f.to_string()))))
-            .collect();
-        PROBED
-            .map(|ch| {
-                let style = TextRun { len: ch.len_utf8(), font: font.font(), ..Default::default() };
-                let shaped = window.text_system().shape_line(ch.to_string().into(), font.size, &[style], None);
-                let Some(id) = shaped.runs.first().map(|r| r.font_id) else {
-                    return format!("`{ch}` not shaped");
-                };
-                let family = if !term_element::drawn_by_fallback(ts, own, ch) {
-                    font.family.to_string()
-                } else {
-                    candidates.iter().find(|(_, c)| *c == id).map_or(format!("font #{}", id.0), |(f, _)| f.to_string())
-                };
-                let ink = ts.typographic_bounds(id, font.size, ch).map_or("no ink".into(), |b| {
-                    format!("ink {:.1}×{:.1}", f32::from(b.size.width), f32::from(b.size.height))
-                });
-                format!("`{ch}` {family} advance {:.1} {ink}", f32::from(shaped.width))
-            })
-            .join(", ")
-    })
-    .map(|s| format!("at {:?}: {s}", font.size))
 }
 
 async fn triangles_fit(view: &Entity<FleetView>, terminal: &Entity<Terminal>, font: &TermFont, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

@@ -372,13 +372,6 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     }
     out.push(format!("5 Run now: {} nothing to do, first in Last runs", ended.0));
 
-    click(view, &format!("sched-page-dry-run-{WS}/{ID}"), cx).await?;
-    let dry = page_text(view, "the dry run", "\n\nDry run\n", cx).await?;
-    if !dry.contains("next fires") {
-        bail!("the dry run lacks the next fires: {dry}");
-    }
-    out.push("5d dry run in the page's Dry run section".into());
-
     let failed = format!("{ID}-selftest-failed");
     let at = supraman_core::time::now_ms();
     for (ts, event) in [

@@ -1,6 +1,6 @@
 //! gpui turns a CF_DIB into a PNG-only entry that claude's Alt+V does not see as an image, so steps that borrow the clipboard use this.
 
-pub(crate) use win::{Held, Snapshot, put_test_image, sequence};
+pub(crate) use win::{Held, Snapshot, sequence};
 
 use std::time::{Duration, Instant};
 
@@ -82,18 +82,6 @@ pub(crate) fn put_text(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Resul
     cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())))
 }
 
-fn test_dib() -> Vec<u8> {
-    let mut dib = Vec::new();
-    for field in [40u32, 2, 2] {
-        dib.extend_from_slice(&field.to_le_bytes());
-    }
-    dib.extend_from_slice(&1u16.to_le_bytes());
-    dib.extend_from_slice(&32u16.to_le_bytes());
-    dib.extend_from_slice(&[0; 24]);
-    dib.extend_from_slice(&[0x40, 0x80, 0xC0, 0xFF].repeat(4));
-    dib
-}
-
 #[cfg(windows)]
 mod win {
     use std::time::{Duration, Instant};
@@ -107,7 +95,6 @@ mod win {
                     OpenClipboard, SetClipboardData,
                 },
                 Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
-                Ole::CF_DIB,
                 Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
             },
         },
@@ -215,10 +202,6 @@ mod win {
             Ok(Snapshot(formats))
         }
 
-        pub(crate) fn formats(&self) -> usize {
-            self.0.len()
-        }
-
         pub(crate) fn restore(&self) -> windows::core::Result<()> {
             set(self.0.iter().map(|(f, b)| (*f, b.as_slice())))
         }
@@ -226,11 +209,6 @@ mod win {
 
     pub(crate) fn sequence() -> u32 {
         unsafe { GetClipboardSequenceNumber() }
-    }
-
-    /// Windows offers it as CF_BITMAP too, which `Clipboard.ContainsImage` asks for.
-    pub(crate) fn put_test_image() -> windows::core::Result<()> {
-        set([(CF_DIB.0 as u32, super::test_dib().as_slice())].into_iter())
     }
 
     fn set<'a>(formats: impl Iterator<Item = (u32, &'a [u8])>) -> windows::core::Result<()> {
@@ -358,12 +336,4 @@ mod tests {
         std::fs::remove_file(&pid_file).ok();
     }
 
-    #[test]
-    fn the_test_image_is_a_2x2_32_bit_dib() {
-        let dib = super::test_dib();
-        let u32_at = |at: usize| u32::from_le_bytes(dib[at..at + 4].try_into().unwrap());
-        let u16_at = |at: usize| u16::from_le_bytes(dib[at..at + 2].try_into().unwrap());
-        assert_eq!((u32_at(0), u32_at(4), u32_at(8), u16_at(12), u16_at(14)), (40, 2, 2, 1, 32));
-        assert_eq!(dib.len(), 40 + 2 * 2 * 4);
-    }
 }

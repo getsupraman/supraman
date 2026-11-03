@@ -227,10 +227,6 @@ impl SettingsView {
         self.url_input.update(cx, |input, cx| input.set_text(text, cx));
     }
 
-    pub fn url_error(&self) -> Option<String> {
-        self.url_error.clone()
-    }
-
     pub fn apply_url(&mut self, cx: &mut Context<Self>) {
         let text = self.url_input.read(cx).text().to_string();
         let result = self.fleet.update(cx, |fleet, cx| fleet.set_workstate_url(&text, cx)).unwrap_or(Err("the main window is closed".into()));

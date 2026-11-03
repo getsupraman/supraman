@@ -56,33 +56,6 @@ async fn dismiss_all(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> a
     Ok(clicked)
 }
 
-pub async fn placeholder(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    use supraman_ui::themes::{hex, parse_color, placeholder_contrast};
-    use theme::{ActiveTheme as _, GlobalTheme};
-    crate::selftest::scrolled_into_view(view, "search-box", cx).await?;
-    let paint = |color: gpui::Hsla, cx: &mut AsyncWindowContext| {
-        cx.update(|_, cx| {
-            let mut theme = (**cx.theme()).clone();
-            theme.styles.colors.text_placeholder = color;
-            GlobalTheme::update_theme(cx, std::sync::Arc::new(theme));
-            cx.refresh_windows();
-        })
-        .map_err(|e| anyhow!("{e}"))
-    };
-    let (fitted, ratios) = cx
-        .update(|_, cx| {
-            let theme = cx.theme();
-            (theme.colors().text_placeholder, placeholder_contrast(theme, theme.colors().text_placeholder))
-        })
-        .map_err(|e| anyhow!("{e}"))?;
-    let before = parse_color("#FFFFFF56").ok_or_else(|| anyhow!("#FFFFFF56"))?;
-    paint(before, cx)?;
-    shot("m5-36-search-placeholder-before", cx).await;
-    paint(fitted, cx)?;
-    shot("m5-36-search-placeholder-after", cx).await;
-    Ok(format!("search box placeholder {} ({:.2}..{:.2}:1 on panel/editor), shot before (#FFFFFF56) and after", hex(fitted), ratios.0, ratios.1))
-}
-
 pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let outbox = outbox_dir(home, WORKSPACE)?;
     std::fs::create_dir_all(&outbox)?;
@@ -146,35 +119,4 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
         "× on the older of 2 notes from {SENDER}: count {before} → {after}, the newer still shown, {FILE} holds it after a reload and a poll, \
          outbox file kept; {rest} more × emptied the section and hid it; a newer note showed it again (count 1) and its × hid it"
     ))
-}
-
-pub async fn compose(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let home = crate::selftest::home();
-    let outbox = outbox_dir(&home, WORKSPACE)?;
-    let file = format!("{:013}-selftest-decide.json", supraman_claude::now_ms());
-    let from = supraman_supervisor::workspace_session_name(WORKSPACE);
-    let text = serde_json::json!({"from": "uds:selftest", "from_name": from, "body": "DECIDE: rebase m5/51 now or after the gate?"}).to_string();
-    std::fs::write(outbox.join(format!("{file}.tmp")), text)?;
-    std::fs::rename(outbox.join(format!("{file}.tmp")), outbox.join(&file))?;
-    pointer_off(view, cx).await?;
-    let reply = format!("msg-reply-{WORKSPACE}/{file}");
-    until(view, cx, WITHIN, "the DECIDE: row's Reply…", |v| painted(v, &reply).then_some(())).await?;
-    click(view, &reply, cx).await?;
-    until(view, cx, WITHIN, "the reply box", |v| painted(v, "compose-box").then_some(())).await?;
-    view.update(cx, |v, cx| {
-        if let Some(c) = &v.compose {
-            c.input.update(cx, |input, cx| input.set_text("Rebase m5/51 on main, then run the gate.", cx));
-        }
-    });
-    crate::selftest::scrolled_into_view(view, "compose-text", cx).await?;
-    shot("m5-51-compose", cx).await;
-    view.update(cx, |v, cx| {
-        v.compose = None;
-        cx.notify();
-    });
-    until(view, cx, WITHIN, "the reply box closed", |v| (!painted(v, "compose-box")).then_some(())).await?;
-    let dismiss = format!("msg-dismiss-{WORKSPACE}/{file}");
-    click(view, &dismiss, cx).await?;
-    until(view, cx, WITHIN, "the DECIDE: row dismissed", |v| (!painted(v, &dismiss)).then_some(())).await?;
-    Ok("Reply… on a DECIDE: row opened the reply box under it; a line typed, shot, closed, the row dismissed".into())
 }
