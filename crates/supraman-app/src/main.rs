@@ -154,8 +154,19 @@ fn parse_args() -> (Mode, Option<elevate::Relaunched>) {
         }
         println!("{}", selftest_desktop::placement());
     }
+    if !matches!(mode, Mode::App) {
+        match supraman_core::fs::heavy_job_lock("this selftest") {
+            Ok(file) => {
+                let _ = HEAVY_JOB.set(file);
+            }
+            Err(e) => eprintln!("cannot take the heavy-job lock ({e}); running without it"),
+        }
+    }
     (mode, None)
 }
+
+/// Held while a selftest runs, so no build or other selftest shares the machine.
+static HEAVY_JOB: std::sync::OnceLock<std::fs::File> = std::sync::OnceLock::new();
 
 /// Tool-shell variables a tab must not inherit; see LEARNINGS fleet UI, tf/5 and tf/8.
 fn env_scrub(get: impl Fn(&str) -> Option<String>) -> Vec<&'static str> {

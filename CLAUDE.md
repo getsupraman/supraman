@@ -31,6 +31,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_ui::themes` (`contrast`, `fit_floors`) and `supraman_ui::term_element::terminal_grid`: the themes with their contrast floors, and the terminal painter.
 - `supraman_core::fs::write_atomic`: every write of a file another process or thread may read or write (settings, registry, supervisor and relay files); never a fixed `*.tmp` and rename by hand.
 - `supraman_core::fs::lock_file`: an exclusive cross-process lock held while the returned file lives, around a read-modify-write (`refresh.lock`, `DesiredState::update`); never a check-then-write retry loop. `try_lock_file` is the same without the wait (`None` while held): a schedule's overlap lock.
+- `supraman_core::fs::heavy_job_lock`: the machine-wide lock of one heavy job; every selftest mode holds it for its run, and `scripts/heavy-lock.ps1` runs a cargo build or test under the same file, so builds and selftests never overlap.
 - `supraman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
 - `supraman_core::prune::prune`: the one retention rule for event logs and relay files left in the home; never a cleanup of your own.
