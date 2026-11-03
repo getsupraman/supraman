@@ -171,6 +171,9 @@ pub struct Hands {
     claude_dir: Option<PathBuf>,
     /// Names whose token a continuation of their claude session holds: never revoked here, they lapse unused.
     carried: std::collections::HashSet<String>,
+    /// `sm.exe` and the store a hand's token is kept in: its config's `headersHelper` prints it at each connect.
+    /// Without it the token goes into the config file.
+    helper: Option<(PathBuf, Arc<dyn supraman_core::secret::SecretStore>)>,
 }
 
 pub fn restart_notice(n: usize, to: &str) -> Option<String> {
@@ -202,6 +205,7 @@ impl Hands {
     pub fn open(home: &Path) -> (Self, Option<String>) {
         let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo);
         hands.claude_dir = supraman_core::paths::claude_dir();
+        hands.helper = supraman_core::install::sm_exe().ok().filter(|sm| sm.is_file()).map(|sm| (sm, supraman_core::secret::default_store(home)));
         (hands, notice)
     }
 
@@ -230,6 +234,7 @@ impl Hands {
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
+            helper: None,
         };
         (hands, notice)
     }
@@ -275,6 +280,26 @@ impl Hands {
             Some(dir) => supraman_claude::newest_in(dir, claude_session),
             None => claude_session.to_string(),
         }
+    }
+
+    /// The claude session `name`'s token is bound to runs.
+    fn holder_runs(&self, name: &str) -> bool {
+        self.minted.get(name).and_then(|m| m.claude_session_id.as_deref()).is_some_and(|sid| self.runs(sid))
+    }
+
+    /// `name`'s config: with a [`Self::helper`], the token kept in the secret store and `sm mcp-header` as its
+    /// `headersHelper`; else, or when the store refuses it, the token in the file.
+    fn write_config(&self, name: &str, url: &str, token: &str) -> std::io::Result<PathBuf> {
+        if let Some((sm, store)) = &self.helper {
+            match store.set(&supraman_claude::mcp_token_key(name), token) {
+                Ok(()) => {
+                    let command = supraman_claude::mcp_header_command(sm, &self.home, name);
+                    return supraman_claude::write_mcp_config_helped(&self.mcp_dir(), name, url, &command);
+                }
+                Err(e) => log::warn!("hand {name}: the secret store refused its token, so its config holds it: {e}"),
+            }
+        }
+        supraman_claude::write_mcp_config(&self.mcp_dir(), name, url, token, &[])
     }
 
     /// claude's session registry lists `claude_session` with a running pid.
@@ -340,6 +365,12 @@ impl Hands {
             repo: (self.repo_of)(cwd),
             claude_session_id: claude_session.clone(),
         };
+        // the exited holder's own name: its config and kept token are rewritten in place
+        if request.replace
+            && let Some(held) = self.minted.names().find(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id == claude_session) && self.ended(n))
+        {
+            name = held.clone();
+        }
         if self.sessions.values().any(|s| *s == request.name) {
             notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
@@ -387,7 +418,7 @@ impl Hands {
             notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
         }
         self.sessions.insert(name.clone(), request.name.clone());
-        match supraman_claude::write_mcp_config(&self.mcp_dir(), &name, &url, &minted.token, &[]) {
+        match self.write_config(&name, &url, &minted.token) {
             Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
             Err(e) => {
                 let revoked = self.release(&name);
@@ -403,10 +434,11 @@ impl Hands {
         self.minted.get(name).is_some() && self.config_path(name).is_ok_and(|p| !p.exists())
     }
 
-    /// Revokes `name`'s token, unless a continuation of its claude session holds it ([`Self::follow`]).
+    /// Revokes `name`'s token, unless its claude session runs or a continuation of it holds the token
+    /// ([`Self::follow`]): those keep token and config, and Workman's idle window lapses them once unused.
     pub fn release(&mut self, name: &str) -> Option<String> {
-        if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name)) {
-            log::info!("hand {name} kept: a continuation of its claude session holds its token");
+        if self.minted.get(name).is_some() && (self.follow(name) || self.carried.contains(name) || self.holder_runs(name)) {
+            log::info!("hand {name} kept: the claude session holding its token runs");
             self.sessions.remove(name);
             return self.save();
         }
@@ -414,6 +446,11 @@ impl Hands {
         self.sessions.remove(name);
         if let Ok(config) = self.config_path(name) {
             let _ = std::fs::remove_file(config);
+        }
+        if let Some((_, store)) = &self.helper
+            && let Err(e) = store.delete(&supraman_claude::mcp_token_key(name))
+        {
+            log::warn!("hand {name}: cannot delete its kept token: {e}");
         }
         let bearer = self.bearer();
         let other = match (&bearer, &m.origin) {
@@ -1284,6 +1321,98 @@ mod tests {
             assert_ne!(session, "mw-workflow", "{resumed}: a fresh name, never the continuation's");
             assert!(sessions.live(&held), "{resumed}: the re-mint for that name leaves the live continuation's token");
         }
+    }
+
+    /// A claude dir whose session registry lists `SID` running (this process's pid) while `runs`.
+    fn running_claude(dir: &Path, runs: bool) -> PathBuf {
+        let claude = dir.join("claude");
+        std::fs::create_dir_all(claude.join("sessions")).unwrap();
+        if runs {
+            let pid = std::process::id();
+            std::fs::write(claude.join("sessions").join(format!("{pid}.json")), format!(r#"{{"pid":{pid},"sessionId":"{SID}","name":"supraman","kind":"interactive"}}"#)).unwrap();
+        }
+        claude
+    }
+
+    #[test]
+    fn a_hand_whose_claude_runs_keeps_its_token_and_config_across_quit_and_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        before.claude_dir = Some(running_claude(dir.path(), true));
+        let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-live"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-live").unwrap();
+
+        assert!(before.release_all().is_empty(), "the quit");
+        assert!(sessions.live(&held) && config.exists(), "its claude runs: token and config stay");
+        let (mut after, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        after.claude_dir = Some(dir.path().join("claude"));
+        assert!(after.release_last_run().is_empty(), "the start");
+        assert!(sessions.live(&held) && config.exists(), "still running at the start: nothing is minted or revoked");
+        assert!(after.minted.get("hand-alpha-1").is_some());
+    }
+
+    #[test]
+    fn a_hand_whose_claude_ended_is_revoked_at_quit_and_at_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut quit, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        quit.claude_dir = Some(running_claude(dir.path(), false));
+        let Launch::Minted { config, .. } = quit.launch_for(alpha, Some("mw-ended"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-ended").unwrap();
+        assert!(quit.release_all().is_empty());
+        assert!(!sessions.live(&held) && !config.exists(), "the quit revokes it");
+
+        let (mut crashed, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        crashed.claude_dir = Some(dir.path().join("claude"));
+        let Launch::Minted { config, .. } = crashed.launch_for(alpha, Some("mw-ended"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-ended").unwrap();
+        drop(crashed);
+        let (mut start, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        start.claude_dir = Some(dir.path().join("claude"));
+        assert!(start.release_last_run().is_empty());
+        assert!(!sessions.live(&held) && !config.exists(), "the start revokes what a run left behind");
+    }
+
+    #[test]
+    fn a_hand_config_carries_the_helper_whose_header_follows_a_re_mint_and_holds_no_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let sm = PathBuf::from(r"C:\Tools\supra man\sm.exe");
+        let store: Arc<dyn supraman_core::secret::SecretStore> = Arc::new(supraman_core::secret::MemoryStore::default());
+        let helped = |hands: &mut Hands| hands.helper = Some((sm.clone(), store.clone()));
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        helped(&mut hands);
+        let Launch::Minted { name, config, .. } = hands.launch_for(alpha, Some("mw-helped"), Some(SID)) else { panic!() };
+        let first = sessions.token_of("mw-helped").unwrap();
+
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(!text.contains(&first) && !text.contains("Bearer") && !text.contains("wss_"), "no token in the config file");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let workman = &v["mcpServers"]["workman"];
+        assert_eq!(workman["headersHelper"], format!(r#""C:\Tools\supra man\sm.exe" mcp-header --home "{}" {name}"#, home.display()));
+        assert_eq!((workman["type"].as_str(), workman["url"].as_str()), (Some("http"), Some(format!("{}/mcp", fake.base()).as_str())));
+        assert!(workman["headers"].get("Authorization").is_none());
+        let header = |want: &str| serde_json::from_str::<serde_json::Value>(&supraman_claude::mcp_header(store.as_ref(), &name).unwrap()).unwrap() == serde_json::json!({ "Authorization": format!("Bearer {want}") });
+        assert!(header(&first), "the helper prints the minted token");
+
+        std::fs::remove_file(&config).unwrap();
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        helped(&mut reopened);
+        let Launch::Minted { name: again, .. } = reopened.launch_for(alpha, Some("mw-helped"), Some(SID)) else { panic!() };
+        let second = sessions.token_of("mw-helped").unwrap();
+        assert!(second != first && !sessions.live(&first), "re-minted with replace");
+        assert_eq!(again, name);
+        assert!(header(&second), "a reconnect's helper run gets the re-minted token");
+
+        assert!(reopened.release(&name).is_none());
+        assert!(supraman_claude::mcp_header(store.as_ref(), &name).is_err(), "a revoked hand's kept token goes too");
     }
 
     #[test]

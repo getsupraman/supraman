@@ -5763,3 +5763,27 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   follows the chain and attaches to a running background continuation, and a hand whose claude continued keeps its token:
   never revoked at quit, kept at start while claude's session registry lists the newest session running, and never
   replaced by a mint for that name. Every hand mint is logged: name, replace, claude session id, never the token.
+
+## 2026-11-04 — backlog/restart-keeps-hands claude's `headersHelper` for an http MCP server
+
+- **claude 2.1.317 has `headersHelper` on an `http`/`sse` server entry**: a command string whose stdout is one JSON
+  object of string header values (`{"Authorization":"Bearer …"}`); anything else fails the connect with "did not return
+  valid JSON" or "must return a JSON object with string key-value pairs". Measured with three throwaway `claude -p`
+  runs (`--strict-mcp-config --mcp-config <file>`, a logging helper, a local HTTP server logging the header it gets):
+  the helper ran, and every request of the session (server/discover, initialize, notifications, GET, tools/list)
+  carried its `Authorization`. It works in an `--mcp-config` file under `--strict-mcp-config`.
+- **It runs at every connect**: once per connect, before the first request; on a 401 at connect claude runs it again
+  and connects again (three tries, each with a fresh header, measured); a tool call that gets a 401 re-runs it and
+  retries once (the CLI's "re-running headersHelper and retrying once"). `headersHelperTtlSec` and
+  `headersHelperRefreshBufferSec` exist as entry keys. So `/mcp` → Reconnect always reads the current token.
+- **Its cwd and env**: an `--mcp-config` server (scope `dynamic`) runs it in the session's cwd, with the session's
+  env (`SUPRAMAN_*` included) plus `CLAUDE_CODE_MCP_SERVER_NAME` and `CLAUDE_CODE_MCP_SERVER_URL`; stdin is no TTY.
+  A project-scoped (`.mcp.json`) server's helper needs the folder's persisted trust; an `--mcp-config` one does not.
+- **The command line**: a quoted absolute Windows path with quoted, spaced arguments reaches the program as written
+  (`"C:\…\sm.exe" mcp-header --home "C:\…\Supraman" hand-x-1`).
+- **What Supraman does with it**: a [+] session's config carries `headersHelper` = the hidden `sm mcp-header --home
+  <home> <name>`, which prints the hand's token from the secret store (`mcp_token_key`); the file holds no token. A hand
+  is revoked only once its claude session is gone (claude's session registry), at quit, at start or when its tab ends;
+  a running one keeps token and config, and Workman's idle window lapses it once unused. A replace re-mint takes the
+  exited holder's own name, so its config and kept token are rewritten in place. Supervised sessions keep their
+  static header: nothing revokes a live one at quit or start (a resume re-mints and rewrites its config).

@@ -1542,6 +1542,29 @@ mod tests {
     }
 
     #[test]
+    fn a_live_supervised_session_keeps_its_token_across_quit_and_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
+        sup.config.supraman_home = Some(home.clone());
+        let config = sup.config.clone();
+        let started = || Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None)).with_minter(minter.clone());
+        let mut before = started();
+        before.tick(&[], &mut free(), NOW);
+        let live = row(SessionState::Working, Some(Status::Busy), Some(7));
+        before.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
+        let minted = before.minted().get("fm-demo-workspace").cloned().expect("minted at launch");
+        minter.take();
+        drop(before);
+
+        let mut after = started();
+        after.tick(std::slice::from_ref(&live), &mut free(), NOW + 120 * SECOND);
+        let calls: Vec<MintCall> = minter.take().into_iter().filter(|c| !matches!(c, MintCall::Bind { .. })).collect();
+        assert_eq!(calls, [], "the quit and the start neither revoke nor mint a live session's token");
+        assert_eq!(after.minted().get("fm-demo-workspace"), Some(&minted));
+    }
+
+    #[test]
     fn mint_a_live_session_idle_past_its_token_window_asks_for_a_remint() {
         const HOUR: Millis = 3_600 * SECOND;
         let dir = tempfile::tempdir().unwrap();
