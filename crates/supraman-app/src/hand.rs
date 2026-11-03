@@ -14,6 +14,8 @@ use supraman_workman::Auth;
 pub const EXTERNAL_ROLE: &str = "hand";
 pub const ROLE: &str = "orchestrator";
 const MAX_NAME: usize = 64;
+/// Fresh names tried after a refused one, before the tab runs without a token.
+const FRESH_TRIES: usize = 3;
 const LAUNCHED_BY: &str = "foreman/hand";
 /// Quoted for a pwsh '…' string.
 const STALE: &str = "This tab''s Workman token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
@@ -242,8 +244,19 @@ impl Hands {
     }
 
     fn next_name(&self, cwd: &Path) -> String {
+        self.free_names(cwd).next().unwrap()
+    }
+
+    fn free_names(&self, cwd: &Path) -> impl Iterator<Item = String> + '_ {
         let folder = folder_slug(cwd);
-        (1..).map(|n| format!("hand-{folder}-{n}")).find(|n| self.minted.get(n).is_none()).unwrap()
+        (1..).map(move |n| format!("hand-{folder}-{n}")).filter(|n| self.minted.get(n).is_none())
+    }
+
+    /// The claude that last held `claude_session`'s token here has exited (its config is gone): taking that token is safe.
+    fn holder_exited(&self, claude_session: Option<&str>) -> bool {
+        claude_session.is_some_and(|sid| {
+            self.minted.names().any(|n| self.minted.get(n).is_some_and(|m| m.claude_session_id.as_deref() == Some(sid)) && self.ended(n))
+        })
     }
 
     #[cfg(test)]
@@ -263,7 +276,7 @@ impl Hands {
             .filter(|s| supraman_claude::is_session_id(s))
             .map(str::to_string)
             .or_else(|| new_session.clone());
-        let name = self.next_name(cwd);
+        let mut name = self.next_name(cwd);
         let folder = cwd.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
         let base = api_base(&url);
         let mut request = MintRequest {
@@ -273,24 +286,31 @@ impl Hands {
             origin: format!("{LAUNCHED_BY}/{folder}"),
             cwd: cwd.to_string_lossy().into_owned(),
             external_role: EXTERNAL_ROLE.into(),
-            replace: true,
+            replace: self.holder_exited(claude_session.as_deref()),
             repo: (self.repo_of)(cwd),
             claude_session_id: claude_session.clone(),
         };
         let mut notice = None;
-        // `replace` would take the token of another tab's session of that name
         if self.sessions.values().any(|s| *s == request.name) {
             notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
         }
-        let minted = match self.minter.mint(&base, &bearer, &request) {
-            // `replace` covers a live token, so a 409 is another launcher's name (doc 14 §2)
-            Err(MintError::Refused { status: 409, reason }) if request.name != name => {
-                notice = Some(format!("Workman session {name}, not {}: {reason}", request.name));
-                request.name = name.clone();
-                self.minter.mint(&base, &bearer, &request)
+        // a 409 is a name whose token another process still uses, or another launcher's: never take it, use a fresh name
+        let wanted = request.name.clone();
+        let mut fresh = self.free_names(cwd).filter(|n| *n != wanted).take(FRESH_TRIES).collect::<Vec<_>>().into_iter();
+        let minted = loop {
+            match self.minter.mint(&base, &bearer, &request) {
+                Err(MintError::Refused { status: 409, reason }) => {
+                    let Some(next) = fresh.next() else {
+                        break Err(MintError::Refused { status: 409, reason });
+                    };
+                    notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
+                    name = next;
+                    request.name = name.clone();
+                    request.replace = false;
+                }
+                other => break other,
             }
-            other => other,
         };
         let minted = match minted {
             Ok(m) => m,
@@ -390,7 +410,7 @@ impl Hands {
 mod tests {
     use std::cell::Cell;
 
-    use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman};
+    use supraman_workman::fake::{Answer, FakeAuth, FakeSessions, FakeWorkman};
 
     use super::*;
 
@@ -524,7 +544,7 @@ mod tests {
             body,
             serde_json::json!({
                 "name": "hand-alpha-1", "role": "orchestrator", "launchedBy": "foreman/hand", "origin": "foreman/hand/alpha",
-                "cwd": r"C:\demo\alpha", "externalRole": "hand", "replace": true,
+                "cwd": r"C:\demo\alpha", "externalRole": "hand", "replace": false,
                 "repo": { "root": "C:/demo/alpha", "remote": "https://example.invalid/demo/alpha.git" },
                 "claudeSessionId": sid
             })
@@ -854,14 +874,14 @@ mod tests {
     #[test]
     fn hand_mint_failure_opens_it_plain_with_one_notice() {
         let dir = tempfile::tempdir().unwrap();
-        let (url, seen, _oauth) = fake_workman(vec![(409, r#"{"error":"name held by another launcher"}"#)]);
+        let (url, seen, _oauth) = fake_workman(vec![(500, r#"{"error":"the store is down"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
         assert_eq!(
             launch,
             Launch::Unminted(
-                "This claude session runs without its own Workman token: cannot mint an orchestrator one (Workman answered HTTP 409: name held by another launcher)".into()
+                "This claude session runs without its own Workman token: cannot mint an orchestrator one (Workman answered HTTP 500: the store is down)".into()
             )
         );
         assert_eq!(launch.script(), "claude");
@@ -1101,5 +1121,85 @@ mod tests {
             let out = tab(shell, tab_args(Launch::Plain.shell_args()), dir.path(), restricted);
             assert!(ran.exists(), "{shell}: a tab runs claude.ps1 under Restricted: {out:?}");
         }
+    }
+
+    /// A fake that mints and revokes agent sessions as Workman does, behind its OAuth server.
+    fn session_workman() -> (FakeWorkman, Arc<FakeSessions>) {
+        let fake = FakeWorkman::start(Vec::new());
+        fake.enable_oauth();
+        let sessions = fake.enable_sessions();
+        (fake, sessions)
+    }
+
+    const SID: &str = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+
+    #[test]
+    fn a_reopened_tab_never_takes_a_token_its_earlier_claude_still_uses() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let Launch::Minted { session, config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
+        assert_eq!(session, "mw-workflow");
+        let held = sessions.token_of("mw-workflow").unwrap();
+
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let Launch::Minted { session, notice, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
+        assert!(sessions.live(&held), "the claude still running under mw-workflow keeps its token");
+        assert_eq!(session, "hand-alpha-2");
+        assert!(notice.as_deref().is_some_and(|n| n.starts_with("Workman session hand-alpha-2, not mw-workflow: ") && n.contains("already has a live token")), "{notice:?}");
+        assert!(config.exists());
+        assert!(sessions.token_of("hand-alpha-2").is_some());
+    }
+
+    #[test]
+    fn a_reopened_tab_whose_claude_exited_takes_its_name_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut before, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let Launch::Minted { config, .. } = before.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
+        let held = sessions.token_of("mw-workflow").unwrap();
+        std::fs::remove_file(&config).unwrap();
+
+        let (mut reopened, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let Launch::Minted { session, notice, .. } = reopened.launch_for(alpha, Some("mw-workflow"), Some(SID)) else { panic!() };
+        assert_eq!((session.as_str(), notice), ("mw-workflow", None));
+        assert!(!sessions.live(&held), "its exited claude's token is replaced");
+        assert!(sessions.token_of("mw-workflow").is_some_and(|t| t != held));
+    }
+
+    #[test]
+    fn a_second_sign_in_leaves_a_running_tabs_token_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (fake, sessions) = session_workman();
+        let (home, auth) = home_with(dir.path(), Some(fake.base()));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let Launch::Minted { session, .. } = hands.launch(alpha, None) else { panic!() };
+        let held = sessions.token_of(&session).unwrap();
+        auth.sign_in(fake.base(), &supraman_workman::auth::http_browser()).unwrap();
+        assert!(hands.elsewhere(fake.base()).is_empty(), "no tab is told to restart");
+        let Launch::Minted { session: next, .. } = hands.launch(alpha, None) else { panic!() };
+        assert_ne!(next, session);
+        assert!(sessions.live(&held));
+    }
+
+    #[test]
+    fn a_name_refused_again_and_again_ends_without_a_token_after_a_few_fresh_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let refused = (409, r#"{"error":"the session \"x\" already has a live token; pass replace: true to revoke it and mint a new one"}"#);
+        let (url, seen, _oauth) = fake_workman(vec![refused; 1 + FRESH_TRIES]);
+        let (home, auth) = home_with(dir.path(), Some(&url));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        assert!(matches!(&launch, Launch::Unminted(why) if why.contains("HTTP 409")), "{launch:?}");
+        let names: Vec<String> = (0..=FRESH_TRIES)
+            .map(|_| serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["hand-alpha-1", "hand-alpha-2", "hand-alpha-3", "hand-alpha-4"]);
+        assert!(seen.try_recv().is_err(), "no fifth mint");
     }
 }

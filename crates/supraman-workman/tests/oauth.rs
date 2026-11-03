@@ -237,6 +237,63 @@ fn a_refused_refresh_is_sign_in_again_without_retrying() {
     assert!(auth.access_token(fake.base()).is_ok(), "a sign-in clears it");
 }
 
+static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, meta: &log::Metadata) -> bool {
+        meta.target().starts_with("supraman_workman")
+    }
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        LOGGED.lock().unwrap().push(format!("{} {}", record.level(), record.args()));
+    }
+    fn flush(&self) {}
+}
+
+/// The lines logged about `origin` since the capture began; every test of this binary shares the one logger.
+fn logged(origin: &str) -> Vec<String> {
+    if log::set_logger(&Capture).is_ok() {
+        log::set_max_level(log::LevelFilter::Trace);
+    }
+    LOGGED.lock().unwrap().iter().filter(|l| l.contains(origin)).cloned().collect()
+}
+
+#[test]
+fn sign_in_sign_out_and_a_refused_refresh_are_logged_without_a_token() {
+    let (_dir, fake, oauth, store, auth) = setup();
+    let origin = fake.base().trim_end_matches('/');
+    logged(origin);
+    oauth.set_access_ttl(60);
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    let mut secrets = vec![store.get(&oauth.issuer()).unwrap().unwrap(), auth.access_token(fake.base()).unwrap()];
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    secrets.push(store.get(&oauth.issuer()).unwrap().unwrap());
+    oauth.rescope_grants("workstate.read workstate.sessions offline_access");
+    oauth.drop_legacy_scopes();
+    assert!(auth.access_token(fake.base()).is_err());
+    auth.sign_out(fake.base()).unwrap();
+    auth.sign_out(fake.base()).unwrap();
+
+    let lines = logged(origin);
+    let want = [
+        format!("INFO Workman at {origin}: signed in"),
+        format!("INFO Workman at {origin}: the sign-in held before is replaced, not revoked"),
+        format!("INFO Workman at {origin}: signed in"),
+        format!("WARN Workman at {origin}: the server refused the refresh (invalid_scope); sign in again"),
+        format!("INFO Workman at {origin}: signed out; the grant is revoked, with every session token minted under it"),
+        format!("INFO Workman at {origin}: signed out; no stored sign-in, nothing to revoke"),
+    ];
+    assert_eq!(lines.len(), want.len(), "{lines:#?}");
+    for (line, want) in lines.iter().zip(&want) {
+        assert!(line.starts_with(want.as_str()), "{line:?} does not start with {want:?}");
+    }
+    assert!(!lines.iter().any(|l| secrets.iter().any(|s| l.contains(s.as_str())) || l.contains("fake-rt-")), "{lines:#?}");
+}
+
 #[test]
 fn sign_out_revokes_the_grant_and_forgets_everything() {
     let (_dir, fake, oauth, store, auth) = setup();
