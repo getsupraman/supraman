@@ -119,7 +119,9 @@ only when Supraman starts depending on something an older CLI lacks, and say wha
 ## Release gate
 
 From the release folder **outside the repo** (e.g. copied to `C:\…\Supraman`): `supraman.exe --selftest` and
-`supraman.exe --selftest-supervise` both PASS, and `cargo test --workspace` passes in the repo.
+`supraman.exe --selftest-supervise --release` both PASS, and `cargo test --workspace` passes in the repo.
+`--release` adds the supervise step only a release runs: Adopt forks a real session with
+`--resume <uuid> --fork-session` (step y); the merge gate runs `--selftest-supervise` without it.
 `cargo deny check licenses` passes (`deny.toml`: only licences that allow shipping the whole as GPL-3.0-or-later)
 and `pwsh -File scripts/third-party.ps1 -Check` says `THIRD_PARTY.md is current`; `release.ps1` runs that check
 itself and stops on a stale file. After a dependency change, `pwsh -File scripts/third-party.ps1` regenerates it.
