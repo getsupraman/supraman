@@ -38,7 +38,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `fs::load_json_or_notice` — a JSON state file whose loss is a notice, not an error (stars, dismissals).
 - `fs::append_capped` (with `fs::rotated`) — an append-only log rotated to `<file>.1` at a cap (event logs, `foreman.log`).
 - `paths::{user_home, claude_dir}` — the user's home and claude's config dir (`CLAUDE_CONFIG_DIR`-aware); never read `USERPROFILE`/`HOME` yourself.
-- `paths::{normalize, path_key, within, key_within, main_checkout, linked_git_dir}` — path comparison (`within`: a folder or below it, never a sibling sharing a prefix) and the `.git` file/dir walk without running git.
+- `paths::{normalize, path_key, within, key_within, git_at, main_checkout, linked_git_dir}` — path comparison (`within`: a folder or below it, never a sibling sharing a prefix) and the `.git` file/dir walk without running git; `git_at` is the nearest `.git` (a repo's folder or a linked worktree's file) at or above a folder, the walk `branch_at`, `main_checkout` and the Details tab's worktree line share.
 - `time::{now_ms, epoch_ms, modified_ms, hex6}` — epoch milliseconds and a scratch-name suffix.
 - `hex::{encode, decode}` — bytes as lowercase hex, two digits each, and back; every digest, key file name and MAC written as hex.
 - `update::{Manifest, sign, verify, release_keys, sha256_file, signature_path}` — a release's `supraman-update.json` (its bytes as written are what is signed), its ed25519 signature file and the release keys compiled in from `update.pub`; `Manifest::check_zip` checks a downloaded zip. `sm release` writes and signs it; the app's update check and install use it.

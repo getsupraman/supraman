@@ -65,22 +65,21 @@ pub fn linked_git_dir(git_file: &Path) -> Option<PathBuf> {
     Some(git_file.parent()?.join(dir))
 }
 
-/// The main checkout `dir` is in, [`normalize`]d: the folder of the first `.git` dir up from `dir`, or the
+/// The nearest `.git` at or above `dir`: a repo's folder, or a linked worktree's file. Never runs git.
+pub fn git_at(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())
+}
+
+/// The main checkout `dir` is in, [`normalize`]d: the folder of the [`git_at`] dir, or the
 /// `<repo>` of a linked worktree's `gitdir: <repo>/.git/worktrees/<n>`. Never runs git.
 pub fn main_checkout(dir: &Path) -> Option<PathBuf> {
-    for ancestor in dir.ancestors() {
-        let git = ancestor.join(".git");
-        if git.is_dir() {
-            return Some(PathBuf::from(normalize(ancestor)));
-        }
-        if !git.is_file() {
-            continue;
-        }
-        let mut gitdir = normalize(&linked_git_dir(&git)?);
-        gitdir.truncate(gitdir.rfind("/.git/worktrees/")?);
-        return Some(PathBuf::from(gitdir));
+    let git = git_at(dir)?;
+    if git.is_dir() {
+        return Some(PathBuf::from(normalize(git.parent()?)));
     }
-    None
+    let mut gitdir = normalize(&linked_git_dir(&git)?);
+    gitdir.truncate(gitdir.rfind("/.git/worktrees/")?);
+    Some(PathBuf::from(gitdir))
 }
 
 #[cfg(test)]
@@ -169,6 +168,24 @@ mod tests {
         fs::write(odd.join(".git"), "gitdir: /elsewhere/modules/x\n").unwrap();
         assert_eq!(main_checkout(&odd), None, "a gitdir that is not a worktree's");
         assert_eq!(linked_git_dir(&wt.join(".git")), Some(wt.join("../../Alpha/.git/worktrees/feat")));
+    }
+
+    #[test]
+    fn git_at_is_the_nearest_git_dir_or_worktree_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("Alpha");
+        fs::create_dir_all(main.join(".git")).unwrap();
+        fs::create_dir_all(main.join("src").join("deep")).unwrap();
+        let wt = main.join("src").join("wt");
+        fs::create_dir_all(wt.join("deep")).unwrap();
+        fs::write(wt.join(".git"), "gitdir: ../../.git/worktrees/wt\n").unwrap();
+        let plain = tmp.path().join("plain");
+        fs::create_dir_all(&plain).unwrap();
+        assert_eq!(git_at(&main), Some(main.join(".git")));
+        assert_eq!(git_at(&main.join("src").join("deep")), Some(main.join(".git")));
+        assert_eq!(git_at(&wt.join("deep")), Some(wt.join(".git")), "the worktree's file, not the repo above it");
+        assert!(git_at(&wt).unwrap().is_file());
+        assert_eq!(git_at(&plain).filter(|g| g.starts_with(tmp.path())), None);
     }
 }
 

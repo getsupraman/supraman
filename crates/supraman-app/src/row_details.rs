@@ -263,10 +263,11 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
 
 /// `<worktree folder> of <main checkout>` when `cwd` lies in a linked worktree.
 fn worktree(cwd: &Path) -> Option<String> {
-    let top = cwd.ancestors().find(|d| d.join(".git").exists())?;
-    if !top.join(".git").is_file() {
+    let git = supraman_core::paths::git_at(cwd)?;
+    if !git.is_file() {
         return None;
     }
+    let top = git.parent()?;
     let main = supraman_core::paths::main_checkout(cwd)?;
     let name = top.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| top.display().to_string());
     Some(format!("{name} of {}", main.display()))

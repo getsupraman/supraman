@@ -88,7 +88,7 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &
 /// The branch checked out at `dir`, from the nearest `.git` at or above it (a folder, or a linked
 /// worktree's file); `None` when HEAD is detached or there is no repo.
 pub fn branch_at(dir: &Path) -> Option<String> {
-    let git = dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())?;
+    let git = crate::paths::git_at(dir)?;
     let git_dir = if git.is_dir() { git } else { crate::paths::linked_git_dir(&git)? };
     read_branch(&git_dir)
 }
