@@ -455,28 +455,7 @@ mod tests {
     use util::paths::PathWithPosition;
 
     fn path_hyperlink_regexes() -> Vec<String> {
-        vec![
-            r#"File "(?<path>[^"]+)", line (?<line>[0-9]+)"#.to_string(),
-            [
-                r#"(?x)"#,
-                r#"(?<path>"#,
-                r#"    ("#,
-                r#"        # multi-char path: first char (not opening delimiter, space, or box drawing char)"#,
-                r#"        [^({\[<"'`\ \u2500-\u257F]"#,
-                r#"        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space"#,
-                r#"        ([^\ :(]|[:(][^0-9()\ ])*"#,
-                r#"        # last char: not closing delimiter or colon"#,
-                r#"        [^()}\]>"'`.,;:\ ]"#,
-                r#"    |"#,
-                r#"        # single-char path: not delimiter, punctuation, space, or box drawing char"#,
-                r#"        [^(){}\[\]<>"'`.,;:\ \u2500-\u257F]"#,
-                r#"    )"#,
-                r#"    # optional line/column suffix (included in path for PathWithPosition::parse_str)"#,
-                r#"    (:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:]?[0-9]+)?\))?"#,
-                r#")"#,
-            ]
-            .join("\n"),
-        ]
+        crate::terminal_settings::PATH_HYPERLINK_REGEXES.iter().map(|regex| regex.to_string()).collect()
     }
 
     #[test]
@@ -726,6 +705,17 @@ mod tests {
             test_path!(r#"‹«\\?\C:\test\cool👉.rs»›"#);
             test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
         }
+
+        #[test]
+        fn windows_paths_with_a_position() {
+            test_path!(r#"‹«C:\x\👉y.rs»›"#);
+            test_path!(r#"‹«C:/x/👉y.rs»›"#);
+            test_path!(r#"‹«src\👉x.rs»:«12»:«3»›"#);
+            test_path!(r#"error: ‹«C:\x\y👉.rs»:«12»:«3»›: expected `;`"#);
+            test_path!(r#"  --> ‹«src/👉x.rs»:«12»:«3»›"#);
+            test_path!(r#"   --> ‹«crates\a\src\x.rs»:«12»:«👉3»›"#);
+            test_path!(r#"‹«C:\x\👉y.cpp»(«12»,«3»)›: error C2065"#);
+        }
     }
 
     mod file_iri {
@@ -771,6 +761,12 @@ mod tests {
         fn iris() {
             test_iri!("https://en.wiktionary.org/wiki/Ῥόδος");
             test_iri!("https://en.wiktionary.org/wiki/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82");
+        }
+
+        #[test]
+        fn a_url_wins_over_the_path_in_it() {
+            test_hyperlink!("‹«https://example.com/👉src/x.rs:12»›"; Iri);
+            test_hyperlink!("see ‹«https://example.com/src/x.r👉s»›"; Iri);
         }
 
         #[test]

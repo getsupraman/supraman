@@ -20,6 +20,31 @@ pub fn campbell() -> [Hsla; 16] {
 /// Windows Terminal's default `wordDelimiters`: a double-click selects up to these.
 pub(crate) const WORD_DELIMITERS: &str = " /\\()\"'-.,:;<>~!@#$%^&*|+=[]{}~?\u{2502}";
 
+/// Zed's default `terminal.path_hyperlink_regexes` (assets/settings/default.json), tried in order: Python's
+/// `File "…", line N`, then a path with an optional `:line:column` or `(line,column)` suffix.
+pub const PATH_HYPERLINK_REGEXES: [&str; 2] = [
+    r#"File "(?<path>[^"]+)", line (?<line>[0-9]+)"#,
+    r#"(?x)
+(?<path>
+    (
+        # multi-char path: first char (not opening delimiter, space, or box drawing char)
+        [^({\[<"'`\ \u2500-\u257F]
+        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space
+        ([^\ :(]|[:(][^0-9()\ ])*
+        # last char: not closing delimiter or colon
+        [^()}\]>"'`.,;:\ ]
+    |
+        # single-char path: not delimiter, punctuation, space, or box drawing char
+        [^(){}\[\]<>"'`.,;:\ \u2500-\u257F]
+    )
+    # optional line/column suffix (included in path for PathWithPosition::parse_str)
+    (:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:]?[0-9]+)?\))?
+)"#,
+];
+
+/// Zed's default `terminal.path_hyperlink_timeout_ms`.
+pub const PATH_HYPERLINK_TIMEOUT: Duration = Duration::from_millis(1);
+
 /// Windows Terminal's caret blink: Windows' default `GetCaretBlinkTime`.
 pub const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
