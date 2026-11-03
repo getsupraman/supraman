@@ -303,6 +303,8 @@ pub struct FleetView {
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
     sends: Serial,
+    /// The busy-session limit's writes, in the order set; a poll's report gives way to them ([`MaxWrites`]).
+    max_writes: MaxWrites,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -648,6 +650,7 @@ impl FleetView {
                 };
                 if this
                     .update(cx, |this, cx| {
+                        this.max_writes.tick_starts();
                         this.apply(refresh, cx);
                         this.refresh_details(cx);
                         if this.other_scans == 0 {
@@ -788,6 +791,7 @@ impl FleetView {
             answered_route: BTreeMap::new(),
             compose: None,
             sends: Serial::default(),
+            max_writes: MaxWrites::default(),
             work_live: Rc::default(),
             work_inbox,
             menu: None,
@@ -1407,7 +1411,9 @@ impl FleetView {
         self.needs = report.needs;
         let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
         self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
-        self.max_working = report.max_working;
+        if self.max_writes.report_counts() {
+            self.max_working = report.max_working;
+        }
         self.supervise_errors = report.errors;
         supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
         self.daemon_hold = report.daemon_hold;
@@ -1663,19 +1669,30 @@ impl FleetView {
         });
     }
 
+    /// Shown at once; written to `settings.toml` behind it, each write after the one set before it.
     pub fn set_max_working(&mut self, max_working: usize, cx: &mut Context<Self>) {
         let max_working = max_working.min(MAX_WORKING_LIMIT);
-        let result = match &self.home {
-            Some(home) => supervise::set_max_working(home, max_working),
-            None => Err(anyhow::anyhow!("no Supraman home")),
+        let Some(home) = self.home.clone() else {
+            self.action_error = Some("Cannot save the busy-session limit: no Supraman home".into());
+            cx.notify();
+            return;
         };
-        match result {
-            Ok(()) => {
-                self.max_working = max_working;
-                self.action_error = None;
+        self.max_working = max_working;
+        let generation = self.max_writes.set();
+        let previous = self.max_writes.serial.previous();
+        let task = cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
             }
-            Err(e) => self.action_error = Some(format!("Cannot save the busy-session limit: {e:#}")),
-        }
+            let saved = cx.background_executor().spawn(async move { supervise::set_max_working(&home, max_working) }).await;
+            this.update(cx, |this, cx| {
+                this.max_writes.landed(generation);
+                this.action_error = saved.err().map(|e| format!("Cannot save the busy-session limit: {e:#}"));
+                cx.notify();
+            })
+            .ok();
+        });
+        self.max_writes.serial.push(task);
         cx.notify();
     }
 
@@ -3004,6 +3021,35 @@ impl Serial {
     }
 }
 
+/// The busy-session limit's writes behind the shown value. A tick reads `settings.toml`; its report's limit counts only
+/// when no write is pending and the tick started after the last one landed, so a stale read never undoes a click.
+#[derive(Default)]
+struct MaxWrites {
+    serial: Serial,
+    set: u64,
+    landed: u64,
+    tick_saw: u64,
+}
+
+impl MaxWrites {
+    fn set(&mut self) -> u64 {
+        self.set += 1;
+        self.set
+    }
+
+    fn landed(&mut self, generation: u64) {
+        self.landed = self.landed.max(generation);
+    }
+
+    fn tick_starts(&mut self) {
+        self.tick_saw = self.landed;
+    }
+
+    fn report_counts(&self) -> bool {
+        self.landed == self.set && self.tick_saw == self.landed
+    }
+}
+
 pub const SEND_SECTION: &str = "compose send";
 pub const APPROVE_SECTION: &str = "approve";
 
@@ -3037,6 +3083,27 @@ mod tests {
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
         let fake = Path::new(r"C:\scratch\fake-claude");
         assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
+    }
+
+    #[test]
+    fn a_poll_report_never_undoes_a_busy_limit_set_since_its_tick_started() {
+        let mut w = MaxWrites::default();
+        w.tick_starts();
+        assert!(w.report_counts(), "nothing set: the report is the file's value");
+        let one = w.set();
+        assert!(!w.report_counts(), "set, not yet written");
+        w.tick_starts();
+        w.landed(one);
+        assert!(!w.report_counts(), "this tick read the file before the write landed");
+        let two = w.set();
+        w.tick_starts();
+        assert!(!w.report_counts(), "a second set is pending");
+        w.landed(two);
+        assert!(!w.report_counts());
+        w.tick_starts();
+        assert!(w.report_counts(), "a tick started after the last write landed");
+        w.landed(one);
+        assert!(w.report_counts(), "an older generation never moves it back");
     }
 
     #[test]
