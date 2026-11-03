@@ -1,4 +1,4 @@
-# Foreman (AutoWork)
+# Supraman (AutoWork)
 
 Native Rust/gpui app that supervises workspaces of Claude Code sessions. Work runs as a controller queue in Workman project `autowork`; `docs/LEARNINGS.md` holds what each unit found.
 
@@ -60,7 +60,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `crate::row_details` and `view/details.rs` (supraman-app): a session's and a workspace's Details tab (`TabKind::Details`, `open_details`, one tab per target): `row_details::{session, workspace}` say the facts as `Section`s, the poll refreshes them (`refresh_details`, which also reads `OnDisk`: branch, worktree, transcript), and the actions are the row's menu items run through `run_action`, so the page allows nothing the menu does not.
 - `crate::schedules` and `view/schedules.rs` (supraman-app): the Schedules group, a schedule's Details tab (`TabKind::Schedule`, `open_schedule`, the page's words in `schedules::sections`) with Approve (`approve_shown` → `approve_schedule`, the only `schedule::approve` caller), Run now, the Edit dialog and the schedule Inbox entries (failed runs, and `schedules::waiting` for a pending schedule); the window's `registrar` is `FakeRegistrar` in every selftest.
 - `supraman_core::schedule::{sync, Registrar, WindowsRegistrar, FakeRegistrar, task_xml, task_root}`: every Windows task of a schedule; `sync` makes `\Supraman\<ws>` (another home `\Supraman-<hex8>`) hold the active, approved schedules and nothing else, never outside it; only the app calls it, after Approve, Pause and Remove (C100); tests and selftests use `FakeRegistrar` (C101). `supraman_claude::task_run_level` gives its run level.
-- `supraman_core::sm_allowed_tools`: the `--allowedTools` rules that keep `sm` from parking, for every Foreman-launched session and scheduled run.
+- `supraman_core::sm_allowed_tools`: the `--allowedTools` rules that keep `sm` from parking, for every Supraman-launched session and scheduled run.
 - `supraman_core::install_hook_exe` (`HOOK_EXE`): the plugin's `bin/sm.exe`, the hooks' copy.
 - `supraman_core::time::{now_ms, epoch_ms, modified_ms, hex6}`: epoch milliseconds and a scratch-name suffix.
 - `supraman_core::time::{local, ago, clock, short, near, date_words, rfc3339_local}`: every time shown to the user (`5 min ago`, `09:00`, `Mon 09:00`, `Mon 3 Nov 2026 at 08:00`, a server's RFC 3339 time here); never a `format("%H:%M")` of your own.
@@ -77,7 +77,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_claude::mcp_config_path`: the path of a session's Workman config file, with the session-name check; write, read and delete it through this.
 - `supraman_claude::{Claude, LaunchSpec, resume_argv, list_sessions}`: every `claude` launch, resume, stop, rm and listing outside a terminal tab; a tab runs `claude` in its PTY.
 - `supraman_claude::transcript::Usage`: a session's tokens from its transcript (input, output, cache creation and cache reads, each message once), read on incrementally; a scheduled run's token cap.
-- `supraman_supervisor::{AppTokens, bearer, workman_role}`: the one `TokenProvider` of Foreman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
+- `supraman_supervisor::{AppTokens, bearer, workman_role}`: the one `TokenProvider` of Supraman's sign-in, for the app's supervisor and for `sm`'s scheduled runs.
 - `supraman_supervisor::LaunchConfig::launch_spec`: every supervised or scheduled `claude --bg` spec (name, cwd, prompt, mode, strict MCP, plugin dirs, add-dirs, `--settings` env, `--allowedTools`); the caller adds its token and its own flags. `session_env` is that env as pairs and `interactive_args` the plugin and `--allowedTools` flags, for a [+] session (`hand::extras`); `supraman-app` `supervise::launch_config` builds the app's `LaunchConfig` for both.
 - `supraman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `sm want`); `DesiredState::release` stops the sessions of folders taken away (stop, never rm).
 

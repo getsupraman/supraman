@@ -69,7 +69,7 @@ pub(crate) use left::grid;
 pub use manage::{AddDraft, Removing};
 pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 
-gpui::actions!(foreman, [NextTab, PreviousTab, FocusSearch]);
+gpui::actions!(supraman, [NextTab, PreviousTab, FocusSearch]);
 
 const KEY_CONTEXT: &str = "FleetView";
 
@@ -1711,7 +1711,7 @@ impl FleetView {
         Some(self.attach(workspace, "supervised", &session, window, cx))
     }
 
-    /// Typed, not run: the human presses Enter and answers the trust prompt; Foreman never answers it.
+    /// Typed, not run: the human presses Enter and answers the trust prompt; Supraman never answers it.
     pub fn run_in_terminal(&mut self, cwd: PathBuf, command: String, window: &mut Window, cx: &mut Context<Self>) -> u64 {
         let title = format!("trust · {}", cwd.display());
         self.type_in_shell(cwd, title, command, window, cx)

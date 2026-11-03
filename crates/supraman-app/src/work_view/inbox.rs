@@ -1,4 +1,4 @@
-//! Foreman writes nothing to Workman (C21): dismissals are local ([`Dismissed`]).
+//! Supraman writes nothing to Workman (C21): dismissals are local ([`Dismissed`]).
 
 use std::collections::BTreeMap;
 use std::path::Path;

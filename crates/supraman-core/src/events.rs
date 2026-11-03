@@ -13,7 +13,7 @@ use crate::is_safe_id;
 
 pub const ROTATE_AT: u64 = 256 * 1024;
 
-/// The fixed subset of a hook payload Foreman keeps. Never the prompt or the assistant's text.
+/// The fixed subset of a hook payload Supraman keeps. Never the prompt or the assistant's text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Unix epoch milliseconds, when `sm hook` ran.

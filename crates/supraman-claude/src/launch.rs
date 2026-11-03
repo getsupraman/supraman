@@ -220,7 +220,7 @@ impl Claude {
     }
 
     /// Refuses with [`ClaudeError::NameTaken`] when any row (stopped ones included) already carries
-    /// the name — the CLI itself accepts duplicates (m2/1), but names are Foreman's join key — then
+    /// the name — the CLI itself accepts duplicates (m2/1), but names are Supraman's join key — then
     /// [`Claude::launch_unchecked`].
     pub fn launch(&self, spec: &LaunchSpec) -> Result<String> {
         if name_taken(&self.list_sessions()?, &spec.name) {
@@ -304,7 +304,7 @@ impl Claude {
         self.run_in(args, None, timeout)
     }
 
-    /// `claude <args>` from `cwd`, no flag of Foreman's added: stdout, or the [`classify`]d failure.
+    /// `claude <args>` from `cwd`, no flag of Supraman's added: stdout, or the [`classify`]d failure.
     pub fn run_in(&self, args: &[&str], cwd: Option<&Path>, timeout: Duration) -> Result<String> {
         let out = self.exec(args.iter().map(OsString::from).collect(), cwd, &[], timeout)?;
         match classify(&out) {

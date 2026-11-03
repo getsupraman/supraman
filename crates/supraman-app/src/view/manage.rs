@@ -477,7 +477,7 @@ impl FleetView {
         cx.notify();
     }
 
-    /// Nothing on disk outside the Foreman home is touched.
+    /// Nothing on disk outside the Supraman home is touched.
     pub fn remove_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
         let (started, wanted) = self.desired.get(name).cloned().unwrap_or_default();
         if started {

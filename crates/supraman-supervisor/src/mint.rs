@@ -1,5 +1,5 @@
 //! Per-session Workman tokens (Skills `docs/workstate/14-agent-launch.md` §2): only the minted `wss_`
-//! token reaches a session's config file; the bearer never leaves Foreman's process.
+//! token reaches a session's config file; the bearer never leaves Supraman's process.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// `POST /api/agent-sessions`. `role` is the Workman role (never above the bearer's),
-/// `external_role` Foreman's.
+/// `external_role` Supraman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MintRequest {

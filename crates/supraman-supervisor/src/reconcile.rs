@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(run(&d, &[running("fm-demo-workspace", 1), park]), []);
     }
 
-    // R4, m3/8: a Foreman session blocked with nothing it waits for waits on a peer, not on the human
+    // R4, m3/8: a Supraman session blocked with nothing it waits for waits on a peer, not on the human
     #[test]
     fn blocked_without_waiting_for_is_not_reported() {
         let d = desired(true, &["fm-demo-workspace"]);

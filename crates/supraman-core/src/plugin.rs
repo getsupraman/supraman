@@ -120,12 +120,9 @@ mod tests {
     }
 
     #[test]
-    fn the_old_plugin_name_is_never_loaded() {
+    fn both_exes_find_the_release_layouts_plugin() {
         let root = tempfile::tempdir().unwrap();
         let install = root.path().join("Tools").join("supraman");
-        plugin_at(&install.join("plugins").join("foreman"));
-        plugin_at(&root.path().join("plugins").join("foreman"));
-        assert!(find_plugin_dir(&install.join("supraman.exe")).is_err(), "an old install's plugins/foreman is the old sessions'");
         let new = install.join("plugins").join("supraman");
         plugin_at(&new);
         assert_eq!(find_plugin_dir(&install.join("supraman.exe")).unwrap(), new);

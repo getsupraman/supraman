@@ -303,7 +303,7 @@ async fn selftest(
 
     // The echo is typed into the PTY; the nonce must show up twice in the grid:
     // once on the typed command line, once as the command's output.
-    let nonce = format!("FOREMAN-TERM-{}", nonce());
+    let nonce = format!("SUPRAMAN-TERM-{}", nonce());
     let typed = Instant::now();
     terminal.update(cx, |terminal, _| {
         terminal.input(format!("echo {nonce}\r").into_bytes())

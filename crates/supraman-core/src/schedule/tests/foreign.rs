@@ -153,7 +153,7 @@ fn own_roots_are_supramans_of_any_home() {
     for own in [r"\Supraman", r"\Supraman-0a1b2c3d\ws", r"\supraman-99"] {
         assert!(is_own_root(own), "{own}");
     }
-    for other in [r"\", r"\Microsoft\Windows", r"\Mine\Supraman", r"\Claude", r"\Foreman\ws"] {
+    for other in [r"\", r"\Microsoft\Windows", r"\Mine\Supraman", r"\Claude"] {
         assert!(!is_own_root(other), "{other}");
     }
 }

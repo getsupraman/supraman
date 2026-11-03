@@ -50,7 +50,7 @@ These pieces are Windows-only in the same way for macOS and Linux, and the count
 | The process memory figure in the status bar | `supraman-ui/src/lib.rs` (`memory`) | Linux: `/proc/self/statm`. macOS: `task_info` (`MACH_TASK_BASIC_INFO`) | **verified**: 0 off Windows |
 | Icon font (`Segoe Fluent Icons` or `Segoe MDL2 Assets`) | `supraman-ui/src/fonts.rs` (`icons`) | A bundled icon font, the same on every platform | **expected**; off Windows it names Segoe Fluent Icons, which is not installed there (**verified**) |
 | Clipboard lock and save/restore around selftests | `supraman-app/src/selftest_clipboard.rs` | Not needed on a private display (Xvfb, or a CI machine's own session); a lock file stays for machines that share one | **expected** |
-| Windows resources: icon, version info, manifest | `supraman-app/assets/foreman.rc`, `foreman.manifest`, `build.rs` | macOS: `Info.plist` and `.icns` in the app bundle. Linux: a `.desktop` file and PNG icons | **expected** |
+| Windows resources: icon, version info, manifest | `supraman-app/assets/supraman.rc`, `supraman.manifest`, `build.rs` | macOS: `Info.plist` and `.icns` in the app bundle. Linux: a `.desktop` file and PNG icons | **expected** |
 | Release script | `scripts/release.ps1` | `cargo xtask release`, the same steps for every target, run in CI on each platform | **expected** |
 
 ## macOS

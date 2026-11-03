@@ -264,7 +264,7 @@ fn end_mint(host: &mut dyn SessionHost, mcp_dir: &Path, name: &str, mint: Option
     (!failed.is_empty()).then(|| failed.join("; "))
 }
 
-/// `DELETE /api/agent-sessions/<session_id>` on `base`, with the bearer of the server Foreman is signed in to.
+/// `DELETE /api/agent-sessions/<session_id>` on `base`, with the bearer of the server Supraman is signed in to.
 pub(crate) fn revoke(tokens: &dyn TokenProvider, minter: &dyn Minter, base: &str, session_id: &str) -> Result<(), String> {
     match tokens.token(crate::schedule::RUN_ROLE) {
         Ok(Some(t)) if api_base(&t.url) == base => minter.revoke(base, &t.token, session_id).map_err(|e| format!("cannot revoke Workman session {session_id}: {e}")),

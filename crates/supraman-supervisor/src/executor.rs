@@ -68,7 +68,7 @@ pub struct LaunchConfig {
     /// `--settings {"worktree":{"bgIsolation":"none"}}`: in a main checkout a `--bg` session otherwise
     /// moves its writes into a worktree of its own that a plain `claude rm` refuses to delete (m2/2).
     pub bg_isolation_none: bool,
-    /// `--allowedTools`: permission rules every session gets, so `sm` (Foreman's CLI, run by controllers
+    /// `--allowedTools`: permission rules every session gets, so `sm` (Supraman's CLI, run by controllers
     /// themselves) never parks for permission (m3/2: `Bash(sm:*)` matched; PowerShell rules did not).
     pub allowed_tools: Vec<String>,
 }
@@ -160,7 +160,7 @@ pub struct Supervisor<L, T> {
     /// Resumes whose output named no id ([`Resumed::Unknown`]): (name, id, when), settled against the
     /// next snapshots ([`Self::confirm_resumes`]).
     unconfirmed: Vec<(String, String, Millis)>,
-    /// The server Foreman is signed in to, as [`Self::server_changed`] last saw it.
+    /// The server Supraman is signed in to, as [`Self::server_changed`] last saw it.
     origin: Option<String>,
     /// The server [`Self::server_changed`] last scheduled re-mints for.
     checked: Option<String>,
@@ -271,7 +271,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// The server Foreman is signed in to (`None`: not signed in), on every tick. The first time it is
+    /// The server Supraman is signed in to (`None`: not signed in), on every tick. The first time it is
     /// `origin`, every wanted session minted elsewhere (or on an unknown server) is stopped at the next
     /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
     /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
@@ -791,7 +791,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 }
 
 /// What `w` tells Workman about itself: its name, `foreman/<workspace>` as launcher, the repo in its
-/// origin, its cwd and Foreman role.
+/// origin, its cwd and Supraman role.
 pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
     let launched_by = format!("foreman/{workspace}");
     SessionIdentity {
@@ -1202,13 +1202,13 @@ mod tests {
         minter.take();
 
         assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty(), "minted there");
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
         assert!(sup.server_changed(None).is_empty(), "not signed in: nothing to mint with");
         assert_eq!(
-            sup.server_changed(Some("https://workstate.example")),
+            sup.server_changed(Some("https://workman.example")),
             [("fm-demo-workspace".to_string(), Some("http://127.0.0.1:1".to_string()))]
         );
-        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "once");
+        assert!(sup.server_changed(Some("https://workman.example")).is_empty(), "once");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "the live row is stopped");
         let stopped = row(SessionState::Stopped, None, None);
@@ -1217,14 +1217,14 @@ mod tests {
         assert!(matches!(calls.as_slice(), [Call::Resume { session_id, .. }] if *session_id == stopped.session_id), "{calls:?}");
         match minter.take().as_slice() {
             [MintCall::Mint { base, request, .. }] => {
-                assert_eq!(base, "https://workstate.example");
+                assert_eq!(base, "https://workman.example");
                 assert!(request.replace);
                 assert_eq!(request.claude_session_id, Some(stopped.session_id.clone()));
             }
             other => panic!("{other:?}"),
         }
         let text = config_text(&mcp, "fm-demo-workspace");
-        assert!(text.contains("https://workstate.example/mcp") && text.contains("wss_fake2"), "{text}");
+        assert!(text.contains("https://workman.example/mcp") && text.contains("wss_fake2"), "{text}");
     }
 
     /// A supervisor of `home` whose sessions file holds `json`, with the static role token.
@@ -1294,9 +1294,9 @@ mod tests {
         sup.tick(&[], &mut free(), NOW);
         sup.launcher().take();
         minter.take();
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
         // checked while its row was not live: nothing to stop, and then it shows live with the old token
-        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        assert_eq!(sup.server_changed(Some("https://workman.example")).len(), 1);
         sup.tick(&[], &mut free(), NOW + SECOND);
         sup.launcher().take();
         let live = row(SessionState::Working, Some(Status::Busy), Some(1));
@@ -1304,7 +1304,7 @@ mod tests {
         let other: Vec<_> = needs.iter().filter(|n| n.kind == NeedsKind::OtherServer).collect();
         let [need] = other.as_slice() else { panic!("{needs:?}") };
         assert_eq!(need.action, Some(Remedy::Remint { id: live.id.clone() }));
-        assert!(need.detail.contains("http://127.0.0.1:1") && need.detail.contains("https://workstate.example"), "{}", need.detail);
+        assert!(need.detail.contains("http://127.0.0.1:1") && need.detail.contains("https://workman.example"), "{}", need.detail);
         assert!(minter.take().is_empty(), "no PATCH of the old server's session on the new one");
 
         sup.retry("fm-demo-workspace");
@@ -1878,7 +1878,7 @@ mod tests {
         }
     }
 
-    /// An unelevated Foreman facing an elevated service gets one row saying why, at once, and
+    /// An unelevated Supraman facing an elevated service gets one row saying why, at once, and
     /// no more launches — not five 45 s failures.
     #[test]
     fn an_unreachable_service_supraman_cannot_reach_holds_with_one_row() {
@@ -2035,13 +2035,13 @@ mod tests {
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         sup.launcher().take();
         minter.take();
-        sup.tokens_mut().0.as_mut().unwrap().url = "https://workstate.example/mcp".into();
-        assert_eq!(sup.server_changed(Some("https://workstate.example")).len(), 1);
+        sup.tokens_mut().0.as_mut().unwrap().url = "https://workman.example/mcp".into();
+        assert_eq!(sup.server_changed(Some("https://workman.example")).len(), 1);
         sup.launcher.stop_errors.borrow_mut().push(ClaudeError::CliFailed { code: Some(1), stderr: "busy".into() });
         let needs = sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 70 * SECOND);
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
         assert!(needs.iter().any(|n| n.kind == NeedsKind::OtherServer), "still on the other server: {needs:?}");
-        assert!(sup.server_changed(Some("https://workstate.example")).is_empty(), "not scheduled twice");
+        assert!(sup.server_changed(Some("https://workman.example")).is_empty(), "not scheduled twice");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 71 * SECOND);
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }], "tried again");
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 72 * SECOND);
@@ -2049,7 +2049,7 @@ mod tests {
         let stopped = row(SessionState::Stopped, None, None);
         sup.tick(std::slice::from_ref(&stopped), &mut free(), NOW + 130 * SECOND);
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
-        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { base, .. }] if base == "https://workstate.example"));
+        assert!(matches!(minter.take().as_slice(), [MintCall::Mint { base, .. }] if base == "https://workman.example"));
     }
 
     #[test]

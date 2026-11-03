@@ -265,7 +265,7 @@ pub fn schedule_items(row: &ScheduleRow) -> Vec<MenuItem> {
     items
 }
 
-/// Named `fm-…`: launched by a Foreman supervisor (or its selftest), so Stop does not ask.
+/// Named `fm-…`: launched by a Supraman supervisor (or its selftest), so Stop does not ask.
 pub fn is_foremans(session: &Session) -> bool {
     session.name.starts_with("fm-")
 }

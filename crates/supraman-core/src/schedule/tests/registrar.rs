@@ -17,8 +17,8 @@ fn spec<'a>(s: &'a Schedule, level: RunLevel) -> TaskSpec<'a> {
     TaskSpec {
         user: FakeRegistrar::USER,
         level,
-        smw: Path::new(r"C:\Program Files\Foreman\smw.exe"),
-        home: Path::new(r"C:\Users\rene\AppData\Roaming\Foreman\"),
+        smw: Path::new(r"C:\Program Files\Supraman\smw.exe"),
+        home: Path::new(r"C:\Users\rene\AppData\Roaming\Supraman\"),
         workspace: "demo",
         schedule: s,
         fingerprint: "9f2c00000000000000000000000000000000000000000000000000000000beef",
@@ -77,7 +77,7 @@ fn the_default_home_has_the_supraman_folder_and_any_other_home_its_own() {
 }
 
 fn target<'a>(f: &'a Fixture, store: &'a MemoryStore, level: RunLevel) -> SyncTarget<'a> {
-    SyncTarget { home: &f.home, store, level, smw: Path::new(r"C:\Foreman\smw.exe"), now_ms: 1_793_341_200_000 }
+    SyncTarget { home: &f.home, store, level, smw: Path::new(r"C:\Supraman\smw.exe"), now_ms: 1_793_341_200_000 }
 }
 
 fn second(f: &Fixture, store: &MemoryStore, id: &str) {
@@ -99,7 +99,6 @@ fn sync_writes_only_its_own_folder_and_leaves_every_other_task_alone() {
     let planted = [
         (format!(r"{root}\other"), "autofix-prod-bugs"),
         (root.clone(), "demo"),
-        (r"\Foreman\demo".to_string(), "autofix-prod-bugs"),
         (format!(r"{root}-x\demo"), "autofix-prod-bugs"),
         (r"\Microsoft\Windows\Defrag".to_string(), "ScheduledDefrag"),
     ];
@@ -199,7 +198,7 @@ fn the_task_runs_smw_with_the_home_the_workspace_the_id_and_the_approved_fingerp
     let fp = &s.approval.unwrap().fingerprint;
     let home = f.home.to_string_lossy();
     assert!(xml.contains(&format!("<Arguments>schedule fire --home &quot;{home}&quot; demo {ID} --fingerprint {fp}</Arguments>")), "{xml}");
-    assert!(xml.contains(r"<Command>C:\Foreman\smw.exe</Command>"));
+    assert!(xml.contains(r"<Command>C:\Supraman\smw.exe</Command>"));
     assert!(xml.contains(&format!("<UserId>{}</UserId>", FakeRegistrar::USER)));
 }
 

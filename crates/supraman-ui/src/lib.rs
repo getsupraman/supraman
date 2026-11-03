@@ -1,4 +1,4 @@
-//! What every Foreman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
+//! What every Supraman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! the text input, buttons, banners, fonts, the widgets (menu, confirm, toast, notices, tab strip, hover
 //! card, split pane, matcher, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
 //! selftests print.
@@ -98,7 +98,7 @@ impl log::Log for Logger {
 
 /// gpui_windows' VSync thread redraws every window in its list, and a destroyed window leaves that list
 /// only when the message its WM_DESTROY posts is handled; a redraw in between fails on the dead HWND
-/// (0x80070578). Harmless (nothing is drawn) and out of Foreman's reach (LEARNINGS, m5/22).
+/// (0x80070578). Harmless (nothing is drawn) and out of Supraman's reach (LEARNINGS, m5/22).
 pub fn is_vsync_race(target: &str, message: &str) -> bool {
     target == "gpui_windows::platform" && message.starts_with("Invalid window handle") && message.contains("0x80070578")
 }

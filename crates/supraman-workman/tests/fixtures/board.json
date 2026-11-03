@@ -17,11 +17,11 @@
     "ref": "autowork",
     "qualifiedRef": "autowork",
     "kind": "project",
-    "title": "Foreman",
+    "title": "Supraman",
     "status": "in_progress"
   },
-  "intent": "Browse the work from Foreman",
-  "branch": "m4/1-workstate-client",
+  "intent": "Browse the work from Supraman",
+  "branch": "m4/1-workman-client",
   "worktree": null,
   "rollup": {
     "total": 3,
@@ -40,7 +40,7 @@
         "ref": "1",
         "qualifiedRef": "m4/1",
         "kind": "task",
-        "title": "supraman-workstate: read API v1 client",
+        "title": "supraman-workman: read API v1 client",
         "status": "in_progress",
         "addedLater": "x"
       },
@@ -71,7 +71,7 @@
           "ref": "1",
           "qualifiedRef": "m4/1",
           "kind": "task",
-          "title": "supraman-workstate: read API v1 client",
+          "title": "supraman-workman: read API v1 client",
           "status": "in_progress",
           "addedLater": "x"
         },
@@ -186,7 +186,7 @@
           "ref": "1",
           "qualifiedRef": "m4/1",
           "kind": "task",
-          "title": "supraman-workstate: read API v1 client",
+          "title": "supraman-workman: read API v1 client",
           "status": "in_progress",
           "addedLater": "x"
         }

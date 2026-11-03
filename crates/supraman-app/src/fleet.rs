@@ -159,7 +159,7 @@ pub struct Supervised<'a> {
     pub expanded: Option<&'a HashSet<String>>,
     /// Keeps a disabled folder that holds no session (search); the tree leaves it out.
     pub disabled_folders: bool,
-    /// A selftest's run prefix: its `fm-selftest-<hex>` sessions are this Foreman's own.
+    /// A selftest's run prefix: its `fm-selftest-<hex>` sessions are this Supraman's own.
     pub own_prefix: Option<&'a str>,
 }
 
@@ -266,7 +266,7 @@ pub fn build(workspaces: &[Workspace], sessions: &[Session], now_ms: i64, show_s
         }
     };
     let listed: HashSet<&str> = sessions.iter().map(|s| s.session_id.as_str()).collect();
-    // a Foreman session's transcript (a selftest's, a supervised one removed) is not the user's to resume
+    // a Supraman session's transcript (a selftest's, a supervised one removed) is not the user's to resume
     let closed: Vec<Session> = sup
         .closed
         .iter()
@@ -565,9 +565,9 @@ pub enum Adoption {
     No(String),
 }
 
-/// `None` unless `row` is a background session Foreman did not start, running or stopped, under `folder`
+/// `None` unless `row` is a background session Supraman did not start, running or stopped, under `folder`
 /// enabled here and supervised by this workspace ([`owners`]). An interactive session runs in someone's
-/// terminal, and a muted row is another Foreman's.
+/// terminal, and a muted row is another Supraman's.
 pub fn adoption(
     workspaces: &[Workspace],
     workspace: &str,
@@ -1040,15 +1040,15 @@ mod tests {
         assert_eq!(find(larchsys, "loose").also_in, None, "shown once");
     }
 
-    /// René's registry: foreman {AutoWork, Skills}, gaia {Gaia, NodeApi, node-api-dotnet}, larchsys a scan of
+    /// René's registry: supraman {AutoWork, Skills}, gaia {Gaia, NodeApi, node-api-dotnet}, larchsys a scan of
     /// P:\L that found AutoWork, Gaia and Skills disabled (supervised elsewhere), plus Healthy and Old (disabled).
     fn renes() -> Vec<Workspace> {
         let off = |name: &str| Folder { enabled: false, ..Folder::new(name, format!(r"P:\L\{name}")) };
         let on = |name: &str| Folder::new(name, format!(r"P:\L\{name}"));
-        let foreman = Workspace { home: None, ..Workspace::new("foreman", r"P:\L\AutoWork", vec![on("AutoWork"), on("Skills")]) };
+        let supraman = Workspace { home: None, ..Workspace::new("supraman", r"P:\L\AutoWork", vec![on("AutoWork"), on("Skills")]) };
         let gaia = Workspace::new("gaia", r"P:\L\Gaia", vec![on("Gaia"), Folder { kind: FolderKind::Plain, ..on("NodeApi") }, on("node-api-dotnet")]);
         let larchsys = Workspace::new("larchsys", r"P:\L", vec![off("AutoWork"), off("Gaia"), on("Healthy"), off("Old"), off("Quiet"), off("Skills")]);
-        vec![foreman, gaia, larchsys]
+        vec![supraman, gaia, larchsys]
     }
 
     #[test]
@@ -1067,8 +1067,8 @@ mod tests {
         let known = HashMap::from([(PathBuf::from(r"P:\L\AutoWork.worktrees\m5-64"), Some(PathBuf::from(r"P:\L\AutoWork")))]);
         let sup = Supervised { main_repos: Some(&known), ..Supervised::default() };
         let tree = build(&ws, &sessions, NOW, false, &sup);
-        let (foreman, gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1], &tree.workspaces[2]);
-        assert_eq!(folders(foreman), [f("AutoWork", true, 2), f("Skills", true, 1)]);
+        let (supraman, gaia, larchsys) = (&tree.workspaces[0], &tree.workspaces[1], &tree.workspaces[2]);
+        assert_eq!(folders(supraman), [f("AutoWork", true, 2), f("Skills", true, 1)]);
         assert_eq!(folders(gaia), [f("Gaia", true, 1), f("NodeApi", true, 1), f("node-api-dotnet", true, 0)]);
         assert_eq!(
             folders(larchsys),
@@ -1083,11 +1083,11 @@ mod tests {
         let all = build(&ws, &sessions, NOW, false, &Supervised { disabled_folders: true, ..sup });
         let parked: Vec<(&str, Option<&str>, usize)> =
             all.workspaces[2].repos.iter().filter(|r| !r.enabled && r.listed).map(|r| (r.name.as_str(), r.supervised_in.as_deref(), r.sessions.len())).collect();
-        assert_eq!(parked, [("AutoWork", Some("foreman"), 0), ("Gaia", Some("gaia"), 0), ("Old", None, 1), ("Quiet", None, 0), ("Skills", Some("foreman"), 0)]);
+        assert_eq!(parked, [("AutoWork", Some("supraman"), 0), ("Gaia", Some("gaia"), 0), ("Old", None, 1), ("Quiet", None, 0), ("Skills", Some("supraman"), 0)]);
         let found = crate::search::search(&all, "autowork");
         let hit = |w: &str| found.workspaces.iter().find(|h| h.name == w).and_then(|h| h.repos.iter().find(|r| r.name == "AutoWork")).map(|r| (r.supervised_in.clone(), r.disabled, r.sessions.len()));
-        assert_eq!(hit("larchsys"), Some((Some("foreman".to_string()), false, 0)), "search finds it in larchsys, labelled with its workspace");
-        assert_eq!(hit("foreman"), Some((None, false, 0)));
+        assert_eq!(hit("larchsys"), Some((Some("supraman".to_string()), false, 0)), "search finds it in larchsys, labelled with its workspace");
+        assert_eq!(hit("supraman"), Some((None, false, 0)));
         let quiet = crate::search::search(&all, "quiet");
         assert!(quiet.workspaces[0].repos[0].disabled && quiet.workspaces[0].repos[0].supervised_in.is_none());
     }

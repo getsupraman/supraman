@@ -549,7 +549,7 @@ fn files_holding(dir: &Path, needle: &str) -> Vec<PathBuf> {
 }
 
 /// c4: the secrets reach the script's environment; stderr tails and the gate output are masked; no file
-/// Foreman writes holds them.
+/// Supraman writes holds them.
 #[test]
 fn fire_passes_secrets_to_the_script_and_writes_them_nowhere() {
     let f = fixture();

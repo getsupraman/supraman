@@ -1,4 +1,4 @@
-//! [`supraman_claude::forget_transcript`] is the one write Foreman makes under the claude dir.
+//! [`supraman_claude::forget_transcript`] is the one write Supraman makes under the claude dir.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

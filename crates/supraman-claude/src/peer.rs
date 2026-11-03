@@ -1,5 +1,5 @@
 //! Writing into a session's own message pipe, as another session's `SendMessage` does
-//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Foreman never registers a pipe, a
+//! (`docs/peer-messaging.md`). Read-only on `~/.claude/sessions`: Supraman never registers a pipe, a
 //! `.json` or a `.key` of its own, so a session cannot answer it there (it answers with `sm tell`).
 //!
 //! Registry: `<pid>.json` (`name`, `messagingSocketPath`, `peerProtocol`, `procStart` = the process
@@ -241,7 +241,7 @@ pub fn wrap(body: &str) -> String {
     format!("<cross-session-message from-name=\"{FROM_NAME}\">\n{body}\n{CLOSE_TAG}")
 }
 
-/// The `user` line: no `from` (Foreman has no inbox to name), no mode.
+/// The `user` line: no `from` (Supraman has no inbox to name), no mode.
 pub fn user_line(content: &str, msg_id: &str) -> String {
     serde_json::json!({
         "type": "user",

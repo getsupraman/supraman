@@ -9,7 +9,7 @@
     "ref": "1",
     "qualifiedRef": "m4/1",
     "kind": "task",
-    "title": "supraman-workstate: read API v1 client",
+    "title": "supraman-workman: read API v1 client",
     "status": "in_progress",
     "addedLater": "x"
   },
@@ -19,7 +19,7 @@
       "ref": "autowork",
       "qualifiedRef": "autowork",
       "kind": "project",
-      "title": "Foreman",
+      "title": "Supraman",
       "status": "in_progress"
     },
     {
@@ -31,8 +31,8 @@
       "status": "in_progress"
     }
   ],
-  "intent": "One crate for every WorkState read",
-  "verifyCmd": "cargo test -p supraman-workstate",
+  "intent": "One crate for every Workman read",
+  "verifyCmd": "cargo test -p supraman-workman",
   "riskTags": [
     "auth"
   ],
@@ -67,7 +67,7 @@
       "ref": "1",
       "qualifiedRef": "m4/1",
       "kind": "task",
-      "title": "supraman-workstate: read API v1 client",
+      "title": "supraman-workman: read API v1 client",
       "status": "in_progress",
       "addedLater": "x"
     },
@@ -126,9 +126,9 @@
       "endedAt": null,
       "status": "done",
       "files": [
-        "crates/supraman-workstate/src/lib.rs"
+        "crates/supraman-workman/src/lib.rs"
       ],
-      "verify": "cargo test -p supraman-workstate",
+      "verify": "cargo test -p supraman-workman",
       "redCheck": "dropped the header check: 2 failed",
       "deviations": "none",
       "risks": "none",
@@ -138,7 +138,7 @@
   ],
   "verifications": [
     {
-      "command": "cargo test -p supraman-workstate",
+      "command": "cargo test -p supraman-workman",
       "resultLine": "Passed! 308",
       "passed": true,
       "counts": {
@@ -198,7 +198,7 @@
         "ref": "1",
         "qualifiedRef": "m4/1",
         "kind": "task",
-        "title": "supraman-workstate: read API v1 client",
+        "title": "supraman-workman: read API v1 client",
         "status": "in_progress",
         "addedLater": "x"
       },
@@ -240,7 +240,7 @@
         "ref": "1",
         "qualifiedRef": "m4/1",
         "kind": "task",
-        "title": "supraman-workstate: read API v1 client",
+        "title": "supraman-workman: read API v1 client",
         "status": "in_progress",
         "addedLater": "x"
       },

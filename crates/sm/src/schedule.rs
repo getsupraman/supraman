@@ -623,7 +623,7 @@ fn local_text(t: &DateTime<Local>) -> String {
 }
 
 /// The `claude --bg` a run of `s` stamped `stamp` launches, before its Workman token; `plugin_dir` is
-/// Foreman's plugin, when found. Dry-run prints it and fire launches it.
+/// Supraman's plugin, when found. Dry-run prints it and fire launches it.
 pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, plugin_dir: Option<&Path>) -> Result<LaunchSpec, Failure> {
     let folder = w.folder(&s.folder).ok_or_else(|| no_folder(w, &s.folder))?;
     let prompt = s.action.prompt.as_ref().ok_or_else(|| Failure::Refused(format!("error: schedule {} runs a script alone; it has no session", s.id)))?;

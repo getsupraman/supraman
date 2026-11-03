@@ -1,4 +1,4 @@
-//! Foreman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
+//! Supraman's OAuth 2.1 native client for Workman's `/api`; the contract is Skills `docs/workstate/10-read-api.md`
 //! rule 5 and `14-agent-launch.md` "Minting with OAuth". No token is ever in a message, a log line, a plain-text file
 //! or a `Debug` output.
 
@@ -348,7 +348,7 @@ impl Auth {
     }
 
     /// Registers a fresh client each time: a stale cached one fails on the server's page in the browser,
-    /// where Foreman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
+    /// where Supraman never sees `invalid_client`. Blocks up to 5 minutes: run it off the UI thread.
     pub fn sign_in(&self, origin: &str, browser: &dyn Fn(&str) -> Result<(), String>) -> Result<AuthStatus, AuthError> {
         self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);

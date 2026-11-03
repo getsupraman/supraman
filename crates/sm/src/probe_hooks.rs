@@ -78,7 +78,7 @@ impl Setup {
 
     /// Writes role text version `v` and returns its tag line.
     fn set_role(&self, hex: &str, v: u32) -> Result<String, String> {
-        let text = format!("You are the Foreman m2/2 probe role, version {v} (run {hex}). Follow the user's probe instructions exactly.");
+        let text = format!("You are the Supraman m2/2 probe role, version {v} (run {hex}). Follow the user's probe instructions exactly.");
         fs::write(self.role_file(), format!("{text}\n")).map_err(|e| format!("write role: {e}"))?;
         Ok(role_tag(ROLE, &text))
     }
@@ -367,7 +367,7 @@ fn summary(events: Vec<Event>) -> String {
 /// About 80 KB of plain words per file: ~20k tokens, under the Read tool's per-call cap.
 fn big_text(round: usize, file: usize) -> String {
     const WORDS: [&str; 16] = [
-        "foreman", "probe", "context", "window", "compaction", "session", "hook", "event", "ledger", "worker",
+        "supraman", "probe", "context", "window", "compaction", "session", "hook", "event", "ledger", "worker",
         "controller", "signal", "summary", "turn", "budget", "token",
     ];
     let mut out = String::with_capacity(BIG_LINES * 100);

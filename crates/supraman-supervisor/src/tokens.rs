@@ -6,7 +6,7 @@ use supraman_workman::{Auth, AuthError};
 
 use crate::{RoleToken, TokenProvider};
 
-/// The [`TokenProvider`] of the app and of `sm`: Foreman's OAuth sign-in.
+/// The [`TokenProvider`] of the app and of `sm`: Supraman's OAuth sign-in.
 pub struct AppTokens {
     pub auth: Arc<Auth>,
 }

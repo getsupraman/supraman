@@ -180,7 +180,7 @@ pub struct Loaded {
     pub theme: Theme,
     /// Style keys that set a colour.
     pub applied: usize,
-    /// Keys with a value that is neither a colour nor null, or that Foreman does not know.
+    /// Keys with a value that is neither a colour nor null, or that Supraman does not know.
     pub ignored: Vec<String>,
     pub adjusted: Vec<Adjustment>,
 }
@@ -256,7 +256,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
                     applied += 1;
                 }
             }
-            // known, and nothing Foreman paints
+            // known, and nothing Supraman paints
             "syntax" | "background.appearance" => {}
             _ => {
                 let field = key.replace('.', "_");
@@ -705,7 +705,7 @@ mod tests {
         // null keys keep One Dark's: success
         assert_eq!(s.success, one_dark().status().success);
         // 160 keys: two are skipped on purpose (syntax, background.appearance), the rest set a colour,
-        // are null, or are unknown to Foreman
+        // are null, or are unknown to Supraman
         println!("ignored: {:?}", loaded.ignored);
         assert_eq!(loaded.applied, 97);
         assert!(loaded.ignored.contains(&"version_control_conflict_ours_background".to_string()), "{:?}", loaded.ignored);
@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn the_catalog_lists_bundled_then_files_and_reports_bad_ones() {
-        let home = std::env::temp_dir().join(format!("foreman-themes-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("supraman-themes-{}", std::process::id()));
         let dir = themes_dir(&home);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.json"), r##"{"themes":[{"name":"Bee","style":{"background":"#000000"}},{"name":"Bee 2"}]}"##).unwrap();
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn a_theme_file_is_parsed_again_only_when_it_changes() {
-        let home = std::env::temp_dir().join(format!("foreman-themes-cache-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("supraman-themes-cache-{}", std::process::id()));
         let dir = themes_dir(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("c.json");

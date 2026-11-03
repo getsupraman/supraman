@@ -575,10 +575,10 @@ mod tests {
 
     #[test]
     fn hand_script_passes_only_the_path_and_no_strict_flag() {
-        let config = PathBuf::from(r"C:\Users\o'neil\Foreman\mcp\workstate-hand-alpha-1.json");
+        let config = PathBuf::from(r"C:\Users\o'neil\Supraman\mcp\workstate-hand-alpha-1.json");
         let launch = Launch::Minted { name: "hand-alpha-1".into(), session: "hand-alpha-1".into(), config, notice: None, new_session: None };
         let script = launch.script();
-        let path = "C:\\Users\\o''neil\\Foreman\\mcp\\workstate-hand-alpha-1.json";
+        let path = "C:\\Users\\o''neil\\Supraman\\mcp\\workstate-hand-alpha-1.json";
         assert_eq!(
             script,
             format!(

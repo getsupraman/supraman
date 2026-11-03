@@ -54,7 +54,7 @@ impl Policy {
 pub enum Failure {
     /// Never retried automatically; only Retry clears it.
     TrustNeeded { cwd: PathBuf },
-    /// `--bg` could not reach the background service; [`crate::Supervisor`] asks whether Foreman's
+    /// `--bg` could not reach the background service; [`crate::Supervisor`] asks whether Supraman's
     /// elevation is why, else it counts like [`Failure::Other`].
     DaemonUnreachable(String),
     Other(String),

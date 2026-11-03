@@ -1,4 +1,4 @@
-//! The only code in Foreman that knows the `claude` CLI. This is the read side: list sessions,
+//! The only code in Supraman that knows the `claude` CLI. This is the read side: list sessions,
 //! derive their health, map them onto a workspace's repos — and the write side ([`Claude`]):
 //! launch, stop, rm, resume.
 //!
@@ -35,7 +35,7 @@
 //! threshold keeps B11 alive: m0/2 measured the legitimate no-pid `working` row for ~1.8 s.
 //!
 //! [`Session::supervised_health`] (the Inbox, the fleet panel, `sm roster`) reads B1/B3 without
-//! `waitingFor` on an `fm-…` row as `Idle`: a Foreman session waits on peers, not on the human (m3/8).
+//! `waitingFor` on an `fm-…` row as `Idle`: a Supraman session waits on peers, not on the human (m3/8).
 //!
 //! Every other `kind` (interactive rows carry `status` and `pid`, no `state`):
 //!

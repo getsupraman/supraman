@@ -1,4 +1,4 @@
-//! The relay's files: `<SUPRAMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Foreman drops `{to, body}`
+//! The relay's files: `<SUPRAMAN_HOME>/relay/<workspace>/{inbox,outbox}`. Supraman drops `{to, body}`
 //! into the inbox ([`send`]); the workspace's relay session watches it with `sm inbox` under its
 //! `Monitor` tool ([`InboxWatcher`]) and sends each drop with native `SendMessage`; every message the
 //! relay receives comes back as an outbox file `{from, from_name, body}` ([`read_outbox`]), as does a
@@ -130,7 +130,7 @@ pub struct OutboxMessage {
     /// The sender's address (`uds:…` pipe, opaque), or `relay-notice` for a delivery notice or a
     /// failed `SendMessage`.
     pub from: String,
-    /// The sender's session name: what Foreman routes by (m0/4).
+    /// The sender's session name: what Supraman routes by (m0/4).
     pub from_name: String,
     pub body: String,
     /// Arrival: the file's modification time, Unix epoch milliseconds.
@@ -269,7 +269,7 @@ pub fn ask_states(msgs: &[OutboxMessage], from_name: &str, answered: &BTreeMap<S
         .collect()
 }
 
-/// The questions the human answered from Foreman: `relay/<w>/answered.json`, outbox file name → the
+/// The questions the human answered from Supraman: `relay/<w>/answered.json`, outbox file name → the
 /// answer's first line, so a restart does not offer Approve twice.
 pub const ANSWERED_FILE: &str = "answered.json";
 

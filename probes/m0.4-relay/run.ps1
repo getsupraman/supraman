@@ -92,10 +92,10 @@ try {
     $hex = Hex6
     $targetName = "aw-m0-relay-target-$hex"
     $relayName = "aw-m0-relay-$hex"
-    $nonce = "FOREMAN-RELAY-$(Hex6)$(Hex6)"
+    $nonce = "SUPRAMAN-RELAY-$(Hex6)$(Hex6)"
     Log "scratch $scratch target=$targetName ($TargetMode) relay=$relayName nonce=$nonce"
 
-    $targetPrompt = 'When another session sends you a message, reply to its sender with SendMessage repeating the FOREMAN-RELAY nonce it contains, then wait for more'
+    $targetPrompt = 'When another session sends you a message, reply to its sender with SendMessage repeating the SUPRAMAN-RELAY nonce it contains, then wait for more'
     Push-Location $scratch
     try { $o = & claude --bg --name $targetName --permission-mode $TargetMode $targetPrompt 2>&1 } finally { Pop-Location }
     $names.Add($targetName)

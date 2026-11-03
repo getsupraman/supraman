@@ -288,7 +288,7 @@ fn read_key(store: &dyn SecretStore) -> std::result::Result<Option<Vec<u8>>, Ref
     }
 }
 
-/// René's Approve in the Foreman window, and nothing else (C100): records the approval of schedule `id` as
+/// René's Approve in the Supraman window, and nothing else (C100): records the approval of schedule `id` as
 /// it is now and makes it active. Creates the key on the first approval in this home.
 pub fn approve(home: &Path, store: &dyn SecretStore, workspace: &Workspace, id: &str, now_ms: i64) -> Result<Schedule> {
     let key = {

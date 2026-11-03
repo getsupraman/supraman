@@ -13,7 +13,7 @@ pub struct DesiredState {
     pub workspace: String,
     /// Start/Stop. `false` stops every wanted session that is alive (stop, never rm).
     pub started: bool,
-    /// Names Foreman stopped wanting (`sm unwant`): a live row with one is stopped, never launched or
+    /// Names Supraman stopped wanting (`sm unwant`): a live row with one is stopped, never launched or
     /// resumed. A name wanted again leaves this list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired: Vec<String>,
@@ -257,7 +257,7 @@ impl DesiredState {
         }
     }
 
-    /// The permission mode Foreman launches the wanted session `name` with, if it wants one: what
+    /// The permission mode Supraman launches the wanted session `name` with, if it wants one: what
     /// `supraman_claude::human` needs to know before it writes into that session's pipe.
     pub fn launch_mode(home: &Path, workspace: &str, name: &str) -> Option<String> {
         let desired = Self::load(home, workspace).ok()??;

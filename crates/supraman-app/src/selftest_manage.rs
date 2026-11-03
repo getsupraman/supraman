@@ -498,7 +498,7 @@ fn pumping_open(path: &Path) -> Result<(), String> {
     supraman_ui::open::open(path.as_os_str())
 }
 
-/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Foreman; the
+/// Open folder from the workspace menu while foreground tasks keep arriving, as they do in a working Supraman; the
 /// folder does not exist, so no Explorer opens and the refusal must come back as the action error.
 async fn open_folder(view: &Entity<FleetView>, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let missing = cargo_root().join("target").join("selftest-open-folder-missing");

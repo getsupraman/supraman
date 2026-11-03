@@ -173,7 +173,7 @@ pub fn fire_cmd(args: &[&str], print: bool) -> u8 {
     fired_cmd(args, print, Fired::Task)
 }
 
-/// Run now from the Foreman window: `--home <home> <workspace> <id>`, the path of `sm schedule run`.
+/// Run now from the Supraman window: `--home <home> <workspace> <id>`, the path of `sm schedule run`.
 pub fn run_now_cmd(args: &[&str]) -> u8 {
     fired_cmd(args, false, Fired::RunNow)
 }

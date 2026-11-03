@@ -41,7 +41,7 @@
 //! supervisor on one snapshot, one after another, with one [`Budget`]: it starts at `max_working`
 //! minus this home's live `fm-` rows that are mid-turn ([`mid_turn`]: `status=busy`, not `state=working`), minus
 //! every wanted session still settling after a start ([`Supervisor::starting`]); each launch/resume that succeeds takes a slot.
-//! Another home's rows ([`is_foreign`]) take no slot: two Foremans do not share a budget. Tests
+//! Another home's rows ([`is_foreign`]) take no slot: two Supramans do not share a budget. Tests
 //! `two_started_workspaces_never_exceed_the_shared_budget_together`, `another_homes_busy_sessions_take_no_slot`.
 //!
 //! # Failures

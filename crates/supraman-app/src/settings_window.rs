@@ -606,7 +606,7 @@ impl SettingsView {
                 .child(crate::brand::supraman(40.))
                 .child(crate::brand::wordmark(22., cx))
                 .into_any_element(),
-            row("Supraman", "This build.", value("about-foreman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
+            row("Supraman", "This build.", value("about-supraman", env!("CARGO_PKG_VERSION").to_string()), None, cx),
             row(
                 "Check for updates",
                 "At start and once a day Supraman asks GitHub whether a newer release is published, and shows it above the session list. Off sends no request.",

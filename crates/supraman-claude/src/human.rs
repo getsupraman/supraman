@@ -18,7 +18,7 @@ pub const LEDGER_FILE: &str = "direct.json";
 pub const BURST: f64 = 30.0;
 pub const REFILL_PER_SEC: f64 = 0.5;
 /// Never spend the receiver's last tokens: SendMessage from sessions shares nothing with us, but a
-/// second Foreman process might.
+/// second Supraman process might.
 pub const RESERVE: f64 = 10.0;
 const KEEP_MS: i64 = 61_000;
 
@@ -185,7 +185,7 @@ impl Default for Sender {
 }
 
 impl<L: Liveness> Sender<L> {
-    /// Direct first, when `mode` (how Foreman launched `to`) is known and prompting; else, or on any
+    /// Direct first, when `mode` (how Supraman launched `to`) is known and prompting; else, or on any
     /// failure, the relay. Errs only when both failed.
     pub fn send(&self, home: &Path, workspace: &str, to: &str, mode: Option<&str>, body: &str) -> Result<Sent, SendError> {
         let direct = match mode {

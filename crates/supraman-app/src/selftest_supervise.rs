@@ -24,7 +24,7 @@ use crate::{Mode, supervise};
 pub static RELEASE: AtomicBool = AtomicBool::new(false);
 
 const PROMPT_TARGET: &str = "This is an automated Supraman selftest. Messages will arrive that contain nonces like \
-FOREMAN-DIRECT-1a2b3c01 or FOREMAN-RELAY-1a2b3c. Each time you get one or more of them, run exactly one Bash command: \
+SUPRAMAN-DIRECT-1a2b3c01 or SUPRAMAN-RELAY-1a2b3c. Each time you get one or more of them, run exactly one Bash command: \
 sm tell \"<every nonce you got since your last reply, space-separated>\" and then wait for more. Never use SendMessage. \
 Do nothing else.";
 const DIRECT_SENDS: usize = 3;
@@ -964,7 +964,7 @@ async fn relay_step(
     }
 
     let tag = crate::selftest::hex6();
-    let nonces: Vec<String> = (1..=DIRECT_SENDS).map(|i| format!("FOREMAN-DIRECT-{tag}{i:02}")).collect();
+    let nonces: Vec<String> = (1..=DIRECT_SENDS).map(|i| format!("SUPRAMAN-DIRECT-{tag}{i:02}")).collect();
     let direct_started = Instant::now();
     let mut not_direct = Vec::new();
     for (i, nonce) in nonces.iter().enumerate() {
@@ -998,7 +998,7 @@ async fn relay_step(
     // forced fallback: a registry dir with no entry, so the relay carries it
     let empty = tb.home.join("no-sessions");
     std::fs::create_dir_all(&empty)?;
-    let nonce = format!("FOREMAN-RELAY-{}", crate::selftest::hex6());
+    let nonce = format!("SUPRAMAN-RELAY-{}", crate::selftest::hex6());
     let sent_at = Instant::now();
     let fallback =
         Sender { sessions: Some(empty), ..Sender::default() }.send(&tb.home, w, &target, Some("auto"), &format!("{nonce} ping from the selftest\nsecond line"))?;
@@ -1242,7 +1242,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let w = tb.a.0.as_str();
     let ctrl = workspace_session_name(w);
     own_peer(&ctrl, &tb.a.1).context("the workspace session's registry entry")?;
-    let nonce = format!("FOREMAN-TASKBOX-{}", crate::selftest::hex6());
+    let nonce = format!("SUPRAMAN-TASKBOX-{}", crate::selftest::hex6());
     let outbox = outbox_dir(&tb.home, w)?;
     let decide = inject(&outbox, &ctrl, "decide", &format!("DECIDE: selftest question {nonce} (injected by the selftest)"))?;
     let decide_key = format!("{w}/{decide}");

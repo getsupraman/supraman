@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{Claude, ClaudeError, Result, Session};
 
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(10);
-/// The oldest claude CLI Foreman runs on (docs/RELEASE.md): every CLI fact it relies on (`--bg`, the
+/// The oldest claude CLI Supraman runs on (docs/RELEASE.md): every CLI fact it relies on (`--bg`, the
 /// `agents --json --all` fields, `--plugin-dir`, the peer registry's `peerProtocol 1`) was measured on it.
 pub const MIN_VERSION: (u32, u32, u32) = (2, 1, 308);
 /// The newest claude CLI the release gate passed on. Newer ones run; a newer minor or major warns.

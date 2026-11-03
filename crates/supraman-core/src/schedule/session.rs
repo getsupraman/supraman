@@ -67,7 +67,7 @@ impl std::str::FromStr for Profile {
 }
 
 impl Permissions {
-    /// `--allowedTools`: `always` (Foreman's own, `sm_allowed_tools`), the profile's, then the schedule's. An
+    /// `--allowedTools`: `always` (Supraman's own, `sm_allowed_tools`), the profile's, then the schedule's. An
     /// `edit` run in a run worktree may push that worktree's `branch` and no other; in the checkout it pushes nothing.
     pub fn allowed(&self, always: &[String], run_branch: Option<&str>) -> Vec<String> {
         let profile = self.profile.tools().iter().map(|t| t.to_string());

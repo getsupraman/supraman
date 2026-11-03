@@ -11,7 +11,7 @@ pub struct NeedsYou {
     /// When the supervisor first saw this need (kept across ticks by [`crate::Supervisor`]).
     pub since: Millis,
     pub detail: String,
-    /// `None` for [`NeedsKind::Duplicate`]: which row to keep is the human's call, outside Foreman.
+    /// `None` for [`NeedsKind::Duplicate`]: which row to keep is the human's call, outside Supraman.
     pub action: Option<Remedy>,
 }
 
@@ -28,7 +28,7 @@ pub enum NeedsKind {
     /// A live minted session had no turn for longer than its token's idle window: its next
     /// Workman call gets HTTP 401.
     TokenExpired,
-    /// A live minted session's token is from another Workman server than the one Foreman uses.
+    /// A live minted session's token is from another Workman server than the one Supraman uses.
     OtherServer,
     /// `claude stop` failed on a session that should stop: it keeps running.
     StopFailed,
@@ -40,13 +40,13 @@ pub enum Remedy {
     Attach { id: String },
     /// Clears the name's failure memory; the next tick launches or resumes at once.
     Retry,
-    /// Foreman never changes trust: the human runs `command` in `cwd`, accepts, then presses Retry.
+    /// Supraman never changes trust: the human runs `command` in `cwd`, accepts, then presses Retry.
     RunInTerminal { cwd: PathBuf, command: String },
     /// Goes through Retry ([`crate::Supervisor::retry`]): stops the live row `id`; the supervisor then
     /// resumes it with a freshly minted token in its config file.
     Remint { id: String },
-    /// The background service runs as administrator and Foreman does not: turn Settings → Run
-    /// Foreman as administrator on and restart elevated.
+    /// The background service runs as administrator and Supraman does not: turn Settings → Run
+    /// Supraman as administrator on and restart elevated.
     RestartElevated,
     /// The copy of an adopted session (`from`, its full uuid) failed: Retry tries it again, Start fresh
     /// ([`crate::DesiredState::start_fresh`]) launches a new session instead.

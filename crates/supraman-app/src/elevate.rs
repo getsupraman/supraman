@@ -1,4 +1,4 @@
-//! An elevated `claude --bg` starts the background service elevated, out of an unelevated Foreman's reach.
+//! An elevated `claude --bg` starts the background service elevated, out of an unelevated Supraman's reach.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -82,8 +82,8 @@ mod tests {
 
     #[test]
     fn the_copy_gets_its_home_quoted_and_reads_it_back() {
-        let args = arguments(Path::new(r"C:\Users\o neil\Foreman"), None);
-        assert_eq!(args, r#"--elevated --home "C:\Users\o neil\Foreman""#);
+        let args = arguments(Path::new(r"C:\Users\o neil\Supraman"), None);
+        assert_eq!(args, r#"--elevated --home "C:\Users\o neil\Supraman""#);
         assert_eq!(arguments(Path::new("C:\\fm\\"), Some(42)), r#"--elevated --home "C:\fm" --after 42"#);
         // as the C runtime splits them
         assert_eq!(
