@@ -67,8 +67,9 @@ impl Save {
     pub fn write(self) -> Result<(), String> {
         let _writing = self.pending.writing.lock().unwrap_or_else(|e| e.into_inner());
         let Some(text) = self.pending.newest.lock().unwrap_or_else(|e| e.into_inner()).take() else { return Ok(()) };
-        let fail = |e: &dyn std::fmt::Display| format!("cannot write {}: {e}", self.path.display());
-        write_atomic(&self.path, text.map_err(|e| fail(&e))?).map_err(|e| fail(&e))
+        let path = &self.path;
+        let text = text.map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        write_atomic(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 }
 
