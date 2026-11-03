@@ -65,9 +65,6 @@ pub struct Logger {
 
 pub const LOG_FILE: &str = "supraman.log";
 
-/// An older build's [`LOG_FILE`] in the same folder; [`init_logger`] renames it while there is no [`LOG_FILE`].
-pub const LEGACY_LOG_FILE: &str = "foreman.log";
-
 /// Where a log file rotates: the previous one is kept as `supraman.log.1`, so at most twice this.
 pub const LOG_CAP: u64 = 1024 * 1024;
 
@@ -109,21 +106,10 @@ pub fn is_vsync_race(target: &str, message: &str) -> bool {
 /// Log lines go to `<dir>/`[`LOG_FILE`] (created here) when `dir` is given, never to a console;
 /// without one, to stderr. Call once.
 pub fn init_logger(dir: Option<&Path>) {
-    let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| adopt_legacy_log(dir)));
+    let file = dir.and_then(|dir| std::fs::create_dir_all(dir).ok().map(|_| dir.join(LOG_FILE)));
     let logger = Box::leak(Box::new(Logger { file, write: Mutex::new(()) }));
     log::set_logger(logger).ok();
     log::set_max_level(log::LevelFilter::Info);
-}
-
-/// `<dir>/`[`LOG_FILE`], after renaming [`LEGACY_LOG_FILE`] and its `.1` to it where the new name is free; never deletes.
-fn adopt_legacy_log(dir: &Path) -> PathBuf {
-    for suffix in ["", ".1"] {
-        let (old, new) = (dir.join(format!("{LEGACY_LOG_FILE}{suffix}")), dir.join(format!("{LOG_FILE}{suffix}")));
-        if old.is_file() && !new.exists() {
-            let _ = std::fs::rename(old, new);
-        }
-    }
-    dir.join(LOG_FILE)
 }
 
 /// Every panic goes to the log (message, location, backtrace) before the hook that was set runs; a panic that
@@ -317,26 +303,6 @@ pub fn percentile(sorted: &[f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::is_vsync_race;
-
-    #[test]
-    fn an_older_builds_log_is_renamed_once_and_never_over_a_newer_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let at = |name: &str| dir.path().join(name);
-        let read = |name: &str| std::fs::read_to_string(at(name)).unwrap();
-        std::fs::write(at("foreman.log"), "old\n").unwrap();
-        std::fs::write(at("foreman.log.1"), "older\n").unwrap();
-        assert_eq!(super::adopt_legacy_log(dir.path()), at("supraman.log"));
-        assert_eq!((read("supraman.log"), read("supraman.log.1")), ("old\n".to_string(), "older\n".to_string()));
-        assert!(!at("foreman.log").exists() && !at("foreman.log.1").exists());
-
-        std::fs::write(at("foreman.log"), "stale\n").unwrap();
-        super::adopt_legacy_log(dir.path());
-        assert_eq!((read("supraman.log"), read("foreman.log")), ("old\n".to_string(), "stale\n".to_string()), "both kept");
-
-        let empty = tempfile::tempdir().unwrap();
-        assert_eq!(super::adopt_legacy_log(empty.path()), empty.path().join("supraman.log"));
-        assert_eq!(std::fs::read_dir(empty.path()).unwrap().count(), 0);
-    }
 
     #[test]
     fn the_app_binarys_info_lines_are_kept() {
