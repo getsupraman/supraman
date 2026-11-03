@@ -1,4 +1,5 @@
-//! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`].
+//! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`] and
+//! its agent-session mints behind [`FakeWorkman::enable_sessions`].
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -139,6 +140,7 @@ pub struct FakeWorkman {
     /// Open `/api/stream` connections, past their response head.
     streams: Arc<Mutex<Vec<TcpStream>>>,
     oauth: Arc<Mutex<Option<Arc<FakeAuth>>>>,
+    sessions: Arc<Mutex<Option<Arc<FakeSessions>>>>,
 }
 
 fn read_seen(stream: &TcpStream) -> Option<Seen> {
@@ -179,11 +181,12 @@ impl FakeWorkman {
         let queued: Queued = Arc::default();
         let streams: Arc<Mutex<Vec<TcpStream>>> = Arc::default();
         let oauth: Arc<Mutex<Option<Arc<FakeAuth>>>> = Arc::default();
-        let (table, waiting, log, open, guard) = (routes.clone(), queued.clone(), seen.clone(), streams.clone(), oauth.clone());
+        let sessions: Arc<Mutex<Option<Arc<FakeSessions>>>> = Arc::default();
+        let (table, waiting, log, open, guard, rows) = (routes.clone(), queued.clone(), seen.clone(), streams.clone(), oauth.clone(), sessions.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let (routes, queued, log, open, guard) = (table.clone(), waiting.clone(), log.clone(), open.clone(), guard.clone());
+                let (routes, queued, log, open, guard, rows) = (table.clone(), waiting.clone(), log.clone(), open.clone(), guard.clone(), rows.clone());
                 std::thread::spawn(move || {
                     let Some(seen) = read_seen(&stream) else { return };
                     let (method, target, authorization, body) = (&seen.method, &seen.target, &seen.authorization, &seen.body);
@@ -195,6 +198,10 @@ impl FakeWorkman {
                         && !a.accepts(authorization.as_deref())
                     {
                         answer = Some(a.unauthorized());
+                    }
+                    if answer.is_none() {
+                        let rows = rows.lock().unwrap().clone();
+                        answer = rows.and_then(|r| r.handle(method, target, body));
                     }
                     let keyed = format!("{method} {target}");
                     let answer = answer.or_else(|| {
@@ -227,7 +234,15 @@ impl FakeWorkman {
                 });
             }
         });
-        Self { base, seen, routes, queued, streams, oauth }
+        Self { base, seen, routes, queued, streams, oauth, sessions }
+    }
+
+    /// From now on the fake mints and revokes agent sessions (`POST /api/agent-sessions`,
+    /// `DELETE /api/agent-sessions/{id}`) as Workman 2.3.0 does; queued answers for them are not used.
+    pub fn enable_sessions(&self) -> Arc<FakeSessions> {
+        let sessions = Arc::new(FakeSessions::default());
+        *self.sessions.lock().unwrap() = Some(sessions.clone());
+        sessions
     }
 
     /// From now on the fake is also the OAuth authorization server of its origin, and `/api/*`
@@ -646,4 +661,81 @@ impl FakeAuth {
 /// The query of a redirect `Location`, for tests that play the browser.
 pub fn location_query(location: &str) -> BTreeMap<String, String> {
     form_decode(location.split_once('?').map_or("", |(_, q)| q))
+}
+
+#[derive(Debug, Clone)]
+struct Row {
+    id: String,
+    launched_by: String,
+    token: Option<String>,
+    revoked: bool,
+}
+
+/// Agent-session rows, one per name, by Workman 2.3.0's rules (`SessionStore.Tokens.cs`): a name whose token
+/// still works is refused (409) without `replace`; a revoked one is taken over in its row; another launcher's
+/// name is refused even with `replace`.
+#[derive(Default)]
+pub struct FakeSessions {
+    rows: Mutex<BTreeMap<String, Row>>,
+    minted: Mutex<u64>,
+}
+
+impl FakeSessions {
+    /// Whether `token` still answers: its row holds it and is not revoked.
+    pub fn live(&self, token: &str) -> bool {
+        self.rows.lock().unwrap().values().any(|r| !r.revoked && r.token.as_deref() == Some(token))
+    }
+
+    /// The live token of the session named `name`.
+    pub fn token_of(&self, name: &str) -> Option<String> {
+        self.rows.lock().unwrap().get(name).filter(|r| !r.revoked).and_then(|r| r.token.clone())
+    }
+
+    /// The rows' names, revoked ones too.
+    pub fn names(&self) -> Vec<String> {
+        self.rows.lock().unwrap().keys().cloned().collect()
+    }
+
+    fn handle(&self, method: &str, target: &str, body: &str) -> Option<Answer> {
+        match (method, target) {
+            ("POST", "/api/agent-sessions") => Some(self.mint(body)),
+            ("DELETE", t) => {
+                let id = t.strip_prefix("/api/agent-sessions/")?;
+                let mut rows = self.rows.lock().unwrap();
+                Some(match rows.values_mut().find(|r| r.id == id) {
+                    Some(r) => {
+                        r.revoked = true;
+                        Answer::status(204, "")
+                    }
+                    None => Answer::status(404, r#"{"error":"no such session"}"#),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn mint(&self, body: &str) -> Answer {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+            return Answer::status(400, r#"{"error":"not JSON"}"#);
+        };
+        let (Some(name), Some(launched_by)) = (v["name"].as_str(), v["launchedBy"].as_str()) else {
+            return Answer::status(400, r#"{"error":"name and launchedBy are required"}"#);
+        };
+        let replace = v["replace"].as_bool().unwrap_or(false);
+        let mut rows = self.rows.lock().unwrap();
+        let mut n = self.minted.lock().unwrap();
+        *n += 1;
+        let token = format!("wss_fake_session{n}");
+        let row = rows.entry(name.to_string()).or_insert_with(|| Row { id: format!("s{n}"), launched_by: launched_by.to_string(), token: None, revoked: false });
+        if row.launched_by != launched_by {
+            return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" belongs to another launcher") }).to_string());
+        }
+        if row.token.is_some() && !row.revoked && !replace {
+            let error = format!("the session \"{name}\" already has a live token; pass replace: true to revoke it and mint a new one");
+            return Answer::status(409, serde_json::json!({ "error": error }).to_string());
+        }
+        row.token = Some(token.clone());
+        row.revoked = false;
+        Answer::status(201, serde_json::json!({ "sessionId": row.id, "token": token }).to_string())
+    }
 }
