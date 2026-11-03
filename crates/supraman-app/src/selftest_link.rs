@@ -134,6 +134,10 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     let hint = format!("terminal-link-{tab}");
     move_to(on_link, Modifiers::default(), cx)?;
     until_with(cx, WITHIN, &format!("hovering {TEXT:?} shows {URL}"), |cx| {
+        // the prompt may redraw after the click and move the link: point at where it is now
+        if let Some(&cell) = link_cells(terminal, URL, cx).get(2) {
+            let _ = move_to(cell_center(terminal, cell, cx), Modifiers::default(), cx);
+        }
         let shown = view.read_with(cx, |v, _| v.hits.borrow().contains_key(&hint));
         let link = terminal.read_with(cx, |t, _| t.hovered_link().map(str::to_owned));
         (shown && link.as_deref() == Some(URL)).then_some(())
@@ -149,11 +153,18 @@ async fn steps(view: &Entity<FleetView>, tab: u64, terminal: &Entity<Terminal>, 
     })
     .await?;
 
-    move_to(on_link, Modifiers::default(), cx)?;
+    let now_on_link = |cx: &mut AsyncWindowContext| link_cells(terminal, URL, cx).get(2).map(|&cell| cell_center(terminal, cell, cx)).unwrap_or(on_link);
+    let at = now_on_link(cx);
+    move_to(at, Modifiers::default(), cx)?;
     sleep(cx, Duration::from_millis(150)).await;
     ctrl(true, cx)?;
-    until_with(cx, WITHIN, "Ctrl over the link: a hand", |cx| terminal.read_with(cx, |t, _| t.hand_painted.then_some(()))).await?;
-    click(on_link, Modifiers::control(), cx)?;
+    until_with(cx, WITHIN, "Ctrl over the link: a hand", |cx| {
+        let _ = move_to(now_on_link(cx), Modifiers::control(), cx);
+        terminal.read_with(cx, |t, _| t.hand_painted.then_some(()))
+    })
+    .await?;
+    let at = now_on_link(cx);
+    click(at, Modifiers::control(), cx)?;
     until_with(cx, WITHIN, &format!("Ctrl+click opens {URL}"), |_| (!opened().is_empty()).then_some(())).await?;
     if opened() != [Link::Url(URL.into())] {
         bail!("Ctrl+click opened {:?}, not exactly {URL}", opened());
