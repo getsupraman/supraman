@@ -113,6 +113,9 @@ struct TestHost<'a> {
     slept: Vec<Duration>,
     now: i64,
     gates: Vec<Option<String>>,
+    /// What each `end_dead_session` answers, in order; `Ok` once they run out.
+    ends: VecDeque<Result<(), String>>,
+    ended: usize,
 }
 
 impl<'a> TestHost<'a> {
@@ -121,7 +124,7 @@ impl<'a> TestHost<'a> {
     }
 
     fn at(f: &'a Fixture, now: i64) -> Self {
-        Self { store: &f.store, busy: VecDeque::new(), busy_asked: 0, slept: Vec::new(), now, gates: Vec::new() }
+        Self { store: &f.store, busy: VecDeque::new(), busy_asked: 0, slept: Vec::new(), now, gates: Vec::new(), ends: VecDeque::new(), ended: 0 }
     }
 }
 
@@ -150,7 +153,8 @@ impl Host for TestHost<'_> {
     }
 
     fn end_dead_session(&mut self, _home: &Path, _session: &schedule::LiveSession) -> Result<(), String> {
-        Ok(())
+        self.ended += 1;
+        self.ends.pop_front().unwrap_or(Ok(()))
     }
 }
 
@@ -459,6 +463,41 @@ fn fire_skips_a_missed_start_when_catch_up_is_skip() {
 }
 
 /// A live file under a free lock is a dead run: it is recorded interrupted before the new run starts.
+#[test]
+fn a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up() {
+    let f = fixture();
+    f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
+    fs::create_dir_all(f.live()).unwrap();
+    let session = r#"{"name":"fm-demo-sched-gate-x","id":"abcd1234"}"#;
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":4243,"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
+    let dead = f.live().join("gate.dead.json");
+    let mut host = TestHost::at(&f, 1_000_000);
+    host.ends = VecDeque::from([Err("claude stop abcd1234: unreachable".to_string())]);
+    assert_eq!(fire::recover_if_dead_with(&f.home, "demo", "gate", 1_000_000, &mut host).as_deref(), Some("gate-20261101-070000"));
+    let (outcome, why) = ended(&f.records("gate-20261101-070000"));
+    assert_eq!(outcome, Outcome::Interrupted);
+    assert!(why.ends_with("; claude stop abcd1234: unreachable"), "{why}");
+    assert!(!f.live().join("gate.json").exists() && dead.exists(), "the session is kept for another try");
+
+    assert_eq!(fire::recover_if_dead_with(&f.home, "demo", "gate", 1_000_000 + 59_000, &mut host), None);
+    assert_eq!((host.ended, dead.exists()), (1, true), "not before its time");
+    assert_eq!(fire::recover_if_dead_with(&f.home, "demo", "gate", 1_000_000 + 60_000, &mut host), None);
+    assert_eq!((host.ended, dead.exists()), (2, false), "ended on the second try");
+
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-080000","fm_pid":4243,"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
+    host.ends = (0..5).map(|_| Err("gone".to_string())).collect();
+    let mut at = 2_000_000;
+    fire::recover_if_dead_with(&f.home, "demo", "gate", at, &mut host);
+    while dead.exists() {
+        at += 10 * 60_000;
+        fire::recover_if_dead_with(&f.home, "demo", "gate", at, &mut host);
+        assert!(at < 2_000_000 + 60 * 60_000, "never given up");
+    }
+    assert_eq!(host.ended, 2 + 5, "five tries in all");
+    let log = fs::read_to_string(schedule::fire_log(&f.home)).unwrap();
+    assert!(log.contains("its session fm-demo-sched-gate-x is ended") && log.contains("given up on its session fm-demo-sched-gate-x after 5 tries: gone"), "{log}");
+}
+
 /// A live file whose sm is gone is ended as interrupted, by the next fire and by the window's poll; one whose sm
 /// runs, or whose lock a fire holds, is left alone.
 #[test]

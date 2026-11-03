@@ -86,7 +86,7 @@ fn ledger_path(home: &Path, workspace: &str) -> Result<PathBuf, CoreError> {
 
 /// A missing or broken ledger is an empty one: it only paces.
 fn load(path: &Path, now: i64) -> Ledger {
-    let mut ledger: Ledger = fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let (mut ledger, _): (Ledger, _) = supraman_core::fs::load_json_or_notice(path, "");
     ledger.sent.retain(|e| now - e.at < KEEP_MS && e.at <= now);
     ledger
 }
@@ -97,12 +97,35 @@ fn save(path: &Path, ledger: &Ledger) {
     }
 }
 
-/// Adds one send under the ledger's lock: a second Foreman's sends between our load and save stay.
+/// Adds one send under the ledger's lock: a second Supraman's sends between our load and save stay.
+#[cfg(test)]
 fn record(path: &Path, entry: LedgerEntry) {
-    let _lock = supraman_core::fs::lock_file(&path.with_extension("lock"));
+    let _lock = lock(path).unwrap();
+    append(path, entry);
+}
+
+/// The ledger's lock, held across a send's pacing check, its delivery and its record.
+fn lock(path: &Path) -> Result<fs::File, String> {
+    let at = path.with_extension("lock");
+    supraman_core::fs::lock_file(&at).map_err(|e| format!("cannot lock {}: {e}", at.display()))
+}
+
+fn append(path: &Path, entry: LedgerEntry) {
     let mut ledger = load(path, now_ms());
     ledger.sent.push(entry);
     save(path, &ledger);
+}
+
+/// Why a direct send did not go through; `may_arrive` when the pipe write timed out and can still land.
+struct NotDirect {
+    reason: String,
+    may_arrive: bool,
+}
+
+impl From<String> for NotDirect {
+    fn from(reason: String) -> Self {
+        Self { reason, may_arrive: false }
+    }
 }
 
 /// The receiver's bucket for us after `sent` (oldest first), at `now`.
@@ -154,12 +177,15 @@ impl<L: Liveness> Sender<L> {
     pub fn send(&self, home: &Path, workspace: &str, to: &str, mode: Option<&str>, body: &str) -> Result<Sent, SendError> {
         let direct = match mode {
             Some(m) if accepts_unmoded(m) => self.direct(home, workspace, to, body),
-            Some(m) => Err(format!("{to} runs in {m} mode, which holds Supraman's messages")),
-            None => Err(format!("{to}'s launch mode is not known")),
+            Some(m) => Err(format!("{to} runs in {m} mode, which holds Supraman's messages").into()),
+            None => Err(format!("{to}'s launch mode is not known").into()),
         };
         let reason = match direct {
             Ok(id) => return Ok(Sent { to: to.into(), id: Some(id), route: Route::Direct }),
-            Err(reason) => reason,
+            Err(NotDirect { reason, may_arrive: true }) => {
+                return Err(SendError { direct: reason, relay: "not tried: the direct write may still arrive, and the relay would deliver it twice".into() });
+            }
+            Err(NotDirect { reason, .. }) => reason,
         };
         if let Some(why) = &self.no_relay {
             return Err(SendError { direct: reason, relay: why.clone() });
@@ -170,23 +196,30 @@ impl<L: Liveness> Sender<L> {
         }
     }
 
-    fn direct(&self, home: &Path, workspace: &str, to: &str, body: &str) -> Result<String, String> {
-        let dir = self.sessions.as_deref().ok_or("no home directory to find ~/.claude/sessions in")?;
+    fn direct(&self, home: &Path, workspace: &str, to: &str, body: &str) -> Result<String, NotDirect> {
+        let dir = self.sessions.as_deref().ok_or_else(|| "no home directory to find ~/.claude/sessions in".to_string())?;
         let target = find_session(dir, to, &self.live).map_err(|e| e.to_string())?;
         let path = ledger_path(home, workspace).map_err(|e| e.to_string())?;
+        let _held = lock(&path)?;
         let ledger = load(&path, now_ms());
         let to_them = |l: &Ledger| -> Vec<i64> { l.sent.iter().filter(|e| e.to == to).map(|e| e.at).collect() };
         let wait = wait_for_token(&to_them(&ledger), now_ms());
         if wait > self.max_wait {
-            return Err(format!("paced: {} sent to {to} in the last minute", to_them(&ledger).len()));
+            return Err(format!("paced: {} sent to {to} in the last minute", to_them(&ledger).len()).into());
         }
         if !wait.is_zero() {
             std::thread::sleep(wait);
         }
         let id = new_id();
-        deliver(&target, &wrap(&framed(workspace, body, &id))).map_err(|e: PeerError| e.to_string())?;
-        record(&path, LedgerEntry { to: to.into(), id: id.clone(), at: now_ms() });
-        Ok(id)
+        let delivered = deliver(&target, &wrap(&framed(workspace, body, &id)));
+        if matches!(delivered, Ok(()) | Err(PeerError::Timeout { .. })) {
+            append(&path, LedgerEntry { to: to.into(), id: id.clone(), at: now_ms() });
+        }
+        match delivered {
+            Ok(()) => Ok(id),
+            Err(e @ PeerError::Timeout { .. }) => Err(NotDirect { reason: format!("{e}; it may still arrive"), may_arrive: true }),
+            Err(e) => Err(e.to_string().into()),
+        }
     }
 }
 

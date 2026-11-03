@@ -35,7 +35,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_core::fs::load_json_or_notice`: a JSON state file whose loss is shown to the user as a notice, not an error (stars, dismissals).
 - `supraman_core::fs::append_capped`: an append-only log that rotates to `<file>.1` at a size cap (event logs, `foreman.log`).
 - `supraman_core::prune::prune`: the one retention rule for event logs and relay files left in the home; never a cleanup of your own.
-- `supraman_core::Settings::update`: every change to `settings.toml` (load, edit, save, retried against other writers); `Settings::load_with_notices` when a bad key should be shown.
+- `supraman_core::Settings::update`: every change to `settings.toml` (load, edit, save under `<home>/settings.lock`); `Settings::load_with_notices` when a bad key should be shown.
 - `supraman_core::Settings` sections (`sessions`, `workman`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `supraman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `supraman_workman::secret` re-exports it.
 - `supraman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.

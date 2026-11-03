@@ -107,16 +107,23 @@ pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut 
         }
     };
     if ended == Ended::Exited {
-        return Ok((ended, Output { code, stdout: stdout.joined(), stderr: stderr.joined() }));
+        if let Some(job) = &tree {
+            job.release();
+        }
+    } else {
+        terminate(&mut child, tree.as_ref());
     }
-    terminate(&mut child, tree.as_ref());
-    // A grandchild that survives a `Kill::Child` keeps the pipes open: take what was read by then.
-    let until = Instant::now() + Duration::from_secs(1);
+    // A descendant that outlives the child (claude's background service, a `Kill::Child` survivor) keeps the pipes
+    // open: take what was read by then.
+    let until = Instant::now() + PIPES_SETTLE;
     while !(stdout.0.is_finished() && stderr.0.is_finished()) && Instant::now() < until {
         thread::sleep(Duration::from_millis(10));
     }
-    Ok((ended, Output { code, stdout: stdout.taken(), stderr: stderr.taken() }))
+    Ok((ended, Output { code, stdout: stdout.finish(), stderr: stderr.finish() }))
 }
+
+/// How long the pipes may stay open after the child ended before its output is taken as it stands.
+const PIPES_SETTLE: Duration = Duration::from_secs(1);
 
 /// `git -C <dir> <args>` within [`GIT_TIMEOUT`].
 pub fn git(dir: &Path, args: &[&str]) -> Result<Output, RunError> {
@@ -134,14 +141,13 @@ fn terminate(child: &mut Child, tree: Option<&Job>) {
 struct Drain(thread::JoinHandle<()>, Arc<Mutex<Vec<u8>>>);
 
 impl Drain {
-    fn joined(self) -> String {
+    /// Everything once the pipe closed; else what was read so far, and the reader runs on until it closes.
+    fn finish(self) -> String {
         let Drain(handle, buf) = self;
-        let _ = handle.join();
+        if handle.is_finished() {
+            let _ = handle.join();
+        }
         Drain::text(&buf)
-    }
-
-    fn taken(&self) -> String {
-        Drain::text(&self.1)
     }
 
     fn text(buf: &Mutex<Vec<u8>>) -> String {
@@ -162,7 +168,8 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> Drain {
     Drain(handle, buf)
 }
 
-/// A job object holding one child's tree; closing it leaves the tree running.
+/// A job object holding one child's tree. It kills the tree when its last handle closes, so a tree whose owner
+/// dies goes with it; [`Job::release`] lifts that once the child exited, and its descendants keep running.
 #[cfg(windows)]
 struct Job(windows::Win32::Foundation::HANDLE);
 
@@ -172,12 +179,32 @@ impl Job {
     fn adopt(child: &Child) -> Option<Self> {
         use std::os::windows::io::AsRawHandle as _;
         use windows::Win32::Foundation::HANDLE;
-        use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+        use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE};
         // SAFETY: the job handle is owned by the returned value; the child's handle outlives the call.
         unsafe {
             let job = Job(CreateJobObjectW(None, windows::core::PCWSTR::null()).ok()?);
+            job.limit(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).ok()?;
             AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle())).ok()?;
             Some(job)
+        }
+    }
+
+    fn release(&self) {
+        let _ = self.limit(windows::Win32::System::JobObjects::JOB_OBJECT_LIMIT(0));
+    }
+
+    fn limit(&self, flags: windows::Win32::System::JobObjects::JOB_OBJECT_LIMIT) -> windows::core::Result<()> {
+        use windows::Win32::System::JobObjects::{JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject};
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = flags;
+        // SAFETY: a job handle this value owns, and a struct of the size passed.
+        unsafe {
+            SetInformationJobObject(
+                self.0,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
         }
     }
 
@@ -205,6 +232,8 @@ impl Job {
     fn adopt(_child: &Child) -> Option<Self> {
         None
     }
+
+    fn release(&self) {}
 
     fn terminate(&self) -> bool {
         false
@@ -392,6 +421,67 @@ mod tests {
                 let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
             }
         }
+    }
+
+    /// A child that starts `ping -n 60` with its own pipes (or none) and exits; the pid of ping is in `pid_file`.
+    fn leaves_a_grandchild(pid_file: &Path, own_pipes: bool) -> Command {
+        let redirect = if own_pipes {
+            format!(" -RedirectStandardOutput '{0}.out' -RedirectStandardError '{0}.err'", pid_file.display())
+        } else {
+            String::new()
+        };
+        powershell(&format!(
+            "$p = Start-Process ping -ArgumentList '-n','60','127.0.0.1' -NoNewWindow -PassThru{redirect}; Set-Content -LiteralPath '{}' $p.Id; Write-Output done",
+            pid_file.display()
+        ))
+    }
+
+    fn grandchild(pid_file: &Path) -> u32 {
+        std::fs::read_to_string(pid_file).expect("the grandchild started").trim().parse().unwrap()
+    }
+
+    fn end(pid: u32) {
+        let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
+
+    #[test]
+    fn a_child_that_exits_returns_its_output_while_a_descendant_holds_the_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let started_at = Instant::now();
+        let out = run(&mut leaves_a_grandchild(&pid_file, false), Duration::from_secs(30), Kill::Child).unwrap();
+        let took = started_at.elapsed();
+        end(grandchild(&pid_file));
+        assert_eq!(out.code, Some(0));
+        assert!(out.stdout.lines().any(|l| l.trim() == "done"), "the child's own line, beside what the descendant wrote: {:?}", out.stdout);
+        assert!(took < Duration::from_secs(20), "the call waited for the descendant: {took:?}");
+    }
+
+    #[test]
+    fn a_tree_outlives_a_child_that_exited_and_dies_with_an_owner_that_did_not_release_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = dir.path().join("kept");
+        let out = run(&mut leaves_a_grandchild(&kept, true), Duration::from_secs(30), Kill::Tree).unwrap();
+        assert_eq!(out.code, Some(0), "{out:?}");
+        let kept = grandchild(&kept);
+        assert!(alive(kept), "a descendant of a child that exited keeps running");
+        end(kept);
+
+        let dropped = dir.path().join("dropped");
+        let mut cmd = leaves_a_grandchild(&dropped, true);
+        let mut child = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let job = Job::adopt(&child).expect("a job");
+        child.wait().unwrap();
+        let pid = grandchild(&dropped);
+        assert!(alive(pid));
+        drop(job);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        let left = alive(pid);
+        end(pid);
+        assert!(!left, "the job's last handle closing ends the tree, as when sm dies");
     }
 
     #[test]

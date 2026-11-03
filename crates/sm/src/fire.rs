@@ -131,7 +131,7 @@ pub fn end_dead_session(host: &dyn SessionHost, home: &Path, session: &LiveSessi
     {
         failed.push(e);
     }
-    if let Err(e) = crate::run::remove_config(&home.join("mcp"), &session.name) {
+    if let Err(e) = supraman_supervisor::remove_mcp_config(&home.join("mcp"), &session.name) {
         failed.push(e);
     }
     if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
@@ -305,14 +305,22 @@ fn exit_of(outcome: Outcome) -> u8 {
 }
 
 /// The live file of the run in flight: `schedules/live/<ws>/<id>.json`.
-struct LiveFile {
+struct LiveFile<'h> {
+    home: &'h Path,
     path: PathBuf,
     body: Live,
+    unwritten: bool,
 }
 
-impl LiveFile {
-    fn write(&self) {
-        let _ = supraman_core::fs::write_atomic(&self.path, serde_json::to_vec(&self.body).expect("plain data serializes"));
+impl LiveFile<'_> {
+    /// A write that fails is said once in fire.log: without the file, a dead sm's run is not recovered.
+    fn write(&mut self) {
+        let written = supraman_core::fs::write_atomic(&self.path, serde_json::to_vec(&self.body).expect("plain data serializes"));
+        if let Err(e) = written
+            && !std::mem::replace(&mut self.unwritten, true)
+        {
+            log(self.home, &format!("{}: cannot write the live file {}: {e}", self.body.run, self.path.display()));
+        }
     }
 
     fn stage(&mut self, stage: &str) {
@@ -324,7 +332,7 @@ impl LiveFile {
 /// What the session stage writes through: the run records and the live file.
 struct SessionLog<'r, 'a> {
     rec: &'r mut Recorder<'a>,
-    live: &'r mut LiveFile,
+    live: &'r mut LiveFile<'a>,
 }
 
 impl RunLog for SessionLog<'_, '_> {
@@ -431,8 +439,10 @@ fn fire_inner(req: &Request, host: &mut dyn Host) -> Report {
     let run = rec.run.clone();
     let pid = std::process::id();
     let mut live_file = LiveFile {
+        home,
         path: live.json.clone(),
         body: Live { run: run.clone(), fm_pid: pid, fm_started: process::started(pid), started_at: started_ms, stage: String::new(), session: None },
+        unwritten: false,
     };
     live_file.stage(if s.action.kind == ActionKind::Session { "session" } else { "script" });
     rec.start(started_ms);
@@ -477,6 +487,7 @@ struct Paths {
     queued: PathBuf,
     restart: PathBuf,
     json: PathBuf,
+    dead: PathBuf,
 }
 
 impl Paths {
@@ -486,6 +497,59 @@ impl Paths {
             queued: dir.join(format!("{id}.queued")),
             restart: dir.join(format!("{id}.restart")),
             json: dir.join(format!("{id}.json")),
+            dead: dir.join(format!("{id}.dead.json")),
+        }
+    }
+}
+
+/// The session of a dead run whose stop or revoke failed: `<id>.dead.json`, tried again by [`recover_if_dead`].
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct DeadSession {
+    run: String,
+    session: LiveSession,
+    tries: u32,
+    next_at: i64,
+}
+
+/// How often a dead run's session is tried before it is given up and said in fire.log.
+const DEAD_TRIES: u32 = 5;
+/// The wait before the next try grows by this with each failed one.
+const DEAD_RETRY_MS: i64 = 60_000;
+
+fn keep_dead(home: &Path, live: &Paths, dead: &DeadSession) {
+    let written = supraman_core::fs::write_atomic(&live.dead, serde_json::to_vec(dead).expect("plain data serializes"));
+    if let Err(e) = written {
+        log(home, &format!("{}: cannot keep its session for another try in {}: {e}", dead.run, live.dead.display()));
+    }
+}
+
+/// Tries the kept session of a dead run again once its time came; it goes once ended or after [`DEAD_TRIES`].
+fn retry_dead_session(home: &Path, workspace: &str, id: &str, live: &Paths, now: i64, host: &mut dyn Host) {
+    let Ok(bytes) = fs::read(&live.dead) else {
+        return;
+    };
+    let Ok(mut dead) = serde_json::from_slice::<DeadSession>(&bytes) else {
+        log(home, &format!("{workspace}/{id}: {} is not readable; removed", live.dead.display()));
+        let _ = fs::remove_file(&live.dead);
+        return;
+    };
+    if now < dead.next_at {
+        return;
+    }
+    match host.end_dead_session(home, &dead.session) {
+        Ok(()) => {
+            log(home, &format!("{workspace}/{id} {}: its session {} is ended", dead.run, dead.session.name));
+            let _ = fs::remove_file(&live.dead);
+        }
+        Err(e) if dead.tries + 1 >= DEAD_TRIES => {
+            log(home, &format!("{workspace}/{id} {}: given up on its session {} after {} tries: {e}", dead.run, dead.session.name, dead.tries + 1));
+            let _ = fs::remove_file(&live.dead);
+        }
+        Err(e) => {
+            dead.tries += 1;
+            dead.next_at = now + DEAD_RETRY_MS * i64::from(dead.tries);
+            log(home, &format!("{workspace}/{id} {}: try {} for its session {}: {e}", dead.run, dead.tries, dead.session.name));
+            keep_dead(home, live, &dead);
         }
     }
 }
@@ -524,6 +588,20 @@ fn overlap(live: &Paths, policy: Overlap) -> Result<fs::File, Overlapped> {
 /// lock, is recovered as [`recover_dead_run`] does; the run id when it was.
 pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String> {
     let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
+    if !live.json.exists() && !live.dead.exists() {
+        return None;
+    }
+    recover_if_dead_with(home, workspace, id, supraman_core::time::now_ms(), &mut RealHost::new(home))
+}
+
+/// [`recover_if_dead`] at `now` through `host`; it also tries a dead run's kept session again.
+pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, host: &mut dyn Host) -> Option<String> {
+    let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
+    if live.dead.exists()
+        && let Ok(Some(_lock)) = supraman_core::fs::try_lock_file(&live.lock)
+    {
+        retry_dead_session(home, workspace, id, &live, now, host);
+    }
     let dead: Live = serde_json::from_slice(&fs::read(&live.json).ok()?).ok()?;
     if fm_alive(&dead) {
         return None;
@@ -533,8 +611,7 @@ pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String>
     if still.run != dead.run {
         return None;
     }
-    let now = supraman_core::time::now_ms();
-    recover_dead_run(home, workspace, id, &live, now, &mut RealHost::new(home));
+    recover_dead_run(home, workspace, id, &live, now, host);
     Some(dead.run)
 }
 
@@ -552,21 +629,27 @@ fn recover_dead_run(home: &Path, workspace: &str, id: &str, live: &Paths, now: i
     let Ok(bytes) = fs::read(&live.json) else {
         return;
     };
-    if let Ok(dead) = serde_json::from_slice::<Live>(&bytes) {
-        let mut why = format!("sm (pid {}) ended without finishing the run", dead.fm_pid);
-        if let Some(session) = &dead.session
-            && let Err(e) = host.end_dead_session(home, session)
-        {
-            log(home, &format!("{workspace}/{id} {}: {e}", dead.run));
-            why.push_str(&format!("; {e}"));
+    match serde_json::from_slice::<Live>(&bytes) {
+        Ok(dead) => {
+            let mut why = format!("sm (pid {}) ended without finishing the run", dead.fm_pid);
+            if let Some(session) = &dead.session
+                && let Err(e) = host.end_dead_session(home, session)
+            {
+                log(home, &format!("{workspace}/{id} {}: {e}; tried again later", dead.run));
+                why.push_str(&format!("; {e}"));
+                keep_dead(home, live, &DeadSession { run: dead.run.clone(), session: session.clone(), tries: 1, next_at: now + DEAD_RETRY_MS });
+            }
+            let ended = schedule::runs(home, workspace).is_ok_and(|runs| runs.iter().any(|r| r.run == dead.run && r.ended.is_some()));
+            if !ended {
+                let ms = u64::try_from(now - dead.started_at).unwrap_or(0);
+                let run = dead.run.clone();
+                let record = RunRecord { ts: now, run: dead.run, schedule: id.to_string(), event: RunEvent::Ended { outcome: Outcome::Interrupted, why, tokens: None, ms } };
+                if let Err(e) = schedule::append_run(home, workspace, &record) {
+                    log(home, &format!("{workspace}/{id} {run}: cannot record it as interrupted: {e}"));
+                }
+            }
         }
-        let ended = schedule::runs(home, workspace).is_ok_and(|runs| runs.iter().any(|r| r.run == dead.run && r.ended.is_some()));
-        if !ended {
-            let ms = u64::try_from(now - dead.started_at).unwrap_or(0);
-            let record =
-                RunRecord { ts: now, run: dead.run, schedule: id.to_string(), event: RunEvent::Ended { outcome: Outcome::Interrupted, why, tokens: None, ms } };
-            let _ = schedule::append_run(home, workspace, &record);
-        }
+        Err(e) => log(home, &format!("{workspace}/{id}: the live file {} is not readable ({e}); removed", live.json.display())),
     }
     let _ = fs::remove_file(&live.json);
 }

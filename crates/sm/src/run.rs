@@ -3,7 +3,6 @@
 //! the stop (never rm) and revoke.
 
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -259,7 +258,7 @@ fn end_mint(host: &mut dyn SessionHost, mcp_dir: &Path, name: &str, mint: Option
             failed.push(e);
         }
     }
-    if let Err(e) = remove_config(mcp_dir, name) {
+    if let Err(e) = supraman_supervisor::remove_mcp_config(mcp_dir, name) {
         failed.push(e);
     }
     (!failed.is_empty()).then(|| failed.join("; "))
@@ -272,14 +271,6 @@ pub(crate) fn revoke(tokens: &dyn TokenProvider, minter: &dyn Minter, base: &str
         Ok(Some(_)) => Err(format!("cannot revoke Workman session {session_id}: Supraman is signed in to another server now")),
         Ok(None) => Err(format!("cannot revoke Workman session {session_id}: Supraman is not signed in")),
         Err(e) => Err(format!("cannot revoke Workman session {session_id}: {e}")),
-    }
-}
-
-pub(crate) fn remove_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
-    let file = supraman_claude::mcp_config_path(mcp_dir, name).map_err(|e| format!("cannot delete the Workman config of {name}: {e}"))?;
-    match fs::remove_file(&file) {
-        Err(e) if e.kind() != ErrorKind::NotFound => Err(format!("cannot delete {}: {e}", file.display())),
-        _ => Ok(()),
     }
 }
 

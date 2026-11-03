@@ -341,25 +341,18 @@ impl Settings {
         Ok(path)
     }
 
-    /// Load, `edit`, save, against other writers as `supraman_supervisor::DesiredState::update` does:
-    /// a file changed between the load and the save starts it over (up to 10 times). `edit` may run more than once.
-    pub fn update<T>(home: &Path, mut edit: impl FnMut(&mut Self) -> T) -> Result<(Self, T)> {
+    /// Load, `edit`, save, under `<home>/settings.lock`, so two writers never lose each other's change.
+    pub fn update<T>(home: &Path, edit: impl FnOnce(&mut Self) -> T) -> Result<(Self, T)> {
+        let lock = home.join("settings.lock");
+        let _held = crate::fs::lock_file(&lock).map_err(|e| CoreError::io(&lock, e))?;
         let path = Self::path(home);
-        let mut attempt = 0;
-        loop {
-            let before = read(&path)?;
-            let mut settings = match &before {
-                Some(text) => parse(&path, text)?.0,
-                None => Self::default(),
-            };
-            let out = edit(&mut settings);
-            attempt += 1;
-            if read(&path)? != before && attempt < 10 {
-                continue;
-            }
-            settings.save(home)?;
-            return Ok((settings, out));
-        }
+        let mut settings = match read(&path)? {
+            Some(text) => parse(&path, &text)?.0,
+            None => Self::default(),
+        };
+        let out = edit(&mut settings);
+        settings.save(home)?;
+        Ok((settings, out))
     }
 
     /// The table `key` of another owner, e.g. a plugin's `[gitman]`: `None` when it is absent or not `T`.
@@ -828,21 +821,22 @@ url = "https://workman.example"
     }
 
     #[test]
-    fn update_starts_over_when_another_writer_saved_meanwhile() {
+    fn concurrent_updates_keep_every_writers_change() {
         let home = tempfile::tempdir().unwrap();
-        Settings::default().save(home.path()).unwrap();
-        let mut calls = 0;
-        let (s, ()) = Settings::update(home.path(), |s| {
-            calls += 1;
-            if calls == 1 {
-                let other = Settings { appearance: AppearanceSettings { theme: Some("Other".into()), ..Default::default() }, ..Settings::default() };
-                other.save(home.path()).unwrap();
+        std::thread::scope(|scope| {
+            for i in 0..8 {
+                let home = home.path();
+                scope.spawn(move || {
+                    Settings::update(home, |s| {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        s.sessions.extra_plugin_dirs.push(PathBuf::from(format!("C:/plugins/{i}")));
+                    })
+                    .unwrap()
+                });
             }
-            s.window.left_width = Some(333);
-        })
-        .unwrap();
-        assert_eq!(calls, 2, "the edit ran again on the other writer's file");
-        assert_eq!((s.appearance.theme.as_deref(), s.window.left_width), (Some("Other"), Some(333)));
-        assert_eq!(Settings::load(home.path()).unwrap(), s);
+        });
+        let mut dirs = Settings::load(home.path()).unwrap().sessions.extra_plugin_dirs;
+        dirs.sort();
+        assert_eq!(dirs, (0..8).map(|i| PathBuf::from(format!("C:/plugins/{i}"))).collect::<Vec<_>>());
     }
 }

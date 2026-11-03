@@ -12,12 +12,19 @@ static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
 /// to disk and renamed over `path` (retried while another process holds it open), so a reader never sees
 /// half a file and a crash leaves the old file or the new one.
 pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> io::Result<()> {
+    write_atomic_prepared(path, bytes, |_| Ok(()))
+}
+
+/// [`write_atomic`] that runs `prepare` on the empty temp file before `bytes` go in: a secret's file restricted
+/// to its owner before the secret is written (`supraman_claude::write_mcp_config`).
+pub fn write_atomic_prepared(path: &Path, bytes: impl AsRef<[u8]>, prepare: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
     const ERROR_SHARING_VIOLATION: i32 = 32;
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir)?;
     }
     let tmp = tmp_path(path);
-    let staged = fs::File::create(&tmp).and_then(|mut file| {
+    let staged = fs::File::create(&tmp).map(drop).and_then(|()| prepare(&tmp)).and_then(|()| {
+        let mut file = fs::OpenOptions::new().write(true).open(&tmp)?;
         file.write_all(bytes.as_ref())?;
         file.sync_all()
     });
