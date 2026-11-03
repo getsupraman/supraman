@@ -1,6 +1,6 @@
 //! Zed's icons (`assets/icons`, Lucide-derived, ISC — see `assets/icons/LICENSES`), compiled in and tinted with the text colour.
 
-use gpui::{Hsla, Styled as _, Svg, px, svg};
+use gpui::{Hsla, Svg, prelude::*, px, svg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
