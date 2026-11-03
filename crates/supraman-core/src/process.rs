@@ -342,8 +342,9 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let pid_file = dir.path().join("pid");
             let script = format!(
-                "$p = [System.Diagnostics.Process]::Start('ping', '-n 60 127.0.0.1'); Set-Content -LiteralPath '{}' $p.Id; Start-Sleep 60",
-                pid_file.display()
+                "$p = Start-Process ping -ArgumentList '-n','60','127.0.0.1' -NoNewWindow -PassThru -RedirectStandardOutput '{out}' -RedirectStandardError '{out}.err'; Set-Content -LiteralPath '{pid}' $p.Id; Start-Sleep 60",
+                out = dir.path().join("ping.out").display(),
+                pid = pid_file.display()
             );
             let started_at = Instant::now();
             let err = run(&mut powershell(&script), Duration::from_secs(8), kill).unwrap_err();

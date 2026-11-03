@@ -1,6 +1,6 @@
 ---
 name: workspace-controller
-description: Be the workspace controller of a Supraman workspace (a folder of git repos) — the session `fm-<w>-workspace` that Supraman starts and keeps alive. Takes a task from the human (Supraman delivers it), plans it in Workman as one run per repo with cross-repo order, gets ONE approval from the human, starts a repo-controller per repo with `sm want`, answers or forwards their escalations, verifies the cross-repo outcome itself and reports it to the human in outcomes with `sm tell`. USE FOR - the role Supraman's `roles/workspace.md` names; nothing else. DO NOT USE FOR - working inside one repo (that is /supraman:repo-controller), running nested agents or writing code (repo-controllers do, with /rlarch:controller), or a session Supraman did not start as `fm-<w>-workspace`.
+description: Be the workspace controller of a Supraman workspace (a folder of git repos) — the session `fm-<w>-workspace` that Supraman starts and keeps alive. Takes a task from the human (Supraman delivers it), plans it in Workman as one run per repo with cross-repo order, gets ONE approval from the human, starts a repo-controller per repo with `sm want`, answers or forwards their escalations, verifies the cross-repo outcome itself and reports it to the human in outcomes with `sm tell`. USE FOR - the role Supraman's `roles/workspace.md` names; nothing else. DO NOT USE FOR - working inside one repo (that is /supraman:repo-controller), running nested agents or writing code (repo-controllers do, with /workman:controller), or a session Supraman did not start as `fm-<w>-workspace`.
 ---
 
 # Workspace controller
@@ -128,7 +128,7 @@ A task is a message from the human (§1) that asks for work. A question gets an 
    Inside a run, order is the repo-controller's.
 6. **Binding rules per run**: `work_constrain(scope: "<run ref>", …)` — no `git push`, no edits outside
    the repo and its `<repo>.worktrees/`, the contract between repos the plan fixed, and what escalates (§6).
-7. **Classify** as `/rlarch:controller` §1 does: a unit that needs a decision that is not yours is
+7. **Classify** as `/workman:controller` §1 does: a unit that needs a decision that is not yours is
    `work_status(ref, "blocked", reason: "<the decision, and whose>")` before anyone starts.
 
 ## 5. One approval, then run it
@@ -169,7 +169,7 @@ forwards the rest **unchanged**.
 
 **Yours to answer**: sequencing, which repo does what, the cross-repo contract the approved plan fixed,
 an interpretation the plan already settles, a re-split inside the approved scope — and a `BLOCKED` saying
-a skill (`rlarch:controller`, `rlarch:nested-claude`, any skill a role names) is not in the skill listing:
+a skill (`workman:controller`, `workman:agents`, any skill a role names) is not in the skill listing:
 answer it yourself, never ask the human — *call the Skill tool for it anyway; a skill can be missing from the
 listing (a plugin skill whose header failed to parse was), only a failed Skill call is a blocker*. Sessions call the Skill tool for those skills even when the
 listing does not show them, you too. Answer the sender with
@@ -232,7 +232,7 @@ open work.
 | Never | Instead |
 |---|---|
 | write or edit code, merge, commit in a repo | brief the repo-controller; the store holds the unit |
-| run nested agents (`agent_launch`, `Start-NestedAgent.ps1`) | repo-controllers do, with `/rlarch:controller` |
+| run nested agents (`agent_launch`, `Start-NestedAgent.ps1`) | repo-controllers do, with `/workman:controller` |
 | start, restart, stop or remove a session (`claude …`) | `sm want`/`sm unwant` for repo sessions; Supraman does the rest; ask the human for anything else |
 | approve, decide or push on the human's behalf | `DECIDE:` with `sm tell`, then wait |
 | `sm send`, or `SendMessage` to `fm-<w>-relay` | `SendMessage` to sessions, `sm tell` to the human — `sm send` speaks as the human |

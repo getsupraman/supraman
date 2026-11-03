@@ -33,8 +33,8 @@ pub trait Section: Serialize + DeserializeOwned + Default {
 pub struct SessionSettings {
     /// Most of this home's `fm-` sessions mid-turn at once, across its workspaces.
     pub max_working: usize,
-    /// More plugin dirs every launch gets, as `--plugin-dir` after Foreman's own (e.g. the rlarch plugin
-    /// whose `/rlarch:controller` a repo-controller runs). Edited in the file; the app only shows them.
+    /// More plugin dirs every launch gets, as `--plugin-dir` after Foreman's own (e.g. the workman plugin
+    /// whose `/workman:controller` a repo-controller runs). Edited in the file; the app only shows them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_plugin_dirs: Vec<PathBuf>,
     /// Start elevated (one UAC prompt per start), so Foreman reaches a claude background service an
