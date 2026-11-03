@@ -38,7 +38,7 @@ fn the_workspace_controller_reaches_the_human_with_fm_tell_not_the_relay() {
     assert!(role.contains("you reach the human with `sm tell` (never SendMessage to the relay"));
     assert!(role.contains("announce ready to the human with `sm tell` once"));
     // both shapes of the human's message: Foreman's own frame, and the relay as fallback
-    assert!(skill.contains("<cross-session-message from-name=\"foreman\">` whose first line is `From the human (via Supraman, workspace <w>) [m-<id>]:`"));
+    assert!(skill.contains("<cross-session-message from-name=\"supraman\">` whose first line is `From the human (via Supraman, workspace <w>) [m-<id>]:`"));
     assert!(skill.contains("from-name=\"fm-<w>-relay\">`: the relay carried it"));
     assert!(skill.contains("**both are the human's voice**"));
     let first_line = supraman_claude::human::framed("<w>", "", "m-<id>");

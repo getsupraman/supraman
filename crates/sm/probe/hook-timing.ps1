@@ -20,7 +20,7 @@ for ($i = 0; $i -lt $N; $i++) {
     $p.StandardInput.Write($payload); $p.StandardInput.Close()
     $out = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
     $sw.Stop()
-    if ($p.ExitCode -ne 0 -or -not $out.StartsWith('FOREMAN-ROLE timing v')) { throw "bad run: exit $($p.ExitCode) out '$out'" }
+    if ($p.ExitCode -ne 0 -or -not $out.StartsWith('SUPRAMAN-ROLE timing v')) { throw "bad run: exit $($p.ExitCode) out '$out'" }
     $ms += $sw.Elapsed.TotalMilliseconds
 }
 $s = $ms | Sort-Object

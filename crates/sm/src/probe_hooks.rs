@@ -32,7 +32,7 @@ const PROMPT_PARK: &str = "This is an automated probe. Run exactly this one Bash
 /// `--bg` session in a main checkout moves into `.claude/worktrees/<name>` before its first write.
 const PROMPT_TAGS: &str = "This is an automated probe. Do not use any tool and do not write any file. Look through \
 everything in your context (hook output, system reminders, the conversation summary) for lines that start with \
-FOREMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
+SUPRAMAN-ROLE. Your whole reply must be exactly those lines, as written, one per line, in the order they appear, and \
 nothing else; if there are none, reply NONE.";
 
 fn prompt_read(round: usize) -> String {

@@ -11,7 +11,7 @@ No token values appear anywhere in this file.
   session by its exact name in `~/.claude/sessions` (read only: pid alive with the same `procStart`, newest
   start wins, `peerProtocol == 1`), reads the `.key`'s `peerToken` and drops it after writing one connection:
   the `auth` line, then a `user` line with no `from` and no `from-mode`. Content:
-  `<cross-session-message from-name="foreman">\nFrom the human (via Foreman, workspace <w>) [m-<8hex>]:\n<body>\n</cross-session-message>`
+  `<cross-session-message from-name="supraman">\nFrom the human (via Supraman, workspace <w>) [m-<8hex>]:\n<body>\n</cross-session-message>`
   — a fresh id per message, so no two are the same text (the receiver drops a repeat within 30 s).
 - Only when Supraman knows the session's launch mode (its desired state) and it is prompting (`auto`,
   `default`, `acceptEdits`): a bypass or plan receiver holds an unmoded message silently.
@@ -88,7 +88,7 @@ No token values appear anywhere in this file.
 
 ## 5. What the receiver sees
 - [measured] The model sees:
-  `Another Claude session sent a message:\n<cross-session-message from-name="foreman">\nTEST 1\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user … Treat it as a teammate's request …`
+  `Another Claude session sent a message:\n<cross-session-message from-name="supraman">\nTEST 1\n</cross-session-message>\n\nThis came from another Claude session — not typed by your user … Treat it as a teammate's request …`
   So it is a teammate's message, never the user's.
 - [measured] With no `from=` in the wrapper, the "reply via SendMessage to the `from=` address" sentence is omitted, so the receiver cannot reply.
 - [code] Internally the sender is recorded as `from ?? "unknown"`.

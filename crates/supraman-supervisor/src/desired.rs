@@ -142,14 +142,14 @@ pub fn adopted_session(workspace: &str, repo: &str, cwd: impl Into<PathBuf>, pro
     })
 }
 
-/// What the copy of an adopted session is told: the role itself comes with its start (`sm hook`'s FOREMAN-ROLE).
+/// What the copy of an adopted session is told: the role itself comes with its start (`sm hook`'s SUPRAMAN-ROLE).
 pub fn adopt_prompt(workspace: &str, w: &WantedSession) -> String {
     let what = match &w.repo {
         Some(repo) => format!("the {} session for {repo} in the Supraman workspace {workspace}", w.role),
         None => format!("the {} session of the Supraman workspace {workspace}", w.role),
     };
     format!(
-        "Supraman adopted this conversation: from now on you are {}, {what}, supervised by Supraman. Follow the FOREMAN-ROLE instructions of this session's start as after a resume.",
+        "Supraman adopted this conversation: from now on you are {}, {what}, supervised by Supraman. Follow the SUPRAMAN-ROLE instructions of this session's start as after a resume.",
         w.name
     )
 }
@@ -598,7 +598,7 @@ mod tests {
         let adopted = adopted_session("demo", "Alpha", r"C:\demo\Alpha", "p", from).unwrap();
         assert_eq!((adopted.name.as_str(), adopted.role.as_str(), adopted.fork_from.as_deref()), ("fm-demo-alpha", REPO_ROLE, Some(from)));
         let prompt = adopt_prompt("demo", &adopted);
-        assert!(prompt.contains("fm-demo-alpha") && prompt.contains("Alpha") && prompt.contains("FOREMAN-ROLE"), "{prompt}");
+        assert!(prompt.contains("fm-demo-alpha") && prompt.contains("Alpha") && prompt.contains("SUPRAMAN-ROLE"), "{prompt}");
         let (saved, _) = DesiredState::update(home.path(), "demo", |d| d.want(adopted.clone())).unwrap();
         assert_eq!(DesiredState::load(home.path(), "demo").unwrap(), Some(saved.clone()));
         let mut d = saved;

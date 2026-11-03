@@ -22,7 +22,7 @@ pub const PEER_PROTOCOL: i64 = 1;
 pub const DELIVER_TIMEOUT: Duration = Duration::from_secs(5);
 /// What the receiver shows as the sender's name; its wrapper is only honoured when it re-renders
 /// byte-identical, which `from-name` alone does (measured, m5/4).
-pub const FROM_NAME: &str = "foreman";
+pub const FROM_NAME: &str = "supraman";
 const CLOSE_TAG: &str = "</cross-session-message>";
 /// Under `cfg(test)`, [`deliver`] writes to no other pipe: a test can never reach a live session.
 #[cfg(test)]
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(lines[0], serde_json::json!({"type": "auth", "token": "fixturetoken0001"}));
         assert_eq!(lines[1]["type"], "user");
         assert!(lines[1].get("from").is_none() && !text.contains("from-mode"), "{text}");
-        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(lines[1]["message"]["content"], "<cross-session-message from-name=\"supraman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(text.ends_with('\n'));
     }
 
@@ -513,7 +513,7 @@ mod tests {
         assert!(v.get("from").is_none());
         assert_eq!(v["message"]["role"], "user");
         let content = v["message"]["content"].as_str().unwrap();
-        assert_eq!(content, "<cross-session-message from-name=\"foreman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
+        assert_eq!(content, "<cross-session-message from-name=\"supraman\">\nFrom the human (via Supraman, workspace w):\nhi\n</cross-session-message>");
         assert!(!line.contains("from-mode") && !line.contains("from=\""), "{line}");
         let token = Token("abc123secret".into());
         assert_eq!(format!("{token:?}"), "Token(<redacted>)");

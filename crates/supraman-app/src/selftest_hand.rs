@@ -92,7 +92,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContex
         bail!("`where sm` found `{found}` first, not {}: {text}", sm.display());
     }
     let version = lines.iter().find(|l| l.starts_with("sm ")).copied().ok_or_else(|| anyhow!("`sm --version` printed nothing: {text}"))?;
-    let tag = lines.iter().find(|l| l.starts_with("FOREMAN-ROLE hand v")).copied().ok_or_else(|| anyhow!("SessionStart injected no hand role: {text}"))?;
+    let tag = lines.iter().find(|l| l.starts_with("SUPRAMAN-ROLE hand v")).copied().ok_or_else(|| anyhow!("SessionStart injected no hand role: {text}"))?;
     if !text.contains(&format!("Supraman workspace {WORKSPACE}")) || !text.contains("/supraman:supraman-scheduler") {
         bail!("the hand role is not rendered for {WORKSPACE}: {text}");
     }

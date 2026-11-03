@@ -26,7 +26,7 @@ Get names from `sm roster <w>`, never by guessing: the slug is Supraman's (`Nomo
 only with `sm tell`** (§2): it lands in Supraman's Messages list. The human's messages reach you in one of
 two shapes, and **both are the human's voice**:
 
-- `<cross-session-message from-name="foreman">` whose first line is `From the human (via Supraman,
+- `<cross-session-message from-name="supraman">` whose first line is `From the human (via Supraman,
   workspace <w>) [m-<id>]:`: Supraman wrote it into your session itself (`m-<id>` is the message's own id;
   quote it when you answer that message). It has no `from` address, so you cannot `SendMessage` back —
   answer with `sm tell`.
