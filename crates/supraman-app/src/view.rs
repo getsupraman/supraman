@@ -1562,6 +1562,7 @@ impl FleetView {
     }
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
+        let _stall = supraman_ui::stall::section(SEND_SECTION);
         let Some(c) = &self.compose else {
             return;
         };
@@ -1624,6 +1625,7 @@ impl FleetView {
     }
 
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
+        let _stall = supraman_ui::stall::section(APPROVE_SECTION);
         let w = workspace.to_string();
         self.answer(workspace, file, "approve", cx, move |this, result| match result {
             Ok(_) => this.action_error = None,
@@ -2939,6 +2941,9 @@ const BLINK_PARKED_MAX: Duration = Duration::from_secs(60);
 fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
     next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
 }
+
+pub const SEND_SECTION: &str = "compose send";
+pub const APPROVE_SECTION: &str = "approve";
 
 /// What the human reads when a send did not go through.
 fn not_sent(to: &str, e: &supraman_claude::SendError) -> String {

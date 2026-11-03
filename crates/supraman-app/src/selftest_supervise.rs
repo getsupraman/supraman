@@ -1248,6 +1248,7 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
     let decide_key = format!("{w}/{decide}");
     let reply_key = format!("msg-reply-{decide_key}");
     wait_painted(view, &reply_key, Duration::from_secs(10), cx).await?;
+    supraman_ui::stall::take();
     click(view, &reply_key, cx).await?;
     wait_painted(view, "compose-box", Duration::from_secs(5), cx).await?;
     let open = cx.update(|window, cx| {
@@ -1301,6 +1302,11 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         bail!("answered.json has {saved:?}, not {file} → approve and {decide} → {reply_line:?}");
     }
 
+    let stalls = supraman_ui::stall::take();
+    let held: Vec<String> = stalls.iter().filter(|s| s.what.contains(crate::view::SEND_SECTION) || s.what.contains(crate::view::APPROVE_SECTION)).map(|s| s.to_string()).collect();
+    if !held.is_empty() {
+        bail!("Send or Approve held the UI thread over {} ms: {}", supraman_ui::stall::STALL.as_millis(), held.join("; "));
+    }
     // The Approve click gave the keys to the window: a click in the box takes them back.
     click(view, "compose-text", cx).await?;
     until_compose_focused(view, cx).await?;
@@ -1320,10 +1326,11 @@ async fn task_box_step(tb: &Testbed, transcript: &str, view: &Entity<FleetView>,
         bail!("Escape: box closed={closed}, (relay drops, direct sends) {before:?} → {after:?}, expected 2 direct sends");
     }
     println!(
-        "step t: DECIDE: {decide} → Reply… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → `sent direct [{task_id}]`, box closed, in {ctrl}'s transcript framed as the human's after {} | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked with a reply box open → `answered: approve · sent direct [{approve_id}]`, answered.json has both, in the transcript after {}, no relay drop | typed in the box + Escape → closed, nothing sent",
+        "step t: DECIDE: {decide} → Reply… → box for {w}; {} chars typed (2 lines), Ctrl+Enter → `sent direct [{task_id}]`, box closed, in {ctrl}'s transcript framed as the human's after {} | APPROVE? injected as {file} from {ctrl} → Approve + Reply… shown; Approve clicked with a reply box open → `answered: approve · sent direct [{approve_id}]`, answered.json has both, in the transcript after {}, no relay drop; no UI-thread stall in Send or Approve ({} other stalls meanwhile) | typed in the box + Escape → closed, nothing sent",
         task.chars().count(),
         secs(task_in),
         secs(approve_in),
+        stalls.len(),
     );
     Ok(())
 }
