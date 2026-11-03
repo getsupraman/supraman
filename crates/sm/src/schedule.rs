@@ -643,7 +643,7 @@ pub(crate) fn run_spec(home: &Path, w: &Workspace, s: &Schedule, stamp: &str, pl
         resume_prompt: None,
         fork_from: None,
     };
-    let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into(), "Bash(fm:*)".into()]);
+    let always = plugin_dir.map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
     let config = LaunchConfig {
         mcp_dir: home.join("mcp"),
         plugin_dirs: plugin_dir.map(Path::to_path_buf).into_iter().collect(),
@@ -712,7 +712,7 @@ fn dry_run(registry: &Registry, args: &[&str]) -> Result<(), Failure> {
             println!("  {}", quoted(&arg.to_string_lossy()));
         }
         println!("mcp config: written at fire with the run's minted token; absent when Supraman is not signed in");
-        let always = plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into(), "Bash(fm:*)".into()]);
+        let always = plugin_dir.as_deref().map(sm_allowed_tools).unwrap_or_else(|| vec!["Bash(sm:*)".into()]);
         println!("permissions: profile {} (--permission-mode {})", s.permissions.profile.as_str(), s.permissions.profile.permission_mode());
         let allowed = s.permissions.allowed(&always, s.action.worktree.then(|| schedule::run_branch(&s.id, &stamp)).as_deref());
         println!("  allow: {}", allowed.join("  "));

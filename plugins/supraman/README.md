@@ -11,7 +11,7 @@ The session needs `SUPRAMAN_HOME` (and `FOREMAN_HOME`, which an older `fm` reads
 with) and, for a repo session, `FOREMAN_REPO` in its environment,
 passed as `--settings '{"env":{…}}'` (env on the `claude --bg` process does not reach the session). The app
 writes `roles/{workspace,relay,repo}.md` to `<home>/roles/` at start (`{sm}`/`{home}` filled in) and installs
-`bin/sm.exe` from its own build. Claude Code puts this plugin's `bin/` on the session's PATH, so roles call `sm` by name, with the Bash tool: every launch passes `--allowedTools "Bash(sm:*)" "Bash(<abs sm>:*)"` and, for one release, the same two for `fm` (`bin/fm.exe` is a copy of `sm.exe`, docs/RELEASE.md)
+`bin/sm.exe` from its own build. Claude Code puts this plugin's `bin/` on the session's PATH, so roles call `sm` by name, with the Bash tool: every launch passes `--allowedTools "Bash(sm:*)" "Bash(<abs sm>:*)"`
 (a `PowerShell(…)` rule did not match). `sm send` exits 1 when `FOREMAN_ROLE` is set and non-empty: its drop
 reaches the receiver from `fm-<w>-relay`, the human's voice, so a session reaches another one with `SendMessage` only.
 

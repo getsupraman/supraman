@@ -62,7 +62,6 @@ Supraman\
   supraman.pdb                 symbols and line tables: file:line of each frame of a panic's backtrace in supraman.log
   sm.exe                       the CLI controllers and users run
   smw.exe                      sm with no console window: a schedule's task runs `smw.exe schedule fire …`
-  fm.exe, fmw.exe              copies of sm.exe and smw.exe (see "The fm name" below)
   VERSION                      version, commit, build time (UTC), claude tested / minimum
   SOURCE.txt                   where this build's source is: the tag's (or commit's) tree on GitHub
   THIRD_PARTY.md               the bundled assets and every shipped crate with its licence and source
@@ -72,7 +71,6 @@ Supraman\
     roles\*.md                 role templates
     skills\**
     bin\sm.exe                 the hooks' copy (sm plugin install; the app refreshes it at start)
-    bin\fm.exe                 the same copy under the old name
 ```
 
 The folder is self-contained: it runs from any path, no junction to a repo. Supraman's state stays in
@@ -129,20 +127,6 @@ The selftests run on a hidden desktop of their own (their first line names it, t
 had the focus), so typing at the machine meanwhile is fine. `--visible` (or `SUPRAMAN_SELFTEST_VISIBLE=1`) runs one
 on your desktop to watch it; it can then take your focus and read your held keys.
 
-## The fm name
-
-The CLI is `sm` (`smw` without a console). For one release the old name still works, and every copy runs the same code:
-
-- `plugins\supraman\bin\fm.exe` beside `bin\sm.exe` (`install_hook_exe`): a session started from the previous
-  release runs its hooks through `bin\fm.exe` until it restarts.
-- `sm_allowed_tools` allows `Bash(fm:*)` and the plugin's `bin/fm.exe` next to the `sm` rules, so a session whose
-  prompt, role or skill still says `fm …` runs it without a permission prompt.
-- `fm.exe` and `fmw.exe` beside `sm.exe` and `smw.exe`: a scheduled task registered by the previous release calls
-  `fmw.exe`. The task's definition names `smw.exe` now, so its digest differs and the workspace's next `sync`
-  (Approve, Pause, Resume, Remove) registers it again with `smw.exe`.
-
-All of this is removed in the release after the first one that ships `sm.exe` (its `VERSION` line names it).
-
 ## Updating from a Foreman install
 
 A Foreman install (`C:\Tools\foreman`, home `%APPDATA%\Foreman`) stays where it is: sessions it started keep running
@@ -187,7 +171,7 @@ The banner's **Update** (`crate::updates::install_update`) does the whole update
 5. **Apply** (`supraman_core::install::apply`): waits up to 60 s for the pid (still running: nothing changes, nothing
    restarts), takes `<install>\.update.lock`, reads the old release's `FILES`, then for each file of the new release
    stages `<name>.new` and moves it over the target with `MoveFileExW`. A target that refuses (a running exe: sessions'
-   hooks run `plugins\supraman\bin\sm.exe` and `fm.exe` even while Supraman is closed) is renamed to
+   hooks run `plugins\supraman\bin\sm.exe` even while Supraman is closed) is renamed to
    `<name>.old-<stamp>`, listed in `<install>\.old-files` first, and the new one moved in. If even that rename fails,
    every move so far is undone from the journal and its backups (`<home>\updates\<version>\backup\`), the old
    Supraman restarts, and the next start's banner says why (the last `failed:` line of `apply.log`). Files the old

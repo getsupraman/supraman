@@ -7,13 +7,9 @@ use std::path::{Path, PathBuf};
 
 pub const HOOK_EXE: &str = "sm.exe";
 
-/// A copy of [`HOOK_EXE`] for prompts, skills and sessions that still say `fm`; its end is in docs/RELEASE.md.
-pub const COMPAT_HOOK_EXE: &str = "fm.exe";
-
-/// So `sm` (and `fm`, [`COMPAT_HOOK_EXE`]) never parks: by name on the session's PATH, or by its absolute path.
+/// So `sm` never parks: by name on the session's PATH, or by its absolute path.
 pub fn sm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
-    let rule = |exe: &str| format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(exe)));
-    vec!["Bash(sm:*)".into(), rule(HOOK_EXE), "Bash(fm:*)".into(), rule(COMPAT_HOOK_EXE)]
+    vec!["Bash(sm:*)".into(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(HOOK_EXE)))]
 }
 
 fn is_plugin(dir: &Path) -> bool {
@@ -53,8 +49,8 @@ pub fn find_plugin_dir(exe: &Path) -> Result<PathBuf, String> {
         })
 }
 
-/// Copies `exe` to `<plugin_dir>/bin/sm.exe` and `bin/fm.exe` ([`COMPAT_HOOK_EXE`]), each unless it is
-/// already byte-identical; the path of `sm.exe`, and whether either was copied. A hook may be running
+/// Copies `exe` to `<plugin_dir>/bin/sm.exe` unless it is already byte-identical; the path of `sm.exe`, and
+/// whether it was copied. A hook may be running
 /// the old file, which Windows will not let us overwrite but will let us rename, so the new copy is
 /// written beside it and swapped in by renames; the old one is left as `<name>.old`.
 pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, bool)> {
@@ -67,7 +63,7 @@ pub fn install_hook_exe(plugin_dir: &Path, exe: &Path) -> io::Result<(PathBuf, b
     let bin = plugin_dir.join("bin");
     fs::create_dir_all(&bin)?;
     let bytes = fs::read(exe)?;
-    let copied = place(&bin, HOOK_EXE, &bytes)? | place(&bin, COMPAT_HOOK_EXE, &bytes)?;
+    let copied = place(&bin, HOOK_EXE, &bytes)?;
     Ok((bin.join(HOOK_EXE), copied))
 }
 
@@ -157,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn the_bin_holds_sm_and_the_compatibility_fm() {
+    fn the_bin_holds_only_sm() {
         let dir = tempfile::tempdir().unwrap();
         let plugin = dir.path().join("p");
         plugin_at(&plugin);
@@ -166,23 +162,13 @@ mod tests {
         let (target, _) = install_hook_exe(&plugin, &exe).unwrap();
         let bin = plugin.join("bin");
         assert_eq!(target, bin.join("sm.exe"));
-        assert_eq!(fs::read(bin.join("sm.exe")).unwrap(), b"one");
-        assert_eq!(fs::read(bin.join("fm.exe")).unwrap(), b"one");
-
-        fs::remove_file(bin.join("fm.exe")).unwrap();
-        assert!(install_hook_exe(&plugin, &exe).unwrap().1, "a missing fm.exe alone is copied again");
-        assert_eq!(fs::read(bin.join("fm.exe")).unwrap(), b"one");
-        fs::write(&exe, b"two").unwrap();
-        install_hook_exe(&plugin, &exe).unwrap();
-        assert_eq!((fs::read(bin.join("fm.exe")).unwrap(), fs::read(bin.join("fm.exe.old")).unwrap()), (b"two".to_vec(), b"one".to_vec()));
-        assert_eq!(find_plugin_dir(&bin.join("fm.exe")).unwrap(), plugin, "the compatibility copy finds its plugin");
+        let names: Vec<_> = fs::read_dir(&bin).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["sm.exe"]);
+        assert_eq!(find_plugin_dir(&target).unwrap(), plugin, "the hooks' copy finds its plugin");
     }
 
     #[test]
-    fn allowed_tools_name_sm_and_fm() {
-        assert_eq!(
-            sm_allowed_tools(Path::new(r"C:\x\plugins\supraman")),
-            ["Bash(sm:*)", "Bash(C:/x/plugins/supraman/bin/sm.exe:*)", "Bash(fm:*)", "Bash(C:/x/plugins/supraman/bin/fm.exe:*)"]
-        );
+    fn allowed_tools_name_sm() {
+        assert_eq!(sm_allowed_tools(Path::new(r"C:\x\plugins\supraman")), ["Bash(sm:*)", "Bash(C:/x/plugins/supraman/bin/sm.exe:*)"]);
     }
 }

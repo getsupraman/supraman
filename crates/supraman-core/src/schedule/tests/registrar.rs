@@ -231,7 +231,7 @@ fn a_change_of_the_services_elevation_registers_every_task_again() {
 }
 
 #[test]
-fn the_task_runs_fmw_with_the_home_the_workspace_the_id_and_the_approved_fingerprint() {
+fn the_task_runs_smw_with_the_home_the_workspace_the_id_and_the_approved_fingerprint() {
     let f = fixture();
     let store = MemoryStore::default();
     let s = approved(&f, &store);

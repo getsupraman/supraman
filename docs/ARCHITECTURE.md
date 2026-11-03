@@ -60,7 +60,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `relay` (`send`, `tell`, `inbox_dir`, `outbox_dir`, `InboxWatcher`, …) — the relay's `inbox`/`outbox` files per workspace.
 - `events` (`append_event`, `EventReader`, `role_injection`) — the hook events `sm hook` appends per session.
 - `install::{exe_dir, sm_exe}` — the running exe's folder, where `supraman.exe`, `sm.exe` and `smw.exe` ship side by side, and the `sm.exe` in it; `schedule::smw_exe` and every app and `sm` lookup of either goes through them.
-- `install_hook_exe`, `find_plugin_dir`, `sm_allowed_tools` — placing `sm.exe` and its compatibility copy `fm.exe` (`COMPAT_HOOK_EXE`, docs/RELEASE.md) in the plugin, and the `--allowedTools` rules that keep `sm` from parking (every supervised session and every scheduled run).
+- `install_hook_exe`, `find_plugin_dir`, `sm_allowed_tools` — placing `sm.exe` in the plugin, and the `--allowedTools` rules that keep `sm` from parking (every supervised session and every scheduled run).
 
 ### supraman-ui (`crates/supraman-ui/src/`)
 
