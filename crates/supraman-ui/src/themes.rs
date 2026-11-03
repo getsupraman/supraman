@@ -695,10 +695,8 @@ mod tests {
         assert_eq!(hex(c.terminal_bright_foreground), "#CCCCCC", "falls back to terminal.foreground");
         assert_eq!(hex(loaded.theme.players().local().cursor), "#AEAFAD");
         assert_eq!(loaded.theme.accents().0.len(), 9);
-        // null keys keep One Dark's: success
         assert_eq!(s.success, one_dark().status().success);
-        // 160 keys: two are skipped on purpose (syntax, background.appearance), the rest set a colour,
-        // are null, or are unknown to Supraman
+        // 160 keys: syntax and background.appearance are skipped; the rest set a colour, are null or are unknown.
         println!("ignored: {:?}", loaded.ignored);
         assert_eq!(loaded.applied, 97);
         assert!(loaded.ignored.contains(&"version_control_conflict_ours_background".to_string()), "{:?}", loaded.ignored);
@@ -720,7 +718,7 @@ mod tests {
         let c = palette(&campbell_theme);
         assert_eq!(c.ansi, campbell());
         assert_eq!(hex(c.background), "#181818", "Campbell changes ANSI 0-15 only");
-        assert_eq!(palette(&supraman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell, as before m5/31");
+        assert_eq!(palette(&supraman_dark().theme).ansi, campbell(), "Supraman Dark is One Dark with Campbell");
     }
 
     #[test]
@@ -766,7 +764,6 @@ mod tests {
             assert!(secondary >= SECONDARY_FLOOR, "{}: secondary {secondary}", theme.name);
             assert!(ratio(QUIET * DIMMED) >= 4.5 && ratio(SECONDARY * DIMMED) >= 3., "{}: dimmed", theme.name);
         }
-        // the loaded theme holds every floor
         let mut theme = modern.theme.clone();
         for (key, alpha, floor, on) in FLOORS {
             let color = *floor_color(&mut theme, key);
@@ -813,7 +810,6 @@ mod tests {
                 println!("{}: {what} {got:.2} (floor {floor})", theme.name);
                 assert!(got >= floor, "{}: {what} {got} < {floor}", theme.name);
             }
-            // the mark still shows: its background and its left edge differ from the panel
             assert!(contrast(marked, c.panel_background) > 1.1, "{}: the marked row's background is the panel's", theme.name);
             assert!(contrast(c.border_focused, c.panel_background) >= 3., "{}: the marked row's edge", theme.name);
         }

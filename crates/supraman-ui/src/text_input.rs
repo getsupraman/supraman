@@ -612,7 +612,6 @@ impl TextInput {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |this: &mut Self, _, cx| this.lit(cx)).detach();
         cx.on_blur(&focus_handle, window, |_: &mut Self, _, cx| cx.notify()).detach();
-        // repaints at each blink edge while focused
         let blink = cx.spawn_in(window, async move |this, cx| {
             loop {
                 let wait = this.update_in(cx, |this, window, cx| {
@@ -738,7 +737,6 @@ impl TextInput {
         if let Some(c) = refused {
             cx.emit(InputEvent::Refused(c));
         }
-        // a refused key leaves the selection alone
         if taken.is_empty() && marked.is_none() && (range.is_empty() || refused.is_some()) {
             self.lit(cx);
             return;
@@ -1168,7 +1166,6 @@ impl Element for TextElement {
             style.size.height = line_height.into();
             return (window.request_layout(style, [], cx), ());
         }
-        // as high as the text wraps to at the width it gets, within MIN_ROWS..=MAX_ROWS
         let (shown, runs, font_size) = input.shaping(window, cx);
         let id = window.request_measured_layout(style, move |known, available, window, _| {
             let width = known.width.or(match available.width {
@@ -1224,7 +1221,6 @@ impl Element for TextElement {
             }
             scroll.y = scroll.y.clamp(px(0.), (line_height * rows.max(1) as f32 - height).max(px(0.)));
         } else {
-            // keep the caret inside the box, with a little room on the right
             scroll.y = px(0.);
             let width = bounds.size.width - CARET_ROOM;
             let line_width = lines.first().map_or(px(0.), |l| l.unwrapped_layout.width);
