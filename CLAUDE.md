@@ -43,7 +43,7 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_core::Settings` sections (`sessions`, `workman`, `appearance`, `terminal`, `window`, each a `Section`): a key belongs in its table; another owner's table (a plugin's `[gitman]`) goes through `Settings::section`/`set_section` and survives every save.
 - `supraman_core::secret::{SecretStore, FileStore, MemoryStore, default_store}`: every secret at rest (DPAPI file per key under `<home>/oauth/secrets`); `MemoryStore` in tests; `supraman_workman::secret` re-exports it.
 - `supraman_core::Registry::load_all`: every list of workspaces that must survive one corrupt file (the supervisor); `list` only where one failure should stop the caller.
-- `supraman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Foreman session name starts with `fm-`.
+- `supraman_core::{slugify, validate_name, FM_PREFIX}`: a name as a session-name part; every Supraman session name starts with `fm-`.
 - `supraman_core::{name_char, is_session_name, is_safe_id}` (`slug.rs`): the name rules: a typed character of a `validate_name` name (a name field's filter), a session name safe in a file name (`mcp_config_path`), a session id as a file name (event logs).
 - `supraman_core::{discover, rescan, scan}`, the relay files (`send`, `tell`, `inbox_dir`, `outbox_dir`) and the hook events (`append_event`, `EventReader`): shared by `sm` and the app.
 - `supraman_core::home::{home_from_env, env_home, home_env}` (`HOME_VAR` `SUPRAMAN_HOME`): the Supraman home, `%APPDATA%\Supraman` by default; `env_home` for a hook's or session's home; `home_env` for a child's env. Never read the var yourself.
