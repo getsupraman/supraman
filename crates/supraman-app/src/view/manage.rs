@@ -107,32 +107,13 @@ fn supervised_elsewhere(taken: &[(String, String)]) -> String {
 }
 
 impl FleetView {
-    /// The window is activated after the picker returns, so the keys reach the review whatever Windows gave the activation to.
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         if let Some(path) = self.pick_folder.take() {
             self.begin_add(path, window, cx);
             return;
         }
-        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Add as a Supraman workspace".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = paths.await else {
-                return;
-            };
-            if let Some(path) = paths.into_iter().next() {
-                this.update_in(cx, |this, window, cx| {
-                    window.activate_window();
-                    this.begin_add(path, window, cx);
-                })
-                .ok();
-            }
-        })
-        .detach();
+        supraman_ui::folder_picker::pick_folder("Add as a Supraman workspace", window, cx, |this, path, window, cx| this.begin_add(path, window, cx));
     }
 
     pub fn open_add_menu(&mut self, cx: &mut Context<Self>) {

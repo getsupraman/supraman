@@ -9,6 +9,7 @@ pub mod button;
 pub mod clipped;
 pub mod confirm;
 pub mod details;
+pub mod folder_picker;
 pub mod fonts;
 pub mod hit;
 pub mod hover_card;

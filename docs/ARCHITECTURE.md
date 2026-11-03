@@ -78,6 +78,7 @@ Use these; do not grow a private copy (CLAUDE.md, C56). If none fits, extract on
 - `icon::Icon` — Zed's Lucide icons (`assets/icons`, ISC, `THIRD_PARTY.md`) compiled in and tinted with a colour; `slotted` sizes one for a square slot so outlines and filled marks look one size.
 - `tooltip::{Tooltip, LAST_SHOWN}` — a plain text tooltip; `LAST_SHOWN` is the text last shown, for the selftests.
 - `clipped::{clipped, clipped_with, cut_at}` — a one-line label cut with an ellipsis (at the end or the middle) that carries its whole text as a tooltip while it is cut; `cut_at` is where a cut label was painted.
+- `folder_picker::pick_folder` — the system folder picker; the owner gets the chosen folder after the window is activated again, so keys reach it whatever Windows gave the activation to.
 - `split::SplitPane` — a resizable side-by-side split; the owner keeps and persists the width.
 - `matcher::{find_all, prefix, highlighted, count}` — case-insensitive substring/prefix matching, a result's highlighted label and a count badge.
 - `settings_page::{SettingsPages, SettingsPage, row}` — a settings window's pages, registered by id with a title, an icon and a render fn, and one setting's row.
