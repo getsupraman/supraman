@@ -343,45 +343,48 @@ impl Hands {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::sync::mpsc;
+    use std::cell::Cell;
 
-    use supraman_workman::fake::{FakeAuth, read_request};
+    use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman};
 
     use super::*;
 
     const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+    const MINTS: usize = 12;
 
-    fn fake_workstate(mints: Vec<(u16, &'static str)>) -> (String, mpsc::Receiver<(String, String, String)>, Arc<FakeAuth>) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let oauth = Arc::new(FakeAuth::new(&url));
-        let as_server = oauth.clone();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut mints = mints.into_iter();
-            let mut n = 0;
-            for stream in listener.incoming() {
-                let mut stream = stream.unwrap();
-                let (method, target, auth, body) = read_request(&stream).unwrap();
-                if let Some(answer) = as_server.handle(&method, &target, &body) {
-                    stream.write_all(answer.to_http().as_bytes()).unwrap();
-                    continue;
-                }
-                let (line, auth) = (format!("{method} {target} HTTP/1.1"), auth.unwrap_or_default());
-                let (status, answer) = if line.starts_with("POST") {
-                    n += 1;
-                    mints.next().map(|(s, b)| (s, b.to_string())).unwrap_or((201, format!(r#"{{"sessionId":"h{n}","token":"wss_fake{n}"}}"#)))
-                } else {
-                    (204, String::new())
-                };
-                write!(stream, "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}", answer.len()).unwrap();
-                if tx.send((line, auth, body)).is_err() {
-                    break;
-                }
-            }
-        });
-        (url, rx, oauth)
+    /// The fake's requests past its OAuth server, one at a time as they arrive: (request line, Authorization, body).
+    struct Requests {
+        fake: FakeWorkman,
+        taken: Cell<usize>,
+    }
+
+    impl Requests {
+        fn recv_timeout(&self, timeout: std::time::Duration) -> Result<(String, String, String), ()> {
+            let api = |seen: &[supraman_workman::fake::Seen]| -> Vec<supraman_workman::fake::Seen> {
+                seen.iter().filter(|s| !s.target.starts_with("/connect/") && !s.target.starts_with("/.well-known/")).cloned().collect()
+            };
+            let taken = self.taken.get();
+            let s = api(&self.fake.seen_when(timeout, |seen| api(seen).len() > taken)).into_iter().nth(taken).ok_or(())?;
+            self.taken.set(taken + 1);
+            Ok((format!("{} {} HTTP/1.1", s.method, s.target), s.authorization.unwrap_or_default(), s.body))
+        }
+
+        fn try_recv(&self) -> Result<(String, String, String), ()> {
+            self.recv_timeout(std::time::Duration::ZERO)
+        }
+    }
+
+    /// Each `POST` takes the next of `mints`, then mints `h<n>` with `wss_fake<n>`, n counting every `POST`.
+    fn fake_workstate(mints: Vec<(u16, &'static str)>) -> (String, Requests, Arc<FakeAuth>) {
+        let ids = 1..=mints.len() + MINTS;
+        let fake = FakeWorkman::start(ids.clone().map(|n| (format!("DELETE /api/agent-sessions/h{n}"), Answer::status(204, ""))).collect());
+        let queued = mints.iter().map(|(status, body)| Answer::status(*status, *body));
+        let minted = ids.skip(mints.len()).map(|n| Answer::status(201, format!(r#"{{"sessionId":"h{n}","token":"wss_fake{n}"}}"#)));
+        for answer in queued.chain(minted) {
+            fake.queue("POST /api/agent-sessions", answer);
+        }
+        let oauth = fake.enable_oauth();
+        (fake.base().to_string(), Requests { fake, taken: Cell::new(0) }, oauth)
     }
 
     fn a_repo(cwd: &Path) -> Option<MintRepo> {
@@ -395,7 +398,7 @@ mod tests {
         let home = dir.join("home");
         match url {
             Some(url) => {
-                let auth = crate::tokens::signed_in(&home, url);
+                let auth = crate::test_auth::signed_in(&home, url);
                 (home, auth)
             }
             None => {

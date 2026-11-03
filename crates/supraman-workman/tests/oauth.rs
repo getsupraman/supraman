@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use supraman_core::Settings;
 use supraman_workman::auth::{http_browser, http_browser_with};
-use supraman_workman::fake::{Answer, FakeWorkman, location_query};
+use supraman_workman::fake::{Answer, FakeWorkman, closed_base, location_query};
 use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
 
 fn overview() -> Answer {
@@ -291,9 +291,9 @@ fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_to
     let new = FakeWorkman::start(vec![]);
     new.enable_oauth();
     auth.sign_in(new.base(), &http_browser()).unwrap();
-    // accepts the connection and never answers: the slowest a gone server can be
-    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    revoke_at(dir.path(), old.base(), &format!("http://{}/connect/revoke", silent.local_addr().unwrap()));
+    // the slowest a gone server can be
+    let silent = FakeWorkman::start(vec![("/connect/revoke".into(), Answer::silent())]);
+    revoke_at(dir.path(), old.base(), &format!("{}/connect/revoke", silent.base()));
 
     let signing_out = auth.clone();
     let origin = old.base().to_string();
@@ -310,9 +310,9 @@ fn signing_out_of_an_unreachable_old_server_is_quick_once_and_blocks_no_other_to
     assert_eq!(auth.sign_out(old.base()), Ok(()), "nothing left: no second notice");
     assert!(matches!(auth.status(new.base()), AuthStatus::SignedIn { .. }));
 
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    let closed = closed_base();
     auth.sign_in(old.base(), &http_browser()).unwrap();
-    revoke_at(dir.path(), old.base(), &format!("http://{closed}/connect/revoke"));
+    revoke_at(dir.path(), old.base(), &format!("{closed}/connect/revoke"));
     let started = std::time::Instant::now();
     assert!(auth.sign_out(old.base()).is_err());
     assert!(started.elapsed() < Duration::from_secs(3), "a closed port answers at once: {:?}", started.elapsed());

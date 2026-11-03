@@ -3,7 +3,7 @@ use std::process::Output;
 use std::sync::Arc;
 
 use supraman_workman::auth::{form_decode, http_browser};
-use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman};
+use supraman_workman::fake::{Answer, FakeAuth, FakeWorkman, closed_base};
 use supraman_workman::secret::default_store;
 use supraman_workman::Auth;
 const RUN: &str = "22222222-0000-4000-8000-000000000004";
@@ -181,9 +181,9 @@ fn work_errors_are_one_line_without_the_token() {
     one_line(&["work", "overview", "locked"], "error: Workman answered HTTP 403: insufficient_scope");
     one_line(&["work", "board", "autowork", "backlog"], "error: Workman project 'autowork' has no run 'backlog'");
 
-    let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let out = sm(self::home(&format!("http://{free}"), None).path(), &["work", "overview", "autowork"]);
-    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at http://{free}"));
+    let free = closed_base();
+    let out = sm(self::home(&free, None).path(), &["work", "overview", "autowork"]);
+    assert_eq!(text(&out.stderr).trim_end(), format!("error: not signed in to Workman at {free}"));
 
     let none = tempfile::tempdir().unwrap();
     let out = supraman_core::process::command(env!("CARGO_BIN_EXE_sm"))

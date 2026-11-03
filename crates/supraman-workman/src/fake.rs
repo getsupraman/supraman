@@ -1,6 +1,6 @@
 //! A fake Workman read API on 127.0.0.1 for tests, with its OAuth server behind [`FakeWorkman::enable_oauth`].
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
@@ -43,15 +43,21 @@ pub struct Answer {
     pub bytes: Option<Vec<u8>>,
     /// The body sent in chunks of this many bytes, this long apart: a download that takes a while.
     pub pace: Option<(usize, std::time::Duration)>,
+    /// Read the request, then never answer while the client stays connected.
+    pub silent: bool,
 }
 
 impl Answer {
     pub fn json(body: impl Into<String>) -> Self {
-        Self { status: 200, content_type: "application/json", api: Some("1"), body: body.into(), headers: Vec::new(), bytes: None, pace: None }
+        Self { status: 200, content_type: "application/json", api: Some("1"), body: body.into(), headers: Vec::new(), bytes: None, pace: None, silent: false }
     }
 
     pub fn bytes(bytes: Vec<u8>) -> Self {
         Self { content_type: "application/octet-stream", api: None, bytes: Some(bytes), ..Self::json("") }
+    }
+
+    pub fn silent() -> Self {
+        Self { silent: true, ..Self::json("") }
     }
 
     pub fn paced(self, chunk: usize, every: std::time::Duration) -> Self {
@@ -116,19 +122,23 @@ impl Answer {
 }
 
 type Routes = Arc<Mutex<Vec<(String, Answer)>>>;
+type Queued = Arc<Mutex<HashMap<String, VecDeque<Answer>>>>;
+type Log = Arc<(Mutex<Vec<Seen>>, Condvar)>;
+
+/// `http://127.0.0.1:<port>` of a port just freed: nothing listens there.
+pub fn closed_base() -> String {
+    let port = TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).expect("bind a loopback port").port();
+    format!("http://127.0.0.1:{port}")
+}
 
 pub struct FakeWorkman {
     base: String,
-    seen: Arc<Mutex<Vec<Seen>>>,
+    seen: Log,
     routes: Routes,
+    queued: Queued,
     /// Open `/api/stream` connections, past their response head.
     streams: Arc<Mutex<Vec<TcpStream>>>,
     oauth: Arc<Mutex<Option<Arc<FakeAuth>>>>,
-}
-
-/// One request off `stream`: (method, target, Authorization, body).
-pub fn read_request(stream: &TcpStream) -> Option<(String, String, Option<String>, String)> {
-    read_seen(stream).map(|s| (s.method, s.target, s.authorization, s.body))
 }
 
 fn read_seen(stream: &TcpStream) -> Option<Seen> {
@@ -164,15 +174,16 @@ impl FakeWorkman {
     pub fn start(routes: Vec<(String, Answer)>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a fake Workman");
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen: Log = Arc::default();
         let routes: Routes = Arc::new(Mutex::new(routes));
+        let queued: Queued = Arc::default();
         let streams: Arc<Mutex<Vec<TcpStream>>> = Arc::default();
         let oauth: Arc<Mutex<Option<Arc<FakeAuth>>>> = Arc::default();
-        let (table, log, open, guard) = (routes.clone(), seen.clone(), streams.clone(), oauth.clone());
+        let (table, waiting, log, open, guard) = (routes.clone(), queued.clone(), seen.clone(), streams.clone(), oauth.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(mut stream) = stream else { continue };
-                let (routes, log, open, guard) = (table.clone(), log.clone(), open.clone(), guard.clone());
+                let (routes, queued, log, open, guard) = (table.clone(), waiting.clone(), log.clone(), open.clone(), guard.clone());
                 std::thread::spawn(move || {
                     let Some(seen) = read_seen(&stream) else { return };
                     let (method, target, authorization, body) = (&seen.method, &seen.target, &seen.authorization, &seen.body);
@@ -187,13 +198,19 @@ impl FakeWorkman {
                     }
                     let keyed = format!("{method} {target}");
                     let answer = answer.or_else(|| {
+                        let mut queued = queued.lock().unwrap();
+                        let mut next = |key: &str| queued.get_mut(key).and_then(VecDeque::pop_front);
+                        next(&keyed).or_else(|| next(target))
+                    });
+                    let answer = answer.or_else(|| {
                         let routes = routes.lock().unwrap();
                         let find = |key: &str| routes.iter().find(|(t, _)| t == key).map(|(_, a)| a.clone());
                         find(&keyed).or_else(|| find(target))
                     });
                     let stream_open = answer.is_none() && target == STREAM_TARGET;
                     let answer = answer.unwrap_or_else(|| Answer::status(404, format!(r#"{{"error":"no route {target}"}}"#)));
-                    log.lock().unwrap().push(seen);
+                    log.0.lock().unwrap().push(seen);
+                    log.1.notify_all();
                     if stream_open {
                         let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Workman-Api: 1\r\n\r\n: connected\n\n";
                         if stream.write_all(head.as_bytes()).is_ok() {
@@ -201,11 +218,16 @@ impl FakeWorkman {
                         }
                         return;
                     }
+                    if answer.silent {
+                        let mut sink = [0u8; 64];
+                        while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+                        return;
+                    }
                     let _ = answer.send(&mut stream);
                 });
             }
         });
-        Self { base, seen, routes, streams, oauth }
+        Self { base, seen, routes, queued, streams, oauth }
     }
 
     /// From now on the fake is also the OAuth authorization server of its origin, and `/api/*`
@@ -223,6 +245,11 @@ impl FakeWorkman {
             Some(route) => route.1 = answer,
             None => routes.push((target, answer)),
         }
+    }
+
+    /// `route` (a key as in [`Self::start`]) answers with the answers queued on it, in order, then as before.
+    pub fn queue(&self, route: impl Into<String>, answer: Answer) {
+        self.queued.lock().unwrap().entry(route.into()).or_default().push_back(answer);
     }
 
     /// One SSE frame `data: <data>` to every open stream; how many took it.
@@ -259,7 +286,14 @@ impl FakeWorkman {
     }
 
     pub fn seen(&self) -> Vec<Seen> {
-        self.seen.lock().unwrap().clone()
+        self.seen.0.lock().unwrap().clone()
+    }
+
+    /// [`Self::seen`] once `done` holds of it, or as it is when `timeout` runs out.
+    pub fn seen_when(&self, timeout: Duration, done: impl Fn(&[Seen]) -> bool) -> Vec<Seen> {
+        let (lock, cvar) = &*self.seen;
+        let seen = cvar.wait_timeout_while(lock.lock().unwrap(), timeout, |s| !done(s)).unwrap().0;
+        seen.clone()
     }
 }
 

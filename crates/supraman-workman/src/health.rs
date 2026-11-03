@@ -24,7 +24,7 @@ fn transport(e: &ureq::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{Answer, FakeWorkman};
+    use crate::fake::{Answer, FakeWorkman, closed_base};
 
     const QUICK: Duration = Duration::from_secs(3);
 
@@ -40,14 +40,12 @@ mod tests {
 
     #[test]
     fn a_closed_port_is_connection_refused() {
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        assert_eq!(health(&format!("http://127.0.0.1:{port}/mcp"), QUICK), Err("connection refused".into()));
+        assert_eq!(health(&format!("{}/mcp", closed_base()), QUICK), Err("connection refused".into()));
     }
 
     #[test]
     fn a_server_that_never_answers_is_timed_out() {
-        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/mcp", silent.local_addr().unwrap());
-        assert_eq!(health(&url, Duration::from_millis(300)), Err("timed out".into()));
+        let silent = FakeWorkman::start(vec![("/health".into(), Answer::silent())]);
+        assert_eq!(health(&silent.mcp_url(), Duration::from_millis(300)), Err("timed out".into()));
     }
 }

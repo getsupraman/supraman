@@ -118,7 +118,7 @@ mod tests {
         assert!(out.start_warning("demo").unwrap().contains("without Workman"));
 
         oauth.set_access_ttl(60);
-        let auth = crate::tokens::signed_in(&home, fake.base());
+        let auth = crate::test_auth::signed_in(&home, fake.base());
         assert_eq!(detect(Some(&home), Some(&auth)), WsStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()) });
         assert!(fake.seen().iter().filter(|s| s.target == "/health").all(|s| s.authorization.is_none()), "/health carries no token");
 
@@ -135,8 +135,7 @@ mod tests {
     #[test]
     fn a_closed_port_is_unreachable_before_any_sign_in() {
         let dir = tempfile::tempdir().unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let closed = format!("http://127.0.0.1:{port}");
+        let closed = supraman_workman::fake::closed_base();
         Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..Settings::default() }.save(dir.path()).unwrap();
         let down = detect(Some(dir.path()), None);
         assert_eq!(down, WsStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });

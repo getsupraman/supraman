@@ -572,9 +572,8 @@ mod tests {
     #[test]
     fn an_unreachable_server_is_a_failure() {
         let home = tempfile::tempdir().unwrap();
-        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let source = Source {
-            api: format!("http://127.0.0.1:{closed}"),
+            api: crate::fake::closed_base(),
             repo: REPO.into(),
             keys: Ok(vec![key(1).verifying_key()]),
             running: Version::new(0, 1, 0),

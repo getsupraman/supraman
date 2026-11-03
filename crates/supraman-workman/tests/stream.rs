@@ -1,11 +1,10 @@
 //! The `/api/stream` subscriber against FakeWorkman: frames, a dropped connection, the reconnect with
 //! `Last-Event-ID`, a stop while the server is silent, and the backoff while unreachable.
 
-use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 use async_channel::Receiver;
-use supraman_workman::fake::FakeWorkman;
+use supraman_workman::fake::{FakeWorkman, closed_base};
 use supraman_workman::{Client, Stream, StreamConfig, StreamEvent, StreamSignal};
 
 const TOKEN: &str = "fake-reader-token";
@@ -65,8 +64,7 @@ fn frames_reach_a_subscriber_and_a_dropped_stream_resumes_from_the_last_id() {
 
 #[test]
 fn stream_backs_off_while_unreachable_and_never_says_the_token() {
-    let free = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let client = Client::new(format!("http://{free}"), TOKEN);
+    let client = Client::new(closed_base(), TOKEN);
     // Windows takes ~2 s to refuse a connect to a closed port.
     let config = StreamConfig { connect_timeout: Duration::from_millis(300), ..config() };
     let (stream, rx) = Stream::subscribe_with(&client, config);
