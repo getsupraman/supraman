@@ -25,6 +25,8 @@ const DISMISSED_FILE: &str = "dismissed";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const REDIRECTS: u32 = 5;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// A download that receives nothing for this long has stalled and ends.
+const DOWNLOAD_STALL: Duration = Duration::from_secs(60);
 /// The file in `<home>/updates/<version>/` `sm update apply` writes (docs/RELEASE.md, "How Supraman updates itself").
 pub const APPLY_LOG: &str = "apply.log";
 
@@ -317,24 +319,43 @@ fn fetch(url: &str, zip: &Path, size: u64, running: &Version, cancel: &AtomicBoo
     if res.status() != 200 {
         return Err(format!("{url} answered {}", res.status().as_u16()));
     }
-    let written = (|| {
-        let mut body = res.into_body().into_reader();
-        let mut file = std::fs::File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
+    // the reads run on their own thread, so a stalled connection never keeps Cancel waiting
+    let mut body = res.into_body().into_reader();
+    let (tx, chunks) = std::sync::mpsc::sync_channel::<std::io::Result<Vec<u8>>>(4);
+    std::thread::spawn(move || {
         let mut buf = vec![0u8; 1 << 16];
+        loop {
+            let read = body.read(&mut buf).map(|n| buf[..n].to_vec());
+            let last = !matches!(&read, Ok(chunk) if !chunk.is_empty());
+            if tx.send(read).is_err() || last {
+                break;
+            }
+        }
+    });
+    let written = (|| {
+        let mut file = std::fs::File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
         let mut done = 0u64;
+        let mut heard = std::time::Instant::now();
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Err("the download was cancelled".to_string());
             }
-            let n = body.read(&mut buf).map_err(|e| format!("cannot download {url}: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            done += n as u64;
+            let chunk = match chunks.recv_timeout(Duration::from_millis(200)) {
+                Ok(Ok(chunk)) if chunk.is_empty() => break,
+                Ok(Ok(chunk)) => chunk,
+                Ok(Err(e)) => return Err(format!("cannot download {url}: {e}")),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if heard.elapsed() < DOWNLOAD_STALL => continue,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(format!("cannot download {url}: nothing arrived for {} s", DOWNLOAD_STALL.as_secs()));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(format!("cannot download {url}: the connection ended")),
+            };
+            heard = std::time::Instant::now();
+            done += chunk.len() as u64;
             if done > size {
                 return Err(format!("{url} sends more than the {size} bytes its manifest says"));
             }
-            file.write_all(&buf[..n]).map_err(|e| format!("{}: {e}", part.display()))?;
+            file.write_all(&chunk).map_err(|e| format!("{}: {e}", part.display()))?;
             progress(done, size);
         }
         file.sync_all().map_err(|e| format!("{}: {e}", part.display()))

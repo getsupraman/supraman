@@ -230,7 +230,17 @@ impl MintedSessions {
         Self { path, names: BTreeMap::new() }
     }
 
-    /// A missing file is an empty set.
+    /// Moves a sessions file that cannot be read to `<file>.damaged`, so the next save does not overwrite the only
+    /// record of the sessions it held; the path it went to.
+    pub fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(".damaged");
+        let aside = PathBuf::from(aside);
+        std::fs::rename(path, &aside)?;
+        Ok(aside)
+    }
+
+    /// A missing file is an empty set; a damaged one is an error, for [`Self::set_aside`].
     pub fn load(path: Option<PathBuf>) -> std::io::Result<Self> {
         let names = match &path {
             Some(p) => match std::fs::read_to_string(p) {
@@ -291,6 +301,16 @@ impl MintedSessions {
             .filter(|(_, m)| m.origin.as_deref() != Some(origin.as_str()))
             .map(|(name, m)| (name.clone(), m.origin.clone()))
             .collect()
+    }
+}
+
+/// Deletes `name`'s Workman config under `mcp_dir` (written by `supraman_claude::write_mcp_config`); a file that is
+/// already gone is no error.
+pub fn remove_mcp_config(mcp_dir: &Path, name: &str) -> Result<(), String> {
+    let file = supraman_claude::mcp_config_path(mcp_dir, name).map_err(|e| format!("cannot delete the Workman config of {name}: {e}"))?;
+    match std::fs::remove_file(&file) {
+        Err(e) if e.kind() != ErrorKind::NotFound => Err(format!("cannot delete {}: {e}", file.display())),
+        _ => Ok(()),
     }
 }
 

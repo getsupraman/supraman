@@ -353,9 +353,12 @@ impl Auth {
         self.cancel.store(false, Ordering::SeqCst);
         let origin = api_base(origin);
         let meta = self.discover(&origin)?;
-        let mut known = self.load_known()?;
-        known.servers.insert(origin.clone(), meta.clone());
-        self.save_known(&known)?;
+        {
+            let _lock = self.refresh_lock()?;
+            let mut known = self.load_known()?;
+            known.servers.insert(origin.clone(), meta.clone());
+            self.save_known(&known)?;
+        }
         let client_id = self.register(&meta)?;
 
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| AuthError::BadResponse(format!("cannot listen on the loopback: {e}")))?;

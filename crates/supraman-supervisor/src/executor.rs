@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use supraman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
@@ -180,7 +179,12 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let mut notices = Vec::new();
         let mut minted = MintedSessions::load(path.clone()).unwrap_or_else(|e| {
             let shown = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
-            notices.push(format!("Cannot read {shown} ({e}): the Workman sessions minted before are forgotten"));
+            let kept = match path.as_deref().map(MintedSessions::set_aside) {
+                Some(Ok(aside)) => format!("it is kept as {}", aside.display()),
+                Some(Err(moved)) => format!("it could not be set aside ({moved})"),
+                None => String::new(),
+            };
+            notices.push(format!("Cannot read {shown} ({e}); {kept}: the Workman sessions minted before are not revoked"));
             MintedSessions::empty(path)
         });
         if let Err(e) = minted.adopt_origins(&config.mcp_dir) {
@@ -608,12 +612,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
                     m.session_id
                 ));
             }
-            match supraman_claude::mcp_config_path(&self.config.mcp_dir, &name) {
-                Ok(file) => match std::fs::remove_file(&file) {
-                    Err(e) if e.kind() != ErrorKind::NotFound => self.notices.push(format!("Cannot delete {}: {e}", file.display())),
-                    _ => {}
-                },
-                Err(e) => self.notices.push(format!("Cannot delete the Workman config of {name}: {e}")),
+            if let Err(e) = crate::mint::remove_mcp_config(&self.config.mcp_dir, &name) {
+                self.notices.push(format!("{}{}", e[..1].to_uppercase(), &e[1..]));
             }
             self.save_minted();
         }
@@ -1241,6 +1241,21 @@ mod tests {
             .with_repo_of(fake_repo_of)
             .with_daemon_check(|| None);
         (sup, minter)
+    }
+
+    #[test]
+    fn a_damaged_sessions_file_is_set_aside_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, _) = minting_from(dir.path(), "{not json");
+        let notices = sup.take_notices();
+        assert!(notices.iter().any(|n| n.contains("demo.sessions.json.damaged")), "{notices:?}");
+        let path = MintedSessions::path(dir.path(), "demo");
+        let mut aside = path.as_os_str().to_owned();
+        aside.push(".damaged");
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{not json");
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 10 * SECOND);
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{not json", "a later save leaves it");
     }
 
     #[test]

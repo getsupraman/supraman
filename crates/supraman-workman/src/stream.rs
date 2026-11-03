@@ -1,5 +1,6 @@
 //! `GET /api/stream`. An event means "re-read"; `Connected` after a `Lost` means "re-read everything", since
 //! frames sent in between are gone. SSE as the WHATWG spec reads it, except `retry:`: the backoff is ours.
+//! Its own HTTP/1.1 reader, not `http_agent`: [`Stream::stop`] needs short per-read timeouts, which ureq lacks.
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -133,27 +134,30 @@ impl Worker {
 
     fn connect(&mut self, backoff: &mut Duration) -> End {
         let base = self.client.base().to_string();
-        let (tls, rest) = match (base.strip_prefix("http://"), base.strip_prefix("https://")) {
-            (Some(rest), _) => (false, rest),
-            (_, Some(rest)) => (true, rest),
+        let origin = supraman_core::url::origin(&base);
+        let prefix = base.strip_prefix(origin.as_str()).unwrap_or_default().trim_end_matches('/').to_string();
+        let (tls, authority) = match (origin.strip_prefix("http://"), origin.strip_prefix("https://")) {
+            (Some(authority), _) => (false, authority),
+            (_, Some(authority)) => (true, authority),
             _ => return End::Lost(format!("{base} is not http or https")),
         };
         let token = match self.client.bearer() {
             Ok(token) => token,
             Err(e) => return End::Lost(e.to_string()),
         };
-        let (authority, prefix) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
-        let prefix = if prefix.is_empty() { String::new() } else { format!("/{}", prefix.trim_end_matches('/')) };
         let host = authority.rsplit_once(':').filter(|(_, p)| p.parse::<u16>().is_ok()).map_or(authority, |(h, _)| h);
-        let dial = if authority.contains(':') { authority.to_string() } else { format!("{authority}:{}", if tls { 443 } else { 80 }) };
-        let addr = match dial.to_socket_addrs().map(|mut a| a.next()) {
-            Ok(Some(addr)) => addr,
-            Ok(None) => return End::Lost(format!("{authority} has no address")),
+        let dial = if authority.ends_with(']') || !authority.contains(':') { format!("{authority}:{}", if tls { 443 } else { 80 }) } else { authority.to_string() };
+        let addrs: Vec<_> = match dial.to_socket_addrs() {
+            Ok(addrs) => addrs.collect(),
             Err(e) => return End::Lost(format!("{authority}: {e}")),
         };
-        let tcp = match TcpStream::connect_timeout(&addr, self.config.connect_timeout) {
-            Ok(s) => s,
-            Err(e) => return End::Lost(format!("{base} is unreachable ({e})")),
+        if addrs.is_empty() {
+            return End::Lost(format!("{authority} has no address"));
+        }
+        let mut refused = None;
+        let tcp = addrs.iter().find_map(|addr| TcpStream::connect_timeout(addr, self.config.connect_timeout).map_err(|e| refused = Some(e)).ok());
+        let Some(tcp) = tcp else {
+            return End::Lost(format!("{base} is unreachable ({})", refused.map(|e| e.to_string()).unwrap_or_default()));
         };
         let _ = tcp.set_read_timeout(Some(self.config.connect_timeout));
         let mut socket = if tls {

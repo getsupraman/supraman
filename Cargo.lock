@@ -5181,6 +5181,7 @@ name = "sm"
 version = "0.1.5"
 dependencies = [
  "chrono",
+ "serde",
  "serde_json",
  "supraman-claude",
  "supraman-core",

@@ -143,15 +143,13 @@ pub fn workstate_mcp_config(url: &str, token: &str, headers: &[(&str, String)]) 
     .to_string()
 }
 
-/// Writes `<dir>/workstate-<agent>.json` with `headers` beside the `Authorization` one. The file is
-/// created empty, restricted to the current user (Windows: inheritance removed, the user alone granted
-/// full control; unix: 0600), and only then filled, so the token is never readable by anyone else.
+/// Writes `<dir>/workstate-<agent>.json` with `headers` beside the `Authorization` one. Its new content is
+/// staged in a file restricted to the current user (Windows: inheritance removed, the user alone granted full
+/// control; unix: 0600) before the token goes in, then renamed over the old one, so the token is never readable
+/// by anyone else and a session reading its config never sees it empty.
 pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers: &[(&str, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(&path, b"")?;
-    restrict_to_owner(&path)?;
-    std::fs::write(&path, workstate_mcp_config(url, token, headers))?;
+    supraman_core::fs::write_atomic_prepared(&path, workstate_mcp_config(url, token, headers), restrict_to_owner)?;
     Ok(path)
 }
 
