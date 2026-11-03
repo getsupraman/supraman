@@ -2651,7 +2651,12 @@ fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Durati
 }
 
 fn powershell(args: Vec<String>) -> util::shell::Shell {
-    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().into(), args, title_override: None }
+    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().into(), args: powershell_args(args), title_override: None }
+}
+
+/// The policy is the process's own: a `claude.ps1` first on PATH runs under a Restricted machine policy.
+pub(crate) fn powershell_args(args: Vec<String>) -> Vec<String> {
+    ["-ExecutionPolicy".to_string(), "Bypass".into()].into_iter().chain(args).collect()
 }
 
 fn stale_tabs(tabs: &[Tab], elsewhere: &[(String, Option<String>)]) -> Vec<u64> {
