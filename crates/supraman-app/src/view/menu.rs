@@ -92,7 +92,7 @@ pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<M
     if let Some(home) = &node.home {
         items.extend([
             item("open-folder", "Open folder", MenuAction::OpenFolder(home.clone())),
-            item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: home.clone(), title: format!("{} · {w}", supraman_core::paths::terminal_powershell()) }),
+            item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: home.clone(), title: format!("{} · {w}", supraman_core::paths::terminal_powershell().name) }),
         ]);
     }
     items.push(item("details", "Details", MenuAction::Details(MenuTarget::Workspace(w.clone()))));
@@ -181,7 +181,7 @@ pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {
     }
     items.extend(new_task_items(workspace, Some(&repo.path)));
     items.extend([
-        item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: repo.path.clone(), title: title(supraman_core::paths::terminal_powershell()) }),
+        item("open-terminal", "Open terminal here", MenuAction::OpenTerminal { cwd: repo.path.clone(), title: title(supraman_core::paths::terminal_powershell().name) }),
         item("open-folder", "Open folder", MenuAction::OpenFolder(repo.path.clone())),
     ]);
     let (key, label) = if repo.enabled { ("disable", "Disable") } else { ("enable", "Enable") };

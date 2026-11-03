@@ -2206,7 +2206,7 @@ impl FleetView {
     }
 
     pub fn new_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> u64 {
-        let title = format!("{} {}", supraman_core::paths::terminal_powershell(), self.next_tab_id);
+        let title = format!("{} {}", supraman_core::paths::terminal_powershell().name, self.next_tab_id);
         let cwd = self.new_shell_cwd();
         self.open_tab(title, TabKind::Shell, powershell(self.shell_args.clone()), cwd, window, cx)
     }
@@ -2651,7 +2651,7 @@ fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Durati
 }
 
 fn powershell(args: Vec<String>) -> util::shell::Shell {
-    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().into(), args: powershell_args(args), title_override: None }
+    util::shell::Shell::WithArguments { program: supraman_core::paths::terminal_powershell().path.to_string_lossy().into_owned(), args: powershell_args(args), title_override: None }
 }
 
 /// The policy is the process's own: a `claude.ps1` first on PATH runs under a Restricted machine policy.

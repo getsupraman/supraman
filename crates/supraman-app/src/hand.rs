@@ -971,7 +971,7 @@ mod tests {
     #[cfg(windows)]
     fn shells() -> Vec<&'static str> {
         let mut shells = vec!["powershell"];
-        if supraman_core::paths::terminal_powershell() == "pwsh" {
+        if supraman_core::paths::terminal_powershell().name == "pwsh" {
             shells.push("pwsh");
         }
         shells

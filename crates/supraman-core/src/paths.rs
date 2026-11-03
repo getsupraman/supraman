@@ -219,21 +219,70 @@ pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option
     })
 }
 
-/// The PowerShell a terminal tab runs: `pwsh` when a `PATH` folder holds it with a `PATHEXT` extension, else Windows PowerShell's `powershell`.
-pub fn powershell(path: &std::ffi::OsStr, pathext: &str) -> &'static str {
-    let exts: Vec<String> = pathext.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_ascii_lowercase).collect();
-    let found = std::env::split_paths(path).filter(|dir| !dir.as_os_str().is_empty()).any(|dir| exts.iter().any(|ext| dir.join(format!("pwsh{ext}")).is_file()));
-    if found { "pwsh" } else { "powershell" }
+/// A PowerShell to start: its absolute `path`, and its short `name` (`pwsh` or `powershell`) for a tab's title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PowerShell {
+    pub path: PathBuf,
+    pub name: &'static str,
+    /// An App Execution Alias: the process it starts is no descendant of its caller, so a job object misses it.
+    pub alias: bool,
 }
 
-/// [`powershell`] for this process's `PATH` and `PATHEXT`, looked up once.
-pub fn terminal_powershell() -> &'static str {
-    static SHELL: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+/// Windows PowerShell under `system_root` (`%SystemRoot%`, `C:\Windows` when unset).
+pub fn windows_powershell(system_root: Option<&std::ffi::OsStr>) -> PowerShell {
+    let root = system_root.filter(|r| !r.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    PowerShell { path: root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe"), name: "powershell", alias: false }
+}
+
+/// The first `PATH` folder's `pwsh` with a `PATHEXT` extension, else [`windows_powershell`]; never a bare name.
+pub fn powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
+    let exts: Vec<String> = pathext.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_ascii_lowercase).collect();
+    let pwsh = std::env::split_paths(path)
+        .filter(|dir| !dir.as_os_str().is_empty() && dir.is_absolute())
+        .find_map(|dir| exts.iter().map(|ext| dir.join(format!("pwsh{ext}"))).find(|file| file.is_file()));
+    match pwsh {
+        Some(path) => PowerShell { alias: is_app_alias(&path), path, name: "pwsh" },
+        None => windows_powershell(system_root),
+    }
+}
+
+/// [`powershell`], with Windows PowerShell in place of a pwsh alias: for a child whose tree a timeout kills.
+pub fn job_powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
+    let found = powershell(path, pathext, system_root);
+    if found.alias { windows_powershell(system_root) } else { found }
+}
+
+#[cfg(windows)]
+fn is_app_alias(file: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    fs::symlink_metadata(file).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 && !m.file_type().is_symlink())
+}
+
+#[cfg(not(windows))]
+fn is_app_alias(_: &Path) -> bool {
+    false
+}
+
+fn process_env() -> (std::ffi::OsString, String, Option<std::ffi::OsString>) {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    (path, pathext, std::env::var_os("SystemRoot"))
+}
+
+/// [`powershell`] for this process's `PATH`, `PATHEXT` and `SystemRoot`, looked up once: every terminal tab's.
+pub fn terminal_powershell() -> &'static PowerShell {
+    static SHELL: std::sync::OnceLock<PowerShell> = std::sync::OnceLock::new();
     SHELL.get_or_init(|| {
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-        powershell(&path, &pathext)
+        let (path, pathext, root) = process_env();
+        powershell(&path, &pathext, root.as_deref())
     })
+}
+
+/// [`job_powershell`] for this process's `PATH`, `PATHEXT` and `SystemRoot`: a schedule's `.ps1` script's.
+pub fn script_powershell() -> PowerShell {
+    let (path, pathext, root) = process_env();
+    job_powershell(&path, &pathext, root.as_deref())
 }
 
 #[cfg(test)]
@@ -251,10 +300,40 @@ mod command_tests {
         fs::write(script.join("pwsh.ps1"), "").unwrap();
         let path = |dirs: &[&Path]| std::env::join_paths(dirs).unwrap();
         let ext = ".COM;.EXE;.BAT;.CMD";
-        assert_eq!(powershell(&path(&[&empty, &seven]), ext), "pwsh");
-        assert_eq!(powershell(&path(&[&empty]), ext), "powershell");
-        assert_eq!(powershell(&path(&[&script]), ext), "powershell", "a pwsh.ps1 is not PowerShell 7");
-        assert_eq!(powershell(&path(&[&seven]), ".CMD"), "powershell", "only PATHEXT extensions");
+        let root = tmp.path().join("Windows");
+        let windows = PowerShell { path: root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe"), name: "powershell", alias: false };
+        let shell = |p: &std::ffi::OsStr, ext: &str| powershell(p, ext, Some(root.as_os_str()));
+        assert_eq!(shell(&path(&[&empty, &seven]), ext), PowerShell { path: seven.join("pwsh.exe"), name: "pwsh", alias: false });
+        assert_eq!(shell(&path(&[&empty]), ext), windows);
+        assert_eq!(shell(&path(&[&script]), ext), windows, "a pwsh.ps1 is not PowerShell 7");
+        assert_eq!(shell(&path(&[&seven]), ".CMD"), windows, "only PATHEXT extensions");
+        assert_eq!(job_powershell(&path(&[&seven]), ext, Some(root.as_os_str())).path, seven.join("pwsh.exe"), "a real pwsh runs a script too");
+    }
+
+    #[test]
+    fn powershell_without_pwsh_is_windows_powershell_by_absolute_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Windows");
+        let expected = root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        let ext = ".COM;.EXE;.BAT;.CMD";
+        let found = powershell(std::ffi::OsStr::new(""), ext, Some(root.as_os_str()));
+        assert_eq!((found.path.as_path(), found.name), (expected.as_path(), "powershell"), "an empty PATH");
+        assert!(found.path.is_absolute());
+        assert_eq!(powershell(std::ffi::OsStr::new(""), ext, None).path, Path::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
+        assert_eq!(powershell(std::ffi::OsStr::new(""), ext, Some(std::ffi::OsStr::new(""))).path, Path::new(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_relative_path_folder_is_not_searched_for_pwsh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seven = tmp.path().join("seven");
+        fs::create_dir_all(&seven).unwrap();
+        fs::write(seven.join("pwsh.exe"), "").unwrap();
+        let driveless: PathBuf = seven.components().skip(1).collect();
+        assert!(!driveless.is_absolute() && driveless.join("pwsh.exe").is_file(), "{} resolves on the current drive", driveless.display());
+        let found = powershell(driveless.as_os_str(), ".EXE", Some(tmp.path().join("Windows").as_os_str()));
+        assert_eq!(found.name, "powershell");
     }
 
     #[test]
