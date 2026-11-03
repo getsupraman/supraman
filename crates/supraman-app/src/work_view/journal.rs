@@ -265,7 +265,7 @@ impl WorkView {
                 .gap_2()
                 .text_xs()
                 .text_color(colors.text_muted)
-                .child(div().flex_none().child(SharedString::from(short_time(&e.at))))
+                .child(div().flex_none().child(SharedString::from(rfc3339_local(&e.at))))
                 .child(
                     div()
                         .flex_none()

@@ -198,9 +198,7 @@ impl Updates {
             return "Checking…".into();
         }
         let Some(last) = &self.last else { return "Not checked yet.".into() };
-        let at = chrono::DateTime::from_timestamp_millis(last.at_ms)
-            .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
-            .unwrap_or_default();
+        let at = supraman_core::time::clock(last.at_ms);
         match &last.outcome {
             Outcome::Available(a) if a.manifest.semver() > self.running() => format!("Supraman {} is available", a.version()),
             Outcome::Available(_) | Outcome::UpToDate => format!("Up to date, checked {at}"),

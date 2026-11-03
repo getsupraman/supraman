@@ -115,7 +115,7 @@ fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
 }
 
 fn short_since(at: &str) -> String {
-    if at.is_empty() { String::new() } else { format!("since {}", work_view::short_time(at)) }
+    if at.is_empty() { String::new() } else { format!("since {}", supraman_core::time::rfc3339_local(at)) }
 }
 
 pub fn inbox_key(need: &NeedsYou) -> Option<String> {
@@ -761,7 +761,7 @@ impl FleetView {
                                         div()
                                             .text_xs()
                                             .text_color(colors.text_muted)
-                                            .child(SharedString::from(fleet::ago(now - need.since))),
+                                            .child(SharedString::from(supraman_core::time::ago(now - need.since))),
                                     ),
                             )
                             .child(div().text_xs().text_color(colors.text).child(SharedString::from(need.detail.clone()))),
@@ -1140,7 +1140,7 @@ impl FleetView {
                                         div()
                                             .text_xs()
                                             .text_color(quiet(cx))
-                                            .child(SharedString::from(fleet::ago(now - m.at))),
+                                            .child(SharedString::from(supraman_core::time::ago(now - m.at))),
                                     ),
                             )
                             .child(body)

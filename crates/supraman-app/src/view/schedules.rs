@@ -966,7 +966,7 @@ impl FleetView {
                     .child(hit_target(&self.hits, format!("sched-state-{k}"))),
             )
             .children(row.next_fire.map(|t| {
-                div().flex_none().whitespace_nowrap().text_xs().text_color(secondary(cx)).child(SharedString::from(format!("next {}", schedules::local_text(t, now))))
+                div().flex_none().whitespace_nowrap().text_xs().text_color(secondary(cx)).child(SharedString::from(format!("next {}", supraman_core::time::near(t, now))))
             }))
             .child(div().flex_1())
             .child(div().flex().flex_none().items_center().child(action));
@@ -1100,7 +1100,7 @@ impl FleetView {
             }));
             let dismiss = button::bordered(&self.hits, format!("inbox-sched-dismiss-{}", a.run), "Dismiss", cx)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss_schedule_notice(&w, &run, cx)));
-            out.push(card(color, label, format!("{} · {}", a.workspace, a.id), Some(crate::fleet::ago(now - a.at)), detail, div().flex().flex_none().gap_1().child(history).child(dismiss)));
+            out.push(card(color, label, format!("{} · {}", a.workspace, a.id), Some(supraman_core::time::ago(now - a.at)), detail, div().flex().flex_none().gap_1().child(history).child(dismiss)));
         }
         for (k, e) in syncs {
             let dismiss = button::bordered(&self.hits, format!("inbox-sync-dismiss-{k}"), "Dismiss", cx).on_click(cx.listener({

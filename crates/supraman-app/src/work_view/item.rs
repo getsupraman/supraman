@@ -223,7 +223,7 @@ impl WorkView {
                     body = body.child(prose(&format!("evidence: {evidence}"), colors.text_muted).text_xs());
                 }
                 if let Some(at) = &c.checked_at {
-                    body = body.child(small(format!("checked {}", short_time(at)), colors.text_muted));
+                    body = body.child(small(format!("checked {}", rfc3339_local(at)), colors.text_muted));
                 }
                 s = s.child(
                     div()
@@ -276,7 +276,7 @@ impl WorkView {
                         .gap_2()
                         .child(small(a.kind.clone(), colors.text_muted))
                         .child(mono(&a.value, colors.text))
-                        .child(small(short_time(&a.at), colors.text_muted))
+                        .child(small(rfc3339_local(&a.at), colors.text_muted))
                         .child(hit_target(&self.hits, format!("item-artifact-{}", a.value))),
                 );
             }
@@ -318,7 +318,7 @@ impl WorkView {
                     (None, None) => String::new(),
                 };
                 let (state, color) = match &n.consumed_at {
-                    Some(at) => (format!("consumed {}", short_time(at)), colors.text_muted),
+                    Some(at) => (format!("consumed {}", rfc3339_local(at)), colors.text_muted),
                     None => ("not consumed".to_string(), status.warning),
                 };
                 s = s.child(
@@ -337,7 +337,7 @@ impl WorkView {
                                 .when(!route.is_empty(), |d| d.child(small(route, colors.text_muted)))
                                 .when_some(n.session.as_ref(), |d, s| d.child(small(format!("by {}", s.name), colors.text_muted)))
                                 .child(small(state, color))
-                                .child(small(short_time(&n.created_at), colors.text_muted)),
+                                .child(small(rfc3339_local(&n.created_at), colors.text_muted)),
                         )
                         .child(prose(&n.body, colors.text))
                         .child(hit_target(&self.hits, format!("item-note-{}", n.id))),
@@ -408,9 +408,9 @@ impl WorkView {
             );
         }
         let color = status_color(item.status, cx);
-        let mut when = vec![format!("opened {}", short_time(&page.opened_at))];
-        when.extend(page.started_at.as_deref().map(|at| format!("started {}", short_time(at))));
-        when.extend(page.closed_at.as_deref().map(|at| format!("closed {}", short_time(at))));
+        let mut when = vec![format!("opened {}", rfc3339_local(&page.opened_at))];
+        when.extend(page.started_at.as_deref().map(|at| format!("started {}", rfc3339_local(at))));
+        when.extend(page.closed_at.as_deref().map(|at| format!("closed {}", rfc3339_local(at))));
         div()
             .relative()
             .flex()
@@ -474,7 +474,7 @@ impl WorkView {
             row = row.child(small(format!("@ {}", last_segment(tree)), colors.text_muted));
         }
         if !claim.expires_at.is_empty() {
-            let text = if claim.expired { format!("expired {}", short_time(&claim.expires_at)) } else { format!("expires {}", short_time(&claim.expires_at)) };
+            let text = if claim.expired { format!("expired {}", rfc3339_local(&claim.expires_at)) } else { format!("expires {}", rfc3339_local(&claim.expires_at)) };
             row = row.child(small(text, if claim.expired { status.warning } else { colors.text_muted }));
         }
         section("Claim", None).child(row.child(hit_target(&self.hits, "item-claim".into()))).into_any_element()
@@ -508,7 +508,7 @@ impl WorkView {
                     .child(small(format!("attempt {}", r.attempt), muted))
                     .child(small(format!("status {}", r.status), muted))
                     .when(!by.is_empty(), |d| d.child(small(format!("by {by}"), muted)))
-                    .child(small(short_time(&r.at), muted)),
+                    .child(small(rfc3339_local(&r.at), muted)),
             );
         let fields: [(&str, Option<String>); 6] = [
             ("files", (!r.files.is_empty()).then(|| r.files.join(", "))),
@@ -555,7 +555,7 @@ impl WorkView {
                     .gap_2()
                     .child(div().flex_none().font_weight(FontWeight::BOLD).text_color(color).child(mark))
                     .child(small(format!("run by {by}"), colors.text_muted))
-                    .child(small(short_time(&v.at), colors.text_muted)),
+                    .child(small(rfc3339_local(&v.at), colors.text_muted)),
             )
             .when_some(v.command.as_deref().filter(|c| !c.is_empty()), |d, c| d.child(mono(c, colors.text)))
             .when(!v.result_line.is_empty(), |d| d.child(prose(&v.result_line, colors.text)))
@@ -595,7 +595,7 @@ impl WorkView {
                         .flex()
                         .gap_2()
                         .text_xs()
-                        .child(div().flex_none().w(px(110.)).text_color(colors.text_muted).child(SharedString::from(short_time(&e.at))))
+                        .child(div().flex_none().w(px(110.)).text_color(colors.text_muted).child(SharedString::from(rfc3339_local(&e.at))))
                         .child(div().flex_none().w(px(80.)).text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
                         .child(div().flex_none().w(px(110.)).overflow_hidden().whitespace_nowrap().text_color(colors.text_muted).child(SharedString::from(who)))
                         .child(div().flex_1().min_w_0().child(SharedString::from(e.summary.clone().unwrap_or_default())))

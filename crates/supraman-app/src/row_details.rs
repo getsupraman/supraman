@@ -4,7 +4,7 @@ use supraman_claude::{Health, Kind, Status};
 use supraman_ui::details::Section;
 
 use crate::fleet::{self, Open, SessionRow};
-use crate::schedules::date_words;
+use supraman_core::time::{ago, date_words};
 
 /// Who launched a session, as far as this window can tell.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,7 +101,7 @@ fn reported(row: &SessionRow) -> Option<String> {
 }
 
 fn when(ms: i64, now_ms: i64) -> String {
-    format!("{} ({})", fleet::ago(now_ms - ms), date_words(ms))
+    format!("{} ({})", ago(now_ms - ms), date_words(ms))
 }
 
 pub fn session(f: &SessionFacts, now_ms: i64) -> Vec<Section> {
