@@ -32,7 +32,7 @@ pub use events::{
     Event, EventReader, ROTATE_AT, append as append_event, events_dir, log_path, role_injection, role_injection_for, role_tag,
 };
 pub use model::{Folder, FolderKind, Scan, Workspace, holder_of, owners};
-pub use plugin::{HOOK_EXE, find_plugin_dir, sm_allowed_tools, install_hook_exe};
+pub use plugin::{AGENTS_SERVER, AGENT_TOOLS, HOOK_EXE, find_plugin_dir, sm_allowed_tools, install_hook_exe};
 pub use home::{HOME_VAR, env_home, home_from, home_from_env};
 pub use registry::Registry;
 pub use relay::{

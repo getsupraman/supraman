@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(plugin_dirs(None, &Settings::default()), Vec::<PathBuf>::new());
         assert_eq!(
             sm_allowed_tools(own),
-            ["Bash(sm:*)", "Bash(C:/fm/plugins/supraman/bin/sm.exe:*)"]
+            ["Bash(sm:*)", "Bash(C:/fm/plugins/supraman/bin/sm.exe:*)", "mcp__agents__agent_launch", "mcp__agents__agent_list", "mcp__agents__agent_stop"]
         );
     }
 

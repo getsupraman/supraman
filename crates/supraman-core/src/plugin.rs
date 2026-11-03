@@ -7,9 +7,16 @@ use std::path::{Path, PathBuf};
 
 pub const HOOK_EXE: &str = "sm.exe";
 
-/// So `sm` never parks: by name on the session's PATH, or by its absolute path.
+/// The key of the workman plugin's MCP server in a supervised or scheduled session's own config.
+pub const AGENTS_SERVER: &str = "agents";
+
+/// The `agents` tools a session runs unattended: nested agents' launch, list and stop, never sign-in or sign-out.
+pub const AGENT_TOOLS: [&str; 3] = ["agent_launch", "agent_list", "agent_stop"];
+
+/// So `sm` never parks (by name on the session's PATH, or by its absolute path), nor a nested agent's launch.
 pub fn sm_allowed_tools(plugin_dir: &Path) -> Vec<String> {
-    vec!["Bash(sm:*)".into(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(HOOK_EXE)))]
+    let sm = ["Bash(sm:*)".to_string(), format!("Bash({}:*)", crate::paths::normalize(&plugin_dir.join("bin").join(HOOK_EXE)))];
+    sm.into_iter().chain(AGENT_TOOLS.map(|tool| format!("mcp__{AGENTS_SERVER}__{tool}"))).collect()
 }
 
 fn is_plugin(dir: &Path) -> bool {
@@ -166,6 +173,9 @@ mod tests {
 
     #[test]
     fn allowed_tools_name_sm() {
-        assert_eq!(sm_allowed_tools(Path::new(r"C:\x\plugins\supraman")), ["Bash(sm:*)", "Bash(C:/x/plugins/supraman/bin/sm.exe:*)"]);
+        assert_eq!(
+            sm_allowed_tools(Path::new(r"C:\x\plugins\supraman")),
+            ["Bash(sm:*)", "Bash(C:/x/plugins/supraman/bin/sm.exe:*)", "mcp__agents__agent_launch", "mcp__agents__agent_list", "mcp__agents__agent_stop"]
+        );
     }
 }
