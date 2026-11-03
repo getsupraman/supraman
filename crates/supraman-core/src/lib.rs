@@ -27,7 +27,7 @@ pub use discover::{discover, rescan, same_path};
 pub use edit::{Edit, Edited};
 pub use error::{CoreError, Result};
 pub use events::{
-    Event, EventReader, ROTATE_AT, append as append_event, events_dir, is_safe_id, log_path, role_injection, role_injection_for, role_tag,
+    Event, EventReader, ROTATE_AT, append as append_event, events_dir, log_path, role_injection, role_injection_for, role_tag,
 };
 pub use model::{Folder, FolderKind, Scan, Workspace, holder_of, owners};
 pub use plugin::{HOOK_EXE, find_plugin_dir, sm_allowed_tools, install_hook_exe};
@@ -44,5 +44,5 @@ pub use settings::{
     SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TerminalSettings, UpdateSettings, WindowSettings, WorkmanSettings, clamp_terminal_font_size,
     default_terminal_font_family, validate_workman_url,
 };
-pub use slug::{FM_PREFIX, slugify, validate_name};
+pub use slug::{FM_PREFIX, is_safe_id, is_session_name, name_char, slugify, validate_name};
 pub use url::origin as url_origin;

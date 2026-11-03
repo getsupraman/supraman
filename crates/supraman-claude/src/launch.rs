@@ -155,10 +155,7 @@ pub fn write_mcp_config(dir: &Path, agent: &str, url: &str, token: &str, headers
 
 /// `<dir>/workstate-<agent>.json`, the one file of `agent`'s Workman config; `agent` must be a plain session name.
 pub fn mcp_config_path(dir: &Path, agent: &str) -> std::io::Result<PathBuf> {
-    let plain = !agent.is_empty()
-        && !agent.starts_with('.')
-        && agent.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
-    if !plain {
+    if !supraman_core::is_session_name(agent) {
         return Err(std::io::Error::new(ErrorKind::InvalidInput, format!("not a session name: {agent:?}")));
     }
     Ok(dir.join(format!("workstate-{agent}.json")))

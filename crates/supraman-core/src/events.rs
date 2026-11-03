@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::fs::rotated;
+use crate::is_safe_id;
 
 pub const ROTATE_AT: u64 = 256 * 1024;
 
@@ -53,11 +54,6 @@ impl Event {
             transcript_path: text("transcript_path"),
         })
     }
-}
-
-/// Session ids become file names: UUIDs in practice, so letters, digits, `-` and `_` only.
-pub fn is_safe_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub fn events_dir(home: &Path) -> PathBuf {

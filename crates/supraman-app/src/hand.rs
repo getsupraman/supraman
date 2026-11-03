@@ -98,11 +98,8 @@ pub fn plain_name(cwd: &Path) -> String {
 }
 
 fn folder_slug(cwd: &Path) -> String {
-    let folder: String = cwd
-        .file_name()
-        .map(|f| f.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect())
-        .unwrap_or_default();
-    if folder.trim_matches('-').is_empty() { "session".to_string() } else { folder }
+    let folder = supraman_core::slugify(&cwd.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+    if folder.is_empty() { "session".to_string() } else { folder }
 }
 
 pub fn encoded_command(script: &str) -> String {

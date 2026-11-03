@@ -4,7 +4,7 @@ use std::{
 };
 
 use supraman_claude::{Claude, Session, now_ms};
-use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, rescan, validate_name};
+use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, name_char, rescan, validate_name};
 use supraman_supervisor::DesiredState;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
@@ -29,10 +29,6 @@ pub struct AddDraft {
 pub struct Removing {
     pub requested_at: i64,
     pub wanted: Vec<String>,
-}
-
-fn name_char(c: char) -> Option<char> {
-    (c.is_ascii_alphanumeric() || c == '-').then(|| c.to_ascii_lowercase())
 }
 
 impl AddDraft {
