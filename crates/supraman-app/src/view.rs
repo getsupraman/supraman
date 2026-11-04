@@ -17,7 +17,7 @@ use supraman_core::{
 };
 use supraman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
 use supraman_term::{
-    Event as TerminalEvent, MaybeNavigationTarget, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
+    Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
     terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
 };
 use supraman_ui::nudge::{self, Nudge, Nudged};
@@ -37,7 +37,7 @@ use gpui::{
     WindowHandle, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
-use util::paths::{PathStyle, PathWithPosition};
+use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
@@ -56,6 +56,7 @@ pub(crate) mod details;
 mod drop;
 mod folders;
 mod left;
+mod links;
 mod manage;
 mod menu;
 pub(crate) mod notices;
@@ -65,6 +66,10 @@ mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
+
+pub use links::Link;
+#[cfg(test)]
+use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
 pub(crate) use left::grid;
 pub use manage::{AddDraft, Removing};
@@ -2584,25 +2589,6 @@ impl FleetView {
         cx.notify();
     }
 
-    fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
-        match link_target(target) {
-            Ok(Link::Path(path)) => {
-                let found = cx.background_executor().spawn(async move { missing(&path).map_or(Ok(path), Err) });
-                cx.spawn(async move |this, cx| {
-                    let found = found.await;
-                    this.update(cx, |this, cx| match found {
-                        Ok(path) => (this.open_link_with)(&Link::Path(path), cx),
-                        Err(why) => this.pane_toast.show_why(why, |v: &mut Self| &mut v.pane_toast, cx),
-                    })
-                    .ok();
-                })
-                .detach();
-            }
-            Ok(link) => (self.open_link_with)(&link, cx),
-            Err(scheme) => self.pane_toast.show_why(open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
-        }
-    }
-
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         if k.key == "," && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift {
@@ -2668,31 +2654,6 @@ impl FleetView {
         cx.notify();
         cx.stop_propagation();
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Link {
-    Url(String),
-    Path(PathBuf),
-}
-
-/// What a Ctrl+click on `target` opens, or the scheme it refuses; a path loses its `:line:column`.
-pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
-    match target {
-        MaybeNavigationTarget::Url(url) => open::allowed(url, &open::LINK_SCHEMES).map(|()| Link::Url(url.clone())),
-        MaybeNavigationTarget::PathLike(link) => {
-            let path = PathWithPosition::parse_str(&link.maybe_path).path;
-            Ok(Link::Path(match &link.working_directory {
-                Some(cwd) if path.is_relative() => cwd.join(path),
-                _ => path,
-            }))
-        }
-    }
-}
-
-/// Why a path link opens nothing: no file or folder there. Reads the disk, so never on the UI thread.
-pub fn missing(path: &Path) -> Option<String> {
-    (!path.is_absolute() || !path.exists()).then(|| format!("Not opened: there is no file or folder {}.", path.display()))
 }
 
 fn any_exit(executor: &gpui::BackgroundExecutor, pids: Vec<u32>, timeout: Duration) -> impl Future<Output = ()> + use<> {

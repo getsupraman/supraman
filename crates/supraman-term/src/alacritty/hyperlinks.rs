@@ -377,6 +377,13 @@ fn path_match<T>(
         )
     };
 
+    if let Some(range) = super::spaced_path::at(line, hovered_point_byte_offset) {
+        let found = found_from_range(range.clone(), range, None);
+        if found.1.contains(&hovered) {
+            return Some(found);
+        }
+    }
+
     for regex in path_hyperlink_regexes {
         let mut path_found = false;
 
@@ -704,6 +711,16 @@ mod tests {
             test_path!(r#"‹«\\server\share\👉test\cool.rs»›"#);
             test_path!(r#"‹«\\?\C:\test\cool👉.rs»›"#);
             test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
+        }
+
+        #[test]
+        fn paths_with_spaces() {
+            test_path!(r#"open "‹«C:\Program Files\x\👉y.rs»:«12»:«3»›" now"#);
+            test_path!(r#"cd '‹«C:\Program Files (x86👉)»›'"#);
+            test_path!(r#"‹«C:\Tools\Screaming Frog👉 SEO Spider\»›"#);
+            test_path!(r#"see ‹«C:\a b\👉c.txt»› for details"#);
+            test_path!(r#"PS ‹«C:\Users\some 👉one\test»›>"#);
+            test_path!(r#"    ‹File "«C:\a 👉b\x.py»", line «42»›: Wat?"#);
         }
 
         #[test]

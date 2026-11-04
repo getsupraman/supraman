@@ -8,6 +8,7 @@ use std::os::fd::AsRawFd;
 use std::{borrow::Cow, io, ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 mod hyperlinks;
+mod spaced_path;
 
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
