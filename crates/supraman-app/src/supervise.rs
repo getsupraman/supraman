@@ -160,6 +160,7 @@ pub struct Report {
     pub needs: Vec<NeedsYou>,
     pub desired: BTreeMap<String, (bool, Vec<String>)>,
     pub max_working: usize,
+    pub terminal: supraman_core::TerminalSettings,
     pub errors: Vec<String>,
     pub last_attempt: HashMap<String, Millis>,
     pub relays: BTreeMap<String, RelayStatus>,
@@ -286,6 +287,7 @@ impl Supervision {
             Settings::default()
         });
         report.max_working = settings.sessions.max_working;
+        report.terminal = settings.terminal.clone();
         if self.pruned_at.is_none_or(|at| now - at >= PRUNE_EVERY) {
             self.pruned_at = Some(now);
             report.errors.extend(supraman_core::prune::prune(&self.home, supraman_core::time::now_ms(), supraman_core::prune::KEEP_MS));

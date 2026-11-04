@@ -323,7 +323,12 @@ impl SettingsView {
             }
             Err(e) => self.error = Some(format!("Cannot save settings.toml: {e}")),
         }
-        self.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
+        let terminal = self.settings.terminal.clone();
+        self.fleet.update(cx, |fleet, _| {
+            fleet.shell_default.read(terminal);
+            fleet.recheck_workman();
+        })
+        .ok();
         cx.notify();
     }
 

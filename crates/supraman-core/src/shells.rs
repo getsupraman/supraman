@@ -109,7 +109,7 @@ impl Machine {
     pub fn current() -> Self {
         Self {
             path: std::env::var_os("PATH").unwrap_or_default(),
-            pathext: std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into()),
+            pathext: crate::paths::pathext(),
             system_root: std::env::var_os("SystemRoot"),
             program_files_x86: std::env::var_os("ProgramFiles(x86)"),
         }

@@ -213,7 +213,7 @@ fn git_roots() -> Vec<PathBuf> {
     roots.extend(std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Programs").join("Git")));
     roots.extend(std::env::var_os("EXEPATH").map(PathBuf::from));
     if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path).filter(|d| d.join("git.exe").is_file()) {
+        for dir in paths::folders_holding("git.exe", &path) {
             let up = dir.parent().map(Path::to_path_buf);
             let mingw = up.as_deref().filter(|u| u.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().starts_with("mingw")));
             roots.extend(mingw.and_then(Path::parent).map(Path::to_path_buf).or(up));
