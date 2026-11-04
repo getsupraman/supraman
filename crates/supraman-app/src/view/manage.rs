@@ -5,7 +5,7 @@ use std::{
 
 use supraman_claude::{Claude, Session, now_ms};
 use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, name_char, rescan, validate_name};
-use supraman_supervisor::DesiredState;
+use supraman_supervisor::remove_workspace;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
@@ -555,30 +555,36 @@ impl FleetView {
             .collect();
         for name in ready {
             self.removing.remove(&name);
-            let result = (|| -> Result<(), String> {
-                let home = self.home.as_deref().ok_or("no Supraman home")?;
-                let desired = DesiredState::path(home, &name).map_err(|e| e.to_string())?;
-                match std::fs::remove_file(&desired) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {e}", desired.display())),
-                    _ => {}
+            let home = self.home.clone();
+            let task = cx.background_executor().spawn(async move {
+                let home = home.ok_or_else(|| format!("{name}: no Supraman home"))?;
+                remove_workspace(&home, &name).map_err(|e| format!("{name}: {e}"))?;
+                Ok::<_, String>(name)
+            });
+            cx.spawn(async move |this, cx| {
+                let done = task.await;
+                this.update(cx, |this, cx| this.removed(done, cx)).ok();
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    fn removed(&mut self, done: Result<String, String>, cx: &mut Context<Self>) {
+        match done {
+            Ok(name) => {
+                self.desired.remove(&name);
+                self.invalidate_tree();
+                self.relays.remove(&name);
+                self.messages.remove(&name);
+                if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
+                    self.compose = None;
                 }
-                Registry::at(home).remove(&name).map_err(|e| e.to_string())
-            })();
-            match result {
-                Ok(()) => {
-                    self.desired.remove(&name);
-                    self.invalidate_tree();
-                    self.relays.remove(&name);
-                    self.messages.remove(&name);
-                    if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
-                        self.compose = None;
-                    }
-                    self.workspaces.retain(|w| w.name != name);
-                    self.reload_workspaces(cx);
-                    self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
-                }
-                Err(e) => self.action_error = Some(format!("Cannot remove {name}: {e}")),
+                self.workspaces.retain(|w| w.name != name);
+                self.reload_workspaces(cx);
+                self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
             }
+            Err(e) => self.action_error = Some(format!("Cannot remove: {e}")),
         }
         cx.notify();
     }

@@ -330,6 +330,21 @@ impl DesiredState {
     }
 }
 
+/// The files a removed workspace leaves under the home, deleted: its desired state, its minted-sessions record
+/// (nothing is revoked) and, last, its registry file. Its sessions must be stopped first; its mcp configs stay.
+pub fn remove_workspace(home: &Path, workspace: &str) -> Result<()> {
+    let lock = DesiredState::lock_path(home, workspace)?;
+    let held = supraman_core::fs::lock_file(&lock).map_err(|source| SupervisorError::Io { path: lock, source })?;
+    for path in [DesiredState::path(home, workspace)?, crate::MintedSessions::path(home, workspace)] {
+        match fs::remove_file(&path) {
+            Err(source) if source.kind() != ErrorKind::NotFound => return Err(SupervisorError::Io { path, source }),
+            _ => {}
+        }
+    }
+    drop(held);
+    Ok(supraman_core::Registry::at(home).remove(workspace)?)
+}
+
 /// `<plugin_dir>/roles/<role>.md` with `{workspace}` filled in.
 pub fn role_prompt(plugin_dir: &Path, role: &str, workspace: &str) -> Result<String> {
     let path = plugin_dir.join("roles").join(format!("{role}.md"));
@@ -559,6 +574,24 @@ mod tests {
             fs::read_dir(home.path().join("supervisor")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         names.sort();
         assert_eq!(names, ["demo.lock", "demo.toml"]);
+    }
+
+    #[test]
+    fn remove_workspace_deletes_its_desired_state_minted_record_and_registry_file_and_only_them() {
+        let home = tempfile::tempdir().unwrap();
+        let registry = supraman_core::Registry::at(home.path());
+        for name in ["demo", "other"] {
+            registry.save(&supraman_core::Workspace::new(name, home.path(), Vec::new()), false).unwrap();
+            DesiredState::update(home.path(), name, |d| d.started = true).unwrap();
+            fs::write(crate::MintedSessions::path(home.path(), name), "{}").unwrap();
+        }
+        remove_workspace(home.path(), "demo").unwrap();
+        let mut names: Vec<String> =
+            fs::read_dir(home.path().join("supervisor")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names, ["demo.lock", "other.lock", "other.sessions.json", "other.toml"]);
+        assert_eq!(registry.list().unwrap().iter().map(|w| w.name.as_str()).collect::<Vec<_>>(), ["other"]);
+        assert!(matches!(remove_workspace(home.path(), "demo"), Err(SupervisorError::Core(supraman_core::CoreError::NotFound(_)))));
     }
 
     #[test]

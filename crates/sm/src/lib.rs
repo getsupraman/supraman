@@ -18,7 +18,7 @@ usage:
   sm workspace remove-scan <name> <dir>            (the folders only it found go too)
   sm workspace list
   sm workspace show <name>                         (home, scans, folders with kind and owner)
-  sm workspace remove <name>
+  sm workspace remove <name>                       (stops its sessions; stop, never rm; no token is revoked)
   sm sessions [--workspace <name>] [--all]
   sm want <workspace> <repo> [--prompt-file <path>]   (start the repo's session fm-<workspace>-<repo>)
   sm unwant <workspace> <repo>         (stop it; stop, never rm)
@@ -87,6 +87,7 @@ mod probe_rm;
 mod probe_session_id;
 mod relay;
 mod release;
+pub mod remove;
 mod repos;
 pub mod run;
 mod schedule;
@@ -426,7 +427,12 @@ fn show(name: &str) -> Result<(), Failure> {
 }
 
 fn remove(name: &str) -> Result<(), Failure> {
-    registry()?.remove(name)?;
+    let registry = registry()?;
+    registry.load(name)?;
+    let claude = supraman_claude::Claude::default();
+    for stopped in remove::remove(registry.home(), name, &claude).map_err(|e| Failure::Refused(format!("error: {e}")))? {
+        println!("stopped {stopped} (stop, never rm)");
+    }
     println!("removed workspace {name}");
     Ok(())
 }
