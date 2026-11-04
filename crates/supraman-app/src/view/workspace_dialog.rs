@@ -285,15 +285,11 @@ impl Render for WorkspaceDialog {
         let on: folder_list::OnRow<Self> = Rc::new(|this, action, window, cx| this.act(action, window, cx));
         let list = folder_list::render(&self.list, &self.path, "add", &hits, on, cx);
         let can_save = self.can_save(cx);
-        let save = button::bordered(&hits, "add-save", "Save", cx);
-        let save = if can_save {
-            save.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                cx.stop_propagation();
-                this.save(window, cx);
-            }))
-        } else {
-            button::dimmed(save)
-        };
+        let save = button::bordered(&hits, "add-save", "Save", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            this.save(window, cx);
+        }));
+        let save = if can_save { save } else { button::dimmed(save) };
         let cancel = button::bordered(&hits, "add-cancel", "Cancel", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             cx.emit(DialogEvent::Cancel);
@@ -327,7 +323,10 @@ impl Render for WorkspaceDialog {
             .child(hit_target(&hits, "add-dialog".into()))
             .child(div().text_xs().text_color(colors.text_muted).child("ADD WORKSPACE"))
             .child(div().flex().items_center().gap_2().text_sm().child("name").child(name))
-            .children(parent.map(|p| clipped("add-parent", p, true).text_xs().text_color(colors.text_muted)))
+            .children(parent.map(|p| {
+                let line = clipped("add-parent", p, true).text_xs().text_color(colors.text_muted);
+                div().relative().min_w_0().child(line).child(hit_target(&hits, "add-parent".into()))
+            }))
             .children(self.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))
             .when(self.scanning, |d| d.child(div().text_xs().text_color(colors.text_muted).child("scanning…")))
             .child(list)

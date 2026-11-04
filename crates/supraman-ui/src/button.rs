@@ -100,7 +100,7 @@ pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Int
         .child(label.into())
 }
 
-/// `button` dimmed, with the plain cursor, while it cannot act; its caller gives it no click then.
+/// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.
 pub fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
     button.opacity(0.4).cursor_default()
 }

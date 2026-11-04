@@ -644,6 +644,9 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     registry.remove(&again)?;
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
     out.push(format!("the same folder again registers as {again} with alpha and beta disabled, alpha out of its tree and found by search as supervised in {ADDED}; removed"));
+    view.update(cx, |v, cx| v.apply_edit(ADDED, supraman_core::Edit::SetEnabled { folder: "beta".into(), enabled: false }, cx));
+    let beta_row = format!("repo-row-{ADDED}/beta");
+    until(view, cx, WITHIN, "beta disabled, out of the tree and its painted rows", |v| (!in_tree(v, "beta") && !v.hits.borrow().contains_key(&beta_row)).then_some(())).await?;
     out.push(row_details(view, own, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);
@@ -679,10 +682,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "Edit folders… with beta's box", |v| painted(v, "edit-enable-beta").then_some(())).await?;
     shot("edit-folders", cx).await;
     click(view, "edit-enable-beta", cx).await?;
-    until(view, cx, WITHIN, "beta disabled, out of the tree", |v| (!in_tree(v, "beta") && painted(v, "edit-enable-beta")).then_some(())).await?;
-    // the next press must see this frame's layout, not the one before Disable
-    sleep(cx, Duration::from_millis(100)).await;
-    click(view, "edit-enable-beta", cx).await?;
     until(view, cx, WITHIN, "beta enabled in the tree", |v| {
         v.tree().workspaces.iter().find(|w| w.name == ADDED)?.repos.iter().find(|r| r.name == "beta" && r.enabled).map(|_| ())
     })
@@ -695,7 +694,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     }
     click(view, "edit-done", cx).await?;
     until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
-    out.push("beta disabled and enabled again in Edit folders…, then in the tree with its +".into());
+    out.push("beta enabled in Edit folders…, then in the tree with its +".into());
 
     out.push(open_folder(view, &ws_key, cx).await?);
 

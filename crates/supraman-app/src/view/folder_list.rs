@@ -163,8 +163,8 @@ pub fn render<V: 'static>(
         .child(hit_target(hits, format!("{prefix}-new-path")))
         .child(div().absolute().top_0().bottom_0().left(TEXT_LEFT).right(TEXT_LEFT).child(hit_target(hits, format!("{prefix}-new-path-text"))));
     let browse = button::bordered(hits, format!("{prefix}-browse"), "Browse", cx).on_click(act(&on, RowAction::Browse, cx));
-    let add = button::bordered(hits, format!("{prefix}-add"), "Add", cx);
-    let add = if empty { button::dimmed(add) } else { add.on_click(act(&on, RowAction::Add, cx)) };
+    let add = button::bordered(hits, format!("{prefix}-add"), "Add", cx).on_click(act(&on, RowAction::Add, cx));
+    let add = if empty { button::dimmed(add) } else { add };
     out.child(div().flex().items_center().gap_1().min_w_0().pt_1().child(field).child(browse).child(add))
 }
 
