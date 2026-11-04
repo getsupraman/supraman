@@ -85,6 +85,21 @@ Reusable components (crates, boundaries, flows and when to use each: `docs/ARCHI
 - `supraman_supervisor::LaunchConfig::launch_spec`: every supervised or scheduled `claude --bg` spec (name, cwd, prompt, mode, strict MCP, plugin dirs, add-dirs, `--settings` env, `--allowedTools`); the caller adds its token and its own flags. `session_env` is that env as pairs and `interactive_args` the plugin and `--allowedTools` flags, for a [+] session (`hand::extras`); `supraman-app` `supervise::launch_config` builds the app's `LaunchConfig` for both.
 - `supraman_supervisor::DesiredState::update`: every change to a workspace's wanted sessions (the app and `sm want`); `DesiredState::release` stops the sessions of folders taken away (stop, never rm).
 
+## Keep each concern in one place
+
+**This binds every agent and subagent working in this repo — brief subagents on it when you delegate.** Workman rule C144; the two refactor passes (m5/44, refactor2) found these same mistakes twice, and they came back within a day.
+
+1. **A second copy means extract.** A helper whose job already exists (format, hex, path, env, parse, open, validate) is the shared one, or the diff moves both into the owning crate.
+2. **One lifecycle, one module.** Mint, revoke, launch, stop and persist of a session or token live in one owner; a new caller calls it, never copies its match arms.
+3. **One reader per state file and env var**, inside its owner (`Registry::edit`, `Settings`, `paths::*`, …); no new `std::env::var` or read of a named state file elsewhere.
+4. **Nothing blocking in a UI handler.** No `fs`, `Settings::load`, `lock_file`, process, `Client` or peer call inside a click, listener, render or poll handler: run it in the background, then apply the result.
+5. **A persisted read-modify-write** holds `lock_file`, writes with `write_atomic`, and a failed load is a notice, never a default saved back.
+6. **Size caps.** No new production fn over 80 lines; no file over 1,500 non-test lines grows (move something out first); new feature state goes on its own entity, not a `FleetView` field.
+7. **The cheapest test that fails.** A new selftest step says why a unit test cannot do it; no fixed sleep, no hand-rolled server (`FakeWorkman`).
+8. **Nothing open without a ref.** "Narrowed", "kept" or "deferred" in a report names a Workman item; a compat shim names the release that removes it.
+
+A unit that breaks a clause says which and why in its report. The controller checks the diff against each clause before it merges.
+
 ## Comments state the present, not the past
 
 **This binds every agent and subagent working in this repo — brief subagents on it explicitly when you delegate, because they default to narrating their own fix.** The full procedure is the `rlarch:code-comments` skill.
