@@ -45,8 +45,6 @@ usage:
   sm schedule fire --home <home> <workspace> <id> --fingerprint <hex>   (what the schedule's task runs, as smw.exe)
       <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
       pending until Approve in the Supraman window; sm never approves and never registers a task.
-  sm work overview <workspace>         (its Workman project: runs with rollups, who works, the inbox)
-  sm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
   sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
       (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
   sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
@@ -93,7 +91,6 @@ mod repos;
 pub mod run;
 mod schedule;
 mod update;
-mod work;
 
 enum Failure {
     Usage(String),
@@ -250,7 +247,6 @@ fn run(args: &[String]) -> Result<(), Failure> {
             code => Err(Failure::Exit(code)),
         },
         ["schedule", rest @ ..] => schedule::schedule(&registry()?, rest),
-        ["work", rest @ ..] => work::work(registry()?.home(), rest),
         #[cfg(feature = "probes")]
         ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),

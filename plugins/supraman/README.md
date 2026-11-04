@@ -22,7 +22,6 @@ invoke, what to do on start and after a compaction; the skills hold the rules.
 Workman is https://work.supraman.ai, reached only through Supraman's OAuth sign-in (Settings → Workman →
 Sign in); there is no static token and no local stack. Supraman mints each session its own token for its role and
 passes it with `--mcp-config <file> --strict-mcp-config`; not signed in, a session has no `work_*` tools.
-`sm work overview|board` reads the workspace's project with an access token of the same sign-in.
 
 - every event: one line in `<home>/events/<session_id>.jsonl` (`supraman_core::Event`)
 - SessionStart (startup, resume, compact, clear): stdout = `SUPRAMAN-ROLE <role> v<sha8>` + `<home>/roles/<role>.md`

@@ -170,7 +170,6 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 1. `crates/supraman-app/src/work_view.rs` `WorkHub` (a gpui global) builds a `Client` with `Auth::bearer_for(origin)` and subscribes a `Stream`.
 2. `crates/supraman-workman/src/stream.rs` `Stream::subscribe` holds `GET /api/stream` on its own thread with `Last-Event-ID` and our backoff; `WorkHub::on_signal` turns signals into `HubEvent`s.
 3. `WorkView::on_hub` re-reads the open view through `crates/supraman-workman/src/client.rs` `Client`, debounced, off the UI thread; `crates/supraman-app/src/work_view/inbox.rs` `WorkInbox` listens to the same hub. `WorkHub::reconfigure` runs after sign-in, sign-out or a URL change.
-4. `sm work` (`crates/sm/src/work.rs`) reads through the same `Client` and the same sign-in.
 
 ### Quit
 1. `crates/supraman-app/src/tray.rs` Quit (asking first when workspaces are started) → `view.rs` `FleetView::quit`; closing the window only hides it to the tray.
