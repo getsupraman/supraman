@@ -34,11 +34,12 @@ pub enum Icon {
     Work,
     Clock,
     Check,
+    Home,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 30] = [
+    const ALL: [Icon; 31] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -69,6 +70,7 @@ impl Icon {
         Icon::Work,
         Icon::Clock,
         Icon::Check,
+        Icon::Home,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -103,6 +105,7 @@ impl Icon {
             Icon::Work => include_bytes!("../assets/icons/list_todo.svg"),
             Icon::Clock => include_bytes!("../assets/icons/clock.svg"),
             Icon::Check => include_bytes!("../assets/icons/check.svg"),
+            Icon::Home => include_bytes!("../assets/icons/home.svg"),
         }
     }
 

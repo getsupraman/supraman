@@ -462,7 +462,7 @@ impl FleetView {
             notices.push(notice(e.clone(), banner::tinted(status.warning)));
         }
         notices.extend(self.render_confirm(cx));
-        notices.extend(self.render_add(cx));
+        notices.extend(self.add_dialog().map(|d| d.clone().into_any_element()));
         notices.extend(self.render_edit_folders(cx));
         notices.extend(self.render_schedule_edit(cx));
         if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
@@ -1759,132 +1759,6 @@ impl FleetView {
     fn render_confirm(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirm = self.confirm.as_ref()?;
         Some(confirm.render(&self.hits, "confirm", |this: &mut Self, yes, _, cx| this.answer_confirm(yes, cx), cx).mx_3().my_2().into_any_element())
-    }
-
-    fn render_add(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let draft = self.adding.as_ref()?;
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let mut repos = div().flex().flex_col().gap(px(2.));
-        if draft.scanning {
-            repos = repos.child(div().text_xs().text_color(colors.text_muted).child("scanning…"));
-        }
-        for (i, (repo, on)) in draft.repos.iter().enumerate() {
-            let key = format!("add-repo-{}", repo.name);
-            let branch = repo.branch.as_deref().map(|b| format!("({b})")).unwrap_or_default();
-            repos = repos.child(
-                button::checkbox(&self.hits, key, *on)
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_1()
-                    .rounded_sm()
-                    .text_sm()
-                    .hover(|s| s.bg(colors.ghost_element_hover))
-                    .when(!*on, |d| d.text_color(colors.text_muted))
-                    .child(SharedString::from(repo_label(&repo.name, &repo.path, Some(&draft.root))))
-                    .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(branch)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_add_repo(i, cx);
-                    })),
-            );
-        }
-        let ticked = draft.repos.iter().filter(|(_, on)| *on).count();
-        let summary = if draft.empty {
-            "No folders yet: Save opens Edit folders… to add them.".to_string()
-        } else {
-            format!("{ticked} of {} repos enabled; unticked ones are registered disabled", draft.repos.len())
-        };
-        Some(
-            div()
-                .id("add-review")
-                .relative()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .mx_3()
-                .my_2()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(colors.border_focused)
-                .bg(colors.editor_background)
-                .child(hit_target(&self.hits, "add-review".into()))
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .text_xs()
-                        .text_color(colors.text_muted)
-                        .child(if draft.empty { "ADD EMPTY WORKSPACE" } else { "ADD WORKSPACE" })
-                        .child("Enter saves · Esc cancels"),
-                )
-                .when(!draft.empty, |d| {
-                    d.child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.text_muted)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(SharedString::from(draft.root.display().to_string())),
-                    )
-                })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_sm()
-                        .child("name")
-                        .child(
-                            div()
-                                .id("add-name")
-                                .relative()
-                                .flex_1()
-                                .min_w_0()
-                                .child(draft.name.clone())
-                                .child(hit_target(&self.hits, "add-name".into()))
-                                .child(div().absolute().top_0().bottom_0().left(supraman_ui::text_input::TEXT_LEFT).right(supraman_ui::text_input::TEXT_LEFT).child(hit_target(&self.hits, "add-name-text".into()))),
-                        ),
-                )
-                .children(draft.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))
-                .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(summary)))
-                .when(!draft.empty, |d| d.child(repos))
-                .child(
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .justify_end()
-                        .children(draft.error.clone().map(|e| {
-                            div()
-                                .relative()
-                                .flex_1()
-                                .min_w_0()
-                                .px_1()
-                                .rounded_sm()
-                                .bg(status.error.opacity(0.14))
-                                .text_xs()
-                                .text_color(status.error)
-                                .child(SharedString::from(e))
-                                .child(hit_target(&self.hits, "add-error".into()))
-                        }))
-                        .child(button::bordered(&self.hits, "add-save", "Save", cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, window, cx| {
-                                cx.stop_propagation();
-                                this.save_add(window, cx);
-                            },
-                        )))
-                        .child(button::bordered(&self.hits, "add-cancel", "Cancel", cx).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.cancel_add(cx);
-                            },
-                        ))),
-                )
-                .into_any_element(),
-        )
     }
 }
 

@@ -54,6 +54,7 @@ use crate::workman_setup::{self, WorkmanStatus};
 mod delete;
 pub(crate) mod details;
 mod drop;
+mod folder_list;
 mod folders;
 mod left;
 mod links;
@@ -66,13 +67,14 @@ mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
+pub(crate) mod workspace_dialog;
 
 pub use links::Link;
 #[cfg(test)]
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
 pub(crate) use left::grid;
-pub use manage::{AddDraft, Removing};
+pub use manage::Removing;
 pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 
 gpui::actions!(supraman, [NextTab, PreviousTab, FocusSearch]);
@@ -315,7 +317,7 @@ pub struct FleetView {
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
     pub confirm: Option<Confirm>,
-    pub adding: Option<AddDraft>,
+    pub adding: Option<(Entity<workspace_dialog::WorkspaceDialog>, gpui::Subscription)>,
     pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
@@ -2557,7 +2559,7 @@ impl FleetView {
 
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
-            || self.adding.as_ref().is_some_and(|d| d.name.read(cx).is_focused(window))
+            || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
             || self.editing.as_ref().is_some_and(|e| e.path.read(cx).is_focused(window))
             || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
@@ -2605,14 +2607,7 @@ impl FleetView {
             cx.stop_propagation();
             return;
         }
-        // the review keeps Enter and Esc after a click on one of its repos took the keys from its name
-        if self.adding.is_some() && !k.modifiers.modified() && matches!(k.key.as_str(), "enter" | "escape") {
-            if k.key == "enter" {
-                self.save_add(window, cx);
-            } else {
-                self.adding = None;
-            }
-            cx.notify();
+        if !k.modifiers.modified() && self.add_key(&k.key, window, cx) {
             cx.stop_propagation();
             return;
         }

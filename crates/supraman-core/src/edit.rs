@@ -50,6 +50,12 @@ fn no_folder(w: &Workspace, folder: &str) -> CoreError {
 }
 
 impl Workspace {
+    /// [`Self::add_folder`] of `path` made absolute, refused unless it is a folder.
+    pub fn add_directory(&mut self, path: &Path) -> Result<&Folder> {
+        let path = directory(path)?;
+        Ok(self.add_folder(&path))
+    }
+
     /// By name, then ignoring case, then by slug, then by path.
     pub fn find_folder(&self, which: &str) -> Option<&Folder> {
         let slug = crate::slugify(which);
@@ -259,5 +265,20 @@ mod tests {
         assert!(w.scans.is_empty());
         assert_eq!(w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Own", "A"], "folders added by hand stay");
         assert!(matches!(reg.edit("v", Edit::RemoveScan(parent)), Err(CoreError::NoScan { .. })));
+    }
+
+    #[test]
+    fn add_directory_reads_the_folder_names_it_apart_and_refuses_a_missing_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, other) = (tmp.path().join("a").join("Repo"), tmp.path().join("b").join("Repo"));
+        repo_dir(&repo);
+        fs::create_dir_all(&other).unwrap();
+        let mut w = Workspace::new("v", tmp.path(), Vec::new());
+        let first = w.add_directory(&repo).unwrap().clone();
+        assert_eq!((first.name.as_str(), first.branch.as_deref(), first.added), ("Repo", Some("main"), true));
+        assert_eq!(w.add_directory(&other).unwrap().name, "Repo-2");
+        assert_eq!(w.add_directory(&repo).unwrap().name, "Repo", "the folder already there");
+        assert_eq!(w.folders.len(), 2);
+        assert!(matches!(w.add_directory(&tmp.path().join("gone")), Err(CoreError::NotADirectory(_))));
     }
 }
