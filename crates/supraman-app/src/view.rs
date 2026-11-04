@@ -1239,14 +1239,12 @@ impl FleetView {
         let Some(home) = self.home.clone() else {
             return;
         };
-        let auth = crate::signin::auth(&home);
-        let task = cx.background_executor().spawn(async move { auth.sign_out(&auth.configured_origin()) });
+        let (auth, hands) = (crate::signin::auth(&home), self.hands.clone());
+        let task = cx.background_executor().spawn(async move { supervise::sign_out(&auth, hands) });
         cx.spawn(async move |this, cx| {
-            let result = task.await;
+            let notices = task.await;
             this.update(cx, |this, cx| {
-                if let Err(e) = result {
-                    this.hand_notices.push(e);
-                }
+                this.hand_notices.extend(notices);
                 this.workman = WorkmanStatus::Checking;
                 this.recheck_workman();
                 WorkHub::reconfigure(Some(home), cx);

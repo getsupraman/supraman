@@ -16,11 +16,30 @@ use supraman_supervisor::{
 
 pub use supraman_core::sm_allowed_tools;
 
-use supraman_supervisor::AppTokens;
+use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, forget_runs, revoke_deleted_runs};
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 pub static TICK: Mutex<()> = Mutex::new(());
+
+/// Origins signed out of since the last tick: the sessions minted there end at the next.
+static SIGNED_OUT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub fn signed_out(origin: &str) {
+    SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner()).push(origin.to_string());
+}
+
+/// Signs out of `auth`'s configured server, whose grant revoke takes every session token minted there; the hands,
+/// supervised sessions and scheduled runs minted there end. What failed.
+pub fn sign_out(auth: &supraman_workman::Auth, hands: Option<std::sync::Arc<Mutex<crate::hand::Hands>>>) -> Vec<String> {
+    let origin = auth.configured_origin();
+    let mut notices: Vec<String> = auth.sign_out(&origin).err().into_iter().collect();
+    signed_out(&origin);
+    if let Some(hands) = hands {
+        notices.extend(hands.lock().unwrap_or_else(|e| e.into_inner()).signed_out(&origin));
+    }
+    notices
+}
 
 pub fn disable_and_wait() {
     ENABLED.store(false, Ordering::SeqCst);
@@ -244,6 +263,8 @@ pub struct Supervision {
     pub daemon: DaemonWatch,
     daemon_logged: Option<String>,
     pruned_at: Option<Millis>,
+    /// The scheduled runs' claude sessions missing from the snapshots.
+    runs_absent: Absent,
 }
 
 pub const NOTICES_KEPT: usize = 5;
@@ -266,6 +287,22 @@ pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings:
 }
 
 impl Supervision {
+    /// A sign-out since the last tick ends the sessions minted there; a scheduled run whose claude session is
+    /// deleted is revoked. `observed` was read without error.
+    fn end_sessions(&mut self, observed: &[Session]) -> Vec<String> {
+        let keeper = Keeper::open(&self.home);
+        let mut notices = Vec::new();
+        for origin in std::mem::take(&mut *SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner())) {
+            for s in self.supervisors.values_mut() {
+                s.signed_out(&origin);
+            }
+            notices.extend(forget_runs(&keeper, &origin));
+        }
+        let auth = crate::signin::auth(&self.home);
+        notices.extend(revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed));
+        notices
+    }
+
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
         let config = launch_config(Some(home.clone()), plugin_dir.as_deref(), &Settings::default());
         Self {
@@ -277,6 +314,7 @@ impl Supervision {
             daemon: DaemonWatch::new(supraman_claude::daemon_mismatch),
             daemon_logged: None,
             pruned_at: None,
+            runs_absent: Absent::default(),
         }
     }
 
@@ -364,6 +402,8 @@ impl Supervision {
             self.daemon_logged = self.daemon.why.clone();
         }
         report.daemon_hold = self.daemon.why.clone();
+        let ended = self.end_sessions(observed);
+        self.notices.extend(ended);
         for s in self.supervisors.values_mut() {
             self.notices.extend(s.take_notices());
         }

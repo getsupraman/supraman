@@ -195,11 +195,14 @@ pub fn smw(args: Vec<String>) -> ExitCode {
     }
 }
 
-/// A [+] session's `headersHelper` (not in the usage): its Workman `Authorization` header as claude reads it, from the
-/// secret store; never on stderr.
+/// A session's `headersHelper` (not in the usage): its Workman `Authorization` header as claude reads it, minted
+/// afresh when Workman refuses the kept one (`supraman_supervisor::header`); never on stderr.
 fn mcp_header(home: &std::path::Path, name: &str) -> Result<(), Failure> {
-    let store = supraman_core::secret::default_store(home);
-    let header = supraman_claude::mcp_header(store.as_ref(), name).map_err(|e| Failure::Refused(format!("error: {e}")))?;
+    use supraman_supervisor::{Bearer, HttpMinter, Keeper};
+    let bearer = || Bearer::of(supraman_supervisor::bearer(&supraman_workman::Auth::open(home)));
+    let refused = |url: &str, token: &str| supraman_workman::refuses(url, token, std::time::Duration::from_secs(5));
+    let header = supraman_supervisor::header(&Keeper::open(home), name, bearer, &HttpMinter::default(), refused)
+        .map_err(|e| Failure::Refused(format!("error: {e}")))?;
     println!("{header}");
     Ok(())
 }

@@ -39,3 +39,55 @@ fn mcp_header_prints_the_kept_token_as_claude_reads_it_and_a_missing_one_without
     let help = String::from_utf8_lossy(&sm(&["--help"]).stdout).into_owned();
     assert!(!help.contains("mcp-header"), "not in the usage");
 }
+
+/// What claude's retry after a 401 runs: Workman refuses the kept token, so `sm mcp-header` mints a fresh one with
+/// `replace` from the session's record and Supraman's sign-in, keeps it, and prints it.
+#[test]
+fn mcp_header_mints_afresh_when_workman_refuses_the_kept_token() {
+    use supraman_supervisor::{Keeper, MintRequest, MintedSession, MintedSessions, Minter};
+    const NAME: &str = "fm-demo-workspace";
+    let home = tempfile::tempdir().unwrap();
+    let fake = supraman_workman::fake::FakeWorkman::start(Vec::new());
+    fake.enable_oauth();
+    let sessions = fake.enable_sessions();
+    let mut settings = supraman_core::Settings::default();
+    settings.workman.url = Some(fake.base().to_string());
+    settings.save(home.path()).unwrap();
+    let auth = supraman_workman::Auth::open(home.path());
+    auth.sign_in(fake.base(), &supraman_workman::auth::http_browser()).unwrap();
+    let (_, bearer) = auth.current().unwrap();
+
+    let request = MintRequest {
+        name: NAME.into(),
+        role: "controller".into(),
+        launched_by: "foreman/demo".into(),
+        origin: "foreman/demo".into(),
+        cwd: r"C:\demo".into(),
+        external_role: "workspace".into(),
+        replace: true,
+        repo: None,
+        claude_session_id: None,
+    };
+    let minted = supraman_supervisor::HttpMinter::default().mint(fake.base(), &bearer, &request).unwrap();
+    let mut records = MintedSessions::empty(Some(MintedSessions::path(home.path(), "demo")));
+    let session = MintedSession { session_id: minted.session_id, role: "workspace".into(), claude_session_id: None, last_active: None, origin: Some(fake.base().into()) };
+    records.insert_minted(NAME, session, &request);
+    records.save().unwrap();
+    let config = Keeper::open(home.path()).write(NAME, &fake.mcp_url(), &minted.token, &[]).unwrap();
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "{text}");
+
+    let header = |out: Output| serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["Authorization"].as_str().unwrap().to_string();
+    assert_eq!(header(mcp_header(home.path(), NAME)), format!("Bearer {}", minted.token), "a live kept token");
+
+    sessions.revoke_name(NAME);
+    let out = mcp_header(home.path(), NAME);
+    assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+    let fresh = sessions.token_of(NAME).expect("a fresh token on the session's row");
+    assert_ne!(fresh, minted.token);
+    assert_eq!(header(out), format!("Bearer {fresh}"), "the fresh token is what claude gets");
+    assert_eq!(Keeper::open(home.path()).kept(NAME).as_deref(), Some(fresh.as_str()), "and is kept");
+    let mints: Vec<serde_json::Value> =
+        fake.seen().iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").map(|s| serde_json::from_str(&s.body).unwrap()).collect();
+    assert_eq!((mints.len(), &mints[1]["replace"], &mints[1]["name"]), (2, &true.into(), &NAME.into()));
+}
