@@ -12,6 +12,18 @@ pub fn health(mcp_url: &str, timeout: Duration) -> Result<(), String> {
     if (200..300).contains(&status) { Ok(()) } else { Err(format!("HTTP {status}")) }
 }
 
+/// Whether Workman's MCP endpoint at `mcp_url` refuses `token` (401 or 403) to one JSON-RPC `ping` without a
+/// session; unreachable or any other answer is no refusal.
+pub fn refuses(mcp_url: &str, token: &str, timeout: Duration) -> bool {
+    let res = crate::http::agent(timeout)
+        .post(mcp_url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json, text/event-stream")
+        .content_type("application/json")
+        .send(r#"{"jsonrpc":"2.0","id":0,"method":"ping"}"#);
+    res.is_ok_and(|r| matches!(r.status().as_u16(), 401 | 403))
+}
+
 fn transport(e: &ureq::Error) -> String {
     match e {
         ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::ConnectionRefused => "connection refused".into(),
@@ -36,6 +48,22 @@ mod tests {
         assert_eq!(seen.last().map(|s| (s.target.as_str(), s.authorization.clone())), Some(("/health", None)), "no token sent");
         fake.set("/health", Answer::status(503, "Unhealthy"));
         assert_eq!(health(&fake.mcp_url(), QUICK), Err("HTTP 503".into()));
+    }
+
+    #[test]
+    fn refuses_is_a_401_or_403_of_the_mcp_endpoint_and_nothing_else() {
+        let fake = FakeWorkman::start(Vec::new());
+        let sessions = fake.enable_sessions();
+        assert!(refuses(&fake.mcp_url(), "wss_unknown", QUICK), "a token Workman does not know");
+        let minted = crate::http::read(crate::http::agent(QUICK).post(format!("{}/api/agent-sessions", fake.base())).send(r#"{"name":"x","launchedBy":"t"}"#)).unwrap();
+        let token = serde_json::from_str::<serde_json::Value>(&minted.body).unwrap()["token"].as_str().unwrap().to_string();
+        assert!(sessions.live(&token));
+        assert!(!refuses(&fake.mcp_url(), &token, QUICK), "a live token");
+        let seen = fake.seen();
+        let ping = seen.last().unwrap();
+        assert_eq!((ping.method.as_str(), ping.target.as_str()), ("POST", "/mcp"));
+        assert_eq!(ping.authorization.as_deref(), Some(format!("Bearer {token}").as_str()));
+        assert!(!refuses(&format!("{}/mcp", closed_base()), &token, QUICK), "down is no refusal");
     }
 
     #[test]

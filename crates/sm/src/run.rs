@@ -1,6 +1,6 @@
 //! The session stage of `sm schedule fire` (docs/research/scheduler.md, "The life of `sm schedule fire`", steps
 //! 8 to 10): the run's worktree, its minted Workman token, `claude --bg`, the watch until the run ends, and
-//! the stop (never rm) and revoke.
+//! the stop (never rm). The token, its config and its record stay: a deleted run session revokes it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use std::time::Duration;
 use supraman_claude::{Claude, Health, LaunchSpec, Session};
 use supraman_core::EventReader;
 use supraman_core::schedule::{self, LiveSession, Outcome, Reported, RunEvent, Stage, Tokens};
-use supraman_supervisor::{Launcher, MintRequest, Minter, TokenProvider, api_base};
+use supraman_supervisor::{Bearer, Keeper, Launcher, MintRequest, MintedSession, MintedSessions, Minter, TokenProvider, api_base};
 
 use crate::fire::RunCtx;
 
@@ -108,19 +108,18 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
     if let Some(stdout) = gate {
         spec.prompt.push_str(&format!("\n\n<gate-output>\n{}\n</gate-output>", capped(stdout)));
     }
-    let mcp_dir = ctx.home.join("mcp");
-    let mint = match mint(ctx, &spec, host) {
+    let keeper = Keeper::open(ctx.home);
+    let mut mint = match mint(ctx, &spec, host) {
         Ok(m) => m,
         Err(why) => return SessionEnd::failed(why),
     };
     spec.mcp_config = None;
     let mut without_workstate = None;
     match &mint {
-        Some(m) => match spec.clone().with_minted_token(&mcp_dir, &spec.name, &m.url, &m.token) {
+        Some(m) => match keeper.launch(spec.clone(), &m.url, &m.token) {
             Ok(with) => spec = with,
-            Err(e) => {
-                let why = format!("cannot write the mcp config of {}: {e}", spec.name);
-                end_mint(host, &mcp_dir, &spec.name, Some(m));
+            Err(why) => {
+                end_mint(host, &keeper, ctx.home, &spec.name, Some(m));
                 return SessionEnd::failed(why);
             }
         },
@@ -128,16 +127,22 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
     }
 
     if let Err(e) = host.claude().launch(&spec) {
-        end_mint(host, &mcp_dir, &spec.name, mint.as_ref());
+        end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
         return SessionEnd::failed(format!("cannot launch {}: {e}", spec.name));
     }
     let row = match find_row(host, &spec.name) {
         Some(row) => row,
         None => {
-            end_mint(host, &mcp_dir, &spec.name, mint.as_ref());
+            end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
             return SessionEnd::failed(format!("{} launched, but no session of that name showed within {}s", spec.name, FIND_WITHIN.as_secs()));
         }
     };
+    if let Some(m) = &mut mint
+        && !row.session_id.is_empty()
+        && let Err(e) = m.bind(&spec.name, &row.session_id)
+    {
+        crate::fire::log(ctx.home, &format!("{}/{} {}: {e}", w.name, s.id, ctx.run));
+    }
     let workstate_session = mint.as_ref().map(|m| m.session_id.clone());
     log.session(&LiveSession {
         name: spec.name.clone(),
@@ -170,9 +175,6 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
 
     if let Err(e) = host.claude().stop(&row.id) {
         crate::fire::log(ctx.home, &format!("{}/{} {}: claude stop {}: {e}", w.name, s.id, ctx.run, row.id));
-    }
-    if let Some(why) = end_mint(host, &mcp_dir, &spec.name, mint.as_ref()) {
-        crate::fire::log(ctx.home, &format!("{}/{} {}: {why}", w.name, s.id, ctx.run));
     }
     let _ = fs::remove_file(&report);
     if end.outcome == Outcome::Done && end.why.is_empty() {
@@ -226,9 +228,22 @@ struct Mint {
     url: String,
     token: String,
     session_id: String,
+    /// The run's record, at [`MintedSessions::run_path`]: only this sm writes it.
+    record: MintedSessions,
 }
 
-/// The run's own token, minted with the signed-in bearer as the supervisor mints; `None` when not signed in.
+impl Mint {
+    /// The run's claude session on its record, so deleting that session revokes the token.
+    fn bind(&mut self, name: &str, claude_session_id: &str) -> Result<(), String> {
+        if let Some(m) = self.record.get_mut(name) {
+            m.claude_session_id = Some(claude_session_id.to_string());
+        }
+        self.record.save().map_err(|e| format!("cannot record the claude session of {name}: {e}"))
+    }
+}
+
+/// The run's own token, minted with the signed-in bearer as the supervisor mints and recorded at
+/// [`MintedSessions::run_path`]; `None` when not signed in.
 fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<Option<Mint>, String> {
     let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))? else {
         return Ok(None);
@@ -246,32 +261,35 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         claude_session_id: None,
     };
     let minted = host.minter().mint(&api_base(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
-    Ok(Some(Mint { url: t.url, token: minted.token, session_id: minted.session_id }))
+    let mut record = MintedSessions::empty(Some(MintedSessions::run_path(ctx.home, &spec.name)));
+    let session = MintedSession {
+        session_id: minted.session_id.clone(),
+        role: crate::schedule::RUN_ROLE.into(),
+        claude_session_id: None,
+        last_active: None,
+        origin: Some(api_base(&t.url)),
+    };
+    record.insert_minted(&spec.name, session, &request);
+    record.save().map_err(|e| format!("cannot record the Workman session of {}: {e}", spec.name))?;
+    Ok(Some(Mint { url: t.url, token: minted.token, session_id: minted.session_id, record }))
 }
 
-/// Revokes the run's token and deletes its config; `Some` says what failed.
-fn end_mint(host: &mut dyn SessionHost, mcp_dir: &Path, name: &str, mint: Option<&Mint>) -> Option<String> {
+/// A run that never got going: its session cannot come back, so its token is revoked ([`supraman_supervisor::revoke`])
+/// and its record goes; `Some` says what failed.
+fn end_mint(host: &mut dyn SessionHost, keeper: &Keeper, home: &Path, name: &str, mint: Option<&Mint>) -> Option<String> {
     let mut failed = Vec::new();
-    if let Some(m) = mint {
-        let base = api_base(&m.url);
-        if let Err(e) = revoke(host.tokens(), host.minter(), &base, &m.session_id) {
-            failed.push(e);
+    if let Some(session) = mint.and_then(|m| m.record.get(name)) {
+        let bearer = Bearer::of(host.tokens().token(crate::schedule::RUN_ROLE).map(|t| t.map(|t| (t.url, t.token))));
+        failed.extend(supraman_supervisor::revoke(keeper, host.minter(), &bearer, name, session).notices);
+        if let Err(e) = fs::remove_file(MintedSessions::run_path(home, name))
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            failed.push(format!("cannot delete the Workman record of {name}: {e}"));
         }
-    }
-    if let Err(e) = supraman_supervisor::remove_mcp_config(mcp_dir, name) {
+    } else if let Err(e) = supraman_supervisor::remove_mcp_config(keeper.mcp_dir(), name) {
         failed.push(e);
     }
     (!failed.is_empty()).then(|| failed.join("; "))
-}
-
-/// `DELETE /api/agent-sessions/<session_id>` on `base`, with the bearer of the server Supraman is signed in to.
-pub(crate) fn revoke(tokens: &dyn TokenProvider, minter: &dyn Minter, base: &str, session_id: &str) -> Result<(), String> {
-    match tokens.token(crate::schedule::RUN_ROLE) {
-        Ok(Some(t)) if api_base(&t.url) == base => minter.revoke(base, &t.token, session_id).map_err(|e| format!("cannot revoke Workman session {session_id}: {e}")),
-        Ok(Some(_)) => Err(format!("cannot revoke Workman session {session_id}: Supraman is signed in to another server now")),
-        Ok(None) => Err(format!("cannot revoke Workman session {session_id}: Supraman is not signed in")),
-        Err(e) => Err(format!("cannot revoke Workman session {session_id}: {e}")),
-    }
 }
 
 fn find_row(host: &mut dyn SessionHost, name: &str) -> Option<Session> {

@@ -68,7 +68,7 @@ pub trait Host {
     fn now_ms(&mut self) -> i64;
     /// The session stage; `gate` is the script's stdout when it exited [`GATE_EXIT`], `None` for a session action.
     fn session(&mut self, ctx: &RunCtx, gate: Option<&str>, log: &mut dyn RunLog) -> SessionEnd;
-    /// The session of a run whose sm died: stopped (never rm'd), its token revoked, its config deleted.
+    /// The session of a run whose sm died: stopped (never rm'd); its token, config and record stay.
     fn end_dead_session(&mut self, home: &Path, session: &LiveSession) -> Result<(), String>;
 }
 
@@ -120,21 +120,9 @@ impl SessionHost for RealHost {
     }
 }
 
-/// [`Host::end_dead_session`] with `host`'s claude and Workman.
-pub fn end_dead_session(host: &dyn SessionHost, home: &Path, session: &LiveSession) -> Result<(), String> {
-    let mut failed = Vec::new();
-    if let Err(e) = host.claude().stop(&session.id) {
-        failed.push(format!("claude stop {}: {e}", session.id));
-    }
-    if let (Some(id), Some(base)) = (&session.workstate_session, &session.origin)
-        && let Err(e) = crate::run::revoke(host.tokens(), host.minter(), base, id)
-    {
-        failed.push(e);
-    }
-    if let Err(e) = supraman_supervisor::remove_mcp_config(&home.join("mcp"), &session.name) {
-        failed.push(e);
-    }
-    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ")) }
+/// [`Host::end_dead_session`] with `host`'s claude.
+pub fn end_dead_session(host: &dyn SessionHost, _home: &Path, session: &LiveSession) -> Result<(), String> {
+    host.claude().stop(&session.id).map(drop).map_err(|e| format!("claude stop {}: {e}", session.id))
 }
 
 impl Host for RealHost {
@@ -502,7 +490,7 @@ impl Paths {
     }
 }
 
-/// The session of a dead run whose stop or revoke failed: `<id>.dead.json`, tried again by [`recover_if_dead`].
+/// The session of a dead run whose stop failed: `<id>.dead.json`, tried again by [`recover_if_dead`].
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct DeadSession {
     run: String,
@@ -623,7 +611,7 @@ pub fn sm_alive(live: &Live) -> bool {
     }
 }
 
-/// A live file left under a free lock is a run whose sm died: its session is stopped and its token revoked, and it
+/// A live file left under a free lock is a run whose sm died: its session is stopped, and it
 /// ends as `interrupted` unless it ended before.
 fn recover_dead_run(home: &Path, workspace: &str, id: &str, live: &Paths, now: i64, host: &mut dyn Host) {
     let Ok(bytes) = fs::read(&live.json) else {

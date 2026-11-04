@@ -8,7 +8,7 @@ use std::time::Duration;
 use supraman_core::home::home_env;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
-use supraman_supervisor::{HAND_ROLE, HttpMinter, LaunchConfig, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
+use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -172,7 +172,6 @@ pub struct Hands {
     /// Names whose token a continuation of their claude session holds: never revoked here, they lapse unused.
     carried: std::collections::HashSet<String>,
     /// `sm.exe` and the store a hand's token is kept in: its config's `headersHelper` prints it at each connect.
-    /// Without it the token goes into the config file.
     helper: Option<(PathBuf, Arc<dyn supraman_core::secret::SecretStore>)>,
 }
 
@@ -199,13 +198,13 @@ pub fn session_name(raw: &str) -> Option<String> {
 
 impl Hands {
     pub fn path(home: &Path) -> PathBuf {
-        home.join("supervisor").join("hands.json")
+        MintedSessions::hands_path(home)
     }
 
     pub fn open(home: &Path) -> (Self, Option<String>) {
         let (mut hands, notice) = Self::with(home, crate::signin::auth(home), HttpMinter::default(), git_repo);
         hands.claude_dir = supraman_core::paths::claude_dir();
-        hands.helper = supraman_core::install::sm_exe().ok().filter(|sm| sm.is_file()).map(|sm| (sm, supraman_core::secret::default_store(home)));
+        hands.helper = Some((supraman_core::install::sm_exe().unwrap_or_else(|_| supraman_core::HOOK_EXE.into()), supraman_core::secret::default_store(home)));
         (hands, notice)
     }
 
@@ -234,7 +233,7 @@ impl Hands {
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
-            helper: None,
+            helper: Some((supraman_core::HOOK_EXE.into(), Arc::new(supraman_core::secret::MemoryStore::default()))),
         };
         (hands, notice)
     }
@@ -287,19 +286,14 @@ impl Hands {
         self.minted.get(name).and_then(|m| m.claude_session_id.as_deref()).is_some_and(|sid| self.runs(sid))
     }
 
-    /// `name`'s config: with a [`Self::helper`], the token kept in the secret store and `sm mcp-header` as its
-    /// `headersHelper`; else, or when the store refuses it, the token in the file.
+    /// Where a hand's token is kept, and its config written: [`Self::helper`].
+    fn keeper(&self) -> Keeper {
+        let (sm, store) = self.helper.clone().unwrap_or_else(|| (supraman_core::HOOK_EXE.into(), Arc::new(supraman_core::secret::MemoryStore::default())));
+        Keeper::new(&self.home, &self.mcp_dir(), store).with_sm(sm)
+    }
+
     fn write_config(&self, name: &str, url: &str, token: &str) -> std::io::Result<PathBuf> {
-        if let Some((sm, store)) = &self.helper {
-            match store.set(&supraman_claude::mcp_token_key(name), token) {
-                Ok(()) => {
-                    let command = supraman_claude::mcp_header_command(sm, &self.home, name);
-                    return supraman_claude::write_mcp_config_helped(&self.mcp_dir(), name, url, &command);
-                }
-                Err(e) => log::warn!("hand {name}: the secret store refused its token, so its config holds it: {e}"),
-            }
-        }
-        supraman_claude::write_mcp_config(&self.mcp_dir(), name, url, token, &[])
+        self.keeper().write(name, url, token, &[]).map_err(std::io::Error::other)
     }
 
     /// claude's session registry lists `claude_session` with a running pid.
@@ -404,16 +398,8 @@ impl Hands {
             Ok(m) => m,
             Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")),
         };
-        self.minted.insert(
-            &name,
-            MintedSession {
-                session_id: minted.session_id.clone(),
-                role: EXTERNAL_ROLE.into(),
-                claude_session_id: claude_session,
-                last_active: None,
-                origin: Some(base),
-            },
-        );
+        let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, last_active: None, origin: Some(base) };
+        self.minted.insert_minted(&name, session, &request);
         if let Some(unsaved) = self.save() {
             notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
         }
@@ -442,39 +428,32 @@ impl Hands {
             self.sessions.remove(name);
             return self.save();
         }
+        self.end(name, None)
+    }
+
+    /// [`supraman_supervisor::revoke`] of `name` with `bearer`, else the sign-in's; forgotten here.
+    fn end(&mut self, name: &str, bearer: Option<Bearer>) -> Option<String> {
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
-        if let Ok(config) = self.config_path(name) {
-            let _ = std::fs::remove_file(config);
-        }
-        if let Some((_, store)) = &self.helper
-            && let Err(e) = store.delete(&supraman_claude::mcp_token_key(name))
+        let bearer = bearer.unwrap_or_else(|| Bearer::of(self.bearer()));
+        let done = supraman_supervisor::revoke(&self.keeper(), &*self.minter, &bearer, name, &m);
+        if let Some(other) = done.left
+            && !self.left.contains(&other)
         {
-            log::warn!("hand {name}: cannot delete its kept token: {e}");
+            self.left.push(other);
         }
-        let bearer = self.bearer();
-        let other = match (&bearer, &m.origin) {
-            (Ok(Some((url, _))), Some(o)) if *o != api_base(url) => Some(o.clone()),
-            _ => None,
-        };
-        if let Some(other) = &other
-            && !self.left.contains(other)
-        {
-            self.left.push(other.clone());
-        }
-        let result = match bearer {
-            Ok(Some(_)) if other.is_some() => Ok(()),
-            Ok(Some((url, token))) => self.minter.revoke(&api_base(&url), &token, &m.session_id).map_err(|e| e.to_string()),
-            Ok(None) => Err("not signed in to Workman any more".into()),
-            Err(e) => Err(e),
-        };
-        let revoke = result
-            .err()
-            .map(|e| format!("Cannot revoke the Workman token of {name} (session {}): {e}; unused, it lapses after its idle window", m.session_id));
+        let revoke = (!done.notices.is_empty()).then(|| done.notices.join("; "));
         match (revoke, self.save()) {
             (Some(r), Some(s)) => Some(format!("{r}; {s}")),
             (r, s) => r.or(s),
         }
+    }
+
+    /// The sign-out of `origin`: each hand minted there ends; its grant revoke took the tokens.
+    pub fn signed_out(&mut self, origin: &str) -> Vec<String> {
+        let origin = api_base(origin);
+        let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
+        names.iter().filter_map(|n| self.end(n, Some(Bearer::SignedOut))).collect()
     }
 
     pub fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
@@ -668,7 +647,9 @@ mod tests {
         assert!(launch.script().contains(&format!("try {{ supramanClaude @('--session-id', '{sid}', '--mcp-config', '")), "{}", launch.script());
         assert_eq!(hands.minted.get(&name).unwrap().claude_session_id.as_deref(), Some(sid.as_str()));
         let text = std::fs::read_to_string(&config).unwrap();
-        assert!(text.contains("Bearer wss_fake1") && text.contains(&format!("{url}/mcp")), "the minted token, not the sign-in's");
+        let kept = hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(&name)).unwrap().unwrap_or_default();
+        assert!(kept == "wss_fake1" && text.contains(&format!("{url}/mcp")), "the minted token, not the sign-in's");
+        assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
         assert!(!text.contains("eyJ"));
 
         let Launch::Minted { name, new_session, .. } = hands.launch(Path::new(r"C:\demo"), None) else { panic!() };

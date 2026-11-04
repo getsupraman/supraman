@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_with_the_oauth_bearer_over_http_then_revoke_on_stop() {
+    fn mint_with_the_oauth_bearer_over_http_keep_on_stop_and_revoke_once_deleted() {
         use supraman_supervisor::{Budget, DesiredState, LaunchConfig, Supervisor};
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
@@ -94,15 +94,23 @@ mod tests {
         assert_eq!((&body["role"], &body["externalRole"], &body["replace"]), (&"controller".into(), &"workspace".into(), &true.into()));
         let file = home.join("mcp").join("workstate-fm-demo-workspace.json");
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(text.contains("Bearer wss_selftest") && text.contains(&format!("{}/mcp", fake.base())), "{text}");
+        assert!(sup.keeper().kept("fm-demo-workspace").as_deref() == Some("wss_selftest") && text.contains(&format!("{}/mcp", fake.base())), "{text}");
+        assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
         let argv = sup.launcher().0.borrow().concat().join(" ");
         assert!(!argv.contains("wss_"), "{argv}");
         for t in oauth.issued() {
             assert!(!text.contains(&t) && !argv.contains(&t), "no OAuth token in the file or argv");
         }
 
+        let live = workspace_row(supraman_claude::SessionState::Working, Some(7), now);
+        sup.tick(std::slice::from_ref(&live), &mut Budget { max: 1, free: 1 }, now + 1_000);
         sup.desired.started = false;
-        sup.tick(&[], &mut Budget { max: 1, free: 1 }, now + 1_000);
+        sup.tick(std::slice::from_ref(&live), &mut Budget { max: 1, free: 1 }, now + 2_000);
+        assert!(api("DELETE").is_empty() && file.exists(), "a Stop keeps the token and its config");
+        let other = supraman_claude::Session { session_id: "bbbb0002-0000-4000-8000-000000000002".into(), name: "fm-demo-other".into(), ..workspace_row(supraman_claude::SessionState::Stopped, None, now) };
+        for t in [3_000, 4_000] {
+            sup.tick(std::slice::from_ref(&other), &mut Budget { max: 1, free: 1 }, now + t);
+        }
         let deletes = api("DELETE");
         assert_eq!(deletes.iter().map(|s| s.target.as_str()).collect::<Vec<_>>(), ["/api/agent-sessions/91"]);
         assert!(oauth.accepts(deletes[0].authorization.as_deref()));
@@ -186,7 +194,9 @@ mod tests {
         sup.tick(std::slice::from_ref(&stopped), &mut budget(), now + 130_000);
         assert_eq!(*sup.launcher().0.borrow(), ["stop aaaa0001", "resume aaaa0001-0000-4000-8000-000000000001"]);
         let text = std::fs::read_to_string(&file).unwrap();
-        assert!(text.contains(&format!("{}/mcp", b.base())) && text.contains("wss_from_b") && !text.contains("wss_from_a"), "{text}");
+        let kept = sup.keeper().kept("fm-demo-workspace").unwrap_or_default();
+        assert!(text.contains(&format!("{}/mcp", b.base())) && kept == "wss_from_b" && kept != "wss_from_a", "{text}");
+        assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().origin.as_deref(), Some(b.base()));
         let posts = b.seen().into_iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").count();
         assert_eq!(posts, 1, "minted on B");

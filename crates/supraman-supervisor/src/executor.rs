@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use supraman_claude::{Claude, LaunchSpec, Session, SessionIdentity};
 use supraman_core::AGENTS_SERVER;
 
+use crate::mint::{Absent, Bearer, Keeper};
 use crate::{
     Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
     NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, api_base, is_live, mid_turn, reconcile,
@@ -59,7 +60,7 @@ pub trait TokenProvider {
 /// session gets the role's Workman server or none, never the user-scope one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LaunchConfig {
-    /// `<SUPRAMAN_HOME>/mcp`, where [`LaunchSpec::with_minted_token`] writes each session's owner-only config.
+    /// `<SUPRAMAN_HOME>/mcp`, where [`crate::Keeper`] writes each session's helped config.
     pub mcp_dir: PathBuf,
     pub plugin_dirs: Vec<PathBuf>,
     /// Passed to the session as `SUPRAMAN_HOME`, with `SUPRAMAN_ROLE`, `SUPRAMAN_WORKSPACE`, `SUPRAMAN_SESSION` (its
@@ -177,6 +178,10 @@ pub struct Supervisor<L, T> {
     repo_of: fn(&Path) -> Option<MintRepo>,
     /// The sessions this supervisor minted a token for, by name.
     minted: MintedSessions,
+    /// Where their tokens are kept and their configs written.
+    keeper: Keeper,
+    /// Their claude sessions missing from the snapshots: a deleted one revokes.
+    absent: Absent,
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
@@ -217,6 +222,10 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         if let Err(e) = minted.adopt_origins(&config.mcp_dir) {
             notices.push(format!("Cannot save the minted Workman sessions of {}: {e}", desired.workspace));
         }
+        let keeper = match &config.supraman_home {
+            Some(home) => Keeper::new(home, &config.mcp_dir, supraman_core::secret::default_store(home)),
+            None => Keeper::new(config.mcp_dir.parent().unwrap_or(&config.mcp_dir), &config.mcp_dir, std::sync::Arc::new(supraman_core::secret::MemoryStore::default())),
+        };
         Self {
             desired,
             memory: SupervisorMemory::default(),
@@ -227,6 +236,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             minter: Box::new(HttpMinter::default()),
             repo_of: crate::git_repo,
             minted,
+            keeper,
+            absent: Absent::default(),
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
@@ -275,6 +286,19 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     pub fn minted(&self) -> &MintedSessions {
         &self.minted
+    }
+
+    pub fn keeper(&self) -> &Keeper {
+        &self.keeper
+    }
+
+    /// The sign-out of `origin`: each session minted there ends ([`crate::mint::revoke`]); its grant revoke took the tokens.
+    pub fn signed_out(&mut self, origin: &str) {
+        let origin = api_base(origin);
+        let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
+        for name in names {
+            self.end(&name, Some(Bearer::SignedOut));
+        }
     }
 
     pub fn launcher(&self) -> &L {
@@ -426,7 +450,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.record_stops(stops, now);
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
-        self.revoke_unwanted();
+        self.revoke_deleted(observed);
         self.track_activity(observed, now);
         let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
             .into_iter()
@@ -495,9 +519,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.prompt = adopt_prompt(&self.desired.workspace, w);
         }
         if let Some((url, token)) = self.mint(w, None, now)? {
-            spec = spec
-                .with_minted_token(&self.config.mcp_dir, &w.name, &url, &token)
-                .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
+            spec = self.keeper.launch(spec, &url, &token).map_err(Failure::Other)?;
         }
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
     }
@@ -533,16 +555,14 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .minter
             .mint(&api_base(&t.url), &t.token, &request)
             .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?;
-        self.minted.insert(
-            &w.name,
-            MintedSession {
-                session_id: minted.session_id,
-                role: w.role.clone(),
-                claude_session_id: claude_session_id.map(str::to_string),
-                last_active: Some(now),
-                origin: Some(api_base(&t.url)),
-            },
-        );
+        let session = MintedSession {
+            session_id: minted.session_id,
+            role: w.role.clone(),
+            claude_session_id: claude_session_id.map(str::to_string),
+            last_active: Some(now),
+            origin: Some(api_base(&t.url)),
+        };
+        self.minted.insert_minted(&w.name, session, &request);
         self.save_minted();
         Ok(Some((t.url, minted.token)))
     }
@@ -550,8 +570,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// Before the resume of `claude_session_id`: a fresh token into the session's config file.
     fn remint(&mut self, w: &WantedSession, claude_session_id: &str, now: Millis) -> Result<(), Failure> {
         if let Some((url, token)) = self.mint(w, Some(claude_session_id), now)? {
-            supraman_claude::write_mcp_config_with(&self.config.mcp_dir, &w.name, &url, &token, &[], &self.config.plugin_servers(&w.name))
-                .map_err(|e| Failure::Other(format!("cannot write the mcp config of {}: {e}", w.name)))?;
+            self.keeper.write(&w.name, &url, &token, &self.config.plugin_servers(&w.name)).map_err(Failure::Other)?;
         }
         Ok(())
     }
@@ -613,37 +632,26 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Revokes the token of every minted session no longer kept alive (Stop, `sm unwant` (R14), gave
-    /// up, gone from the desired state) and deletes its config file. A failed revoke is a notice: the
-    /// unused token lapses by itself after its idle window.
-    fn revoke_unwanted(&mut self) {
-        let kept = |name: &str| {
-            self.desired.started
-                && self.desired.sessions.iter().any(|w| w.name == name)
-                && !self.memory.get(name).is_some_and(|a| a.gave_up)
-        };
-        let gone: Vec<String> = self.minted.names().filter(|n| !kept(n)).cloned().collect();
-        for name in gone {
-            let Some(m) = self.minted.remove(&name) else {
-                continue;
-            };
-            let result = match self.tokens.token(&m.role) {
-                Ok(Some(t)) if Self::elsewhere(&m, &t.url) => Ok(()),
-                Ok(Some(t)) => self.minter.revoke(&api_base(&t.url), &t.token, &m.session_id).map_err(|e| e.to_string()),
-                Ok(None) => Err(format!("role {} has no Workman token any more", m.role)),
-                Err(e) => Err(e),
-            };
-            if let Err(e) = result {
-                self.notices.push(format!(
-                    "Cannot revoke the Workman token of {name} (session {}): {e}; unused, it lapses after its idle window",
-                    m.session_id
-                ));
-            }
-            if let Err(e) = crate::mint::remove_mcp_config(&self.config.mcp_dir, &name) {
-                self.notices.push(format!("{}{}", e[..1].to_uppercase(), &e[1..]));
-            }
-            self.save_minted();
+    /// Ends each minted session whose claude session is deleted ([`Absent`]). Stop, `sm unwant`, give-up and a
+    /// workspace's removal keep token, config and kept token: the session can come back, and Workman's idle window
+    /// lapses an unused token.
+    fn revoke_deleted(&mut self, observed: &[Session]) {
+        let bound = self.minted.bound();
+        let deleted = self.absent.deleted(&bound, observed);
+        for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
+            log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
+            self.end(&name, None);
         }
+    }
+
+    /// [`crate::mint::revoke`] of `name` with `bearer`, else its role's; forgotten here.
+    fn end(&mut self, name: &str, bearer: Option<Bearer>) {
+        let Some(m) = self.minted.remove(name) else {
+            return;
+        };
+        let bearer = bearer.unwrap_or_else(|| Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token)))));
+        self.notices.extend(crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices);
+        self.save_minted();
     }
 
     /// The Re-mint: stops the single live row of each name whose Re-mint was pressed. The supervisor
@@ -1064,6 +1072,20 @@ mod tests {
         std::fs::read_to_string(mcp_dir.join(format!("workstate-{name}.json"))).unwrap()
     }
 
+    /// `name`'s config runs `sm mcp-header` for it and holds no token.
+    fn assert_helped(mcp_dir: &Path, name: &str) {
+        let text = config_text(mcp_dir, name);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let helper = v["mcpServers"]["workman"]["headersHelper"].as_str().unwrap_or_default();
+        assert!(helper.contains(" mcp-header --home ") && helper.ends_with(&format!(" {name}")), "{text}");
+        assert!(!text.contains("Bearer") && !text.contains("wss_") && !text.contains(STATIC), "no token in the config: {text}");
+    }
+
+    /// The token `name`'s session gets: the one kept for it.
+    fn kept(sup: &Supervisor<FakeLauncher, FakeTokens>, name: &str) -> String {
+        sup.keeper().kept(name).unwrap_or_default()
+    }
+
     fn launch_argv(calls: &[Call]) -> String {
         match calls {
             [Call::Launch { argv, .. }] => argv.join(" "),
@@ -1130,7 +1152,9 @@ mod tests {
         assert!(!text.contains(STATIC), "the static token never reaches the file: {text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["mcpServers"]["workman"]["url"], "http://127.0.0.1:1/mcp");
-        assert_eq!(v["mcpServers"]["workman"]["headers"], serde_json::json!({ "Authorization": "Bearer wss_fake1" }));
+        assert_eq!(v["mcpServers"]["workman"]["headers"], serde_json::json!({}));
+        assert_helped(&mcp, "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0");
         assert_eq!(sup.tick(&[], &mut free(), NOW + 5 * SECOND), []);
         assert_eq!(sup.launcher().take(), [], "the row has not shown yet: no second launch");
@@ -1186,7 +1210,9 @@ mod tests {
 
         let ws = config_text(&mcp, "fm-demo-workspace");
         let repo = config_text(&mcp, "fm-demo-alpha");
-        assert!(ws.contains("wss_fake1") && repo.contains("wss_fake2"), "{ws} {repo}");
+        assert!(kept(&sup, "fm-demo-workspace") == "wss_fake1" && kept(&sup, "fm-demo-alpha") == "wss_fake2", "{ws} {repo}");
+        assert_helped(&mcp, "fm-demo-workspace");
+        assert_helped(&mcp, "fm-demo-alpha");
         assert!(["X-WorkState-", "X-Workman-"].iter().all(|h| !ws.contains(h) && !repo.contains(h)), "identity is on the row, not in headers: {repo}");
     }
 
@@ -1221,7 +1247,8 @@ mod tests {
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
         let resumed = servers(config_text(&mcp, "fm-demo-workspace"));
         assert_eq!(resumed["agents"], want, "the re-mint keeps it");
-        assert_eq!(resumed["workman"]["headers"]["Authorization"], "Bearer wss_fake2");
+        assert_helped(&mcp, "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake2");
 
         let (mut plain, _) = minting(true, &dir.path().join("plain"));
         plain.tick(&[], &mut free(), NOW);
@@ -1252,8 +1279,9 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().session_id, "ws-0", "same Workman row");
-        let text = config_text(&mcp, "fm-demo-workspace");
-        assert!(text.contains("wss_fake2") && !text.contains("wss_fake1") && !text.contains(STATIC), "{text}");
+        let token = kept(&sup, "fm-demo-workspace");
+        assert!(token == "wss_fake2" && token != "wss_fake1" && token != STATIC, "{token}");
+        assert_helped(&mcp, "fm-demo-workspace");
     }
 
     #[test]
@@ -1292,7 +1320,8 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let text = config_text(&mcp, "fm-demo-workspace");
-        assert!(text.contains("https://workman.example/mcp") && text.contains("wss_fake2"), "{text}");
+        assert!(text.contains("https://workman.example/mcp") && kept(&sup, "fm-demo-workspace") == "wss_fake2", "{text}");
+        assert_helped(&mcp, "fm-demo-workspace");
     }
 
     /// A supervisor of `home` whose sessions file holds `json`, with the static role token.
@@ -1380,8 +1409,10 @@ mod tests {
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Stop { .. }]), "Re-mint stops it");
 
         sup.desired.started = false;
-        sup.tick(&[], &mut free(), NOW + 63 * SECOND);
-        assert!(minter.take().is_empty(), "its server's grant revoke covers it, not a DELETE here");
+        for t in [63, 64] {
+            sup.tick(&[another()], &mut free(), NOW + t * SECOND);
+        }
+        assert!(minter.take().is_empty(), "deleted, its server's grant revoke covers it, not a DELETE here");
         assert!(sup.minted().get("fm-demo-workspace").is_none());
         assert!(!mcp.join("workstate-fm-demo-workspace.json").exists());
     }
@@ -1434,7 +1465,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_stop_revokes_the_token_and_deletes_the_config() {
+    fn mint_stop_keeps_the_token_and_the_config() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
         sup.tick(&[], &mut free(), NOW);
@@ -1446,16 +1477,17 @@ mod tests {
         sup.desired.started = false;
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
         assert_eq!(sup.launcher().take().last(), Some(&Call::Stop { id: "aaaa0001".into() }));
-        assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
-        assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
-        assert_eq!(sup.minted().get("fm-demo-workspace"), None);
-        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 3 * SECOND);
-        assert_eq!(minter.take(), [], "revoked once");
+        assert_eq!(minter.take(), [], "a Stop revokes nothing");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
+        assert_eq!(sup.minted().get("fm-demo-workspace").map(|m| m.session_id.as_str()), Some("ws-0"));
+        sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + 3 * SECOND);
+        assert_eq!(minter.take(), [], "nor later, while its claude session is there");
         assert!(sup.take_notices().is_empty());
     }
 
     #[test]
-    fn mint_unwant_and_give_up_revoke_too() {
+    fn mint_unwant_and_give_up_keep_the_token_too() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
         sup.desired.sessions.push(alpha());
@@ -1464,8 +1496,9 @@ mod tests {
         // `sm unwant` (R14): retired while the workspace runs
         sup.desired.unwant("fm-demo-alpha");
         sup.tick(&[], &mut free(), NOW + SECOND);
-        assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-1".into() }]);
-        assert!(!dir.path().join("workstate-fm-demo-alpha.json").exists());
+        assert_eq!(minter.take(), [], "an unwant revokes nothing");
+        assert_helped(dir.path(), "fm-demo-alpha");
+        assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2");
         assert!(dir.path().join("workstate-fm-demo-workspace.json").exists(), "the others keep theirs");
         // the workspace session dies within 20 s of each start until the supervisor gives up
         let mut now = NOW + 30 * SECOND;
@@ -1474,8 +1507,80 @@ mod tests {
             now += 30 * SECOND;
         }
         let revokes: Vec<MintCall> = minter.take().into_iter().filter(|c| matches!(c, MintCall::Revoke { .. })).collect();
-        assert_eq!(revokes, [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
+        assert_eq!(revokes, [], "a give-up revokes nothing");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert!(sup.minted().get("fm-demo-workspace").is_some());
+    }
+
+    /// A session of another name, so a snapshot without the minted one is not empty.
+    fn another() -> Session {
+        Session {
+            id: "bbbb0002".into(),
+            session_id: "bbbb0002-0000-4000-8000-000000000002".into(),
+            name: "fm-demo-other".into(),
+            ..row(SessionState::Stopped, None, None)
+        }
+    }
+
+    /// Launched, bound to its claude session, then stopped: what a delete finds.
+    fn minted_and_stopped(mcp_dir: &Path) -> (Supervisor<FakeLauncher, FakeTokens>, FakeMinter) {
+        let (mut sup, minter) = minting(true, mcp_dir);
+        sup.tick(&[], &mut free(), NOW);
+        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(1))], &mut free(), NOW + SECOND);
+        sup.desired.started = false;
+        sup.tick(&[row(SessionState::Working, Some(Status::Busy), Some(1))], &mut free(), NOW + 2 * SECOND);
+        sup.launcher().take();
+        minter.take();
+        (sup, minter)
+    }
+
+    #[test]
+    fn a_deleted_claude_session_revokes_once_two_snapshots_miss_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minted_and_stopped(dir.path());
+        sup.tick(&[another()], &mut free(), NOW + 3 * SECOND);
+        assert_eq!(minter.take(), [], "one snapshot without it is not yet a delete");
+        sup.tick(&[another()], &mut free(), NOW + 4 * SECOND);
+        assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
+        assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists(), "the config goes");
+        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None, "the kept token goes");
+        assert_eq!(sup.minted().get("fm-demo-workspace"), None);
+        sup.tick(&[another()], &mut free(), NOW + 5 * SECOND);
+        assert_eq!(minter.take(), [], "revoked once");
+        assert!(sup.take_notices().is_empty());
+    }
+
+    #[test]
+    fn an_empty_snapshot_revokes_nothing_and_starts_the_count_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minted_and_stopped(dir.path());
+        for t in 3..6 {
+            sup.tick(&[], &mut free(), NOW + t * SECOND);
+        }
+        sup.tick(&[another()], &mut free(), NOW + 6 * SECOND);
+        sup.tick(&[], &mut free(), NOW + 7 * SECOND);
+        sup.tick(&[another()], &mut free(), NOW + 8 * SECOND);
+        assert_eq!(minter.take(), [], "never two non-empty snapshots in a row without it");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
+    }
+
+    #[test]
+    fn a_sign_out_ends_every_session_minted_on_that_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        sup.minted.get_mut("fm-demo-alpha").unwrap().origin = Some("https://b.example".into());
+        sup.signed_out("http://127.0.0.1:1/");
+        assert_eq!(minter.take(), [], "the grant revoke took the tokens");
+        assert_eq!(sup.minted().get("fm-demo-workspace"), None);
         assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
+        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
+        assert!(sup.minted().get("fm-demo-alpha").is_some(), "another server's stays");
+        assert_helped(dir.path(), "fm-demo-alpha");
+        assert!(sup.take_notices().is_empty());
     }
 
     #[test]
@@ -1499,25 +1604,28 @@ mod tests {
         sup.retry("fm-demo-workspace");
         sup.tick(&[], &mut free(), NOW + SECOND);
         assert!(!launch_argv(&sup.launcher().take()).contains(STATIC));
-        assert!(config_text(dir.path(), "fm-demo-workspace").contains("wss_fake1"));
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
+        assert_helped(dir.path(), "fm-demo-workspace");
     }
 
     #[test]
     fn mint_a_failed_revoke_is_a_notice_and_the_file_still_goes() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut sup, minter) = minting(true, dir.path());
-        sup.tick(&[], &mut free(), NOW);
+        let (mut sup, minter) = minted_and_stopped(dir.path());
         minter.0.lock().unwrap().revoke_error = Some(MintError::Unreachable { base: "http://127.0.0.1:1".into(), reason: "refused".into() });
-        sup.desired.started = false;
-        sup.tick(&[], &mut free(), NOW + SECOND);
+        sup.take_notices();
+        for t in [3, 4] {
+            sup.tick(&[another()], &mut free(), NOW + t * SECOND);
+        }
         let notices = sup.take_notices();
         assert_eq!(notices.len(), 1, "{notices:?}");
         assert!(notices[0].starts_with("Cannot revoke the Workman token of fm-demo-workspace (session ws-0)"), "{}", notices[0]);
         assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
+        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
     }
 
     #[test]
-    fn mint_sessions_survive_a_restart_and_are_revoked_on_stop() {
+    fn mint_sessions_survive_a_restart_and_are_revoked_once_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
@@ -1532,11 +1640,18 @@ mod tests {
         minter.take();
         let saved = std::fs::read_to_string(MintedSessions::path(&home, "demo")).unwrap();
         assert!(saved.contains("ws-0") && !saved.contains("wss_") && !saved.contains(STATIC), "{saved}");
-        // the app restarts, then the workspace is stopped
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + SECOND);
+        minter.take();
+        // the app restarts, then the workspace is stopped, and later its session deleted
         let mut desired = sup.desired.clone();
         desired.started = false;
         let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None)).with_minter(minter.clone());
-        sup.tick(&[], &mut free(), NOW + SECOND);
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
+        assert_eq!(minter.take(), [], "the Stop keeps it");
+        for t in [3, 4] {
+            sup.tick(&[another()], &mut free(), NOW + t * SECOND);
+        }
         assert_eq!(minter.take(), [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-0".into() }]);
         assert_eq!(std::fs::read_to_string(MintedSessions::path(&home, "demo")).unwrap().trim(), "{}");
     }
@@ -1601,7 +1716,8 @@ mod tests {
         assert!(matches!(sup.launcher().take().as_slice(), [Call::Resume { .. }]));
         assert!(matches!(minter.take().as_slice(), [MintCall::Mint { request, .. }] if request.replace));
         assert_eq!(sup.minted().get("fm-demo-workspace").unwrap().last_active, Some(t + 31 * SECOND));
-        assert!(config_text(dir.path(), "fm-demo-workspace").contains("wss_fake2"));
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake2");
+        assert_helped(dir.path(), "fm-demo-workspace");
         assert_eq!(sup.tick(std::slice::from_ref(&idle), &mut free(), t + 40 * SECOND), [], "fresh window");
         // a plain Retry elsewhere never stops a session
         sup.retry("fm-demo-workspace");

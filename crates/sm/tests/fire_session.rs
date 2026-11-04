@@ -340,7 +340,7 @@ fn report_done_after(after_ms: i64) -> OnSleep {
 
 /// A session-only schedule the earlier release saved with `worktree = true` starts one `fm-<ws>-sched-*`
 /// session in a fresh worktree, with the profile, the prompt and a minted token; DONE ends it, and the end stops
-/// (never rm) and revokes.
+/// (never rm) and keeps its token.
 #[test]
 fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint() {
     let f = fixture(true);
@@ -372,7 +372,8 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert_eq!(first, supraman_core::install::exe_dir().unwrap().display().to_string(), "the run's sm is the one beside its sm");
 
     let config = host.claude.config_at_launch.borrow().clone().expect("the run's mcp config");
-    assert!(config.contains(&format!("Bearer {MINTED}")), "{config}");
+    assert!(config.contains("headersHelper") && config.contains(" mcp-header --home ") && !config.contains("Bearer") && !config.contains("wss_"), "{config}");
+    assert_eq!(supraman_supervisor::Keeper::open(&f.home).kept(&spec.name).as_deref(), Some(MINTED), "the run's token is the kept one");
     let posts = f.api("POST");
     let [post] = posts.as_slice() else { panic!("{posts:?}") };
     let body: serde_json::Value = serde_json::from_str(&post.body).unwrap();
@@ -382,8 +383,11 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     assert_eq!(f.api("PATCH").len(), 1, "the claude session is bound");
 
     assert_eq!(host.calls(), [format!("launch {}", spec.name), "stop aaaa0001".to_string()], "stopped, never rm'd");
-    assert_eq!(f.api("DELETE").iter().map(|s| s.target.as_str()).collect::<Vec<_>>(), ["/api/agent-sessions/91"], "revoked");
-    assert!(!spec.mcp_config.unwrap().exists(), "the config is deleted");
+    assert_eq!(f.api("DELETE"), [], "the end revokes nothing: the stopped session can be resumed");
+    assert!(spec.mcp_config.unwrap().exists(), "the config is kept");
+    assert_eq!(supraman_supervisor::Keeper::open(&f.home).kept(&spec.name).as_deref(), Some(MINTED), "and the kept token");
+    let (record, _) = supraman_supervisor::MintedSessions::find(&f.home, &spec.name).expect("the run's record stays");
+    assert_eq!((record.session_id.as_str(), record.claude_session_id.as_deref()), ("91", Some(UUID)), "bound, so deleting the session revokes");
 
     let events = f.records(&run);
     let Stage::Session { name, id, session_id, worktree: wt, workstate_session, without_workstate } = session_stage(&events) else { unreachable!() };
@@ -413,9 +417,9 @@ fn fire_session_after_a_script_gets_its_stdout_in_the_prompt() {
     assert!(matches!(events.iter().find_map(|e| match e { RunEvent::Stage(Stage::Script { code, .. }) => Some(*code), _ => None }), Some(Some(10))));
 }
 
-/// max_runtime stops the session (stop, never rm) and revokes; the record says why.
+/// max_runtime stops the session (stop, never rm) and keeps its token; the record says why.
 #[test]
-fn fire_session_max_runtime_stops_and_revokes() {
+fn fire_session_max_runtime_stops_and_keeps_the_token() {
     let f = fixture(true);
     let mut s = session_schedule("slow", ActionKind::Session, Profile::Read);
     s.caps.max_runtime = Span(5 * 60);
@@ -426,16 +430,16 @@ fn fire_session_max_runtime_stops_and_revokes() {
     assert!(report.why.contains("max_runtime 5m"), "{}", report.why);
     assert_eq!(host.calls().last().unwrap(), "stop aaaa0001");
     assert!(host.calls().iter().all(|c| !c.starts_with("rm")));
-    assert_eq!(f.api("DELETE").len(), 1);
+    assert_eq!(f.api("DELETE").len(), 0, "the end keeps the token");
     let ends = ended(&f.records(&report.run.unwrap()));
     assert_eq!(ends.len(), 1);
     assert_eq!(ends[0].0, Outcome::CappedRuntime);
     assert!(host.now - T0 >= 5 * 60 * 1000 && host.now - T0 < 6 * 60 * 1000, "ended within a poll of max_runtime");
 }
 
-/// The transcript's input + output + cache-creation tokens over max_tokens stop the session and revoke.
+/// The transcript's input + output + cache-creation tokens over max_tokens stop the session; its token stays.
 #[test]
-fn fire_session_token_cap_stops_and_revokes_with_the_totals() {
+fn fire_session_token_cap_stops_with_the_totals_and_keeps_the_token() {
     let f = fixture(true);
     let mut s = session_schedule("big", ActionKind::Session, Profile::Read);
     s.caps.max_tokens = 1_000;
@@ -461,7 +465,7 @@ fn fire_session_token_cap_stops_and_revokes_with_the_totals() {
     assert_eq!(report.outcome, Some(Outcome::CappedTokens), "{report:?}");
     assert!(report.why.contains("1200 tokens") && report.why.contains("max_tokens 1000"), "{}", report.why);
     assert_eq!(host.calls().last().unwrap(), "stop aaaa0001");
-    assert_eq!(f.api("DELETE").len(), 1);
+    assert_eq!(f.api("DELETE").len(), 0, "the end keeps the token");
     let ends = ended(&f.records(&report.run.unwrap()));
     assert_eq!(ends[0].2, Some(schedule::Tokens { input: 600, output: 200, cache_creation: 400, cache_read: 180_000 }), "cache reads recorded, not capped");
 }
@@ -475,7 +479,7 @@ fn fire_session_idle_after_work_ends_the_run_done() {
     let report = run_now(&f, "tidy", &mut host);
     assert_eq!((report.outcome, report.why.as_str()), (Some(Outcome::Done), "idle after its work, without a report"), "{report:?}");
     assert_eq!(host.calls().last().unwrap(), "stop aaaa0001");
-    assert_eq!(f.api("DELETE").len(), 1);
+    assert_eq!(f.api("DELETE").len(), 0, "the end keeps the token");
 }
 
 /// A blocked run is recorded `needs_you` at once, stays parked until max_runtime, then is stopped.
@@ -502,7 +506,7 @@ fn fire_session_blocked_is_needs_you_at_once_and_parked_until_max_runtime() {
     assert_eq!(host.calls().iter().filter(|c| c.starts_with("stop")).count(), 1, "parked, then stopped once");
     assert!(host.now - T0 >= 10 * 60 * 1000, "parked until max_runtime");
     assert_eq!(ended(&f.records(&report.run.unwrap())).len(), 1, "one ended line");
-    assert_eq!(f.api("DELETE").len(), 1);
+    assert_eq!(f.api("DELETE").len(), 0, "the end keeps the token");
 }
 
 /// The session gone without a report is `failed`; a report names a run in flight.
@@ -549,9 +553,9 @@ fn fire_session_needs_a_repo_for_a_worktree_and_launches_nothing() {
     assert!(host.calls().is_empty() && f.api("POST").is_empty());
 }
 
-/// A run whose sm died with its session live: the next fire stops that session, revokes, and records it interrupted.
+/// A run whose sm died with its session live: the next fire stops that session, keeps its token, and records it interrupted.
 #[test]
-fn fire_session_of_a_dead_fm_is_stopped_and_revoked_by_the_next_fire() {
+fn fire_session_of_a_dead_fm_is_stopped_by_the_next_fire_and_keeps_its_token() {
     let f = fixture(true);
     f.add_approved(session_schedule("crash", ActionKind::Session, Profile::Read));
     let live = schedule::live_dir(&f.home, "demo").unwrap();
@@ -575,7 +579,7 @@ fn fire_session_of_a_dead_fm_is_stopped_and_revoked_by_the_next_fire() {
     run_now(&f, "crash", &mut host);
     assert_eq!(host.dead_ended.len(), 1);
     assert_eq!(host.calls()[0], "stop dead0001");
-    assert!(f.api("DELETE").len() >= 2, "the dead run's token and the new run's");
+    assert!(f.api("DELETE").is_empty(), "neither the dead run's token nor the new run's is revoked");
     assert_eq!(ended(&f.records("crash-20261101-090000"))[0].0, Outcome::Interrupted);
 }
 

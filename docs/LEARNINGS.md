@@ -1298,14 +1298,21 @@ Task thrown with `fm send`: add `--shout` to `textcli greet`, built on a new `te
   server ignores `X-WorkState-Agent` for it; launcher, origin, cwd and Foreman role are on the row from the mint
   body. Two sources (headers vs row) could only disagree.
 - **sessionId** per name in `<FOREMAN_HOME>/supervisor/<w>.sessions.json` (`.json`, not `.toml`: `migrate_home`
-  rewrites every `supervisor/*.toml`). No token in it. It survives an app restart, so a Stop after a restart still
+  rewrites every `supervisor/*.toml`). No token in it. It survives an app restart, so a delete after a restart still
   revokes.
 - **PATCH** `{claudeSessionId}` once per mint, when the name's single live row shows a `sessionId` (the tick already
   has the `agents --json --all` snapshot). Failed or not, it is not repeated until the next mint; a failure is a notice.
-- **Revoke**: every tick, each minted name that is not (workspace started ∧ still wanted ∧ not given up) is
-  DELETEd and its config file deleted — Stop, `fm unwant` (R14), give-up, removal from the desired state. A 404 is
-  revoked. A failed revoke is a notice (`Supervision` keeps the last 5 among the panel's warnings); the file goes
-  anyway, and the unused token lapses after its idle window.
+- **Revoke** (`supraman_supervisor::revoke`, the one owner for supervised sessions, hands and scheduled runs): only
+  when the session cannot come back — its claude session is deleted (the app's Delete, `claude rm`, or gone from
+  `claude agents --all`: missing from two non-empty snapshots in a row, `Absent`; an empty or failed snapshot counts
+  for nothing), or the user signs out of that Workman server (the grant revoke takes every token minted under it;
+  Supraman forgets the records, configs and kept tokens). Then the token is DELETEd, unless it is from another server
+  than the sign-in's (left to that server's grant revoke), and its config and kept token go. Stop, `sm unwant` (R14),
+  give-up, a scheduled run's end (or its dead sm's recovery), Supraman's quit and start, and workspace remove keep
+  token, config and kept token: Workman's idle window lapses an unused one. A run whose record cannot be found when its
+  session is deleted (a removed workspace's sessions file, a deleted `supervisor/runs/<name>.json`) lapses the same way;
+  `prune::prune` drops no run session and no record. A 404 is revoked. A failed revoke is a notice; the config and kept
+  token go anyway.
 - **Failure**: a refused or unreachable mint fails the launch/resume into the existing `launch failed` row with
   Retry and backoff, detail `cannot mint a WorkState token for <name>: WorkState answered HTTP <status>: <reason>`;
   nothing is launched and **no fallback** to the static token. `RoleToken`'s and `Minted`'s `Debug` redact the token;
@@ -5785,5 +5792,34 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   <home> <name>`, which prints the hand's token from the secret store (`mcp_token_key`); the file holds no token. A hand
   is revoked only once its claude session is gone (claude's session registry), at quit, at start or when its tab ends;
   a running one keeps token and config, and Workman's idle window lapses it once unused. A replace re-mint takes the
-  exited holder's own name, so its config and kept token are rewritten in place. Supervised sessions keep their
-  static header: nothing revokes a live one at quit or start (a resume re-mints and rewrites its config).
+  exited holder's own name, so its config and kept token are rewritten in place. Supervised sessions and scheduled
+  runs get the same helped config (fix-u15).
+
+## 2026-11-04 — fix-u15 `headersHelper` for every session; a token revoked only when its session is gone
+
+- **No Supraman config holds a token**: supervised sessions, resumes, scheduled runs and [+] sessions keep the minted token in the secret store (`Keeper`, `mcp_token_key`) and
+  write `headersHelper` = `sm mcp-header --home <home> <name>`, with the plugin servers beside Workman's. A supervised
+  session's config from before is rewritten helped at its next launch or resume (both always mint and write).
+- **Self-healing**: `sm mcp-header` cannot tell a first connect from claude's retry after a 401, so it asks Workman:
+  one JSON-RPC `ping` POST to the config's MCP URL with the kept token (`supraman_workman::refuses`). A 401 or 403, or
+  no kept token, mints afresh with `replace` from the name's record (each record keeps the mint that made its token;
+  `MintedSessions::find` over `supervisor/*.sessions.json`, `hands.json`, `runs/*.json`) and Supraman's sign-in,
+  keeps it and prints it; unreachable or anything else prints the kept one. Cost per connect, measured: `sm.exe`
+  starts in about 70 ms, and the ping to work.supraman.ai takes about 0.1 s with its TLS handshake (it answers 401 to
+  a bad token on `/mcp`); a re-mint adds the mint. A record's idle window was not used: only the supervisor slides
+  `lastActive`, so hands and runs have none.
+- **claude 2.1.318 when Workman is down at the first connect** (a `claude -p` with a helped `--mcp-config` server at a
+  closed port that opened 20 s in, a logging helper, `--debug mcp`): claude tries 4 times in the first 7 s (at 0,
+  0.5, 2 and 6 s; "Retry attempt 1..3: transiently-failed remote server(s)", each running the helper again), then
+  logs "still failed after all retries" and never tries again: the server, up from 20 s, got no request in the
+  52 s session, and the model saw no tool ("NO TOOL"). A tool that never connected is never listed, so no later
+  tool call can reconnect it. Only `/mcp` → Reconnect or a restart does; the 401 path stays the only self-healing one.
+- **claude 2.1.318's needs-auth cache** (`<config dir>/mcp-needs-auth-cache.json`, keyed by server name; throwaway
+  `CLAUDE_CONFIG_DIR`s, no credentials, the connect happens before "Not logged in"): a cached `workman` entry makes a
+  new `--strict-mcp-config` session log `MCP server "workman": Skipping connection (cached needs-auth)`; its helper
+  never runs and the server gets no request, whatever the config holds. With no cache the helper runs and the session
+  connects. The entry blocks for about 15 min: 600 s old it still blocks, 960 s old it does not. A helped server's
+  401 writes no cache entry and gets no OAuth fallback ("OAuth fallback is disabled when the helper supplies
+  Authorization"). So only a non-helped `workman` server (the user-scope OAuth one, or an old static-token config) can
+  poison it; after fix-u15 no Supraman config is non-helped. The per-session server name is René's decision
+  (Workman item of its own).

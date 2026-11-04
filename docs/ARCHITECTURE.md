@@ -10,7 +10,7 @@ Dependencies point down this list only; nothing below depends on anything above 
 | Crate | Owns | Depends on |
 |---|---|---|
 | `crates/supraman-app` | The `supraman.exe` binary: `FleetView` (left tree, tabs, Work tab, Inbox), Settings window, tray, the supervisor's driver, hand sessions, the selftests. | every crate below |
-| `crates/sm` | The `sm` CLI (`lib.rs`, shared by `sm.exe` and the console-less `smw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop, revoke). | claude, core, supervisor, workman |
+| `crates/sm` | The `sm` CLI (`lib.rs`, shared by `sm.exe` and the console-less `smw.exe` a schedule's task runs): `workspace`, `sessions`, `want`/`unwant`/`roster`, `inbox`/`send`/`tell`/`messages`, `schedule` (with `fire`, `run`, `report` and `secret set`; `fire.rs` the checks and the script stage, `run.rs` the session stage), `work`, `hook`, `plugin install`, `probe`. Edits files the app acts on; drives no supervisor, but owns a scheduled run end to end (launch, watch, stop), and `mcp-header`, every session's `headersHelper`. | claude, core, supervisor, workman |
 | `crates/supraman-supervisor` | Desired state per workspace, the pure `reconcile`, the executor (launch, resume, stop, mint, revoke), the shared busy budget, the Inbox rows (`NeedsYou`). No UI. | claude, core, workman |
 | `crates/supraman-claude` | The only code that knows the `claude` CLI: `agents --json --all` and health, `--bg` launch, stop, rm, resume, the peer pipe, transcripts, the background-service check. | core |
 | `crates/supraman-workman` | Every Workman read: the read API v1 client, `/api/stream`, the OAuth client, the HTTP agent. Read only (C21). A test fake behind the `fake` feature. | core |
@@ -155,10 +155,12 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 
 ### Minting and re-minting
 - The supervisor mints for `fm-` sessions (`executor.rs` `Supervisor::mint`, from `launch`, and `remint` before every Resume); hands mint for tab sessions (`hand.rs` `Hands::launch_for`).
-- `crates/supraman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/supraman-supervisor/src/tokens.rs` `AppTokens`, role from `workman_role`). A scheduled run mints its own token the same way (`crates/sm/src/run.rs`), keeps it out of `MintedSessions`, and revokes it when the run ends.
-- Only the minted `wss_` token reaches a session, in the file `mcp_config_path` names (`crates/supraman-claude/src/launch.rs` `write_mcp_config`, owner-only ACL, `--strict-mcp-config` for supervised sessions).
-- Records: `<home>/supervisor/<workspace>.sessions.json` (`MintedSessions`) and `<home>/supervisor/hands.json`.
-- Re-mint: every Resume; the Re-mint remedy on a `TokenExpired` or `OtherServer` row (`Supervisor::retry` → `stop_for_remint`, then resume); a server change (`Supervisor::server_changed`). Unwanted tokens are revoked by `revoke_unwanted` and `Hands::release_all`.
+- `crates/supraman-supervisor/src/mint.rs` `HttpMinter`: POST `/api/agent-sessions` (`replace: true`), PATCH to bind the claude session id, DELETE to revoke (404 counts as revoked). The bearer is the OAuth access token (`crates/supraman-supervisor/src/tokens.rs` `AppTokens`, role from `workman_role`). A scheduled run mints its own token the same way (`crates/sm/src/run.rs`).
+- No file holds a token. `mint.rs` `Keeper` keeps the minted `wss_` token in the secret store under `mcp_token_key(name)` and writes the config `mcp_config_path` names with `headersHelper` = `sm mcp-header --home <home> <name>` (`write_mcp_config_helped`, the plugin servers beside Workman's, `--strict-mcp-config`).
+- `sm mcp-header` (`mint.rs` `header`) prints the kept token after one `ping` POST to the MCP URL with it (`supraman_workman::refuses`); a 401/403 or a missing kept token mints afresh with `replace` from the name's record (`MintedSessions::find`) and Supraman's sign-in, keeps it and prints it, so claude's own retry after a 401 heals the connection.
+- Records, each with the mint that made its token: `<home>/supervisor/<workspace>.sessions.json`, `<home>/supervisor/hands.json`, and one `<home>/supervisor/runs/<name>.json` per scheduled run (`MintedSessions`).
+- Re-mint: every Resume; the Re-mint remedy on a `TokenExpired` or `OtherServer` row (`Supervisor::retry` → `stop_for_remint`, then resume); a server change (`Supervisor::server_changed`).
+- Revoke (`mint.rs` `revoke`, the one end of a minted session: DELETE, unless the token is from another server than the sign-in's, then its config and kept token go) happens only when the session cannot come back: its claude session is deleted (`Absent`: missing from two non-empty `claude agents --all` snapshots in a row; `Supervisor::tick` for supervised sessions, `Supervision::tick` → `revoke_deleted_runs` for scheduled runs, the app's Delete → `Hands::release_session` and a hand whose claude is gone for hands), or a sign-out (`supervise::sign_out`: the grant revoke takes every token minted under it, and `Supervisor::signed_out`, `forget_runs` and `Hands::signed_out` forget them). Stop, unwant, give-up, a run's end, quit, start and workspace remove keep token, config and kept token; Workman's idle window lapses an unused one.
 
 ### OAuth sign-in and refresh
 1. `crates/supraman-app/src/view.rs` `FleetView::sign_in` → `crates/supraman-app/src/signin.rs` (one `Auth` per home).
@@ -174,7 +176,7 @@ Attach opens `claude attach <id>` (`view.rs` `attach`); `resume` runs `claude --
 ### Quit
 1. `crates/supraman-app/src/tray.rs` Quit (asking first when workspaces are started) → `view.rs` `FleetView::quit`; closing the window only hides it to the tray.
 2. Every attach tab detaches: `close_tab` → `start_detach` writes Ctrl+Z (`DETACH_INPUT`) and waits `DETACH_WITHIN`; a tab that does not detach cancels the quit.
-3. `quit_step`: with no attach tab left, `hand::release_all_within` revokes the hand tokens, then `close_for_quit` closes the window. `open_hands` also releases them on `on_app_quit` and releases stale ones at start.
+3. `quit_step`: with no attach tab left, `hand::release_all_within` revokes the tokens of hands whose claude is gone, then `close_for_quit` closes the window. `open_hands` also releases them on `on_app_quit` and releases stale ones at start.
 4. Supervised `--bg` sessions keep running; the supervisor only stops ticking.
 
 ## Protected business logic

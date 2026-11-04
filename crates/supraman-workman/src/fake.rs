@@ -205,7 +205,7 @@ impl FakeWorkman {
                     }
                     if answer.is_none() {
                         let rows = rows.lock().unwrap().clone();
-                        answer = rows.and_then(|r| r.handle(method, target, body));
+                        answer = rows.and_then(|r| r.handle(method, target, authorization.as_deref(), body));
                     }
                     if answer.is_none() && method == "GET" {
                         let events = events.lock().unwrap().clone();
@@ -707,14 +707,25 @@ impl FakeSessions {
         self.rows.lock().unwrap().get(name).filter(|r| !r.revoked).and_then(|r| r.token.clone())
     }
 
+    /// Revokes the live token of the session named `name`, as a revoke elsewhere or its idle window would.
+    pub fn revoke_name(&self, name: &str) {
+        if let Some(r) = self.rows.lock().unwrap().get_mut(name) {
+            r.revoked = true;
+        }
+    }
+
     /// The rows' names, revoked ones too.
     pub fn names(&self) -> Vec<String> {
         self.rows.lock().unwrap().keys().cloned().collect()
     }
 
-    fn handle(&self, method: &str, target: &str, body: &str) -> Option<Answer> {
+    fn handle(&self, method: &str, target: &str, authorization: Option<&str>, body: &str) -> Option<Answer> {
         match (method, target) {
             ("POST", "/api/agent-sessions") => Some(self.mint(body)),
+            ("POST", "/mcp") => Some(match authorization.and_then(|a| a.strip_prefix("Bearer ")) {
+                Some(token) if self.live(token) => Answer::json(r#"{"jsonrpc":"2.0","id":0,"result":{}}"#),
+                _ => Answer::status(401, r#"{"error":"invalid_token"}"#),
+            }),
             ("DELETE", t) => {
                 let id = t.strip_prefix("/api/agent-sessions/")?;
                 let mut rows = self.rows.lock().unwrap();

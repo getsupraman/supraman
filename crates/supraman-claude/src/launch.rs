@@ -55,6 +55,13 @@ impl LaunchSpec {
         Ok(self)
     }
 
+    /// [`Self::with_minted_token`] whose token `helper` prints ([`write_mcp_config_helped`]): no token in the file.
+    pub fn with_helped_config(mut self, dir: &Path, agent: &str, url: &str, helper: &str) -> std::io::Result<Self> {
+        self.mcp_config = Some(write_mcp_config_helped(dir, agent, url, helper, &self.mcp_servers)?);
+        self.strict_mcp_config = true;
+        Ok(self)
+    }
+
     /// Everything after the program name. The prompt goes after `--` because `--mcp-config` is
     /// variadic and would otherwise swallow it.
     pub fn argv(&self) -> Vec<OsString> {
@@ -186,9 +193,9 @@ pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, he
 
 /// [`write_mcp_config`] whose `Authorization` comes from `helper`, a command claude runs at each connect and on a
 /// 401 (its `headersHelper`, LEARNINGS restart-keeps-hands): no token in the file.
-pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str) -> std::io::Result<PathBuf> {
+pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
-    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], &[]), restrict_to_owner)?;
+    supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], servers), restrict_to_owner)?;
     Ok(path)
 }
 
@@ -522,11 +529,11 @@ mod tests {
     fn a_helped_config_has_the_helper_and_no_authorization() {
         let dir = tempfile::tempdir().unwrap();
         let helper = r#""C:\sm.exe" mcp-header --home "C:\h" hand-alpha-1"#;
-        let helped = write_mcp_config_helped(dir.path(), "hand-alpha-1", "http://127.0.0.1:1/mcp", helper).unwrap();
+        let helped = write_mcp_config_helped(dir.path(), "hand-alpha-1", "http://127.0.0.1:1/mcp", helper, &[]).unwrap();
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&helped).unwrap()).unwrap();
         assert_eq!(v["mcpServers"]["workman"], serde_json::json!({ "type": "http", "url": "http://127.0.0.1:1/mcp", "headers": {}, "headersHelper": helper }));
         assert_eq!(helped, mcp_config_path(dir.path(), "hand-alpha-1").unwrap());
-        assert!(write_mcp_config_helped(dir.path(), "../x", "http://127.0.0.1:1/mcp", "sm").is_err());
+        assert!(write_mcp_config_helped(dir.path(), "../x", "http://127.0.0.1:1/mcp", "sm", &[]).is_err());
         assert_eq!(
             mcp_header_command(Path::new(r"C:\Tools\sm.exe"), Path::new(r"C:\Users\a b\Supraman"), "hand-x-1"),
             r#""C:\Tools\sm.exe" mcp-header --home "C:\Users\a b\Supraman" hand-x-1"#
