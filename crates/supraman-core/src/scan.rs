@@ -5,9 +5,11 @@ use crate::{CoreError, Folder, FolderKind, Result};
 
 pub const DEFAULT_DEPTH: usize = 1;
 
-/// Finds the git repos under `root`, at most `depth` levels down (1 = direct children). A `root` that is
-/// itself a repo (a `.git` folder, or the `.git` file of a linked worktree) is one too, listed first
-/// named after its folder ([`root_repo_name`]), its path the root.
+/// The folders under `root`: at `depth` 1 every direct subfolder, git or plain; deeper, the git repos at most
+/// `depth` levels down. Hidden folders, `*.worktrees` folders and linked worktrees are skipped. A `root` that is
+/// itself a repo (a `.git` folder, or the `.git` file of a linked worktree) is one too, listed first named after
+/// its folder ([`root_repo_name`]), its path the root; a plain `root` scanned at depth 1 with no subfolder is its
+/// own one folder.
 ///
 /// Read-only: it never runs git and never writes inside a scanned folder.
 pub fn scan(root: &Path, depth: usize) -> Result<Vec<Folder>> {
@@ -15,16 +17,20 @@ pub fn scan(root: &Path, depth: usize) -> Result<Vec<Folder>> {
         return Err(CoreError::NotADirectory(root.to_path_buf()));
     }
     let entries = fs::read_dir(root).map_err(|e| CoreError::io(root, e))?;
-    let mut repos = Vec::new();
-    walk(entries, "", 1, depth, &mut repos);
-    repos.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut folders = Vec::new();
+    // Only a depth-1 scan lists plain folders; a deeper one stays a search for repos (add-workspace/1).
+    let every = depth == 1;
+    walk(entries, "", 1, depth, every, &mut folders);
+    folders.sort_by(|a, b| a.name.cmp(&b.name));
     let git = root.join(".git");
     if git.exists() {
-        let name = root_repo_name(root, &repos);
+        let name = root_repo_name(root, &folders);
         let git_dir = if git.is_dir() { Some(git) } else { crate::paths::linked_git_dir(&git) };
-        repos.insert(0, repo_at(name, root.to_path_buf(), git_dir.as_deref()));
+        folders.insert(0, repo_at(name, root.to_path_buf(), git_dir.as_deref()));
+    } else if every && folders.is_empty() {
+        folders.push(folder_at(root_repo_name(root, &[]), root.to_path_buf()));
     }
-    Ok(repos)
+    Ok(folders)
 }
 
 /// The root repo's name: its folder's name, `<folder>-root` when a repo below already has that name.
@@ -56,7 +62,7 @@ pub(crate) fn folder_at(name: String, path: std::path::PathBuf) -> Folder {
     }
 }
 
-fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &mut Vec<Folder>) {
+fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, every: bool, found: &mut Vec<Folder>) {
     if level > depth {
         return;
     }
@@ -68,21 +74,35 @@ fn walk(entries: fs::ReadDir, prefix: &str, level: usize, depth: usize, repos: &
         let Ok(folder) = entry.file_name().into_string() else {
             continue;
         };
-        if folder.starts_with('.') || folder.ends_with(".worktrees") {
+        if folder.starts_with('.') || folder.ends_with(".worktrees") || hidden(&entry) {
             continue;
         }
         let path = entry.path();
         let name = format!("{prefix}{folder}");
         let git = path.join(".git");
         if git.is_dir() {
-            repos.push(repo_at(name, path, Some(&git)));
+            found.push(repo_at(name, path, Some(&git)));
         } else if git.exists() {
             // A `.git` file: a linked worktree of a repo that lives elsewhere.
             continue;
+        } else if every {
+            found.push(Folder { kind: FolderKind::Plain, ..repo_at(name, path, None) });
         } else if let Ok(children) = fs::read_dir(&path) {
-            walk(children, &format!("{name}/"), level + 1, depth, repos);
+            walk(children, &format!("{name}/"), level + 1, depth, every, found);
         }
     }
+}
+
+#[cfg(windows)]
+fn hidden(entry: &fs::DirEntry) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_HIDDEN;
+    entry.metadata().is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_HIDDEN.0 != 0)
+}
+
+#[cfg(not(windows))]
+fn hidden(_: &fs::DirEntry) -> bool {
+    false
 }
 
 /// The branch checked out at `dir`, from the nearest `.git` at or above it (a folder, or a linked
@@ -144,12 +164,57 @@ mod tests {
     }
 
     #[test]
-    fn depth_one_finds_only_plain_top_level_repos() {
+    fn depth_one_lists_every_direct_subfolder_git_or_plain() {
         let tmp = tree();
         let repos = scan(tmp.path(), DEFAULT_DEPTH).unwrap();
-        assert_eq!(names(&repos), ["Alpha", "Beta", "Gamma"]);
+        assert_eq!(names(&repos), ["Alpha", "Beta", "Gamma", "group", "plain"]);
         assert!(repos.iter().all(|r| r.enabled));
         assert_eq!(repos[0].path, tmp.path().join("Alpha"));
+        let kinds: Vec<FolderKind> = repos.iter().map(|r| r.kind).collect();
+        assert_eq!(kinds, [FolderKind::Git, FolderKind::Git, FolderKind::Git, FolderKind::Plain, FolderKind::Plain]);
+    }
+
+    #[test]
+    fn a_plain_parent_lists_its_subfolders_as_plain_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        for f in ["NodeApi", "docs"] {
+            fs::create_dir_all(tmp.path().join(f).join("src")).unwrap();
+        }
+        fs::write(tmp.path().join("NodeApi").join("CLAUDE.md"), "x").unwrap();
+        let found = scan(tmp.path(), 1).unwrap();
+        assert_eq!(names(&found), ["NodeApi", "docs"]);
+        assert!(found.iter().all(|f| f.kind == FolderKind::Plain && f.branch.is_none()));
+        assert!(found[0].has_claude_md && !found[1].has_claude_md);
+        assert_eq!(found[1].path, tmp.path().join("docs"));
+    }
+
+    #[test]
+    fn a_parent_without_subfolders_is_its_own_one_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Notes");
+        fs::create_dir_all(root.join(".cache")).unwrap();
+        fs::write(root.join("todo.md"), "x").unwrap();
+        let found = scan(&root, 1).unwrap();
+        assert_eq!(names(&found), ["Notes"]);
+        assert_eq!((found[0].path.as_path(), found[0].kind), (root.as_path(), FolderKind::Plain));
+        assert!(scan(&root, 2).unwrap().is_empty(), "a deeper scan only searches for repos");
+    }
+
+    #[test]
+    fn hidden_subfolders_are_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        for f in [".vscode", "shown", "Hidden"] {
+            fs::create_dir_all(tmp.path().join(f)).unwrap();
+        }
+        repo(&tmp.path().join(".dotrepo"), "ref: refs/heads/main
+");
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, SetFileAttributesW};
+            SetFileAttributesW(&windows::core::HSTRING::from(tmp.path().join("Hidden").as_os_str()), FILE_ATTRIBUTE_HIDDEN).unwrap();
+        }
+        let expected: &[&str] = if cfg!(windows) { &["shown"] } else { &["Hidden", "shown"] };
+        assert_eq!(names(&scan(tmp.path(), 1).unwrap()), expected);
     }
 
     #[test]

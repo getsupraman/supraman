@@ -8,17 +8,18 @@ use supraman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, d
 
 const USAGE: &str = "\
 usage:
-  sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]   (a parent folder, scanned)
+  sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
+      (a parent folder: depth 1 adds each direct subfolder, git or plain; a deeper scan adds its git repos)
   sm workspace new <name> [--home <dir>] [--folder <dir>]...   (a workspace of the folders given, or empty)
   sm workspace add-folder <name> <dir> [--enable]   (git or plain; --enable: it may have a supervised session)
   sm workspace remove-folder <name> <folder>       (stops its supervised session; stop, never rm)
   sm workspace enable <name> <folder>   |   sm workspace disable <name> <folder>
   sm workspace set-home <name> <dir>               (where the workspace and relay sessions run)
-  sm workspace add-scan <name> <dir> [--depth N]   (adds the repos below <dir>, now and on every rescan)
+  sm workspace add-scan <name> <dir> [--depth N]   (adds the folders below <dir> as add does, now and on every rescan)
   sm workspace remove-scan <name> <dir>            (the folders only it found go too)
   sm workspace list
   sm workspace show <name>                         (home, scans, folders with kind and owner)
-  sm workspace remove <name>
+  sm workspace remove <name>                       (stops its sessions; stop, never rm; no token is revoked)
   sm sessions [--workspace <name>] [--all]
   sm want <workspace> <repo> [--prompt-file <path>]   (start the repo's session fm-<workspace>-<repo>)
   sm unwant <workspace> <repo>         (stop it; stop, never rm)
@@ -45,8 +46,6 @@ usage:
   sm schedule fire --home <home> <workspace> <id> --fingerprint <hex>   (what the schedule's task runs, as smw.exe)
       <workspace>: default the one whose folders hold the current folder. An added or changed schedule is
       pending until Approve in the Supraman window; sm never approves and never registers a task.
-  sm work overview <workspace>         (its Workman project: runs with rollups, who works, the inbox)
-  sm work board <workspace> <run-ref>  (one run's items: status, criteria n/m, claim, verification)
   sm release manifest <zip> --version <semver> --commit <sha> [--notes-url <url>]
       (writes supraman-update.json and SHA256SUMS beside the zip; the zip is Supraman-<semver>.zip)
   sm release sign <manifest>           (the secret key from UPDATE_SIGNING_KEY; writes <manifest>.sig)
@@ -89,11 +88,11 @@ mod probe_rm;
 mod probe_session_id;
 mod relay;
 mod release;
+pub mod remove;
 mod repos;
 pub mod run;
 mod schedule;
 mod update;
-mod work;
 
 enum Failure {
     Usage(String),
@@ -250,7 +249,6 @@ fn run(args: &[String]) -> Result<(), Failure> {
             code => Err(Failure::Exit(code)),
         },
         ["schedule", rest @ ..] => schedule::schedule(&registry()?, rest),
-        ["work", rest @ ..] => work::work(registry()?.home(), rest),
         #[cfg(feature = "probes")]
         ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),
@@ -430,7 +428,12 @@ fn show(name: &str) -> Result<(), Failure> {
 }
 
 fn remove(name: &str) -> Result<(), Failure> {
-    registry()?.remove(name)?;
+    let registry = registry()?;
+    registry.load(name)?;
+    let claude = supraman_claude::Claude::default();
+    for stopped in remove::remove(registry.home(), name, &claude).map_err(|e| Failure::Refused(format!("error: {e}")))? {
+        println!("stopped {stopped} (stop, never rm)");
+    }
     println!("removed workspace {name}");
     Ok(())
 }

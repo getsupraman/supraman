@@ -5,7 +5,7 @@ use std::{
 
 use supraman_claude::{Claude, Session, now_ms};
 use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, name_char, rescan, validate_name};
-use supraman_supervisor::DesiredState;
+use supraman_supervisor::remove_workspace;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Subscription, Window};
 
 use super::FleetView;
@@ -118,9 +118,6 @@ fn add(registry: Registry, name: String, empty: bool, root: PathBuf, repos: Vec<
         registry.save(&workspace, false).map_err(|e| add_error(&e))?;
         return Ok((workspace, Vec::new()));
     }
-    if repos.is_empty() {
-        return Err(format!("No git repos found directly under {}.", root.display()));
-    }
     validate_name(&name).map_err(|e| add_error(&e))?;
     let mut workspace = Workspace::new(name, root.clone(), repos);
     workspace.scans.push(Scan::new(root, DEFAULT_DEPTH));
@@ -176,13 +173,7 @@ impl FleetView {
                         draft.root = workspace.home().map(Path::to_path_buf).unwrap_or_default();
                         draft.name.update(cx, |name, cx| name.set_text(&workspace.name, cx));
                         draft.repos = workspace.folders.into_iter().map(|r| (r, true)).collect();
-                        draft.error = if draft.repos.is_empty() {
-                            Some(format!("No git repos found directly under {}.", draft.root.display()))
-                        } else if renamed {
-                            Some("The folder's name gives no valid workspace name: choose one.".into())
-                        } else {
-                            None
-                        };
+                        draft.error = renamed.then(|| "The folder's name gives no valid workspace name: choose one.".into());
                     }
                     Err(e) => draft.error = Some(add_error(&e)),
                 }
@@ -555,30 +546,36 @@ impl FleetView {
             .collect();
         for name in ready {
             self.removing.remove(&name);
-            let result = (|| -> Result<(), String> {
-                let home = self.home.as_deref().ok_or("no Supraman home")?;
-                let desired = DesiredState::path(home, &name).map_err(|e| e.to_string())?;
-                match std::fs::remove_file(&desired) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {e}", desired.display())),
-                    _ => {}
+            let home = self.home.clone();
+            let task = cx.background_executor().spawn(async move {
+                let home = home.ok_or_else(|| format!("{name}: no Supraman home"))?;
+                remove_workspace(&home, &name).map_err(|e| format!("{name}: {e}"))?;
+                Ok::<_, String>(name)
+            });
+            cx.spawn(async move |this, cx| {
+                let done = task.await;
+                this.update(cx, |this, cx| this.removed(done, cx)).ok();
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    fn removed(&mut self, done: Result<String, String>, cx: &mut Context<Self>) {
+        match done {
+            Ok(name) => {
+                self.desired.remove(&name);
+                self.invalidate_tree();
+                self.relays.remove(&name);
+                self.messages.remove(&name);
+                if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
+                    self.compose = None;
                 }
-                Registry::at(home).remove(&name).map_err(|e| e.to_string())
-            })();
-            match result {
-                Ok(()) => {
-                    self.desired.remove(&name);
-                    self.invalidate_tree();
-                    self.relays.remove(&name);
-                    self.messages.remove(&name);
-                    if self.compose.as_ref().is_some_and(|c| c.workspace == name) {
-                        self.compose = None;
-                    }
-                    self.workspaces.retain(|w| w.name != name);
-                    self.reload_workspaces(cx);
-                    self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
-                }
-                Err(e) => self.action_error = Some(format!("Cannot remove {name}: {e}")),
+                self.workspaces.retain(|w| w.name != name);
+                self.reload_workspaces(cx);
+                self.show_toast(format!("Removed workspace {name}; no files were deleted."), cx);
             }
+            Err(e) => self.action_error = Some(format!("Cannot remove: {e}")),
         }
         cx.notify();
     }
@@ -696,7 +693,7 @@ mod tests {
         let e = add(Registry::at(tmp.path()), "one".into(), false, tmp.path().join("root"), vec![repo("beta")]).unwrap_err();
         assert_eq!(e, "The name one is taken: choose another.");
         let e = add(Registry::at(tmp.path()), "Bad Name".into(), false, tmp.path().join("root"), Vec::new()).unwrap_err();
-        assert!(e.starts_with("No git repos found directly under"), "the folder before the name: {e}");
+        assert_eq!(e, "Use lowercase letters, digits and '-' only for the name.", "a folder without subfolders is no error");
         let (empty, _) = add(Registry::at(tmp.path()), "three".into(), true, PathBuf::new(), Vec::new()).unwrap();
         assert_eq!((empty.folders.len(), empty.home.is_none()), (0, true));
     }

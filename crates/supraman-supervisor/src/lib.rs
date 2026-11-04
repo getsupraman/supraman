@@ -77,7 +77,7 @@ mod tokens;
 pub use budget::{Budget, mid_turn, tick_all, working};
 pub use desired::{
     DEFAULT_PERMISSION_MODE, DesiredState, HAND_ROLE, RELAY_RESUME_PROMPT, RELAY_ROLE, REPO_ROLE, WORKSPACE_ROLE, WantedSession, Wanted,
-    adopt_prompt, adopted_session, fill_paths, is_foreign, is_relay, relay_session, relay_session_name, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
+    adopt_prompt, adopted_session, fill_paths, is_foreign, is_relay, relay_session, relay_session_name, remove_workspace, render_repo_role, render_role, repo_session, repo_session_name, role_prompt,
     workspace_session_name,
 };
 pub use error::{Result, SupervisorError};

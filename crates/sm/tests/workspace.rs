@@ -184,3 +184,19 @@ fn a_workspace_made_empty_takes_folders_a_home_and_scans_and_shows_kind_and_owne
     }
     assert!(!home.join("workspaces").join("x.toml").exists(), "a refused new writes nothing");
 }
+
+#[test]
+fn add_of_a_plain_parent_adds_its_subfolders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let parent = tmp.path().join("Clients");
+    for f in ["acme", "globex", ".cache"] {
+        fs::create_dir_all(parent.join(f)).unwrap();
+    }
+    let out = sm(&home, &["workspace", "add", parent.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let text = stdout(&out);
+    assert!(text.contains("registered workspace clients") && text.contains("folders: 2\n"), "{text}");
+    assert!(text.contains("  acme\tkind=plain\tbranch=-\tclaude_md=no\tagents_md=no\tenabled=yes\towner=clients\tpath="), "{text}");
+    assert!(text.contains("  globex\tkind=plain\t"), "{text}");
+}
