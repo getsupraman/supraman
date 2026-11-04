@@ -54,6 +54,7 @@ use crate::workman_setup::{self, WorkmanStatus};
 mod delete;
 pub(crate) mod details;
 mod drop;
+mod folder_list;
 mod folders;
 mod left;
 mod links;

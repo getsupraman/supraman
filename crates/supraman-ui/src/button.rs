@@ -100,6 +100,11 @@ pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Int
         .child(label.into())
 }
 
+/// `button` dimmed, with the plain cursor, while it cannot act; its caller gives it no click then.
+pub fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
+    button.opacity(0.4).cursor_default()
+}
+
 /// A ghost button with a `border` outline and a text label.
 pub fn outline(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, border: Hsla, cx: &App) -> Stateful<Div> {
     ghost(hits, key, cx)
