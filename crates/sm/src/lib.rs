@@ -8,13 +8,14 @@ use supraman_core::{CoreError, DEFAULT_DEPTH, FolderKind, Registry, Workspace, d
 
 const USAGE: &str = "\
 usage:
-  sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]   (a parent folder, scanned)
+  sm workspace add <dir> [--name <slug>] [--depth N] [--dry-run] [--force]
+      (a parent folder: depth 1 adds each direct subfolder, git or plain; a deeper scan adds its git repos)
   sm workspace new <name> [--home <dir>] [--folder <dir>]...   (a workspace of the folders given, or empty)
   sm workspace add-folder <name> <dir> [--enable]   (git or plain; --enable: it may have a supervised session)
   sm workspace remove-folder <name> <folder>       (stops its supervised session; stop, never rm)
   sm workspace enable <name> <folder>   |   sm workspace disable <name> <folder>
   sm workspace set-home <name> <dir>               (where the workspace and relay sessions run)
-  sm workspace add-scan <name> <dir> [--depth N]   (adds the repos below <dir>, now and on every rescan)
+  sm workspace add-scan <name> <dir> [--depth N]   (adds the folders below <dir> as add does, now and on every rescan)
   sm workspace remove-scan <name> <dir>            (the folders only it found go too)
   sm workspace list
   sm workspace show <name>                         (home, scans, folders with kind and owner)

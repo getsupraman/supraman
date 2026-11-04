@@ -118,9 +118,6 @@ fn add(registry: Registry, name: String, empty: bool, root: PathBuf, repos: Vec<
         registry.save(&workspace, false).map_err(|e| add_error(&e))?;
         return Ok((workspace, Vec::new()));
     }
-    if repos.is_empty() {
-        return Err(format!("No git repos found directly under {}.", root.display()));
-    }
     validate_name(&name).map_err(|e| add_error(&e))?;
     let mut workspace = Workspace::new(name, root.clone(), repos);
     workspace.scans.push(Scan::new(root, DEFAULT_DEPTH));
@@ -176,13 +173,7 @@ impl FleetView {
                         draft.root = workspace.home().map(Path::to_path_buf).unwrap_or_default();
                         draft.name.update(cx, |name, cx| name.set_text(&workspace.name, cx));
                         draft.repos = workspace.folders.into_iter().map(|r| (r, true)).collect();
-                        draft.error = if draft.repos.is_empty() {
-                            Some(format!("No git repos found directly under {}.", draft.root.display()))
-                        } else if renamed {
-                            Some("The folder's name gives no valid workspace name: choose one.".into())
-                        } else {
-                            None
-                        };
+                        draft.error = renamed.then(|| "The folder's name gives no valid workspace name: choose one.".into());
                     }
                     Err(e) => draft.error = Some(add_error(&e)),
                 }
@@ -702,7 +693,7 @@ mod tests {
         let e = add(Registry::at(tmp.path()), "one".into(), false, tmp.path().join("root"), vec![repo("beta")]).unwrap_err();
         assert_eq!(e, "The name one is taken: choose another.");
         let e = add(Registry::at(tmp.path()), "Bad Name".into(), false, tmp.path().join("root"), Vec::new()).unwrap_err();
-        assert!(e.starts_with("No git repos found directly under"), "the folder before the name: {e}");
+        assert_eq!(e, "Use lowercase letters, digits and '-' only for the name.", "a folder without subfolders is no error");
         let (empty, _) = add(Registry::at(tmp.path()), "three".into(), true, PathBuf::new(), Vec::new()).unwrap();
         assert_eq!((empty.folders.len(), empty.home.is_none()), (0, true));
     }

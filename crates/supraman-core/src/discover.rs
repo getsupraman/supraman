@@ -125,7 +125,7 @@ mod tests {
         fs::create_dir_all(root.join("plain")).unwrap();
         let w = discover(&root, None, 1).unwrap();
         assert_eq!(w.name, "my-projects");
-        assert_eq!(names(&w), [("Alpha", true), ("Beta", true)]);
+        assert_eq!(names(&w), [("Alpha", true), ("Beta", true), ("plain", true)]);
         assert_eq!(w.home(), Some(root.as_path()));
         assert_eq!(w.scans, [Scan::new(root.clone(), 1)]);
         assert_eq!(discover(&root, Some("x"), 1).unwrap().name, "x");
@@ -190,6 +190,22 @@ mod tests {
         assert_eq!(names(&after), [("renamed", true), ("NodeApi", true), ("Far", true)]);
         assert_eq!(after.folders[1].kind, FolderKind::Plain);
         assert!(added.is_empty() && removed.is_empty(), "{added:?} {removed:?}");
+    }
+
+    #[test]
+    fn a_plain_subfolder_removed_by_hand_is_not_added_again_by_a_rescan() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = Registry::at(dir.path().join("home"));
+        let root = dir.path().join("ws");
+        repo_dir(&root, "Alpha");
+        fs::create_dir_all(root.join("notes")).unwrap();
+        reg.save(&discover(&root, Some("ws"), 1).unwrap(), false).unwrap();
+        reg.edit("ws", crate::Edit::RemoveFolder("notes".into())).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        let (after, added, removed) = rescan(&reg.load("ws").unwrap()).unwrap();
+        assert_eq!(names(&after), [("Alpha", true), ("docs", true)]);
+        assert_eq!((added, removed), (vec!["docs".to_string()], Vec::<String>::new()));
+        assert_eq!(after.folders[1].kind, FolderKind::Plain);
     }
 
     #[test]
