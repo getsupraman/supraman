@@ -20,7 +20,7 @@ pub enum MenuAction {
     Rescan(String),
     EditFolders(String),
     AddFromFolder,
-    AddEmpty,
+    AddCustom,
     Remove(String),
     OpenFolder(PathBuf),
     /// A tab of the default shell titled `place · <shell>`.
@@ -170,9 +170,8 @@ pub fn other_schedule_items(task: &ForeignTask) -> Vec<MenuItem> {
     ]
 }
 
-/// Add workspace: today's scan of a parent folder, or a workspace with no folder yet.
 pub fn add_items() -> Vec<MenuItem> {
-    vec![item("add-from-folder", "From a parent folder…", MenuAction::AddFromFolder), item("add-empty", "Empty workspace", MenuAction::AddEmpty)]
+    vec![item("add-from-folder", "From a parent folder…", MenuAction::AddFromFolder), item("add-custom", "Custom workspace…", MenuAction::AddCustom)]
 }
 
 pub fn repo_items(workspace: &str, repo: &RepoNode) -> Vec<MenuItem> {

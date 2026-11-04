@@ -19,16 +19,39 @@ use gpui::{
 
 use crate::{
     selftest::{cargo_root, click, press, sleep, until, until_app},
-    view::{FleetView, MenuAction},
+    view::{FleetView, MenuAction, workspace_dialog::WorkspaceDialog},
 };
 
 pub const FOLDER: &str = "selftest-add";
 pub const SINGLE: &str = "selftest-single";
 const ADDED: &str = "selftest-added";
+const CUSTOM: &str = "selftest-custom";
 const WITHIN: Duration = Duration::from_secs(5);
 
 fn painted(v: &FleetView, key: &str) -> bool {
     v.shown(key)
+}
+
+fn dialog<'a>(v: &FleetView, cx: &'a gpui::App) -> Option<&'a WorkspaceDialog> {
+    v.add_dialog().map(|d| d.read(cx))
+}
+
+/// The dialog's rows as `(name, included, home)`.
+fn rows(v: &FleetView, cx: &gpui::App) -> Option<Vec<(String, Option<bool>, bool)>> {
+    dialog(v, cx).filter(|d| !d.scanning).map(|d| d.list.rows.iter().map(|r| (r.folder.name.clone(), r.included, r.home)).collect())
+}
+
+/// The dialog's name (`name`) or path field set to `text`, and the dialog painted again.
+fn set_field(view: &Entity<FleetView>, name: bool, text: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    view.update(cx, |v, cx| {
+        let dialog = v.add_dialog().cloned().ok_or_else(|| anyhow!("no Add workspace dialog"))?;
+        dialog.update(cx, |d, cx| {
+            let field = if name { d.name.clone() } else { d.path.clone() };
+            field.update(cx, |f, cx| f.set_text(text, cx));
+            cx.notify();
+        });
+        Ok(())
+    })
 }
 
 fn typed(cx: &mut AsyncWindowContext, key: &str, key_char: Option<&str>) -> anyhow::Result<()> {
@@ -119,9 +142,13 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
     Ok(())
 }
 
+fn registry_has(view: &Entity<FleetView>, name: &str, cx: &mut AsyncWindowContext) -> bool {
+    view.read_with(cx, |v, _| v.home.as_ref().is_some_and(|h| Registry::at(h).exists(name).unwrap_or(false)))
+}
+
 async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let name = |v: &FleetView, cx: &gpui::App| {
-        v.adding.as_ref().map(|d| {
+        dialog(v, cx).map(|d| {
             let n = d.name.read(cx);
             (n.text().to_string(), n.line.cursor())
         })
@@ -146,17 +173,19 @@ async fn edit_name(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> any
     let edited = until_app(view, cx, WITHIN, "the name edited by posted End, 3 Backspace and `added`", |v, cx| (name(v, cx) == added).then_some(())).await;
     drop(observer);
     edited.map_err(|e| e.context(format!("(name, caret) {:?}, expected ({ADDED}, {}); keystrokes {:?}", now(cx), ADDED.len(), seen.borrow())))?;
-    view.update(cx, |v, _| v.adding.as_mut().map(|d| d.scanning = true));
+    let set_scanning = |on: bool| move |v: &mut FleetView, cx: &mut gpui::Context<FleetView>| v.add_dialog().cloned().map(|d| d.update(cx, |d, cx| {
+        d.scanning = on;
+        cx.notify();
+    }));
+    view.update(cx, set_scanning(true));
+    until_app(view, cx, WITHIN, "Save dimmed while the folder is read", |v, cx| dialog(v, cx).is_some_and(|d| !d.can_save(cx)).then_some(())).await?;
     post_click(view, "add-save", 4., cx).await?;
-    let said = view.update(cx, |v, _| {
-        let d = v.adding.as_mut()?;
-        d.scanning = false;
-        d.error.take()
-    });
-    let Some(said) = said else {
-        bail!("Save while the folder was still read said nothing");
-    };
-    Ok(format!("name by posted messages: click → caret 0, edited to {ADDED}; Save while reading: \"{said}\""))
+    let (open, saved) = (view.read_with(cx, |v, _| v.adding.is_some()), registry_has(view, ADDED, cx));
+    view.update(cx, set_scanning(false));
+    if !open || saved {
+        bail!("Save while the folder was still read: dialog open {open}, {ADDED} registered {saved}");
+    }
+    Ok(format!("name by posted messages: click → caret 0, edited to {ADDED}; Save while reading: dimmed, nothing saved"))
 }
 
 /// The move is dispatched: a posted WM_MOUSEMOVE is undone by the WM_MOUSELEAVE the real cursor's position sends at once.
@@ -556,52 +585,55 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let home = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?;
     let registry = Registry::at(&home);
 
+    std::fs::create_dir_all(root.join("notes"))?;
+    let all_in = |names: &[&str]| names.iter().map(|n| (n.to_string(), Some(true), false)).collect::<Vec<_>>();
+
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     click(view, "menu-add-from-folder", cx).await?;
-    let repos = until(view, cx, WITHIN, "the review's repos", |v| {
-        let d = v.adding.as_ref().filter(|d| !d.scanning)?;
-        Some(d.repos.iter().map(|(r, _)| r.name.clone()).collect::<Vec<_>>())
-    })
-    .await?;
-    let name = view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name_text(cx)).unwrap_or_default());
-    if name != FOLDER || repos != ["alpha", "beta"] {
-        bail!("the review offers name {name} with repos {repos:?}, expected {FOLDER} with [alpha, beta]");
+    let listed = until_app(view, cx, WITHIN, "the dialog's folders", |v, cx| rows(v, cx)).await?;
+    let name = view.read_with(cx, |v, cx| dialog(v, cx).map(|d| d.name_text(cx)).unwrap_or_default());
+    if name != FOLDER || listed != all_in(&["alpha", "beta", "notes"]) {
+        bail!("the dialog offers name {name} with rows {listed:?}, expected {FOLDER} with alpha, beta and the plain notes, all ticked, no row home");
     }
-    until(view, cx, WITHIN, "Save painted", |v| painted(v, "add-save").then_some(())).await?;
-    click(view, "add-repo-beta", cx).await?;
-    until(view, cx, WITHIN, "beta unticked", |v| v.adding.as_ref().is_some_and(|d| !d.repos[1].1).then_some(())).await?;
+    until(view, cx, WITHIN, "Save and the parent's path painted", |v| (painted(v, "add-save") && painted(v, "add-parent")).then_some(())).await?;
+    click(view, "add-include-notes", cx).await?;
+    until_app(view, cx, WITHIN, "notes unticked", |v, cx| rows(v, cx).filter(|r| r[2].1 == Some(false)).map(|_| ())).await?;
     let name_edit = edit_name(view, cx).await?;
     shot("add-review", cx).await;
     post_keys(&["enter"], cx).await?;
-    until(view, cx, WITHIN, "the review closed on Enter", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the dialog closed on Enter", |v| v.adding.is_none().then_some(())).await?;
     let saved = registry.load(ADDED).context("the registry after Save")?;
     let flags: Vec<(String, bool)> = saved.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
-    if flags != [("alpha".to_string(), true), ("beta".to_string(), false)] {
-        bail!("registered {ADDED} with repos {flags:?}, expected alpha enabled and beta disabled");
+    if flags != [("alpha".to_string(), true), ("beta".to_string(), true)] {
+        bail!("registered {ADDED} with folders {flags:?}, expected alpha and beta, enabled");
+    }
+    let excluded: Vec<&Path> = saved.scans.iter().flat_map(|s| s.exclude.iter().map(PathBuf::as_path)).collect();
+    if saved.home() != Some(root.as_path()) || saved.scans.len() != 1 || excluded != [root.join("notes").as_path()] {
+        bail!("registered {ADDED} with home {:?} and scans {:?}, expected home {} and one scan of it excluding notes", saved.home, saved.scans, root.display());
     }
     let alpha = format!("repo-row-{ADDED}/alpha");
     let in_tree = |v: &FleetView, repo: &str| v.tree().workspaces.iter().find(|w| w.name == ADDED).is_some_and(|w| w.repos.iter().any(|r| r.name == repo));
-    until(view, cx, WITHIN, "alpha in the tree, the disabled beta not", |v| (painted(v, &alpha) && !in_tree(v, "beta")).then_some(())).await?;
-    let mut out = vec![format!("added {ADDED} from {} (alpha enabled, beta disabled), only alpha in the tree", root.display()), name_edit];
+    until(view, cx, WITHIN, "alpha in the tree, the unticked notes not", |v| (painted(v, &alpha) && !in_tree(v, "notes")).then_some(())).await?;
+    let mut out = vec![format!("added {ADDED} from {} (alpha and beta; notes unticked, in its scan's exclude), home the parent", root.display()), name_edit];
     out.push(cut_label_tooltip(view, cx).await?);
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
     click(view, "add-workspace", cx).await?;
     click(view, "menu-add-from-folder", cx).await?;
-    until(view, cx, WITHIN, "the second review", |v| v.adding.as_ref().filter(|d| !d.scanning).map(|_| ())).await?;
-    until(view, cx, WITHIN, "Save painted", |v| painted(v, "add-save").then_some(())).await?;
-    let again = view.read_with(cx, |v, cx| v.adding.as_ref().map(|d| d.name_text(cx))).unwrap_or_default();
+    until_app(view, cx, WITHIN, "the second dialog's folders", |v, cx| rows(v, cx).filter(|r| r.len() == 3)).await?;
+    until(view, cx, WITHIN, "alpha's `supervised in` painted", |v| painted(v, "add-elsewhere-alpha").then_some(())).await?;
+    let again = view.read_with(cx, |v, cx| dialog(v, cx).map(|d| d.name_text(cx))).unwrap_or_default();
     click(view, "add-save", cx).await?;
-    until(view, cx, WITHIN, "the second review closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    until(view, cx, WITHIN, "the second dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
     let second = registry.load(&again).with_context(|| format!("the same folder again, saved as {again}"))?;
     let flags: Vec<(String, bool)> = second.folders.iter().map(|r| (r.name.clone(), r.enabled)).collect();
-    if flags != [("alpha".to_string(), false), ("beta".to_string(), true)] {
-        bail!("the same folder again as {again}: folders {flags:?}, expected alpha disabled (supervised in {ADDED}) and beta enabled");
+    if flags != [("alpha".to_string(), false), ("beta".to_string(), false), ("notes".to_string(), true)] {
+        bail!("the same folder again as {again}: folders {flags:?}, expected alpha and beta disabled (supervised in {ADDED}) and notes enabled");
     }
     let in_again = |v: &FleetView, repo: &str| v.tree().workspaces.iter().find(|w| w.name == again).is_some_and(|w| w.repos.iter().any(|r| r.name == repo));
-    until(view, cx, WITHIN, "beta in the second workspace, alpha (supervised in the first) not", |v| {
-        (painted(v, &format!("repo-row-{again}/beta")) && !in_again(v, "alpha") && !painted(v, &format!("supervised-in-{again}/alpha"))).then_some(())
+    until(view, cx, WITHIN, "notes in the second workspace, alpha (supervised in the first) not", |v| {
+        (painted(v, &format!("repo-row-{again}/notes")) && !in_again(v, "alpha") && !painted(v, &format!("supervised-in-{again}/alpha"))).then_some(())
     })
     .await?;
     view.update(cx, |v, cx| v.search.update(cx, |s, cx| s.set_text("alpha", cx)));
@@ -611,7 +643,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     out.push(edit_folders_fit(view, &registry, &again, cx).await?);
     registry.remove(&again)?;
     until(view, cx, Duration::from_secs(15), "the second workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == again)).then_some(())).await?;
-    out.push(format!("the same folder again registers as {again} with alpha disabled, out of its tree and found by search as supervised in {ADDED}; removed"));
+    out.push(format!("the same folder again registers as {again} with alpha and beta disabled, alpha out of its tree and found by search as supervised in {ADDED}; removed"));
     out.push(row_details(view, own, cx).await?);
 
     let session_key = format!("session-row-{}", own.session_id);
@@ -647,6 +679,10 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     until(view, cx, WITHIN, "Edit folders… with beta's box", |v| painted(v, "edit-enable-beta").then_some(())).await?;
     shot("edit-folders", cx).await;
     click(view, "edit-enable-beta", cx).await?;
+    until(view, cx, WITHIN, "beta disabled, out of the tree", |v| (!in_tree(v, "beta") && painted(v, "edit-enable-beta")).then_some(())).await?;
+    // the next press must see this frame's layout, not the one before Disable
+    sleep(cx, Duration::from_millis(100)).await;
+    click(view, "edit-enable-beta", cx).await?;
     until(view, cx, WITHIN, "beta enabled in the tree", |v| {
         v.tree().workspaces.iter().find(|w| w.name == ADDED)?.repos.iter().find(|r| r.name == "beta" && r.enabled).map(|_| ())
     })
@@ -659,7 +695,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     }
     click(view, "edit-done", cx).await?;
     until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
-    out.push("beta enabled in Edit folders…, then in the tree with its +".into());
+    out.push("beta disabled and enabled again in Edit folders…, then in the tree with its +".into());
 
     out.push(open_folder(view, &ws_key, cx).await?);
 
@@ -684,5 +720,39 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
         bail!("Remove touched the folder {}", root.display());
     }
     out.push(format!("removed via its menu; {} and its repos still on disk", root.display()));
+    out.push(custom(view, &registry, &root, cx).await?);
     Ok(out.join("; "))
+}
+
+/// Custom workspace…: two folders typed (Enter, then Add), home moved to the second, saved with that home.
+async fn custom(view: &Entity<FleetView>, registry: &Registry, root: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let (alpha, beta) = (root.join("alpha"), root.join("beta"));
+    click(view, "add-workspace", cx).await?;
+    click(view, "menu-add-custom", cx).await?;
+    until(view, cx, WITHIN, "the custom dialog's path field", |v| painted(v, "add-new-path-text").then_some(())).await?;
+    if view.read_with(cx, |v, cx| dialog(v, cx).is_none_or(|d| d.can_save(cx) || !d.list.rows.is_empty())) {
+        bail!("a custom dialog opened with folders or Save enabled");
+    }
+    set_field(view, false, &alpha.display().to_string(), cx)?;
+    click(view, "add-new-path-text", cx).await?;
+    post_keys(&["enter"], cx).await?;
+    until_app(view, cx, WITHIN, "alpha added by Enter, home", |v, cx| rows(v, cx).filter(|r| r == &[("alpha".to_string(), None, true)]).map(|_| ())).await?;
+    set_field(view, false, &beta.display().to_string(), cx)?;
+    click(view, "add-add", cx).await?;
+    until_app(view, cx, WITHIN, "beta added by Add", |v, cx| rows(v, cx).filter(|r| r.len() == 2).map(|_| ())).await?;
+    click(view, "add-home-beta", cx).await?;
+    until_app(view, cx, WITHIN, "home moved to beta", |v, cx| rows(v, cx).filter(|r| !r[0].2 && r[1].2).map(|_| ())).await?;
+    set_field(view, true, CUSTOM, cx)?;
+    until_app(view, cx, WITHIN, "Save enabled", |v, cx| dialog(v, cx).is_some_and(|d| d.can_save(cx)).then_some(())).await?;
+    shot("add-custom", cx).await;
+    click(view, "add-save", cx).await?;
+    until(view, cx, WITHIN, "the custom dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let saved = registry.load(CUSTOM).context("the custom workspace after Save")?;
+    let folders: Vec<&Path> = saved.folders.iter().map(|f| f.path.as_path()).collect();
+    if folders != [alpha.as_path(), beta.as_path()] || saved.home.as_deref() != Some(beta.as_path()) || !saved.scans.is_empty() {
+        bail!("registered {CUSTOM} with folders {folders:?}, home {:?}, scans {:?}; expected alpha and beta, home beta, no scan", saved.home, saved.scans);
+    }
+    registry.remove(CUSTOM)?;
+    until(view, cx, Duration::from_secs(15), "the custom workspace gone", |v| (!v.workspaces.iter().any(|w| w.name == CUSTOM)).then_some(())).await?;
+    Ok(format!("{CUSTOM}: alpha typed and added by Enter, beta by Add, home moved to beta; saved with home beta and no scan; removed"))
 }
