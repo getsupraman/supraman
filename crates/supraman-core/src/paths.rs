@@ -211,10 +211,30 @@ pub fn expand_env(text: &str) -> String {
     out
 }
 
+const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
+
+/// This process's `PATHEXT`, Windows' default when unset or empty.
+pub fn pathext() -> String {
+    pathext_or_default(std::env::var("PATHEXT").ok())
+}
+
+fn pathext_or_default(value: Option<String>) -> String {
+    value.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| DEFAULT_PATHEXT.into())
+}
+
+fn path_folders(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> {
+    std::env::split_paths(path).filter(|dir| !dir.as_os_str().is_empty())
+}
+
+/// The folders of `path` (a `PATH` value) that hold the file `file`, in `PATH` order.
+pub fn folders_holding(file: &str, path: &std::ffi::OsStr) -> Vec<PathBuf> {
+    path_folders(path).filter(|dir| dir.join(file).is_file()).collect()
+}
+
 /// The file pwsh runs for a bare `name`: the first `PATH` folder holding `name.ps1` or `name` with a `PATHEXT` extension, `.ps1` first.
 pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
     let exts: Vec<&str> = std::iter::once(".ps1").chain(pathext.split(';').map(str::trim).filter(|e| !e.is_empty())).collect();
-    std::env::split_paths(path).filter(|dir| !dir.as_os_str().is_empty()).find_map(|dir| {
+    path_folders(path).find_map(|dir| {
         exts.iter().map(|ext| dir.join(format!("{name}{}", ext.to_ascii_lowercase()))).find(|file| file.is_file())
     })
 }
@@ -237,8 +257,8 @@ pub fn windows_powershell(system_root: Option<&std::ffi::OsStr>) -> PowerShell {
 /// The first `PATH` folder's `pwsh` with a `PATHEXT` extension, else [`windows_powershell`]; never a bare name.
 pub fn powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
     let exts: Vec<String> = pathext.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_ascii_lowercase).collect();
-    let pwsh = std::env::split_paths(path)
-        .filter(|dir| !dir.as_os_str().is_empty() && dir.is_absolute())
+    let pwsh = path_folders(path)
+        .filter(|dir| dir.is_absolute())
         .find_map(|dir| exts.iter().map(|ext| dir.join(format!("pwsh{ext}"))).find(|file| file.is_file()));
     match pwsh {
         Some(path) => PowerShell { alias: is_app_alias(&path), path, name: "pwsh" },
@@ -266,8 +286,7 @@ fn is_app_alias(_: &Path) -> bool {
 
 fn process_env() -> (std::ffi::OsString, String, Option<std::ffi::OsString>) {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-    (path, pathext, std::env::var_os("SystemRoot"))
+    (path, pathext(), std::env::var_os("SystemRoot"))
 }
 
 /// [`powershell`] for this process's `PATH`, `PATHEXT` and `SystemRoot`, looked up once: every terminal tab's.
@@ -334,6 +353,28 @@ mod command_tests {
         assert!(!driveless.is_absolute() && driveless.join("pwsh.exe").is_file(), "{} resolves on the current drive", driveless.display());
         let found = powershell(driveless.as_os_str(), ".EXE", Some(tmp.path().join("Windows").as_os_str()));
         assert_eq!(found.name, "powershell");
+    }
+
+    #[test]
+    fn pathext_is_windows_default_when_unset_or_empty() {
+        assert_eq!(pathext_or_default(None), ".COM;.EXE;.BAT;.CMD");
+        assert_eq!(pathext_or_default(Some(" ".into())), ".COM;.EXE;.BAT;.CMD");
+        assert_eq!(pathext_or_default(Some(".EXE;.PS1".into())), ".EXE;.PS1");
+    }
+
+    #[test]
+    fn folders_holding_a_file_come_in_path_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b, c) = (tmp.path().join("a"), tmp.path().join("b"), tmp.path().join("c"));
+        for (d, git) in [(&a, true), (&b, false), (&c, true)] {
+            fs::create_dir_all(d).unwrap();
+            if git {
+                fs::write(d.join("git.exe"), "").unwrap();
+            }
+        }
+        let path = std::env::join_paths([&c, &b, &a]).unwrap();
+        assert_eq!(folders_holding("git.exe", &path), [c, a]);
+        assert!(folders_holding("git.exe", std::ffi::OsStr::new("")).is_empty());
     }
 
     #[test]

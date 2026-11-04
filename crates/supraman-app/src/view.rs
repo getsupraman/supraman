@@ -264,6 +264,7 @@ pub struct FleetView {
     pub shell_args: Vec<String>,
     /// This machine's shells, once detected.
     pub shells: Option<Arc<supraman_core::shells::Shells>>,
+    pub(crate) shell_default: shells::ShellDefault,
     focus: FocusHandle,
     pub probe: FrameProbe,
     pub hits: HitTargets,
@@ -756,6 +757,7 @@ impl FleetView {
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
             shells: None,
+            shell_default: shells::ShellDefault::new(loaded.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
             hits: HitTargets::default(),
@@ -1427,6 +1429,7 @@ impl FleetView {
         if self.max_writes.report_counts() {
             self.max_working = report.max_working;
         }
+        self.shell_default.ticked(report.terminal);
         self.supervise_errors = report.errors;
         supraman_ui::notices::keep_dismissed(&mut self.supervise_dismissed, &self.supervise_errors);
         self.daemon_hold = report.daemon_hold;

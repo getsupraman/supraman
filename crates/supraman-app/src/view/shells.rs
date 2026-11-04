@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Context};
-use supraman_core::Settings;
 use supraman_core::shells::{Shell, ShellSetting, Shells};
+use supraman_core::{Settings, TerminalSettings};
 use supraman_ui::menu::item;
 
 use super::menu::{ContextMenu, MenuAction, MenuItem};
@@ -81,6 +81,31 @@ pub(crate) fn menu_items(shells: &Shells, default: &Shell) -> Vec<MenuItem> {
     items
 }
 
+/// The `[terminal]` table + and the ⌄ menu start from, read off the UI thread: at start, by the ⌄ menu, from the
+/// Settings window, and from each supervisor tick, whose value counts only when it changed since the last tick's.
+#[derive(Debug, Default)]
+pub(crate) struct ShellDefault {
+    terminal: TerminalSettings,
+    ticked: Option<TerminalSettings>,
+}
+
+impl ShellDefault {
+    pub(crate) fn new(terminal: TerminalSettings) -> Self {
+        Self { terminal, ticked: None }
+    }
+
+    pub(crate) fn read(&mut self, terminal: TerminalSettings) {
+        self.terminal = terminal;
+    }
+
+    pub(crate) fn ticked(&mut self, terminal: TerminalSettings) {
+        if self.ticked.as_ref() != Some(&terminal) {
+            self.terminal = terminal.clone();
+        }
+        self.ticked = Some(terminal);
+    }
+}
+
 impl FleetView {
     pub(super) fn detect_shells(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
@@ -97,8 +122,7 @@ impl FleetView {
     /// The `[terminal] shell` default; its notice joins the tab notices. PowerShell while detection runs.
     fn default_of(&mut self) -> Option<Shell> {
         let shells = self.shells.clone()?;
-        let terminal = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default().terminal;
-        let (shell, notice) = shells.for_settings(&terminal);
+        let (shell, notice) = shells.for_settings(&self.shell_default.terminal);
         if let Some(notice) = notice
             && !self.tab_notices.contains(&notice)
         {
@@ -131,7 +155,22 @@ impl FleetView {
         self.open_plain(title, cwd, command(shell, &self.shell_args), cx)
     }
 
+    /// Shows the ⌄ menu once `settings.toml` is read again, so its default is the file's.
     pub fn open_shell_menu(&mut self, cx: &mut Context<Self>) {
+        let home = self.home.clone();
+        let read = cx.background_spawn(async move { home.and_then(|h| Settings::load(&h).ok()).unwrap_or_default().terminal });
+        cx.spawn(async move |this, cx| {
+            let terminal = read.await;
+            this.update(cx, |this, cx| {
+                this.shell_default.read(terminal);
+                this.show_shell_menu(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn show_shell_menu(&mut self, cx: &mut Context<Self>) {
         let Some(default) = self.default_of() else {
             self.pane_toast.show_why("Still finding this machine's shells.".into(),|v: &mut Self| &mut v.pane_toast, cx);
             return;
@@ -180,6 +219,19 @@ mod tests {
         let items = menu_items(&shells, &bash);
         let last = items.last().unwrap();
         assert_eq!((last.key, last.label.as_str(), last.section.as_deref()), ("shell-custom", "bash  (default)", Some("[terminal] shell")));
+    }
+
+    #[test]
+    fn a_ticks_stale_terminal_table_never_overrides_a_fresher_read() {
+        let cmd = TerminalSettings { shell: Some(ShellSetting::Cmd), ..Default::default() };
+        let mut default = ShellDefault::new(TerminalSettings::default());
+        default.ticked(TerminalSettings::default());
+        default.read(cmd.clone());
+        default.ticked(TerminalSettings::default());
+        assert_eq!(default.terminal, cmd, "the tick read the file before the change");
+        default.ticked(cmd.clone());
+        default.ticked(TerminalSettings::default());
+        assert_eq!(default.terminal, TerminalSettings::default(), "a change by hand reaches + with the next tick");
     }
 
     #[test]
