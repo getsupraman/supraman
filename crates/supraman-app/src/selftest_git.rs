@@ -153,7 +153,12 @@ async fn refs(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWin
     let stacked = p.rows.iter().position(|r| r.refs > 1).ok_or_else(|| anyhow!("no row with stacked refs"))?;
     move_to(bounds(view, &format!("git-refs-{stacked}"), cx).await?.center(), cx)?;
     let last = format!("git-reflist-{stacked}-{}", p.rows[stacked].refs - 1);
-    until_probe(view, git, "the stacked pill's list on hover", cx, |p, v| (p.listed == Some(stacked) && painted(v, &last)).then_some(())).await?;
+    let hovered = format!("git-reflist-{stacked}-0");
+    until_probe(view, git, "the stacked pill's list on hover", cx, |p, v| (p.listed == Some(stacked) && painted(v, &last) && painted(v, &hovered)).then_some(())).await?;
+    let (top, below) = (bounds(view, &hovered, cx).await?, bounds(view, &format!("git-reflist-{stacked}-1"), cx).await?);
+    if (below.top() - top.bottom()).abs() > px(0.5) || (below.left() - top.left()).abs() > px(0.5) {
+        bail!("the list does not hang from the hovered pill {top:?}: its next group paints at {below:?}");
+    }
     let ghost = p.rows.iter().position(|r| r.refs == 0 && r.ghost).ok_or_else(|| anyhow!("no ref-less row with a ghost"))?;
     move_to(bounds(view, &format!("git-row-{ghost}"), cx).await?.center(), cx)?;
     let (pill, cell) = (format!("git-ghost-{ghost}"), format!("git-refs-{ghost}"));
@@ -164,7 +169,7 @@ async fn refs(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWin
     })
     .await?;
     move_to(point(px(1.), px(1.)), cx)?;
-    Ok(format!("row {stacked}'s stacked pill lists its {} groups on hover; ref-less row {ghost} paints its descendant's ghost pill in its cell", p.rows[stacked].refs))
+    Ok(format!("row {stacked}'s stacked pill lists its {} groups on hover, directly below it; ref-less row {ghost} paints its descendant's ghost pill in its cell", p.rows[stacked].refs))
 }
 
 async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parents: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {

@@ -57,7 +57,7 @@ fn columns() -> Vec<Column> {
         Column::new("refs", "Branch / Tag", px(60.), px(170.)),
         Column::new("graph", "Graph", px(40.), px(120.)),
         Column::new("message", "Commit Message", px(120.), px(400.)).flexible(),
-        Column::new("date", "Commit Date / Time", px(80.), px(140.)),
+        Column::new("date", "Commit Date / Time", px(80.), px(170.)),
         Column::new("sha", "Sha", px(50.), px(76.)),
     ]
 }
@@ -265,6 +265,7 @@ impl GitView {
                 self.more = first.page.more;
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
+                self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 if refresh::follows() {
@@ -277,6 +278,14 @@ impl GitView {
             Err(problem) => self.load = Load::Problem(problem),
         }
         cx.notify();
+    }
+
+    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`].
+    fn fit_graph(&mut self) {
+        let wanted = px(graph::width_for(graph::lanes(&self.rows)).min(graph::MAX_FIT));
+        if let Some(width) = self.widths.get_mut(1) {
+            *width = (*width).max(wanted);
+        }
     }
 
     /// The next page, unless one is on its way or none is left.
@@ -327,20 +336,18 @@ impl GitView {
             1 => graph::cell(row, !row.row.refs.is_empty(), palette),
             2 => {
                 let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
-                cells::message(row, row.wip().then_some(counts.as_str()), palette)
+                cells::message(ix, row, row.wip().then_some(counts.as_str()), palette)
             }
-            3 => cells::date(row, supraman_core::time::now_ms(), palette),
+            3 => cells::date(row, palette),
             _ => cells::sha(row, palette),
         }
     }
 
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = Palette::of(cx.theme());
-        let band = palette.clone();
         let rows = self.rows.len() + usize::from(self.paging || self.page_error.is_some());
         Table::new(TABLE, &self.table, &self.hits, columns(), &self.widths, rows, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
             .row_height(px(graph::ROW))
-            .band(move |this: &GitView, ix, _| this.rows.get(ix).map(|r| band.band(r.row.colour)))
             .on_select(|this: &mut GitView, _, _, cx| this.selection_moved(cx))
             .on_resize(|this: &mut GitView, widths, _, cx| {
                 this.widths = widths;

@@ -6,7 +6,7 @@ use supraman_ui::themes::{contrast, hex};
 use theme::Theme;
 
 /// A lane's alpha over the background for each use.
-const BAND: f32 = 0.07;
+const BAND: f32 = 0.14;
 const PILL: f32 = 0.22;
 const CONNECTOR: f32 = 0.7;
 const GHOST: f32 = 0.5;
@@ -45,6 +45,11 @@ impl Palette {
 
     pub fn pill(&self, colour: usize) -> Hsla {
         self.lane(colour).opacity(PILL)
+    }
+
+    /// The pill fill over the background, solid: a list that covers the rows below.
+    pub fn pill_solid(&self, colour: usize) -> Hsla {
+        blend(self.pill(colour), self.background)
     }
 
     pub fn connector(&self, colour: usize) -> Hsla {
