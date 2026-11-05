@@ -155,9 +155,22 @@ async fn refs(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWin
     let last = format!("git-reflist-{stacked}-{}", p.rows[stacked].refs - 1);
     let hovered = format!("git-reflist-{stacked}-0");
     until_probe(view, git, "the stacked pill's list on hover", cx, |p, v| (p.listed == Some(stacked) && painted(v, &last) && painted(v, &hovered)).then_some(())).await?;
-    let (top, below) = (bounds(view, &hovered, cx).await?, bounds(view, &format!("git-reflist-{stacked}-1"), cx).await?);
-    if (below.top() - top.bottom()).abs() > px(0.5) || (below.left() - top.left()).abs() > px(0.5) {
-        bail!("the list does not hang from the hovered pill {top:?}: its next group paints at {below:?}");
+    let pill = bounds(view, &format!("git-pill-{stacked}"), cx).await?;
+    let mut layer = Vec::new();
+    for i in 0..p.rows[stacked].refs {
+        layer.push(bounds(view, &format!("git-reflist-{stacked}-{i}"), cx).await?);
+    }
+    let top = layer[0];
+    if (top.left() - pill.left()).abs() > px(0.5) || (top.top() - pill.top()).abs() > px(0.5) {
+        bail!("the layer {top:?} does not lie on the row's pill {pill:?}");
+    }
+    for (above, below) in layer.iter().zip(&layer[1..]) {
+        if (below.top() - above.bottom()).abs() > px(0.5) || (below.left() - top.left()).abs() > px(0.5) {
+            bail!("the layer's groups are not one block under the pill: {above:?} then {below:?}");
+        }
+    }
+    if layer.iter().any(|b| (b.size.width - top.size.width).abs() > px(0.5)) || top.size.width < pill.size.width - px(0.5) {
+        bail!("the layer's groups are not one width at least the pill's {pill:?}: {layer:?}");
     }
     let ghost = p.rows.iter().position(|r| r.refs == 0 && r.ghost).ok_or_else(|| anyhow!("no ref-less row with a ghost"))?;
     move_to(bounds(view, &format!("git-row-{ghost}"), cx).await?.center(), cx)?;
@@ -169,7 +182,7 @@ async fn refs(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWin
     })
     .await?;
     move_to(point(px(1.), px(1.)), cx)?;
-    Ok(format!("row {stacked}'s stacked pill lists its {} groups on hover, directly below it; ref-less row {ghost} paints its descendant's ghost pill in its cell", p.rows[stacked].refs))
+    Ok(format!("row {stacked}'s stacked pill lists its {} groups on hover in one layer over it, one width, at least the pill's; ref-less row {ghost} paints its descendant's ghost pill in its cell", p.rows[stacked].refs))
 }
 
 async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parents: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
@@ -230,7 +243,13 @@ async fn diff(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: 
     }
     tap(view, "diff-close", cx).await?;
     until_probe(view, git, "the graph back with the commit selected", cx, |p, v| (p.diff.is_none() && p.selected.as_ref() == Some(&ahead) && painted(v, "git-row-0")).then_some(())).await?;
-    Ok("a.txt's diff: Inline, Split, next change (1st), File View and back, × back to the graph with the commit still selected".into())
+    tap(view, "commit-tree-row-a.txt", cx).await?;
+    until_probe(view, git, "a.txt's diff open again", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && painted(v, "diff-close")).map(|_| ())).await?;
+    tap(view, "commit-tree-row-a.txt", cx).await?;
+    until_probe(view, git, "a second click on a.txt back to the graph", cx, |p, v| (p.diff.is_none() && p.selected.as_ref() == Some(&ahead) && painted(v, "git-row-0")).then_some(())).await?;
+    tap(view, &row_key(&probe(view, git, cx), f.sha("rename"))?, cx).await?;
+    show(view, git, f.sha("rename"), 1, cx).await?;
+    Ok("a.txt's diff: Inline, Split, next change (1st), File View and back, × back to the graph with the commit still selected; a.txt clicked twice opens then closes its diff, the commit kept, and the next commit selects".into())
 }
 
 async fn wip(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

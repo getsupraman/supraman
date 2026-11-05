@@ -160,3 +160,21 @@ fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
     assert!(!repaint(&view, cx).borrow().contains_key("wip-banner-view-change"), "no banner over the WIP panel");
     assert_eq!(file_changes(1), "1 file change");
 }
+
+#[gpui::test]
+fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open_with_editor(&f.dir, cx);
+    select_wip(&view, cx);
+    open_file(&view, Section::Unstaged, "a.txt", cx);
+    open_file(&view, Section::Staged, "a.txt", cx);
+    assert_eq!(view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.of.clone())), Some(Of::Staged), "the same path in the other list is another file");
+    click(&view, "wip-staged-files-row-a.txt", cx);
+    assert!(view.read_with(cx, |v, _| v.diff().is_none()), "a second click on the open file closes the viewer");
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
+    let deselected = view.read_with(cx, |v, cx| {
+        let p = v.wip_panel().read(cx);
+        [&p.unstaged, &p.staged].iter().all(|l| l.paths.selected().is_none() && l.tree.selected().is_none())
+    });
+    assert!(deselected, "no file stays selected");
+}

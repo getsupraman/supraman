@@ -137,7 +137,7 @@ impl TableState {
     }
 
     /// Moves the selection `by` rows within the last frame's rows, reveals it, and returns it; the first row
-    /// when none was selected.
+    /// when none was selected, `None` when it stays put.
     pub fn step(&self, by: isize) -> Option<usize> {
         let row = {
             let mut inner = self.inner.borrow_mut();
@@ -146,11 +146,12 @@ impl TableState {
                 Some(row) => row.saturating_add_signed(by).min(last),
                 None => 0,
             };
+            let moved = inner.selected != Some(row);
             inner.selected = Some(row);
-            row
+            (row, moved)
         };
-        self.reveal(row);
-        Some(row)
+        self.reveal(row.0);
+        row.1.then_some(row.0)
     }
 }
 
@@ -637,6 +638,12 @@ mod tests {
         redraw(&grid, cx);
         cx.simulate_keystrokes("down");
         grid.read_with(cx, |g, _| assert_eq!(g.state.selected(), Some(5_002)));
+        grid.update(cx, |g, _| {
+            g.state.select(Some(0));
+            g.selected.clear();
+        });
+        cx.simulate_keystrokes("up");
+        grid.read_with(cx, |g, _| assert!(g.selected.is_empty(), "an Up on the first row selects nothing anew: {:?}", g.selected));
     }
 
     #[gpui::test]

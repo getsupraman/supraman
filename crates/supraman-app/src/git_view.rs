@@ -170,8 +170,18 @@ impl GitView {
     fn panel_event<P>(&mut self, _: Entity<P>, e: &PanelEvent, cx: &mut Context<Self>) {
         match e {
             PanelEvent::Parent(sha) => self.select_sha(sha, cx),
-            PanelEvent::File(target) => self.open_diff(target.clone(), cx),
+            PanelEvent::File(target) => self.toggle_diff(target.clone(), cx),
         }
+    }
+
+    /// Opens `target`, or closes its viewer and deselects the panels' files when it is the one open.
+    pub fn toggle_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
+        if self.diff().is_none_or(|d| d.read(cx).target != target) {
+            return self.open_diff(target, cx);
+        }
+        self.close_diff(cx);
+        self.panel.update(cx, |p, cx| p.deselect_files(cx));
+        self.wip_panel.update(cx, |p, cx| p.deselect_files(cx));
     }
 
     pub fn sizes(&self, cx: &App) -> GitSizes {

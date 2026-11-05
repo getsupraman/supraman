@@ -137,12 +137,14 @@ fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
         let open = ref_cell(&v.rows[ix].row, true);
         assert_eq!((names(&open.list), open.more), (vec!["side", "v1"], 0), "every group listed and +N hidden");
     });
-    let (hovered, below) = {
+    let (pill, hovered, below) = {
         let hits = hits.borrow();
         let at = |i: usize| hits.get(&format!("git-reflist-{ix}-{i}")).map(|h| h.bounds).expect("the list paints a pill per group");
-        (at(0), at(1))
+        (hits[&format!("git-pill-{ix}")].bounds, at(0), at(1))
     };
+    assert!((hovered.left() - pill.left()).abs() < px(0.5) && (hovered.top() - pill.top()).abs() < px(0.5), "the layer lies on the row's pill: {pill:?} {hovered:?}");
     assert!((below.top() - hovered.bottom()).abs() < px(0.5) && (below.left() - hovered.left()).abs() < px(0.5), "v1 hangs from the hovered pill: {hovered:?} {below:?}");
+    assert!((below.size.width - hovered.size.width).abs() < px(0.5) && hovered.size.width >= pill.size.width - px(0.5), "one width, the pill's or more: {pill:?} {hovered:?} {below:?}");
     let (_, ahead) = view.read_with(cx, |v, _| { let (i, r) = row_of(v, f.sha("ahead")); (i, r.row.clone()) });
     assert!(ref_cell(&ahead, true).list.is_empty(), "a single group opens no list");
 }
