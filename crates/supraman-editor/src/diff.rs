@@ -4,13 +4,12 @@ use std::sync::Arc;
 use buffer_diff::BufferDiff;
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use language::{Buffer, Language};
-use text::{Point, ToOffset as _, ToPoint as _};
+use text::{Point, ToPoint as _};
 
 use crate::read_only_buffer;
 
 /// One change: the rows it covers in the old text and in the new one (either may be empty), and the
-/// changed words inside them as byte ranges of each text (Zed's word diff, kept for runs of up to
-/// [`buffer_diff::MAX_WORD_DIFF_LINE_COUNT`] lines).
+/// changed words inside them as byte ranges of each text ([`crate::words::word_ranges`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hunk {
     pub old_rows: Range<u32>,
@@ -35,41 +34,34 @@ fn rows(range: Range<Point>) -> Range<u32> {
 }
 
 impl Diff {
-    /// Builds the buffers now and diffs them on the background executor.
+    /// Builds the buffers now, diffs their lines and then the words inside each hunk on the background executor.
     pub fn compute(old: String, new: String, language: Option<Arc<Language>>, cx: &mut App) -> Task<Diff> {
-        let old_text: Arc<str> = Arc::from(old.as_str());
+        let (old_text, new_text): (Arc<str>, Arc<str>) = (Arc::from(old.as_str()), Arc::from(new.as_str()));
         let old = read_only_buffer(old, language.clone(), cx);
         let new = read_only_buffer(new, language, cx);
         let snapshot = new.read(cx).text_snapshot();
         let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text_buffer(&snapshot, old.clone(), cx));
         let base = old.read(cx).snapshot();
-        let update = buffer_diff.read(cx).update_diff(snapshot, &base, Some(old_text), cx);
+        let update = buffer_diff.read(cx).update_diff(snapshot, &base, Some(old_text.clone()), cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
             let update = update.await;
-            cx.update(|cx| {
-                buffer_diff.update(cx, |d, cx| {
-                    d.set_snapshot(update, cx);
-                });
-                let hunks = Self::hunks_of(&buffer_diff, &new, cx);
-                Diff { old, new, buffer_diff, hunks }
-            })
+            let rows = cx.update(|cx| {
+                buffer_diff.update(cx, |d, cx| d.set_snapshot(update, cx));
+                Self::hunks_of(&buffer_diff, &new, cx)
+            });
+            let hunks = cx.background_spawn(async move { crate::words::with_words(&old_text, &new_text, rows) }).await;
+            Diff { old, new, buffer_diff, hunks: hunks.into() }
         })
     }
 
-    fn hunks_of(buffer_diff: &Entity<BufferDiff>, new: &Entity<Buffer>, cx: &App) -> Arc<[Hunk]> {
+    fn hunks_of(buffer_diff: &Entity<BufferDiff>, new: &Entity<Buffer>, cx: &App) -> Vec<Hunk> {
         let snapshot = new.read(cx).text_snapshot();
         let diff = buffer_diff.read(cx).snapshot(cx);
         let base = diff.base_text().clone();
         diff.hunks(&snapshot)
             .map(|h| {
-                let start = h.diff_base_byte_range.start;
-                let old_range = base.offset_to_point(start)..base.offset_to_point(h.diff_base_byte_range.end);
-                Hunk {
-                    old_rows: rows(old_range),
-                    new_rows: rows(h.range.clone()),
-                    old_words: h.base_word_diffs.iter().map(|w| start + w.start..start + w.end).collect(),
-                    new_words: h.buffer_word_diffs.iter().map(|w| w.start.to_offset(&snapshot)..w.end.to_offset(&snapshot)).collect(),
-                }
+                let old_range = base.offset_to_point(h.diff_base_byte_range.start)..base.offset_to_point(h.diff_base_byte_range.end);
+                Hunk { old_rows: rows(old_range), new_rows: rows(h.range.clone()), old_words: Vec::new(), new_words: Vec::new() }
             })
             .collect()
     }
@@ -119,9 +111,26 @@ mod tests {
     }
 
     #[gpui::test]
-    fn changed_words_are_marked_on_both_sides(cx: &mut TestAppContext) {
-        let d = compute("let x = 1;\n", "let x = 2;\n", cx);
+    fn a_changed_word_marks_its_line_and_the_word_on_both_sides(cx: &mut TestAppContext) {
+        let d = compute("a\nlet x = 1;\nc\n", "a\nlet x = 2;\nc\n", cx);
         let h = &d.hunks[0];
-        assert_eq!((h.old_words.as_slice(), h.new_words.as_slice()), (&[8..9][..], &[8..9][..]), "{h:?}");
+        assert_eq!((h.old_rows.clone(), h.new_rows.clone()), (1..2, 1..2));
+        assert_eq!((h.old_words.as_slice(), h.new_words.as_slice()), (&[10..11][..], &[10..11][..]), "{h:?}");
+    }
+
+    #[gpui::test]
+    fn fragments_of_a_renamed_call_join_into_one_word(cx: &mut TestAppContext) {
+        let (old, new) = ("{\n    await slot.ReacquireAsync(Aborted);\n}\n", "{\n    await slot.EndWaitAsync(Aborted);\n}\n");
+        let d = compute(old, new, cx);
+        let h = &d.hunks[0];
+        let words = |text: &'static str, ranges: &[std::ops::Range<usize>]| ranges.iter().map(|r| &text[r.clone()]).collect::<Vec<_>>();
+        assert_eq!((words(old, &h.old_words), words(new, &h.new_words)), (vec!["ReacquireAsync"], vec!["EndWaitAsync"]));
+    }
+
+    #[gpui::test]
+    fn added_and_removed_blocks_mark_whole_lines_and_no_words(cx: &mut TestAppContext) {
+        let d = compute("a\nb\nc\n", "a\nx\ny\nb\n", cx);
+        let rows: Vec<_> = d.hunks.iter().map(|h| (h.old_rows.clone(), h.new_rows.clone(), h.old_words.len() + h.new_words.len())).collect();
+        assert_eq!(rows, [(1..1, 1..3, 0), (2..3, 4..4, 0)]);
     }
 }

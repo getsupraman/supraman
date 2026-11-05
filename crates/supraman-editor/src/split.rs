@@ -1,11 +1,19 @@
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle, HighlightKey};
 use editor::{Editor, EditorEvent, RowHighlightOptions};
-use gpui::{App, AppContext as _, Context, Entity, IntoElement as _, Render, Subscription, Window, div, prelude::*};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use gpui::{
+    App, AppContext as _, Context, DispatchPhase, Entity, HitboxBehavior, IntoElement as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Render, Subscription, Window, canvas, div, point,
+    prelude::*, px,
+};
 use language::Buffer;
 use multi_buffer::{Anchor, MultiBuffer};
 use text::{Point, ToPoint as _};
 use theme::ActiveTheme as _;
 
+use crate::look::{diff_colors, filler};
+use crate::ruler::{self, Mark, Ruler};
 use crate::{Diff, Hunk, read_only_editor};
 
 /// Removed rows' background on the old side.
@@ -13,17 +21,20 @@ struct Removed;
 /// Added rows' background on the new side.
 struct Added;
 
-/// The old text left and the new right, each with line numbers, rows aligned by blank spacers and
-/// scrolled together.
+/// The old text left and the new right, each with line numbers, rows aligned by striped fillers and
+/// scrolled together, and the change ruler at the right edge.
 pub struct SplitDiff {
     pub old: Entity<Editor>,
     pub new: Entity<Editor>,
     /// Set while one side copies the other's scroll, so the copy does not echo back.
     syncing: bool,
+    marks: Vec<Mark>,
+    total_rows: u32,
+    dragging: Rc<Cell<bool>>,
     _scrolls: [Subscription; 2],
 }
 
-/// A blank of `rows` rows above `row` of `editor`'s buffer, or below its last row when `row` is past it.
+/// A striped filler of `rows` rows above `row` of `editor`'s buffer, or below its last row when `row` is past it.
 fn spacer(editor: &Editor, row: u32, rows: u32, cx: &App) -> BlockProperties<Anchor> {
     let snapshot = editor.buffer().read(cx).snapshot(cx);
     let max = snapshot.max_point();
@@ -32,8 +43,8 @@ fn spacer(editor: &Editor, row: u32, rows: u32, cx: &App) -> BlockProperties<Anc
     } else {
         BlockPlacement::Above(snapshot.anchor_before(Point::new(row, 0)))
     };
-    // The editor re-measures a block by its element, so the blank must be as tall as its rows.
-    let render = std::sync::Arc::new(|cx: &mut editor::display_map::BlockContext| div().h(cx.line_height * cx.height as f32).into_any_element());
+    // The editor re-measures a block by its element, so the filler must be as tall as its rows.
+    let render = std::sync::Arc::new(|cx: &mut editor::display_map::BlockContext| filler(cx.line_height * cx.height as f32).into_any_element());
     BlockProperties { placement, height: Some(rows), style: BlockStyle::Spacer, render, priority: 0 }
 }
 
@@ -63,16 +74,16 @@ fn mark(editor: &mut Editor, hunks: &[Hunk], side: Side, buffer: &Entity<Buffer>
         if rows.is_empty() {
             continue;
         }
-        let range = snapshot.anchor_before(Point::new(rows.start, 0))..snapshot.anchor_before(Point::new(rows.end - 1, 0));
+        let range = crate::inline::whole_rows(&snapshot, rows.clone());
         match side {
-            Side::Old => editor.highlight_rows::<Removed>(range, |cx| cx.theme().colors().editor_diff_hunk_deleted_background, RowHighlightOptions::default(), cx),
-            Side::New => editor.highlight_rows::<Added>(range, |cx| cx.theme().colors().editor_diff_hunk_added_background, RowHighlightOptions::default(), cx),
+            Side::Old => editor.highlight_rows::<Removed>(range, |cx| diff_colors(cx.theme()).removed.line, RowHighlightOptions::default(), cx),
+            Side::New => editor.highlight_rows::<Added>(range, |cx| diff_colors(cx.theme()).added.line, RowHighlightOptions::default(), cx),
         }
         words.extend(ws.iter().map(|w| snapshot.anchor_before(w.start.to_point(&text))..snapshot.anchor_after(w.end.to_point(&text))));
     }
     let word: fn(&usize, &theme::Theme) -> gpui::Hsla = match side {
-        Side::Old => |_, t| t.colors().version_control_word_deleted,
-        Side::New => |_, t| t.colors().version_control_word_added,
+        Side::Old => |_, t| diff_colors(t).removed.word,
+        Side::New => |_, t| diff_colors(t).added.word,
     };
     editor.highlight_background(HighlightKey::Editor, &words, word, cx);
 }
@@ -112,7 +123,56 @@ impl SplitDiff {
             })
         };
         let scrolls = [follow(&old, new.clone(), window, cx), follow(&new, old.clone(), window, cx)];
-        SplitDiff { old, new, syncing: false, _scrolls: scrolls }
+        let total_rows = new.update(cx, |e, cx| e.display_snapshot(cx).max_point().row().0 + 1);
+        SplitDiff { old, new, syncing: false, marks: ruler::marks(&diff.hunks), total_rows, dragging: Rc::default(), _scrolls: scrolls }
+    }
+
+    /// Scrolls both sides so the view centres on `fraction` of the ruler.
+    pub fn scroll_to(&mut self, fraction: f32, window: &mut Window, cx: &mut Context<Self>) {
+        let total = self.total_rows;
+        self.new.update(cx, |e, cx| {
+            let (x, visible) = (e.scroll_position(cx).x, e.visible_line_count().unwrap_or(0.));
+            e.set_scroll_position(point(x, ruler::scroll_row_at(fraction, visible, total)), window, cx);
+        });
+    }
+
+    fn ruler(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (y, visible) = self.new.update(cx, |e, cx| (e.scroll_position(cx).y, e.visible_line_count().unwrap_or(0.)));
+        let status = cx.theme().status();
+        let ruler = Ruler {
+            marks: self.marks.clone(),
+            total: self.total_rows,
+            view: y..y + visible,
+            removed: status.deleted,
+            added: status.created,
+            view_fill: cx.theme().colors().scrollbar_thumb_background,
+        };
+        let (this, dragging) = (cx.entity().downgrade(), self.dragging.clone());
+        canvas(
+            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            move |bounds, hitbox, window, cx| {
+                ruler.paint(bounds, window, cx);
+                let at = move |y: Pixels| f32::from(y - bounds.origin.y) / f32::from(bounds.size.height).max(1.);
+                let (down, held) = (this.clone(), dragging.clone());
+                window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && hitbox.is_hovered(window) {
+                        held.set(true);
+                        let _ = down.update(cx, |s, cx| s.scroll_to(at(e.position.y), window, cx));
+                        cx.stop_propagation();
+                    }
+                });
+                let held = dragging.clone();
+                window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && held.get() && e.dragging() {
+                        let _ = this.update(cx, |s, cx| s.scroll_to(at(e.position.y), window, cx));
+                    }
+                });
+                window.on_mouse_event(move |_: &MouseUpEvent, _, _, _| dragging.set(false));
+            },
+        )
+        .flex_none()
+        .w(px(ruler::WIDTH))
+        .h_full()
     }
 
     fn copy_scroll(&mut self, from: &Entity<Editor>, to: &Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
@@ -127,6 +187,7 @@ impl SplitDiff {
             }
         });
         self.syncing = false;
+        cx.notify();
     }
 
     /// The display rows a test compares: each side's rows with its spacers.
@@ -149,7 +210,8 @@ impl Render for SplitDiff {
             .size_full()
             .flex()
             .child(div().flex_1().min_w_0().h_full().border_r_1().border_color(border).child(self.old.clone()))
-            .child(div().flex_1().min_w_0().h_full().child(self.new.clone()))
+            .child(div().flex_1().min_w_0().h_full().border_r_1().border_color(border).child(self.new.clone()))
+            .child(self.ruler(cx))
     }
 }
 
@@ -220,6 +282,40 @@ c")];
             let (l, r) = window.update(cx, |s, _, cx| s.display_rows(cx)).unwrap();
             assert_eq!(l, r, "{old:?} -> {new:?}");
         }
+    }
+
+    #[gpui::test]
+    fn the_filler_is_as_tall_as_the_other_sides_lines_and_every_changed_row_is_tinted(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init("Cascadia Mono", 13., cx));
+        let task = cx.update(|cx| Diff::compute("a\nb\nc\n".into(), "a\nB\nx\ny\nc\n".into(), None, cx));
+        cx.run_until_parked();
+        let diff = cx.foreground_executor().block_test(task);
+        let window = cx.add_window(|window, cx| SplitDiff::new(&diff, window, cx));
+        cx.run_until_parked();
+        let (filler, old, new) = window
+            .update(cx, |s, window, cx| {
+                let shown = s.display_rows(cx).0;
+                (shown - diff.row_counts(cx).0, crate::tinted_rows(&s.old, window, cx), crate::tinted_rows(&s.new, window, cx))
+            })
+            .unwrap();
+        assert_eq!(filler, 2, "the old side's filler stands for the two added lines");
+        assert_eq!((old, new), (vec![1], vec![1, 2, 3]));
+    }
+
+    #[gpui::test]
+    fn the_ruler_scrolls_both_sides_to_where_it_is_clicked(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init("Cascadia Mono", 13., cx));
+        let old: String = (0..200).map(|i| format!("line {i}\n")).collect();
+        let task = cx.update(|cx| Diff::compute(old.clone(), old.replace("line 150\n", "line 150 changed\n"), None, cx));
+        cx.run_until_parked();
+        let diff = cx.foreground_executor().block_test(task);
+        let window = cx.add_window(|window, cx| SplitDiff::new(&diff, window, cx));
+        cx.run_until_parked();
+        window.update(cx, |s, window, cx| s.scroll_to(0.75, window, cx)).unwrap();
+        cx.run_until_parked();
+        let (old_y, new_y) = window.update(cx, |s, _, cx| s.scroll_rows(cx)).unwrap();
+        assert_eq!(old_y, new_y);
+        assert!(old_y > 100., "{old_y}");
     }
 
     #[gpui::test]
