@@ -65,11 +65,12 @@ impl GitView {
     }
 }
 
-/// The lowest contrast of the theme's text on a lane's band, and of its text on a pill or muted text on a band.
+/// The lowest contrast of the theme's text on a lane's band, and of its text on a pill or the date and sha on the background.
 pub fn worst_contrast(cx: &App) -> (f32, f32) {
     let p = Palette::of(cx.theme());
     let on = |fg, layer| contrast(fg, blend(layer, p.background));
-    (0..supraman_gitman::LANE_COLOURS).fold((f32::MAX, f32::MAX), |(name, secondary), i| {
-        (name.min(on(p.text, p.band(i))), secondary.min(on(p.text, p.pill(i))).min(on(p.muted, p.band(i))))
+    let muted = contrast(p.muted, p.background);
+    (0..supraman_gitman::LANE_COLOURS).fold((f32::MAX, muted), |(name, secondary), i| {
+        (name.min(on(p.text, p.band(i))), secondary.min(on(p.text, p.pill(i))))
     })
 }
