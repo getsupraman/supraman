@@ -418,6 +418,9 @@ impl<T, A> TreeState<T, A> {
     }
 }
 
+/// A folder's chevron slot; a file's painter starts with a slot this wide, so its name lines up with its sibling folders'.
+pub const LEAD: f32 = 16.;
+
 type PaintFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement;
 type SelectFn<V> = dyn Fn(&mut V, &SharedString, &mut Window, &mut Context<V>);
 
@@ -433,7 +436,7 @@ pub struct TreeList<V, T, A> {
 }
 
 impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
-    /// `paint` draws a row's content right of its indent and chevron.
+    /// `paint` draws a row's content right of its indent, and of a folder's chevron (see [`LEAD`]).
     pub fn new(
         id: impl Into<SharedString>,
         state: &TreeState<T, A>,
@@ -517,7 +520,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                 .w_full()
                 .min_w_0()
                 .pl(indent * node.depth as f32)
-                .child(div().flex().flex_none().items_center().justify_center().w(px(16.)).children(chevron.map(|c| c.svg(12., muted))))
+                .children(chevron.map(|c| div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted))))
                 .child(div().flex().flex_1().min_w_0().items_center().child(content))
                 .into_any_element()
         }
@@ -701,5 +704,40 @@ mod tests {
             assert!(f.state.is_open("dir001"), "a click on a folder's row opens it");
             assert_eq!(f.state.selected().as_deref(), Some("dir001"));
         });
+    }
+
+    struct Names {
+        state: TreeState<Change, Badge>,
+        hits: HitTargets,
+    }
+
+    impl Render for Names {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let list = TreeList::new("n", &self.state, &self.hits, |this: &mut Names, row, _, _| {
+                let name = div().relative().child(row.name.clone()).child(crate::hit::hit_target(&this.hits, format!("name-{}", row.path)));
+                let lead = matches!(row.item, Item::File(_)).then(|| div().flex_none().w(px(LEAD)));
+                div().flex().children(lead).child(name).into_any_element()
+            });
+            div().w(px(400.)).h(px(300.)).child(list.render(cx))
+        }
+    }
+
+    #[gpui::test]
+    fn a_files_name_starts_where_its_sibling_folders_names_do(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (names, cx) = cx.add_window_view(|_, cx| {
+            let state = TreeState::new(cx);
+            state.set_entries(entries(), count);
+            state.expand_all();
+            Names { state, hits: HitTargets::default() }
+        });
+        cx.run_until_parked();
+        let x = |path: &str, cx: &mut VisualTestContext| names.read_with(cx, |n, _| n.hits.borrow().get(path).map(|h| h.bounds.left())).unwrap_or_else(|| panic!("{path} paints"));
+        let top = x("name-src", cx);
+        assert_eq!(x("name-README.md", cx), top, "a top-level file's name at the top-level folders' names");
+        assert_eq!(x("name-docs", cx), top);
+        let inner = x("name-src/ui", cx);
+        assert_eq!(inner, top + px(14.), "one level in is one indent");
+        assert_eq!(x("name-src/main.rs", cx), inner, "a file beside a folder at its name");
     }
 }

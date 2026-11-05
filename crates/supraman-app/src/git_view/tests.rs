@@ -256,9 +256,10 @@ fn git_tab_colours_come_from_the_theme_and_keep_text_readable() {
         let lanes: std::collections::HashSet<String> = (0..supraman_gitman::LANE_COLOURS).map(|i| supraman_ui::themes::hex(p.lane(i))).collect();
         assert!(lanes.len() >= 8, "{}: {lanes:?}", theme.name);
         assert_eq!(p.lane(0), theme.accents().0[0], "lanes are the theme's accents");
+        assert!(supraman_ui::themes::contrast(p.muted, p.background) >= SECONDARY_FLOOR, "{} date and sha on the background", theme.name);
+        assert!(supraman_ui::themes::contrast(p.muted, p.background) < supraman_ui::themes::contrast(p.text, p.background), "{}: date and sha are quieter than the message", theme.name);
         for i in 0..supraman_gitman::LANE_COLOURS {
             assert!(on(&p, p.text, p.band(i)) >= NAME_FLOOR, "{} text on band {i}", theme.name);
-            assert!(on(&p, p.muted, p.band(i)) >= SECONDARY_FLOOR, "{} muted on band {i}", theme.name);
             assert!(on(&p, p.text, p.pill(i)) >= SECONDARY_FLOOR, "{} text on pill {i}", theme.name);
             assert!(supraman_ui::themes::contrast(p.initials(i), p.avatar(i)) >= SECONDARY_FLOOR, "{} initials on avatar {i}", theme.name);
         }

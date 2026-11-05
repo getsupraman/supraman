@@ -1,8 +1,6 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use std::sync::Arc;
-
-use gpui::{AnyElement, Context, Div, FontFeatures, SharedString, deferred, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, SharedString, deferred, div, prelude::*, px};
 use supraman_gitman::{RefGroup, RefKind, Row};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
@@ -156,10 +154,9 @@ pub fn sha_text(row: &GraphRow) -> &str {
     row.sha.get(..7).unwrap_or(&row.sha)
 }
 
-/// Muted, in the UI font with tabular figures: the date and sha columns share one face and keep their digits aligned.
+/// Muted in [`fonts::figures`]: the date and sha columns share one face and keep their digits aligned.
 fn figures(text: String, palette: &Palette) -> AnyElement {
-    let tabular = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
-    div().whitespace_nowrap().font_family(fonts::UI).font_features(tabular).text_color(palette.muted).child(SharedString::from(text)).into_any_element()
+    fonts::figures(div()).whitespace_nowrap().text_color(palette.muted).child(SharedString::from(text)).into_any_element()
 }
 
 pub fn date(row: &GraphRow, palette: &Palette) -> AnyElement {

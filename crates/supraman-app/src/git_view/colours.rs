@@ -32,7 +32,7 @@ impl Palette {
             lanes.push(theme.colors().text_accent);
         }
         let c = theme.colors();
-        Palette { lanes, background: c.editor_background, text: c.text, muted: c.text_muted }
+        Palette { lanes, background: c.editor_background, text: c.text, muted: c.text.opacity(supraman_ui::themes::SECONDARY) }
     }
 
     pub fn lane(&self, colour: usize) -> Hsla {
