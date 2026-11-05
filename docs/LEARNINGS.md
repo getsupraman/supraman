@@ -5823,3 +5823,36 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   Authorization"). So only a non-helped `workman` server (the user-scope OAuth one, or an old static-token config) can
   poison it; after fix-u15 no Supraman config is non-helped. The per-session server name is René's decision
   (Workman item of its own).
+
+## 2026-11-05 — gitman-viewer the read-only Git tab (gv-3 to gv-12)
+
+- **Porcelain `git diff` writes** (gv-3, git 2.44.0.windows.1): an index-against-worktree `git diff` refreshes the
+  index and takes `.git/index.lock` even with `--no-optional-locks` when a file's stat data is stale (the fixture's
+  `bin.dat` rewritten unchanged with an old mtime). `supraman-gitman` reads with plumbing (`diff-files`,
+  `diff-index`, `diff-tree`) so a view never locks a repo a session may be committing in (C154).
+- **Zed's editor without a Project** (gv-9): `supraman_editor::init` (settings, theme settings, editor globals, the
+  buffer font) must run before any editor is built and before `supraman_ui::init_globals`. Zed's
+  `SplittableEditor` needs a `Project`, so `SplitDiff` is two editors aligned by spacer blocks; a spacer block
+  renders at `line_height × rows` or the sides drift apart. wasmtime's build (tree-sitter's `wasm`, which Zed's
+  `language` requires) runs a bare `cmake`: `scripts/heavy-lock.ps1` puts Visual Studio's on `PATH`.
+- **CRLF in diffs** (gv-10): both sides of a diff are read with CRLF as LF, as Zed's buffers hold them, so a
+  change of line endings alone shows no hunks; saying so is gitman-viewer/14.
+- **gpui's TestScheduler and another thread** (gv-11): a wake-up from a foreign thread (a watcher's callback) is
+  refused unless the test allows parking, and one that lands after the test ended panics. The live tests set
+  `refresh::FOLLOW` with `allow_parking` and wait for the watchers' threads to end before returning.
+- **`git check-ignore` refuses pathspec magic** (gv-11): with `--literal-pathspecs` it fails, so
+  `Repo::run_paths` runs without it; every other read keeps it.
+- **A click runs the listener of the frame it hit** (gv-12): a segmented toggle's `on_click` holds the chosen
+  index of the frame that painted it. Clicking the other option before a frame with the new state was drawn calls
+  the old closure, which sees nothing to change. The Git tab's selftest step clears the hits and waits for the key
+  to be painted again before each click (`selftest_git.rs` `tap`).
+- **`SplitPane` mixed window and pane coordinates** (gv-12): the drag clamp took `bounds.right() - min_second`
+  (window x) as the most a pane-relative x may be. The sidebar's split starts at x 0, so it never showed; the Git
+  tab's split starts right of the sidebar, and dragging its divider to the right gave the commit panel a negative
+  width that pushed it out of the window. The clamp is `bounds.size.width - min_second` now, with a unit test of a
+  split right of the window's edge.
+- **A snapped element can pass its clip by a device pixel** (gv-12, scale 1.5): a segment of a 24 px bordered group
+  painted 22.67 px tall in a 22 px clip, so `Hit::fully_visible` refused it. It allows `hit::SNAP` (1 px) now.
+- **At the window's minimum width** (600 px: sidebar 280, tab area 320) the commit panel of fixed width pushed
+  itself past the window; it shrinks to the tab now (`flex_shrink`), leaving the graph none. Step 7g checks the
+  header cells, ref pills and the commit toolbar there, and the toolbar at the panel's minimum (259 px).

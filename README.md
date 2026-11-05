@@ -24,6 +24,9 @@ Supraman runs on your machine and is open source (GPL-3.0-or-later).
 - **One Inbox.** A session waiting on a permission prompt, a question a session sent you, a launch that failed,
   a blocked task in Workman, a scheduled run that failed.
 - **Terminal tabs.** Attach to a session in a tab, or open a new one with **+**.
+- **Git tab.** A folder's commit graph with its branches and tags, each commit's message and files, a file's
+  diff side by side or inline, and the work in progress, following the repository as it changes. It only reads:
+  stage and commit in your own git tool.
 - **Schedules.** Recurring work that runs on this machine (a slash command or a prompt, with a permission
   profile and caps). Nothing runs until you approve it in the window.
 - **Workman.** Sign in once and every session Supraman launches gets its own Workman token, and the Inbox shows
