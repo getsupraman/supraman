@@ -1,7 +1,7 @@
 //! Two panels side by side with a draggable divider between them. The owner keeps the first panel's
 //! width, sizes the first panel by it, and persists it.
 
-use gpui::{ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, SharedString, Window, div, prelude::*, px};
+use gpui::{ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, SharedString, Stateful, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 pub struct SplitPane {
@@ -13,7 +13,8 @@ pub struct SplitPane {
     pub default: Pixels,
 }
 
-struct DraggedDivider(SharedString);
+/// The drag of a divider: the divider's element id and which divider of its owner it is.
+pub(crate) struct DraggedDivider(pub SharedString, pub usize);
 
 impl Render for DraggedDivider {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -48,25 +49,40 @@ impl SplitPane {
             .child(first)
             .child(
                 div().relative().w(px(1.)).h_full().flex_none().bg(border).child(
-                    div()
-                        .id(id.clone())
-                        .absolute()
-                        .top_0()
-                        .left(px(-3.))
-                        .w(px(7.))
-                        .h_full()
-                        .occlude()
-                        .cursor(CursorStyle::ResizeLeftRight)
-                        .on_drag(DraggedDivider(id), |d, _, _, cx| cx.new(|_| DraggedDivider(d.0.clone())))
-                        .on_mouse_up(MouseButton::Left, cx.listener(move |this, _, _, cx| end(this, cx)))
-                        .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
-                            if e.click_count() == 2 {
-                                reset(this, default, cx);
-                                reset_end(this, cx);
-                            }
-                        })),
+                    handle(id, 0, move |this, cx| end(this, cx), move |this, cx| {
+                        reset(this, default, cx);
+                        reset_end(this, cx);
+                    }, cx)
+                    .left(px(-3.)),
                 ),
             )
             .child(second)
     }
+}
+
+/// A divider's 7 px grab strip, absolute in its parent (the caller places it): it starts a
+/// [`DraggedDivider`] drag that the parent's `on_drag_move` follows, calls `on_end` when the button is
+/// let go, and `on_reset` on a double-click.
+pub(crate) fn handle<V: 'static>(
+    id: SharedString,
+    index: usize,
+    on_end: impl Fn(&mut V, &mut Context<V>) + 'static,
+    on_reset: impl Fn(&mut V, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
+    div()
+        .id(id.clone())
+        .absolute()
+        .top_0()
+        .w(px(7.))
+        .h_full()
+        .occlude()
+        .cursor(CursorStyle::ResizeLeftRight)
+        .on_drag(DraggedDivider(id, index), |d, _, _, cx| cx.new(|_| DraggedDivider(d.0.clone(), d.1)))
+        .on_mouse_up(MouseButton::Left, cx.listener(move |this, _, _, cx| on_end(this, cx)))
+        .on_click(cx.listener(move |this, e: &ClickEvent, _, cx| {
+            if e.click_count() == 2 {
+                on_reset(this, cx);
+            }
+        }))
 }
