@@ -35,6 +35,31 @@ impl SplitPane {
         on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
         cx: &mut Context<V>,
     ) -> Div {
+        self.split(first, second, false, on_resize, on_resize_end, cx)
+    }
+
+    /// [`SplitPane::render`] for an owner that keeps the second panel's width: `on_resize` gets that width,
+    /// and `default` is the second panel's.
+    pub fn render_second<V: 'static>(
+        &self,
+        first: impl IntoElement,
+        second: impl IntoElement,
+        on_resize: impl Fn(&mut V, Pixels, &mut Context<V>) + Clone + 'static,
+        on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
+        cx: &mut Context<V>,
+    ) -> Div {
+        self.split(first, second, true, on_resize, on_resize_end, cx)
+    }
+
+    fn split<V: 'static>(
+        &self,
+        first: impl IntoElement,
+        second: impl IntoElement,
+        keeps_second: bool,
+        on_resize: impl Fn(&mut V, Pixels, &mut Context<V>) + Clone + 'static,
+        on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
+        cx: &mut Context<V>,
+    ) -> Div {
         let (id, min_first, min_second, default) = (self.id.clone(), self.min_first, self.min_second, self.default);
         let border = cx.theme().colors().border;
         let (drag, reset, end, reset_end) = (on_resize.clone(), on_resize, on_resize_end.clone(), on_resize_end);
@@ -46,7 +71,8 @@ impl SplitPane {
                     return;
                 }
                 let max = (e.bounds.right() - min_second).max(min_first);
-                drag(this, (e.event.position.x - e.bounds.left()).clamp(min_first, max), cx);
+                let x = (e.event.position.x - e.bounds.left()).clamp(min_first, max);
+                drag(this, if keeps_second { e.bounds.size.width - x - px(1.) } else { x }, cx);
             }))
             .child(first)
             .child(

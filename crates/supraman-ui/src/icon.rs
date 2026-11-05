@@ -40,11 +40,18 @@ pub enum Icon {
     Remote,
     Tag,
     Worktree,
+    Copy,
+    Modified,
+    Renamed,
+    SortDown,
+    SortUp,
+    ListFlat,
+    ListTree,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 36] = [
+    const ALL: [Icon; 43] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -81,6 +88,13 @@ impl Icon {
         Icon::Remote,
         Icon::Tag,
         Icon::Worktree,
+        Icon::Copy,
+        Icon::Modified,
+        Icon::Renamed,
+        Icon::SortDown,
+        Icon::SortUp,
+        Icon::ListFlat,
+        Icon::ListTree,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -121,6 +135,13 @@ impl Icon {
             Icon::Remote => include_bytes!("../assets/icons/server.svg"),
             Icon::Tag => include_bytes!("../assets/icons/bookmark.svg"),
             Icon::Worktree => include_bytes!("../assets/icons/git_worktree.svg"),
+            Icon::Copy => include_bytes!("../assets/icons/copy.svg"),
+            Icon::Modified => include_bytes!("../assets/icons/pencil.svg"),
+            Icon::Renamed => include_bytes!("../assets/icons/arrow_right.svg"),
+            Icon::SortDown => include_bytes!("../assets/icons/arrow_down.svg"),
+            Icon::SortUp => include_bytes!("../assets/icons/arrow_up.svg"),
+            Icon::ListFlat => include_bytes!("../assets/icons/menu.svg"),
+            Icon::ListTree => include_bytes!("../assets/icons/list_tree.svg"),
         }
     }
 

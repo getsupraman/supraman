@@ -330,6 +330,14 @@ impl<T, A> TreeState<T, A> {
         inner.refresh();
     }
 
+    /// The folder at `path`'s aggregate.
+    pub fn aggregate(&self, path: &str) -> Option<A>
+    where
+        A: Clone,
+    {
+        self.inner.borrow().tree.aggregate(path).cloned()
+    }
+
     pub fn is_open(&self, path: &str) -> bool {
         self.inner.borrow().open.contains(path)
     }

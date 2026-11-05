@@ -1,0 +1,186 @@
+use std::rc::Rc;
+
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
+use supraman_gitman::fixture::{Fixture, git_in};
+use supraman_ui::tree::Order;
+
+use super::*;
+use crate::git_view::GitView;
+use crate::git_view::tests::{open, redraw};
+
+fn panel_of(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<CommitPanel> {
+    view.read_with(cx, |v, _| v.panel().clone())
+}
+
+fn shown(panel: &Entity<CommitPanel>, cx: &mut VisualTestContext) -> Rc<Shown> {
+    panel.read_with(cx, |p, _| p.shown().expect("a commit is shown"))
+}
+
+fn select(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) {
+    view.update(cx, |v, cx| v.select_sha(sha, cx));
+    cx.run_until_parked();
+    redraw(view, cx);
+}
+
+fn hits(view: &Entity<GitView>, cx: &mut VisualTestContext) -> supraman_ui::hit::HitTargets {
+    view.read_with(cx, |v, _| v.hits.clone())
+}
+
+/// Hit keys of the next frame only.
+fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> supraman_ui::hit::HitTargets {
+    let hits = hits(view, cx);
+    hits.borrow_mut().clear();
+    redraw(view, cx);
+    hits
+}
+
+fn names(people: &[supraman_gitman::Person]) -> Vec<&str> {
+    people.iter().map(|p| p.name.as_str()).collect()
+}
+
+#[gpui::test]
+fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+
+    select(&view, f.sha("rename"), cx);
+    let s = shown(&panel, cx);
+    assert_eq!((s.sha.as_ref(), s.summary.as_ref(), s.author.as_ref()), (f.sha("rename"), "Move old.txt to new.txt", "Ada Fixture"));
+    assert!(s.body.starts_with("The old name no longer fits."), "{}", s.body);
+    assert_eq!(s.parents, [SharedString::from(f.sha("second").to_string())]);
+    assert_eq!(names(&s.co_authors), ["Bea Two", "Cy Three"]);
+    assert_eq!(s.counts, Counts { renamed: 1, ..Counts::default() });
+    assert_eq!(s.authored_ms, 1_700_000_000_000 + 3 * 60_000, "the third commit's time");
+    let painted = repaint(&view, cx);
+    for key in ["commit-sha", "commit-message-copy", "commit-parent-0", "commit-coauthor-0", "commit-coauthor-1"] {
+        assert!(painted.borrow().contains_key(key), "{key} paints");
+    }
+    assert!(!painted.borrow().contains_key("commit-parent-1"));
+
+    select(&view, f.sha("merge"), cx);
+    let s = shown(&panel, cx);
+    assert_eq!(s.summary.as_ref(), "Merge feature");
+    assert_eq!(s.parents.iter().map(|p| p.as_ref()).collect::<Vec<_>>(), [f.sha("main_work"), f.sha("rename")]);
+    assert!(s.co_authors.is_empty());
+    assert_eq!((s.counts, s.changes[0].path.as_str()), (Counts { renamed: 1, ..Counts::default() }, "new.txt"), "against its first parent");
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("commit-parent-1") && !painted.borrow().contains_key("commit-coauthor-0"));
+
+    let parent = painted.borrow()["commit-parent-0"].bounds.center();
+    cx.simulate_click(parent, Modifiers::none());
+    cx.run_until_parked();
+    let main_work = Selected::Commit(f.sha("main_work").to_string().into());
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(main_work), "a parent's click selects it in the graph");
+    assert_eq!(shown(&panel, cx).summary.as_ref(), "Main work");
+
+    select(&view, f.sha("root"), cx);
+    let s = shown(&panel, cx);
+    assert_eq!((s.summary.as_ref(), s.body.as_ref(), s.parents.len()), ("Root", "", 0));
+    assert_eq!(s.counts, Counts { added: 4, ..Counts::default() });
+    assert!(!repaint(&view, cx).borrow().contains_key("commit-parent-0"), "the root has no parent");
+
+    view.update(cx, |v, cx| {
+        v.table.select(Some(0));
+        v.selection_moved(cx);
+    });
+    cx.run_until_parked();
+    assert!(panel.read_with(cx, |p, _| matches!(p.state(), State::Wip)), "the WIP row shows its placeholder");
+}
+
+/// A commit on `side` (the fixture's worktree) adding files in folders, changing `a.txt` and deleting `b.txt`.
+fn nested_commit(f: &Fixture) -> String {
+    for (path, text) in [("src/app/main.rs", "fn main() {}\n"), ("src/app/lib.rs", "\n"), ("src/util.rs", "\n"), ("docs/guide.md", "# Guide\n"), ("a.txt", "side\n")] {
+        let file = f.worktree.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    std::fs::remove_file(f.worktree.join("b.txt")).unwrap();
+    let date = "@1700100000 +0000".to_string();
+    let env = [("GIT_AUTHOR_DATE", date.clone()), ("GIT_COMMITTER_DATE", date)];
+    git_in(&f.git, &f.worktree, &["add", "-A"], &[], None);
+    git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", "Folders"], &env, None);
+    git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+}
+
+fn visible(panel: &Entity<CommitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
+    panel.read_with(cx, |p, _| p.tree().0.visible().iter().map(|s| s.to_string()).collect())
+}
+
+#[gpui::test]
+fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    let s = shown(&panel, cx);
+    assert_eq!(s.counts, Counts { modified: 1, added: 4, deleted: 1, renamed: 0 });
+
+    panel.update(cx, |p, cx| p.set_view(FileView::Path, cx));
+    let painted = repaint(&view, cx);
+    let changed = ["a.txt", "b.txt", "docs/guide.md", "src/app/lib.rs", "src/app/main.rs", "src/util.rs"];
+    assert_eq!(s.changes.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), changed);
+    for path in changed {
+        assert!(painted.borrow().contains_key(&format!("commit-files-row-{path}")) && painted.borrow().contains_key(&format!("commit-mark-{path}")), "{path} is a row with its mark");
+    }
+    panel.update(cx, |p, cx| p.set_order(Order::Descending, cx));
+    let reversed: Vec<&str> = changed.iter().rev().copied().collect();
+    assert_eq!(shown(&panel, cx).changes.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), reversed, "Z–A");
+    panel.update(cx, |p, cx| p.set_order(Order::Ascending, cx));
+
+    panel.update(cx, |p, cx| p.set_view(FileView::Tree, cx));
+    redraw(&view, cx);
+    assert_eq!(visible(&panel, cx), ["docs", "docs/guide.md", "src", "src/app", "src/app/lib.rs", "src/app/main.rs", "src/util.rs", "a.txt", "b.txt"]);
+    let badge = |path: &str, cx: &mut VisualTestContext| panel.read_with(cx, |p, _| p.tree().0.aggregate(path));
+    assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }), "a folder counts its whole subtree");
+    assert_eq!(badge("src/app", cx), Some(Counts { added: 2, ..Counts::default() }));
+    panel.update(cx, |p, cx| p.expand_or_collapse(cx));
+    assert_eq!(visible(&panel, cx), ["docs", "src", "a.txt", "b.txt"], "Collapse All");
+
+    panel.update(cx, |p, cx| p.set_all_files(true, cx));
+    panel.update(cx, |p, cx| p.expand_or_collapse(cx));
+    let painted = repaint(&view, cx);
+    let all = ["docs", "docs/guide.md", "src", "src/app", "src/app/lib.rs", "src/app/main.rs", "src/util.rs", "a.txt", "b.txt", "bin.dat", "old.txt"];
+    assert_eq!(visible(&panel, cx), all, "the whole tree, the deleted file kept");
+    assert!(!painted.borrow().contains_key("commit-view-path"), "no Path toggle with View all files");
+    for path in changed {
+        assert!(painted.borrow().contains_key(&format!("commit-mark-{path}")), "{path} is marked");
+    }
+    for path in ["bin.dat", "old.txt"] {
+        assert!(painted.borrow().contains_key(&format!("commit-tree-row-{path}")) && !painted.borrow().contains_key(&format!("commit-mark-{path}")), "unchanged {path} has no mark");
+    }
+    assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }));
+
+    panel.update(cx, |p, cx| p.set_filter("APP", cx));
+    assert_eq!(visible(&panel, cx), ["src", "src/app", "src/app/lib.rs", "src/app/main.rs"], "the filter matches the whole path, ignoring case");
+    panel.update(cx, |p, cx| p.set_filter("", cx));
+
+    let bar = repaint(&view, cx).borrow()["commit-message-bar"].bounds.center();
+    let before = panel.read_with(cx, |p, _| p.message_height());
+    cx.simulate_mouse_down(bar, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(bar + point(px(0.), px(20.)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(bar + point(px(0.), px(40.)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(bar + point(px(0.), px(40.)), MouseButton::Left, Modifiers::none());
+    let after = panel.read_with(cx, |p, _| p.message_height());
+    assert!(after > before + px(35.) && after < before + px(45.), "the bar drags the box taller: {before:?} to {after:?}");
+    let kept = cx.update(|_, cx| view.read(cx).sizes(cx).message);
+    assert_eq!(kept, Some(f32::from(after).round() as u32), "the tab keeps the height");
+}
+
+#[gpui::test]
+fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    let earlier = panel.update(cx, |p, cx| p.show(Some(Selected::Commit(f.sha("root").to_string().into())), 0, cx));
+    panel.update(cx, |p, cx| p.show(Some(Selected::Commit(f.sha("second").to_string().into())), 0, cx));
+    cx.run_until_parked();
+    assert_eq!(shown(&panel, cx).summary.as_ref(), "Second");
+
+    let late = load::load(&f.repo(), f.sha("root"), Order::Ascending);
+    assert!(late.is_ok());
+    panel.update(cx, |p, cx| p.apply(earlier, late, cx));
+    let s = shown(&panel, cx);
+    assert_eq!((s.sha.as_ref(), s.summary.as_ref()), (f.sha("second"), "Second"), "the earlier selection's late result is dropped");
+}

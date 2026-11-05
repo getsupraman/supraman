@@ -10,11 +10,11 @@ use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
 use crate::view::git_tab::open_or_focus;
 use crate::view::{Tab, TabKind};
 
-fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| supraman_ui::init_globals(cx, "test"));
     let folder = folder.to_path_buf();
     let (view, cx) = cx.add_window_view(|_, cx| {
-        let view = GitView::open(folder, None, HitTargets::default(), &[], cx);
+        let view = GitView::open(folder, None, HitTargets::default(), &GitSizes::default(), cx);
         Holder(view)
     });
     let view = view.read_with(cx, |h, _| h.0.clone());
@@ -31,7 +31,7 @@ impl Render for Holder {
     }
 }
 
-fn redraw(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+pub(crate) fn redraw(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     view.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
     cx.update(|_, _| ());
@@ -45,6 +45,10 @@ fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
     groups.iter().map(|g| g.name.as_str()).collect()
 }
 
+fn sizes() -> GitSizes {
+    GitSizes { widths: vec![200, 90, 0, 130, 70], panel: Some(360), message: Some(150) }
+}
+
 #[gpui::test]
 fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestAppContext) {
     let f = Fixture::new();
@@ -54,26 +58,29 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
         let (id, _) = cx.update(|cx| {
             open_or_focus(&mut tabs, &mut next, &f.dir, "Git · repo".into(), cx, |cx| {
                 made.set(made.get() + 1);
-                GitView::open(f.dir.clone(), None, HitTargets::default(), &[200, 90, 0, 130, 70], cx)
+                GitView::open(f.dir.clone(), None, HitTargets::default(), &sizes(), cx)
             })
         });
         assert_eq!(id, 1, "a second open focuses the first tab");
     }
     assert_eq!((tabs.len(), made.get()), (1, 1), "one tab and one view for the folder");
     let other = f.temp.path().join("wt");
-    let (id, new) = cx.update(|cx| open_or_focus(&mut tabs, &mut next, &other, "Git · wt".into(), cx, |cx| GitView::open(other.clone(), None, HitTargets::default(), &[], cx)));
+    let (id, new) = cx.update(|cx| open_or_focus(&mut tabs, &mut next, &other, "Git · wt".into(), cx, |cx| GitView::open(other.clone(), None, HitTargets::default(), &GitSizes::default(), cx)));
     assert_eq!((id, new, tabs.len()), (2, true, 2), "another folder, another tab");
 
     let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
-    let saved = cx.update(|cx| SavedTab::Git { title: tabs[0].title.clone(), folder: view.read(cx).folder.clone(), widths: view.read(cx).widths() });
+    let saved = cx.update(|cx| {
+        let sizes = view.read(cx).sizes(cx);
+        SavedTab::Git { title: tabs[0].title.clone(), folder: view.read(cx).folder.clone(), widths: sizes.widths, panel: sizes.panel, message: sizes.message }
+    });
     let home = tempfile::tempdir().unwrap();
     saved_tabs::save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
     let (back, notice) = saved_tabs::load(home.path());
     assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
     let world = World { sessions: &[], now: 0, workspaces: &[], resume_on_click: false, is_dir: &|p| p.is_dir(), is_file: &|_| true, has_transcript: &|_, _| false };
-    let Ok(Reopen::Git { title, folder, widths }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
-    assert_eq!((title.as_str(), folder.as_path(), widths.as_slice()), ("Git · repo", f.dir.as_path(), &[200, 90, 0, 130, 70][..]));
-    let gone = SavedTab::Git { title: "Git · x".into(), folder: f.temp.path().join("gone"), widths: Vec::new() };
+    let Ok(Reopen::Git { title, folder, sizes: back }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
+    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), sizes()), "the columns, the panel and the message box keep their sizes");
+    let gone = SavedTab::Git { title: "Git · x".into(), folder: f.temp.path().join("gone"), widths: Vec::new(), panel: None, message: None };
     assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
 }
 

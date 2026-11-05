@@ -6,7 +6,7 @@ use gpui::{App, Context, Entity};
 use supraman_core::paths::path_key;
 
 use super::{FleetView, Tab, TabKind};
-use crate::git_view::GitView;
+use crate::git_view::{GitSizes, GitView};
 
 /// The open Git tab of `folder`, else a new one from `make`, pushed last; true when it is new.
 pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Path, title: String, cx: &mut App, make: impl FnOnce(&mut App) -> Entity<GitView>) -> (u64, bool) {
@@ -22,10 +22,10 @@ pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Pat
 }
 
 impl FleetView {
-    /// `Git · <repo>` for `folder`, its columns at `widths` when it opens.
-    pub fn open_git(&mut self, folder: PathBuf, title: String, widths: &[u32], cx: &mut Context<Self>) -> u64 {
+    /// `Git · <repo>` for `folder`, at `sizes` when it opens.
+    pub fn open_git(&mut self, folder: PathBuf, title: String, sizes: &GitSizes, cx: &mut Context<Self>) -> u64 {
         let (home, hits) = (self.home.clone(), self.hits.clone());
-        let make = |cx: &mut App| GitView::open(folder.clone(), home, hits, widths, cx);
+        let make = |cx: &mut App| GitView::open(folder.clone(), home, hits, sizes, cx);
         let (id, _) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);
         self.active = Some(id);
         cx.notify();
