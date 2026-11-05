@@ -1,7 +1,7 @@
 //! The Graph column: a row's lanes and edges painted as paths, its node as a circle with the author's initials.
 //! Geometry per docs/research/gitkraken-12.6.1.md §3.
 
-use gpui::{AnyElement, Bounds, FontWeight, Hsla, PathBuilder, Pixels, Window, canvas, div, point, prelude::*, px};
+use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
 
@@ -120,14 +120,26 @@ fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
     if row.merge {
         return at.bg(lane).into_any_element();
     }
-    at.border_2()
-        .border_color(lane)
+    at.child(avatar(row.initials.clone(), colour, NODE, palette))
+        .into_any_element()
+}
+
+/// An author's `side` px circle of `initials`, ringed in lane `colour`: the graph's node and the commit panel's avatars.
+pub fn avatar(initials: SharedString, colour: usize, side: f32, palette: &Palette) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(side))
+        .rounded_full()
+        .border_2()
+        .border_color(palette.lane(colour))
         .bg(palette.avatar(colour))
         .text_color(palette.initials(colour))
-        .text_size(px(8.5))
+        .text_size(px(side * 0.425))
         .font_family(fonts::UI)
         .font_weight(FontWeight::SEMIBOLD)
-        .line_height(px(10.))
-        .child(row.initials.clone())
-        .into_any_element()
+        .line_height(px(side / 2.))
+        .child(initials)
 }

@@ -2,6 +2,7 @@
 
 mod cells;
 mod colours;
+mod details;
 mod graph;
 mod load;
 
@@ -11,14 +12,16 @@ mod tests;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::{Layout, Repo};
 use supraman_ui::hit::HitTargets;
+use supraman_ui::split::SplitPane;
 use supraman_ui::stall;
 use supraman_ui::table::{Column, Table, TableState};
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
+use details::{CommitPanel, PanelEvent};
 use colours::Palette;
 use load::{GraphRow, Problem};
 
@@ -26,6 +29,19 @@ use load::{GraphRow, Problem};
 pub const TABLE: &str = "git";
 /// The near-end distance that asks for the next page.
 const NEAR_END: Pixels = px(1400.);
+const PANEL_WIDTH: Pixels = px(380.);
+
+/// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GitSizes {
+    pub widths: Vec<u32>,
+    pub panel: Option<u32>,
+    pub message: Option<u32>,
+}
+
+fn whole(p: Pixels) -> u32 {
+    f32::from(p).round().max(0.) as u32
+}
 
 fn columns() -> Vec<Column> {
     vec![
@@ -38,7 +54,6 @@ fn columns() -> Vec<Column> {
 }
 
 /// What is selected, for the commit details beside the graph.
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selected {
     Wip,
@@ -75,16 +90,25 @@ pub struct GitView {
     widths: Vec<Pixels>,
     hover_ref: Option<usize>,
     over_list: Option<usize>,
+    panel: Entity<CommitPanel>,
+    panel_width: Pixels,
+    _panel_events: Subscription,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
 
 impl GitView {
-    /// `widths` are the columns' widths the tab was saved with.
-    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, widths: &[u32], cx: &mut App) -> Entity<GitView> {
+    /// `sizes` are the ones the tab was saved with.
+    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, sizes: &GitSizes, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
             let defaults = columns();
-            let widths = defaults.iter().enumerate().map(|(i, c)| widths.get(i).map_or(c.default, |w| px(*w as f32))).collect();
+            let widths = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).map_or(c.default, |w| px(*w as f32))).collect();
+            let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
+            let events = cx.subscribe(&panel, |this: &mut GitView, _, e: &PanelEvent, cx| {
+                if let PanelEvent::Parent(sha) = e {
+                    this.select_sha(sha, cx);
+                }
+            });
             let mut view = GitView {
                 folder,
                 home,
@@ -103,14 +127,22 @@ impl GitView {
                 widths,
                 hover_ref: None,
                 over_list: None,
+                panel,
+                panel_width: sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32)),
+                _panel_events: events,
             };
             view.reload(cx);
             view
         })
     }
 
-    pub fn widths(&self) -> Vec<u32> {
-        self.widths.iter().map(|w| f32::from(*w).round().max(0.) as u32).collect()
+    pub fn sizes(&self, cx: &App) -> GitSizes {
+        GitSizes { widths: self.widths.iter().map(|w| whole(*w)).collect(), panel: Some(whole(self.panel_width)), message: Some(whole(self.panel.read(cx).message_height())) }
+    }
+
+    #[cfg(test)]
+    pub fn panel(&self) -> &Entity<CommitPanel> {
+        &self.panel
     }
 
     /// The row whose ref list is open.
@@ -118,10 +150,25 @@ impl GitView {
         self.hover_ref.or(self.over_list)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn selected(&self) -> Option<Selected> {
         let row = self.rows.get(self.table.selected()?)?;
         Some(if row.wip() { Selected::Wip } else { Selected::Commit(row.sha.clone()) })
+    }
+
+    fn selection_moved(&mut self, cx: &mut Context<Self>) {
+        let colour = self.table.selected().and_then(|ix| self.rows.get(ix)).map_or(0, |r| r.row.colour);
+        let selected = self.selected();
+        self.panel.update(cx, |p, cx| p.show(selected, colour, cx));
+        cx.emit(GitEvent::Selected);
+    }
+
+    /// Selects the row of `sha` when a loaded page holds it.
+    pub fn select_sha(&mut self, sha: &str, cx: &mut Context<Self>) {
+        let Some(ix) = self.rows.iter().position(|r| r.sha.as_ref() == sha) else { return };
+        self.table.select(Some(ix));
+        self.table.reveal(ix);
+        self.selection_moved(cx);
+        cx.notify();
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
@@ -145,6 +192,7 @@ impl GitView {
                 self.more = first.page.more;
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
+                self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.repo = Some(first.repo);
                 self.wip = first.wip.map(|w| w.counts());
                 self.load = Load::Ready;
@@ -213,13 +261,27 @@ impl GitView {
         Table::new(TABLE, &self.table, &self.hits, columns(), &self.widths, rows, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
             .row_height(px(graph::ROW))
             .band(move |this: &GitView, ix, _| this.rows.get(ix).map(|r| band.band(r.row.colour)))
-            .on_select(|_: &mut GitView, _, _, cx| cx.emit(GitEvent::Selected))
+            .on_select(|this: &mut GitView, _, _, cx| this.selection_moved(cx))
             .on_resize(|this: &mut GitView, widths, _, cx| {
                 this.widths = widths;
                 cx.notify();
             })
             .on_near_end(NEAR_END, |this: &mut GitView, _, cx| this.load_more(cx))
             .render(cx)
+            .into_any_element()
+    }
+}
+
+impl GitView {
+    fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let table = div().flex_1().min_w_0().h_full().child(self.render_table(cx));
+        let panel = div().flex_none().w(self.panel_width).h_full().child(self.panel.clone());
+        SplitPane { id: "git-split".into(), min_first: px(320.), min_second: px(260.), default: PANEL_WIDTH }
+            .render_second(table, panel, |this: &mut GitView, width, cx| {
+                this.panel_width = width;
+                cx.notify();
+            }, |_: &mut GitView, _| {}, cx)
+            .size_full()
             .into_any_element()
     }
 }
@@ -247,7 +309,7 @@ impl Render for GitView {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx),
             Load::Problem(Problem::Git(why)) => notice("Git is missing or too old", why.clone(), cx),
             Load::Problem(Problem::Failed(why)) => notice("Cannot read this repository", why.clone(), cx),
-            Load::Ready => self.render_table(cx),
+            Load::Ready => self.render_split(cx),
         };
         div().size_full().bg(cx.theme().colors().editor_background).text_sm().child(content)
     }
