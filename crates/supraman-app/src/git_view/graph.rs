@@ -1,7 +1,7 @@
 //! The Graph column: a row's lanes and edges painted as paths, its node as a circle with the author's initials.
 //! Geometry per docs/research/gitkraken-12.6.1.md §3.
 
-use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, point, prelude::*, px};
+use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
 
@@ -10,24 +10,51 @@ use super::load::GraphRow;
 
 pub const ROW: f32 = 28.;
 const LANE: f32 = 22.;
-const PAD: f32 = 6.;
+/// The column's room left of the first lane and right of the last.
+const PAD: f32 = 8.;
+/// The space between two rows' bands.
+pub const GAP: f32 = 2.;
 const RADIUS: f32 = 11.;
 const NODE: f32 = 20.;
 const MERGE: f32 = 10.;
 const STROKE: f32 = 1.5;
 /// The table pads each cell by this much; the graph paints from the column's edge.
 pub const CELL_PAD: f32 = 8.;
+/// The lane-coloured bar that closes a row's band at the message column's left edge.
+pub const BAR: f32 = 3.;
+/// The widest the graph column grows by itself to hold its lanes.
+pub const MAX_FIT: f32 = 400.;
 
 /// The middle of `lane` from the column's left edge.
 pub fn lane_x(lane: usize) -> f32 {
     PAD + lane as f32 * LANE + LANE / 2.
 }
 
+/// The column width that holds `lanes` lanes with the padding on both sides.
+pub fn width_for(lanes: usize) -> f32 {
+    2. * PAD + lanes as f32 * LANE
+}
+
+/// How many lanes `rows` use.
+pub fn lanes(rows: &[GraphRow]) -> usize {
+    rows.iter().flat_map(|r| r.row.edges.iter().map(|e| e.lane.max(e.node)).chain([r.row.lane])).max().map_or(0, |l| l + 1)
+}
+
+/// A row's band in a graph cell of `bounds`: from the centre of its node's `lane` to the column's right edge, `GAP / 2`
+/// short of the row's top and bottom.
+pub fn band(lane: usize, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+    let left = (bounds.left() + px(lane_x(lane))).min(bounds.right());
+    let top = bounds.top() + px(GAP / 2.);
+    Bounds::from_corners(point(left, top), point(bounds.right(), (bounds.bottom() - px(GAP / 2.)).max(top)))
+}
+
 pub fn cell(row: &GraphRow, connector: bool, palette: &Palette) -> AnyElement {
     let edges: Vec<(Edge, Hsla)> = row.row.edges.iter().map(|e| (*e, palette.lane(e.colour))).collect();
     let (lane, colour) = (row.row.lane, row.row.colour);
     let link = connector.then(|| palette.connector(colour));
+    let shade = palette.band(colour);
     let paint = canvas(|_, _, _| {}, move |bounds, _, window, _| {
+        window.paint_quad(fill(band(lane, bounds), shade));
         if let Some(link) = link {
             line(window, bounds, link, false, |b, mid| {
                 b.move_to(point(bounds.left(), mid));
@@ -44,10 +71,7 @@ pub fn cell(row: &GraphRow, connector: bool, palette: &Palette) -> AnyElement {
     .size_full();
     div()
         .absolute()
-        .top_0()
-        .bottom_0()
-        .left(px(-CELL_PAD))
-        .right(px(-CELL_PAD))
+        .inset_0()
         .child(paint)
         .child(node(row, palette))
         .into_any_element()

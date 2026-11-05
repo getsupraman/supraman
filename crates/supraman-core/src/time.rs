@@ -85,6 +85,104 @@ where
     }
 }
 
+/// A locale's short date and short time patterns in Windows' notation (`dd/MM/yyyy`, `h:mm tt`) and its AM/PM designators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Locale {
+    pub date: String,
+    pub time: String,
+    pub am: String,
+    pub pm: String,
+}
+
+impl Default for Locale {
+    fn default() -> Locale {
+        Locale { date: "yyyy-MM-dd".into(), time: "HH:mm".into(), am: "AM".into(), pm: "PM".into() }
+    }
+}
+
+/// The user's locale, read once from Windows.
+pub fn user_locale() -> &'static Locale {
+    static LOCALE: std::sync::OnceLock<Locale> = std::sync::OnceLock::new();
+    LOCALE.get_or_init(read_locale)
+}
+
+#[cfg(windows)]
+fn read_locale() -> Locale {
+    use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_S1159, LOCALE_S2359, LOCALE_SSHORTDATE, LOCALE_SSHORTTIME};
+    use windows::core::PCWSTR;
+    let read = |kind: u32| {
+        let mut buf = [0u16; 128];
+        let n = unsafe { GetLocaleInfoEx(PCWSTR::null(), kind, Some(&mut buf)) };
+        let n = usize::try_from(n).unwrap_or(0).saturating_sub(1);
+        Some(String::from_utf16_lossy(&buf[..n])).filter(|s| !s.is_empty())
+    };
+    let fallback = Locale::default();
+    Locale {
+        date: read(LOCALE_SSHORTDATE).unwrap_or(fallback.date),
+        time: read(LOCALE_SSHORTTIME).unwrap_or(fallback.time),
+        am: read(LOCALE_S1159).unwrap_or(fallback.am),
+        pm: read(LOCALE_S2359).unwrap_or(fallback.pm),
+    }
+}
+
+#[cfg(not(windows))]
+fn read_locale() -> Locale {
+    Locale::default()
+}
+
+/// `05/11/2026 @ 17:10` or `11/05/2026 @ 5:10 PM`: the user's date order and clock; empty outside chrono's range.
+pub fn stamp(ms: i64) -> String {
+    local(ms).map(|at| stamp_in(&at, user_locale())).unwrap_or_default()
+}
+
+/// [`stamp`] of `at` in `locale`; day and month always take two digits and the year four, so a column of dates aligns.
+pub fn stamp_in<Tz: TimeZone>(at: &DateTime<Tz>, locale: &Locale) -> String {
+    format!("{} @ {}", pattern(at, &locale.date, locale), pattern(at, &locale.time, locale))
+}
+
+/// `at` in a Windows date or time pattern: runs of `d M y H h m s t`, `'quoted'` literals, anything else as written.
+fn pattern<Tz: TimeZone>(at: &DateTime<Tz>, pattern: &str, locale: &Locale) -> String {
+    use chrono::{Datelike as _, Timelike as _};
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let run = chars[i..].iter().take_while(|x| **x == c).count();
+        i += run;
+        let hour12 = match at.hour() % 12 {
+            0 => 12,
+            h => h,
+        };
+        let designator = if at.hour() < 12 { &locale.am } else { &locale.pm };
+        match c {
+            'd' if run >= 3 => out.push_str(&at.weekday().to_string()),
+            'd' => out.push_str(&format!("{:02}", at.day())),
+            'M' => out.push_str(&format!("{:02}", at.month())),
+            'y' => out.push_str(&format!("{:04}", at.year())),
+            'H' if run == 1 => out.push_str(&at.hour().to_string()),
+            'H' => out.push_str(&format!("{:02}", at.hour())),
+            'h' if run == 1 => out.push_str(&hour12.to_string()),
+            'h' => out.push_str(&format!("{hour12:02}")),
+            'm' => out.push_str(&format!("{:02}", at.minute())),
+            's' => out.push_str(&format!("{:02}", at.second())),
+            't' if run == 1 => out.extend(designator.chars().next()),
+            't' => out.push_str(designator),
+            'g' => {}
+            '\'' => {
+                i -= run - 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => out.extend(std::iter::repeat_n(c, run)),
+        }
+    }
+    out.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -128,6 +226,25 @@ mod tests {
         assert_eq!(rfc3339_in("2026-10-26T23:30:00-02:00", &cet), "2026-10-27 02:30");
         assert_eq!(rfc3339_in("2026-10-26T09:30", &cet), "2026-10-26 09:30");
         assert_eq!(rfc3339_local("x"), "x");
+    }
+
+    fn locale(date: &str, time: &str) -> Locale {
+        Locale { date: date.into(), time: time.into(), ..Locale::default() }
+    }
+
+    #[test]
+    fn stamp_takes_the_locales_date_order_and_clock() {
+        let utc = chrono::Utc;
+        let evening = utc.with_ymd_and_hms(2026, 11, 5, 17, 10, 0).unwrap();
+        let morning = utc.with_ymd_and_hms(2026, 3, 9, 0, 7, 0).unwrap();
+        let (gb, us) = (locale("dd/MM/yyyy", "HH:mm"), locale("M/d/yyyy", "h:mm tt"));
+        assert_eq!(stamp_in(&evening, &gb), "05/11/2026 @ 17:10");
+        assert_eq!(stamp_in(&evening, &us), "11/05/2026 @ 5:10 PM");
+        assert_eq!(stamp_in(&morning, &gb), "09/03/2026 @ 00:07");
+        assert_eq!(stamp_in(&morning, &us), "03/09/2026 @ 12:07 AM");
+        assert_eq!(stamp_in(&evening, &locale("yyyy-MM-dd", "H.mm 'h'")), "2026-11-05 @ 17.10 h");
+        assert_eq!(stamp_in(&evening, &locale("d.M.yy", "tt hh:mm")), "05.11.2026 @ PM 05:10");
+        assert_eq!(stamp(i64::MAX), "");
     }
 
     #[test]

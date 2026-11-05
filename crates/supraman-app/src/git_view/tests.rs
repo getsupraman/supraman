@@ -101,8 +101,7 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
         assert_eq!(ahead.summary.as_ref(), "Ahead of origin");
         assert_eq!(cells::sha_text(ahead), &f.sha("ahead")[..7]);
         assert_eq!(ahead.time_ms, 1_700_000_000_000 + 6 * 60_000, "the sixth commit's time");
-        let now = supraman_core::time::now_ms();
-        assert_eq!(cells::date_text(ahead, now), supraman_core::time::short(ahead.time_ms, now).unwrap());
+        assert_eq!(cells::date_text(ahead), supraman_core::time::stamp(ahead.time_ms));
 
         let (_, rename) = row_of(v, f.sha("rename"));
         assert_eq!(rename.summary.as_ref(), "Move old.txt to new.txt");
@@ -135,7 +134,12 @@ fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
         let open = ref_cell(&v.rows[ix].row, true);
         assert_eq!((names(&open.list), open.more), (vec!["side", "v1"], 0), "every group listed and +N hidden");
     });
-    assert!(hits.borrow().contains_key(&format!("git-reflist-{ix}-0")) && hits.borrow().contains_key(&format!("git-reflist-{ix}-1")), "the list paints a pill per group");
+    let (hovered, below) = {
+        let hits = hits.borrow();
+        let at = |i: usize| hits.get(&format!("git-reflist-{ix}-{i}")).map(|h| h.bounds).expect("the list paints a pill per group");
+        (at(0), at(1))
+    };
+    assert!((below.top() - hovered.bottom()).abs() < px(0.5) && (below.left() - hovered.left()).abs() < px(0.5), "v1 hangs from the hovered pill: {hovered:?} {below:?}");
     let (_, ahead) = view.read_with(cx, |v, _| { let (i, r) = row_of(v, f.sha("ahead")); (i, r.row.clone()) });
     assert!(ref_cell(&ahead, true).list.is_empty(), "a single group opens no list");
 }
@@ -228,6 +232,21 @@ fn light() -> theme::Theme {
     let mut theme = supraman_ui::themes::from_zed(&supraman_ui::themes::one_dark(), &zed).theme;
     theme.styles.accents = theme::AccentColors::light();
     theme
+}
+
+#[test]
+fn git_tab_band_runs_from_the_node_to_the_column_edge_short_of_the_row_edges() {
+    let column = gpui::Bounds::new(gpui::point(px(100.), px(56.)), gpui::size(px(120.), px(graph::ROW)));
+    for lane in 0..3 {
+        let band = graph::band(lane, column);
+        assert_eq!(band.left(), column.left() + px(graph::lane_x(lane)), "lane {lane} starts at its node's centre");
+        assert_eq!(band.right(), column.right());
+        assert_eq!((band.top(), band.bottom()), (column.top() + px(graph::GAP / 2.), column.bottom() - px(graph::GAP / 2.)));
+    }
+    let narrow = graph::band(9, column);
+    assert!(narrow.size.width == px(0.) && narrow.left() == column.right(), "a lane past the edge paints nothing: {narrow:?}");
+    let first = graph::lane_x(0);
+    assert!(first - 10. >= 8. && graph::width_for(1) - first - 10. >= 8., "the first lane's node keeps 8 px either side");
 }
 
 #[test]
