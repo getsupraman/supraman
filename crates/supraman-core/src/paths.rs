@@ -233,10 +233,27 @@ pub fn folders_holding(file: &str, path: &std::ffi::OsStr) -> Vec<PathBuf> {
 
 /// The file pwsh runs for a bare `name`: the first `PATH` folder holding `name.ps1` or `name` with a `PATHEXT` extension, `.ps1` first.
 pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
-    let exts: Vec<&str> = std::iter::once(".ps1").chain(pathext.split(';').map(str::trim).filter(|e| !e.is_empty())).collect();
-    path_folders(path).find_map(|dir| {
-        exts.iter().map(|ext| dir.join(format!("{name}{}", ext.to_ascii_lowercase()))).find(|file| file.is_file())
-    })
+    first_on_path(name, path, std::iter::once(".ps1").chain(pathext_list(pathext)))
+}
+
+/// The program a bare `name` starts: the first `PATH` folder holding `name` with a `PATHEXT` extension.
+pub fn executable(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
+    first_on_path(name, path, pathext_list(pathext))
+}
+
+/// [`executable`] on this process's `PATH` and `PATHEXT`.
+pub fn executable_on_path(name: &str) -> Option<PathBuf> {
+    let (path, pathext, _) = process_env();
+    executable(name, &path, &pathext)
+}
+
+fn pathext_list(pathext: &str) -> impl Iterator<Item = &str> {
+    pathext.split(';').map(str::trim).filter(|e| !e.is_empty())
+}
+
+fn first_on_path<'a>(name: &str, path: &std::ffi::OsStr, exts: impl Iterator<Item = &'a str>) -> Option<PathBuf> {
+    let exts: Vec<String> = exts.map(str::to_ascii_lowercase).collect();
+    path_folders(path).find_map(|dir| exts.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|file| file.is_file()))
 }
 
 /// A PowerShell to start: its absolute `path`, and its short `name` (`pwsh` or `powershell`) for a tab's title.
@@ -393,5 +410,6 @@ mod command_tests {
         assert_eq!(pwsh_command("claude", &path(&[&native, &npm]), ext), Some(native.join("claude.exe")));
         assert_eq!(pwsh_command("claude", &path(&[&bare, &native]), ext), Some(bare.join("claude.cmd")), "a folder earlier on PATH wins");
         assert_eq!(pwsh_command("claude", &path(&[&bare]), ".EXE"), None, "only PATHEXT extensions and .ps1");
+        assert_eq!(executable("claude", &path(&[&npm, &native]), ext), Some(npm.join("claude.cmd")), "never a .ps1");
     }
 }
