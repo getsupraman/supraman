@@ -71,6 +71,8 @@ pub struct DiffView {
     content: Content,
     /// The change last moved to with previous/next.
     current: Option<usize>,
+    /// Bumped by each read; a read that finishes under another one is dropped.
+    token: u64,
     focus: FocusHandle,
 }
 
@@ -79,20 +81,27 @@ impl EventEmitter<Close> for DiffView {}
 impl DiffView {
     pub fn open(repo: Repo, target: Target, mode: Mode, layout: Layout, hits: HitTargets, cx: &mut App) -> Entity<DiffView> {
         cx.new(|cx| {
-            let job = target.clone();
-            let loaded = cx.background_spawn(async move { load::load(&repo, &job) });
-            cx.spawn(async move |this: gpui::WeakEntity<DiffView>, cx| {
-                let loaded = loaded.await;
-                let diff = this.update(cx, |this, cx| this.apply(loaded, cx)).ok().flatten();
-                if let Some((diff, encoding)) = diff {
-                    let diff = diff.await;
-                    this.update(cx, |this, cx| this.show(diff, encoding, cx)).ok();
-                }
-            })
-            .detach();
             let mode = if target.of == Of::Conflicted { Mode::File } else { mode };
-            DiffView { hits, target, mode, layout, content: Content::Loading, current: None, focus: cx.focus_handle() }
+            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, token: 0, focus: cx.focus_handle() };
+            view.reload(repo, cx);
+            view
         })
+    }
+
+    /// Reads the file's two sides again off the UI thread; what is shown stays until they are in.
+    pub fn reload(&mut self, repo: Repo, cx: &mut Context<Self>) {
+        self.token += 1;
+        let (token, job) = (self.token, self.target.clone());
+        let loaded = cx.background_spawn(async move { load::load(&repo, &job) });
+        cx.spawn(async move |this: gpui::WeakEntity<DiffView>, cx| {
+            let loaded = loaded.await;
+            let diff = this.update(cx, |this, cx| if this.token == token { this.apply(loaded, cx) } else { None }).ok().flatten();
+            if let Some((diff, encoding)) = diff {
+                let diff = diff.await;
+                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, cx) }).ok();
+            }
+        })
+        .detach();
     }
 
     fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, Encoding)> {
@@ -113,6 +122,7 @@ impl DiffView {
     }
 
     fn show(&mut self, diff: Diff, encoding: Encoding, cx: &mut Context<Self>) {
+        self.current = None;
         self.content = Content::Text(Box::new(Text { diff, encoding, file: None, inline: None, split: None }));
         cx.notify();
     }

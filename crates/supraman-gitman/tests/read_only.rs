@@ -61,6 +61,8 @@ fn read_everything(f: &Fixture, repo: &Repo) {
         patch(repo, of, &[]).unwrap();
     }
     status(repo).unwrap();
+    dirs(repo).unwrap();
+    ignored(repo, &["a.txt".into(), "target/x".into()]).unwrap();
 }
 
 #[test]

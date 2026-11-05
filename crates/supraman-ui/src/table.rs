@@ -160,6 +160,19 @@ impl TableState {
         self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
     }
 
+    /// How far the rows are scrolled down.
+    pub fn scroll_top(&self) -> Pixels {
+        -self.scroll.0.borrow().base_handle.offset().y
+    }
+
+    /// Scrolls the rows `top` down, as a frame lays them out: past the last row is cut back then.
+    pub fn set_scroll_top(&self, top: Pixels) {
+        let mut state = self.scroll.0.borrow_mut();
+        state.deferred_scroll_to_item = None;
+        let x = state.base_handle.offset().x;
+        state.base_handle.set_offset(gpui::point(x, -top.max(px(0.))));
+    }
+
     /// Moves the selection `by` rows within the last frame's rows, reveals it, and returns it; the first row
     /// when none was selected.
     pub fn step(&self, by: isize) -> Option<usize> {

@@ -5,11 +5,15 @@ mod colours;
 mod details;
 pub mod diff;
 mod graph;
+mod live;
 mod load;
+mod refresh;
 mod wip;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod live_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -105,6 +109,7 @@ pub struct GitView {
     diff_layout: DiffLayout,
     /// The viewer opened since the last frame and takes the keyboard on the next.
     focus_diff: bool,
+    follow: refresh::Follow,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
@@ -144,6 +149,7 @@ impl GitView {
                 diff_mode: DiffMode::default(),
                 diff_layout: DiffLayout::default(),
                 focus_diff: false,
+                follow: refresh::Follow::default(),
             };
             view.reload(cx);
             view
@@ -261,6 +267,9 @@ impl GitView {
                 self.tips = first.tips.into();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
+                if refresh::follows() {
+                    self.follow(first.repo.clone(), cx);
+                }
                 self.repo = Some(first.repo);
                 self.wip = first.wip;
                 self.load = Load::Ready;
@@ -277,11 +286,11 @@ impl GitView {
         }
         let (Some(repo), Some(layout)) = (self.repo.clone(), self.layout.take()) else { return };
         self.paging = true;
-        let (tips, skip) = (self.tips.clone(), self.commits);
+        let (tips, skip, generation) = (self.tips.clone(), self.commits, self.follow.generation);
         let page = cx.background_spawn(async move { load::next(&repo, &tips, skip, layout) });
         cx.spawn(async move |this, cx| {
             let page = page.await;
-            this.update(cx, |this, cx| this.apply_page(page, cx)).ok();
+            this.update(cx, |this, cx| if this.follow.generation == generation { this.apply_page(page, cx) }).ok();
         })
         .detach();
         cx.notify();
@@ -391,6 +400,7 @@ fn notice(title: &str, detail: String, cx: &App) -> AnyElement {
 impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: git tab");
+        self.watch_activation(window, cx);
         if std::mem::take(&mut self.focus_diff)
             && let Some((view, _)) = &self.diff
         {
