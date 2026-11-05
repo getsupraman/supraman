@@ -1,0 +1,257 @@
+use gpui::{Modifiers, TestAppContext, VisualTestContext};
+use supraman_gitman::fixture::{Fixture, Generated, git_in};
+use supraman_gitman::{FIRST_PAGE, NEXT_PAGE};
+use supraman_ui::hit::HitTargets;
+use supraman_ui::themes::{NAME_FLOOR, SECONDARY_FLOOR};
+
+use super::*;
+use super::load::initials;
+use crate::saved_tabs::{self, Reopen, SavedTab, SavedTabs, World};
+use crate::view::git_tab::open_or_focus;
+use crate::view::{Tab, TabKind};
+
+fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+    cx.update(|cx| supraman_ui::init_globals(cx, "test"));
+    let folder = folder.to_path_buf();
+    let (view, cx) = cx.add_window_view(|_, cx| {
+        let view = GitView::open(folder, None, HitTargets::default(), &[], cx);
+        Holder(view)
+    });
+    let view = view.read_with(cx, |h, _| h.0.clone());
+    cx.run_until_parked();
+    redraw(&view, cx);
+    (view, cx)
+}
+
+struct Holder(Entity<GitView>);
+
+impl Render for Holder {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(1200.)).h(px(800.)).child(self.0.clone())
+    }
+}
+
+fn redraw(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    cx.update(|_, _| ());
+}
+
+fn row_of<'a>(view: &'a GitView, sha: &str) -> (usize, &'a GraphRow) {
+    view.rows.iter().enumerate().find(|(_, r)| r.sha.as_ref() == sha).unwrap_or_else(|| panic!("no row of {sha}"))
+}
+
+fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
+    groups.iter().map(|g| g.name.as_str()).collect()
+}
+
+#[gpui::test]
+fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (mut tabs, mut next) = (Vec::<Tab>::new(), 1u64);
+    let made = std::cell::Cell::new(0);
+    for _ in 0..2 {
+        let (id, _) = cx.update(|cx| {
+            open_or_focus(&mut tabs, &mut next, &f.dir, "Git · repo".into(), cx, |cx| {
+                made.set(made.get() + 1);
+                GitView::open(f.dir.clone(), None, HitTargets::default(), &[200, 90, 0, 130, 70], cx)
+            })
+        });
+        assert_eq!(id, 1, "a second open focuses the first tab");
+    }
+    assert_eq!((tabs.len(), made.get()), (1, 1), "one tab and one view for the folder");
+    let other = f.temp.path().join("wt");
+    let (id, new) = cx.update(|cx| open_or_focus(&mut tabs, &mut next, &other, "Git · wt".into(), cx, |cx| GitView::open(other.clone(), None, HitTargets::default(), &[], cx)));
+    assert_eq!((id, new, tabs.len()), (2, true, 2), "another folder, another tab");
+
+    let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
+    let saved = cx.update(|cx| SavedTab::Git { title: tabs[0].title.clone(), folder: view.read(cx).folder.clone(), widths: view.read(cx).widths() });
+    let home = tempfile::tempdir().unwrap();
+    saved_tabs::save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
+    let (back, notice) = saved_tabs::load(home.path());
+    assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
+    let world = World { sessions: &[], now: 0, workspaces: &[], resume_on_click: false, is_dir: &|p| p.is_dir(), is_file: &|_| true, has_transcript: &|_, _| false };
+    let Ok(Reopen::Git { title, folder, widths }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
+    assert_eq!((title.as_str(), folder.as_path(), widths.as_slice()), ("Git · repo", f.dir.as_path(), &[200, 90, 0, 130, 70][..]));
+    let gone = SavedTab::Git { title: "Git · x".into(), folder: f.temp.path().join("gone"), widths: Vec::new() };
+    assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
+}
+
+#[gpui::test]
+fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    view.read_with(cx, |v, _| {
+        assert!(matches!(v.load, Load::Ready), "the fixture loads");
+        let shas: Vec<&str> = v.rows.iter().skip(1).map(|r| r.sha.as_ref()).collect();
+        for label in ["ahead", "merge", "main_work", "rename", "second", "root"] {
+            assert!(shas.contains(&f.sha(label)), "{label} is a row");
+        }
+        let (_, ahead) = row_of(v, f.sha("ahead"));
+        let cell = ref_cell(&ahead.row, false);
+        let first = cell.first.expect("main on its commit");
+        assert!(first.name == "main" && first.head() && !cell.ghost, "{first:?}");
+        assert_eq!(ahead.summary.as_ref(), "Ahead of origin");
+        assert_eq!(cells::sha_text(ahead), &f.sha("ahead")[..7]);
+        assert_eq!(ahead.time_ms, 1_700_000_000_000 + 6 * 60_000, "the sixth commit's time");
+        let now = supraman_core::time::now_ms();
+        assert_eq!(cells::date_text(ahead, now), supraman_core::time::short(ahead.time_ms, now).unwrap());
+
+        let (_, rename) = row_of(v, f.sha("rename"));
+        assert_eq!(rename.summary.as_ref(), "Move old.txt to new.txt");
+        assert!(rename.body.starts_with("The old name no longer fits. Co-authored-by: Bea Two"), "{}", rename.body);
+        assert_eq!(names(&rename.row.refs), ["feature"]);
+        let (_, merge) = row_of(v, f.sha("merge"));
+        assert!(merge.merge && merge.row.refs.iter().any(|g| g.refs.iter().any(|r| r.name == "origin/main")));
+        let (_, root) = row_of(v, f.sha("root"));
+        let ghost = ref_cell(&root.row, false);
+        assert!(ghost.ghost && ghost.first.is_some() && root.row.refs.is_empty(), "a ref-less row offers its descendant's branch: {ghost:?}");
+    });
+}
+
+#[gpui::test]
+fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let (ix, cell) = view.read_with(cx, |v, _| {
+        let (ix, second) = row_of(v, f.sha("second"));
+        (ix, ref_cell(&second.row, false))
+    });
+    assert_eq!((cell.first.as_ref().map(|g| g.name.as_str()), cell.more), (Some("side"), 1), "the worktree's branch, then +1 for v1");
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    assert!(hits.borrow().contains_key(&format!("git-more-{ix}")) && !hits.borrow().contains_key(&format!("git-reflist-{ix}-1")));
+    let at = hits.borrow()[&format!("git-refs-{ix}")].bounds.center();
+    cx.simulate_mouse_move(at, None, Modifiers::none());
+    redraw(&view, cx);
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.listed(), Some(ix), "resting on the cell opens its list");
+        let open = ref_cell(&v.rows[ix].row, true);
+        assert_eq!((names(&open.list), open.more), (vec!["side", "v1"], 0), "every group listed and +N hidden");
+    });
+    assert!(hits.borrow().contains_key(&format!("git-reflist-{ix}-0")) && hits.borrow().contains_key(&format!("git-reflist-{ix}-1")), "the list paints a pill per group");
+    let (_, ahead) = view.read_with(cx, |v, _| { let (i, r) = row_of(v, f.sha("ahead")); (i, r.row.clone()) });
+    assert!(ref_cell(&ahead, true).list.is_empty(), "a single group opens no list");
+}
+
+#[gpui::test]
+fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    view.read_with(cx, |v, _| {
+        let top = &v.rows[0];
+        assert!(top.wip() && v.rows[1].sha.as_ref() == f.sha("ahead"), "WIP, then HEAD's commit");
+        assert!(top.row.edges.iter().all(|e| e.dashed), "its edge to HEAD is dashed");
+        assert_eq!(v.wip.as_deref(), Some("+2 ✎2 −1"), "s.txt and u.txt added, a.txt and the rename changed, b.txt deleted");
+        assert_eq!(v.rows.iter().filter(|r| r.wip()).count(), 1);
+    });
+    f.git(&["reset", "-q", "--hard"]);
+    f.git(&["clean", "-qfd"]);
+    view.update(cx, |v, cx| v.reload(cx));
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.rows.iter().all(|r| !r.wip()) && v.wip.as_deref().is_none(), "a clean tree has no WIP row");
+        assert_eq!(v.rows[0].sha.as_ref(), f.sha("ahead"));
+    });
+}
+
+#[gpui::test]
+fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut TestAppContext) {
+    let g = Generated::new(20_000);
+    supraman_ui::stall::take();
+    let (view, cx) = open(&g.dir, cx);
+    let stalls = supraman_ui::stall::take();
+    assert!(stalls.is_empty(), "the first page painted with stalls: {stalls:?}");
+    let commits = |v: &GitView| v.rows.iter().filter(|r| !r.wip()).count();
+    let first = view.read_with(cx, |v, _| (commits(v), v.paging));
+    assert_eq!(first, (FIRST_PAGE, false));
+    let last = view.read_with(cx, |v, _| v.rows.len() - 1);
+    view.read_with(cx, |v, _| v.table.reveal(FIRST_PAGE / 2));
+    redraw(&view, cx);
+    assert_eq!(view.read_with(cx, |v, _| commits(v)), FIRST_PAGE, "half way down loads nothing");
+    view.read_with(cx, |v, _| v.table.reveal(last));
+    redraw(&view, cx);
+    redraw(&view, cx);
+    assert_eq!(view.read_with(cx, |v, _| commits(v)), FIRST_PAGE + NEXT_PAGE, "the end loads the next page");
+    let shas: std::collections::HashSet<_> = view.read_with(cx, |v, _| v.rows.iter().filter(|r| !r.wip()).map(|r| r.sha.clone()).collect());
+    assert_eq!(shas.len(), FIRST_PAGE + NEXT_PAGE, "no commit twice");
+    assert!(supraman_ui::stall::take().is_empty());
+}
+
+#[gpui::test]
+fn git_tab_gives_two_authors_their_initials_and_distinct_lane_rings(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let second = f.sha("second").to_string();
+    let date = "@1700010000 +0000".to_string();
+    let env = [
+        ("GIT_AUTHOR_NAME", "Bea Two".to_string()),
+        ("GIT_AUTHOR_EMAIL", "bea@example.test".to_string()),
+        ("GIT_AUTHOR_DATE", date.clone()),
+        ("GIT_COMMITTER_DATE", date),
+    ];
+    let tree = format!("{second}^{{tree}}");
+    let bea = git_in(&f.git, &f.dir, &["commit-tree", &tree, "-p", &second, "-m", "By Bea"], &env, None);
+    f.git(&["branch", "bea", &bea]);
+    let (view, cx) = open(&f.dir, cx);
+    let palette = cx.update(|_, cx| Palette::of(cx.theme()));
+    view.read_with(cx, |v, _| {
+        let (_, b) = row_of(v, &bea);
+        let (_, a) = row_of(v, f.sha("ahead"));
+        assert_eq!((b.initials.as_ref(), a.initials.as_ref()), ("BT", "AF"));
+        assert_ne!(a.row.lane, b.row.lane);
+        assert_ne!(palette.lane(a.row.colour), palette.lane(b.row.colour), "their rings differ");
+    });
+    assert_eq!(initials("Jan van Vliet"), "JV");
+    assert_eq!(initials("ada"), "A");
+    assert_eq!(initials(""), "?");
+}
+
+fn on(p: &Palette, fg: gpui::Hsla, layer: gpui::Hsla) -> f32 {
+    supraman_ui::themes::contrast(fg, super::colours::blend(layer, p.background))
+}
+
+fn light() -> theme::Theme {
+    let style = serde_json::json!({
+        "background": "#F3F3F3",
+        "panel.background": "#F3F3F3",
+        "editor.background": "#FFFFFF",
+        "text": "#1F1F1F",
+        "text.muted": "#5A5A5A",
+    });
+    let zed = supraman_ui::themes::ZedTheme { name: "Light test".into(), appearance: Some("light".into()), style: style.as_object().unwrap().clone() };
+    let mut theme = supraman_ui::themes::from_zed(&supraman_ui::themes::one_dark(), &zed).theme;
+    theme.styles.accents = theme::AccentColors::light();
+    theme
+}
+
+#[test]
+fn git_tab_colours_come_from_the_theme_and_keep_text_readable() {
+    for theme in [supraman_ui::themes::dark_modern().theme, light()] {
+        let p = Palette::of(&theme);
+        let lanes: std::collections::HashSet<String> = (0..supraman_gitman::LANE_COLOURS).map(|i| supraman_ui::themes::hex(p.lane(i))).collect();
+        assert!(lanes.len() >= 8, "{}: {lanes:?}", theme.name);
+        assert_eq!(p.lane(0), theme.accents().0[0], "lanes are the theme's accents");
+        for i in 0..supraman_gitman::LANE_COLOURS {
+            assert!(on(&p, p.text, p.band(i)) >= NAME_FLOOR, "{} text on band {i}", theme.name);
+            assert!(on(&p, p.muted, p.band(i)) >= SECONDARY_FLOOR, "{} muted on band {i}", theme.name);
+            assert!(on(&p, p.text, p.pill(i)) >= SECONDARY_FLOOR, "{} text on pill {i}", theme.name);
+            assert!(supraman_ui::themes::contrast(p.initials(i), p.avatar(i)) >= SECONDARY_FLOOR, "{} initials on avatar {i}", theme.name);
+        }
+    }
+}
+
+#[gpui::test]
+fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let _sub = cx.update({
+        let (view, seen) = (view.clone(), seen.clone());
+        move |_, cx| cx.subscribe(&view, move |v, GitEvent::Selected, cx| seen.borrow_mut().push(v.read(cx).selected()))
+    });
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let row = hits.borrow()["git-row-1"].bounds.center();
+    cx.simulate_click(row, Modifiers::none());
+    cx.simulate_keystrokes("up down");
+    let ahead = Selected::Commit(f.sha("ahead").to_string().into());
+    assert_eq!(*seen.borrow(), vec![Some(ahead.clone()), Some(Selected::Wip), Some(ahead)]);
+}

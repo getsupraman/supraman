@@ -188,6 +188,7 @@ fn tabs_now(view: &Entity<FleetView>, window: &gpui::Window, cx: &gpui::App) -> 
                 crate::view::TabKind::Attach { .. } => "attach".to_string(),
                 crate::view::TabKind::Shell => "shell".to_string(),
                 crate::view::TabKind::Work(_) => "work".to_string(),
+                crate::view::TabKind::Git(_) => "git".to_string(),
                 crate::view::TabKind::Schedule(_) => "schedule".to_string(),
                 crate::view::TabKind::Details(_) => "details".to_string(),
                 crate::view::TabKind::Saved(_) => "saved".to_string(),

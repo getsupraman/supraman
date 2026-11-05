@@ -21,6 +21,13 @@ pub enum SavedTab {
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
     Work { title: String, workspace: String },
+    /// `widths` are its columns' widths in whole pixels.
+    Git {
+        title: String,
+        folder: PathBuf,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        widths: Vec<u32>,
+    },
 }
 
 impl SavedTab {
@@ -36,13 +43,13 @@ impl SavedTab {
 
     pub fn title(&self) -> &str {
         match self {
-            SavedTab::Shell { title, .. } | SavedTab::Claude { title, .. } | SavedTab::Attach { title, .. } | SavedTab::Work { title, .. } => title,
+            SavedTab::Shell { title, .. } | SavedTab::Claude { title, .. } | SavedTab::Attach { title, .. } | SavedTab::Work { title, .. } | SavedTab::Git { title, .. } => title,
         }
     }
 
     pub fn cwd(&self) -> Option<&Path> {
         match self {
-            SavedTab::Shell { cwd, .. } | SavedTab::Claude { cwd, .. } | SavedTab::Attach { cwd, .. } => Some(cwd),
+            SavedTab::Shell { cwd, .. } | SavedTab::Claude { cwd, .. } | SavedTab::Attach { cwd, .. } | SavedTab::Git { folder: cwd, .. } => Some(cwd),
             SavedTab::Work { .. } => None,
         }
     }
@@ -105,6 +112,7 @@ pub enum Reopen {
     /// A tab with a Resume button; nothing runs until it is clicked.
     Placeholder(SavedTab),
     Work { workspace: String },
+    Git { title: String, folder: PathBuf, widths: Vec<u32> },
 }
 
 pub struct World<'a> {
@@ -131,6 +139,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
+        SavedTab::Git { title, folder, widths } => Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), widths: widths.clone() }),
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;
             let live = world.sessions.iter().find(|s| s.session_id == session.session_id && fleet::is_alive(&s.health(world.now)));

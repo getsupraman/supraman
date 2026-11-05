@@ -38,7 +38,7 @@ impl FleetView {
         match &tab.kind {
             TabKind::Attach { session_id } => self.sessions.iter().find(|s| &s.id == session_id).map(|s| s.session_id.clone()),
             TabKind::Shell => tab.claude.clone(),
-            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) | TabKind::Saved(_) => None,
+            TabKind::Work(_) | TabKind::Git(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) | TabKind::Saved(_) => None,
         }
     }
 

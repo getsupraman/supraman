@@ -66,6 +66,7 @@ impl FleetView {
             TabKind::Saved(saved) => saved.clone(),
             TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => return None,
             TabKind::Work(view) => SavedTab::Work { title, workspace: view.read(cx).workspace.clone() },
+            TabKind::Git(view) => SavedTab::Git { title, folder: view.read(cx).folder.clone(), widths: view.read(cx).widths() },
             TabKind::Shell if tab.hand => {
                 let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone()).map(|sid| self.continued.get(&sid).cloned().unwrap_or(sid));
                 let name = session_id.as_deref().and_then(named).or_else(|| tab.session_name.clone()).unwrap_or_default();
@@ -184,6 +185,7 @@ impl FleetView {
             Reopen::Attach { title, session } => self.attach_titled(title, &session, cx),
             Reopen::Resume { title, session } => self.resume_titled(title, &session, cx),
             Reopen::Work { workspace } => self.open_work(&workspace, cx),
+            Reopen::Git { title, folder, widths } => self.open_git(folder, title, &widths, cx),
             Reopen::Placeholder(saved) => {
                 let session = saved.session();
                 let id = self.push_tab(saved.title().to_string(), TabKind::Saved(saved.clone()), saved.cwd().map(Path::to_path_buf), cx);
@@ -264,6 +266,6 @@ pub(super) fn kind_of(saved: &SavedTab) -> Option<tab_card::Kind> {
     match saved {
         SavedTab::Claude { .. } => Some(tab_card::Kind::Hand),
         SavedTab::Attach { .. } => Some(tab_card::Kind::Attach),
-        SavedTab::Shell { .. } | SavedTab::Work { .. } => None,
+        SavedTab::Shell { .. } | SavedTab::Work { .. } | SavedTab::Git { .. } => None,
     }
 }
