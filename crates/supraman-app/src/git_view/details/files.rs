@@ -138,7 +138,7 @@ pub fn path_list<V: 'static>(
 ) -> Stateful<Div> {
     let file = Rc::new(file);
     let (paint, keys, painter) = (file.clone(), file.clone(), hits.clone());
-    let column = [Column::new("path", "", px(0.), px(0.)).flexible()];
+    let column = [Column::new("path", "", px(0.), px(0.))];
     Table::new(format!("{list}-files"), state, hits, column, &[px(0.)], len, move |_: &mut V, ix, _, _, cx| {
         paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| path_row(list, &path, kind, &painter, cx))
     })

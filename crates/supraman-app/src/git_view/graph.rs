@@ -22,6 +22,8 @@ const STROKE: f32 = 1.5;
 pub const CELL_PAD: f32 = 8.;
 /// The lane-coloured bar that closes a row's band at the message column's left edge.
 pub const BAR: f32 = 3.;
+/// The narrowest the graph column goes: a node, 3 px either side and the gutter.
+pub const MIN_WIDTH: f32 = NODE + 2. * 3. + 28.;
 /// The widest the graph column grows by itself to hold its lanes.
 pub const MAX_FIT: f32 = 400.;
 

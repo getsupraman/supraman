@@ -468,7 +468,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
             (inner.rows.len(), inner.selected.as_ref().and_then(|p| inner.row_of(p)))
         };
         self.state.table.select(selected);
-        let column = [Column::new("name", "", px(0.), px(0.)).flexible()];
+        let column = [Column::new("name", "", px(0.), px(0.))];
         let (keys, picked, clicked, arrows) = (self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone());
         let (on_select, on_arrow) = (self.on_select.clone(), self.on_select.clone());
         Table::new(self.id.clone(), &self.state.table, &self.hits, column, &[px(0.)], rows, self.cell())
