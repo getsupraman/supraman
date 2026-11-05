@@ -8277,7 +8277,7 @@ dependencies = [
 
 [[package]]
 name = "sm"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "serde",
@@ -8571,7 +8571,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-app"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8608,7 +8608,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-claude"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "memchr",
  "serde",
@@ -8623,7 +8623,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -8647,7 +8647,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-editor"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "buffer_diff",
  "editor",
@@ -8668,7 +8668,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-gitman"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "serde",
  "supraman-core",
@@ -8679,7 +8679,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-supervisor"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "log",
  "serde",
@@ -8695,7 +8695,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-term"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -8720,7 +8720,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-ui"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chrono",
  "futures",
@@ -8739,7 +8739,7 @@ dependencies = [
 
 [[package]]
 name = "supraman-workman"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-channel 2.5.0",
  "base64 0.22.1",
