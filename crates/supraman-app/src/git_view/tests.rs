@@ -46,7 +46,7 @@ fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
 }
 
 fn sizes() -> GitSizes {
-    GitSizes { widths: vec![200, 90, 0, 130, 70], panel: Some(360), message: Some(150) }
+    GitSizes { widths: vec![200, 90, 300, 130, 70], panel: Some(360), message: Some(150) }
 }
 
 #[gpui::test]
@@ -82,6 +82,9 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
     assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), sizes()), "the columns, the panel and the message box keep their sizes");
     let gone = SavedTab::Git { title: "Git · x".into(), folder: f.temp.path().join("gone"), widths: Vec::new(), panel: None, message: None };
     assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
+    let narrow = GitSizes { widths: vec![1, 1, 1, 1, 1], ..sizes() };
+    let clamped = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx).read(cx).sizes(cx).widths);
+    assert_eq!(clamped, vec![32, graph::MIN_WIDTH as u32, 50, 50, 50], "saved widths are held at the columns' mins on load");
 }
 
 #[gpui::test]

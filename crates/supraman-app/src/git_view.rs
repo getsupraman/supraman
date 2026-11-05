@@ -22,9 +22,10 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::{Layout, Repo};
 use supraman_ui::hit::HitTargets;
+use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
 use supraman_ui::stall;
-use supraman_ui::table::{Column, Table, TableState};
+use supraman_ui::table::{self, Column, Table, TableState};
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
@@ -52,13 +53,18 @@ fn whole(p: Pixels) -> u32 {
     f32::from(p).round().max(0.) as u32
 }
 
-fn columns() -> Vec<Column> {
+/// `graph_max` is the width of the lanes loaded so far.
+fn columns(graph_max: Option<Pixels>) -> Vec<Column> {
+    let graph = Column::new("graph", "Graph", px(graph::MIN_WIDTH), px(150.)).icon(Icon::GitGraph, px(56.));
     vec![
-        Column::new("refs", "Branch / Tag", px(60.), px(170.)),
-        Column::new("graph", "Graph", px(40.), px(120.)),
-        Column::new("message", "Commit Message", px(120.), px(400.)).flexible(),
-        Column::new("date", "Commit Date / Time", px(80.), px(170.)),
-        Column::new("sha", "Sha", px(50.), px(76.)),
+        Column::new("refs", "Branch / Tag", px(32.), px(130.)).icon(Icon::Tag, px(55.)),
+        match graph_max {
+            Some(max) => graph.max(max),
+            None => graph,
+        },
+        Column::new("message", "Commit Message", px(50.), px(300.)).icon(Icon::Chat, px(55.)),
+        Column::new("date", "Commit Date / Time", px(50.), px(170.)).icon(Icon::Clock, px(55.)),
+        Column::new("sha", "Sha", px(50.), px(130.)).icon(Icon::Hash, px(50.)),
     ]
 }
 
@@ -96,7 +102,9 @@ pub struct GitView {
     paging: bool,
     page_error: Option<String>,
     table: TableState,
+    /// The columns' preferred widths.
     widths: Vec<Pixels>,
+    graph_max: Option<Pixels>,
     hover_ref: Option<usize>,
     over_list: Option<usize>,
     panel: Entity<CommitPanel>,
@@ -119,8 +127,9 @@ impl GitView {
     /// `sizes` are the ones the tab was saved with.
     pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, sizes: &GitSizes, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
-            let defaults = columns();
-            let widths = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).map_or(c.default, |w| px(*w as f32))).collect();
+            let defaults = columns(None);
+            let saved: Vec<Pixels> = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).filter(|w| **w > 0).map_or(c.default, |w| px(*w as f32))).collect();
+            let widths = table::clamp(&defaults, &saved);
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event)];
@@ -140,6 +149,7 @@ impl GitView {
                 page_error: None,
                 table: TableState::new(cx),
                 widths,
+                graph_max: None,
                 hover_ref: None,
                 over_list: None,
                 panel,
@@ -280,12 +290,17 @@ impl GitView {
         cx.notify();
     }
 
-    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`].
+    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max.
     fn fit_graph(&mut self) {
-        let wanted = px(graph::width_for(graph::lanes(&self.rows)).min(graph::MAX_FIT));
+        self.measure_lanes();
+        let lanes = self.graph_max.unwrap_or(px(graph::MAX_FIT));
         if let Some(width) = self.widths.get_mut(1) {
-            *width = (*width).max(wanted);
+            *width = (*width).max(lanes.min(px(graph::MAX_FIT))).min(lanes).max(px(graph::MIN_WIDTH));
         }
+    }
+
+    fn measure_lanes(&mut self) {
+        self.graph_max = Some(px(graph::width_for(graph::lanes(&self.rows))));
     }
 
     /// The next page, unless one is on its way or none is left.
@@ -312,6 +327,7 @@ impl GitView {
             Ok(page) => {
                 self.commits += page.rows.len();
                 self.rows.extend(page.rows);
+                self.measure_lanes();
                 self.more = page.more;
                 self.layout = Some(page.layout);
             }
@@ -346,10 +362,10 @@ impl GitView {
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = Palette::of(cx.theme());
         let rows = self.rows.len() + usize::from(self.paging || self.page_error.is_some());
-        Table::new(TABLE, &self.table, &self.hits, columns(), &self.widths, rows, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
+        Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, rows, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
             .row_height(px(graph::ROW))
             .on_select(|this: &mut GitView, _, _, cx| this.selection_moved(cx))
-            .on_resize(|this: &mut GitView, widths, _, cx| {
+            .on_resize(|this: &mut GitView, widths, cx| {
                 this.widths = widths;
                 cx.notify();
             })

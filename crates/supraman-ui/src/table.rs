@@ -12,90 +12,51 @@ use theme::ActiveTheme as _;
 
 use crate::clipped::clipped;
 use crate::hit::{HitTargets, hit_target};
+use crate::icon::Icon;
 use crate::split::{DraggedDivider, handle};
+use crate::tooltip::Tooltip;
+
+mod widths;
+
+pub use widths::{clamp, drag, fit};
 
 #[derive(Clone, Debug)]
 pub struct Column {
     pub id: SharedString,
     pub caption: SharedString,
     pub min: Pixels,
-    /// What a double-click on the column's divider restores.
+    /// The preferred width without the owner's, and what a double-click on the column's divider restores.
     pub default: Pixels,
-    /// Takes the width the other columns leave; without one, the last column does.
-    pub flexible: bool,
+    /// Ignored on the last column, which takes what the others leave.
+    pub max: Option<Pixels>,
+    /// The icon the header shows in place of the caption at this width and narrower.
+    pub icon: Option<(Icon, Pixels)>,
 }
 
 impl Column {
     pub fn new(id: impl Into<SharedString>, caption: impl Into<SharedString>, min: Pixels, default: Pixels) -> Self {
-        Self { id: id.into(), caption: caption.into(), min, default, flexible: false }
+        Self { id: id.into(), caption: caption.into(), min, default, max: None, icon: None }
     }
 
-    pub fn flexible(mut self) -> Self {
-        self.flexible = true;
+    pub fn max(mut self, max: Pixels) -> Self {
+        self.max = Some(max);
         self
+    }
+
+    pub fn icon(mut self, icon: Icon, at: Pixels) -> Self {
+        self.icon = Some((icon, at));
+        self
+    }
+
+    /// The icon the header shows in place of the caption when the column is `width` wide.
+    pub fn header_icon(&self, width: Pixels) -> Option<Icon> {
+        self.icon.filter(|(_, at)| width <= *at).map(|(icon, _)| icon)
     }
 }
 
 /// The hover group of every row of table `id`, for a cell's `group_hover`.
 pub fn row_group(id: &str) -> SharedString {
     SharedString::from(format!("{id}-row"))
-}
-
-fn flexible(columns: &[Column]) -> usize {
-    columns.iter().position(|c| c.flexible).unwrap_or(columns.len().saturating_sub(1))
-}
-
-/// The column the divider right of column `divider` resizes: the one on its side away from the flexible one.
-fn resized_by(columns: &[Column], divider: usize) -> usize {
-    if divider < flexible(columns) { divider } else { divider + 1 }
-}
-
-/// Each column's width in a table `total` wide: the owner's `widths` held at their mins, the flexible column
-/// taking the rest; when that leaves it under its min, the columns after it, then those before it, give way
-/// down to their mins. Only when every column is at its min does the sum pass `total`.
-pub fn fit(columns: &[Column], widths: &[Pixels], total: Pixels) -> Vec<Pixels> {
-    let flex = flexible(columns);
-    let mut fitted: Vec<Pixels> = columns
-        .iter()
-        .enumerate()
-        .map(|(i, c)| if i == flex { c.min } else { widths.get(i).copied().unwrap_or(c.default).max(c.min) })
-        .collect();
-    let others = |w: &[Pixels]| w.iter().enumerate().filter(|(i, _)| *i != flex).fold(px(0.), |sum, (_, w)| sum + *w);
-    let mut excess = others(&fitted) + columns.get(flex).map_or(px(0.), |c| c.min) - total;
-    let order = (flex + 1..columns.len()).rev().chain((0..flex).rev());
-    for i in order {
-        if excess <= px(0.) {
-            break;
-        }
-        let give = (fitted[i] - columns[i].min).min(excess);
-        fitted[i] -= give;
-        excess -= give;
-    }
-    if let Some(c) = columns.get(flex) {
-        fitted[flex] = (total - others(&fitted)).max(c.min);
-    }
-    fitted
-}
-
-/// The widths after the divider right of column `divider` is dragged to `x` (from the table's left edge):
-/// a divider left of the flexible column resizes the column on its left, one right of it the column on its
-/// right, and the flexible column takes up the difference, neither going under its min.
-pub fn drag(columns: &[Column], widths: &[Pixels], total: Pixels, divider: usize, x: Pixels) -> Vec<Pixels> {
-    let flex = flexible(columns);
-    let mut fitted = fit(columns, widths, total);
-    if divider + 1 >= columns.len() {
-        return fitted;
-    }
-    let left = |i: usize| fitted[..i].iter().fold(px(0.), |sum, w| sum + *w);
-    let target = resized_by(columns, divider);
-    let wanted = if target == divider { x - left(divider) } else { left(divider + 2) - x };
-    let slack = (fitted[flex] - columns[flex].min).max(px(0.));
-    let max = (fitted[target] + slack).max(columns[target].min);
-    let width = wanted.clamp(columns[target].min, max);
-    let freed = fitted[target] - width;
-    fitted[flex] += freed;
-    fitted[target] = width;
-    fitted
 }
 
 /// Whether the view has come near the end: once per approach, and again each time more rows arrive.
@@ -126,6 +87,8 @@ struct Inner {
     selected: Option<usize>,
     rows: usize,
     width: Pixels,
+    /// The columns' widths as last laid out; the owner keeps the preferred ones.
+    current: Vec<Pixels>,
     near_end: NearEnd,
 }
 
@@ -194,7 +157,7 @@ impl TableState {
 type CellFn<V> = dyn Fn(&mut V, usize, usize, &mut Window, &mut Context<V>) -> AnyElement;
 type BandFn<V> = dyn Fn(&V, usize, &App) -> Option<Hsla>;
 type SelectFn<V> = dyn Fn(&mut V, usize, &mut Window, &mut Context<V>);
-type ResizeFn<V> = dyn Fn(&mut V, Vec<Pixels>, bool, &mut Context<V>);
+type ResizeFn<V> = dyn Fn(&mut V, Vec<Pixels>, &mut Context<V>);
 type NearEndFn<V> = dyn Fn(&mut V, &mut Window, &mut Context<V>);
 type KeyFn<V> = dyn Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool;
 type RowKeyFn = dyn Fn(usize) -> String;
@@ -292,9 +255,10 @@ impl<V: 'static> Table<V> {
         self
     }
 
-    /// Gets every column's new width while a divider is dragged (`false`), and when it is let go or
-    /// double-clicked (`true`): the moment to persist them.
-    pub fn on_resize(mut self, f: impl Fn(&mut V, Vec<Pixels>, bool, &mut Context<V>) + 'static) -> Self {
+    /// Gets every column's preferred width when a divider is let go or double-clicked: the owner's `widths`
+    /// with the dragged column's new one, the moment to keep and persist them. A drag in between moves only
+    /// the table's own widths.
+    pub fn on_resize(mut self, f: impl Fn(&mut V, Vec<Pixels>, &mut Context<V>) + 'static) -> Self {
         self.on_resize = Some(Rc::new(f));
         self
     }
@@ -306,13 +270,13 @@ impl<V: 'static> Table<V> {
     }
 
     pub fn render(self, cx: &mut Context<V>) -> Stateful<Div> {
-        let total = {
+        let widths: Rc<[Pixels]> = {
             let mut inner = self.state.inner.borrow_mut();
             inner.rows = self.rows;
-            inner.width
+            let total = if inner.width > px(0.) { inner.width } else { clamp(&self.columns, &self.widths).iter().fold(px(0.), |s, w| s + *w) };
+            inner.current = fit(&self.columns, &inner.current, &self.widths, total);
+            inner.current.as_slice().into()
         };
-        let total = if total > px(0.) { total } else { self.widths.iter().fold(px(0.), |sum, w| sum + *w) };
-        let widths: Rc<[Pixels]> = fit(&self.columns, &self.widths, total).into();
         let (state, on_select, on_key) = (self.state.clone(), self.on_select.clone(), self.on_key.clone());
         let keys = cx.listener(move |this: &mut V, e: &KeyDownEvent, window, cx| {
             if on_key.as_ref().is_some_and(|f| f(this, e.keystroke.key.as_str(), window, cx)) {
@@ -354,7 +318,16 @@ impl<V: 'static> Table<V> {
         let mut cells = Vec::with_capacity(self.columns.len());
         for (i, (column, width)) in self.columns.iter().zip(widths).enumerate() {
             let key = format!("{}-col-{}", self.id, column.id);
-            let caption = clipped(format!("{key}-caption"), column.caption.to_uppercase(), false);
+            let caption = match column.header_icon(*width) {
+                Some(icon) => div()
+                    .id(SharedString::from(format!("{key}-icon")))
+                    .flex_none()
+                    .child(hit_target(&self.hits, format!("{key}-icon")))
+                    .child(icon.slotted(14., text))
+                    .tooltip(Tooltip::text(column.caption.clone()))
+                    .into_any_element(),
+                None => clipped(format!("{key}-caption"), column.caption.to_uppercase(), false).into_any_element(),
+            };
             let divider = (i < last).then(|| self.divider(i, column, cx));
             cells.push(
                 div()
@@ -389,17 +362,14 @@ impl<V: 'static> Table<V> {
 
     fn follow_drag(&self, cx: &mut Context<V>) -> impl Fn(&DragMoveEvent<DraggedDivider>, &mut Window, &mut App) + 'static {
         let prefix = format!("{}-divider-", self.id);
-        let (state, columns, owner, on_resize) = (self.state.clone(), self.columns.clone(), self.widths.clone(), self.on_resize.clone());
-        cx.listener(move |this: &mut V, e: &DragMoveEvent<DraggedDivider>, _, cx| {
+        let (state, columns, preferred) = (self.state.clone(), self.columns.clone(), self.widths.clone());
+        cx.listener(move |_: &mut V, e: &DragMoveEvent<DraggedDivider>, _, cx| {
             let dragged = e.drag(cx);
             if !dragged.0.starts_with(&prefix) {
                 return;
             }
-            let widths = drag(&columns, &owner, e.bounds.size.width, dragged.1, e.event.position.x - e.bounds.left());
-            state.inner.borrow_mut().width = e.bounds.size.width;
-            if let Some(f) = &on_resize {
-                f(this, widths, false, cx);
-            }
+            let mut inner = state.inner.borrow_mut();
+            inner.current = drag(&columns, &inner.current, &preferred, dragged.1, e.event.position.x - e.bounds.left());
             cx.notify();
         })
     }
@@ -407,23 +377,26 @@ impl<V: 'static> Table<V> {
     fn divider(&self, i: usize, column: &Column, cx: &mut Context<V>) -> Stateful<Div> {
         let key = format!("{}-divider-{}", self.id, column.id);
         let (end, reset) = (self.on_resize.clone(), self.on_resize.clone());
-        let (columns, widths, state) = (self.columns.clone(), self.widths.clone(), self.state.clone());
-        let ended = widths.clone();
+        let (columns, preferred, state) = (self.columns.clone(), self.widths.clone(), self.state.clone());
+        let (ended, ending) = (preferred.clone(), state.clone());
         handle(
             key.clone().into(),
             i,
             move |this, cx| {
+                let kept = keep(&ending, &ended, i);
                 if let Some(f) = &end {
-                    f(this, ended.clone(), true, cx);
+                    f(this, kept, cx);
                 }
             },
             move |this, cx| {
-                let mut restored = widths.clone();
-                let target = resized_by(&columns, i);
-                restored[target] = columns[target].default;
-                let total = state.inner.borrow().width;
+                {
+                    let mut inner = state.inner.borrow_mut();
+                    let x = inner.current[..i].iter().fold(columns[i].default, |s, w| s + *w);
+                    inner.current = drag(&columns, &inner.current, &preferred, i, x);
+                }
+                let kept = keep(&state, &preferred, i);
                 if let Some(f) = &reset {
-                    f(this, fit(&columns, &restored, total), true, cx);
+                    f(this, kept, cx);
                 }
                 cx.notify();
             },
@@ -496,6 +469,16 @@ impl<V: 'static> Table<V> {
     }
 }
 
+/// The owner's preferred widths with column `i`'s set to its current one.
+fn keep(state: &TableState, preferred: &[Pixels], i: usize) -> Vec<Pixels> {
+    let inner = state.inner.borrow();
+    let mut kept = preferred.to_vec();
+    if let (Some(slot), Some(width)) = (kept.get_mut(i), inner.current.get(i)) {
+        *slot = *width;
+    }
+    kept
+}
+
 /// The row the view ends at, from the scroll as of this frame: the row painter is also called with
 /// `0..1` to measure a row, so its range is not the view.
 fn visible_end(scroll: &UniformListScrollHandle, row_height: Pixels) -> Option<usize> {
@@ -531,11 +514,11 @@ mod tests {
 
     fn columns() -> Vec<Column> {
         vec![
-            Column::new("branch", "Branch / Tag", px(60.), px(160.)),
-            Column::new("graph", "Graph", px(40.), px(120.)),
-            Column::new("message", "Commit Message", px(120.), px(300.)).flexible(),
-            Column::new("date", "Commit Date / Time", px(80.), px(150.)),
-            Column::new("sha", "Sha", px(50.), px(70.)),
+            Column::new("branch", "Branch / Tag", px(32.), px(130.)).icon(Icon::Tag, px(55.)),
+            Column::new("graph", "Graph", px(54.), px(150.)).icon(Icon::GitGraph, px(56.)),
+            Column::new("message", "Commit Message", px(50.), px(300.)).icon(Icon::Chat, px(55.)),
+            Column::new("date", "Commit Date / Time", px(50.), px(170.)).icon(Icon::Clock, px(55.)),
+            Column::new("sha", "Sha", px(50.), px(130.)).icon(Icon::Hash, px(50.)),
         ]
     }
 
@@ -543,43 +526,16 @@ mod tests {
         widths.iter().fold(px(0.), |s, w| s + *w)
     }
 
-    fn within_mins(columns: &[Column], widths: &[Pixels]) -> bool {
-        columns.iter().zip(widths).all(|(c, w)| *w >= c.min)
+    fn near(a: Pixels, b: f32) -> bool {
+        (a - px(b)).abs() <= px(1.)
     }
 
     #[test]
-    fn a_divider_drag_keeps_every_column_at_its_min_and_fills_the_width() {
-        let columns = columns();
-        let owner = vec![px(160.), px(120.), px(0.), px(150.), px(70.)];
-        let total = px(900.);
-        let fitted = fit(&columns, &owner, total);
-        assert_eq!(fitted, vec![px(160.), px(120.), px(400.), px(150.), px(70.)]);
-        for divider in 0..columns.len() - 1 {
-            for x in (-200..1200).step_by(37) {
-                let widths = drag(&columns, &owner, total, divider, px(x as f32));
-                assert!(within_mins(&columns, &widths), "divider {divider} to {x}: {widths:?}");
-                assert_eq!(sum(&widths), total, "divider {divider} to {x}: {widths:?}");
-            }
-        }
-        let widths = drag(&columns, &owner, total, 0, px(200.));
-        assert_eq!(widths[..3], [px(200.), px(120.), px(360.)], "left of the flexible column: the column on the left");
-        let widths = drag(&columns, &owner, total, 3, px(800.));
-        assert_eq!(widths[2..], [px(370.), px(150.), px(100.)], "right of it: the column on the right");
-        let widths = drag(&columns, &owner, total, 1, px(5000.));
-        assert_eq!(widths[2], px(120.), "the flexible column stops at its min");
-    }
-
-    #[test]
-    fn a_narrow_table_takes_the_width_from_the_columns_after_the_flexible_one_first() {
-        let columns = columns();
-        let owner = vec![px(160.), px(120.), px(0.), px(150.), px(70.)];
-        let widths = fit(&columns, &owner, px(500.));
-        assert_eq!(widths, vec![px(160.), px(90.), px(120.), px(80.), px(50.)]);
-        assert_eq!(sum(&widths), px(500.));
-        let widths = fit(&columns, &owner, px(200.));
-        assert_eq!(widths, columns.iter().map(|c| c.min).collect::<Vec<_>>(), "at the mins the table clips");
-        let widths = fit(&columns, &[px(1.), px(1.), px(1.), px(1.), px(1.)], px(900.));
-        assert!(within_mins(&columns, &widths) && sum(&widths) == px(900.));
+    fn the_header_shows_the_icon_at_its_threshold_and_narrower() {
+        let sha = &columns()[4];
+        assert_eq!(sha.header_icon(px(51.)), None);
+        assert_eq!(sha.header_icon(px(50.)), Some(Icon::Hash));
+        assert_eq!(Column::new("x", "X", px(10.), px(20.)).header_icon(px(10.)), None, "a column without an icon keeps its caption");
     }
 
     #[test]
@@ -605,7 +561,7 @@ mod tests {
         selected: Vec<usize>,
         near: usize,
         widths: Vec<Pixels>,
-        resized: Vec<bool>,
+        resized: usize,
     }
 
     impl Render for Grid {
@@ -618,9 +574,9 @@ mod tests {
             })
             .on_select(|this, row, _, _| this.selected.push(row))
             .on_near_end(px(280.), |this, _, _| this.near += 1)
-            .on_resize(|this, widths, done, cx| {
+            .on_resize(|this, widths, cx| {
                 this.widths = widths;
-                this.resized.push(done);
+                this.resized += 1;
                 cx.notify();
             });
             div().w(px(900.)).h(px(24. + 280.)).child(table.render(cx))
@@ -632,8 +588,8 @@ mod tests {
         let (grid, cx) = cx.add_window_view(|window, cx| {
             let state = TableState::new(cx);
             window.focus(state.focus_handle(), cx);
-            let widths = vec![px(160.), px(120.), px(0.), px(150.), px(70.)];
-            Grid { state, hits: HitTargets::default(), rows, painted: Vec::new(), selected: Vec::new(), near: 0, widths, resized: Vec::new() }
+            let widths = vec![px(130.), px(150.), px(300.), px(170.), px(130.)];
+            Grid { state, hits: HitTargets::default(), rows, painted: Vec::new(), selected: Vec::new(), near: 0, widths, resized: 0 }
         });
         cx.run_until_parked();
         (grid, cx)
@@ -702,22 +658,43 @@ mod tests {
         assert_eq!(grid.read_with(cx, |g, _| g.near), 2, "rows arrived and the end is still near");
     }
 
-    #[gpui::test]
-    fn dragging_a_divider_reports_the_widths_and_its_end(cx: &mut TestAppContext) {
+    fn drag_by(grid: &Entity<Grid>, divider: &str, by: f32, cx: &mut VisualTestContext) -> Vec<Pixels> {
         use gpui::{Modifiers, MouseButton, point};
-        let (grid, cx) = grid(100, cx);
-        redraw(&grid, cx);
-        let hit = grid.read_with(cx, |g, _| g.hits.borrow().get("t-divider-branch").copied()).expect("the divider paints under its key");
+        let key = format!("t-divider-{divider}");
+        let hit = grid.read_with(cx, |g, _| g.hits.borrow().get(&key).copied()).expect("the divider paints under its key");
         let start = hit.bounds.center();
         cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-        cx.simulate_mouse_move(start + point(px(20.), px(0.)), MouseButton::Left, Modifiers::none());
-        cx.simulate_mouse_move(start + point(px(40.), px(0.)), MouseButton::Left, Modifiers::none());
-        cx.simulate_mouse_up(start + point(px(40.), px(0.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start + point(px(by / 2.), px(0.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start + point(px(by), px(0.)), MouseButton::Left, Modifiers::none());
+        let during = grid.read_with(cx, |g, _| g.state.inner.borrow().current.clone());
+        cx.simulate_mouse_up(start + point(px(by), px(0.)), MouseButton::Left, Modifiers::none());
+        redraw(grid, cx);
+        during
+    }
+
+    #[gpui::test]
+    fn dragging_a_divider_moves_only_its_column_and_those_right_of_it(cx: &mut TestAppContext) {
+        let (grid, cx) = grid(100, cx);
+        redraw(&grid, cx);
+        let before = grid.read_with(cx, |g, _| g.state.inner.borrow().current.clone());
+        assert_eq!(before, [px(130.), px(150.), px(300.), px(170.), px(150.)], "the rest of the 900 px to the last column");
+        let during = drag_by(&grid, "message", 40., cx);
+        assert_eq!(during[..2], before[..2], "left of the divider: unchanged");
+        assert!(near(during[2], 340.) && near(during[3], 170.) && near(during[4], 110.), "the sha gives first: {during:?}");
+        assert_eq!(sum(&during), px(900.));
         grid.read_with(cx, |g, _| {
-            assert_eq!(g.resized.last(), Some(&true), "{:?}", g.resized);
-            assert!(g.resized.contains(&false));
-            assert!(g.widths[0] > px(196.) && g.widths[0] < px(204.), "follows the pointer 40 px on: {:?}", g.widths);
-            assert_eq!(sum(&g.widths), px(900.));
+            assert_eq!(g.resized, 1, "one call, at the end");
+            assert!(near(g.widths[2], 340.), "the message's preferred width is where it was let go: {:?}", g.widths);
+            assert_eq!((&g.widths[..2], &g.widths[3..]), (&[px(130.), px(150.)][..], &[px(170.), px(130.)][..]), "the others' preferred widths stay");
+        });
+        assert!(!grid.read_with(cx, |g, _| g.hits.borrow().contains_key("t-col-sha-icon")));
+        let before = grid.read_with(cx, |g, _| g.state.inner.borrow().current.clone());
+        let during = drag_by(&grid, "date", 200., cx);
+        assert_eq!(during[..3], before[..3], "left of the date: unchanged");
+        assert_eq!(during[4], px(50.), "the sha down to its min");
+        grid.read_with(cx, |g, _| {
+            assert!(g.hits.borrow().contains_key("t-col-sha-icon"), "at its threshold the sha's header is its icon");
+            assert!(!g.hits.borrow().contains_key("t-col-date-icon"));
         });
     }
 }
