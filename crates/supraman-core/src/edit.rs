@@ -20,6 +20,8 @@ pub enum Edit {
     AddScan { path: PathBuf, depth: usize },
     /// The folders only it found go with it.
     RemoveScan(PathBuf),
+    /// The scanned folders a [`rescan`] no longer finds go; no scan skips them.
+    DropGone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +137,12 @@ impl Registry {
                 let (gone, kept): (Vec<Folder>, Vec<Folder>) = w.folders.iter().cloned().partition(only_it);
                 w.folders = kept;
                 out.removed = gone;
+            }
+            Edit::DropGone => {
+                let (_, _, gone) = rescan(&w)?;
+                let (removed, kept): (Vec<Folder>, Vec<Folder>) = w.folders.drain(..).partition(|f| gone.contains(&f.name));
+                w.folders = kept;
+                out.removed = removed;
             }
         }
         self.save(&w, true)?;
@@ -265,6 +273,27 @@ mod tests {
         assert!(w.scans.is_empty());
         assert_eq!(w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["Own", "A"], "folders added by hand stay");
         assert!(matches!(reg.edit("v", Edit::RemoveScan(parent)), Err(CoreError::NoScan { .. })));
+    }
+
+    #[test]
+    fn drop_gone_takes_only_the_scanned_folders_gone_from_disk_and_skips_none() {
+        let (tmp, reg) = setup();
+        let parent = tmp.path().join("P");
+        for r in ["A", "B"] {
+            repo_dir(&parent.join(r));
+        }
+        let by_hand = tmp.path().join("Own");
+        fs::create_dir_all(&by_hand).unwrap();
+        reg.edit("v", Edit::AddFolder { path: by_hand.clone(), enable: true }).unwrap();
+        reg.edit("v", Edit::AddScan { path: parent.clone(), depth: 1 }).unwrap();
+        fs::remove_dir_all(parent.join("A")).unwrap();
+        repo_dir(&parent.join("C"));
+        let e = reg.edit("v", Edit::DropGone).unwrap();
+        assert_eq!(e.removed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["A"]);
+        assert!(e.added.is_empty(), "a new folder is not taken");
+        let w = reg.load("v").unwrap();
+        assert_eq!(w.folders.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["B", "Own"]);
+        assert!(w.scans[0].exclude.is_empty());
     }
 
     #[test]

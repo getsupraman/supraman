@@ -1,10 +1,12 @@
-//! Add workspace: a name and a [`FolderList`], from a parent folder's subfolders or built by hand.
+//! Add workspace and Edit folders…: a name and a [`FolderList`], from a parent folder's subfolders, built by hand, or
+//! a registered workspace's folders.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{AppContext as _, ClickEvent, Context, Entity, EventEmitter, SharedString, Subscription, Window, div, prelude::*, px};
-use supraman_core::{CoreError, DEFAULT_DEPTH, Folder, Registry, Scan, Workspace, discover, name_char, validate_name};
+use supraman_core::paths::path_key;
+use supraman_core::{CoreError, DEFAULT_DEPTH, Edit, Folder, Registry, Scan, Workspace, discover, name_char, validate_name};
 use supraman_ui::banner;
 use supraman_ui::button;
 use supraman_ui::clipped::clipped;
@@ -19,10 +21,13 @@ pub enum Mode {
     /// Its subfolders, ticked; it is the home and is scanned.
     Parent(PathBuf),
     Custom,
+    /// A registered workspace as it was opened; Save emits its change as [`Edit`]s.
+    Edit(Workspace),
 }
 
 pub enum DialogEvent {
     Saved { workspace: Workspace, taken: Vec<(String, String)> },
+    Edit { workspace: String, edits: Vec<Edit> },
     /// Esc: the owner closes a popup of its own first.
     Cancel,
 }
@@ -33,9 +38,10 @@ pub struct WorkspaceDialog {
     pub path: Entity<TextInput>,
     pub list: FolderList,
     pub scanning: bool,
-    saving: bool,
+    pub saving: bool,
     pub error: Option<String>,
     pub hint: Option<String>,
+    pub note: Option<String>,
     home: Option<PathBuf>,
     hits: HitTargets,
     _events: [Subscription; 2],
@@ -108,12 +114,29 @@ fn workspace_of(name: String, mode: &Mode, list: &FolderList) -> Workspace {
             w.scans.push(scan);
             w
         }
-        Mode::Custom => {
+        Mode::Custom | Mode::Edit(_) => {
             let mut w = Workspace::new(name, PathBuf::new(), list.folders());
             w.home = list.home_index().filter(|&i| i > 0).and(marked);
             w
         }
     }
+}
+
+/// What Save changes in a registered workspace: its folders taken out, the rows new to it (an unticked one is
+/// neither added nor skipped) and its home.
+pub fn edits_of(original: &Workspace, list: &FolderList) -> Vec<Edit> {
+    let listed = |f: &Folder| list.rows.iter().any(|r| path_key(&r.folder.path) == path_key(&f.path));
+    let mut edits: Vec<Edit> = original.folders.iter().filter(|f| !listed(f)).map(|f| Edit::RemoveFolder(f.name.clone())).collect();
+    let new = list.rows.iter().filter(|r| r.included != Some(false) && original.folder_at(&r.folder.path).is_none());
+    edits.extend(new.map(|r| Edit::AddFolder { path: r.folder.path.clone(), enable: true }));    let home = match list.home_index() {
+        None => original.home.clone(),
+        Some(0) if list.first_is_home => None,
+        Some(i) => Some(list.rows[i].folder.path.clone()),
+    };
+    if home.as_deref().map(path_key) != original.home.as_deref().map(path_key) {
+        edits.push(Edit::SetHome(home));
+    }
+    edits
 }
 
 /// Save's registry write: checked, its folders claimed ([`Registry::claim_folders`]), never over another.
@@ -141,8 +164,16 @@ impl WorkspaceDialog {
         let events = [cx.subscribe_in(&name, window, Self::on_name), cx.subscribe_in(&path, window, Self::on_path)];
         name.update(cx, |name, cx| name.focus_all(window, cx));
         let scanning = matches!(mode, Mode::Parent(_));
-        let list = FolderList::new(others, mode == Mode::Custom);
-        let this = Self { mode, name, path, list, scanning, saving: false, error: None, hint: None, home, hits, _events: events };
+        let list = match &mode {
+            Mode::Edit(w) => {
+                name.update(cx, |name, cx| name.set_text(&w.name, cx));
+                path.update(cx, |path, cx| path.focus_all(window, cx));
+                let others: Vec<Workspace> = others.iter().filter(|o| o.name != w.name).cloned().collect();
+                FolderList::of_workspace(w, &others)
+            }
+            _ => FolderList::new(others, mode == Mode::Custom),
+        };
+        let this = Self { mode, name, path, list, scanning, saving: false, error: None, hint: None, note: None, home, hits, _events: events };
         if let Mode::Parent(root) = &this.mode {
             this.scan(root.clone(), cx);
         }
@@ -180,6 +211,17 @@ impl WorkspaceDialog {
         .detach();
     }
 
+    /// A rescan's new subfolders, unticked.
+    pub fn offer(&mut self, found: Vec<Folder>) {
+        for f in found {
+            self.list.push(f, Some(false));
+        }
+    }
+
+    fn prefix(&self) -> &'static str {
+        if matches!(self.mode, Mode::Edit(_)) { "edit" } else { "add" }
+    }
+
     pub fn name_text(&self, cx: &gpui::App) -> String {
         self.name.read(cx).text().to_string()
     }
@@ -189,6 +231,9 @@ impl WorkspaceDialog {
     }
 
     pub fn can_save(&self, cx: &gpui::App) -> bool {
+        if matches!(self.mode, Mode::Edit(_)) {
+            return !self.saving;
+        }
         !self.scanning && !self.saving && validate_name(&self.name_text(cx)).is_ok() && !self.list.folders().is_empty()
     }
 
@@ -256,6 +301,11 @@ impl WorkspaceDialog {
         if !self.can_save(cx) {
             return;
         }
+        if let Mode::Edit(w) = &self.mode {
+            let edits = edits_of(w, &self.list);
+            cx.emit(DialogEvent::Edit { workspace: w.name.clone(), edits });
+            return;
+        }
         let workspace = workspace_of(self.name_text(cx), &self.mode, &self.list);
         self.saving = true;
         let registry = self.home.clone().map(Registry::at).ok_or_else(|| "no Supraman home".to_string());
@@ -283,31 +333,39 @@ impl Render for WorkspaceDialog {
         let status = cx.theme().status().clone();
         let hits = self.hits.clone();
         let on: folder_list::OnRow<Self> = Rc::new(|this, action, window, cx| this.act(action, window, cx));
-        let list = folder_list::render(&self.list, &self.path, "add", &hits, on, cx);
+        let p = self.prefix();
+        let list = folder_list::render(&self.list, &self.path, p, &hits, on, cx);
         let can_save = self.can_save(cx);
-        let save = button::bordered(&hits, "add-save", "Save", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        let save = button::bordered(&hits, format!("{p}-save"), "Save", cx).on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             this.save(window, cx);
         }));
         let save = if can_save { save } else { button::dimmed(save) };
-        let cancel = button::bordered(&hits, "add-cancel", "Cancel", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+        let cancel = button::bordered(&hits, format!("{p}-cancel"), "Cancel", cx).on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             cx.emit(DialogEvent::Cancel);
         }));
-        let name = div()
-            .id("add-name")
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .child(self.name.clone())
-            .child(hit_target(&hits, "add-name".into()))
-            .child(div().absolute().top_0().bottom_0().left(TEXT_LEFT).right(TEXT_LEFT).child(hit_target(&hits, "add-name-text".into())));
+        let name = match &self.mode {
+            Mode::Edit(w) => div().id("edit-name-line").relative().flex_1().min_w_0().child(clipped("edit-name", w.name.clone(), false)).child(hit_target(&hits, "edit-name".into())),
+            _ => div()
+                .id("add-name")
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .child(self.name.clone())
+                .child(hit_target(&hits, "add-name".into()))
+                .child(div().absolute().top_0().bottom_0().left(TEXT_LEFT).right(TEXT_LEFT).child(hit_target(&hits, "add-name-text".into()))),
+        };
         let parent = match &self.mode {
             Mode::Parent(root) if !root.as_os_str().is_empty() => Some(root.display().to_string()),
+            Mode::Edit(w) if !w.scans.is_empty() => {
+                Some(format!("parent folder {}", w.scans.iter().map(|s| s.path.display().to_string()).collect::<Vec<_>>().join(" · ")))
+            }
             _ => None,
         };
+        let title = if matches!(self.mode, Mode::Edit(_)) { "EDIT FOLDERS" } else { "ADD WORKSPACE" };
         div()
-            .id("add-dialog")
+            .id(SharedString::from(format!("{p}-dialog")))
             .relative()
             .flex()
             .flex_col()
@@ -320,18 +378,19 @@ impl Render for WorkspaceDialog {
             .border_1()
             .border_color(colors.border_focused)
             .bg(colors.editor_background)
-            .child(hit_target(&hits, "add-dialog".into()))
-            .child(div().text_xs().text_color(colors.text_muted).child("ADD WORKSPACE"))
+            .child(hit_target(&hits, format!("{p}-dialog")))
+            .child(div().text_xs().text_color(colors.text_muted).child(title))
             .child(div().flex().items_center().gap_2().text_sm().child("name").child(name))
-            .children(parent.map(|p| {
-                let line = clipped("add-parent", p, true).text_xs().text_color(colors.text_muted);
-                div().relative().min_w_0().child(line).child(hit_target(&hits, "add-parent".into()))
+            .children(parent.map(|parent| {
+                let line = clipped(format!("{p}-parent"), parent, true).text_xs().text_color(colors.text_muted);
+                div().relative().min_w_0().child(line).child(hit_target(&hits, format!("{p}-parent")))
             }))
+            .children(self.note.clone().map(|n| div().text_xs().text_color(colors.text_muted).child(SharedString::from(n))))
             .children(self.hint.clone().map(|h| div().text_xs().text_color(status.warning).child(SharedString::from(h))))
             .when(self.scanning, |d| d.child(div().text_xs().text_color(colors.text_muted).child("scanning…")))
             .child(list)
             .children(self.error.clone().map(|e| {
-                banner::tinted(status.error).relative().px_1().py_0().text_xs().child(SharedString::from(e)).child(hit_target(&hits, "add-error".into()))
+                banner::tinted(status.error).relative().px_1().py_0().text_xs().child(SharedString::from(e)).child(hit_target(&hits, format!("{p}-error")))
             }))
             .child(div().flex().gap_2().justify_end().pt(px(2.)).child(save).child(cancel))
     }

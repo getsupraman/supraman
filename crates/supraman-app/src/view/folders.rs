@@ -1,33 +1,17 @@
-//! Edit folders…: a registered workspace's folders, home and scans, changed through [`Registry::edit`].
+//! Edit folders… and Rescan: a registered workspace's change, asked about when it stops a supervised session,
+//! applied through [`Registry::edit`] off the UI thread, its removed folders' sessions released.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use gpui::{Context, Window};
 use supraman_core::paths::within;
-use supraman_core::{DEFAULT_DEPTH, Edit, Edited, Folder, Registry, Workspace, owners};
+use supraman_core::{Edit, Edited, Folder, Registry, Workspace, rescan};
 use supraman_supervisor::{DesiredState, repo_session_name};
-use supraman_ui::button;
-use supraman_ui::hit::hit_target;
-use supraman_ui::text_input::{InputEvent, TextInput};
-use gpui::{AnyElement, AppContext as _, ClickEvent, Context, Entity, SharedString, Subscription, Window, div, prelude::*, px};
-use theme::ActiveTheme as _;
 
 use super::FleetView;
-use supraman_ui::icon::Icon;
-use super::left::{secondary, tag};
 use super::menu::{Confirm, Confirmed};
-use supraman_ui::clipped::clipped;
+use super::workspace_dialog::Mode;
 use crate::fleet;
-
-const STATE_COLUMN: gpui::Pixels = px(16.);
-/// As wide as the `Home` button, so `home` and `Home` rows keep the same columns.
-const HOME_SLOT: gpui::Pixels = px(48.);
-
-pub struct EditFolders {
-    pub workspace: String,
-    pub path: Entity<TextInput>,
-    pub error: Option<String>,
-    _path_events: Subscription,
-}
 
 /// What the edit's toast says beyond "done": folders claimed by their owner, sessions stopped, and a running
 /// session the new folder holds.
@@ -63,129 +47,192 @@ fn verb(edit: &Edit) -> String {
     match edit {
         Edit::RemoveFolder(f) => format!("Remove folder {f}"),
         Edit::SetEnabled { folder, .. } => format!("Disable folder {folder}"),
-        Edit::RemoveScan(p) => format!("Remove the scan of {} and the folders only it found", p.display()),
         _ => "Change it".into(),
     }
+}
+
+/// Applies `edits` in turn, stopping at the first refused, and releases the sessions of every folder removed or
+/// disabled on the way (stop, never rm). Returns the edits' sum and the sessions stopped.
+pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<String>), String> {
+    let registry = Registry::at(home);
+    let (mut sum, mut released, mut refused): (Option<Edited>, Vec<String>, Option<String>) = (None, Vec::new(), None);
+    for edit in edits {
+        let disabling = match &edit {
+            Edit::SetEnabled { folder, enabled: false } => Some(folder.clone()),
+            _ => None,
+        };
+        match registry.edit(w, edit) {
+            Ok(done) => {
+                released.extend(done.removed.iter().map(|f| f.name.clone()));
+                released.extend(disabling.and_then(|f| done.workspace.find_folder(&f)).map(|f| f.name.clone()));
+                sum = Some(match sum {
+                    None => done,
+                    Some(mut s) => {
+                        s.added.extend(done.added);
+                        s.removed.extend(done.removed);
+                        s.claimed.extend(done.claimed);
+                        s.workspace = done.workspace;
+                        s
+                    }
+                });
+            }
+            Err(e) => {
+                refused = Some(e.to_string());
+                break;
+            }
+        }
+    }
+    let names: Vec<&str> = released.iter().map(String::as_str).collect();
+    let stopped = DesiredState::release(home, w, &names).map_err(|e| e.to_string())?;
+    match (refused, sum) {
+        (None, Some(sum)) => Ok((sum, stopped)),
+        (Some(e), _) => Err(e),
+        (None, None) => Err("nothing to change".into()),
+    }
+}
+
+/// What Rescan offers: the workspace (its gone folders dropped), the subfolders new to it, and the drop's result.
+#[derive(Debug)]
+pub struct Offer {
+    pub workspace: Workspace,
+    pub found: Vec<Folder>,
+    pub gone: Option<(Edited, Vec<String>)>,
+}
+
+/// Looks in the workspace's parent folders again: the folders gone from disk are dropped ([`Edit::DropGone`]),
+/// the new ones only offered.
+pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
+    let workspace = Registry::at(home).load(name).map_err(|e| e.to_string())?;
+    if workspace.scans.is_empty() {
+        return Err(format!("{name} has no parent folder to look in: Edit folders… adds a folder."));
+    }
+    let (next, added, gone) = rescan(&workspace).map_err(|e| e.to_string())?;
+    let found = next.folders.into_iter().filter(|f| added.contains(&f.name)).collect();
+    if gone.is_empty() {
+        return Ok(Offer { workspace, found, gone: None });
+    }
+    let (done, stopped) = edit_all(home, name, vec![Edit::DropGone])?;
+    Ok(Offer { workspace: done.workspace.clone(), found, gone: Some((done, stopped)) })
 }
 
 impl FleetView {
     pub fn edit_folders(&mut self, workspace: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
-        self.adding = None;
-        let path = cx.new(|cx| TextInput::new("a folder's path", None, window, cx));
-        let events = cx.subscribe_in(&path, window, |this: &mut Self, _, event: &InputEvent, window, cx| this.on_path_event(event, window, cx));
-        self.editing = Some(EditFolders { workspace: workspace.to_string(), path, error: None, _path_events: events });
-        self.collapsed.remove(&format!("workspace:{workspace}"));
-        cx.notify();
-    }
-
-    fn on_path_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editing) = &mut self.editing else {
+        let Some(w) = self.workspaces.iter().find(|x| x.name == workspace).cloned() else {
             return;
         };
-        match event {
-            InputEvent::Edited | InputEvent::Refused(_) => editing.error = None,
-            InputEvent::Confirm | InputEvent::ConfirmBack => self.add_typed(false, window, cx),
-            InputEvent::Cancel if self.dismiss_popup() => {}
-            InputEvent::Cancel => {
-                self.editing = None;
-                self.focus.focus(window, cx);
+        self.collapsed.remove(&format!("workspace:{workspace}"));
+        self.open_add(Mode::Edit(w), window, cx);
+    }
+
+    pub(super) fn rescan_workspace(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        self.scan_other_schedules(cx);
+        let name = name.to_string();
+        let task = cx.background_executor().spawn(async move { rescan_offer(&home, &name).map(|o| (name, o)) });
+        cx.spawn_in(window, async move |this, cx| {
+            let done = task.await;
+            this.update_in(cx, |this, window, cx| {
+                match done {
+                    Ok((name, offer)) => this.offered(&name, offer, window, cx),
+                    Err(e) => this.toast.show_why(e, |this: &mut Self| &mut this.toast, cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn offered(&mut self, name: &str, offer: Offer, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((done, stopped)) = &offer.gone {
+            self.put_workspace(done.workspace.clone());
+            self.reload_workspaces(cx);
+            let gone: Vec<&str> = done.removed.iter().map(|f| f.name.as_str()).collect();
+            self.show_toast(format!("{name}: {} gone from disk, removed.{}", gone.join(", "), edited_note(done, stopped, &[])), cx);
+        }
+        let note = offer.found.is_empty().then(|| "No new subfolders: nothing to add.".to_string());
+        self.open_add(Mode::Edit(offer.workspace), window, cx);
+        if let Some(dialog) = self.add_dialog().cloned() {
+            dialog.update(cx, |d, _| {
+                d.offer(offer.found);
+                d.note = note;
+            });
+        }
+    }
+
+    /// Asks first when an edit stops a supervised session ([`stops`]).
+    pub fn request_edits(&mut self, w: &str, edits: Vec<Edit>, cx: &mut Context<Self>) {
+        let wanted = self.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
+        let workspace = self.workspaces.iter().find(|x| x.name == w);
+        let mut stopping = Vec::new();
+        let mut verbs = Vec::new();
+        for edit in &edits {
+            let stops = workspace.map(|x| stops(x, edit, &wanted)).unwrap_or_default();
+            if !stops.is_empty() {
+                verbs.push(verb(edit));
+                stopping.extend(stops);
             }
         }
-        cx.notify();
-    }
-
-    pub fn close_edit_folders(&mut self, cx: &mut Context<Self>) {
-        self.editing = None;
-        cx.notify();
-    }
-
-    fn typed_path(&self, cx: &gpui::App) -> Option<PathBuf> {
-        let text = self.editing.as_ref()?.path.read(cx).text().trim().trim_matches('"').to_string();
-        (!text.is_empty()).then(|| PathBuf::from(text))
-    }
-
-    /// The path typed, as a folder (`scan` false) or a scan; an empty field opens the folder picker.
-    pub fn add_typed(&mut self, scan: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(w) = self.editing.as_ref().map(|e| e.workspace.clone()) else {
-            return;
-        };
-        match self.typed_path(cx) {
-            Some(path) => self.add_path(&w, path, scan, cx),
-            None => self.browse(scan, window, cx),
-        }
-    }
-
-    pub fn set_typed_home(&mut self, cx: &mut Context<Self>) {
-        let Some(w) = self.editing.as_ref().map(|e| e.workspace.clone()) else {
-            return;
-        };
-        match self.typed_path(cx) {
-            Some(path) => self.apply_edit(&w, Edit::SetHome(Some(path)), cx),
-            None => self.edit_failed("Type or browse to the folder to run the workspace's own sessions in.".into(), cx),
-        }
-    }
-
-    fn add_path(&mut self, w: &str, path: PathBuf, scan: bool, cx: &mut Context<Self>) {
-        let edit = if scan { Edit::AddScan { path, depth: DEFAULT_DEPTH } } else { Edit::AddFolder { path, enable: true } };
-        self.apply_edit(w, edit, cx);
-    }
-
-    /// The folder picker, or [`FleetView::pick_folder`] when a selftest set one.
-    pub fn browse(&mut self, scan: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(w) = self.editing.as_ref().map(|e| e.workspace.clone()) else {
-            return;
-        };
-        if let Some(path) = self.pick_folder.take() {
-            self.add_path(&w, path, scan, cx);
-            return;
-        }
-        let prompt = if scan { "Scan for repos" } else { "Add folder" };
-        supraman_ui::folder_picker::pick_folder(prompt, window, cx, move |this, path, _, cx| this.add_path(&w, path, scan, cx));
-    }
-
-    /// Asks first when the edit stops a supervised session ([`stops`]).
-    pub fn request_edit(&mut self, w: &str, edit: Edit, cx: &mut Context<Self>) {
-        let wanted = self.desired.get(w).map(|d| d.1.clone()).unwrap_or_default();
-        let stopping = self.workspaces.iter().find(|x| x.name == w).map(|x| stops(x, &edit, &wanted)).unwrap_or_default();
         if stopping.is_empty() {
-            self.apply_edit(w, edit, cx);
+            self.apply_edits(w, edits, cx);
             return;
         }
         self.confirm = Some(Confirm::ask(
             format!(
                 "{} in workspace {w}? Its supervised session {} is stopped (stop, never rm) and can be resumed; no files are deleted.",
-                verb(&edit),
+                verbs.join("; "),
                 stopping.join(", ")
             ),
             "Stop and remove",
-            Confirmed::Edit { workspace: w.to_string(), edit },
+            Confirmed::Edit { workspace: w.to_string(), edits },
         ));
         cx.notify();
     }
 
+    pub fn request_edit(&mut self, w: &str, edit: Edit, cx: &mut Context<Self>) {
+        self.request_edits(w, vec![edit], cx);
+    }
+
     pub fn apply_edit(&mut self, w: &str, edit: Edit, cx: &mut Context<Self>) {
+        self.apply_edits(w, vec![edit], cx);
+    }
+
+    fn editing(&self, w: &str, cx: &gpui::App) -> Option<gpui::Entity<super::workspace_dialog::WorkspaceDialog>> {
+        self.add_dialog().filter(|d| matches!(&d.read(cx).mode, Mode::Edit(x) if x.name == w)).cloned()
+    }
+
+    pub fn apply_edits(&mut self, w: &str, edits: Vec<Edit>, cx: &mut Context<Self>) {
         let Some(home) = self.home.clone() else {
-            return self.edit_failed("no Supraman home".into(), cx);
+            self.action_error = Some("no Supraman home".into());
+            return cx.notify();
         };
-        let disabling = match &edit {
-            Edit::SetEnabled { folder, enabled: false } => Some(folder.clone()),
-            _ => None,
-        };
-        let result = Registry::at(&home).edit(w, edit).map_err(|e| e.to_string()).and_then(|done| {
-            let mut released: Vec<&str> = done.removed.iter().map(|f| f.name.as_str()).collect();
-            let disabled = disabling.as_deref().and_then(|f| done.workspace.find_folder(f)).map(|f| f.name.clone());
-            released.extend(disabled.as_deref());
-            let stopped = DesiredState::release(&home, w, &released).map_err(|e| e.to_string())?;
-            Ok((done, stopped))
+        if let Some(dialog) = self.editing(w, cx) {
+            dialog.update(cx, |d, cx| {
+                d.saving = true;
+                cx.notify();
+            });
+        }
+        let w = w.to_string();
+        let task = cx.background_executor().spawn({
+            let w = w.clone();
+            async move { edit_all(&home, &w, edits) }
         });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| this.edits_applied(&w, result, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn edits_applied(&mut self, w: &str, result: Result<(Edited, Vec<String>), String>, cx: &mut Context<Self>) {
+        let dialog = self.editing(w, cx);
         match result {
             Ok((done, stopped)) => {
-                if let Some(e) = &mut self.editing {
-                    e.error = None;
-                    if !done.added.is_empty() {
-                        e.path.update(cx, |p, cx| p.set_text("", cx));
-                    }
+                if dialog.is_some() {
+                    self.adding = None;
                 }
                 let live_in = self.live_in(&done);
                 if let Some(added) = done.added.first() {
@@ -193,12 +240,19 @@ impl FleetView {
                     self.reveal_new(super::left::PendingReveal::Row(format!("repo:{w}/{added}")));
                 }
                 self.put_workspace(done.workspace.clone());
-                self.reload_workspaces(cx);
                 let what = if done.added.is_empty() && done.removed.is_empty() { format!("Saved {w}.") } else { summary(w, &done) };
                 self.show_toast(format!("{what}{}", edited_note(&done, &stopped, &live_in)), cx);
             }
-            Err(e) => self.edit_failed(e, cx),
+            Err(e) => match dialog {
+                Some(dialog) => dialog.update(cx, |d, cx| {
+                    d.saving = false;
+                    d.error = Some(e);
+                    cx.notify();
+                }),
+                None => self.action_error = Some(e),
+            },
         }
+        self.reload_workspaces(cx);
         cx.notify();
     }
 
@@ -212,214 +266,6 @@ impl FleetView {
             }
         }
         out
-    }
-
-    fn edit_failed(&mut self, error: String, cx: &mut Context<Self>) {
-        match &mut self.editing {
-            Some(e) => e.error = Some(error),
-            None => self.action_error = Some(error),
-        }
-        cx.notify();
-    }
-
-    pub(super) fn render_edit_folders(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let editing = self.editing.as_ref()?;
-        let w = self.workspaces.iter().find(|x| x.name == editing.workspace)?;
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let others: Vec<Workspace> = self.workspaces.iter().filter(|x| x.name != w.name).cloned().collect();
-        let owned = owners(&others);
-        let name = w.name.clone();
-        let edit_button = |key: String, label: &str, edit: Edit, cx: &mut Context<Self>| {
-            let w = name.clone();
-            button::bordered(&self.hits, key, label.to_string(), cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.request_edit(&w, edit.clone(), cx);
-            }))
-        };
-        let mut folders = div().flex().flex_col().gap(px(2.)).min_w_0();
-        if w.folders.is_empty() {
-            folders = folders.child(div().text_xs().text_color(secondary(cx)).child("No folders yet: add one below."));
-        }
-        for f in &w.folders {
-            let elsewhere = owned.get(&supraman_core::paths::path_key(&f.path)).filter(|_| !f.enabled).cloned();
-            let is_home = w.home().is_some_and(|h| supraman_core::same_path(h, &f.path));
-            let state = div().flex_none().w(STATE_COLUMN);
-            let state = match &elsewhere {
-                Some(_) => state,
-                None => {
-                    let edit = Edit::SetEnabled { folder: f.name.clone(), enabled: !f.enabled };
-                    let w = name.clone();
-                    state.child(
-                        button::checkbox(&self.hits, format!("edit-enable-{}", f.name), f.enabled)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.request_edit(&w, edit.clone(), cx);
-                            })),
-                    )
-                }
-            };
-            let kind = match (f.is_git(), &f.branch) {
-                (true, Some(b)) => clipped(format!("edit-branch-{}", f.name), b.clone(), false).flex_shrink(8.).text_xs().text_color(secondary(cx)).into_any_element(),
-                _ => div().flex_none().text_xs().text_color(secondary(cx)).child(if f.is_git() { "git" } else { "folder" }).into_any_element(),
-            };
-            let named = div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .min_w_0()
-                .child(state)
-                .child(clipped(format!("edit-name-{}", f.name), f.name.clone(), false).when(!f.enabled, |d| d.text_color(secondary(cx))))
-                .child(if f.is_git() { Icon::GitBranch } else { Icon::Folder }.svg(12., secondary(cx)).flex_none())
-                .child(kind);
-            let path = clipped(format!("edit-folder-path-{}", f.name), f.path.display().to_string(), true).flex_1().text_xs().text_color(colors.text_muted);
-            let located = div().flex().items_center().gap_2().min_w_0().text_xs();
-            let located = match &elsewhere {
-                Some(owner) => located.child(
-                    tag(format!("supervised in {owner}"), cx)
-                        .relative()
-                        .flex_shrink(1.)
-                        .min_w_0()
-                        .overflow_hidden()
-                        .child(hit_target(&self.hits, format!("edit-elsewhere-{}", f.name))),
-                ),
-                None => located.child(div().flex_none().w(STATE_COLUMN)),
-            };
-            let home = if is_home {
-                tag("home", cx).into_any_element()
-            } else {
-                edit_button(format!("edit-home-{}", f.name), "Home", Edit::SetHome(Some(f.path.clone())), cx).into_any_element()
-            };
-            let buttons = div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_1()
-                .child(div().flex().flex_none().justify_end().min_w(HOME_SLOT).child(home))
-                .child(edit_button(format!("edit-remove-{}", f.name), "Remove", Edit::RemoveFolder(f.name.clone()), cx));
-            folders = folders.child(
-                div()
-                    .id(SharedString::from(format!("edit-folder-{}", f.name)))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .min_w_0()
-                    .px_1()
-                    .text_sm()
-                    .child(hit_target(&self.hits, format!("edit-folder-{}", f.name)))
-                    .child(div().flex().flex_col().flex_1().min_w_0().child(named).child(located.child(path)))
-                    .child(buttons),
-            );
-        }
-        let mut scans = div().flex().flex_col().gap(px(2.)).min_w_0();
-        for (i, s) in w.scans.iter().enumerate() {
-            let skips = if s.exclude.is_empty() { String::new() } else { format!(" · skips {}", s.exclude.len()) };
-            scans = scans.child(
-                div()
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .min_w_0()
-                    .px_1()
-                    .text_xs()
-                    .child(clipped(format!("edit-scan-{i}"), format!("{}  depth {}{skips}", s.path.display(), s.depth), true).flex_1())
-                    .child(edit_button(format!("edit-scan-remove-{i}"), "Remove", Edit::RemoveScan(s.path.clone()), cx)),
-            );
-        }
-        let home_line = match (&w.home, w.home()) {
-            (Some(h), _) => format!("home {}", h.display()),
-            (None, Some(first)) => format!("home: the first folder, {}", first.display()),
-            (None, None) => "home: none yet (the first folder added)".into(),
-        };
-        let typed = |key: &'static str, label: &'static str, run: fn(&mut Self, &mut Window, &mut Context<Self>), cx: &mut Context<Self>| {
-            button::bordered(&self.hits, key, label, cx).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                cx.stop_propagation();
-                run(this, window, cx);
-            }))
-        };
-        let reset = w.home.is_some().then(|| edit_button("edit-reset-home".into(), "Reset", Edit::SetHome(None), cx));
-        Some(
-            div()
-                .id("edit-folders")
-                .relative()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .min_w_0()
-                .mx_3()
-                .my_2()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(colors.border_focused)
-                .bg(colors.editor_background)
-                .child(hit_target(&self.hits, "edit-folders".into()))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(colors.text_muted)
-                        .child(clipped("edit-title", format!("EDIT FOLDERS · {}", w.name), false))
-                        .child(typed("edit-done", "Done", |this, _, cx| this.close_edit_folders(cx), cx)),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(colors.text_muted)
-                        .child(clipped("edit-home-line", home_line, true).flex_1())
-                        .children(reset),
-                )
-                .child(div().text_xs().text_color(colors.text_muted).child("FOLDERS  ☑ may have a supervised session"))
-                .child(folders)
-                .when(!w.scans.is_empty(), |d| d.child(div().text_xs().text_color(colors.text_muted).child("SCANS")).child(scans))
-                .child(
-                    div()
-                        .id("edit-path")
-                        .relative()
-                        .child(editing.path.clone())
-                        .child(hit_target(&self.hits, "edit-path".into()))
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(supraman_ui::text_input::TEXT_LEFT)
-                                .right(supraman_ui::text_input::TEXT_LEFT)
-                                .child(hit_target(&self.hits, "edit-path-text".into())),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .justify_end()
-                        .child(typed("edit-add-folder", "Add folder…", |this, window, cx| this.add_typed(false, window, cx), cx))
-                        .child(typed("edit-add-scan", "Add scan…", |this, window, cx| this.add_typed(true, window, cx), cx))
-                        .child(typed("edit-set-home", "Set as home", |this, _, cx| this.set_typed_home(cx), cx)),
-                )
-                .child(div().text_xs().text_color(colors.text_muted).child("An empty path opens the folder picker. Enter adds the folder typed · Esc closes"))
-                .children(editing.error.clone().map(|e| {
-                    div()
-                        .relative()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(status.error.opacity(0.14))
-                        .text_xs()
-                        .text_color(status.error)
-                        .child(SharedString::from(e))
-                        .child(hit_target(&self.hits, "edit-error".into()))
-                }))
-                .into_any_element(),
-        )
     }
 }
 
@@ -437,8 +283,11 @@ fn summary(w: &str, done: &Edited) -> String {
 
 #[cfg(test)]
 mod tests {
-    use supraman_core::{Folder, Scan};
+    use supraman_core::{Folder, FolderKind, Scan};
+    use supraman_supervisor::repo_session;
 
+    use super::super::folder_list::FolderList;
+    use super::super::workspace_dialog::edits_of;
     use super::*;
 
     fn workspace() -> Workspace {
@@ -472,5 +321,93 @@ mod tests {
         );
         assert_eq!(edited_note(&done, &[], &[("x".into(), "NodeApi".into(), true)]), " Skills stays supervised in larchsys, disabled here. x in NodeApi now shows here.");
         assert_eq!(summary("gaia", &done), "gaia: added NodeApi.");
+    }
+
+    fn dir(path: &Path) -> std::path::PathBuf {
+        std::fs::create_dir_all(path).unwrap();
+        path.to_path_buf()
+    }
+
+    /// `demo` of the plain folders alpha and beta in `P`, scanned, home `P`.
+    fn registered(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let (home, parent) = (tmp.join("home"), tmp.join("P"));
+        dir(&parent.join("alpha"));
+        dir(&parent.join("beta"));
+        let w = supraman_core::discover(&parent, Some("demo"), 1).unwrap();
+        Registry::at(&home).save(&w, false).unwrap();
+        (home, parent)
+    }
+
+    fn names(w: &Workspace) -> Vec<&str> {
+        w.folders.iter().map(|f| f.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_save_removes_adds_and_moves_home_and_releases_the_removed_folders_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, parent) = registered(tmp.path());
+        DesiredState::update(&home, "demo", |d| {
+            d.want(repo_session("demo", "beta", &parent.join("beta").display().to_string(), "p").unwrap());
+        })
+        .unwrap();
+        let original = Registry::at(&home).load("demo").unwrap();
+        let mut list = FolderList::of_workspace(&original, &[]);
+        let extra = dir(&tmp.path().join("extra"));
+        list.remove(1);
+        list.push(Folder { kind: FolderKind::Plain, ..Folder::new("extra", &extra) }, None);
+        list.set_home(0);
+        let edits = edits_of(&original, &list);
+        assert_eq!(
+            edits,
+            [Edit::RemoveFolder("beta".into()), Edit::AddFolder { path: extra.clone(), enable: true }, Edit::SetHome(Some(parent.join("alpha")))]
+        );
+        assert_eq!(stops(&original, &edits[0], &["fm-demo-beta".into()]), ["fm-demo-beta"], "the removal asks first");
+
+        let (done, stopped) = edit_all(&home, "demo", edits).unwrap();
+        assert_eq!(stopped, ["fm-demo-beta"]);
+        assert!(DesiredState::load(&home, "demo").unwrap().unwrap().sessions.is_empty(), "beta's session released");
+        let saved = Registry::at(&home).load("demo").unwrap();
+        assert_eq!(saved, done.workspace);
+        assert_eq!((names(&saved), saved.home.clone()), (vec!["alpha", "extra"], Some(parent.join("alpha"))));
+        assert_eq!(saved.scans[0].exclude, [parent.join("beta")], "× on a folder keeps it out of the next Rescan");
+        assert!(edits_of(&saved, &FolderList::of_workspace(&saved, &[])).is_empty(), "no change, no edit");
+    }
+
+    #[test]
+    fn rescan_only_offers_new_subfolders_and_an_unticked_one_comes_back_the_next_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, parent) = registered(tmp.path());
+        dir(&parent.join("fresh"));
+        let offer = rescan_offer(&home, "demo").unwrap();
+        assert_eq!(offer.found.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["fresh"]);
+        assert!(offer.gone.is_none());
+        assert_eq!(names(&Registry::at(&home).load("demo").unwrap()), ["alpha", "beta"], "nothing saved before Save");
+
+        let mut list = FolderList::of_workspace(&offer.workspace, &[]);
+        list.push(offer.found[0].clone(), Some(false));
+        list.remove(0);
+        edit_all(&home, "demo", edits_of(&offer.workspace, &list)).unwrap();
+        let saved = Registry::at(&home).load("demo").unwrap();
+        assert_eq!((names(&saved), saved.scans[0].exclude.clone()), (vec!["beta"], vec![parent.join("alpha")]), "unticked: not skipped");
+
+        let again = rescan_offer(&home, "demo").unwrap();
+        assert_eq!(again.found.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["fresh"], "alpha (×) not offered, fresh again");
+        let mut list = FolderList::of_workspace(&again.workspace, &[]);
+        list.push(again.found[0].clone(), Some(false));
+        list.toggle(1);
+        edit_all(&home, "demo", edits_of(&again.workspace, &list)).unwrap();
+        assert_eq!(names(&Registry::at(&home).load("demo").unwrap()), ["beta", "fresh"]);
+        assert!(rescan_offer(&home, "demo").unwrap().found.is_empty(), "a folder taken is not offered again");
+
+        std::fs::remove_dir_all(parent.join("beta")).unwrap();
+        let gone = rescan_offer(&home, "demo").unwrap();
+        let (done, _) = gone.gone.unwrap();
+        assert_eq!(done.removed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["beta"]);
+        let saved = Registry::at(&home).load("demo").unwrap();
+        assert_eq!((names(&saved), saved.scans[0].exclude.clone()), (vec!["fresh"], vec![parent.join("alpha")]), "gone: dropped, not skipped");
+
+        let custom = Workspace::new("custom", tmp.path(), vec![Folder::new("x", tmp.path())]);
+        Registry::at(&home).save(&custom, false).unwrap();
+        assert_eq!(rescan_offer(&home, "custom").unwrap_err(), "custom has no parent folder to look in: Edit folders… adds a folder.");
     }
 }

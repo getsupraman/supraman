@@ -4,7 +4,7 @@ use std::{
 };
 
 use supraman_claude::{Claude, Session, now_ms};
-use supraman_core::{CoreError, Registry, Workspace, rescan};
+use supraman_core::{Registry, Workspace};
 use supraman_supervisor::remove_workspace;
 use gpui::{AppContext as _, ClipboardItem, Context, Entity, Pixels, Point, Window};
 
@@ -46,7 +46,6 @@ impl FleetView {
     }
 
     pub fn open_add(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
-        self.editing = None;
         let (home, hits) = (self.home.clone(), self.hits.clone());
         let dialog = cx.new(|cx| WorkspaceDialog::new(mode, home, &self.workspaces, hits, window, cx));
         let events = cx.subscribe_in(&dialog, window, Self::on_add_event);
@@ -81,6 +80,8 @@ impl FleetView {
         match event {
             DialogEvent::Cancel if self.dismiss_popup() => cx.notify(),
             DialogEvent::Cancel => self.close_add(window, cx),
+            DialogEvent::Edit { edits, .. } if edits.is_empty() => self.close_add(window, cx),
+            DialogEvent::Edit { workspace, edits } => self.request_edits(workspace, edits.clone(), cx),
             DialogEvent::Saved { workspace, taken } => {
                 let name = workspace.name.clone();
                 self.close_add(window, cx);
@@ -248,7 +249,7 @@ impl FleetView {
             MenuAction::NewTask { workspace, folder, scheduled } => {
                 self.open_start(&workspace, folder, scheduled, window, cx);
             }
-            MenuAction::Rescan(w) => self.rescan_workspace(&w, cx),
+            MenuAction::Rescan(w) => self.rescan_workspace(&w, window, cx),
             MenuAction::OpenTaskScheduler => self.open_folder(PathBuf::from("taskschd.msc"), cx),
             MenuAction::EditFolders(w) => self.edit_folders(&w, window, cx),
             MenuAction::AddFromFolder => self.add_workspace(window, cx),
@@ -345,7 +346,7 @@ impl FleetView {
                 Confirmed::Adopt { workspace, folder, session, name } => self.adopt(workspace, folder, session, name, cx),
                 Confirmed::Delete { session, discard } => self.delete_now(session, discard, cx),
                 Confirmed::DeleteClosed { workspace, sessions, skipped } => self.delete_closed_now(workspace, sessions, skipped, cx),
-                Confirmed::Edit { workspace, edit } => self.apply_edit(&workspace, edit, cx),
+                Confirmed::Edit { workspace, edits } => self.apply_edits(&workspace, edits, cx),
                 Confirmed::RemoveSchedule { workspace, id } => self.remove_schedule(workspace, id, cx),
                 Confirmed::Update => self.update_confirmed(cx),
             }
@@ -409,37 +410,6 @@ impl FleetView {
             Err(e) => self.action_error = Some(format!("Cannot remove: {e}")),
         }
         cx.notify();
-    }
-
-    fn rescan_workspace(&mut self, name: &str, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
-            return;
-        };
-        self.scan_other_schedules(cx);
-        let name = name.to_string();
-        let task = cx.background_executor().spawn(async move {
-            let registry = Registry::at(home);
-            let (mut workspace, added, removed) = rescan(&registry.load(&name)?)?;
-            registry.claim_folders(&mut workspace, |f| added.contains(&f.name))?;
-            registry.save(&workspace, true)?;
-            Ok::<_, CoreError>((name, added, removed))
-        });
-        cx.spawn(async move |this, cx| {
-            let done = task.await;
-            this.update(cx, |this, cx| {
-                match done {
-                    Ok((name, added, removed)) => {
-                        let list = |v: &[String]| if v.is_empty() { "none".to_string() } else { v.join(", ") };
-                        this.show_toast(format!("Rescanned {name}: added {}; gone {}.", list(&added), list(&removed)), cx);
-                        this.reload_workspaces(cx);
-                    }
-                    Err(e) => this.action_error = Some(format!("Cannot rescan: {e}")),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     fn open_folder(&mut self, path: PathBuf, cx: &mut Context<Self>) {

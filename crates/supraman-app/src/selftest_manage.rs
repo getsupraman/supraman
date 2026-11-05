@@ -359,15 +359,14 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
     Ok(())
 }
 
-/// Details from the row's menu: its report's text, once painted; OK closes it.
-/// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width.
+/// Every Edit folders… row keeps its buttons inside the dialog at the left panel's minimum width; Cancel saves nothing.
 async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspace: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const LONG: &str = "a-folder-with-a-rather-long-name-for-edit-folders";
     const BRANCH: &str = "copilot/fix-the-edit-folders-dialog-overflowing-its-box";
     let long = cargo_root().join("target").join("selftest-edit-long").join(LONG);
     std::fs::create_dir_all(long.join(".git"))?;
-    std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}
-"))?;
+    std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}\n"))?;
+    let before = registry.load(workspace)?;
     let width = view.read_with(cx, |v, _| v.left_width);
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
@@ -375,24 +374,22 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
             v.edit_folders(workspace, window, cx);
         })
     })?;
-    view.update(cx, |v, _| v.pick_folder = Some(long.clone()));
-    click(view, "edit-add-folder", cx).await?;
-    let folders = until(view, cx, WITHIN, "the long folder added", |_| {
-        let w = registry.load(workspace).ok()?;
-        w.folders.iter().any(|f| f.path == long).then(|| w.folders.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+    until(view, cx, WITHIN, "Edit folders…'s path field", |v| painted(v, "edit-new-path-text").then_some(())).await?;
+    set_field(view, false, &long.display().to_string(), cx)?;
+    click(view, "edit-add", cx).await?;
+    let folders = until_app(view, cx, WITHIN, "the long folder in the list", |v, cx| {
+        let d = dialog(v, cx)?;
+        d.list.rows.iter().any(|r| r.folder.path == long).then(|| d.list.rows.iter().map(|r| r.folder.name.clone()).collect::<Vec<_>>())
     })
     .await?;
-    let long_name = registry.load(workspace)?.folders.into_iter().find(|f| f.path == long).map(|f| f.name).ok_or_else(|| anyhow!("no long folder"))?;
+    let long_name = folders.last().cloned().ok_or_else(|| anyhow!("no long folder"))?;
     let fits = until(view, cx, WITHIN, "every Edit folders row inside the dialog", |v| {
         let hits = v.hits.borrow();
-        let dialog = hits.get("edit-folders")?.bounds;
+        let dialog = hits.get("edit-dialog")?.bounds;
         let mut rights = Vec::new();
         for f in &folders {
-            let state = [format!("edit-enable-{f}"), format!("edit-elsewhere-{f}")].into_iter().find(|k| hits.contains_key(k))?;
-            let mut keys = vec![state, format!("edit-remove-{f}")];
-            keys.extend(Some(format!("edit-home-{f}")).filter(|k| hits.contains_key(k)));
-            for key in &keys {
-                let b = hits.get(key)?.bounds;
+            for key in [format!("edit-home-{f}"), format!("edit-remove-{f}")] {
+                let b = hits.get(&key)?.bounds;
                 if b.left() < dialog.left() || b.right() > dialog.right() + px(0.5) {
                     return None;
                 }
@@ -427,10 +424,13 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
         v.left_width = width;
         cx.notify();
     });
-    click(view, "edit-done", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
+    click(view, "edit-cancel", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed by Cancel", |v| v.adding.is_none().then_some(())).await?;
+    if registry.load(workspace)? != before {
+        bail!("Cancel in Edit folders… changed {workspace}");
+    }
     Ok(format!(
-        "Edit folders… of {workspace} at the minimum left width ({:.0} px dialog): {folders:?} keep their boxes and buttons inside, Remove at x {:?} in every row, {LONG}'s path and branch {BRANCH} clipped with a tooltip",
+        "Edit folders… of {workspace} at the minimum left width ({:.0} px dialog): {folders:?} keep their buttons inside, × at x {:?} in every row, {LONG}'s path and branch {BRANCH} clipped with a tooltip; Cancel saved nothing",
         fits.0, fits.1
     ))
 }
@@ -676,25 +676,6 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
 
     // a menu closed but still painted takes the next press as a click outside it
     until(view, cx, WITHIN, "a frame without the closed menu", |v| (!painted(v, "menu-remove")).then_some(())).await?;
-    press_painted(view, &ws_key, MouseButton::Right, cx).await?;
-    menu_open(view, ADDED, cx).await?;
-    click(view, "menu-edit-folders", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… with beta's box", |v| painted(v, "edit-enable-beta").then_some(())).await?;
-    shot("edit-folders", cx).await;
-    click(view, "edit-enable-beta", cx).await?;
-    until(view, cx, WITHIN, "beta enabled in the tree", |v| {
-        v.tree().workspaces.iter().find(|w| w.name == ADDED)?.repos.iter().find(|r| r.name == "beta" && r.enabled).map(|_| ())
-    })
-    .await?;
-    // painted: the next press must see this frame's layout, not the one before Enable
-    let plus = format!("new-claude-{ADDED}/beta");
-    until(view, cx, WITHIN, "beta's + painted", |v| painted(v, &plus).then_some(())).await?;
-    if !registry.load(ADDED)?.folders.iter().all(|r| r.enabled) {
-        bail!("Enable did not reach the registry");
-    }
-    click(view, "edit-done", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
-    out.push("beta enabled in Edit folders…, then in the tree with its +".into());
 
     out.push(open_folder(view, &ws_key, cx).await?);
 
