@@ -256,6 +256,13 @@ impl CommitPanel {
         input
     }
 
+    pub fn deselect_files(&mut self, cx: &mut Context<Self>) {
+        self.changed.select(None);
+        self.all.select(None);
+        self.paths.select(None);
+        cx.notify();
+    }
+
     fn file_clicked(&mut self, path: &SharedString, cx: &mut Context<Self>) {
         let Some(shown) = self.shown() else { return };
         if shown.files.contains(path.as_ref()) {

@@ -7,6 +7,7 @@ use supraman_ui::tree::Order;
 use super::*;
 use crate::git_view::GitView;
 use crate::git_view::tests::{open, redraw};
+use crate::git_view::wip::tests::click;
 
 fn panel_of(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Entity<CommitPanel> {
     view.read_with(cx, |v, _| v.panel().clone())
@@ -138,8 +139,16 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
     let badge = |path: &str, cx: &mut VisualTestContext| panel.read_with(cx, |p, _| p.tree().0.aggregate(path));
     assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }), "a folder counts its whole subtree");
     assert_eq!(badge("src/app", cx), Some(Counts { added: 2, ..Counts::default() }));
+    let painted = repaint(&view, cx);
+    for folder in ["docs", "src", "src/app"] {
+        assert!(!painted.borrow().contains_key(&format!("commit-badges-{folder}")), "open {folder} shows no counters");
+    }
     panel.update(cx, |p, cx| p.expand_or_collapse(cx));
     assert_eq!(visible(&panel, cx), ["docs", "src", "a.txt", "b.txt"], "Collapse All");
+    let painted = repaint(&view, cx);
+    for folder in ["docs", "src"] {
+        assert!(painted.borrow().contains_key(&format!("commit-badges-{folder}")), "closed {folder} shows its counters");
+    }
 
     panel.update(cx, |p, cx| p.set_all_files(true, cx));
     panel.update(cx, |p, cx| p.expand_or_collapse(cx));
@@ -191,4 +200,29 @@ fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut Tes
     panel.update(cx, |p, cx| p.apply(earlier, late, cx));
     let s = shown(&panel, cx);
     assert_eq!((s.sha.as_ref(), s.summary.as_ref()), (f.sha("second"), "Second"), "the earlier selection's late result is dropped");
+}
+
+#[gpui::test]
+fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = crate::git_view::wip::tests::open_with_editor(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    let open_path = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.diff().map(|d| d.read(cx).target.path.clone()));
+    for (list, row) in [(FileView::Path, "commit-files-row"), (FileView::Tree, "commit-tree-row")] {
+        panel.update(cx, |p, cx| p.set_view(list, cx));
+        click(&view, &format!("{row}-a.txt"), cx);
+        assert_eq!(open_path(cx).as_deref(), Some("a.txt"), "{list:?}: a click opens the file");
+        click(&view, &format!("{row}-src/util.rs"), cx);
+        assert_eq!(open_path(cx).as_deref(), Some("src/util.rs"), "{list:?}: another file switches the viewer to it");
+        click(&view, &format!("{row}-src/util.rs"), cx);
+        assert_eq!(open_path(cx), None, "{list:?}: a second click on the open file closes the viewer");
+        assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(sha.clone().into())), "the commit stays selected");
+        assert!(repaint(&view, cx).borrow().contains_key("git-col-sha"), "the graph is back");
+        assert_eq!(panel.read_with(cx, |p, _| (p.paths.selected(), p.tree().0.selected())), (None, None), "the file is deselected");
+        assert_eq!(shown(&panel, cx).sha.as_ref(), sha, "the panel keeps the commit");
+    }
+    select(&view, f.sha("second"), cx);
+    assert_eq!(shown(&panel, cx).summary.as_ref(), "Second", "the next commit selects as usual");
 }

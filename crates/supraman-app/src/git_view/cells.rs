@@ -1,6 +1,6 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
-use gpui::{AnyElement, Context, Div, SharedString, deferred, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, SharedString, deferred, div, prelude::*, px, relative};
 use supraman_gitman::{RefGroup, RefKind, Row};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
@@ -92,12 +92,8 @@ pub fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool, palett
         let shown = if selected { shown.opacity(dim) } else { shown.opacity(0.).group_hover(group, move |s| s.opacity(dim)) };
         return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
-    let shown = if view.list.is_empty() {
-        shown
-    } else {
-        let below = div().absolute().top(px(PILL)).left_0().child(deferred(list(ix, &view.list, colour, palette, hits, cx)).with_priority(1));
-        shown.relative().rounded_b(px(0.)).bg(palette.pill_solid(colour)).child(hit_target(hits, format!("git-reflist-{ix}-0"))).child(below)
-    };
+    let shown = shown.relative().child(hit_target(hits, format!("git-pill-{ix}")));
+    let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, &view.list, colour, palette, hits, cx)).with_priority(1)) };
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));
         d.child(div().relative().flex_none().text_xs().text_color(palette.muted).child(more).child(hit_target(hits, format!("git-more-{ix}"))))
@@ -106,19 +102,25 @@ pub fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool, palett
     cell.child(connector).into_any_element()
 }
 
-/// The groups after the first, stacked under the hovered pill as one block with it.
+/// Every group, the first on top, in one block laid over the row's pill: as wide as its widest group and never
+/// narrower than the pill, each group as wide as the block.
 fn list(ix: usize, groups: &[RefGroup], colour: usize, palette: &Palette, hits: &HitTargets, cx: &mut Context<GitView>) -> AnyElement {
     let last = groups.len().saturating_sub(1);
     div()
         .id(SharedString::from(format!("git-reflist-{ix}")))
         .occlude()
+        .absolute()
+        .top_0()
+        .left_0()
+        .min_w(relative(1.))
+        .max_w(px(320.))
         .flex()
         .flex_col()
-        .max_w(px(320.))
-        .children(groups.iter().enumerate().skip(1).map(|(i, g)| {
+        .children(groups.iter().enumerate().map(|(i, g)| {
             let key = format!("git-reflist-{ix}-{i}");
-            let corners = if i == last { px(4.) } else { px(0.) };
-            pill(format!("{key}-name"), g, colour, palette).relative().rounded(px(0.)).rounded_b(corners).bg(palette.pill_solid(colour)).child(hit_target(hits, key))
+            let top = if i == 0 { px(4.) } else { px(0.) };
+            let bottom = if i == last { px(4.) } else { px(0.) };
+            pill(format!("{key}-name"), g, colour, palette).relative().rounded(px(0.)).rounded_t(top).rounded_b(bottom).bg(palette.pill_solid(colour)).child(hit_target(hits, key))
         }))
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
             this.over_list = if *hovered { Some(ix) } else { this.over_list.filter(|r| *r != ix) };

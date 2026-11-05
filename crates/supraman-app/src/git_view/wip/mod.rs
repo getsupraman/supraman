@@ -205,6 +205,14 @@ impl WipPanel {
     }
 
     /// Opens `path`'s change in `section`; a folder of the tree opens nothing.
+    pub fn deselect_files(&mut self, cx: &mut Context<Self>) {
+        for list in [&self.unstaged, &self.staged] {
+            list.tree.select(None);
+            list.paths.select(None);
+        }
+        cx.notify();
+    }
+
     pub fn file_clicked(&mut self, section: Section, path: &str, cx: &mut Context<Self>) {
         let Some(shown) = self.shown() else { return };
         if let Some(file) = shown.files(section).iter().find(|f| f.path == path) {

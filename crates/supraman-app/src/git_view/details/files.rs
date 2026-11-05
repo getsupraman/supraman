@@ -69,8 +69,9 @@ pub fn tally(parts: impl IntoIterator<Item = (ChangeKind, String)>, cx: &App) ->
     }))
 }
 
-fn badges(counts: &Counts, cx: &App) -> Div {
-    tally(counts.parts().into_iter().map(|(kind, n)| (kind, n.to_string())), cx).ml(px(NAME_GAP)).text_color(cx.theme().colors().text_muted)
+/// A closed folder's counts, painted under `<list>-badges-<path>`.
+fn badges(counts: &Counts, key: String, hits: &HitTargets, cx: &App) -> Div {
+    tally(counts.parts().into_iter().map(|(kind, n)| (kind, n.to_string())), cx).relative().ml(px(NAME_GAP)).text_color(cx.theme().colors().text_muted).child(hit_target(hits, key))
 }
 
 /// A row's name, painted under `<list>-name-<path>`.
@@ -79,7 +80,8 @@ fn name(list: &str, row: &Row<'_, Mark, Counts>, colour: Hsla, hits: &HitTargets
     clipped(format!("{list}-{kind}-{}", row.path), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
 }
 
-/// A folder's name muted and a file's bright; a file's mark fills the lead slot, so every name at one depth starts at one x.
+/// A folder's name muted, its badges only while it is closed, and a file's bright; a file's mark fills the lead slot, so every
+/// name at one depth starts at one x.
 fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App) -> AnyElement {
     let row_div = div().flex().items_center().min_w_0();
     match row.item {
@@ -87,7 +89,7 @@ fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App)
             .child(mark(m, format!("{list}-mark-{}", row.path), hits, cx))
             .child(name(list, &row, cx.theme().colors().text, hits))
             .into_any_element(),
-        Item::Folder { aggregate, .. } => row_div.child(name(list, &row, secondary(cx), hits)).child(badges(aggregate, cx)).into_any_element(),
+        Item::Folder { aggregate, open } => row_div.child(name(list, &row, secondary(cx), hits)).when(!open, |d| d.child(badges(aggregate, format!("{list}-badges-{}", row.path), hits, cx))).into_any_element(),
     }
 }
 
