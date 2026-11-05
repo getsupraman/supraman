@@ -1,4 +1,4 @@
-use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle, HighlightKey};
+use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle, DisplaySnapshot, HighlightKey};
 use editor::{Editor, EditorEvent, RowHighlightOptions};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -8,8 +8,8 @@ use gpui::{
     prelude::*, px,
 };
 use language::Buffer;
-use multi_buffer::{Anchor, MultiBuffer};
-use text::{Point, ToPoint as _};
+use multi_buffer::{Anchor, MultiBuffer, MultiBufferRow};
+use text::{Bias, Point, ToPoint as _};
 use theme::ActiveTheme as _;
 
 use crate::look::{diff_colors, filler};
@@ -28,10 +28,17 @@ pub struct SplitDiff {
     pub new: Entity<Editor>,
     /// Set while one side copies the other's scroll, so the copy does not echo back.
     syncing: bool,
-    marks: Vec<Mark>,
-    total_rows: u32,
+    hunks: std::sync::Arc<[Hunk]>,
     dragging: Rc<Cell<bool>>,
     _scrolls: [Subscription; 2],
+}
+
+/// Buffer `rows` as `snapshot`'s display rows, from its first row's first wrap to its last row's last.
+fn display_rows(snapshot: &DisplaySnapshot, rows: &std::ops::Range<u32>) -> std::ops::Range<u32> {
+    let last = rows.end.saturating_sub(1).max(rows.start);
+    let end = Point::new(last, snapshot.buffer_snapshot().line_len(MultiBufferRow(last)));
+    let start = snapshot.point_to_display_point(Point::new(rows.start, 0), Bias::Left).row().0;
+    start..snapshot.point_to_display_point(end, Bias::Left).row().0 + 1
 }
 
 /// A striped filler of `rows` rows above `row` of `editor`'s buffer, or below its last row when `row` is past it.
@@ -123,13 +130,25 @@ impl SplitDiff {
             })
         };
         let scrolls = [follow(&old, new.clone(), window, cx), follow(&new, old.clone(), window, cx)];
-        let total_rows = new.update(cx, |e, cx| e.display_snapshot(cx).max_point().row().0 + 1);
-        SplitDiff { old, new, syncing: false, marks: ruler::marks(&diff.hunks), total_rows, dragging: Rc::default(), _scrolls: scrolls }
+        new.update(cx, |e, cx| e.set_show_vertical_scrollbar(false, cx));
+        SplitDiff { old, new, syncing: false, hunks: diff.hunks.clone(), dragging: Rc::default(), _scrolls: scrolls }
+    }
+
+    /// The new side's display rows, its soft-wrapped rows and fillers counted, as the ruler spans them.
+    pub fn total_rows(&self, cx: &mut App) -> u32 {
+        self.new.update(cx, |e, cx| e.display_snapshot(cx).max_point().row().0 + 1)
+    }
+
+    /// The ruler's marks in display rows: the removed runs on the old side's, the added on the new side's.
+    fn marks(&self, cx: &mut App) -> Vec<Mark> {
+        let old = self.old.update(cx, |e, cx| e.display_snapshot(cx));
+        let new = self.new.update(cx, |e, cx| e.display_snapshot(cx));
+        ruler::marks(&self.hunks, |rows| display_rows(&old, rows), |rows| display_rows(&new, rows))
     }
 
     /// Scrolls both sides so the view centres on `fraction` of the ruler.
     pub fn scroll_to(&mut self, fraction: f32, window: &mut Window, cx: &mut Context<Self>) {
-        let total = self.total_rows;
+        let total = self.total_rows(cx);
         self.new.update(cx, |e, cx| {
             let (x, visible) = (e.scroll_position(cx).x, e.visible_line_count().unwrap_or(0.));
             e.set_scroll_position(point(x, ruler::scroll_row_at(fraction, visible, total)), window, cx);
@@ -138,10 +157,11 @@ impl SplitDiff {
 
     fn ruler(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (y, visible) = self.new.update(cx, |e, cx| (e.scroll_position(cx).y, e.visible_line_count().unwrap_or(0.)));
+        let (marks, total) = (self.marks(cx), self.total_rows(cx));
         let status = cx.theme().status();
         let ruler = Ruler {
-            marks: self.marks.clone(),
-            total: self.total_rows,
+            marks,
+            total,
             view: y..y + visible,
             removed: status.deleted,
             added: status.created,
@@ -198,8 +218,7 @@ impl SplitDiff {
 
     /// Both sides' scroll rows, for a test.
     pub fn scroll_rows(&self, cx: &mut App) -> (f64, f64) {
-        let y = |e: &Entity<Editor>, cx: &mut App| e.update(cx, |e, cx| e.scroll_position(cx).y);
-        (y(&self.old, cx), y(&self.new, cx))
+        (crate::scroll_row(&self.old, cx), crate::scroll_row(&self.new, cx))
     }
 }
 
@@ -338,5 +357,36 @@ c")];
             cx.run_until_parked();
             assert_eq!(window.update(cx, |s, _, cx| s.scroll_rows(cx)).unwrap(), (y, y), "scrolled from the {} side", if from_old { "old" } else { "new" });
         }
+    }
+
+    #[gpui::test]
+    fn a_soft_wrapped_line_takes_its_rows_on_the_ruler_and_its_bottom_reaches_the_end(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init("Cascadia Mono", 13., cx));
+        let long = "word ".repeat(400);
+        let old: String = (0..120).map(|i| if i == 10 { format!("{long}
+") } else { format!("line {i}
+") }).collect();
+        let new = old.replace("line 100
+", "line one hundred
+");
+        let language = crate::language_for("README.md");
+        assert!(language.is_some(), "Markdown soft-wraps at the editor's width");
+        let task = cx.update(|cx| Diff::compute(old, new, language, cx));
+        cx.run_until_parked();
+        let diff = cx.foreground_executor().block_test(task);
+        let window = cx.add_window(|window, cx| SplitDiff::new(&diff, window, cx));
+        cx.run_until_parked();
+        let (total, marks) = window.update(cx, |s, _, cx| (s.total_rows(cx), s.marks(cx))).unwrap();
+        assert!(total > 121 + 5, "the wrapped line's rows count: {total} display rows for 120 lines");
+        let wrapped = total - 121;
+        let added = marks.iter().find(|m| m.lane == ruler::Lane::Added).expect("the changed line's mark");
+        assert_eq!(added.rows, 100 + wrapped..101 + wrapped, "the mark sits below the wrapped rows");
+        window.update(cx, |s, window, cx| s.scroll_to(1.0, window, cx)).unwrap();
+        cx.run_until_parked();
+        let (y, visible) = window.update(cx, |s, _, cx| s.new.update(cx, |e, cx| (e.scroll_position(cx).y, e.visible_line_count().unwrap_or(0.)))).unwrap();
+        assert!(visible > 0., "the editor laid out");
+        assert!((y + visible - total as f64).abs() < 1., "the bottom of the ruler shows the last line: top {y}, {visible} rows of {total}");
+        let (top, tall) = ruler::span(y..y + visible, total, 400.);
+        assert!(top >= 0. && top + tall <= 400. + 0.01, "the view's box inside the ruler: {top} + {tall}");
     }
 }

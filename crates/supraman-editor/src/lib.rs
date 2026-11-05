@@ -125,6 +125,11 @@ pub fn cursor_row(editor: &Entity<Editor>, cx: &mut App) -> u32 {
     })
 }
 
+/// The display row at the top of `editor`'s view.
+pub fn scroll_row(editor: &Entity<Editor>, cx: &mut App) -> f64 {
+    editor.update(cx, |e, cx| e.scroll_position(cx).y)
+}
+
 /// The text of `editor`'s buffer, as a test reads it.
 pub fn text(editor: &Entity<Editor>, cx: &App) -> String {
     editor.read(cx).buffer().read(cx).snapshot(cx).text()
