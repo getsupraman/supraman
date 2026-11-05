@@ -184,19 +184,41 @@ pub fn small(id: impl Into<ElementId>, label: impl Into<SharedString>, cx: &App)
 /// One option of a choice; the selected one is drawn as a selected list row.
 pub fn choice(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
-    div()
-        .id(id)
-        .flex()
-        .items_center()
+    chosen(div().id(id), selected, cx)
         .gap_2()
         .px_2()
         .py_0p5()
         .rounded_sm()
         .border_1()
         .border_color(if selected { colors.border_focused } else { colors.border })
+        .text_sm()
+        .child(div().flex_1().child(label.into()))
+}
+
+/// One option of a [`crate::segmented`] group: [`choice`]'s fills without a border of its own, `icon` and
+/// `label` side by side; paints under `key`.
+pub fn segment(hits: &HitTargets, key: impl Into<SharedString>, icon: Option<Icon>, label: Option<SharedString>, selected: bool, cx: &App) -> Stateful<Div> {
+    let key = key.into();
+    let colors = cx.theme().colors();
+    let fg = if selected { colors.text } else { colors.text_muted };
+    chosen(div().id(key.clone()), selected, cx)
+        .relative()
+        .flex_none()
+        .gap_1()
+        .h_full()
+        .px_2()
+        .text_xs()
+        .text_color(fg)
+        .children(icon.map(|i| i.svg(12., fg)))
+        .children(label)
+        .child(hit_target(hits, key.to_string()))
+}
+
+fn chosen(d: Stateful<Div>, selected: bool, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    d.flex()
+        .items_center()
+        .cursor_pointer()
         .when(selected, |d| d.bg(colors.element_selected))
         .when(!selected, |d| d.bg(colors.element_background).hover(|s| s.bg(colors.element_hover)))
-        .text_sm()
-        .cursor_pointer()
-        .child(div().flex_1().child(label.into()))
 }

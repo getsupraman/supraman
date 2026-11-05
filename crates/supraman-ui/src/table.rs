@@ -183,6 +183,8 @@ type BandFn<V> = dyn Fn(&V, usize, &App) -> Option<Hsla>;
 type SelectFn<V> = dyn Fn(&mut V, usize, &mut Window, &mut Context<V>);
 type ResizeFn<V> = dyn Fn(&mut V, Vec<Pixels>, bool, &mut Context<V>);
 type NearEndFn<V> = dyn Fn(&mut V, &mut Window, &mut Context<V>);
+type KeyFn<V> = dyn Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool;
+type RowKeyFn = dyn Fn(usize) -> String;
 
 /// One frame's table, built in the owner's render. Its element ids and hit keys start with `id`:
 /// `<id>-col-<column>`, `<id>-divider-<column>` (right of that column) and `<id>-row-<index>`.
@@ -199,6 +201,10 @@ pub struct Table<V> {
     on_select: Option<Rc<SelectFn<V>>>,
     on_resize: Option<Rc<ResizeFn<V>>>,
     near_end: Option<(Pixels, Rc<NearEndFn<V>>)>,
+    on_click: Option<Rc<SelectFn<V>>>,
+    on_key: Option<Rc<KeyFn<V>>>,
+    row_key: Option<Rc<RowKeyFn>>,
+    headless: bool,
 }
 
 impl<V: 'static> Table<V> {
@@ -225,7 +231,35 @@ impl<V: 'static> Table<V> {
             on_select: None,
             on_resize: None,
             near_end: None,
+            on_click: None,
+            on_key: None,
+            row_key: None,
+            headless: false,
         }
+    }
+
+    /// No header row.
+    pub fn headless(mut self) -> Self {
+        self.headless = true;
+        self
+    }
+
+    /// The part of a row's element id and hit key after `<id>-row-`; the row's index without one.
+    pub fn row_key(mut self, key: impl Fn(usize) -> String + 'static) -> Self {
+        self.row_key = Some(Rc::new(key));
+        self
+    }
+
+    /// Called after a click selects a row, following [`Table::on_select`].
+    pub fn on_click(mut self, f: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static) -> Self {
+        self.on_click = Some(Rc::new(f));
+        self
+    }
+
+    /// Gets every key pressed while the table has focus before Up/Down do; `true` when it took the key.
+    pub fn on_key(mut self, f: impl Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool + 'static) -> Self {
+        self.on_key = Some(Rc::new(f));
+        self
     }
 
     pub fn row_height(mut self, height: Pixels) -> Self {
@@ -266,8 +300,13 @@ impl<V: 'static> Table<V> {
         };
         let total = if total > px(0.) { total } else { self.widths.iter().fold(px(0.), |sum, w| sum + *w) };
         let widths: Rc<[Pixels]> = fit(&self.columns, &self.widths, total).into();
-        let (state, on_select) = (self.state.clone(), self.on_select.clone());
+        let (state, on_select, on_key) = (self.state.clone(), self.on_select.clone(), self.on_key.clone());
         let keys = cx.listener(move |this: &mut V, e: &KeyDownEvent, window, cx| {
+            if on_key.as_ref().is_some_and(|f| f(this, e.keystroke.key.as_str(), window, cx)) {
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
             let by = match e.keystroke.key.as_str() {
                 "up" => -1,
                 "down" => 1,
@@ -279,9 +318,10 @@ impl<V: 'static> Table<V> {
             }
             cx.notify();
         });
-        let header = self.header(&widths, cx);
+        let header = (!self.headless).then(|| self.header(&widths, cx));
         div()
             .id(self.id.clone())
+            .relative()
             .track_focus(&self.state.focus)
             .on_key_down(keys)
             .flex()
@@ -289,7 +329,8 @@ impl<V: 'static> Table<V> {
             .size_full()
             .min_w_0()
             .overflow_hidden()
-            .child(header)
+            .child(width_probe(self.state.clone()))
+            .children(header)
             .child(self.body(widths, cx))
     }
 
@@ -330,7 +371,6 @@ impl<V: 'static> Table<V> {
             .text_xs()
             .text_color(text)
             .on_drag_move(self.follow_drag(cx))
-            .child(width_probe(self.state.clone()))
             .children(cells)
     }
 
@@ -382,7 +422,7 @@ impl<V: 'static> Table<V> {
 
     fn body(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> impl IntoElement {
         let scroll = self.state.scroll.clone();
-        let Self { id, state, hits, rows, row_height, cell, band, on_select, near_end, .. } = self;
+        let Self { id, state, hits, rows, row_height, cell, band, on_select, near_end, on_click, row_key, .. } = self;
         let list_id = SharedString::from(format!("{id}-rows"));
         let group = row_group(&id);
         let paint = cx.processor(move |this: &mut V, range: Range<usize>, window, cx| {
@@ -398,7 +438,10 @@ impl<V: 'static> Table<V> {
             let (selection, hover) = (colors.element_selected, colors.ghost_element_hover);
             let mut out = Vec::with_capacity(range.len());
             for ix in range {
-                let key = format!("{id}-row-{ix}");
+                let key = match &row_key {
+                    Some(k) => format!("{id}-row-{}", k(ix)),
+                    None => format!("{id}-row-{ix}"),
+                };
                 let background = band.as_ref().and_then(|b| b(this, ix, cx));
                 let cells: Vec<AnyElement> = widths
                     .iter()
@@ -408,7 +451,7 @@ impl<V: 'static> Table<V> {
                         div().flex().flex_none().items_center().w(*width).h_full().px_2().overflow_hidden().child(content).into_any_element()
                     })
                     .collect();
-                let (state, on_select) = (state.clone(), on_select.clone());
+                let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))
@@ -425,6 +468,9 @@ impl<V: 'static> Table<V> {
                             state.select(Some(ix));
                             window.focus(&state.focus, cx);
                             if let Some(f) = &on_select {
+                                f(this, ix, window, cx);
+                            }
+                            if let Some(f) = &on_click {
                                 f(this, ix, window, cx);
                             }
                             cx.notify();
@@ -446,7 +492,7 @@ fn visible_end(scroll: &UniformListScrollHandle, row_height: Pixels) -> Option<u
     Some(((top + viewport) / row_height).ceil() as usize)
 }
 
-/// Records the header's width for the next frame's [`fit`], and asks for that frame when it changed.
+/// Records the table's width for the next frame's [`fit`], and asks for that frame when it changed.
 fn width_probe(state: TableState) -> impl IntoElement {
     canvas(
         move |bounds, window, _| {
