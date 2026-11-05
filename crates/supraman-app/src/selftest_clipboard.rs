@@ -81,6 +81,19 @@ pub(crate) fn put_text(text: &str, cx: &mut AsyncWindowContext) -> anyhow::Resul
     cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.into())))
 }
 
+pub(crate) const CLIPBOARD_TRIES: usize = 5;
+
+pub(crate) async fn read_own(cx: &mut AsyncWindowContext, own: impl Fn(&str) -> bool) -> anyhow::Result<Option<String>> {
+    let started = Instant::now();
+    loop {
+        let text = text(cx)?;
+        if text.as_deref().is_some_and(&own) || started.elapsed() > Duration::from_secs(1) {
+            return Ok(text);
+        }
+        crate::selftest::sleep(cx, Duration::from_millis(50)).await;
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use std::time::{Duration, Instant};

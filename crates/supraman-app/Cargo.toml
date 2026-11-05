@@ -19,7 +19,7 @@ sm = { path = "../sm" }
 supraman-claude = { path = "../supraman-claude" }
 supraman-core = { path = "../supraman-core" }
 supraman-editor = { path = "../supraman-editor" }
-supraman-gitman = { path = "../supraman-gitman" }
+supraman-gitman = { path = "../supraman-gitman", features = ["test-support"] }
 supraman-supervisor = { path = "../supraman-supervisor" }
 supraman-term = { path = "../supraman-term" }
 supraman-ui = { path = "../supraman-ui" }

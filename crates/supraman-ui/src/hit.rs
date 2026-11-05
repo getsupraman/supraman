@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use gpui::{Bounds, IntoElement, Pixels, Styled as _, canvas};
+use gpui::{Bounds, IntoElement, Pixels, Styled as _, canvas, px};
 
 /// Where a clickable thing was painted, and the part of the window it can be seen in: its clip, i.e.
 /// the visible area of the scroll container around it (the whole window when there is none).
@@ -12,10 +12,14 @@ pub struct Hit {
     pub visible: Bounds<Pixels>,
 }
 
+/// How far an element's snapped bounds may pass its clip and still count as inside: one device pixel at
+/// a fractional scale factor.
+pub const SNAP: Pixels = px(1.);
+
 impl Hit {
     pub fn fully_visible(&self) -> bool {
         let (b, v) = (self.bounds, self.visible);
-        b.left() >= v.left() && b.top() >= v.top() && b.right() <= v.right() && b.bottom() <= v.bottom()
+        b.left() >= v.left() - SNAP && b.top() >= v.top() - SNAP && b.right() <= v.right() + SNAP && b.bottom() <= v.bottom() + SNAP
     }
 }
 
@@ -41,7 +45,7 @@ pub fn hit_target(hits: &HitTargets, key: String) -> impl IntoElement {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, size};
+    use gpui::{point, size};
 
     use super::*;
 
@@ -58,5 +62,7 @@ mod tests {
         assert!(!Hit { bounds: rect(406., 846., 41., 19.), visible: tree }.fully_visible(), "below the fold");
         assert!(!Hit { bounds: rect(406., 550., 41., 19.), visible: tree }.fully_visible(), "under the section above");
         assert!(!Hit { bounds: rect(470., 700., 41., 19.), visible: tree }.fully_visible(), "past the right edge");
+        let group = rect(1123., 383., 112., 22.);
+        assert!(Hit { bounds: rect(1122.67, 382.67, 56., 22.67), visible: group }.fully_visible(), "snapped a device pixel past its clip");
     }
 }

@@ -60,8 +60,16 @@ pub const CO_AUTHORED: &str = "Move old.txt to new.txt\n\nThe old name no longer
 
 impl Fixture {
     pub fn new() -> Fixture {
+        Fixture::of(tempfile::tempdir().expect("temp dir"))
+    }
+
+    /// The same repository in a temp dir under `parent`.
+    pub fn new_in(parent: &Path) -> Fixture {
+        Fixture::of(tempfile::tempdir_in(parent).expect("temp dir"))
+    }
+
+    fn of(temp: TempDir) -> Fixture {
         let git = system_git();
-        let temp = tempfile::tempdir().expect("temp dir");
         let dir = temp.path().join("repo");
         let worktree = temp.path().join("wt");
         let mut f = Fixture { git, temp, dir, worktree, shas: BTreeMap::new(), time: FIRST_TIME };

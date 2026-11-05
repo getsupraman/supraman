@@ -135,7 +135,6 @@ impl DiffView {
         self.layout
     }
 
-    #[cfg(test)]
     pub fn current(&self) -> Option<usize> {
         self.current
     }

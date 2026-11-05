@@ -7,6 +7,7 @@ pub mod diff;
 mod graph;
 mod live;
 mod load;
+pub mod probe;
 mod refresh;
 mod wip;
 
@@ -177,7 +178,6 @@ impl GitView {
         &self.wip_panel
     }
 
-    #[cfg(test)]
     pub fn diff(&self) -> Option<&Entity<DiffView>> {
         self.diff.as_ref().map(|(d, _)| d)
     }
@@ -370,7 +370,7 @@ impl GitView {
             None => self.render_table(cx),
         };
         let table = div().flex_1().min_w_0().h_full().child(first);
-        let panel = div().flex_none().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
+        let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
         SplitPane { id: "git-split".into(), min_first: px(320.), min_second: px(260.), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;

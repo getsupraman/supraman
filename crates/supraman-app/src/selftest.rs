@@ -606,7 +606,7 @@ pub(crate) async fn scrolled_into_view(view: &Entity<FleetView>, key: &str, cx: 
             }
             return Ok(b);
         }
-        if b.size.height > v.size.height || b.size.width > v.size.width {
+        if b.size.height > v.size.height + supraman_ui::hit::SNAP * 2. || b.size.width > v.size.width + supraman_ui::hit::SNAP * 2. {
             bail!("{key} ({b:?}) is larger than its visible area {v:?}");
         }
         let dy = if b.bottom() > v.bottom() { v.bottom() - margin - b.bottom() } else { v.top() + margin - b.top() };
@@ -1065,6 +1065,9 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     let tasked = step("7+t", crate::selftest_start::run(view, &home(), cx)).await?;
     println!("step 7+t: {tasked}");
 
+    let git = step("7g", crate::selftest_git::run(view, &home(), cx)).await?;
+    println!("step 7g: {git}");
+
     let cached = step("7+c", async {
         crate::view::tree_check::set(false);
         let (mismatches, compared) = crate::view::tree_check::take();
@@ -1098,18 +1101,7 @@ async fn gate(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::
     Ok(())
 }
 
-pub(crate) const CLIPBOARD_TRIES: usize = 5;
-
-pub(crate) async fn read_own(cx: &mut AsyncWindowContext, own: impl Fn(&str) -> bool) -> anyhow::Result<Option<String>> {
-    let started = Instant::now();
-    loop {
-        let text = crate::selftest_clipboard::text(cx)?;
-        if text.as_deref().is_some_and(&own) || started.elapsed() > Duration::from_secs(1) {
-            return Ok(text);
-        }
-        sleep(cx, Duration::from_millis(50)).await;
-    }
-}
+pub(crate) use crate::selftest_clipboard::{CLIPBOARD_TRIES, read_own};
 
 /// The row is read from the last frame but the drag lands on the grid as it is: it waits for a frame that caught up, and drags again when the grid moved.
 pub(crate) async fn select_wheel_line(terminal: &Entity<Terminal>, cx: &mut AsyncWindowContext) -> anyhow::Result<(i32, String)> {

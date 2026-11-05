@@ -18,6 +18,7 @@ mod selftest_desktop;
 mod selftest_drop;
 mod selftest_first_run;
 mod selftest_font;
+mod selftest_git;
 mod selftest_hand;
 mod selftest_launch;
 mod selftest_left;
