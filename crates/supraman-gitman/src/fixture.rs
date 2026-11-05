@@ -24,6 +24,12 @@ pub fn system_git() -> Git {
 
 /// Runs `git -C dir args` with no user or system config (only the repo's own), `input` on stdin; panics unless it exits 0.
 pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> String {
+    let out = run_git(git, dir, args, env, input);
+    assert!(out.success(), "git {args:?} in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr));
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
     let mut cmd = process::command(&git.path);
     cmd.arg("-C").arg(dir).args(args);
     cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -31,9 +37,7 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
     env.iter().for_each(|(k, v)| {
         cmd.env(k, v);
     });
-    let out = process::run_bytes(&mut cmd, input, TIMEOUT, Kill::Tree).expect("git runs");
-    assert!(out.success(), "git {args:?} in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
+    process::run_bytes(&mut cmd, input, TIMEOUT, Kill::Tree).expect("git runs")
 }
 
 /// One repository with a commit of every kind: a root, a rename with co-authors on `feature`, a `--no-ff` merge,
@@ -83,6 +87,15 @@ impl Fixture {
 
     pub fn write(&self, path: &str, bytes: &[u8]) {
         std::fs::write(self.dir.join(path), bytes).unwrap();
+    }
+
+    /// The worktree `wt` (on `side`) stops merging `main` on a conflict in `a.txt`.
+    pub fn conflict(&self) {
+        std::fs::write(self.worktree.join("a.txt"), b"side
+").unwrap();
+        git_in(&self.git, &self.worktree, &["commit", "-q", "--no-verify", "-am", "Side's a.txt"], &[], None);
+        let merge = run_git(&self.git, &self.worktree, &["merge", "-q", "--no-ff", "--no-verify", "--no-edit", "main"], &[], None);
+        assert!(!merge.success(), "the merge stops on a conflict");
     }
 
     fn commit(&mut self, label: &'static str, message: &str) {

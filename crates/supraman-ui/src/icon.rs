@@ -52,11 +52,13 @@ pub enum Icon {
     File,
     FileDiff,
     ChevronUp,
+    Untracked,
+    Conflict,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 48] = [
+    const ALL: [Icon; 50] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -105,6 +107,8 @@ impl Icon {
         Icon::File,
         Icon::FileDiff,
         Icon::ChevronUp,
+        Icon::Untracked,
+        Icon::Conflict,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -157,6 +161,8 @@ impl Icon {
             Icon::File => include_bytes!("../assets/icons/file.svg"),
             Icon::FileDiff => include_bytes!("../assets/icons/file_diff.svg"),
             Icon::ChevronUp => include_bytes!("../assets/icons/chevron_up.svg"),
+            Icon::Untracked => include_bytes!("../assets/icons/circle_help.svg"),
+            Icon::Conflict => include_bytes!("../assets/icons/git_merge_conflict.svg"),
         }
     }
 

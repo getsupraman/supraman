@@ -8,21 +8,19 @@ use supraman_core::time;
 use supraman_ui::button;
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
-use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::split::HeightBar;
 use supraman_ui::stall;
 use supraman_ui::tooltip::Tooltip;
-use supraman_ui::tree::Order;
 use theme::ActiveTheme as _;
 
-use super::files::{kind_word, mark_icon};
+use super::files::{self, kind_word, mark_icon};
 use super::{CommitPanel, FileView, MESSAGE_HEIGHT, PanelEvent, Shown, State};
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::graph::avatar;
 use crate::git_view::load::initials;
 
 /// The panel and the message box as steps of the theme's text over its editor background.
-const PANEL_STEP: f32 = 0.025;
+pub(crate) const PANEL_STEP: f32 = 0.025;
 const BOX_STEP: f32 = 0.06;
 
 fn short(sha: &str) -> SharedString {
@@ -34,7 +32,7 @@ fn person_colour(email: &str) -> usize {
     email.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % supraman_gitman::LANE_COLOURS
 }
 
-fn placeholder(title: &str, detail: Option<&str>, cx: &App) -> AnyElement {
+pub(crate) fn placeholder(title: &str, detail: Option<&str>, cx: &App) -> AnyElement {
     let colors = cx.theme().colors().clone();
     div()
         .flex()
@@ -166,18 +164,8 @@ impl CommitPanel {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
-        let (icon, words) = match self.order {
-            Order::Ascending => (Icon::SortDown, "Names A–Z; click for Z–A"),
-            Order::Descending => (Icon::SortUp, "Names Z–A; click for A–Z"),
-        };
-        let sort = button::icon(&self.hits, "commit-sort", icon.svg(14., colors.text_muted), px(24.), cx)
-            .tooltip(Tooltip::text(words))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_order(this.order.reversed(), cx)));
-        let segments = [Segment::new("path").icon(Icon::ListFlat).label("Path"), Segment::new("tree").icon(Icon::ListTree).label("Tree")];
-        let chosen = usize::from(self.view == FileView::Tree);
-        let toggle = (!self.all_files).then(|| {
-            segmented(&self.hits, "commit-view", &segments, chosen, |this: &mut CommitPanel, i, _, cx| this.set_view(if i == 0 { FileView::Path } else { FileView::Tree }, cx), cx)
-        });
+        let sort = files::sort_button(&self.hits, "commit", self.order, |this: &mut CommitPanel, order, cx| this.set_order(order, cx), cx);
+        let toggle = (!self.all_files).then(|| files::view_toggle(&self.hits, "commit", self.view, |this: &mut CommitPanel, view, cx| this.set_view(view, cx), cx));
         let all = self.all_files;
         let tick = button::checkbox(&self.hits, "commit-all-files", all, cx).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_all_files(!all, cx)));
         div()
@@ -196,7 +184,9 @@ impl CommitPanel {
         let colors = cx.theme().colors().clone();
         let column = div().flex().flex_col().flex_1().min_h_0().px_1();
         if !self.all_files && self.view == FileView::Path {
-            return column.child(self.render_paths(shown, cx));
+            let rows = shown.clone();
+            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), cx);
+            return column.child(list.flex_1().min_h_0());
         }
         let (_, expanded) = self.tree();
         let label = if expanded { "Collapse All" } else { "Expand All" };
@@ -210,6 +200,12 @@ impl CommitPanel {
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.expand_or_collapse(cx)));
         let filter = self.all_files.then(|| self.filter_box(window, cx));
         column.children(filter.map(|f| div().flex_none().px_1().pb_1().child(f))).child(div().flex().flex_none().pb_0p5().child(expand)).child(self.render_tree(cx))
+    }
+
+    /// The tree on show, with View all files the whole one.
+    fn render_tree(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (tree, _) = self.tree();
+        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), cx).flex_1().min_h_0().into_any_element()
     }
 
     fn render_shown(&mut self, shown: Rc<Shown>, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -239,7 +235,6 @@ impl Render for CommitPanel {
         let bg = blend(colors.text.opacity(PANEL_STEP), colors.editor_background);
         let content = match &self.state {
             State::Empty => placeholder("No commit selected", Some("Select a commit to see its message and files."), cx),
-            State::Wip => placeholder("Working directory changes", Some("The changes not yet committed."), cx),
             State::Loading => placeholder("Reading the commit…", None, cx),
             State::Failed(why) => placeholder("Cannot read this commit", Some(why), cx),
             State::Shown(shown) => {

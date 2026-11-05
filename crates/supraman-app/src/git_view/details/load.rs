@@ -21,7 +21,7 @@ pub struct Counts {
 impl Counts {
     pub fn add(&mut self, mark: &Mark) {
         match mark {
-            Some(ChangeKind::Added | ChangeKind::Copied) => self.added += 1,
+            Some(ChangeKind::Added | ChangeKind::Copied | ChangeKind::Untracked) => self.added += 1,
             Some(ChangeKind::Deleted) => self.deleted += 1,
             Some(ChangeKind::Renamed) => self.renamed += 1,
             Some(ChangeKind::Modified | ChangeKind::TypeChanged | ChangeKind::Unmerged) => self.modified += 1,

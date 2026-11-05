@@ -11,6 +11,8 @@ pub enum ChangeKind {
     /// File, symlink or submodule became another of these.
     TypeChanged,
     Unmerged,
+    /// In the worktree only, unknown to the index.
+    Untracked,
 }
 
 impl ChangeKind {

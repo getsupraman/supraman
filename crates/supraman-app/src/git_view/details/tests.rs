@@ -85,7 +85,7 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
         v.selection_moved(cx);
     });
     cx.run_until_parked();
-    assert!(panel.read_with(cx, |p, _| matches!(p.state(), State::Wip)), "the WIP row shows its placeholder");
+    assert!(panel.read_with(cx, |p, _| matches!(p.state(), State::Empty)), "the WIP row leaves the commit panel to the WIP panel");
 }
 
 /// A commit on `side` (the fixture's worktree) adding files in folders, changing `a.txt` and deleting `b.txt`.

@@ -1,7 +1,7 @@
 //! The commit panel right of the graph: the selected commit's message, author, parents and files, read
 //! off the UI thread on each selection, read-only (C146).
 
-mod files;
+pub mod files;
 mod load;
 mod render;
 
@@ -21,6 +21,7 @@ use supraman_ui::tree::{Order, TreeState};
 
 pub use files::{kind_word, mark_icon};
 pub use load::{Counts, Mark};
+pub(crate) use render::{PANEL_STEP, placeholder};
 
 use super::Selected;
 
@@ -56,7 +57,6 @@ pub struct Shown {
 
 pub enum State {
     Empty,
-    Wip,
     Loading,
     Failed(String),
     Shown(Rc<Shown>),
@@ -134,7 +134,7 @@ impl CommitPanel {
         self.colour = colour;
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
-            (Some(Selected::Wip), _) => self.state = State::Wip,
+            (Some(Selected::Wip), _) => self.state = State::Empty,
             (Some(Selected::Commit(_)), None) => self.state = State::Loading,
             (Some(Selected::Commit(sha)), Some(repo)) => {
                 if !matches!(self.state, State::Shown(_)) {
@@ -262,13 +262,13 @@ impl CommitPanel {
         if shown.files.contains(path.as_ref()) {
             let change = shown.changes.iter().find(|c| c.path == path.as_ref()).cloned();
             let parent = shown.parents.first().map(|p| p.to_string());
-            cx.emit(PanelEvent::File(super::diff::Target { sha: shown.sha.to_string(), parent, path: path.to_string(), change }));
+            cx.emit(PanelEvent::File(super::diff::Target::commit(shown.sha.to_string(), parent, path.to_string(), change)));
         }
     }
 }
 
 /// By path ignoring case, then as written; reversed for Z–A.
-fn sort_changes(changes: &mut [FileChange], order: Order) {
+pub(crate) fn sort_changes(changes: &mut [FileChange], order: Order) {
     changes.sort_by(|a, b| {
         let by = a.path.to_lowercase().cmp(&b.path.to_lowercase()).then_with(|| a.path.cmp(&b.path));
         if order == Order::Descending { by.reverse() } else { by }

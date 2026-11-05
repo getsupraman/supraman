@@ -148,7 +148,7 @@ fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &
         let top = &v.rows[0];
         assert!(top.wip() && v.rows[1].sha.as_ref() == f.sha("ahead"), "WIP, then HEAD's commit");
         assert!(top.row.edges.iter().all(|e| e.dashed), "its edge to HEAD is dashed");
-        assert_eq!(v.wip.as_deref(), Some("+2 ✎2 −1"), "s.txt and u.txt added, a.txt and the rename changed, b.txt deleted");
+        assert_eq!(v.wip.map(|w| w.counts()).as_deref(), Some("+2 ✎2 −1"), "s.txt and u.txt added, a.txt and the rename changed, b.txt deleted");
         assert_eq!(v.rows.iter().filter(|r| r.wip()).count(), 1);
     });
     f.git(&["reset", "-q", "--hard"]);
@@ -156,7 +156,7 @@ fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &
     view.update(cx, |v, cx| v.reload(cx));
     cx.run_until_parked();
     view.read_with(cx, |v, _| {
-        assert!(v.rows.iter().all(|r| !r.wip()) && v.wip.as_deref().is_none(), "a clean tree has no WIP row");
+        assert!(v.rows.iter().all(|r| !r.wip()) && v.wip.is_none(), "a clean tree has no WIP row");
         assert_eq!(v.rows[0].sha.as_ref(), f.sha("ahead"));
     });
 }

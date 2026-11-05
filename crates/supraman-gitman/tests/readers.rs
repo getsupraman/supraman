@@ -117,7 +117,7 @@ fn work_in_progress_entries_and_a_merge_under_way() {
     assert_eq!((entry("s.txt").staged, entry("s.txt").unstaged), (Some(ChangeKind::Added), None));
     assert_eq!((entry("renamed.txt").kind, entry("renamed.txt").orig_path.as_deref()), (EntryKind::Renamed { score: 100 }, Some("new.txt")));
     assert_eq!((entry("b.txt").staged, entry("b.txt").unstaged), (None, Some(ChangeKind::Deleted)));
-    assert_eq!(entry("u.txt").kind, EntryKind::Untracked);
+    assert_eq!((entry("u.txt").kind, entry("u.txt").unstaged), (EntryKind::Untracked, Some(ChangeKind::Untracked)));
     assert_eq!(s.entries.len(), 5, "bin.dat is unchanged: {:?}", s.entries);
     assert_eq!(s.operation, None);
     let env = [("GIT_AUTHOR_DATE", "@1700001000 +0000".to_string()), ("GIT_COMMITTER_DATE", "@1700001000 +0000".to_string())];
@@ -125,4 +125,35 @@ fn work_in_progress_entries_and_a_merge_under_way() {
     let in_worktree = status(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
     assert_eq!((in_worktree.operation, in_worktree.branch.head.as_deref()), (Some(Operation::Merge), Some("side")));
     assert_eq!(status(&f.repo()).unwrap().operation, None, "the merge is the worktree's own");
+}
+
+#[test]
+fn the_staged_and_the_worktree_side_of_a_file() {
+    let f = Fixture::new();
+    let repo = f.repo();
+    assert_eq!(staged_blob(&repo, "a.txt").unwrap().bytes, b"staged
+");
+    assert_eq!(worktree_file(&repo, "a.txt").unwrap().bytes, b"staged
+unstaged
+");
+    assert_eq!(worktree_file(&repo, "u.txt").unwrap().bytes, b"untracked
+");
+    assert!(staged_blob(&repo, "u.txt").is_err(), "an untracked file has no staged side");
+    assert!(matches!(worktree_file(&repo, "b.txt"), Err(GitError::Read { .. })), "b.txt is deleted");
+    let inside = Repo::new(f.git.clone(), f.dir.join("sub"));
+    std::fs::create_dir(f.dir.join("sub")).unwrap();
+    assert_eq!(worktree_file(&inside, "a.txt").unwrap().bytes, b"staged
+unstaged
+", "paths are from the top");
+    assert!(worktree_file(&repo, "bin.dat").unwrap().binary);
+}
+
+#[test]
+fn a_conflicted_file_is_unmerged_in_the_status() {
+    let f = Fixture::new();
+    f.conflict();
+    let s = status(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
+    let a = s.entries.iter().find(|e| e.path == "a.txt").expect("a.txt is listed");
+    assert_eq!((a.kind, a.staged, a.unstaged), (EntryKind::Unmerged, Some(ChangeKind::Unmerged), Some(ChangeKind::Unmerged)));
+    assert_eq!(s.operation, Some(Operation::Merge));
 }

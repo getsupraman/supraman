@@ -15,7 +15,7 @@ mod status;
 #[cfg(feature = "test-support")]
 pub mod fixture;
 
-pub use blob::{Blob, blob, is_binary};
+pub use blob::{Blob, blob, is_binary, staged_blob, worktree_file};
 pub use changes::{ChangeKind, FileChange, TreeFile, changed_between, changed_files, tree};
 pub use history::{Commit, Details, FIRST_PAGE, NEXT_PAGE, Page, Person, Signature, details, history};
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row};

@@ -32,7 +32,7 @@ pub struct Entry {
     pub orig_path: Option<String>,
     /// Index against HEAD; for an unmerged entry, what "us" did.
     pub staged: Option<ChangeKind>,
-    /// Worktree against the index; for an unmerged entry, what "them" did.
+    /// Worktree against the index; for an unmerged entry, what "them" did; `Untracked` for an untracked one.
     pub unstaged: Option<ChangeKind>,
 }
 
@@ -88,7 +88,7 @@ fn parse_status(out: &[u8]) -> Result<Status, String> {
                 entry.orig_path = Some(records.next().ok_or("a rename without its source")?);
                 status.entries.push(entry);
             }
-            "?" => status.entries.push(Entry { kind: EntryKind::Untracked, path: rest.into(), orig_path: None, staged: None, unstaged: None }),
+            "?" => status.entries.push(Entry { kind: EntryKind::Untracked, path: rest.into(), orig_path: None, staged: None, unstaged: Some(ChangeKind::Untracked) }),
             _ => {}
         }
     }
@@ -148,6 +148,6 @@ u UU N... 100644 100644 100644 100644 h1 h2 h3 c.txt\0? u.txt\0";
         assert_eq!((e[0].path.as_str(), e[0].staged, e[0].unstaged), ("a b.txt", Some(ChangeKind::Modified), Some(ChangeKind::Modified)));
         assert_eq!((e[1].kind, e[1].path.as_str(), e[1].orig_path.as_deref()), (EntryKind::Renamed { score: 100 }, "new name", Some("old name")));
         assert_eq!((e[2].kind, e[2].staged), (EntryKind::Unmerged, Some(ChangeKind::Unmerged)));
-        assert_eq!(e[3].kind, EntryKind::Untracked);
+        assert_eq!((e[3].kind, e[3].unstaged), (EntryKind::Untracked, Some(ChangeKind::Untracked)));
     }
 }
