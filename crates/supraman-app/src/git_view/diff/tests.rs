@@ -78,7 +78,7 @@ fn change(r: &Repo, path: &str) -> Option<FileChange> {
 }
 
 fn show(view: &Entity<GitView>, r: &Repo, path: &str, cx: &mut VisualTestContext) -> Entity<DiffView> {
-    let target = Target { sha: r.change.clone(), parent: Some(r.base.clone()), path: path.into(), change: change(r, path) };
+    let target = Target::commit(r.change.clone(), Some(r.base.clone()), path.into(), change(r, path));
     view.update(cx, |v, cx| v.open_diff(target, cx));
     cx.run_until_parked();
     redraw(view, cx);

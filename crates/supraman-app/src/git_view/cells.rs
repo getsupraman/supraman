@@ -53,20 +53,15 @@ fn kind_icon(kind: RefKind) -> Icon {
     }
 }
 
+/// A name's box in a lane's pill fill, as a ref shows on the graph.
+pub fn pill_box(colour: usize, palette: &Palette) -> Div {
+    div().flex().items_center().gap_1().min_w_0().h(px(18.)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_color(palette.text).text_xs()
+}
+
 fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette) -> Div {
     let mut kinds: Vec<RefKind> = group.refs.iter().map(|r| r.kind).collect();
     kinds.dedup();
-    div()
-        .flex()
-        .items_center()
-        .gap_1()
-        .min_w_0()
-        .h(px(18.))
-        .px_1p5()
-        .rounded(px(4.))
-        .bg(palette.pill(colour))
-        .text_color(palette.text)
-        .text_xs()
+    pill_box(colour, palette)
         .when(group.head(), |d| d.child(Icon::Check.svg(12., palette.text)))
         .children(kinds.into_iter().map(|k| kind_icon(k).svg(12., palette.text)))
         .child(clipped(key, group.name.clone(), false))

@@ -53,6 +53,11 @@ impl Wip {
         wip
     }
 
+    /// The changed paths.
+    pub fn total(&self) -> usize {
+        self.added + self.modified + self.deleted
+    }
+
     /// `+1 ✎2 −1`, the zero counts left out.
     pub fn counts(&self) -> String {
         [(self.added, "+"), (self.modified, "✎"), (self.deleted, "−")]

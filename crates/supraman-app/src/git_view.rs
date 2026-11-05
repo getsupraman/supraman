@@ -6,6 +6,7 @@ mod details;
 pub mod diff;
 mod graph;
 mod load;
+mod wip;
 
 #[cfg(test)]
 mod tests;
@@ -25,7 +26,8 @@ use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
 use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
-use load::{GraphRow, Problem};
+use load::{GraphRow, Problem, Wip};
+use wip::WipPanel;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub const TABLE: &str = "git";
@@ -84,7 +86,7 @@ pub struct GitView {
     layout: Option<Layout>,
     rows: Vec<GraphRow>,
     commits: usize,
-    wip: Option<String>,
+    wip: Option<Wip>,
     more: bool,
     paging: bool,
     page_error: Option<String>,
@@ -93,8 +95,9 @@ pub struct GitView {
     hover_ref: Option<usize>,
     over_list: Option<usize>,
     panel: Entity<CommitPanel>,
+    wip_panel: Entity<WipPanel>,
     panel_width: Pixels,
-    _panel_events: Subscription,
+    _panel_events: [Subscription; 2],
     /// The file viewer in the graph's place, while one is open.
     diff: Option<(Entity<DiffView>, Subscription)>,
     /// The last viewer's mode and layout, the next one's start.
@@ -113,12 +116,8 @@ impl GitView {
             let defaults = columns();
             let widths = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).map_or(c.default, |w| px(*w as f32))).collect();
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
-            let events = cx.subscribe(&panel, |this: &mut GitView, _, e: &PanelEvent, cx| {
-                match e {
-                    PanelEvent::Parent(sha) => this.select_sha(sha, cx),
-                    PanelEvent::File(target) => this.open_diff(target.clone(), cx),
-                }
-            });
+            let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
+            let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event)];
             let mut view = GitView {
                 folder,
                 home,
@@ -138,6 +137,7 @@ impl GitView {
                 hover_ref: None,
                 over_list: None,
                 panel,
+                wip_panel,
                 panel_width: sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32)),
                 _panel_events: events,
                 diff: None,
@@ -150,6 +150,13 @@ impl GitView {
         })
     }
 
+    fn panel_event<P>(&mut self, _: Entity<P>, e: &PanelEvent, cx: &mut Context<Self>) {
+        match e {
+            PanelEvent::Parent(sha) => self.select_sha(sha, cx),
+            PanelEvent::File(target) => self.open_diff(target.clone(), cx),
+        }
+    }
+
     pub fn sizes(&self, cx: &App) -> GitSizes {
         GitSizes { widths: self.widths.iter().map(|w| whole(*w)).collect(), panel: Some(whole(self.panel_width)), message: Some(whole(self.panel.read(cx).message_height())) }
     }
@@ -157,6 +164,11 @@ impl GitView {
     #[cfg(test)]
     pub fn panel(&self) -> &Entity<CommitPanel> {
         &self.panel
+    }
+
+    #[cfg(test)]
+    pub fn wip_panel(&self) -> &Entity<WipPanel> {
+        &self.wip_panel
     }
 
     #[cfg(test)]
@@ -177,7 +189,11 @@ impl GitView {
 
     pub fn close_diff(&mut self, cx: &mut Context<Self>) {
         if let Some((view, _)) = self.diff.take() {
-            (self.diff_mode, self.diff_layout) = view.read_with(cx, |v, _| (v.mode(), v.layout()));
+            let (mode, layout, of) = view.read_with(cx, |v, _| (v.mode(), v.layout(), v.target.of.clone()));
+            if of != diff::Of::Conflicted {
+                self.diff_mode = mode;
+            }
+            self.diff_layout = layout;
             cx.notify();
         }
     }
@@ -195,6 +211,9 @@ impl GitView {
     fn selection_moved(&mut self, cx: &mut Context<Self>) {
         let colour = self.table.selected().and_then(|ix| self.rows.get(ix)).map_or(0, |r| r.row.colour);
         let selected = self.selected();
+        if selected == Some(Selected::Wip) {
+            self.wip_panel.update(cx, |p, cx| p.show(colour, cx));
+        }
         self.panel.update(cx, |p, cx| p.show(selected, colour, cx));
         cx.emit(GitEvent::Selected);
     }
@@ -204,6 +223,17 @@ impl GitView {
         let Some(ix) = self.rows.iter().position(|r| r.sha.as_ref() == sha) else { return };
         self.table.select(Some(ix));
         self.table.reveal(ix);
+        self.selection_moved(cx);
+        cx.notify();
+    }
+
+    /// Selects the WIP row, when the graph has one.
+    pub fn select_wip(&mut self, cx: &mut Context<Self>) {
+        if !self.rows.first().is_some_and(GraphRow::wip) {
+            return;
+        }
+        self.table.select(Some(0));
+        self.table.reveal(0);
         self.selection_moved(cx);
         cx.notify();
     }
@@ -230,8 +260,9 @@ impl GitView {
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
+                self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.repo = Some(first.repo);
-                self.wip = first.wip.map(|w| w.counts());
+                self.wip = first.wip;
                 self.load = Load::Ready;
             }
             Err(problem) => self.load = Load::Problem(problem),
@@ -285,7 +316,10 @@ impl GitView {
                 cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
             }
             1 => graph::cell(row, !row.row.refs.is_empty(), palette),
-            2 => cells::message(row, row.wip().then(|| self.wip.as_deref().unwrap_or_default()), palette),
+            2 => {
+                let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
+                cells::message(row, row.wip().then_some(counts.as_str()), palette)
+            }
             3 => cells::date(row, supraman_core::time::now_ms(), palette),
             _ => cells::sha(row, palette),
         }
@@ -310,13 +344,24 @@ impl GitView {
 }
 
 impl GitView {
+    /// The WIP panel for the WIP row, else the commit panel under the banner of a dirty tree.
+    fn render_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.selected();
+        if selected == Some(Selected::Wip) {
+            return div().size_full().child(self.wip_panel.clone()).into_any_element();
+        }
+        let dirty = self.wip.map_or(0, |w| w.total());
+        let banner = (dirty > 0 && selected.is_some()).then(|| wip::banner(dirty, &self.hits, cx));
+        div().size_full().flex().flex_col().children(banner).child(div().flex_1().min_h_0().child(self.panel.clone())).into_any_element()
+    }
+
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let first = match &self.diff {
             Some((view, _)) => view.clone().into_any_element(),
             None => self.render_table(cx),
         };
         let table = div().flex_1().min_w_0().h_full().child(first);
-        let panel = div().flex_none().w(self.panel_width).h_full().child(self.panel.clone());
+        let panel = div().flex_none().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
         SplitPane { id: "git-split".into(), min_first: px(320.), min_second: px(260.), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;

@@ -34,6 +34,8 @@ pub enum GitError {
     Failed { args: String, code: Option<i32>, stderr: String },
     #[error("git {args}: unexpected output: {what}")]
     Parse { args: String, what: String },
+    #[error("read {path}: {source}")]
+    Read { path: String, source: std::io::Error },
 }
 
 /// A repository (or a folder inside one) read with one git.

@@ -54,6 +54,8 @@ fn read_everything(f: &Fixture, repo: &Repo) {
     changed_between(repo, f.sha("root"), f.sha("ahead")).unwrap();
     tree(repo, "HEAD").unwrap();
     blob(repo, "HEAD", "bin.dat").unwrap();
+    staged_blob(repo, "a.txt").unwrap();
+    worktree_file(repo, "a.txt").unwrap();
     let rev = f.sha("root");
     for of in [DiffOf::Commit(f.sha("merge")), DiffOf::Revs(rev, "HEAD"), DiffOf::RevToWorktree(rev), DiffOf::RevToIndex(rev), DiffOf::IndexToWorktree] {
         patch(repo, of, &[]).unwrap();

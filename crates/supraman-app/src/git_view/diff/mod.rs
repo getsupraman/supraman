@@ -14,7 +14,7 @@ use supraman_gitman::Repo;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 
-pub use load::Target;
+pub use load::{Of, Target};
 
 gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff]);
 
@@ -90,6 +90,7 @@ impl DiffView {
                 }
             })
             .detach();
+            let mode = if target.of == Of::Conflicted { Mode::File } else { mode };
             DiffView { hits, target, mode, layout, content: Content::Loading, current: None, focus: cx.focus_handle() }
         })
     }

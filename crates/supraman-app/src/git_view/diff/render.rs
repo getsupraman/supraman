@@ -56,6 +56,7 @@ impl DiffView {
             .children(mark)
             .when(renamed, |d| d.child(path("diff-old-path", self.target.old_path(), cx)).child(Icon::Renamed.svg(12., colors.text_muted)))
             .child(path("diff-path", &self.target.path, cx).flex_1())
+            .children(self.target.side_word().map(|word| div().id("diff-side").flex_none().px_1p5().rounded_sm().border_1().border_color(colors.border).text_xs().text_color(colors.text_muted).child(word)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(encoding))
             .child(close)
     }
