@@ -56,6 +56,7 @@ pub(crate) mod details;
 mod drop;
 mod folder_list;
 mod folders;
+pub(crate) mod git_tab;
 mod left;
 mod links;
 mod manage;
@@ -140,6 +141,7 @@ pub enum TabKind {
     Attach { session_id: String },
     Shell,
     Work(Entity<WorkView>),
+    Git(Entity<crate::git_view::GitView>),
     Schedule(schedules::SchedulePage),
     Details(details::DetailsPage),
     Start(start::StartPage),
@@ -2121,7 +2123,7 @@ impl FleetView {
             TabKind::Attach { session_id } => *session_id == session.id,
             TabKind::Shell => tab.claude.as_deref() == Some(session.session_id.as_str()),
             TabKind::Saved(saved) => saved.session().is_some_and(|s| s.session_id == session.session_id),
-            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => false,
+            TabKind::Work(_) | TabKind::Git(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => false,
         }
     }
 
@@ -2219,7 +2221,7 @@ impl FleetView {
             TabKind::Attach { .. } => Some(tab_card::Kind::Attach),
             TabKind::Shell if tab.hand => Some(tab_card::Kind::Hand),
             TabKind::Shell => Some(tab_card::Kind::Shell),
-            TabKind::Work(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => None,
+            TabKind::Work(_) | TabKind::Git(_) | TabKind::Schedule(_) | TabKind::Details(_) | TabKind::Start(_) => None,
             TabKind::Saved(saved) => reopen::kind_of(saved),
         };
         tab_card::Card {

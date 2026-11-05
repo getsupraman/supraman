@@ -5340,6 +5340,7 @@ dependencies = [
  "sm",
  "supraman-claude",
  "supraman-core",
+ "supraman-gitman",
  "supraman-supervisor",
  "supraman-term",
  "supraman-ui",

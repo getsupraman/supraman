@@ -36,6 +36,11 @@ impl Column {
     }
 }
 
+/// The hover group of every row of table `id`, for a cell's `group_hover`.
+pub fn row_group(id: &str) -> SharedString {
+    SharedString::from(format!("{id}-row"))
+}
+
 fn flexible(columns: &[Column]) -> usize {
     columns.iter().position(|c| c.flexible).unwrap_or(columns.len().saturating_sub(1))
 }
@@ -379,6 +384,7 @@ impl<V: 'static> Table<V> {
         let scroll = self.state.scroll.clone();
         let Self { id, state, hits, rows, row_height, cell, band, on_select, near_end, .. } = self;
         let list_id = SharedString::from(format!("{id}-rows"));
+        let group = row_group(&id);
         let paint = cx.processor(move |this: &mut V, range: Range<usize>, window, cx| {
             if let (Some((within, f)), Some(end)) = (&near_end, visible_end(&state.scroll, row_height)) {
                 let within = (*within / row_height).ceil() as usize;
@@ -406,6 +412,7 @@ impl<V: 'static> Table<V> {
                 out.push(
                     div()
                         .id(SharedString::from(key.clone()))
+                        .group(group.clone())
                         .relative()
                         .flex()
                         .w_full()

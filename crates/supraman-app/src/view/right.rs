@@ -18,6 +18,7 @@ impl FleetView {
                     id: tab.id,
                     label: match tab.kind {
                         TabKind::Work(_) => div().flex().items_center().gap_1p5().child(crate::brand::workman(gpui::rems(1.), if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
+                        TabKind::Git(_) => div().flex().items_center().gap_1p5().child(Icon::GitGraph.svg(14., if self.active == Some(tab.id) { colors.text } else { colors.text_muted })).child(clipped).into_any_element(),
                         _ => clipped.into_any_element(),
                     },
                     title: title.into(),
@@ -70,6 +71,7 @@ impl FleetView {
         let status = cx.theme().status().clone();
         let content: AnyElement = match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
+            Some(Tab { kind: TabKind::Git(view), .. }) => view.clone().into_any_element(),
             Some(Tab { kind: TabKind::Schedule(page), .. }) => self
                 .render_schedule_page(page, cx)
                 .unwrap_or_else(|| placeholder(format!("Schedule {} of {} is gone.", page.id, page.workspace), cx)),

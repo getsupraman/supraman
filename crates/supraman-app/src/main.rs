@@ -53,6 +53,7 @@ mod transcripts_load;
 mod tray;
 mod updates;
 mod view;
+mod git_view;
 mod work_view;
 mod workman_setup;
 

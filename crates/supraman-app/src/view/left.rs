@@ -1192,6 +1192,15 @@ impl FleetView {
                 },
             ))
         };
+        let history = git.then(|| {
+            let (folder, title) = (repo.path.clone(), format!("Git · {}", repo.name));
+            self.hover_icon(format!("git-graph-{w}/{}", repo.name), Icon::GitGraph, "Show this folder's commit graph", &group, false, cx).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.open_git(folder.clone(), title.clone(), &[], cx);
+                },
+            ))
+        });
         div()
             .id(SharedString::from(rkey.clone()))
             .group(group)
@@ -1219,7 +1228,7 @@ impl FleetView {
             .when(parked, |d| d.child(tag("disabled", cx)))
             .children(self.folder_tags(w, repo, cx))
             .child(div().flex_1())
-            .child(div().flex().flex_none().items_center().gap(px(2.)).child(new_claude.map_or_else(slot, IntoElement::into_any_element)).child(terminal))
+            .child(div().flex().flex_none().items_center().gap(px(2.)).children(history).child(new_claude.map_or_else(slot, IntoElement::into_any_element)).child(terminal))
             .child(hit_target(&self.hits, format!("repo-row-{w}/{}", repo.name)))
             .on_mouse_down(MouseButton::Right, {
                 let (w, r) = (w.clone(), repo.name.clone());
