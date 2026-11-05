@@ -9,6 +9,7 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
+use crate::icon::Icon;
 
 fn base(hits: &HitTargets, key: SharedString, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
     div()
@@ -134,10 +135,33 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .child(label.into())
 }
 
-/// A tick box, `☑` while `on`, else `☐`; the caller adds its label, its click and any hover.
-pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool) -> Stateful<Div> {
+/// A tick box: [`tick`] in the accent colour, its border lit on hover; the caller adds its label and its click.
+pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();
-    div().id(key.clone()).relative().cursor_pointer().child(if on { "☑" } else { "☐" }).child(hit_target(hits, key.to_string()))
+    let colors = cx.theme().colors();
+    div()
+        .id(key.clone())
+        .group(key.clone())
+        .relative()
+        .flex_none()
+        .cursor_pointer()
+        .child(tick(on, colors.text_accent, cx).group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected })))
+        .child(hit_target(hits, key.to_string()))
+}
+
+/// A 14 px square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.
+pub fn tick(on: bool, fill: Hsla, cx: &App) -> Div {
+    let colors = cx.theme().colors();
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(14.))
+        .rounded_sm()
+        .border_1()
+        .border_color(if on { fill } else { colors.border })
+        .when(on, |d| d.bg(fill).child(Icon::Check.svg(10., gpui::white())))
 }
 
 /// A bordered button sized by its text; no hit key.

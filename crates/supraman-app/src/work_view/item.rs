@@ -216,7 +216,6 @@ impl WorkView {
             let checked = page.criteria.iter().filter(|c| c.checked).count();
             let mut s = section("Criteria", Some(format!("{checked}/{}", page.criteria.len())));
             for c in &page.criteria {
-                let (mark, color) = if c.checked { ("☑", status.success) } else { ("☐", colors.text_muted) };
                 let mut body = div().flex_1().min_w_0().flex().flex_col().child(prose(&c.text, colors.text));
                 if let Some(evidence) = c.evidence.as_deref().filter(|e| !e.is_empty()) {
                     body = body.child(prose(&format!("evidence: {evidence}"), colors.text_muted).text_xs());
@@ -229,7 +228,7 @@ impl WorkView {
                         .relative()
                         .flex()
                         .gap_2()
-                        .child(div().flex_none().text_color(color).child(mark))
+                        .child(div().flex_none().h(px(20.)).flex().items_center().child(button::tick(c.checked, status.success, cx)))
                         .child(div().flex_none().w(px(28.)).text_xs().text_color(colors.text_muted).child(SharedString::from(c.id.clone())))
                         .child(body)
                         .child(hit_target(&self.hits, criterion_key(&c.id, c.checked))),
