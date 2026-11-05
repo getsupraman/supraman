@@ -13,7 +13,7 @@ use supraman_ui::stall;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::files::{self, kind_word, mark_icon};
+use super::files::{self, kind_word};
 use super::{CommitPanel, FileView, MESSAGE_HEIGHT, PanelEvent, Shown, State};
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::graph::avatar;
@@ -25,6 +25,11 @@ const BOX_STEP: f32 = 0.06;
 
 fn short(sha: &str) -> SharedString {
     SharedString::from(sha.get(..7).unwrap_or(sha).to_string())
+}
+
+/// The author's date as the graph's date column says it.
+pub(super) fn authored(shown: &Shown) -> String {
+    time::stamp(shown.authored_ms)
 }
 
 /// A co-author's colour: one of the lanes, picked by their email so it stays theirs.
@@ -50,11 +55,10 @@ impl CommitPanel {
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().colors().text_muted;
         let sha = shown.sha.clone();
-        div().flex().flex_none().justify_center().items_center().gap_1().py_1p5().child(div().text_color(muted).child("commit:")).child(
-            button::ghost(&self.hits, "commit-sha", cx)
+        div().flex().flex_none().justify_center().items_baseline().gap_1().py_1p5().child(div().text_color(muted).child("commit:")).child(
+            fonts::figures(button::ghost(&self.hits, "commit-sha", cx))
                 .px_1()
                 .rounded_sm()
-                .font_family(fonts::MONO)
                 .child(short(&shown.sha))
                 .tooltip(Tooltip::text("Copy the full sha"))
                 .on_click(move |_: &ClickEvent, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(sha.to_string()))),
@@ -101,10 +105,9 @@ impl CommitPanel {
         let colors = cx.theme().colors().clone();
         let parents = shown.parents.iter().enumerate().map(|(i, sha)| {
             let full = sha.clone();
-            button::ghost(&self.hits, format!("commit-parent-{i}"), cx)
+            fonts::figures(button::ghost(&self.hits, format!("commit-parent-{i}"), cx))
                 .px_0p5()
                 .rounded_sm()
-                .font_family(fonts::MONO)
                 .text_color(colors.text)
                 .child(short(sha))
                 .tooltip(Tooltip::text("Select this parent in the graph"))
@@ -113,7 +116,7 @@ impl CommitPanel {
         let parents = div()
             .flex()
             .flex_none()
-            .items_center()
+            .items_baseline()
             .gap_0p5()
             .text_xs()
             .when(!shown.parents.is_empty(), |d| d.child(div().text_color(colors.text_muted).child(if shown.parents.len() > 1 { "parents:" } else { "parent:" })))
@@ -123,7 +126,7 @@ impl CommitPanel {
             .text_color(colors.text)
             .child(shown.author.clone())
             .tooltip(Tooltip::text(format!("{} <{}>", shown.author, shown.author_email)));
-        let when = div().flex().gap_1().text_xs().child(div().text_color(colors.text_muted).child("authored")).child(div().text_color(colors.text).child(SharedString::from(time::date_words(shown.authored_ms))));
+        let when = div().flex().gap_1().text_xs().child(div().text_color(colors.text_muted).child("authored")).child(div().text_color(colors.text).child(SharedString::from(authored(shown))));
         div()
             .flex()
             .flex_none()
@@ -154,12 +157,8 @@ impl CommitPanel {
     }
 
     fn counts(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
-        let text = cx.theme().colors().text;
-        let parts = shown.counts.parts().into_iter().map(|(kind, n)| {
-            let (icon, colour) = mark_icon(kind, cx);
-            div().flex().items_center().gap_1().child(icon.svg(12., colour)).child(SharedString::from(format!("{n} {}", kind_word(kind))))
-        });
-        div().flex().flex_none().items_center().gap_3().px_2().text_xs().text_color(text).children(parts.collect::<Vec<_>>())
+        let parts = shown.counts.parts().into_iter().map(|(kind, n)| (kind, format!("{n} {}", kind_word(kind))));
+        files::tally(parts, cx).px_2().text_color(cx.theme().colors().text)
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {

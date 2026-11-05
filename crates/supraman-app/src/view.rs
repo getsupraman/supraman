@@ -75,7 +75,7 @@ pub use links::Link;
 #[cfg(test)]
 use {links::{link_target, missing}, supraman_term::MaybeNavigationTarget};
 
-pub(crate) use left::grid;
+pub(crate) use left::{grid, secondary};
 pub use manage::Removing;
 pub use menu::{Confirm, Confirmed, ContextMenu, MenuAction, MenuTarget};
 

@@ -18,3 +18,8 @@ pub fn icons() -> &'static str {
 pub fn icons() -> &'static str {
     "Segoe Fluent Icons"
 }
+
+/// The UI font with tabular figures, so digits keep one width: dates and shas.
+pub fn figures<E: gpui::Styled>(element: E) -> E {
+    element.font_family(UI).font_features(gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])))
+}

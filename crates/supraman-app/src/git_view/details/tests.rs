@@ -52,6 +52,9 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     assert_eq!(names(&s.co_authors), ["Bea Two", "Cy Three"]);
     assert_eq!(s.counts, Counts { renamed: 1, ..Counts::default() });
     assert_eq!(s.authored_ms, 1_700_000_000_000 + 3 * 60_000, "the third commit's time");
+    let authored = render::authored(&s);
+    assert_eq!(authored, supraman_core::time::stamp(s.authored_ms), "the author's date reads as the graph's date column");
+    assert!(authored.contains(" @ "), "{authored}");
     let painted = repaint(&view, cx);
     for key in ["commit-sha", "commit-message-copy", "commit-parent-0", "commit-coauthor-0", "commit-coauthor-1"] {
         assert!(painted.borrow().contains_key(key), "{key} paints");
@@ -151,6 +154,11 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
         assert!(painted.borrow().contains_key(&format!("commit-tree-row-{path}")) && !painted.borrow().contains_key(&format!("commit-mark-{path}")), "unchanged {path} has no mark");
     }
     assert_eq!(badge("src", cx), Some(Counts { added: 3, ..Counts::default() }));
+    let x = |path: &str| painted.borrow().get(&format!("commit-name-{path}")).map(|h| h.bounds.left()).unwrap_or_else(|| panic!("{path}'s name paints"));
+    for path in ["src", "a.txt", "bin.dat"] {
+        assert_eq!(x(path), x("docs"), "{path}'s name at the top-level folders' names, marked or not");
+    }
+    assert_eq!(x("src/util.rs"), x("src/app"), "a file's name at its sibling folder's");
 
     panel.update(cx, |p, cx| p.set_filter("APP", cx));
     assert_eq!(visible(&panel, cx), ["src", "src/app", "src/app/lib.rs", "src/app/main.rs"], "the filter matches the whole path, ignoring case");

@@ -12,12 +12,18 @@ use supraman_ui::icon::Icon;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::table::{Column, Table, TableState};
 use supraman_ui::tooltip::Tooltip;
-use supraman_ui::tree::{Item, Order, Row, TreeList, TreeState};
+use supraman_ui::tree::{Item, LEAD, Order, Row, TreeList, TreeState};
 use theme::ActiveTheme as _;
 
 use super::{Counts, FileView, Mark};
+use crate::view::secondary;
 
 const ROW: f32 = 24.;
+const ICON: f32 = 12.;
+/// A count sits close to its icon, kinds apart, and a folder's counts a fixed step after its name.
+const ICON_GAP: f32 = 3.;
+const KIND_GAP: f32 = 14.;
+const NAME_GAP: f32 = 12.;
 
 /// A change's icon in the theme's status colour.
 pub fn mark_icon(kind: ChangeKind, cx: &App) -> (Icon, Hsla) {
@@ -43,45 +49,45 @@ pub fn kind_word(kind: ChangeKind) -> &'static str {
     }
 }
 
-/// A file's mark, painted under `<list>-mark-<path>`; an empty slot of the same width on an unchanged file.
+/// A file's mark, painted under `<list>-mark-<path>`, in the tree's lead slot; an empty slot on an unchanged file.
 fn mark(mark: &Mark, key: String, hits: &HitTargets, cx: &App) -> Div {
-    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(16.));
+    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD));
     match mark {
         Some(kind) => {
             let (icon, colour) = mark_icon(*kind, cx);
-            slot.child(icon.svg(12., colour)).child(hit_target(hits, key))
+            slot.child(icon.svg(ICON, colour)).child(hit_target(hits, key))
         }
         None => slot,
     }
 }
 
-/// A folder's counts of changes below it, each its icon and number.
-fn badges(counts: &Counts, cx: &App) -> Div {
-    let text = cx.theme().colors().text_muted;
-    div().flex().flex_none().items_center().gap_2().ml_2().text_xs().text_color(text).children(counts.parts().into_iter().map(|(kind, n)| {
+/// Each kind's icon and its words: a folder's badges and the panel's summary line.
+pub fn tally(parts: impl IntoIterator<Item = (ChangeKind, String)>, cx: &App) -> Div {
+    div().flex().flex_none().items_center().gap(px(KIND_GAP)).text_xs().children(parts.into_iter().map(|(kind, words)| {
         let (icon, colour) = mark_icon(kind, cx);
-        div().flex().items_center().gap_0p5().child(icon.svg(11., colour)).child(SharedString::from(n.to_string()))
+        div().flex().items_center().gap(px(ICON_GAP)).child(icon.svg(ICON, colour)).child(SharedString::from(words))
     }))
 }
 
+fn badges(counts: &Counts, cx: &App) -> Div {
+    tally(counts.parts().into_iter().map(|(kind, n)| (kind, n.to_string())), cx).ml(px(NAME_GAP)).text_color(cx.theme().colors().text_muted)
+}
+
+/// A row's name, painted under `<list>-name-<path>`.
+fn name(list: &str, row: &Row<'_, Mark, Counts>, colour: Hsla, hits: &HitTargets) -> Stateful<Div> {
+    let kind = if matches!(row.item, Item::File(_)) { "file" } else { "folder" };
+    clipped(format!("{list}-{kind}-{}", row.path), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
+}
+
+/// A folder's name muted and a file's bright; a file's mark fills the lead slot, so every name at one depth starts at one x.
 fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App) -> AnyElement {
-    let colors = cx.theme().colors().clone();
+    let row_div = div().flex().items_center().min_w_0();
     match row.item {
-        Item::File(m) => div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .min_w_0()
+        Item::File(m) => row_div
             .child(mark(m, format!("{list}-mark-{}", row.path), hits, cx))
-            .child(clipped(format!("{list}-file-{}", row.path), row.name.clone(), false).text_color(colors.text))
+            .child(name(list, &row, cx.theme().colors().text, hits))
             .into_any_element(),
-        Item::Folder { aggregate, .. } => div()
-            .flex()
-            .items_center()
-            .min_w_0()
-            .child(clipped(format!("{list}-folder-{}", row.path), row.name.clone(), false).text_color(colors.text_muted))
-            .child(badges(aggregate, cx))
-            .into_any_element(),
+        Item::Folder { aggregate, .. } => row_div.child(name(list, &row, secondary(cx), hits)).child(badges(aggregate, cx)).into_any_element(),
     }
 }
 
@@ -100,7 +106,7 @@ fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &Ap
         .min_w_0()
         .whitespace_nowrap()
         .child(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))
-        .when(!dir.is_empty(), |d| d.child(clipped(format!("{list}-dir-{path}"), dir, true).flex_shrink(1.).text_color(colors.text_muted)))
+        .when(!dir.is_empty(), |d| d.child(clipped(format!("{list}-dir-{path}"), dir, true).flex_shrink(1.).text_color(secondary(cx))))
         .child(div().flex_none().text_color(colors.text).child(SharedString::from(name)))
         .into_any_element()
 }
