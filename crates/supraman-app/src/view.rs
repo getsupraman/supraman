@@ -318,7 +318,6 @@ pub struct FleetView {
     pub menu: Option<ContextMenu>,
     pub confirm: Option<Confirm>,
     pub adding: Option<(Entity<workspace_dialog::WorkspaceDialog>, gpui::Subscription)>,
-    pub editing: Option<folders::EditFolders>,
     pub removing: BTreeMap<String, Removing>,
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
@@ -808,7 +807,6 @@ impl FleetView {
             menu: None,
             confirm: None,
             adding: None,
-            editing: None,
             removing: BTreeMap::new(),
             pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
@@ -2560,7 +2558,6 @@ impl FleetView {
     pub fn input_focused(&self, window: &Window, cx: &gpui::App) -> bool {
         self.search.read(cx).is_focused(window)
             || self.add_dialog().is_some_and(|d| d.read(cx).focused(window, cx))
-            || self.editing.as_ref().is_some_and(|e| e.path.read(cx).is_focused(window))
             || self.compose.as_ref().is_some_and(|c| c.input.read(cx).is_focused(window))
             || self.tabs.iter().filter_map(|t| t.find.as_ref()).any(|f| f.input.read(cx).is_focused(window))
     }
@@ -2608,12 +2605,6 @@ impl FleetView {
             return;
         }
         if !k.modifiers.modified() && self.add_key(&k.key, window, cx) {
-            cx.stop_propagation();
-            return;
-        }
-        if self.editing.is_some() && !k.modifiers.modified() && k.key == "escape" {
-            self.editing = None;
-            cx.notify();
             cx.stop_propagation();
             return;
         }

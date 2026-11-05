@@ -54,7 +54,6 @@ impl FolderList {
         Self { rows: Vec::new(), removed: Vec::new(), first_is_home, owners: owners(others) }
     }
 
-    #[allow(dead_code, reason = "Edit folders… takes it in add-workspace/4")]
     pub fn of_workspace(w: &Workspace, others: &[Workspace]) -> Self {
         let mut list = Self::new(others, w.home.is_none());
         for f in &w.folders {

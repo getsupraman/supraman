@@ -56,7 +56,7 @@ pub enum Confirmed {
     /// `discard`: the `--discard-unpushed` value rm printed, only after its own second question.
     Delete { session: Session, discard: Option<String> },
     DeleteClosed { workspace: String, sessions: Vec<Session>, skipped: Vec<(String, String)> },
-    Edit { workspace: String, edit: supraman_core::Edit },
+    Edit { workspace: String, edits: Vec<supraman_core::Edit> },
     RemoveSchedule { workspace: String, id: String },
     /// The banner's Update, while sessions are attached in tabs.
     Update,
@@ -89,7 +89,7 @@ pub fn workspace_items(node: &WorkspaceNode, closed_background: bool, own: Vec<M
     }];
     items.push(item("work", "Work", MenuAction::Work(w.clone())));
     items.extend(new_task_items(w, None));
-    items.push(item("rescan", "Rescan repos", MenuAction::Rescan(w.clone())));
+    items.push(item("rescan", "Rescan…", MenuAction::Rescan(w.clone())));
     items.push(item("edit-folders", "Edit folders…", MenuAction::EditFolders(w.clone())));
     if let Some(home) = &node.home {
         items.extend([

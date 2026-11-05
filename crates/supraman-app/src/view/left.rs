@@ -463,7 +463,6 @@ impl FleetView {
         }
         notices.extend(self.render_confirm(cx));
         notices.extend(self.add_dialog().map(|d| d.clone().into_any_element()));
-        notices.extend(self.render_edit_folders(cx));
         notices.extend(self.render_schedule_edit(cx));
         if self.registry_error.is_none() && self.registry_skipped.is_empty() && self.refreshes > 0 && tree.workspaces.is_empty() && self.adding.is_none() {
             notices.push(notice(

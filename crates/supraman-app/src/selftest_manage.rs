@@ -359,15 +359,14 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
     Ok(())
 }
 
-/// Details from the row's menu: its report's text, once painted; OK closes it.
-/// Every Edit folders… row keeps its box and buttons inside the dialog at the left panel's minimum width.
+/// Every Edit folders… row keeps its buttons inside the dialog at the left panel's minimum width; Cancel saves nothing.
 async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspace: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     const LONG: &str = "a-folder-with-a-rather-long-name-for-edit-folders";
     const BRANCH: &str = "copilot/fix-the-edit-folders-dialog-overflowing-its-box";
     let long = cargo_root().join("target").join("selftest-edit-long").join(LONG);
     std::fs::create_dir_all(long.join(".git"))?;
-    std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}
-"))?;
+    std::fs::write(long.join(".git").join("HEAD"), format!("ref: refs/heads/{BRANCH}\n"))?;
+    let before = registry.load(workspace)?;
     let width = view.read_with(cx, |v, _| v.left_width);
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
@@ -375,24 +374,22 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
             v.edit_folders(workspace, window, cx);
         })
     })?;
-    view.update(cx, |v, _| v.pick_folder = Some(long.clone()));
-    click(view, "edit-add-folder", cx).await?;
-    let folders = until(view, cx, WITHIN, "the long folder added", |_| {
-        let w = registry.load(workspace).ok()?;
-        w.folders.iter().any(|f| f.path == long).then(|| w.folders.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+    until(view, cx, WITHIN, "Edit folders…'s path field", |v| painted(v, "edit-new-path-text").then_some(())).await?;
+    set_field(view, false, &long.display().to_string(), cx)?;
+    click(view, "edit-add", cx).await?;
+    let folders = until_app(view, cx, WITHIN, "the long folder in the list", |v, cx| {
+        let d = dialog(v, cx)?;
+        d.list.rows.iter().any(|r| r.folder.path == long).then(|| d.list.rows.iter().map(|r| r.folder.name.clone()).collect::<Vec<_>>())
     })
     .await?;
-    let long_name = registry.load(workspace)?.folders.into_iter().find(|f| f.path == long).map(|f| f.name).ok_or_else(|| anyhow!("no long folder"))?;
+    let long_name = folders.last().cloned().ok_or_else(|| anyhow!("no long folder"))?;
     let fits = until(view, cx, WITHIN, "every Edit folders row inside the dialog", |v| {
         let hits = v.hits.borrow();
-        let dialog = hits.get("edit-folders")?.bounds;
+        let dialog = hits.get("edit-dialog")?.bounds;
         let mut rights = Vec::new();
         for f in &folders {
-            let state = [format!("edit-enable-{f}"), format!("edit-elsewhere-{f}")].into_iter().find(|k| hits.contains_key(k))?;
-            let mut keys = vec![state, format!("edit-remove-{f}")];
-            keys.extend(Some(format!("edit-home-{f}")).filter(|k| hits.contains_key(k)));
-            for key in &keys {
-                let b = hits.get(key)?.bounds;
+            for key in [format!("edit-home-{f}"), format!("edit-remove-{f}")] {
+                let b = hits.get(&key)?.bounds;
                 if b.left() < dialog.left() || b.right() > dialog.right() + px(0.5) {
                     return None;
                 }
@@ -427,12 +424,96 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
         v.left_width = width;
         cx.notify();
     });
-    click(view, "edit-done", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
+    click(view, "edit-cancel", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed by Cancel", |v| v.adding.is_none().then_some(())).await?;
+    if registry.load(workspace)? != before {
+        bail!("Cancel in Edit folders… changed {workspace}");
+    }
     Ok(format!(
-        "Edit folders… of {workspace} at the minimum left width ({:.0} px dialog): {folders:?} keep their boxes and buttons inside, Remove at x {:?} in every row, {LONG}'s path and branch {BRANCH} clipped with a tooltip",
+        "Edit folders… of {workspace} at the minimum left width ({:.0} px dialog): {folders:?} keep their buttons inside, × at x {:?} in every row, {LONG}'s path and branch {BRANCH} clipped with a tooltip; Cancel saved nothing",
         fits.0, fits.1
     ))
+}
+
+/// Edit folders…: beta removed by ×, a folder added by its typed path, home moved to alpha; Save writes all three.
+async fn edit_folders(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let extra = cargo_root().join("target").join("selftest-edit-extra");
+    std::fs::create_dir_all(&extra)?;
+    press_painted(view, ws_key, MouseButton::Right, cx).await?;
+    menu_open(view, ADDED, cx).await?;
+    click(view, "menu-edit-folders", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… with beta's ×", |v| painted(v, "edit-remove-beta").then_some(())).await?;
+    shot("edit-folders", cx).await;
+    click(view, "edit-remove-beta", cx).await?;
+    until_app(view, cx, WITHIN, "beta out of the list", |v, cx| rows(v, cx).filter(|r| r.len() == 1 && r[0].0 == "alpha").map(|_| ())).await?;
+    set_field(view, false, &extra.display().to_string(), cx)?;
+    click(view, "edit-add", cx).await?;
+    until(view, cx, WITHIN, "the typed folder's home button", |v| painted(v, "edit-home-selftest-edit-extra").then_some(())).await?;
+    click(view, "edit-home-alpha", cx).await?;
+    let want = vec![("alpha".to_string(), None, true), ("selftest-edit-extra".to_string(), None, false)];
+    until_app(view, cx, WITHIN, "home moved to alpha", |v, cx| rows(v, cx).filter(|r| r == &want).map(|_| ())).await?;
+    if registry.load(ADDED)?.folders.iter().any(|f| f.name != "alpha" && f.name != "beta") {
+        bail!("Edit folders… wrote {ADDED} before Save");
+    }
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let saved = until(view, cx, WITHIN, "the edit in the registry", |_| registry.load(ADDED).ok().filter(|w| w.folders.len() == 2 && w.home.as_deref() == Some(root.join("alpha").as_path()))).await;
+    let saved = saved.map_err(|e| e.context(format!("registered {:?}", registry.load(ADDED))))?;
+    let folders: Vec<&Path> = saved.folders.iter().map(|f| f.path.as_path()).collect();
+    let excluded: Vec<&Path> = saved.scans.iter().flat_map(|s| s.exclude.iter().map(PathBuf::as_path)).collect();
+    if folders != [root.join("alpha").as_path(), extra.as_path()] || excluded != [root.join("notes").as_path(), root.join("beta").as_path()] {
+        bail!("Edit folders… saved folders {folders:?} with the parent excluding {excluded:?}; expected alpha and the typed folder, notes and beta excluded");
+    }
+    let extra_row = format!("repo-row-{ADDED}/selftest-edit-extra");
+    until(view, cx, WITHIN, "the typed folder in the tree", |v| painted(v, &extra_row).then_some(())).await?;
+    Ok(format!("Edit folders… of {ADDED}: beta removed by × (into the parent's exclude), {} added by its typed path, home moved to alpha; saved at once by Save (no wanted session in the fixture, so no question)", extra.display()))
+}
+
+/// Rescan offers a new subfolder unticked; Save leaves it unticked and unskipped, so the next Rescan offers it again;
+/// ticked and saved, it is a folder and the third Rescan offers nothing. Beta (×) and notes are never offered.
+async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let fresh = root.join("fresh");
+    std::fs::create_dir_all(&fresh)?;
+    let open = async |view: &Entity<FleetView>, cx: &mut AsyncWindowContext| -> anyhow::Result<Vec<(String, Option<bool>, bool)>> {
+        until(view, cx, WITHIN, "no dialog", |v| v.adding.is_none().then_some(())).await?;
+        press_painted(view, ws_key, MouseButton::Right, cx).await?;
+        menu_open(view, ADDED, cx).await?;
+        click(view, "menu-rescan", cx).await?;
+        let listed = until_app(view, cx, WITHIN, "Rescan's dialog", |v, cx| rows(v, cx)).await?;
+        until(view, cx, WITHIN, "Rescan's Save painted", |v| painted(v, "edit-save").then_some(())).await?;
+        Ok(listed)
+    };
+    let offered = |listed: &[(String, Option<bool>, bool)]| listed.iter().filter(|r| r.1.is_some()).map(|r| (r.0.clone(), r.1)).collect::<Vec<_>>();
+    let listed = open(view, cx).await?;
+    if offered(&listed) != [("fresh".to_string(), Some(false))] {
+        bail!("Rescan listed {listed:?}; expected fresh offered unticked, beta and notes not");
+    }
+    if registry.load(ADDED)?.folders.iter().any(|f| f.path == fresh) {
+        bail!("Rescan saved fresh before Save");
+    }
+    shot("rescan-offer", cx).await;
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let w = registry.load(ADDED)?;
+    if w.folders.iter().any(|f| f.path == fresh) || w.scans.iter().any(|s| s.exclude.contains(&fresh)) {
+        bail!("an unticked fresh was saved: folders {:?}, scans {:?}", w.folders, w.scans);
+    }
+    let listed = open(view, cx).await?;
+    if offered(&listed) != [("fresh".to_string(), Some(false))] {
+        bail!("the second Rescan listed {listed:?}; expected fresh offered again");
+    }
+    click(view, "edit-include-fresh", cx).await?;
+    until_app(view, cx, WITHIN, "fresh ticked", |v, cx| rows(v, cx).filter(|r| r.iter().any(|r| r.0 == "fresh" && r.1 == Some(true))).map(|_| ())).await?;
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "fresh in the registry", |_| registry.load(ADDED).ok()?.folders.iter().any(|f| f.path == fresh).then_some(())).await?;
+    let listed = open(view, cx).await?;
+    if !offered(&listed).is_empty() {
+        bail!("the third Rescan listed {listed:?}; expected nothing offered");
+    }
+    until(view, cx, WITHIN, "Rescan's Cancel painted", |v| painted(v, "edit-cancel").then_some(())).await?;
+    click(view, "edit-cancel", cx).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Cancel", |v| v.adding.is_none().then_some(())).await?;
+    Ok("Rescan offered the new fresh unticked (beta, removed by ×, and notes not); Save left it out and unskipped, the second Rescan offered it again; ticked and saved it is a folder, and the third Rescan offers nothing".into())
 }
 
 pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
@@ -586,6 +667,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let registry = Registry::at(&home);
 
     std::fs::create_dir_all(root.join("notes"))?;
+    let _ = std::fs::remove_dir_all(root.join("fresh"));
     let all_in = |names: &[&str]| names.iter().map(|n| (n.to_string(), Some(true), false)).collect::<Vec<_>>();
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
@@ -676,25 +758,8 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
 
     // a menu closed but still painted takes the next press as a click outside it
     until(view, cx, WITHIN, "a frame without the closed menu", |v| (!painted(v, "menu-remove")).then_some(())).await?;
-    press_painted(view, &ws_key, MouseButton::Right, cx).await?;
-    menu_open(view, ADDED, cx).await?;
-    click(view, "menu-edit-folders", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… with beta's box", |v| painted(v, "edit-enable-beta").then_some(())).await?;
-    shot("edit-folders", cx).await;
-    click(view, "edit-enable-beta", cx).await?;
-    until(view, cx, WITHIN, "beta enabled in the tree", |v| {
-        v.tree().workspaces.iter().find(|w| w.name == ADDED)?.repos.iter().find(|r| r.name == "beta" && r.enabled).map(|_| ())
-    })
-    .await?;
-    // painted: the next press must see this frame's layout, not the one before Enable
-    let plus = format!("new-claude-{ADDED}/beta");
-    until(view, cx, WITHIN, "beta's + painted", |v| painted(v, &plus).then_some(())).await?;
-    if !registry.load(ADDED)?.folders.iter().all(|r| r.enabled) {
-        bail!("Enable did not reach the registry");
-    }
-    click(view, "edit-done", cx).await?;
-    until(view, cx, WITHIN, "Edit folders… closed by Done", |v| v.editing.is_none().then_some(())).await?;
-    out.push("beta enabled in Edit folders…, then in the tree with its +".into());
+    out.push(edit_folders(view, &registry, &root, &ws_key, cx).await?);
+    out.push(rescan(view, &registry, &root, &ws_key, cx).await?);
 
     out.push(open_folder(view, &ws_key, cx).await?);
 

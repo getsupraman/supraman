@@ -237,12 +237,13 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
         folders = folders.row(name.clone(), format!("{}{disabled}", path.display()));
     }
 
-    let mut scans = Section::new("scans", "Scans");
+    let mut parents = Section::new("parents", "Parent folder");
     if facts.scans.is_empty() {
-        scans = scans.text("None: Rescan repos adds nothing by itself.");
+        parents = parents.text("None: Rescan has no folder to look in.");
     }
     for (path, depth) in &facts.scans {
-        scans = scans.row("Scan", format!("{}, git repos up to {depth} level(s) down", path.display()));
+        let deep = if *depth > 1 { format!(" (git repos up to {depth} levels down)") } else { String::new() };
+        parents = parents.row("Parent folder", format!("{}{deep}", path.display()));
     }
 
     let mut own = Section::new("own", "Workspace session");
@@ -258,7 +259,7 @@ pub fn workspace(facts: &WorkspaceFacts, now_ms: i64) -> Vec<Section> {
         }
         None => own = own.text("Not wanted."),
     }
-    vec![ws, folders, scans, own]
+    vec![ws, folders, parents, own]
 }
 
 /// `<worktree folder> of <main checkout>` when `cwd` lies in a linked worktree.
@@ -413,8 +414,8 @@ mod tests {
                 r"Alpha  C:\nowhere\demo\Alpha",
                 r"Beta  C:\nowhere\demo\Beta (disabled)",
                 "",
-                "Scans",
-                r"Scan  C:\nowhere\demo, git repos up to 2 level(s) down",
+                "Parent folder",
+                r"Parent folder  C:\nowhere\demo (git repos up to 2 levels down)",
                 "",
                 "Workspace session",
                 "Name  fm-demo-workspace",
