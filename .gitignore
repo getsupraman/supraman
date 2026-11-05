@@ -9,3 +9,4 @@ crates/supraman-supervisor/commit-msg.txt
 plugins/supraman/bin/
 crates/supraman-app/commit-msg.txt
 probes/*/.scratch/
+.design/
