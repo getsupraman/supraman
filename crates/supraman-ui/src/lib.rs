@@ -56,6 +56,7 @@ pub fn init_globals(cx: &mut App, program_version: &str) {
         ..Default::default()
     });
     themes::apply(cx, None, themes::TerminalColors::Theme, None);
+    table::bind_keys(cx);
 }
 
 /// gpui platform info lines (GPU adapter, D3D feature level) plus warnings and errors: to

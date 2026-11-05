@@ -10,7 +10,7 @@ use supraman_ui::stall;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::{CloseDiff, Content, DiffView, KEY_CONTEXT, Layout, Mode, NextChange, PreviousChange};
+use super::{CloseDiff, Content, DiffView, FileStep, FirstFile, Go, KEY_CONTEXT, LastFile, Layout, Mode, NextChange, NextFile, PreviousChange, PreviousFile};
 use crate::git_view::details::{kind_word, mark_icon};
 
 /// `dir/` muted and the name bright, cut from the left side when narrow.
@@ -120,6 +120,7 @@ impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: diff view");
         let colors = cx.theme().colors().clone();
+        self.first_change(window, cx);
         let body = self.body(window, cx);
         div()
             .key_context(KEY_CONTEXT)
@@ -127,6 +128,10 @@ impl Render for DiffView {
             .on_action(cx.listener(|this, _: &NextChange, window, cx| this.next_change(window, cx)))
             .on_action(cx.listener(|this, _: &PreviousChange, window, cx| this.previous_change(window, cx)))
             .on_action(cx.listener(|_, _: &CloseDiff, _, cx| cx.emit(super::Close)))
+            .on_action(cx.listener(|_, _: &PreviousFile, _, cx| cx.emit(Go(FileStep::Previous))))
+            .on_action(cx.listener(|_, _: &NextFile, _, cx| cx.emit(Go(FileStep::Next))))
+            .on_action(cx.listener(|_, _: &FirstFile, _, cx| cx.emit(Go(FileStep::First))))
+            .on_action(cx.listener(|_, _: &LastFile, _, cx| cx.emit(Go(FileStep::Last))))
             .size_full()
             .flex()
             .flex_col()

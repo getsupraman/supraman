@@ -13,7 +13,6 @@ use crate::git_view::{GitView, Selected};
 pub(crate) fn open_with_editor<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-        crate::git_view::diff::bind_keys(cx);
     });
     open(folder, cx)
 }

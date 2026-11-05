@@ -11,7 +11,10 @@ use crate::view::git_tab::open_or_focus;
 use crate::view::{Tab, TabKind};
 
 pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    cx.update(|cx| supraman_ui::init_globals(cx, "test"));
+    cx.update(|cx| {
+        supraman_ui::init_globals(cx, "test");
+        bind_keys(cx);
+    });
     let folder = folder.to_path_buf();
     let (view, cx) = cx.add_window_view(|_, cx| {
         let view = GitView::open(folder, None, HitTargets::default(), &GitSizes::default(), cx);

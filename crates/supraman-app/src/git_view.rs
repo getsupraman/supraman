@@ -5,6 +5,7 @@ mod colours;
 mod details;
 pub mod diff;
 mod graph;
+mod keys;
 mod live;
 mod load;
 pub mod probe;
@@ -15,11 +16,13 @@ mod wip;
 mod tests;
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod keys_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::{Layout, Repo};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
@@ -32,11 +35,13 @@ use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
 use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
-use load::{GraphRow, Problem, Wip};
+use load::{GraphRow, Heads, Problem, Wip};
 use wip::WipPanel;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub const TABLE: &str = "git";
+
+pub use keys::bind_keys;
 /// The near-end distance that asks for the next page.
 const NEAR_END: Pixels = px(1400.);
 const PANEL_WIDTH: Pixels = px(380.);
@@ -93,6 +98,7 @@ pub struct GitView {
     load: Load,
     repo: Option<Repo>,
     tips: Arc<[String]>,
+    heads: Heads,
     /// Away while a page is laid out with it.
     layout: Option<Layout>,
     rows: Vec<GraphRow>,
@@ -112,12 +118,16 @@ pub struct GitView {
     panel_width: Pixels,
     _panel_events: [Subscription; 2],
     /// The file viewer in the graph's place, while one is open.
-    diff: Option<(Entity<DiffView>, Subscription)>,
+    diff: Option<(Entity<DiffView>, [Subscription; 2])>,
     /// The last viewer's mode and layout, the next one's start.
     diff_mode: DiffMode,
     diff_layout: DiffLayout,
     /// The viewer opened since the last frame and takes the keyboard on the next.
     focus_diff: bool,
+    /// The viewer closed since the last frame and the graph takes the keyboard on the next.
+    focus_graph: bool,
+    /// The panels' read of a selection a key moved, waiting for the key to come up.
+    settle: Option<Task<()>>,
     follow: refresh::Follow,
 }
 
@@ -140,6 +150,7 @@ impl GitView {
                 load: Load::Loading,
                 repo: None,
                 tips: Arc::from([]),
+                heads: Heads::default(),
                 layout: None,
                 rows: Vec::new(),
                 commits: 0,
@@ -160,6 +171,8 @@ impl GitView {
                 diff_mode: DiffMode::default(),
                 diff_layout: DiffLayout::default(),
                 focus_diff: false,
+                focus_graph: false,
+                settle: None,
                 follow: refresh::Follow::default(),
             };
             view.reload(cx);
@@ -174,14 +187,21 @@ impl GitView {
         }
     }
 
-    /// Opens `target`, or closes its viewer and deselects the panels' files when it is the one open.
+    /// Opens `target`, or goes back to the graph when it is the one open.
     pub fn toggle_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
         if self.diff().is_none_or(|d| d.read(cx).target != target) {
             return self.open_diff(target, cx);
         }
+        self.back_to_graph(cx);
+    }
+
+    /// Closes the viewer, deselects the panels' files and gives the graph's row the keyboard.
+    pub fn back_to_graph(&mut self, cx: &mut Context<Self>) {
         self.close_diff(cx);
         self.panel.update(cx, |p, cx| p.deselect_files(cx));
         self.wip_panel.update(cx, |p, cx| p.deselect_files(cx));
+        self.focus_graph = true;
+        cx.notify();
     }
 
     pub fn sizes(&self, cx: &App) -> GitSizes {
@@ -207,8 +227,9 @@ impl GitView {
         let Some(repo) = self.repo.clone() else { return };
         self.close_diff(cx);
         let view = DiffView::open(repo, target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
-        let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.close_diff(cx));
-        self.diff = Some((view, closed));
+        let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
+        let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
+        self.diff = Some((view, [closed, go]));
         self.focus_diff = true;
         cx.notify();
     }
@@ -235,13 +256,19 @@ impl GitView {
     }
 
     fn selection_moved(&mut self, cx: &mut Context<Self>) {
+        self.settle = None;
+        self.load_details(cx);
+        cx.emit(GitEvent::Selected);
+    }
+
+    /// The panels read the selected row.
+    fn load_details(&mut self, cx: &mut Context<Self>) {
         let colour = self.table.selected().and_then(|ix| self.rows.get(ix)).map_or(0, |r| r.row.colour);
         let selected = self.selected();
         if selected == Some(Selected::Wip) {
             self.wip_panel.update(cx, |p, cx| p.show(colour, cx));
         }
         self.panel.update(cx, |p, cx| p.show(selected, colour, cx));
-        cx.emit(GitEvent::Selected);
     }
 
     /// Selects the row of `sha` when a loaded page holds it.
@@ -285,6 +312,7 @@ impl GitView {
                 self.more = first.page.more;
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
+                self.heads = first.heads;
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
@@ -371,10 +399,12 @@ impl GitView {
 
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let palette = Palette::of(cx.theme());
-        let rows = self.rows.len() + usize::from(self.paging || self.page_error.is_some());
-        Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, rows, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
+        let footer = usize::from(self.paging || self.page_error.is_some());
+        Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
             .row_height(px(graph::ROW))
-            .on_select(|this: &mut GitView, _, _, cx| this.selection_moved(cx))
+            .footer(footer)
+            .on_select(|this: &mut GitView, _, _, cx| this.stepped(cx))
+            .on_click(|this: &mut GitView, _, _, cx| this.settled(cx))
             .on_resize(|this: &mut GitView, widths, cx| {
                 this.widths = widths;
                 cx.notify();
@@ -400,7 +430,7 @@ impl GitView {
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let first = match &self.diff {
             Some((view, _)) => view.clone().into_any_element(),
-            None => self.render_table(cx),
+            None => self.render_graph(cx),
         };
         let table = div().flex_1().min_w_0().h_full().child(first);
         let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
@@ -439,6 +469,9 @@ impl Render for GitView {
         {
             let focus = view.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
+        }
+        if std::mem::take(&mut self.focus_graph) {
+            window.focus(self.table.focus_handle(), cx);
         }
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx),

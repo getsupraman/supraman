@@ -78,7 +78,8 @@ impl WipPanel {
             .child(chevron.svg(12., colors.text_muted))
             .child(SharedString::from(title))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(section, cx)));
-        let column = div().flex().flex_col().min_h_0().px_1().child(header);
+        let rule = div().flex_none().h(px(1.)).bg(colors.border_variant);
+        let column = div().flex().flex_col().min_h_0().px_1().child(header).child(rule);
         if open { column.flex_1().child(self.file_list(section, shown, cx)) } else { column.flex_none() }
     }
 

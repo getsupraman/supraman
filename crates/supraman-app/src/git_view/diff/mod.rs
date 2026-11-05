@@ -16,11 +16,11 @@ use supraman_ui::stall;
 
 pub use load::{Of, Target};
 
-gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff]);
+gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff, PreviousFile, NextFile, FirstFile, LastFile]);
 
 pub const KEY_CONTEXT: &str = "GitDiff";
 
-pub fn bind_keys(cx: &mut App) {
+pub(super) fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("f7", NextChange, c),
@@ -28,8 +28,44 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-f7", PreviousChange, c),
         KeyBinding::new("alt-up", PreviousChange, c),
         KeyBinding::new("escape", CloseDiff, c),
+        KeyBinding::new("left", CloseDiff, c),
+        KeyBinding::new("up", PreviousFile, c),
+        KeyBinding::new("k", PreviousFile, c),
+        KeyBinding::new("down", NextFile, c),
+        KeyBinding::new("j", NextFile, c),
+        KeyBinding::new("ctrl-up", FirstFile, c),
+        KeyBinding::new("ctrl-home", FirstFile, c),
+        KeyBinding::new("ctrl-down", LastFile, c),
+        KeyBinding::new("ctrl-end", LastFile, c),
     ]);
 }
+
+/// Which file of the panel's list to show next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileStep {
+    /// The one before, the last from the first.
+    Previous,
+    /// The one after, the first from the last.
+    Next,
+    First,
+    Last,
+}
+
+impl FileStep {
+    /// The index `self` leads to from `at` in a list of `len`; `None` for an empty list.
+    pub fn index(self, len: usize, at: Option<usize>) -> Option<usize> {
+        let last = len.checked_sub(1)?;
+        Some(match (self, at) {
+            (FileStep::First, _) | (FileStep::Next, None) => 0,
+            (FileStep::Last, _) | (FileStep::Previous, None) => last,
+            (FileStep::Next, Some(i)) => if i >= last { 0 } else { i + 1 },
+            (FileStep::Previous, Some(i)) => if i == 0 { last } else { i - 1 },
+        })
+    }
+}
+
+/// The viewer asks its owner for another file of the list.
+pub struct Go(pub FileStep);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
@@ -71,18 +107,21 @@ pub struct DiffView {
     content: Content,
     /// The change last moved to with previous/next.
     current: Option<usize>,
+    /// The first read came in and its first change is not yet scrolled to; a reload keeps the place.
+    to_first: bool,
     /// Bumped by each read; a read that finishes under another one is dropped.
     token: u64,
     focus: FocusHandle,
 }
 
 impl EventEmitter<Close> for DiffView {}
+impl EventEmitter<Go> for DiffView {}
 
 impl DiffView {
     pub fn open(repo: Repo, target: Target, mode: Mode, layout: Layout, hits: HitTargets, cx: &mut App) -> Entity<DiffView> {
         cx.new(|cx| {
             let mode = if target.of == Of::Conflicted { Mode::File } else { mode };
-            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, token: 0, focus: cx.focus_handle() };
+            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, to_first: false, token: 0, focus: cx.focus_handle() };
             view.reload(repo, cx);
             view
         })
@@ -123,6 +162,7 @@ impl DiffView {
 
     fn show(&mut self, diff: Diff, encoding: Encoding, cx: &mut Context<Self>) {
         self.current = None;
+        self.to_first = matches!(self.content, Content::Loading);
         self.content = Content::Text(Box::new(Text { diff, encoding, file: None, inline: None, split: None }));
         cx.notify();
     }
@@ -184,6 +224,16 @@ impl DiffView {
         }
         let ix = self.current.map_or(count - 1, |c| c.saturating_sub(1));
         self.go_to(ix, window, cx);
+    }
+
+    /// Scrolls to the first change once after the first read came in, while Diff View shows.
+    pub(super) fn first_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode != Mode::Diff || !std::mem::take(&mut self.to_first) {
+            return;
+        }
+        if self.hunk_count() > 0 {
+            self.go_to(0, window, cx);
+        }
     }
 
     fn go_to(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {

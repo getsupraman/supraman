@@ -118,12 +118,13 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut
     let selected = select(view, &git, f, cx).await?;
     let files = files(view, &git, f, cx).await?;
     let diff = diff(view, &git, f, cx).await?;
+    let keys = keys(view, &git, f, cx).await?;
     let wip = wip(view, &git, f, cx).await?;
     let live = live(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
     let themed = themed(view, &git, home, cx).await?;
-    Ok([opened, refs, selected, files, diff, wip, live, narrow, panel, themed].join("; "))
+    Ok([opened, refs, selected, files, diff, keys, wip, live, narrow, panel, themed].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {
@@ -250,6 +251,33 @@ async fn diff(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: 
     tap(view, &row_key(&probe(view, git, cx), f.sha("rename"))?, cx).await?;
     show(view, git, f.sha("rename"), 1, cx).await?;
     Ok("a.txt's diff: Inline, Split, next change (1st), File View and back, × back to the graph with the commit still selected; a.txt clicked twice opens then closes its diff, the commit kept, and the next commit selects".into())
+}
+
+/// Keys posted to the window as the keyboard sends them: Right, Left and Page Down on the graph's rows.
+async fn keys(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let root = Selected::Commit(f.sha("root").into());
+    tap(view, &row_key(&probe(view, git, cx), f.sha("root"))?, cx).await?;
+    show(view, git, f.sha("root"), 0, cx).await?;
+    post_keys(&["right"], cx).await?;
+    until_probe(view, git, "Right: the root's first file at its first change", cx, |p, v| {
+        p.diff.as_ref().filter(|d| d.path == "a.txt" && d.mode == Mode::Diff && d.current == Some(0) && painted(v, "diff-close")).map(|_| ())
+    })
+    .await?;
+    post_keys(&["left"], cx).await?;
+    let row = until_probe(view, git, "Left: back to the root's row", cx, |p, v| {
+        let ix = p.row_of(f.sha("root"))?;
+        (p.diff.is_none() && p.selected.as_ref() == Some(&root) && painted(v, &format!("git-row-{ix}"))).then_some(ix)
+    })
+    .await?;
+    tap(view, "git-row-0", cx).await?;
+    until_probe(view, git, "the WIP row selected", cx, |p, _| (p.selected == Some(Selected::Wip)).then_some(())).await?;
+    post_keys(&["pagedown"], cx).await?;
+    let paged = until_probe(view, git, "Page Down: a page further", cx, |p, _| match &p.selected {
+        Some(Selected::Commit(sha)) => p.row_of(sha).filter(|ix| *ix > 0),
+        _ => None,
+    })
+    .await?;
+    Ok(format!("Right on the root opens a.txt, its first file, at its first change; Left goes back to row {row}; Page Down from the WIP row selects row {paged}"))
 }
 
 async fn wip(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {

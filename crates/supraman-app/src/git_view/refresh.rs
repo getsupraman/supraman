@@ -155,6 +155,7 @@ impl GitView {
         self.more = first.page.more;
         self.layout = Some(first.page.layout);
         self.tips = first.tips.into();
+        self.heads = first.heads;
         self.wip = first.wip;
         self.keep_selection(selected, cx);
         if let Some(anchor) = anchor {
