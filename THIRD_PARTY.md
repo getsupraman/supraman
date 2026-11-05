@@ -656,6 +656,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tree-sitter | 0.27.0 | MIT | https://github.com/tree-sitter/tree-sitter @ 43623ec9bf0e |
 | tree-sitter-bash | 0.25.1 | MIT | crates.io |
 | tree-sitter-c | 0.24.1 | MIT | crates.io |
+| tree-sitter-c-sharp | 0.23.5 | MIT | crates.io |
 | tree-sitter-cpp | 0.23.4 | MIT | https://github.com/tree-sitter/tree-sitter-cpp @ 5cb9b693cfd7 |
 | tree-sitter-css | 0.23.2 | MIT | crates.io |
 | tree-sitter-diff | 0.1.0 | MIT | crates.io |
@@ -772,7 +773,6 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | crates.io |
 | windows-strings | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | crates.io |
-| windows-sys | 0.52.0 | MIT OR Apache-2.0 | crates.io |
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | crates.io |
 | windows-sys | 0.60.2 | MIT OR Apache-2.0 | crates.io |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | crates.io |

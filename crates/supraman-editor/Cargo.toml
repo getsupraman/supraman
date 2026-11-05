@@ -6,6 +6,7 @@ publish = false
 license.workspace = true
 
 [dependencies]
+anyhow = "1"
 buffer_diff = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 editor = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false }
@@ -20,6 +21,9 @@ settings = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba0
 text = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 theme = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 theme_settings = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-language = "0.1"
 zed_actions = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 
 [dev-dependencies]

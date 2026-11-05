@@ -1,5 +1,5 @@
 //! Zed's editor (rev 03efd49) without a Project, read-only: a file at a revision, and the diff of two
-//! texts inline or split side by side, highlighted by the grammars Zed bundles.
+//! texts inline or split side by side, highlighted by the grammars Zed bundles and those `languages` compiles in.
 
 mod diff;
 mod inline;
@@ -15,6 +15,7 @@ use editor::{Editor, EditorMode, MinimapVisibility};
 use gpui::{App, AppContext as _, BorrowAppContext as _, Context, Entity, KeyBinding, Window};
 use language::{Buffer, Capability};
 use multi_buffer::MultiBuffer;
+use theme::ActiveTheme as _;
 
 pub use diff::{Diff, Hunk};
 pub use editor::Editor as ZedEditor;
@@ -72,8 +73,9 @@ pub fn read_only_buffer(text: String, language: Option<Arc<Language>>, cx: &mut 
     cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
         buffer.set_capability(Capability::ReadOnly, cx);
-        if language.is_some() {
-            buffer.set_language(language, cx);
+        if let Some(language) = &language {
+            language.set_theme(cx.theme().syntax());
+            buffer.set_language(Some(language.clone()), cx);
         }
         buffer
     })
@@ -135,4 +137,25 @@ pub fn selected_text(editor: &Entity<Editor>, cx: &mut App) -> String {
         let range = editor.selections.newest::<text::Point>(&snapshot).range();
         editor.buffer().read(cx).snapshot(cx).text_for_range(range).collect()
     })
+}
+
+/// `editor`'s text runs a syntax colour paints, each with the theme's capture name for it, as a test reads them.
+pub fn highlighted(editor: &Entity<Editor>, cx: &App) -> Vec<(String, String)> {
+    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+    let syntax = cx.theme().syntax();
+    let styling = language::LanguageAwareStyling { tree_sitter: true, diagnostics: false };
+    let mut runs: Vec<(String, String)> = Vec::new();
+    let mut open = false;
+    for chunk in snapshot.chunks(text::Point::zero()..snapshot.max_point(), styling) {
+        let Some(name) = chunk.syntax_highlight_id.and_then(|id| syntax.get_capture_name(id)) else {
+            open = false;
+            continue;
+        };
+        match runs.last_mut() {
+            Some((text, last)) if open && last == name => text.push_str(chunk.text),
+            _ => runs.push((chunk.text.to_string(), name.to_string())),
+        }
+        open = true;
+    }
+    runs
 }

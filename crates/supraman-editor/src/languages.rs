@@ -1,25 +1,31 @@
+mod captures;
+mod compiled;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use language::Language;
+use language::{Language, LanguageConfig, LanguageMatcher};
+
+use compiled::{COMPILED, Compiled};
 
 /// The grammars Zed bundles natively, by their folder in the `grammars` crate; `javascript` and `jsonc`
 /// reuse another's grammar.
-const NAMES: &[&str] = &[
+const ZED: &[&str] = &[
     "bash", "c", "cpp", "css", "diff", "go", "gomod", "gowork", "javascript", "json", "jsonc", "markdown", "python", "rust", "tsx", "typescript", "yaml",
 ];
 
 struct Known {
-    /// `(name, suffixes)` from each config, read once.
+    /// `(key, suffixes)` of every language: Zed's from their configs, read once, then `COMPILED`'s.
     suffixes: Vec<(&'static str, Vec<String>)>,
     built: Mutex<HashMap<&'static str, Option<Arc<Language>>>>,
 }
 
 fn known() -> &'static Known {
     static KNOWN: OnceLock<Known> = OnceLock::new();
-    KNOWN.get_or_init(|| Known {
-        suffixes: NAMES.iter().map(|name| (*name, grammars::load_config(name).matcher.path_suffixes.iter().map(|s| s.to_string()).collect())).collect(),
-        built: Mutex::new(HashMap::new()),
+    KNOWN.get_or_init(|| {
+        let zed = ZED.iter().map(|name| (*name, grammars::load_config(name).matcher.path_suffixes.iter().map(|s| s.to_string()).collect()));
+        let compiled = COMPILED.iter().map(|c| (c.name, c.suffixes.iter().map(|s| s.to_string()).collect()));
+        Known { suffixes: zed.chain(compiled).collect(), built: Mutex::new(HashMap::new()) }
     })
 }
 
@@ -36,9 +42,14 @@ pub fn language_for(path: &str) -> Option<Arc<Language>> {
 }
 
 fn build(name: &str) -> Option<Arc<Language>> {
-    let config = grammars::load_config(name);
-    let grammar = grammars::native_grammars().into_iter().find(|(g, _)| Some(*g) == config.grammar.as_deref()).map(|(_, g)| g)?;
-    let language = Language::new(config, Some(grammar)).with_queries(grammars::load_queries(name));
+    let language = match COMPILED.iter().find(|c| c.name == name) {
+        Some(compiled) => build_compiled(compiled),
+        None => {
+            let config = grammars::load_config(name);
+            let grammar = grammars::native_grammars().into_iter().find(|(g, _)| Some(*g) == config.grammar.as_deref()).map(|(_, g)| g)?;
+            Language::new(config, Some(grammar)).with_queries(grammars::load_queries(name))
+        }
+    };
     match language {
         Ok(language) => Some(Arc::new(language)),
         Err(e) => {
@@ -48,20 +59,15 @@ fn build(name: &str) -> Option<Arc<Language>> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn languages_by_extension_and_name() {
-        assert_eq!(language_for("src/main.rs").map(|l| l.name().to_string()).as_deref(), Some("Rust"));
-        assert_eq!(language_for("a/b/app.tsx").map(|l| l.name().to_string()).as_deref(), Some("TSX"));
-        assert_eq!(language_for("x.json").map(|l| l.name().to_string()).as_deref(), Some("JSON"));
-        assert!(language_for("notes.unknownext").is_none());
-        assert!(language_for("bin.dat").is_none());
-        assert_eq!(language_for("tsconfig.json").map(|l| l.name().to_string()).as_deref(), Some("JSONC"), "a whole file name before its extension");
-        let a = language_for("one.py").unwrap();
-        let b = language_for("two.py").unwrap();
-        assert!(Arc::ptr_eq(&a, &b), "built once");
-    }
+fn build_compiled(compiled: &Compiled) -> anyhow::Result<Language> {
+    let config = LanguageConfig {
+        name: compiled.name.into(),
+        matcher: LanguageMatcher { path_suffixes: compiled.suffixes.iter().map(|s| (*s).into()).collect(), ..Default::default() }.into(),
+        ..Default::default()
+    };
+    let grammar = tree_sitter::Language::new(compiled.grammar);
+    Language::new(config, Some(grammar)).with_highlights_query(&captures::themed(compiled.highlights))
 }
+
+#[cfg(test)]
+mod tests;
