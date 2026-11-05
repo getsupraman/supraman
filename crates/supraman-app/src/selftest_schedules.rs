@@ -178,7 +178,7 @@ async fn others(view: &Entity<FleetView>, fake: &FakeRegistrar, dir: &Path, cx: 
     Ok("9 other schedules: one under the workspace, one at the top, the rest left out; Open in Task Scheduler and Copy action, no write".into())
 }
 
-const LIGHT: &str =r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
+pub(crate) const LIGHT: &str =r##"{"themes":[{"name":"Selftest Light","appearance":"light","style":{
 "background":"#F3F3F3","editor.background":"#FFFFFF","panel.background":"#F3F3F3","surface.background":"#F3F3F3","elevated_surface.background":"#FFFFFF",
 "element.background":"#F0F0F0","element.hover":"#E4E4E4","element.active":"#D8D8D8","element.selected":"#DDE8F5",
 "ghost_element.hover":"#E8E8E8","ghost_element.active":"#DCDCDC","ghost_element.selected":"#DDE8F5",

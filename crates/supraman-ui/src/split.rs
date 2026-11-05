@@ -70,7 +70,7 @@ impl SplitPane {
                 if e.drag(cx).0 != dragged {
                     return;
                 }
-                let max = (e.bounds.right() - min_second).max(min_first);
+                let max = (e.bounds.size.width - min_second).max(min_first);
                 let x = (e.event.position.x - e.bounds.left()).clamp(min_first, max);
                 drag(this, if keeps_second { e.bounds.size.width - x - px(1.) } else { x }, cx);
             }))
@@ -245,5 +245,38 @@ mod tests {
         cx.simulate_event(gpui::MouseDownEvent { position: hit.bounds.center(), button: MouseButton::Left, modifiers: Modifiers::none(), click_count: 2, first_mouse: false });
         cx.simulate_event(gpui::MouseUpEvent { position: hit.bounds.center(), button: MouseButton::Left, modifiers: Modifiers::none(), click_count: 2 });
         message.read_with(cx, |m, _| assert_eq!(m.height, px(100.), "a double-click restores the default"));
+    }
+
+    struct Offset {
+        hits: HitTargets,
+        width: Pixels,
+    }
+
+    impl Render for Offset {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let pane = SplitPane { id: "pane".into(), min_first: px(200.), min_second: px(260.), default: px(380.) };
+            let second = div().relative().w(self.width).h_full().child(hit_target(&self.hits, "second".into()));
+            let split = pane.render_second(div().flex_1().min_w_0().h_full(), second, |this: &mut Offset, width, cx| {
+                this.width = width;
+                cx.notify();
+            }, |_: &mut Offset, _| {}, cx);
+            div().flex().size_full().child(div().flex_none().w(px(300.))).child(split.flex_1().h_full())
+        }
+    }
+
+    #[gpui::test]
+    fn a_split_right_of_the_window_edge_holds_its_second_panel_at_its_min(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Offset { hits: HitTargets::default(), width: px(380.) });
+        cx.run_until_parked();
+        let second = view.read_with(cx, |o, _| o.hits.borrow().get("second").copied()).expect("the second panel paints").bounds;
+        let start = point(second.left() - px(1.), second.center().y);
+        let end = point(second.right() - px(4.), start.y);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start + point(px(20.), px(0.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        let width = view.read_with(cx, |o, _| o.width);
+        assert!(width >= px(259.) && width <= px(261.), "held at the second panel's min: {width:?}");
     }
 }

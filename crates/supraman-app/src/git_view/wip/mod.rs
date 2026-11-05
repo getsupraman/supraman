@@ -169,6 +169,10 @@ impl WipPanel {
         cx.notify();
     }
 
+    pub fn state(&self) -> &State {
+        &self.state
+    }
+
     fn shown(&self) -> Option<Rc<Shown>> {
         match &self.state {
             State::Shown(s) => Some(s.clone()),

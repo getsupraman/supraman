@@ -87,7 +87,7 @@ pub fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool, palett
     if view.ghost {
         let dim = palette.ghost();
         let shown = if selected { shown.opacity(dim) } else { shown.opacity(0.).group_hover(group, move |s| s.opacity(dim)) };
-        return cell.child(shown).into_any_element();
+        return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));

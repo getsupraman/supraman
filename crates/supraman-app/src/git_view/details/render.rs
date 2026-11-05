@@ -199,7 +199,7 @@ impl CommitPanel {
             .child(label)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.expand_or_collapse(cx)));
         let filter = self.all_files.then(|| self.filter_box(window, cx));
-        column.children(filter.map(|f| div().flex_none().px_1().pb_1().child(f))).child(div().flex().flex_none().pb_0p5().child(expand)).child(self.render_tree(cx))
+        column.children(filter.map(|f| div().relative().flex_none().px_1().pb_1().child(f).child(supraman_ui::hit::hit_target(&self.hits, "commit-filter".into())))).child(div().flex().flex_none().pb_0p5().child(expand)).child(self.render_tree(cx))
     }
 
     /// The tree on show, with View all files the whole one.

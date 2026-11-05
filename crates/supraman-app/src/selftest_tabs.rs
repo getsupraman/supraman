@@ -159,6 +159,11 @@ async fn drag(view: &Entity<FleetView>, id: u64, to: Point<Pixels>, shot: Option
 /// Left button down on what is painted under `key`, moved in steps to `to` and let go there, as a hand drags it.
 pub(crate) async fn drag_from(view: &Entity<FleetView>, key: &str, to: Point<Pixels>, shot: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let from = scrolled_into_view(view, key, cx).await?.center();
+    drag_between(from, to, shot, cx).await
+}
+
+/// Left button down at `from`, moved in steps to `to` and let go there.
+pub(crate) async fn drag_between(from: Point<Pixels>, to: Point<Pixels>, shot: Option<&str>, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     let none = Modifiers::default();
     cx.update(|window, cx| {
         window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, pressed_button: None, modifiers: none }), cx);

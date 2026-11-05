@@ -122,7 +122,6 @@ impl CommitPanel {
         self.message_height
     }
 
-    #[cfg(test)]
     pub fn state(&self) -> &State {
         &self.state
     }
