@@ -80,6 +80,27 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
         Files = @(@{ From = 'crates/supraman-app/assets/brand/source/font/OFL.txt'; To = 'archivo-OFL.txt' })
     }
     [pscustomobject]@{
+        Title = 'GraphQL highlights query'
+        Text = @'
+- Source: https://github.com/11bit/zed-extension-graphql, `languages/graphql/highlights.scm` @ 7337bb0ea46b0f71b0c29ef877e5d15ce5ad7252
+- In Supraman: `crates/supraman-editor/queries/graphql/highlights.scm`, compiled into `supraman.exe`
+- Licence: MIT, © 2024 Ivan Buryak. Full text: `crates/supraman-editor/queries/graphql/LICENSE`, in a release
+  `licenses\graphql-highlights.LICENSE`
+'@
+        Files = @(@{ From = 'crates/supraman-editor/queries/graphql/LICENSE'; To = 'graphql-highlights.LICENSE' })
+    }
+    [pscustomobject]@{
+        Title = 'HCL highlights query'
+        Text = @'
+- Source: https://github.com/zed-extensions/terraform, `languages/hcl/highlights.scm` @ 99bcfa52db879b6f71b803307a9640e04e336623
+  (itself from nvim-treesitter's `queries/hcl/highlights.scm`, Apache-2.0)
+- In Supraman: `crates/supraman-editor/queries/hcl/highlights.scm`, compiled into `supraman.exe`
+- Licence: Apache-2.0, © 2022-2024 Zed Industries, Inc. Full text: `crates/supraman-editor/queries/hcl/LICENSE`, in
+  a release `licenses\hcl-highlights.LICENSE`
+'@
+        Files = @(@{ From = 'crates/supraman-editor/queries/hcl/LICENSE'; To = 'hcl-highlights.LICENSE' })
+    }
+    [pscustomobject]@{
         Title = 'The Rust standard library'
         Text = @'
 - Source: the Rust toolchain of `rust-toolchain.toml`, linked into every exe

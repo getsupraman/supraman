@@ -40,6 +40,21 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 - Licence: SIL Open Font License 1.1, © 2020 The Archivo Project Authors. Full text:
   `crates/supraman-app/assets/brand/source/font/OFL.txt`, in a release `licenses\archivo-OFL.txt`
 
+### GraphQL highlights query
+
+- Source: https://github.com/11bit/zed-extension-graphql, `languages/graphql/highlights.scm` @ 7337bb0ea46b0f71b0c29ef877e5d15ce5ad7252
+- In Supraman: `crates/supraman-editor/queries/graphql/highlights.scm`, compiled into `supraman.exe`
+- Licence: MIT, © 2024 Ivan Buryak. Full text: `crates/supraman-editor/queries/graphql/LICENSE`, in a release
+  `licenses\graphql-highlights.LICENSE`
+
+### HCL highlights query
+
+- Source: https://github.com/zed-extensions/terraform, `languages/hcl/highlights.scm` @ 99bcfa52db879b6f71b803307a9640e04e336623
+  (itself from nvim-treesitter's `queries/hcl/highlights.scm`, Apache-2.0)
+- In Supraman: `crates/supraman-editor/queries/hcl/highlights.scm`, compiled into `supraman.exe`
+- Licence: Apache-2.0, © 2022-2024 Zed Industries, Inc. Full text: `crates/supraman-editor/queries/hcl/LICENSE`, in
+  a release `licenses\hcl-highlights.LICENSE`
+
 ### The Rust standard library
 
 - Source: the Rust toolchain of `rust-toolchain.toml`, linked into every exe
@@ -47,7 +62,7 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 
 ## Rust crates
 
-The 766 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
+The 790 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
 build-dependencies). Their licence texts and copyright notices, as each package ships them, are in a release's
 `licenses\rust-crates.txt`.
 
@@ -158,6 +173,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | core2 | 0.4.0 | Apache-2.0 OR MIT | crates.io |
 | core_detect | 1.0.0 | MIT/Apache-2.0 | crates.io |
 | core_maths | 0.1.1 | MIT | crates.io |
+| cortexkit-tree-sitter-scss | 1.0.1 | MIT | crates.io |
 | cpp_demangle | 0.5.1 | MIT OR Apache-2.0 | crates.io |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | crates.io |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | crates.io |
@@ -655,23 +671,46 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tray-icon | 0.26.1 | MIT OR Apache-2.0 | crates.io |
 | tree-sitter | 0.27.0 | MIT | https://github.com/tree-sitter/tree-sitter @ 43623ec9bf0e |
 | tree-sitter-bash | 0.25.1 | MIT | crates.io |
+| tree-sitter-batch | 0.11.1 | MIT | crates.io |
 | tree-sitter-c | 0.24.1 | MIT | crates.io |
 | tree-sitter-c-sharp | 0.23.5 | MIT | crates.io |
+| tree-sitter-containerfile | 0.9.2 | MIT | crates.io |
 | tree-sitter-cpp | 0.23.4 | MIT | https://github.com/tree-sitter/tree-sitter-cpp @ 5cb9b693cfd7 |
 | tree-sitter-css | 0.23.2 | MIT | crates.io |
+| tree-sitter-dart | 0.3.0 | MIT | crates.io |
 | tree-sitter-diff | 0.1.0 | MIT | crates.io |
+| tree-sitter-fsharp | 0.3.12 | MIT | crates.io |
 | tree-sitter-gitcommit | 0.0.1 | MIT | https://github.com/zed-industries/tree-sitter-git-commit @ 88309716a69d |
 | tree-sitter-go | 0.25.0 | MIT | crates.io |
 | tree-sitter-gomod | 1.1.1 | MIT | https://github.com/camdencheek/tree-sitter-go-mod @ 2e886870578e |
 | tree-sitter-gowork | 0.0.1 | MIT | https://github.com/zed-industries/tree-sitter-go-work @ acb0617bf7f4 |
+| tree-sitter-graphql | 0.3.0 | MIT | crates.io |
+| tree-sitter-hcl | 1.1.0 | Apache-2.0 | crates.io |
+| tree-sitter-html | 0.23.2 | MIT | crates.io |
+| tree-sitter-ini | 1.4.0 | Apache-2.0 | crates.io |
+| tree-sitter-java | 0.23.5 | MIT | crates.io |
 | tree-sitter-jsdoc | 0.23.2 | MIT | crates.io |
 | tree-sitter-json | 0.24.8 | MIT | crates.io |
+| tree-sitter-kotlin-sg | 0.4.1 | MIT | crates.io |
 | tree-sitter-language | 0.1.8 | MIT | https://github.com/tree-sitter/tree-sitter @ 43623ec9bf0e |
+| tree-sitter-less | 1.0.0 | MIT | crates.io |
+| tree-sitter-lua | 0.5.0 | MIT | crates.io |
+| tree-sitter-make | 1.1.1 | MIT | crates.io |
 | tree-sitter-md | 0.3.2 | MIT | https://github.com/zed-industries/tree-sitter-markdown @ b596e7372867 |
+| tree-sitter-php | 0.25.1 | MIT | crates.io |
+| tree-sitter-powershell | 0.26.6 | MIT | crates.io |
+| tree-sitter-proto | 0.6.0 | MIT | crates.io |
 | tree-sitter-python | 0.25.0 | MIT | crates.io |
+| tree-sitter-r | 1.3.0 | MIT | crates.io |
 | tree-sitter-regex | 0.24.3 | MIT | crates.io |
+| tree-sitter-ruby | 0.23.1 | MIT | crates.io |
 | tree-sitter-rust | 0.24.2 | MIT | crates.io |
+| tree-sitter-scala | 0.26.4 | MIT | crates.io |
+| tree-sitter-sequel | 0.3.11 | MIT | crates.io |
+| tree-sitter-swift | 0.7.4 | MIT | crates.io |
+| tree-sitter-toml-ng | 0.7.0 | MIT | crates.io |
 | tree-sitter-typescript | 0.23.2 | MIT | https://github.com/zed-industries/tree-sitter-typescript @ e2c53597d6a5 |
+| tree-sitter-xml | 0.7.0 | MIT | crates.io |
 | tree-sitter-yaml | 0.6.1 | MIT | https://github.com/zed-industries/tree-sitter-yaml @ baff0b51c64e |
 | try-lock | 0.2.5 | MIT | crates.io |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | crates.io |

@@ -65,8 +65,9 @@ fn build_compiled(compiled: &Compiled) -> anyhow::Result<Language> {
         matcher: LanguageMatcher { path_suffixes: compiled.suffixes.iter().map(|s| (*s).into()).collect(), ..Default::default() }.into(),
         ..Default::default()
     };
-    let grammar = tree_sitter::Language::new(compiled.grammar);
-    Language::new(config, Some(grammar)).with_highlights_query(&captures::themed(compiled.highlights))
+    let inherited = compiled.inherits.and_then(|name| grammars::load_queries(name).highlights).unwrap_or_default();
+    let query = format!("{inherited}\n{}", captures::themed(compiled.highlights));
+    Language::new(config, Some((compiled.grammar)())).with_highlights_query(&query)
 }
 
 #[cfg(test)]
