@@ -269,3 +269,21 @@ fn diff_view_closes_back_to_the_graph_as_it_was(cx: &mut TestAppContext) {
     redraw(&view, cx);
     assert!(view.read_with(cx, |v, _| v.diff().is_none()), "Esc closes too");
 }
+
+#[test]
+fn diff_tints_keep_the_text_readable_and_the_stripes_seen_in_a_dark_and_a_light_theme() {
+    use supraman_ui::themes::{SECONDARY_FLOOR, contrast, dark_modern, from_zed, one_dark, parse_family};
+    let light = from_zed(&one_dark(), &parse_family(crate::selftest_schedules::LIGHT).unwrap().themes[0]).theme;
+    for theme in [dark_modern().theme, light] {
+        let c = supraman_editor::diff_colors(&theme);
+        let (bg, text) = (theme.colors().editor_background, theme.colors().editor_foreground);
+        for tint in [c.removed, c.added] {
+            let line = crate::git_view::colours::blend(tint.line, bg);
+            let word = crate::git_view::colours::blend(tint.word, line);
+            assert!(contrast(text, word) >= SECONDARY_FLOOR, "{}: text on a changed word {:.2}:1", theme.name, contrast(text, word));
+            assert!(contrast(word, line) > 1.15, "{}: a word stands out of its line ({:.2}:1)", theme.name, contrast(word, line));
+            assert!(contrast(line, bg) > 1.15, "{}: a changed line stands out ({:.2}:1)", theme.name, contrast(line, bg));
+        }
+        assert!(contrast(c.stripes, bg) > 1.15, "{}: the filler's stripes show", theme.name);
+    }
+}

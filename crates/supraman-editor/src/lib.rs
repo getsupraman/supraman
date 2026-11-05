@@ -2,8 +2,12 @@
 //! texts inline or split side by side, highlighted by the grammars Zed bundles.
 
 mod diff;
+mod inline;
 mod languages;
+mod look;
+mod ruler;
 mod split;
+mod words;
 
 use std::sync::Arc;
 
@@ -14,9 +18,12 @@ use multi_buffer::MultiBuffer;
 
 pub use diff::{Diff, Hunk};
 pub use editor::Editor as ZedEditor;
+pub use inline::{inline_editor, tinted_rows, tinted_words};
 pub use language::Language;
 pub use languages::language_for;
+pub use look::{DiffColors, Tint, diff_colors};
 pub use split::SplitDiff;
+pub use words::word_ranges;
 
 /// The editor's context: its keys are bound in it.
 pub const CONTEXT: &str = "Editor";
@@ -25,7 +32,7 @@ pub const CONTEXT: &str = "Editor";
 /// read-only keys. Call once, before the app applies its own theme: the theme settings' init installs Zed's.
 pub fn init(font: &str, size: f32, cx: &mut App) {
     settings::init(cx);
-    let user = serde_json::json!({ "buffer_font_family": font, "buffer_font_size": size }).to_string();
+    let user = serde_json::json!({ "buffer_font_family": font, "buffer_font_size": size, "word_diff_enabled": false }).to_string();
     cx.update_global(|store: &mut settings::SettingsStore, cx| {
         let _ = store.set_user_settings(&user, cx);
     });
@@ -96,23 +103,6 @@ pub fn file_editor(buffer: Entity<Buffer>, window: &mut Window, cx: &mut App) ->
     cx.new(|cx| {
         let multi = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         read_only_editor(multi, window, cx)
-    })
-}
-
-/// One column: the new text with each removed run shown above what replaced it, by Zed's own diff
-/// rendering (row backgrounds and the changed words from the theme's version-control colours).
-pub fn inline_editor(diff: &Diff, window: &mut Window, cx: &mut App) -> Entity<Editor> {
-    let (new, buffer_diff) = (diff.new.clone(), diff.buffer_diff.clone());
-    cx.new(|cx| {
-        let multi = cx.new(|cx| {
-            let mut multi = MultiBuffer::singleton(new, cx);
-            multi.add_diff(buffer_diff, cx);
-            multi.set_all_diff_hunks_expanded(cx);
-            multi
-        });
-        let mut editor = read_only_editor(multi, window, cx);
-        editor.set_expand_all_diff_hunks(cx);
-        editor
     })
 }
 
