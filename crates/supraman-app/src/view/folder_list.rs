@@ -190,7 +190,7 @@ fn row_element<V: 'static, F: Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'st
         .items_center()
         .gap_2()
         .min_w_0()
-        .children(row.included.map(|on| button::checkbox(hits, format!("{prefix}-include-{}", f.name), on).flex_none().on_click(include)))
+        .children(row.included.map(|on| button::checkbox(hits, format!("{prefix}-include-{}", f.name), on, cx).on_click(include)))
         .child(clipped(format!("{prefix}-name-{}", f.name), f.name.clone(), false).when(off, |d| d.text_color(secondary(cx))))
         .children(f.branch.clone().map(|b| clipped(format!("{prefix}-branch-{}", f.name), format!("({b})"), false).flex_shrink(8.).text_xs().text_color(secondary(cx))))
         .children(row.elsewhere.as_ref().map(|owner| {
