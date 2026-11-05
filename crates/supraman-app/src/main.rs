@@ -295,6 +295,7 @@ fn main() {
     }
 
     gpui_platform::application().run(move |cx: &mut App| {
+        supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
         supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
         supraman_ui::stall::watch(cx);
         let home = supraman_core::home_from_env();
@@ -303,6 +304,7 @@ fn main() {
         }
         view::bind_keys(cx);
         text_input::bind_keys(cx);
+        git_view::diff::bind_keys(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

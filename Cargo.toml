@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/supraman-core", "crates/supraman-claude", "crates/supraman-supervisor", "crates/supraman-workman", "crates/supraman-gitman", "crates/supraman-term", "crates/supraman-ui", "crates/supraman-app", "crates/sm", "spikes/term-spike"]
+members = ["crates/supraman-core", "crates/supraman-claude", "crates/supraman-supervisor", "crates/supraman-workman", "crates/supraman-gitman", "crates/supraman-editor", "crates/supraman-term", "crates/supraman-ui", "crates/supraman-app", "crates/sm", "spikes/term-spike"]
 
 [workspace.package]
 license = "GPL-3.0-or-later"
@@ -15,3 +15,6 @@ debug = "line-tables-only"
 [patch.crates-io]
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
+notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
+notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }

@@ -47,11 +47,16 @@ pub enum Icon {
     SortUp,
     ListFlat,
     ListTree,
+    DiffSplit,
+    DiffInline,
+    File,
+    FileDiff,
+    ChevronUp,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 43] = [
+    const ALL: [Icon; 48] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -95,6 +100,11 @@ impl Icon {
         Icon::SortUp,
         Icon::ListFlat,
         Icon::ListTree,
+        Icon::DiffSplit,
+        Icon::DiffInline,
+        Icon::File,
+        Icon::FileDiff,
+        Icon::ChevronUp,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -142,6 +152,11 @@ impl Icon {
             Icon::SortUp => include_bytes!("../assets/icons/arrow_up.svg"),
             Icon::ListFlat => include_bytes!("../assets/icons/menu.svg"),
             Icon::ListTree => include_bytes!("../assets/icons/list_tree.svg"),
+            Icon::DiffSplit => include_bytes!("../assets/icons/diff_split.svg"),
+            Icon::DiffInline => include_bytes!("../assets/icons/diff_unified.svg"),
+            Icon::File => include_bytes!("../assets/icons/file.svg"),
+            Icon::FileDiff => include_bytes!("../assets/icons/file_diff.svg"),
+            Icon::ChevronUp => include_bytes!("../assets/icons/chevron_up.svg"),
         }
     }
 
