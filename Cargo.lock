@@ -8631,6 +8631,7 @@ dependencies = [
  "flate2",
  "getrandom 0.3.4",
  "hmac",
+ "notify",
  "roxmltree 0.21.1",
  "semver",
  "serde",

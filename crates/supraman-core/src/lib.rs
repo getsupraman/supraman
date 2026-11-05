@@ -25,6 +25,7 @@ mod slug;
 pub mod time;
 pub mod update;
 pub mod url;
+pub mod watch;
 
 pub use discover::{discover, rescan, same_path};
 pub use edit::{Edit, Edited};
