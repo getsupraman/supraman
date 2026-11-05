@@ -141,7 +141,7 @@ function Licence-Texts($p) {
 
     $authors = @($p.authors | ForEach-Object { $_ -replace '\s*<[^>]*>', '' })
     $holder = if ($authors) { $authors -join ', ' } else { "the $($p.name) authors" }
-    foreach ($spdx in 'MIT', 'Apache-2.0') {
+    foreach ($spdx in 'MIT', 'Apache-2.0', 'MPL-2.0') {
         if ($p.license -match "(^|[\s/(])$([regex]::Escape($spdx))($|[\s/)])") {
             $text = Read-Text (Join-Path $PSScriptRoot "licenses\$spdx.txt")
             $text = $text.Replace('{copyright}', "Copyright (c) $holder")
