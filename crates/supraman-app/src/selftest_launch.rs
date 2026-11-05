@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// The argv of `claude` for the session `name`, with `config` as its only MCP config.
 pub(crate) fn args<'a>(name: &'a str, config: &'a str, prompt: &'a str) -> [&'a str; 9] {
-    ["--bg", "--name", name, "--permission-mode", "auto", "--strict-mcp-config", "--mcp-config", config, prompt]
+    ["--bg", "--name", name, "--permission-mode", "auto", "--mcp-config", config, "--strict-mcp-config", prompt]
 }
 
 /// `<home>/no-mcp.json`, an MCP config of no servers; its path.
@@ -31,6 +31,7 @@ mod tests {
         assert!(argv.contains(&"--strict-mcp-config"), "{argv:?}");
         let at = argv.iter().position(|a| *a == "--mcp-config").expect("--mcp-config");
         assert_eq!(argv[at + 1], config);
+        assert!(argv[at + 2].starts_with("--"), "--mcp-config takes every value up to the next flag: {argv:?}");
         assert_eq!(argv.last(), Some(&"hi"));
         std::fs::remove_dir_all(&home).ok();
     }
