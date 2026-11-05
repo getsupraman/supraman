@@ -19,6 +19,7 @@ pub mod schedule;
 pub mod secret;
 pub mod shells;
 pub mod store;
+pub mod text;
 mod settings;
 mod slug;
 pub mod time;

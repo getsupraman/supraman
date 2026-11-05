@@ -3,6 +3,7 @@
 mod cells;
 mod colours;
 mod details;
+pub mod diff;
 mod graph;
 mod load;
 
@@ -22,6 +23,7 @@ use theme::ActiveTheme as _;
 
 use cells::ref_cell;
 use details::{CommitPanel, PanelEvent};
+use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
 use load::{GraphRow, Problem};
 
@@ -93,6 +95,13 @@ pub struct GitView {
     panel: Entity<CommitPanel>,
     panel_width: Pixels,
     _panel_events: Subscription,
+    /// The file viewer in the graph's place, while one is open.
+    diff: Option<(Entity<DiffView>, Subscription)>,
+    /// The last viewer's mode and layout, the next one's start.
+    diff_mode: DiffMode,
+    diff_layout: DiffLayout,
+    /// The viewer opened since the last frame and takes the keyboard on the next.
+    focus_diff: bool,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
@@ -105,8 +114,9 @@ impl GitView {
             let widths = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).map_or(c.default, |w| px(*w as f32))).collect();
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
             let events = cx.subscribe(&panel, |this: &mut GitView, _, e: &PanelEvent, cx| {
-                if let PanelEvent::Parent(sha) = e {
-                    this.select_sha(sha, cx);
+                match e {
+                    PanelEvent::Parent(sha) => this.select_sha(sha, cx),
+                    PanelEvent::File(target) => this.open_diff(target.clone(), cx),
                 }
             });
             let mut view = GitView {
@@ -130,6 +140,10 @@ impl GitView {
                 panel,
                 panel_width: sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32)),
                 _panel_events: events,
+                diff: None,
+                diff_mode: DiffMode::default(),
+                diff_layout: DiffLayout::default(),
+                focus_diff: false,
             };
             view.reload(cx);
             view
@@ -143,6 +157,29 @@ impl GitView {
     #[cfg(test)]
     pub fn panel(&self) -> &Entity<CommitPanel> {
         &self.panel
+    }
+
+    #[cfg(test)]
+    pub fn diff(&self) -> Option<&Entity<DiffView>> {
+        self.diff.as_ref().map(|(d, _)| d)
+    }
+
+    /// Shows `target` in the graph's place; the graph keeps its selection and scroll for when it closes.
+    pub fn open_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else { return };
+        self.close_diff(cx);
+        let view = DiffView::open(repo, target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.close_diff(cx));
+        self.diff = Some((view, closed));
+        self.focus_diff = true;
+        cx.notify();
+    }
+
+    pub fn close_diff(&mut self, cx: &mut Context<Self>) {
+        if let Some((view, _)) = self.diff.take() {
+            (self.diff_mode, self.diff_layout) = view.read_with(cx, |v, _| (v.mode(), v.layout()));
+            cx.notify();
+        }
     }
 
     /// The row whose ref list is open.
@@ -274,7 +311,11 @@ impl GitView {
 
 impl GitView {
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let table = div().flex_1().min_w_0().h_full().child(self.render_table(cx));
+        let first = match &self.diff {
+            Some((view, _)) => view.clone().into_any_element(),
+            None => self.render_table(cx),
+        };
+        let table = div().flex_1().min_w_0().h_full().child(first);
         let panel = div().flex_none().w(self.panel_width).h_full().child(self.panel.clone());
         SplitPane { id: "git-split".into(), min_first: px(320.), min_second: px(260.), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
@@ -303,8 +344,14 @@ fn notice(title: &str, detail: String, cx: &App) -> AnyElement {
 }
 
 impl Render for GitView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: git tab");
+        if std::mem::take(&mut self.focus_diff)
+            && let Some((view, _)) = &self.diff
+        {
+            let focus = view.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
+        }
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx),
             Load::Problem(Problem::Git(why)) => notice("Git is missing or too old", why.clone(), cx),

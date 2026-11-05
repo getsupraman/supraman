@@ -19,6 +19,7 @@ use supraman_ui::table::TableState;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use supraman_ui::tree::{Order, TreeState};
 
+pub use files::{kind_word, mark_icon};
 pub use load::{Counts, Mark};
 
 use super::Selected;
@@ -30,8 +31,8 @@ pub const MESSAGE_HEIGHT: Pixels = px(140.);
 pub enum PanelEvent {
     /// Select this parent in the graph.
     Parent(SharedString),
-    /// A file was clicked: the diff of `path` in commit `sha`.
-    File { sha: SharedString, path: SharedString },
+    /// A file was clicked: its change in the shown commit, against the first parent.
+    File(super::diff::Target),
 }
 
 /// The commit shown, its texts ready to paint.
@@ -259,7 +260,9 @@ impl CommitPanel {
     fn file_clicked(&mut self, path: &SharedString, cx: &mut Context<Self>) {
         let Some(shown) = self.shown() else { return };
         if shown.files.contains(path.as_ref()) {
-            cx.emit(PanelEvent::File { sha: shown.sha.clone(), path: path.clone() });
+            let change = shown.changes.iter().find(|c| c.path == path.as_ref()).cloned();
+            let parent = shown.parents.first().map(|p| p.to_string());
+            cx.emit(PanelEvent::File(super::diff::Target { sha: shown.sha.to_string(), parent, path: path.to_string(), change }));
         }
     }
 }

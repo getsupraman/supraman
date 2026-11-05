@@ -160,16 +160,7 @@ fn is_script(word: &str) -> bool {
 pub fn read_script(path: &Path) -> Option<String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path).ok()?.take(SCRIPT_CAP).read_to_end(&mut bytes).ok()?;
-    let utf16 = |b: &[u8], le: bool| {
-        let units: Vec<u16> = b.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
-        String::from_utf16_lossy(&units)
-    };
-    Some(match bytes.as_slice() {
-        [0xFF, 0xFE, rest @ ..] => utf16(rest, true),
-        [0xFE, 0xFF, rest @ ..] => utf16(rest, false),
-        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
-        b => String::from_utf8_lossy(b).into_owned(),
-    })
+    Some(crate::text::decode(&bytes).0)
 }
 
 /// `on logon`, `at startup`, `daily at 09:00`, `weekly Mon, Thu at 08:00`, `once at 2026-11-02 07:30`, several
