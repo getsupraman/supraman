@@ -32,4 +32,19 @@ allow = [
     "Unlicense",
     # Fonts only: the OFL allows bundling a font with any software as long as the font is not sold alone.
     "OFL-1.1",
+    # bzip2's own BSD-style licence (libbz2-rs-sys): free and GPL-compatible.
+    "bzip2-1.0.6",
+    # A permissive data licence (webpki-roots' Mozilla root certificates): attribution only.
+    "CDLA-Permissive-2.0",
 ]
+
+# Zed crates at the pinned rev that ship LICENSE-GPL but name no licence in Cargo.toml.
+[[licenses.clarify]]
+crate = "grammars"
+expression = "GPL-3.0-or-later"
+license-files = []
+
+[[licenses.clarify]]
+crate = "language_core"
+expression = "GPL-3.0-or-later"
+license-files = []

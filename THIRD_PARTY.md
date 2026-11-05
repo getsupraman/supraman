@@ -47,7 +47,7 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 
 ## Rust crates
 
-The 451 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
+The 766 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
 build-dependencies). Their licence texts and copyright notices, as each package ships them, are in a release's
 `licenses\rust-crates.txt`.
 
@@ -56,40 +56,60 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | accesskit | 0.24.1 | MIT OR Apache-2.0 | crates.io |
 | accesskit_consumer | 0.38.0 | MIT OR Apache-2.0 | crates.io |
 | accesskit_windows | 0.34.0 | MIT OR Apache-2.0 | crates.io |
+| addr2line | 0.26.1 | Apache-2.0 OR MIT | crates.io |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | crates.io |
 | adler32 | 1.2.0 | Zlib | crates.io |
+| agent_settings | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | aho-corasick | 1.1.3 | Unlicense OR MIT | crates.io |
 | alacritty_terminal | 0.26.1-dev | Apache-2.0 | https://github.com/zed-industries/alacritty @ 4c129667ce56 |
 | aligned | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | aligned-vec | 0.6.4 | MIT | crates.io |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | crates.io |
+| any_vec | 0.14.0 | MIT OR Apache-2.0 | crates.io |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | crates.io |
 | approx | 0.5.1 | Apache-2.0 | crates.io |
+| arbitrary | 1.4.2 | MIT OR Apache-2.0 | crates.io |
+| arc-swap | 1.9.0 | MIT OR Apache-2.0 | crates.io |
 | arg_enum_proc_macro | 0.3.4 | MIT | crates.io |
+| arraydeque | 0.5.1 | MIT/Apache-2.0 | crates.io |
 | arrayref | 0.3.9 | BSD-2-Clause | crates.io |
 | arrayvec | 0.7.6 | MIT OR Apache-2.0 | crates.io |
 | as-slice | 0.2.1 | MIT OR Apache-2.0 | crates.io |
+| ascii | 1.1.0 | Apache-2.0 OR MIT | crates.io |
+| askpass | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| async-channel | 1.9.0 | Apache-2.0 OR MIT | crates.io |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT | crates.io |
 | async-compression | 0.4.32 | MIT OR Apache-2.0 | crates.io |
 | async-executor | 1.13.3 | Apache-2.0 OR MIT | crates.io |
 | async-fs | 2.2.0 | Apache-2.0 OR MIT | crates.io |
+| async-global-executor | 2.4.1 | Apache-2.0 OR MIT | crates.io |
 | async-io | 2.6.0 | Apache-2.0 OR MIT | crates.io |
 | async-lock | 3.4.2 | Apache-2.0 OR MIT | crates.io |
 | async-net | 2.0.0 | Apache-2.0 OR MIT | crates.io |
 | async-process | 2.5.0 | Apache-2.0 OR MIT | https://github.com/zed-industries/async-process.git @ 0b6d6713570a |
+| async-recursion | 1.1.1 | MIT OR Apache-2.0 | crates.io |
+| async-std | 1.13.2 | Apache-2.0 OR MIT | crates.io |
+| async-tar | 0.6.1 | MIT/Apache-2.0 | https://github.com/zed-industries/async-tar @ bd3ad6f89df9 |
 | async-task | 4.7.1 | Apache-2.0 OR MIT | https://github.com/zed-industries/async-task.git @ 015845a19fc3 |
+| async-trait | 0.1.89 | MIT OR Apache-2.0 | crates.io |
+| async-tungstenite | 0.33.0 | MIT | crates.io |
 | async_zip | 0.0.18 | MIT | crates.io |
 | atomic | 0.5.3 | Apache-2.0/MIT | crates.io |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | crates.io |
 | av-scenechange | 0.14.1 | MIT | crates.io |
 | av1-grain | 0.2.4 | BSD-2-Clause | crates.io |
 | avif-serialize | 0.8.6 | BSD-3-Clause | crates.io |
+| aws-lc-rs | 1.18.1 | ISC AND (Apache-2.0 OR ISC) | crates.io |
+| aws-lc-sys | 0.45.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) | crates.io |
 | backtrace | 0.3.76 | MIT OR Apache-2.0 | crates.io |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | crates.io |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | crates.io |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT | crates.io |
+| betlang | 0.1.1 | MIT | crates.io |
 | bit-set | 0.11.1 | Apache-2.0 OR MIT | crates.io |
+| bit-set | 0.8.0 | Apache-2.0 OR MIT | crates.io |
 | bit-vec | 0.10.1 | Apache-2.0 OR MIT | crates.io |
+| bit-vec | 0.8.0 | Apache-2.0 OR MIT | crates.io |
 | bit_field | 0.10.3 | Apache-2.0/MIT | crates.io |
 | bitflags | 1.3.2 | MIT/Apache-2.0 | crates.io |
 | bitflags | 2.13.1 | MIT OR Apache-2.0 | crates.io |
@@ -98,7 +118,9 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | blocking | 1.6.2 | Apache-2.0 OR MIT | crates.io |
 | borsh | 1.8.1 | MIT OR Apache-2.0 | crates.io |
 | borsh-derive | 1.8.1 | Apache-2.0 | crates.io |
+| breadcrumbs | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | bstr | 1.12.1 | MIT OR Apache-2.0 | crates.io |
+| buffer_diff | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | crates.io |
 | by_address | 1.2.1 | MIT OR Apache-2.0 | crates.io |
 | bytemuck | 1.24.0 | Zlib OR Apache-2.0 OR MIT | crates.io |
@@ -106,75 +128,136 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | byteorder | 1.5.0 | Unlicense OR MIT | crates.io |
 | byteorder-lite | 0.1.0 | Unlicense OR MIT | crates.io |
 | bytes | 1.11.1 | MIT | crates.io |
+| bzip2 | 0.6.1 | MIT OR Apache-2.0 | crates.io |
 | cfg-if | 1.0.4 | MIT OR Apache-2.0 | crates.io |
 | chacha20 | 0.10.2 | MIT OR Apache-2.0 | crates.io |
+| chardetng | 0.1.17 | Apache-2.0 OR MIT | crates.io |
 | chrono | 0.4.42 | MIT OR Apache-2.0 | crates.io |
+| chunked_transfer | 1.5.0 | MIT OR Apache-2.0 | crates.io |
+| ciborium | 0.2.2 | Apache-2.0 | crates.io |
+| ciborium-io | 0.2.2 | Apache-2.0 | crates.io |
+| ciborium-ll | 0.2.2 | Apache-2.0 | crates.io |
+| client | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| clock | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| cloud_api_client | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| cloud_api_types | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| cloud_llm_client | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| cobs | 0.3.0 | MIT OR Apache-2.0 | crates.io |
 | collections | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | color_quant | 1.1.0 | MIT | crates.io |
+| component | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | compression-codecs | 0.4.31 | MIT OR Apache-2.0 | crates.io |
 | compression-core | 0.4.29 | MIT OR Apache-2.0 | crates.io |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | crates.io |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT | crates.io |
+| const_format | 0.2.35 | Zlib | crates.io |
+| const_format_proc_macros | 0.2.34 | Zlib | crates.io |
+| context_server | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | convert_case | 0.10.0 | MIT | crates.io |
 | convert_case | 0.11.0 | MIT | crates.io |
 | core2 | 0.4.0 | Apache-2.0 OR MIT | crates.io |
 | core_detect | 1.0.0 | MIT/Apache-2.0 | crates.io |
 | core_maths | 0.1.1 | MIT | crates.io |
+| cpp_demangle | 0.5.1 | MIT OR Apache-2.0 | crates.io |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | crates.io |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | crates.io |
+| cranelift-assembler-x64 | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-bforest | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-bitset | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-codegen | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-codegen-shared | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-control | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-entity | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-frontend | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| cranelift-native | 0.135.7 | Apache-2.0 WITH LLVM-exception | crates.io |
 | crc32fast | 1.5.0 | MIT OR Apache-2.0 | crates.io |
+| credentials_provider | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 | crates.io |
 | crossbeam-deque | 0.8.6 | MIT OR Apache-2.0 | crates.io |
 | crossbeam-epoch | 0.9.18 | MIT OR Apache-2.0 | crates.io |
 | crossbeam-queue | 0.3.12 | MIT OR Apache-2.0 | crates.io |
 | crossbeam-utils | 0.8.21 | MIT OR Apache-2.0 | crates.io |
 | crypto-common | 0.1.6 | MIT OR Apache-2.0 | crates.io |
+| cssparser | 0.36.0 | MPL-2.0 | crates.io |
+| cssparser-macros | 0.6.1 | MPL-2.0 | crates.io |
 | ctor | 1.0.12 | Apache-2.0 OR MIT | crates.io |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | crates.io |
 | curve25519-dalek | 4.1.3 | BSD-3-Clause | crates.io |
 | curve25519-dalek-derive | 0.1.1 | MIT/Apache-2.0 | crates.io |
+| dap | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| dap-types | 0.0.1 | MIT OR Apache-2.0 | https://github.com/zed-industries/dap-types @ 1b461b310481 |
 | dary_heap | 0.3.9 | MIT OR Apache-2.0 | crates.io |
+| data-encoding | 2.9.0 | MIT | crates.io |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | crates.io |
+| db | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | deflate64 | 0.1.10 | MIT | crates.io |
 | der | 0.7.10 | Apache-2.0 OR MIT | crates.io |
 | der | 0.8.3 | Apache-2.0 OR MIT | crates.io |
+| deranged | 0.5.4 | MIT OR Apache-2.0 | crates.io |
 | derive_more | 2.1.1 | MIT | crates.io |
 | derive_more-impl | 2.1.1 | MIT | crates.io |
 | derive_refineable | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| diffy | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | digest | 0.10.7 | MIT OR Apache-2.0 | crates.io |
 | dirs | 6.0.0 | MIT OR Apache-2.0 | crates.io |
 | dirs-sys | 0.5.0 | MIT OR Apache-2.0 | crates.io |
 | displaydoc | 0.2.5 | MIT OR Apache-2.0 | crates.io |
+| documented | 0.10.0 | MIT | crates.io |
+| documented-macros | 0.10.0 | MIT | crates.io |
 | dpi | 0.1.2 | Apache-2.0 AND MIT | crates.io |
+| dtoa | 1.0.10 | MIT OR Apache-2.0 | crates.io |
+| dtoa-short | 0.3.5 | MPL-2.0 | crates.io |
+| dugong | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
+| dugong-graphlib | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | crates.io |
 | dyn-clone | 1.0.20 | MIT OR Apache-2.0 | crates.io |
+| ec4rs | 1.2.0 | Apache-2.0 | crates.io |
 | ed25519 | 2.2.3 | Apache-2.0 OR MIT | crates.io |
 | ed25519-dalek | 2.2.0 | BSD-3-Clause | crates.io |
+| edit_prediction_types | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| editor | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | either | 1.15.0 | MIT OR Apache-2.0 | crates.io |
+| embedded-io | 0.4.0 | MIT OR Apache-2.0 | crates.io |
+| embedded-io | 0.6.1 | MIT OR Apache-2.0 | crates.io |
+| emojis | 0.9.0 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io |
+| encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause | crates.io |
 | enumn | 0.1.14 | MIT OR Apache-2.0 | crates.io |
+| env_var | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | equator | 0.4.2 | MIT | crates.io |
 | equator-macro | 0.4.2 | MIT | crates.io |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT | crates.io |
+| erased-serde | 0.4.9 | MIT OR Apache-2.0 | crates.io |
 | errno | 0.3.14 | MIT OR Apache-2.0 | crates.io |
 | etagere | 0.2.15 | MIT/Apache-2.0 | crates.io |
 | euclid | 0.22.14 | MIT OR Apache-2.0 | crates.io |
+| event-listener | 2.5.3 | Apache-2.0 OR MIT | crates.io |
 | event-listener | 5.4.1 | Apache-2.0 OR MIT | crates.io |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT | crates.io |
 | exr | 1.74.0 | BSD-3-Clause | crates.io |
+| extension | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| fancy-regex | 0.19.0 | MIT | crates.io |
 | fast-srgb8 | 1.0.0 | MIT OR Apache-2.0 OR CC0-1.0 | crates.io |
 | fastrand | 2.3.0 | Apache-2.0 OR MIT | crates.io |
 | fax | 0.2.6 | MIT | crates.io |
 | fax_derive | 0.2.0 | MIT | crates.io |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 | crates.io |
+| fearless_simd | 0.4.1 | Apache-2.0 OR MIT | crates.io |
+| feature_flags | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| feature_flags_macros | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| file_content | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| file_icons | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| filetime | 0.2.29 | MIT/Apache-2.0 | crates.io |
 | fixedbitset | 0.5.7 | MIT OR Apache-2.0 | crates.io |
 | flate2 | 1.1.8 | MIT OR Apache-2.0 | crates.io |
 | float-cmp | 0.9.0 | MIT | crates.io |
 | float_next_after | 1.0.0 | MIT | crates.io |
 | flume | 0.12.0 | Apache-2.0/MIT | crates.io |
 | fnv | 1.0.7 | Apache-2.0 / MIT | crates.io |
+| foldhash | 0.1.5 | Zlib | crates.io |
 | foldhash | 0.2.0 | Zlib | crates.io |
 | fontdb | 0.23.0 | MIT | crates.io |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | crates.io |
+| fs | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | futures | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-concurrency | 7.7.1 | MIT OR Apache-2.0 | crates.io |
@@ -186,33 +269,55 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | futures-sink | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-task | 0.3.34 | MIT OR Apache-2.0 | crates.io |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | crates.io |
+| fuzzy | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| fuzzy_nucleo | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | generic-array | 0.14.7 | MIT | crates.io |
 | getrandom | 0.2.16 | MIT OR Apache-2.0 | crates.io |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 | crates.io |
 | getrandom | 0.4.1 | MIT OR Apache-2.0 | crates.io |
 | gif | 0.14.2 | MIT OR Apache-2.0 | crates.io |
-| globset | 0.4.17 | Unlicense OR MIT | crates.io |
+| gimli | 0.33.0 | MIT OR Apache-2.0 | crates.io |
+| git | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| git_hosting_providers | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| globset | 0.4.21 | Unlicense OR MIT | crates.io |
 | gpui | 0.2.2 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_macros | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_platform | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_shared_string | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| gpui_tokio | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_util | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_windows | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| grammars | 0.1.0 | see  | https://github.com/zed-industries/zed @ 03efd49220ba |
+| granit-parser | 1.0.0 | MIT OR Apache-2.0 | crates.io |
 | half | 2.7.1 | MIT OR Apache-2.0 | crates.io |
 | hash32 | 0.3.1 | MIT OR Apache-2.0 | crates.io |
+| hashbrown | 0.15.5 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 | crates.io |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | crates.io |
 | heapless | 0.9.2 | MIT OR Apache-2.0 | crates.io |
 | heck | 0.5.0 | MIT OR Apache-2.0 | crates.io |
+| hex | 0.4.3 | MIT OR Apache-2.0 | crates.io |
 | hmac | 0.12.1 | MIT OR Apache-2.0 | crates.io |
 | home | 0.5.11 | MIT OR Apache-2.0 | crates.io |
+| html5ever | 0.39.0 | MIT OR Apache-2.0 | crates.io |
+| htmlize | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | http | 1.3.1 | MIT OR Apache-2.0 | crates.io |
 | http-body | 1.0.1 | MIT | crates.io |
+| http-body-util | 0.1.3 | MIT | crates.io |
 | http_client | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| http_client_tls | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | httparse | 1.10.1 | MIT OR Apache-2.0 | crates.io |
+| httpdate | 1.0.3 | MIT OR Apache-2.0 | crates.io |
+| hyper | 1.12.0 | MIT | crates.io |
+| hyper-util | 0.1.17 | MIT | crates.io |
 | iana-time-zone | 0.1.64 | MIT OR Apache-2.0 | crates.io |
+| icons | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| icu_collator | 2.3.0 | Unicode-3.0 | crates.io |
+| icu_collator_data | 2.3.0 | Unicode-3.0 | crates.io |
 | icu_collections | 2.3.0 | Unicode-3.0 | crates.io |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | crates.io |
+| icu_locale_fallback | 2.3.0 | Unicode-3.0 | crates.io |
+| icu_locale_fallback_data | 2.3.0 | Unicode-3.0 | crates.io |
 | icu_normalizer | 2.3.0 | Unicode-3.0 | crates.io |
 | icu_normalizer_data | 2.3.0 | Unicode-3.0 | crates.io |
 | icu_properties | 2.3.0 | Unicode-3.0 | crates.io |
@@ -220,72 +325,129 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | icu_provider | 2.3.0 | Unicode-3.0 | crates.io |
 | idna | 1.1.0 | MIT OR Apache-2.0 | crates.io |
 | idna_adapter | 1.2.1 | Apache-2.0 OR MIT | crates.io |
+| ignore | 0.4.24 | Unlicense OR MIT | crates.io |
 | image | 0.25.10 | MIT OR Apache-2.0 | crates.io |
 | image-webp | 0.2.4 | MIT OR Apache-2.0 | crates.io |
 | imagesize | 0.14.0 | MIT | crates.io |
+| imara-diff | 0.2.0 | Apache-2.0 | crates.io |
 | imgref | 1.12.0 | CC0-1.0 OR Apache-2.0 | crates.io |
 | include-flate | 0.3.4 | Apache-2.0 | crates.io |
 | include-flate-codegen | 0.3.4 | Apache-2.0 | crates.io |
 | include-flate-compress | 0.3.4 | Apache-2.0 | crates.io |
 | indexmap | 2.14.0 | Apache-2.0 OR MIT | crates.io |
+| indoc | 2.0.6 | MIT OR Apache-2.0 | crates.io |
 | inventory | 0.3.21 | MIT OR Apache-2.0 | crates.io |
+| is_executable | 1.0.5 | MIT OR Apache-2.0 | crates.io |
 | itertools | 0.14.0 | MIT OR Apache-2.0 | crates.io |
+| itertools | 0.15.0 | MIT OR Apache-2.0 | crates.io |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | crates.io |
+| json5 | 1.3.1 | MIT | crates.io |
 | keyboard-types | 0.8.3 | MIT OR Apache-2.0 | crates.io |
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | crates.io |
+| kv-log-macro | 1.0.7 | MIT OR Apache-2.0 | crates.io |
+| lalrpop-util | 0.23.1 | Apache-2.0 OR MIT | crates.io |
+| language | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| language_core | 0.1.0 | see  | https://github.com/zed-industries/zed @ 03efd49220ba |
+| language_detection | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| language_model | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| language_model_core | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| lazy_static | 1.5.0 | MIT OR Apache-2.0 | crates.io |
+| leb128fmt | 0.1.0 | MIT OR Apache-2.0 | crates.io |
 | lebe | 0.5.3 | BSD-3-Clause | crates.io |
+| libbz2-rs-sys | 0.2.2 | bzip2-1.0.6 | crates.io |
 | libc | 0.2.186 | MIT OR Apache-2.0 | crates.io |
 | libflate | 2.3.1 | MIT | crates.io |
 | libflate_lz77 | 2.3.0 | MIT | crates.io |
 | libm | 0.2.16 | MIT | crates.io |
+| libsqlite3-sys | 0.30.1 | MIT | crates.io |
 | link-section | 0.19.2 | Apache-2.0 OR MIT | crates.io |
+| linkify | 0.10.0 | MIT OR Apache-2.0 | crates.io |
 | linktime-proc-macro | 0.2.2 | Apache-2.0 OR MIT | crates.io |
 | litemap | 0.8.0 | Unicode-3.0 | crates.io |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | crates.io |
 | log | 0.4.29 | MIT OR Apache-2.0 | crates.io |
+| lol_html | 3.0.1 | BSD-3-Clause | crates.io |
 | loop9 | 0.1.5 | MIT | crates.io |
+| lru | 0.16.4 | MIT | crates.io |
+| lsp | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| lsp-types | 0.95.1 | MIT | https://github.com/zed-industries/lsp-types @ 82d7fc66ebdf |
 | lyon | 1.0.16 | MIT OR Apache-2.0 | crates.io |
 | lyon_algorithms | 1.0.16 | MIT OR Apache-2.0 | crates.io |
 | lyon_geom | 1.0.17 | MIT OR Apache-2.0 | crates.io |
 | lyon_path | 1.0.16 | MIT OR Apache-2.0 | crates.io |
 | lyon_tessellation | 1.0.16 | MIT OR Apache-2.0 | crates.io |
+| manatee | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
+| markdown | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| markup5ever | 0.39.0 | MIT OR Apache-2.0 | crates.io |
+| markup5ever_rcdom | 0.39.0+unofficial | MIT OR Apache-2.0 | crates.io |
 | maybe-rayon | 0.1.1 | MIT | crates.io |
 | memchr | 2.8.3 | Unlicense OR MIT | crates.io |
 | memmap2 | 0.9.8 | MIT OR Apache-2.0 | crates.io |
+| menu | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| mermaid_render | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| merman | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
+| merman-core | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
+| merman-render | 0.8.0-alpha.5 | MIT OR Apache-2.0 | crates.io |
+| migrator | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| mime | 0.3.17 | MIT OR Apache-2.0 | crates.io |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | crates.io |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | crates.io |
+| mio | 1.2.0 | MIT | crates.io |
 | miow | 0.6.1 | MIT OR Apache-2.0 | crates.io |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | muda | 0.21.2 | Apache-2.0 OR MIT | crates.io |
+| multi_buffer | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | native-tls | 0.2.18 | MIT OR Apache-2.0 | crates.io |
+| net | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | new_debug_unreachable | 1.0.6 | MIT | crates.io |
 | no_std_io2 | 0.9.4 | Apache-2.0 OR MIT | crates.io |
+| node_runtime | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | nom | 7.1.3 | MIT | crates.io |
+| nom | 8.0.0 | MIT | crates.io |
 | noop_proc_macro | 0.3.0 | MIT | crates.io |
+| notify | 9.0.0-rc.4 | CC0-1.0 | https://github.com/zed-industries/notify @ d842f16b2716 |
+| notify-types | 2.1.0 | MIT OR Apache-2.0 | https://github.com/zed-industries/notify @ d842f16b2716 |
 | ntapi | 0.4.1 | Apache-2.0 OR MIT | crates.io |
+| nu-ansi-term | 0.50.3 | MIT | crates.io |
+| nucleo-matcher | 0.3.1 | MPL-2.0 | crates.io |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | crates.io |
+| num-bigint-dig | 0.8.6 | MIT/Apache-2.0 | crates.io |
+| num-conv | 0.2.0 | MIT OR Apache-2.0 | crates.io |
 | num-derive | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | num-integer | 0.1.46 | MIT OR Apache-2.0 | crates.io |
+| num-iter | 0.1.45 | MIT OR Apache-2.0 | crates.io |
 | num-rational | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | crates.io |
 | num_cpus | 1.17.0 | MIT OR Apache-2.0 | crates.io |
+| oauth_callback_server | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| object | 0.39.1 | Apache-2.0 OR MIT | crates.io |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | crates.io |
+| optfield | 0.4.0 | MIT OR Apache-2.0 | crates.io |
 | option-ext | 0.2.0 | MPL-2.0 | crates.io |
+| ordered-float | 5.5.1 | MIT | crates.io |
 | palette | 0.7.6 | MIT OR Apache-2.0 | crates.io |
 | palette_derive | 0.7.6 | MIT OR Apache-2.0 | crates.io |
 | parking | 2.2.1 | Apache-2.0 OR MIT | crates.io |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | crates.io |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | crates.io |
+| partial-json-fixer | 0.5.3 | MIT | crates.io |
 | paste | 1.0.15 | MIT OR Apache-2.0 | crates.io |
 | pastey | 0.1.1 | MIT OR Apache-2.0 | crates.io |
 | path | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| paths | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | pem-rfc7468 | 1.0.0 | Apache-2.0 OR MIT | crates.io |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | crates.io |
+| phf | 0.13.1 | MIT | crates.io |
+| phf_generator | 0.13.1 | MIT | crates.io |
+| phf_macros | 0.13.1 | MIT | crates.io |
+| phf_shared | 0.13.1 | MIT | crates.io |
 | pico-args | 0.5.0 | MIT | crates.io |
 | pin-project | 1.1.10 | Apache-2.0 OR MIT | crates.io |
 | pin-project-internal | 1.1.10 | Apache-2.0 OR MIT | crates.io |
 | pin-project-lite | 0.2.16 | Apache-2.0 OR MIT | crates.io |
+| pin-utils | 0.1.0 | MIT OR Apache-2.0 | crates.io |
 | piper | 0.2.4 | MIT OR Apache-2.0 | crates.io |
+| pkcs1 | 0.7.5 | Apache-2.0 OR MIT | crates.io |
 | pkcs8 | 0.10.2 | Apache-2.0 OR MIT | crates.io |
 | png | 0.17.16 | MIT OR Apache-2.0 | crates.io |
 | png | 0.18.0 | MIT OR Apache-2.0 | crates.io |
@@ -293,24 +455,41 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | pollster | 0.2.5 | Apache-2.0/MIT | crates.io |
 | pollster | 0.4.0 | Apache-2.0/MIT | crates.io |
 | polycool | 0.4.0 | MIT OR Apache-2.0 | crates.io |
+| pori | 0.0.0 | MIT | crates.io |
 | postage | 0.5.0 | MIT | crates.io |
+| postcard | 1.1.3 | MIT OR Apache-2.0 | crates.io |
 | potential_utf | 0.1.3 | Unicode-3.0 | crates.io |
+| powerfmt | 0.2.0 | MIT OR Apache-2.0 | crates.io |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | crates.io |
+| precomputed-hash | 0.1.1 | MIT | crates.io |
+| prettier | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | proc-macro-crate | 3.4.0 | MIT OR Apache-2.0 | crates.io |
 | proc-macro-error-attr3 | 3.1.1 | MIT OR Apache-2.0 | crates.io |
 | proc-macro-error3 | 3.1.1 | MIT OR Apache-2.0 | crates.io |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | crates.io |
 | profiling | 1.0.17 | MIT OR Apache-2.0 | crates.io |
 | profiling-procmacros | 1.0.17 | MIT OR Apache-2.0 | crates.io |
+| project | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | proptest | 1.12.0 | MIT OR Apache-2.0 | crates.io |
 | proptest-macro | 0.6.0 | MIT OR Apache-2.0 | crates.io |
+| prost | 0.14.4 | Apache-2.0 | crates.io |
+| prost-derive | 0.14.4 | Apache-2.0 | crates.io |
+| proto | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| proxy_handshake | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| psm | 0.1.30 | MIT OR Apache-2.0 | crates.io |
+| pulldown-cmark | 0.13.6 | MIT | crates.io |
+| pulley-interpreter | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| pulley-macros | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
 | pxfm | 0.1.25 | BSD-3-Clause OR Apache-2.0 | crates.io |
 | qoi | 0.4.1 | MIT/Apache-2.0 | crates.io |
 | quick-error | 1.2.3 | MIT/Apache-2.0 | crates.io |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | crates.io |
+| quick-xml | 0.41.0 | MIT | crates.io |
 | quote | 1.0.47 | MIT OR Apache-2.0 | crates.io |
 | rand | 0.10.3 | MIT OR Apache-2.0 | crates.io |
+| rand | 0.8.8 | MIT OR Apache-2.0 | crates.io |
 | rand | 0.9.4 | MIT OR Apache-2.0 | crates.io |
+| rand_chacha | 0.3.1 | MIT OR Apache-2.0 | crates.io |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.10.1 | MIT OR Apache-2.0 | crates.io |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | crates.io |
@@ -324,23 +503,36 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | ref-cast | 1.0.25 | MIT OR Apache-2.0 | crates.io |
 | ref-cast-impl | 1.0.25 | MIT OR Apache-2.0 | crates.io |
 | refineable | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| regalloc2 | 0.15.2 | Apache-2.0 WITH LLVM-exception | crates.io |
 | regex | 1.12.3 | MIT OR Apache-2.0 | crates.io |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | crates.io |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | crates.io |
+| release_channel | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| remote | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | resvg | 0.46.0 | Apache-2.0 OR MIT | crates.io |
 | rgb | 0.8.52 | MIT | crates.io |
+| ring | 0.17.14 | Apache-2.0 AND ISC | crates.io |
 | rle-decode-fast | 1.0.3 | MIT OR Apache-2.0 | crates.io |
+| rope | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| roughr-merman | 0.12.3 | MIT | crates.io |
 | roxmltree | 0.21.1 | MIT OR Apache-2.0 | crates.io |
+| rpc | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| rsa | 0.9.10 | MIT OR Apache-2.0 | crates.io |
 | rust-embed | 8.11.0 | MIT | crates.io |
 | rust-embed-impl | 8.11.0 | MIT | crates.io |
 | rust-embed-utils | 8.11.0 | MIT | crates.io |
 | rustc-demangle | 0.1.26 | MIT/Apache-2.0 | crates.io |
 | rustc-hash | 2.1.1 | Apache-2.0 OR MIT | crates.io |
-| rustix | 1.1.4 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | crates.io |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | crates.io |
+| rustls-platform-verifier | 0.7.0 | MIT OR Apache-2.0 | crates.io |
+| rustls-webpki | 0.103.16 | ISC | crates.io |
+| rustversion | 1.0.22 | MIT OR Apache-2.0 | crates.io |
 | rusty-fork | 0.3.1 | MIT/Apache-2.0 | crates.io |
 | rustybuzz | 0.20.1 | MIT | crates.io |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | crates.io |
+| ryu-js | 1.0.2 | Apache-2.0 OR BSL-1.0 | crates.io |
 | same-file | 1.0.6 | Unlicense/MIT | crates.io |
 | schannel | 0.1.30 | MIT | crates.io |
 | scheduler | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
@@ -348,17 +540,28 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | schemars_derive | 1.0.4 | MIT | crates.io |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | crates.io |
 | seahash | 4.1.0 | MIT | crates.io |
+| selectors | 0.37.0 | MPL-2.0 | crates.io |
 | semver | 1.0.28 | MIT OR Apache-2.0 | crates.io |
 | serde | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | crates.io |
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | crates.io |
+| serde_fmt | 1.0.3 | Apache-2.0 OR MIT | crates.io |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | crates.io |
 | serde_json_lenient | 0.2.4 | MIT/Apache-2.0 | crates.io |
+| serde_path_to_error | 0.1.20 | MIT OR Apache-2.0 | crates.io |
 | serde_spanned | 1.0.3 | MIT OR Apache-2.0 | crates.io |
 | serde_urlencoded | 0.7.1 | MIT/Apache-2.0 | crates.io |
+| servo_arc | 0.4.3 | MIT OR Apache-2.0 | crates.io |
+| session | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| settings | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| settings_content | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| settings_json | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| settings_macros | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| sha1 | 0.10.6 | MIT OR Apache-2.0 | crates.io |
 | sha1_smol | 1.0.1 | BSD-3-Clause | crates.io |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | crates.io |
+| shellexpand | 3.1.1 | MIT/Apache-2.0 | crates.io |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | crates.io |
 | signature | 2.2.0 | Apache-2.0 OR MIT | crates.io |
 | simd-adler32 | 0.3.7 | MIT | crates.io |
@@ -370,16 +573,36 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | smallvec | 1.16.1 | MIT OR Apache-2.0 | crates.io |
 | smol | 2.0.2 | Apache-2.0 OR MIT | crates.io |
 | smol_str | 0.3.6 | MIT OR Apache-2.0 | crates.io |
+| snippet | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| snippet_provider | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| socket2 | 0.6.5 | MIT OR Apache-2.0 | crates.io |
 | spin | 0.10.0 | MIT | crates.io |
 | spin | 0.9.8 | MIT | crates.io |
 | spki | 0.7.3 | Apache-2.0 OR MIT | crates.io |
+| sqlez | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| sqlez_macros | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| sqlformat | 0.2.6 | MIT OR Apache-2.0 | crates.io |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | crates.io |
+| stacker | 0.1.25 | MIT OR Apache-2.0 | crates.io |
+| stacksafe | 1.0.3 | Apache-2.0 | crates.io |
+| stacksafe-macro | 1.0.3 | Apache-2.0 | crates.io |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | crates.io |
+| streaming-iterator | 0.1.9 | MIT OR Apache-2.0 | crates.io |
 | strict-num | 0.1.1 | MIT | crates.io |
+| string_cache | 0.9.0 | MIT OR Apache-2.0 | crates.io |
+| strsim | 0.11.1 | MIT | crates.io |
 | strum | 0.28.0 | MIT | crates.io |
 | strum_macros | 0.28.0 | MIT | crates.io |
 | subtle | 2.6.1 | BSD-3-Clause | crates.io |
 | sum_tree | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| sval | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_buffer | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_dynamic | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_fmt | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_json | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_nested | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_ref | 2.15.0 | Apache-2.0 OR MIT | crates.io |
+| sval_serde | 2.15.0 | Apache-2.0 OR MIT | crates.io |
 | svg_fmt | 0.4.5 | MIT/Apache-2.0 | crates.io |
 | svgtypes | 0.16.1 | Apache-2.0 OR MIT | crates.io |
 | syn | 2.0.117 | MIT OR Apache-2.0 | crates.io |
@@ -389,19 +612,37 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | sysinfo | 0.31.4 | MIT | crates.io |
 | sysinfo | 0.39.6 | MIT | crates.io |
 | taffy | 0.15.0 | MIT | crates.io |
+| target-lexicon | 0.13.5 | Apache-2.0 WITH LLVM-exception | crates.io |
+| task | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| telemetry | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| telemetry_events | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | crates.io |
 | tendril | 0.5.1 | MIT OR Apache-2.0 | crates.io |
+| termcolor | 1.4.1 | Unlicense OR MIT | crates.io |
+| terminal | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| text | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | theme | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| theme_settings | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 | crates.io |
-| thiserror | 2.0.17 | MIT OR Apache-2.0 | crates.io |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 | crates.io |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 | crates.io |
-| thiserror-impl | 2.0.17 | MIT OR Apache-2.0 | crates.io |
+| thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | crates.io |
+| thread_local | 1.1.9 | MIT OR Apache-2.0 | crates.io |
 | tiff | 0.11.3 | MIT | crates.io |
+| time | 0.3.47 | MIT OR Apache-2.0 | crates.io |
+| time-core | 0.1.8 | MIT OR Apache-2.0 | crates.io |
+| time-macros | 0.2.27 | MIT OR Apache-2.0 | crates.io |
 | tiny-skia | 0.11.4 | BSD-3-Clause | crates.io |
 | tiny-skia-path | 0.11.4 | BSD-3-Clause | crates.io |
+| tiny_http | 0.12.0 | MIT OR Apache-2.0 | crates.io |
 | tinystr | 0.8.4 | Unicode-3.0 | crates.io |
 | tinyvec | 1.10.0 | Zlib OR Apache-2.0 OR MIT | crates.io |
 | tinyvec_macros | 0.1.1 | MIT OR Apache-2.0 OR Zlib | crates.io |
+| tokio | 1.52.1 | MIT | crates.io |
+| tokio-macros | 2.7.0 | MIT | crates.io |
+| tokio-native-tls | 0.3.1 | MIT | crates.io |
+| tokio-rustls | 0.26.4 | MIT OR Apache-2.0 | crates.io |
+| tokio-util | 0.7.18 | MIT | crates.io |
 | toml | 0.9.8 | MIT OR Apache-2.0 | crates.io |
 | toml_datetime | 0.7.3 | MIT OR Apache-2.0 | crates.io |
 | toml_edit | 0.23.7 | MIT OR Apache-2.0 | crates.io |
@@ -410,39 +651,98 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tracing | 0.1.44 | MIT | crates.io |
 | tracing-attributes | 0.1.31 | MIT | crates.io |
 | tracing-core | 0.1.36 | MIT | crates.io |
+| trash | 5.2.5 | MIT | https://github.com/zed-industries/trash-rs @ 41c6c800d884 |
 | tray-icon | 0.26.1 | MIT OR Apache-2.0 | crates.io |
+| tree-sitter | 0.27.0 | MIT | https://github.com/tree-sitter/tree-sitter @ 43623ec9bf0e |
+| tree-sitter-bash | 0.25.1 | MIT | crates.io |
+| tree-sitter-c | 0.24.1 | MIT | crates.io |
+| tree-sitter-cpp | 0.23.4 | MIT | https://github.com/tree-sitter/tree-sitter-cpp @ 5cb9b693cfd7 |
+| tree-sitter-css | 0.23.2 | MIT | crates.io |
+| tree-sitter-diff | 0.1.0 | MIT | crates.io |
+| tree-sitter-gitcommit | 0.0.1 | MIT | https://github.com/zed-industries/tree-sitter-git-commit @ 88309716a69d |
+| tree-sitter-go | 0.25.0 | MIT | crates.io |
+| tree-sitter-gomod | 1.1.1 | MIT | https://github.com/camdencheek/tree-sitter-go-mod @ 2e886870578e |
+| tree-sitter-gowork | 0.0.1 | MIT | https://github.com/zed-industries/tree-sitter-go-work @ acb0617bf7f4 |
+| tree-sitter-jsdoc | 0.23.2 | MIT | crates.io |
+| tree-sitter-json | 0.24.8 | MIT | crates.io |
+| tree-sitter-language | 0.1.8 | MIT | https://github.com/tree-sitter/tree-sitter @ 43623ec9bf0e |
+| tree-sitter-md | 0.3.2 | MIT | https://github.com/zed-industries/tree-sitter-markdown @ b596e7372867 |
+| tree-sitter-python | 0.25.0 | MIT | crates.io |
+| tree-sitter-regex | 0.24.3 | MIT | crates.io |
+| tree-sitter-rust | 0.24.2 | MIT | crates.io |
+| tree-sitter-typescript | 0.23.2 | MIT | https://github.com/zed-industries/tree-sitter-typescript @ e2c53597d6a5 |
+| tree-sitter-yaml | 0.6.1 | MIT | https://github.com/zed-industries/tree-sitter-yaml @ baff0b51c64e |
+| try-lock | 0.2.5 | MIT | crates.io |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | crates.io |
+| tungstenite | 0.28.0 | MIT OR Apache-2.0 | crates.io |
 | typed-path | 0.13.0 | MIT OR Apache-2.0 | crates.io |
+| typeid | 1.0.3 | MIT OR Apache-2.0 | crates.io |
 | typenum | 1.19.0 | MIT OR Apache-2.0 | crates.io |
+| ucd-trie | 0.1.7 | MIT OR Apache-2.0 | crates.io |
+| ui | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| ui_input | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| ui_macros | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | unarray | 0.1.4 | MIT OR Apache-2.0 | crates.io |
 | unicase | 2.8.1 | MIT OR Apache-2.0 | crates.io |
 | unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | crates.io |
 | unicode-bidi-mirroring | 0.4.0 | MIT/Apache-2.0 | crates.io |
 | unicode-ccc | 0.4.0 | MIT/Apache-2.0 | crates.io |
+| unicode-general-category | 1.1.0 | Apache-2.0 | crates.io |
 | unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | crates.io |
+| unicode-linebreak | 0.1.5 | Apache-2.0 | crates.io |
 | unicode-properties | 0.1.3 | MIT/Apache-2.0 | crates.io |
 | unicode-script | 0.5.8 | MIT OR Apache-2.0 | crates.io |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | crates.io |
 | unicode-vo | 0.1.0 | MIT/Apache-2.0 | crates.io |
 | unicode-width | 0.2.2 | MIT OR Apache-2.0 | crates.io |
+| unicode-xid | 0.2.6 | MIT OR Apache-2.0 | crates.io |
+| unicode_categories | 0.1.1 | MIT OR Apache-2.0 | crates.io |
+| untrusted | 0.9.0 | ISC | crates.io |
 | ureq | 3.5.0 | MIT OR Apache-2.0 | crates.io |
 | ureq-proto | 0.6.5 | MIT OR Apache-2.0 | crates.io |
-| url | 2.5.7 | MIT OR Apache-2.0 | crates.io |
+| url | 2.5.8 | MIT OR Apache-2.0 | crates.io |
+| urlencoding | 2.1.3 | MIT | crates.io |
 | usvg | 0.46.0 | Apache-2.0 OR MIT | crates.io |
+| utf-8 | 0.7.6 | MIT OR Apache-2.0 | crates.io |
+| utf16_iter | 1.0.5 | Apache-2.0 OR MIT | crates.io |
 | utf8-zero | 0.8.1 | MIT OR Apache-2.0 | crates.io |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | crates.io |
 | util | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | uuid | 1.18.1 | Apache-2.0 OR MIT | crates.io |
 | v_frame | 0.3.9 | BSD-2-Clause | crates.io |
+| value-bag | 1.12.0 | Apache-2.0 OR MIT | crates.io |
+| value-bag-serde1 | 1.12.0 | Apache-2.0 OR MIT | crates.io |
+| value-bag-sval2 | 1.12.0 | Apache-2.0 OR MIT | crates.io |
+| vim_mode_setting | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | vte | 0.15.0 | Apache-2.0 OR MIT | crates.io |
 | wait-timeout | 0.2.1 | MIT/Apache-2.0 | crates.io |
 | waker-fn | 1.2.0 | Apache-2.0 OR MIT | crates.io |
 | walkdir | 2.5.0 | Unlicense/MIT | crates.io |
+| want | 0.3.2 | MIT | crates.io |
 | wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | crates.io |
 | wasm-bindgen-macro | 0.2.129 | MIT OR Apache-2.0 | crates.io |
 | wasm-bindgen-macro-support | 0.2.129 | MIT OR Apache-2.0 | crates.io |
 | wasm-bindgen-shared | 0.2.129 | MIT OR Apache-2.0 | crates.io |
+| wasm-encoder | 0.254.2 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| wasmparser | 0.254.2 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| wasmprinter | 0.254.2 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | crates.io |
+| wasmtime | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-c-api-impl | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-environ | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-c-api-macros | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-component-util | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-core | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-cranelift | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-fiber | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-jit-debug | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-jit-icache-coherence | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-unwinder | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| wasmtime-internal-versioned-export-macros | 48.0.7 | Apache-2.0 WITH LLVM-exception | crates.io |
+| watch | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
+| wax | 0.7.0 | MIT | crates.io |
 | web-time | 1.1.0 | MIT OR Apache-2.0 | crates.io |
+| web_atoms | 0.2.6 | MIT OR Apache-2.0 | crates.io |
+| webpki-roots | 1.0.11 | CDLA-Permissive-2.0 | crates.io |
 | weezl | 0.1.10 | MIT OR Apache-2.0 | crates.io |
 | which | 8.0.5 | MIT | crates.io |
 | winapi | 0.3.9 | MIT/Apache-2.0 | crates.io |
@@ -472,19 +772,32 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | crates.io |
 | windows-strings | 0.4.2 | MIT OR Apache-2.0 | crates.io |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | crates.io |
+| windows-sys | 0.52.0 | MIT OR Apache-2.0 | crates.io |
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | crates.io |
+| windows-sys | 0.60.2 | MIT OR Apache-2.0 | crates.io |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | crates.io |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | crates.io |
+| windows-targets | 0.53.5 | MIT OR Apache-2.0 | crates.io |
 | windows-threading | 0.1.0 | MIT OR Apache-2.0 | crates.io |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | crates.io |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | crates.io |
+| windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 | crates.io |
 | winnow | 0.7.13 | MIT | crates.io |
+| workspace | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| worktree | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| write16 | 1.0.0 | Apache-2.0 OR MIT | crates.io |
 | writeable | 0.6.4 | Unicode-3.0 | crates.io |
+| xml5ever | 0.39.0 | MIT OR Apache-2.0 | crates.io |
 | xmlwriter | 0.1.0 | MIT | crates.io |
+| xxhash-rust | 0.8.16 | BSL-1.0 | crates.io |
 | y4m | 0.8.0 | MIT | crates.io |
+| yawc | 0.4.2 | MPL-2.0 | crates.io |
 | yoke | 0.8.3 | Unicode-3.0 | crates.io |
 | yoke-derive | 0.8.2 | Unicode-3.0 | crates.io |
 | zed-scap | 0.0.8-zed | MIT | https://github.com/zed-industries/scap @ 4afea48c3b00 |
+| zed_actions | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| zed_credentials_provider | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
+| zed_env_vars | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | zerocopy | 0.8.27 | BSD-2-Clause OR Apache-2.0 OR MIT | crates.io |
 | zerocopy-derive | 0.8.27 | BSD-2-Clause OR Apache-2.0 OR MIT | crates.io |
 | zerofrom | 0.1.6 | Unicode-3.0 | crates.io |
@@ -494,7 +807,9 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | zerotrie | 0.2.5 | Unicode-3.0 | crates.io |
 | zerovec | 0.11.8 | Unicode-3.0 | crates.io |
 | zerovec-derive | 0.11.5 | Unicode-3.0 | crates.io |
+| zeta_prompt | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | zip | 9.2.1 | MIT | crates.io |
+| zlog | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | zmij | 1.0.23 | MIT | crates.io |
 | zstd | 0.13.3 | MIT | crates.io |
 | zstd-safe | 7.3.0 | BSD-3-Clause | crates.io |

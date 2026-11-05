@@ -182,7 +182,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 
 "@)
 foreach ($p in $crates) {
-    $licence = if ($p.license) { $p.license } else { "see $($p.license_file)" }
+    $licence = if ($p.license) { $p.license } elseif ($p.license_file) { "see $($p.license_file)" } else { "see $((Licence-Texts $p).Name -join ', ')" }
     [void]$md.Append("| $($p.name) | $($p.version) | $licence | $(Source-Of $p) |`n")
 }
 [void]$md.Append(@"
