@@ -435,6 +435,87 @@ async fn edit_folders_fit(view: &Entity<FleetView>, registry: &Registry, workspa
     ))
 }
 
+/// Edit folders…: beta removed by ×, a folder added by its typed path, home moved to alpha; Save writes all three.
+async fn edit_folders(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let extra = cargo_root().join("target").join("selftest-edit-extra");
+    std::fs::create_dir_all(&extra)?;
+    press_painted(view, ws_key, MouseButton::Right, cx).await?;
+    menu_open(view, ADDED, cx).await?;
+    click(view, "menu-edit-folders", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… with beta's ×", |v| painted(v, "edit-remove-beta").then_some(())).await?;
+    shot("edit-folders", cx).await;
+    click(view, "edit-remove-beta", cx).await?;
+    until_app(view, cx, WITHIN, "beta out of the list", |v, cx| rows(v, cx).filter(|r| r.len() == 1 && r[0].0 == "alpha").map(|_| ())).await?;
+    set_field(view, false, &extra.display().to_string(), cx)?;
+    click(view, "edit-add", cx).await?;
+    until(view, cx, WITHIN, "the typed folder's home button", |v| painted(v, "edit-home-selftest-edit-extra").then_some(())).await?;
+    click(view, "edit-home-alpha", cx).await?;
+    let want = vec![("alpha".to_string(), None, true), ("selftest-edit-extra".to_string(), None, false)];
+    until_app(view, cx, WITHIN, "home moved to alpha", |v, cx| rows(v, cx).filter(|r| r == &want).map(|_| ())).await?;
+    if registry.load(ADDED)?.folders.iter().any(|f| f.name != "alpha" && f.name != "beta") {
+        bail!("Edit folders… wrote {ADDED} before Save");
+    }
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "Edit folders… closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let saved = until(view, cx, WITHIN, "the edit in the registry", |_| registry.load(ADDED).ok().filter(|w| w.folders.len() == 2 && w.home.as_deref() == Some(root.join("alpha").as_path()))).await;
+    let saved = saved.map_err(|e| e.context(format!("registered {:?}", registry.load(ADDED))))?;
+    let folders: Vec<&Path> = saved.folders.iter().map(|f| f.path.as_path()).collect();
+    let excluded: Vec<&Path> = saved.scans.iter().flat_map(|s| s.exclude.iter().map(PathBuf::as_path)).collect();
+    if folders != [root.join("alpha").as_path(), extra.as_path()] || excluded != [root.join("notes").as_path(), root.join("beta").as_path()] {
+        bail!("Edit folders… saved folders {folders:?} with the parent excluding {excluded:?}; expected alpha and the typed folder, notes and beta excluded");
+    }
+    let extra_row = format!("repo-row-{ADDED}/selftest-edit-extra");
+    until(view, cx, WITHIN, "the typed folder in the tree", |v| painted(v, &extra_row).then_some(())).await?;
+    Ok(format!("Edit folders… of {ADDED}: beta removed by × (into the parent's exclude), {} added by its typed path, home moved to alpha; saved at once by Save (no wanted session in the fixture, so no question)", extra.display()))
+}
+
+/// Rescan offers a new subfolder unticked; Save leaves it unticked and unskipped, so the next Rescan offers it again;
+/// ticked and saved, it is a folder and the third Rescan offers nothing. Beta (×) and notes are never offered.
+async fn rescan(view: &Entity<FleetView>, registry: &Registry, root: &Path, ws_key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let fresh = root.join("fresh");
+    std::fs::create_dir_all(&fresh)?;
+    let open = async |view: &Entity<FleetView>, cx: &mut AsyncWindowContext| -> anyhow::Result<Vec<(String, Option<bool>, bool)>> {
+        until(view, cx, WITHIN, "no dialog", |v| v.adding.is_none().then_some(())).await?;
+        press_painted(view, ws_key, MouseButton::Right, cx).await?;
+        menu_open(view, ADDED, cx).await?;
+        click(view, "menu-rescan", cx).await?;
+        let listed = until_app(view, cx, WITHIN, "Rescan's dialog", |v, cx| rows(v, cx)).await?;
+        until(view, cx, WITHIN, "Rescan's Save painted", |v| painted(v, "edit-save").then_some(())).await?;
+        Ok(listed)
+    };
+    let offered = |listed: &[(String, Option<bool>, bool)]| listed.iter().filter(|r| r.1.is_some()).map(|r| (r.0.clone(), r.1)).collect::<Vec<_>>();
+    let listed = open(view, cx).await?;
+    if offered(&listed) != [("fresh".to_string(), Some(false))] {
+        bail!("Rescan listed {listed:?}; expected fresh offered unticked, beta and notes not");
+    }
+    if registry.load(ADDED)?.folders.iter().any(|f| f.path == fresh) {
+        bail!("Rescan saved fresh before Save");
+    }
+    shot("rescan-offer", cx).await;
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Save", |v| v.adding.is_none().then_some(())).await?;
+    let w = registry.load(ADDED)?;
+    if w.folders.iter().any(|f| f.path == fresh) || w.scans.iter().any(|s| s.exclude.contains(&fresh)) {
+        bail!("an unticked fresh was saved: folders {:?}, scans {:?}", w.folders, w.scans);
+    }
+    let listed = open(view, cx).await?;
+    if offered(&listed) != [("fresh".to_string(), Some(false))] {
+        bail!("the second Rescan listed {listed:?}; expected fresh offered again");
+    }
+    click(view, "edit-include-fresh", cx).await?;
+    until_app(view, cx, WITHIN, "fresh ticked", |v, cx| rows(v, cx).filter(|r| r.iter().any(|r| r.0 == "fresh" && r.1 == Some(true))).map(|_| ())).await?;
+    click(view, "edit-save", cx).await?;
+    until(view, cx, WITHIN, "fresh in the registry", |_| registry.load(ADDED).ok()?.folders.iter().any(|f| f.path == fresh).then_some(())).await?;
+    let listed = open(view, cx).await?;
+    if !offered(&listed).is_empty() {
+        bail!("the third Rescan listed {listed:?}; expected nothing offered");
+    }
+    until(view, cx, WITHIN, "Rescan's Cancel painted", |v| painted(v, "edit-cancel").then_some(())).await?;
+    click(view, "edit-cancel", cx).await?;
+    until(view, cx, WITHIN, "Rescan's dialog closed on Cancel", |v| v.adding.is_none().then_some(())).await?;
+    Ok("Rescan offered the new fresh unticked (beta, removed by ×, and notes not); Save left it out and unskipped, the second Rescan offered it again; ticked and saved it is a folder, and the third Rescan offers nothing".into())
+}
+
 pub(crate) fn fake_repo(root: &Path, name: &str) -> anyhow::Result<()> {
     let git = root.join(name).join(".git");
     std::fs::create_dir_all(&git)?;
@@ -586,6 +667,7 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
     let registry = Registry::at(&home);
 
     std::fs::create_dir_all(root.join("notes"))?;
+    let _ = std::fs::remove_dir_all(root.join("fresh"));
     let all_in = |names: &[&str]| names.iter().map(|n| (n.to_string(), Some(true), false)).collect::<Vec<_>>();
 
     view.update(cx, |v, _| v.pick_folder = Some(root.clone()));
@@ -676,6 +758,8 @@ pub async fn run(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWindowCo
 
     // a menu closed but still painted takes the next press as a click outside it
     until(view, cx, WITHIN, "a frame without the closed menu", |v| (!painted(v, "menu-remove")).then_some(())).await?;
+    out.push(edit_folders(view, &registry, &root, &ws_key, cx).await?);
+    out.push(rescan(view, &registry, &root, &ws_key, cx).await?);
 
     out.push(open_folder(view, &ws_key, cx).await?);
 

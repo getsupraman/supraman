@@ -56,9 +56,10 @@ folder.
 
 ## First steps
 
-1. **Add a workspace.** The window starts empty. Click the folder button at the top of the left panel and pick a
-   folder that holds your repositories; Supraman finds the git repos in it. From a shell:
-   `sm workspace add <dir>`.
+1. **Add a workspace.** The window starts empty. Click the folder button at the top of the left panel:
+   **From a parent folder…** lists the folders in the one you pick, each ticked, to keep or leave out;
+   **Custom workspace…** starts empty, and you add folders by path or Browse. Later, **Edit folders…** changes
+   them and **Rescan…** offers the new subfolders of the parent folder. From a shell: `sm workspace add <dir>`.
 2. **Open a session.** Click **+** for a PowerShell tab and run `claude` in it, or attach to a running session from
    the tree. Sessions you start elsewhere show up in the tree too.
 3. **Sign in to Workman** (optional): **Settings → Workman → Sign in** opens your browser. Without it everything
