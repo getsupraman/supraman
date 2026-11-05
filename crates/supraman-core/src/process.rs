@@ -88,9 +88,39 @@ pub fn run(cmd: &mut Command, timeout: Duration, kill: Kill) -> Result<Output, R
 /// [`run`] that also kills the child once `stop` returns true (asked every 20 ms). A killed child's output is
 /// what it wrote until then, and `code` is `None`.
 pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, Output)> {
-    no_window(cmd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (ended, raw) = run_raw(cmd, None, timeout, kill, stop)?;
+    let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
+    Ok((ended, Output { code: raw.code, stdout: text(raw.stdout), stderr: text(raw.stderr) }))
+}
+
+/// What a finished child left behind, as the bytes it wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawOutput {
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+impl RawOutput {
+    pub fn success(&self) -> bool {
+        self.code == Some(0)
+    }
+}
+
+/// [`run`] that writes `input` to the child's stdin and closes it, and keeps both pipes as bytes.
+pub fn run_bytes(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill) -> Result<RawOutput, RunError> {
+    match run_raw(cmd, input, timeout, kill, &mut || false).map_err(RunError::Spawn)? {
+        (Ended::Exited, out) => Ok(out),
+        _ => Err(RunError::Timeout(timeout)),
+    }
+}
+
+fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, RawOutput)> {
+    let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+    no_window(cmd).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
     let tree = (kill == Kill::Tree).then(|| Job::adopt(&child)).flatten();
+    feed(child.stdin.take(), input);
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let deadline = Instant::now() + timeout;
@@ -119,7 +149,17 @@ pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut 
     while !(stdout.0.is_finished() && stderr.0.is_finished()) && Instant::now() < until {
         thread::sleep(Duration::from_millis(10));
     }
-    Ok((ended, Output { code, stdout: stdout.finish(), stderr: stderr.finish() }))
+    Ok((ended, RawOutput { code, stdout: stdout.finish(), stderr: stderr.finish() }))
+}
+
+/// Writes `input` on its own thread, so a child that writes while it reads never blocks on a full pipe.
+fn feed(pipe: Option<std::process::ChildStdin>, input: Option<Vec<u8>>) {
+    if let (Some(mut pipe), Some(input)) = (pipe, input) {
+        thread::spawn(move || {
+            use std::io::Write as _;
+            let _ = pipe.write_all(&input);
+        });
+    }
 }
 
 /// How long the pipes may stay open after the child ended before its output is taken as it stands.
@@ -142,16 +182,12 @@ struct Drain(thread::JoinHandle<()>, Arc<Mutex<Vec<u8>>>);
 
 impl Drain {
     /// Everything once the pipe closed; else what was read so far, and the reader runs on until it closes.
-    fn finish(self) -> String {
+    fn finish(self) -> Vec<u8> {
         let Drain(handle, buf) = self;
         if handle.is_finished() {
             let _ = handle.join();
         }
-        Drain::text(&buf)
-    }
-
-    fn text(buf: &Mutex<Vec<u8>>) -> String {
-        String::from_utf8_lossy(&buf.lock().unwrap_or_else(|e| e.into_inner())).into_owned()
+        buf.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -370,6 +406,18 @@ mod tests {
         let out = run(&mut powershell("[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit 3"), Duration::from_secs(60), Kill::Tree).unwrap();
         assert_eq!(out, Output { code: Some(3), stdout: "out".into(), stderr: "err".into() });
         assert!(!out.success());
+    }
+
+    /// Input larger than a pipe's buffer while the child echoes it: neither side blocks, and bytes come back unchanged.
+    #[test]
+    fn input_goes_in_and_bytes_come_back() {
+        let line: Vec<u8> = (0..60u8).map(|i| 0x80 | i).chain(*b"\r\n").collect();
+        let input = line.repeat(5_000);
+        let mut cmd = command("findstr");
+        cmd.arg("^");
+        let out = run_bytes(&mut cmd, Some(input.clone()), Duration::from_secs(60), Kill::Tree).unwrap();
+        assert!(out.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.stdout, input);
     }
 
     #[test]

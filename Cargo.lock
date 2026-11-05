@@ -5392,6 +5392,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "supraman-gitman"
+version = "0.1.10"
+dependencies = [
+ "serde",
+ "supraman-core",
+ "supraman-gitman",
+ "tempfile",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "supraman-supervisor"
 version = "0.1.10"
 dependencies = [

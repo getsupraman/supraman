@@ -1,0 +1,19 @@
+[package]
+name = "supraman-gitman"
+version = "0.1.10"
+edition = "2024"
+publish = false
+license.workspace = true
+
+[features]
+# The fixture repos (a small one of every kind of change, a generated long history) for other crates' tests.
+test-support = ["dep:tempfile"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+supraman-core = { path = "../supraman-core" }
+tempfile = { version = "3.27.0", optional = true }
+thiserror = "2.0.12"
+
+[dev-dependencies]
+supraman-gitman = { path = ".", features = ["test-support"] }
