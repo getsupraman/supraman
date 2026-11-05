@@ -68,7 +68,6 @@ fn repo() -> Repo {
 fn open<'a>(r: &Repo, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
-        bind_keys(cx);
     });
     open_tab(&r.f.dir, cx)
 }
@@ -200,6 +199,30 @@ fn diff_view_moves_between_changes_and_shows_the_whole_file(cx: &mut TestAppCont
     redraw(&view, cx);
     let file = gone.update_in(cx, |d, window, cx| d.file_editor(window, cx)).unwrap();
     assert_eq!(cx.update(|_, cx| supraman_editor::text(&file, cx)), "bye\n", "a deleted file as it was");
+}
+
+#[gpui::test]
+fn diff_view_opens_at_its_first_change_split_and_inline(cx: &mut TestAppContext) {
+    let r = repo();
+    let (view, cx) = open(&r, cx);
+    for layout in [Layout::Split, Layout::Inline] {
+        view.update(cx, |v, cx| {
+            v.close_diff(cx);
+            v.diff_layout = layout;
+        });
+        let d = show(&view, &r, "big.txt", cx);
+        assert_eq!(d.read_with(cx, |d, _| d.layout()), layout);
+        let first = rows(&d, cx)[0].1.start;
+        assert!(first > 100, "the first change is far down: row {first}");
+        assert_eq!(d.read_with(cx, |d, _| d.current()), Some(0), "{layout:?}: on the first change");
+        let editor = match layout {
+            Layout::Split => d.update_in(cx, |d, window, cx| d.split(window, cx)).read_with(cx, |s, _| s.new.clone()),
+            Layout::Inline => d.update_in(cx, |d, window, cx| d.inline_editor(window, cx)),
+        };
+        let (cursor, top) = cx.update(|_, cx| (supraman_editor::cursor_row(&editor, cx), supraman_editor::scroll_row(&editor, cx)));
+        assert_eq!(cursor, first, "{layout:?}");
+        assert!(top > (first - 10) as f64 && top <= first as f64, "{layout:?}: the view starts just above the change: top {top}, change {first}");
+    }
 }
 
 #[gpui::test]

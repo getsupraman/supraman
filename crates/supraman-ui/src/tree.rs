@@ -185,8 +185,8 @@ impl<T, A> Tree<T, A> {
         Some(kept)
     }
 
-    /// The rows shown: a depth-first walk into the `open` folders, only `kept` nodes when filtered.
-    fn rows(&self, open: &HashSet<SharedString>, kept: Option<&[bool]>) -> Vec<usize> {
+    /// The rows shown: a depth-first walk into the `open` folders (every one with `None`), only `kept` nodes when filtered.
+    fn rows(&self, open: Option<&HashSet<SharedString>>, kept: Option<&[bool]>) -> Vec<usize> {
         let mut out = Vec::new();
         let mut stack: Vec<usize> = self.roots.iter().rev().copied().collect();
         while let Some(at) = stack.pop() {
@@ -195,7 +195,7 @@ impl<T, A> Tree<T, A> {
             }
             out.push(at);
             if let Kind::Folder { children, .. } = &self.nodes[at].kind
-                && open.contains(&self.nodes[at].path)
+                && open.is_none_or(|o| o.contains(&self.nodes[at].path))
             {
                 stack.extend(children.iter().rev());
             }
@@ -234,7 +234,7 @@ struct Inner<T, A> {
 
 impl<T, A> Inner<T, A> {
     fn refresh(&mut self) {
-        self.rows = self.tree.rows(&self.open, self.kept.as_deref());
+        self.rows = self.tree.rows(Some(&self.open), self.kept.as_deref());
     }
 
     fn row_of(&self, path: &str) -> Option<usize> {
@@ -370,8 +370,30 @@ impl<T, A> TreeState<T, A> {
         inner.rows.iter().map(|at| inner.tree.nodes[*at].path.clone()).collect()
     }
 
+    /// Every file the filter keeps, top to bottom as they show with every folder open.
+    pub fn files(&self) -> Vec<SharedString> {
+        let inner = self.inner.borrow();
+        let nodes = &inner.tree.nodes;
+        inner.tree.rows(None, inner.kept.as_deref()).into_iter().filter(|at| matches!(nodes[*at].kind, Kind::File(_))).map(|at| nodes[at].path.clone()).collect()
+    }
+
     pub fn selected(&self) -> Option<SharedString> {
         self.inner.borrow().selected.clone()
+    }
+
+    /// Opens every folder above `path`, then selects it and scrolls it into view.
+    pub fn select_opening(&self, path: &str) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            let mut up = inner.tree.nodes.iter().find(|n| n.path == path).and_then(|n| n.parent);
+            while let Some(at) = up {
+                let folder = inner.tree.nodes[at].path.clone();
+                inner.open.insert(folder);
+                up = inner.tree.nodes[at].parent;
+            }
+            inner.refresh();
+        }
+        self.select(Some(path));
     }
 
     /// Selects the row of `path` (none with `None`) and scrolls it into view when it is shown.
@@ -610,6 +632,20 @@ mod tests {
         assert!(paths(&state).is_empty());
         state.set_filter("");
         assert_eq!(paths(&state)[..4], ["docs", "src", "src/ui", "src/ui/src"], "the folders the filter opened stay open");
+    }
+
+    #[gpui::test]
+    fn the_files_run_in_the_trees_order_and_selecting_one_opens_its_folders(cx: &mut TestAppContext) {
+        let state = cx.update(state);
+        let all = ["docs/guide.md", "src/ui/src/lib.rs", "src/ui/src/Mod.rs", "src/ui/view.rs", "src/main.rs", "README.md"];
+        assert_eq!(state.files(), all, "every file, closed folders too, folders first at each level");
+        state.set_filter("ui/");
+        assert_eq!(state.files(), all[1..4], "only the files the filter keeps");
+        state.set_filter("");
+        state.collapse_all();
+        state.select_opening("src/ui/src/Mod.rs");
+        assert!(["src", "src/ui", "src/ui/src"].iter().all(|f| state.is_open(f)) && !state.is_open("docs"), "the folders above it open, no other");
+        assert_eq!(state.selected().as_deref(), Some("src/ui/src/Mod.rs"));
     }
 
     #[test]

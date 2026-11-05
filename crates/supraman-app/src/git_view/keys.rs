@@ -1,0 +1,135 @@
+//! The graph's own keys (the shared table moves the selection) and the walk through the panel's files in the
+//! viewer: a key moves the selection at once and the panel loads its commit when the key comes up or the
+//! selection settles.
+
+use std::time::Duration;
+
+use gpui::{AnyElement, App, Context, KeyBinding, KeyUpEvent, div, prelude::*};
+
+use super::diff::{self, FileStep};
+use super::load::GraphRow;
+use super::{GitView, Selected};
+
+gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile]);
+
+pub const KEY_CONTEXT: &str = "GitGraph";
+/// How long a selection rests before the panel reads its commit without a key coming up.
+pub const SETTLE: Duration = Duration::from_millis(150);
+
+pub fn bind_keys(cx: &mut App) {
+    let c = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("shift-down", FirstParent, c),
+        KeyBinding::new("shift-up", Child, c),
+        KeyBinding::new("h", GoToHead, c),
+        KeyBinding::new("shift-h", GoToUpstream, c),
+        KeyBinding::new("right", OpenFirstFile, c),
+    ]);
+    diff::bind_keys(cx);
+}
+
+impl GitView {
+    fn row_of(&self, sha: &str) -> Option<usize> {
+        self.rows.iter().position(|r| r.sha.as_ref() == sha)
+    }
+
+    /// The row of `ix`'s first parent: HEAD's commit for the WIP row.
+    pub(super) fn first_parent(&self, ix: usize) -> Option<usize> {
+        let row = self.rows.get(ix)?;
+        let parent = if row.wip() { self.heads.head.as_ref() } else { row.parents.first() };
+        self.row_of(parent?)
+    }
+
+    /// The row of `ix`'s child: the WIP row for HEAD's commit, else the nearest row above whose first parent
+    /// it is, else the nearest that merged it.
+    pub(super) fn child(&self, ix: usize) -> Option<usize> {
+        let row = self.rows.get(ix).filter(|r| !r.wip())?;
+        if self.rows.first().is_some_and(GraphRow::wip) && self.heads.head.as_ref() == Some(&row.sha) {
+            return Some(0);
+        }
+        let above = || (0..ix).rev();
+        above().find(|i| self.rows[*i].parents.first() == Some(&row.sha)).or_else(|| above().find(|i| self.rows[*i].parents.contains(&row.sha)))
+    }
+
+    /// Selects row `ix` as a key does: at once, the panel's read deferred.
+    fn select_by_key(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        let Some(ix) = ix.filter(|ix| self.table.selected() != Some(*ix)) else { return };
+        self.table.select(Some(ix));
+        self.table.reveal(ix);
+        self.stepped(cx);
+        cx.notify();
+    }
+
+    /// The selection moved by a key: said at once, the panel's read after [`SETTLE`] or the key's release.
+    pub(super) fn stepped(&mut self, cx: &mut Context<Self>) {
+        cx.emit(super::GitEvent::Selected);
+        self.settle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            this.update(cx, |v, cx| v.settled(cx)).ok();
+        }));
+    }
+
+    /// The panel reads the selection a key left, when one is waiting.
+    pub(super) fn settled(&mut self, cx: &mut Context<Self>) {
+        if self.settle.take().is_some() {
+            self.load_details(cx);
+        }
+    }
+
+    /// The panel's files when it shows the selected row, in its list's order.
+    fn files(&self, cx: &App) -> Vec<diff::Target> {
+        match self.selected() {
+            Some(Selected::Wip) => self.wip_panel.read(cx).file_order(),
+            Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
+            None => Vec::new(),
+        }
+    }
+
+    /// Opens the file `step` leads to from the one open, selected in the panel's list.
+    pub fn go_file(&mut self, step: FileStep, cx: &mut Context<Self>) {
+        let files = self.files(cx);
+        let at = self.diff().and_then(|d| files.iter().position(|f| *f == d.read(cx).target));
+        let Some(target) = step.index(files.len(), at).map(|ix| files[ix].clone()) else { return };
+        if self.selected() == Some(Selected::Wip) {
+            self.wip_panel.update(cx, |p, cx| p.mark_file(&target, cx));
+        } else {
+            self.panel.update(cx, |p, cx| p.mark_file(&target, cx));
+        }
+        self.open_diff(target, cx);
+    }
+
+    /// Right on a row: its first file's diff, once the panel shows the row.
+    fn open_first_file(&mut self, cx: &mut Context<Self>) {
+        self.settled(cx);
+        if self.diff.is_none() {
+            self.go_file(FileStep::First, cx);
+        }
+    }
+
+    /// The table under the graph's own keys.
+    pub(super) fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .size_full()
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(|this, _: &FirstParent, _, cx| {
+                let to = this.table.selected().and_then(|ix| this.first_parent(ix));
+                this.select_by_key(to, cx)
+            }))
+            .on_action(cx.listener(|this, _: &Child, _, cx| {
+                let to = this.table.selected().and_then(|ix| this.child(ix));
+                this.select_by_key(to, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToHead, _, cx| {
+                let to = this.heads.head.clone().and_then(|sha| this.row_of(&sha));
+                this.select_by_key(to, cx)
+            }))
+            .on_action(cx.listener(|this, _: &GoToUpstream, _, cx| {
+                let to = this.heads.upstream.clone().and_then(|sha| this.row_of(&sha));
+                this.select_by_key(to, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenFirstFile, _, cx| this.open_first_file(cx)))
+            .on_key_up(cx.listener(|this, _: &KeyUpEvent, _, cx| this.settled(cx)))
+            .child(self.render_table(cx))
+            .into_any_element()
+    }
+}

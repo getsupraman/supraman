@@ -129,12 +129,12 @@ fn list(ix: usize, groups: &[RefGroup], colour: usize, palette: &Palette, hits: 
         .into_any_element()
 }
 
-/// The summary, then the body muted; whichever overflows ends with an ellipsis. A bar in the row's lane colour on the
+/// The summary, then the body muted, the WIP row's `// WIP` muted too; whichever overflows ends with an ellipsis. A bar in the row's lane colour on the
 /// column's left edge closes the graph's band.
 pub fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Palette) -> AnyElement {
-    let (summary, body): (SharedString, SharedString) = match wip {
-        Some(counts) => ("// WIP".into(), counts.to_string().into()),
-        None => (row.summary.clone(), row.body.clone()),
+    let (summary, body, colour): (SharedString, SharedString, _) = match wip {
+        Some(counts) => ("// WIP".into(), counts.to_string().into(), palette.muted),
+        None => (row.summary.clone(), row.body.clone(), palette.text),
     };
     let bar = div().absolute().left(px(-CELL_PAD)).w(px(BAR)).top(px(GAP / 2.)).bottom(px(GAP / 2.)).bg(palette.lane(row.row.colour));
     let text = div()
@@ -143,7 +143,7 @@ pub fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Palette) 
         .gap_2()
         .size_full()
         .overflow_hidden()
-        .child(clipped(format!("git-msg-{ix}"), summary, false).flex_shrink(1.).text_color(palette.text))
+        .child(clipped(format!("git-msg-{ix}"), summary, false).flex_shrink(1.).text_color(colour))
         .when(!body.is_empty(), |d| d.child(clipped(format!("git-body-{ix}"), body, false).flex_shrink(BODY_SHRINK).text_color(palette.muted)));
     div().relative().size_full().child(bar).child(text).into_any_element()
 }

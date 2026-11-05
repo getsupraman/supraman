@@ -92,8 +92,8 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
     use windows::Win32::UI::{
         Input::KeyboardAndMouse::{
             GetAsyncKeyState, GetKeyState, GetKeyboardState, MAPVK_VK_TO_VSC, MapVirtualKeyW, SetKeyboardState, VK_BACK, VK_CONTROL, VK_END,
-            VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
-            VkKeyScanW,
+            VK_ESCAPE, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU,
+            VK_RSHIFT, VK_RWIN, VK_SHIFT, VkKeyScanW,
         },
         WindowsAndMessaging::{WM_KEYDOWN, WM_KEYUP},
     };
@@ -130,6 +130,10 @@ pub(crate) async fn post_keys(keys: &[&str], cx: &mut AsyncWindowContext) -> any
     for key in keys {
         let vk = match *key {
             "end" => VK_END.0 as u32,
+            "left" => VK_LEFT.0 as u32,
+            "right" => VK_RIGHT.0 as u32,
+            "pageup" => VK_PRIOR.0 as u32,
+            "pagedown" => VK_NEXT.0 as u32,
             "backspace" => VK_BACK.0 as u32,
             "enter" => VK_RETURN.0 as u32,
             "escape" => VK_ESCAPE.0 as u32,

@@ -1,12 +1,12 @@
 //! A table of columns over rows that lays out only the rows in view ([`gpui::uniform_list`]): a header whose
-//! dividers drag to resize, one selected row moved by Up/Down, and a call when the view nears the last row.
+//! dividers drag to resize, one selected row moved by the keys of [`bind_keys`], and a call when the view nears the last row.
 //! The owner keeps the column widths and the rows; the table keeps the selection and the scroll.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, DragMoveEvent, FocusHandle, Hsla, KeyDownEvent, Pixels, ScrollStrategy, SharedString, Stateful,
-    UniformListScrollHandle, Window, canvas, div, prelude::*, px, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, DragMoveEvent, FocusHandle, Hsla, KeyBinding, KeyDownEvent, Pixels, ScrollStrategy, SharedString,
+    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, uniform_list,
 };
 use theme::ActiveTheme as _;
 
@@ -19,6 +19,36 @@ use crate::tooltip::Tooltip;
 mod widths;
 
 pub use widths::{clamp, drag, fit};
+
+gpui::actions!(table, [SelectPrevious, SelectNext, SelectPageUp, SelectPageDown, SelectFirst, SelectLast]);
+
+pub const KEY_CONTEXT: &str = "Table";
+
+pub fn bind_keys(cx: &mut App) {
+    let c = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("up", SelectPrevious, c),
+        KeyBinding::new("k", SelectPrevious, c),
+        KeyBinding::new("down", SelectNext, c),
+        KeyBinding::new("j", SelectNext, c),
+        KeyBinding::new("pageup", SelectPageUp, c),
+        KeyBinding::new("pagedown", SelectPageDown, c),
+        KeyBinding::new("ctrl-up", SelectFirst, c),
+        KeyBinding::new("ctrl-home", SelectFirst, c),
+        KeyBinding::new("ctrl-down", SelectLast, c),
+        KeyBinding::new("ctrl-end", SelectLast, c),
+    ]);
+}
+
+/// Where a key moves the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    By(isize),
+    /// A page of the rows in view, down when positive.
+    Pages(isize),
+    First,
+    Last,
+}
 
 #[derive(Clone, Debug)]
 pub struct Column {
@@ -85,7 +115,9 @@ impl NearEnd {
 #[derive(Default)]
 struct Inner {
     selected: Option<usize>,
+    /// The rows a key can select: the last frame's, without its footer.
     rows: usize,
+    row_height: Pixels,
     width: Pixels,
     /// The columns' widths as last laid out; the owner keeps the preferred ones.
     current: Vec<Pixels>,
@@ -136,22 +168,36 @@ impl TableState {
         state.base_handle.set_offset(gpui::point(x, -top.max(px(0.))));
     }
 
-    /// Moves the selection `by` rows within the last frame's rows, reveals it, and returns it; the first row
-    /// when none was selected, `None` when it stays put.
-    pub fn step(&self, by: isize) -> Option<usize> {
-        let row = {
+    /// The rows a page holds, as the last frame showed them; at least one.
+    pub fn page(&self) -> usize {
+        let height = self.inner.borrow().row_height;
+        let viewport = self.scroll.0.borrow().last_item_size.map(|s| s.item.height);
+        match viewport {
+            Some(viewport) if height > px(0.) => ((viewport / height).floor() as usize).max(1),
+            _ => 1,
+        }
+    }
+
+    /// Moves the selection to where `step` says within the last frame's rows, reveals it, and returns it
+    /// when it moved; a relative step selects the first row when none was selected.
+    pub fn go(&self, step: Step) -> Option<usize> {
+        let page = self.page() as isize;
+        let (row, moved) = {
             let mut inner = self.inner.borrow_mut();
             let last = inner.rows.checked_sub(1)?;
-            let row = match inner.selected {
-                Some(row) => row.saturating_add_signed(by).min(last),
-                None => 0,
+            let row = match (step, inner.selected) {
+                (Step::First, _) => 0,
+                (Step::Last, _) => last,
+                (_, None) => 0,
+                (Step::By(by), Some(row)) => row.saturating_add_signed(by).min(last),
+                (Step::Pages(n), Some(row)) => row.saturating_add_signed(n * page).min(last),
             };
             let moved = inner.selected != Some(row);
             inner.selected = Some(row);
             (row, moved)
         };
-        self.reveal(row.0);
-        row.1.then_some(row.0)
+        self.reveal(row);
+        moved.then_some(row)
     }
 }
 
@@ -182,6 +228,7 @@ pub struct Table<V> {
     on_key: Option<Rc<KeyFn<V>>>,
     row_key: Option<Rc<RowKeyFn>>,
     headless: bool,
+    footer: usize,
 }
 
 impl<V: 'static> Table<V> {
@@ -212,12 +259,19 @@ impl<V: 'static> Table<V> {
             on_key: None,
             row_key: None,
             headless: false,
+            footer: 0,
         }
     }
 
     /// No header row.
     pub fn headless(mut self) -> Self {
         self.headless = true;
+        self
+    }
+
+    /// The last `rows` rows are a footer no key selects.
+    pub fn footer(mut self, rows: usize) -> Self {
+        self.footer = rows;
         self
     }
 
@@ -233,7 +287,7 @@ impl<V: 'static> Table<V> {
         self
     }
 
-    /// Gets every key pressed while the table has focus before Up/Down do; `true` when it took the key.
+    /// Gets every key pressed while the table has focus that no binding of [`KEY_CONTEXT`] took; `true` when it took the key.
     pub fn on_key(mut self, f: impl Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool + 'static) -> Self {
         self.on_key = Some(Rc::new(f));
         self
@@ -250,7 +304,7 @@ impl<V: 'static> Table<V> {
         self
     }
 
-    /// Called after a click or Up/Down selects a row.
+    /// Called after a click or a key selects a row.
     pub fn on_select(mut self, f: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static) -> Self {
         self.on_select = Some(Rc::new(f));
         self
@@ -273,35 +327,32 @@ impl<V: 'static> Table<V> {
     pub fn render(self, cx: &mut Context<V>) -> Stateful<Div> {
         let widths: Rc<[Pixels]> = {
             let mut inner = self.state.inner.borrow_mut();
-            inner.rows = self.rows;
+            inner.rows = self.rows.saturating_sub(self.footer);
+            inner.row_height = self.row_height;
             let total = if inner.width > px(0.) { inner.width } else { clamp(&self.columns, &self.widths).iter().fold(px(0.), |s, w| s + *w) };
             inner.current = fit(&self.columns, &inner.current, &self.widths, total);
             inner.current.as_slice().into()
         };
-        let (state, on_select, on_key) = (self.state.clone(), self.on_select.clone(), self.on_key.clone());
+        let on_key = self.on_key.clone();
         let keys = cx.listener(move |this: &mut V, e: &KeyDownEvent, window, cx| {
             if on_key.as_ref().is_some_and(|f| f(this, e.keystroke.key.as_str(), window, cx)) {
                 cx.stop_propagation();
                 cx.notify();
-                return;
             }
-            let by = match e.keystroke.key.as_str() {
-                "up" => -1,
-                "down" => 1,
-                _ => return,
-            };
-            cx.stop_propagation();
-            if let (Some(row), Some(f)) = (state.step(by), &on_select) {
-                f(this, row, window, cx);
-            }
-            cx.notify();
         });
         let header = (!self.headless).then(|| self.header(&widths, cx));
         div()
             .id(self.id.clone())
             .relative()
+            .key_context(KEY_CONTEXT)
             .track_focus(&self.state.focus)
             .on_key_down(keys)
+            .on_action(self.stepper(|_: &SelectPrevious| Step::By(-1), cx))
+            .on_action(self.stepper(|_: &SelectNext| Step::By(1), cx))
+            .on_action(self.stepper(|_: &SelectPageUp| Step::Pages(-1), cx))
+            .on_action(self.stepper(|_: &SelectPageDown| Step::Pages(1), cx))
+            .on_action(self.stepper(|_: &SelectFirst| Step::First, cx))
+            .on_action(self.stepper(|_: &SelectLast| Step::Last, cx))
             .flex()
             .flex_col()
             .size_full()
@@ -310,6 +361,17 @@ impl<V: 'static> Table<V> {
             .child(width_probe(self.state.clone()))
             .children(header)
             .child(self.body(widths, cx))
+    }
+
+    /// A key's action moving the selection as `step` says, then [`Table::on_select`] when it moved.
+    fn stepper<A: gpui::Action>(&self, step: impl Fn(&A) -> Step + 'static, cx: &mut Context<V>) -> impl Fn(&A, &mut Window, &mut App) + 'static {
+        let (state, on_select) = (self.state.clone(), self.on_select.clone());
+        cx.listener(move |this: &mut V, action: &A, window, cx| {
+            if let (Some(row), Some(f)) = (state.go(step(action)), &on_select) {
+                f(this, row, window, cx);
+            }
+            cx.notify();
+        })
     }
 
     fn header(&self, widths: &[Pixels], cx: &mut Context<V>) -> Stateful<Div> {
@@ -644,6 +706,55 @@ mod tests {
         });
         cx.simulate_keystrokes("up");
         grid.read_with(cx, |g, _| assert!(g.selected.is_empty(), "an Up on the first row selects nothing anew: {:?}", g.selected));
+    }
+
+    #[gpui::test]
+    fn page_keys_move_a_page_of_rows_and_ctrl_keys_go_to_the_ends(cx: &mut TestAppContext) {
+        let (grid, cx) = grid(1_000, cx);
+        redraw(&grid, cx);
+        let page = grid.read_with(cx, |g, _| g.state.page());
+        assert_eq!(page, 10, "280 px of 28 px rows");
+        let selected = |cx: &mut VisualTestContext| grid.read_with(cx, |g, _| g.state.selected());
+        cx.simulate_keystrokes("j j k pagedown");
+        assert_eq!(selected(cx), Some(10), "J and K are Down and Up; Page Down a page further");
+        cx.simulate_keystrokes("pagedown pageup pageup pageup");
+        assert_eq!(selected(cx), Some(0), "Page Up stops at the first row");
+        cx.simulate_keystrokes("ctrl-end");
+        assert_eq!(selected(cx), Some(999));
+        let painted = redraw(&grid, cx);
+        assert!(painted.contains(&999), "the last row in view: {painted:?}");
+        cx.simulate_keystrokes("pagedown ctrl-home pagedown ctrl-down");
+        assert_eq!(selected(cx), Some(999), "Page Down stops at the last row; Ctrl+Down is Ctrl+End");
+        cx.simulate_keystrokes("ctrl-up");
+        assert_eq!(selected(cx), Some(0));
+        grid.read_with(cx, |g, _| assert_eq!(g.selected[..4], [0, 1, 0, 10]));
+    }
+
+    struct Footed {
+        state: TableState,
+        hits: HitTargets,
+    }
+
+    impl Render for Footed {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let table = Table::new("f", &self.state, &self.hits, columns(), &[px(100.); 5], 6, |_: &mut Footed, row, _, _, _| div().child(format!("{row}")).into_any_element()).footer(1);
+            div().w(px(900.)).h(px(300.)).child(table.render(cx))
+        }
+    }
+
+    #[gpui::test]
+    fn no_key_selects_the_footer(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (footed, cx) = cx.add_window_view(|window, cx| {
+            let state = TableState::new(cx);
+            window.focus(state.focus_handle(), cx);
+            Footed { state, hits: HitTargets::default() }
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-end");
+        assert_eq!(footed.read_with(cx, |f, _| f.state.selected()), Some(4), "the last of five rows above the footer");
+        cx.simulate_keystrokes("down pagedown");
+        assert_eq!(footed.read_with(cx, |f, _| f.state.selected()), Some(4));
     }
 
     #[gpui::test]

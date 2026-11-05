@@ -5,7 +5,7 @@ use std::path::Path;
 
 use gpui::SharedString;
 use supraman_core::Settings;
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Layout, Located, NEXT_PAGE, Repo, Row, Status};
+use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Status};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
@@ -20,6 +20,8 @@ pub struct GraphRow {
     /// Epoch milliseconds of the commit; 0 on the WIP row.
     pub time_ms: i64,
     pub merge: bool,
+    /// Empty on the WIP row.
+    pub parents: Vec<SharedString>,
 }
 
 impl GraphRow {
@@ -84,9 +86,32 @@ pub struct Page {
     pub layout: Layout,
 }
 
+/// The commits HEAD and its branch's upstream are on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Heads {
+    pub head: Option<SharedString>,
+    pub upstream: Option<SharedString>,
+}
+
+impl Heads {
+    pub fn of(refs: &Refs) -> Heads {
+        let (head, branch) = match &refs.head {
+            Head::Branch { name, sha } => (sha.clone(), Some(name)),
+            Head::Detached { sha } => (Some(sha.clone()), None),
+        };
+        let upstream = branch
+            .and_then(|name| refs.branches.iter().find(|b| &b.name == name))
+            .and_then(|b| b.upstream.as_ref().filter(|u| !u.gone))
+            .and_then(|u| refs.remotes.iter().find(|r| r.name == u.name))
+            .map(|r| SharedString::from(r.sha.clone()));
+        Heads { head: head.map(SharedString::from), upstream }
+    }
+}
+
 pub struct First {
     pub repo: Repo,
     pub tips: Vec<String>,
+    pub heads: Heads,
     pub wip: Option<Wip>,
     pub page: Page,
 }
@@ -121,7 +146,7 @@ pub fn read(repo: Repo, count: usize) -> Result<First, String> {
     let tips = refs.tips();
     let page = page(&repo, &tips, 0, count, layout)?;
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
-    Ok(First { repo, tips, wip, page })
+    Ok(First { repo, tips, heads: Heads::of(&refs), wip, page })
 }
 
 fn dirty(status: &Status) -> bool {
@@ -149,7 +174,7 @@ pub fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout) -> Result
 
 fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
     let Some(c) = commit else {
-        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), time_ms: 0, merge: false };
+        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
     };
     let (summary, body) = c.message.split_once('\n').unwrap_or((&c.message, ""));
     GraphRow {
@@ -159,6 +184,7 @@ fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
         initials: initials(&c.author.name).into(),
         time_ms: c.author.time * 1000,
         merge: c.parents.len() > 1,
+        parents: c.parents.iter().map(|p| SharedString::from(p.clone())).collect(),
         row,
     }
 }

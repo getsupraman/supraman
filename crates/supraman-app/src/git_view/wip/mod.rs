@@ -17,6 +17,7 @@ use supraman_ui::table::TableState;
 use supraman_ui::tree::{Order, TreeState};
 
 use super::details::{Counts, FileView, PanelEvent, sort_changes};
+use super::diff::{Of, Target};
 
 pub use load::{Branch, Section, file_changes};
 pub use render::banner;
@@ -204,7 +205,11 @@ impl WipPanel {
         cx.notify();
     }
 
-    /// Opens `path`'s change in `section`; a folder of the tree opens nothing.
+    #[cfg(test)]
+    pub fn selected_row(&self, section: Section) -> Option<usize> {
+        self.list(section).paths.selected()
+    }
+
     pub fn deselect_files(&mut self, cx: &mut Context<Self>) {
         for list in [&self.unstaged, &self.staged] {
             list.tree.select(None);
@@ -218,6 +223,47 @@ impl WipPanel {
         if let Some(file) = shown.files(section).iter().find(|f| f.path == path) {
             cx.emit(PanelEvent::File(section.target(file)));
         }
+    }
+
+    /// A section's files top to bottom as its list shows them, every folder of a tree open.
+    fn paths(&self, section: Section, shown: &Shown) -> Vec<String> {
+        match self.view {
+            FileView::Path => shown.files(section).iter().map(|f| f.path.clone()).collect(),
+            FileView::Tree => self.list(section).tree.files().iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    /// The unstaged files (the conflicted among them), then the staged, as the lists show them.
+    pub fn file_order(&self) -> Vec<Target> {
+        let Some(shown) = self.shown() else { return Vec::new() };
+        [Section::Unstaged, Section::Staged]
+            .into_iter()
+            .flat_map(|section| {
+                let files = shown.files(section);
+                self.paths(section, &shown).into_iter().filter_map(move |p| files.iter().find(|f| f.path == p).map(|f| section.target(f))).collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Selects `target`'s row alone, opening its section and the folders above it.
+    pub fn mark_file(&mut self, target: &Target, cx: &mut Context<Self>) {
+        let Some(shown) = self.shown() else { return };
+        self.deselect_files(cx);
+        let section = if target.of == Of::Staged { Section::Staged } else { Section::Unstaged };
+        let view = self.view;
+        let list = self.list_mut(section);
+        list.open = true;
+        match view {
+            FileView::Path => {
+                let row = shown.files(section).iter().position(|f| f.path == target.path);
+                list.paths.select(row);
+                if let Some(row) = row {
+                    list.paths.reveal(row);
+                }
+            }
+            FileView::Tree => list.tree.select_opening(&target.path),
+        }
+        cx.notify();
     }
 
     /// The header's words before the branch: `3 file changes on`.

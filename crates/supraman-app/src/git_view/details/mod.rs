@@ -256,6 +256,17 @@ impl CommitPanel {
         input
     }
 
+    #[cfg(test)]
+    pub fn token(&self) -> u64 {
+        self.token
+    }
+
+    /// The selected path of the tree on show.
+    #[cfg(test)]
+    pub fn selected_file(&self) -> Option<SharedString> {
+        self.tree().0.selected()
+    }
+
     pub fn deselect_files(&mut self, cx: &mut Context<Self>) {
         self.changed.select(None);
         self.all.select(None);
@@ -263,13 +274,46 @@ impl CommitPanel {
         cx.notify();
     }
 
-    fn file_clicked(&mut self, path: &SharedString, cx: &mut Context<Self>) {
-        let Some(shown) = self.shown() else { return };
-        if shown.files.contains(path.as_ref()) {
-            let change = shown.changes.iter().find(|c| c.path == path.as_ref()).cloned();
-            let parent = shown.parents.first().map(|p| p.to_string());
-            cx.emit(PanelEvent::File(super::diff::Target::commit(shown.sha.to_string(), parent, path.to_string(), change)));
+    /// The diff of `path` in the shown commit: a changed file against the first parent, else the file as it is.
+    fn target(shown: &Shown, path: &str) -> Option<super::diff::Target> {
+        if !shown.files.contains(path) {
+            return None;
         }
+        let change = shown.changes.iter().find(|c| c.path == path).cloned();
+        let parent = shown.parents.first().map(|p| p.to_string());
+        Some(super::diff::Target::commit(shown.sha.to_string(), parent, path.to_string(), change))
+    }
+
+    fn file_clicked(&mut self, path: &SharedString, cx: &mut Context<Self>) {
+        if let Some(target) = self.shown().and_then(|shown| Self::target(&shown, path)) {
+            cx.emit(PanelEvent::File(target));
+        }
+    }
+
+    /// The files of the list on show, top to bottom, every folder of a tree open; none until it shows `sha`.
+    pub fn file_order(&self, sha: &str) -> Vec<super::diff::Target> {
+        let Some(shown) = self.shown().filter(|s| s.sha == sha) else { return Vec::new() };
+        let paths: Vec<String> = match (self.all_files, self.view) {
+            (false, FileView::Path) => shown.changes.iter().map(|c| c.path.clone()).collect(),
+            _ => self.tree().0.files().iter().map(|p| p.to_string()).collect(),
+        };
+        paths.iter().filter_map(|p| Self::target(&shown, p)).collect()
+    }
+
+    /// Selects `target`'s row in the list on show, opening the folders above it.
+    pub fn mark_file(&mut self, target: &super::diff::Target, cx: &mut Context<Self>) {
+        let Some(shown) = self.shown() else { return };
+        match (self.all_files, self.view) {
+            (false, FileView::Path) => {
+                let row = shown.changes.iter().position(|c| c.path == target.path);
+                self.paths.select(row);
+                if let Some(row) = row {
+                    self.paths.reveal(row);
+                }
+            }
+            _ => self.tree().0.select_opening(&target.path),
+        }
+        cx.notify();
     }
 }
 

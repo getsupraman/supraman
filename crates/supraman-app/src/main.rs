@@ -305,7 +305,7 @@ fn main() {
         }
         view::bind_keys(cx);
         text_input::bind_keys(cx);
-        git_view::diff::bind_keys(cx);
+        git_view::bind_keys(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

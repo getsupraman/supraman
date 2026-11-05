@@ -1,5 +1,6 @@
-//! The split diff's change ruler: removed runs in its left lane, added runs in its right, a box over the
-//! rows in view; a click or drag in it scrolls there.
+//! The split diff's change ruler, in the new side's display rows (soft-wrapped rows and fillers counted):
+//! removed runs in its left lane, added runs in its right, a box over the rows in view; a click or drag in it
+//! scrolls there.
 
 use std::ops::Range;
 
@@ -18,46 +19,34 @@ pub enum Lane {
     Added,
 }
 
-/// A run of changed rows in a lane, in the split's aligned display rows.
+/// A run of changed rows in a lane, in display rows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark {
     pub lane: Lane,
     pub rows: Range<u32>,
 }
 
-/// The display row each hunk starts on, the same on both sides once the spacers align them.
-pub fn aligned_starts(hunks: &[Hunk]) -> Vec<u32> {
-    let mut padded = 0;
-    hunks
-        .iter()
-        .map(|h| {
-            let start = h.old_rows.start + padded;
-            padded += (h.new_rows.len() as u32).saturating_sub(h.old_rows.len() as u32);
-            start
-        })
-        .collect()
-}
-
-pub fn marks(hunks: &[Hunk]) -> Vec<Mark> {
+/// Each hunk's removed and added runs, their buffer rows turned into display rows by `old` and `new`.
+pub fn marks(hunks: &[Hunk], old: impl Fn(&Range<u32>) -> Range<u32>, new: impl Fn(&Range<u32>) -> Range<u32>) -> Vec<Mark> {
     let mut out = Vec::new();
-    for (h, start) in hunks.iter().zip(aligned_starts(hunks)) {
-        let (o, n) = (h.old_rows.len() as u32, h.new_rows.len() as u32);
-        if o > 0 {
-            out.push(Mark { lane: Lane::Removed, rows: start..start + o });
+    for h in hunks {
+        if !h.old_rows.is_empty() {
+            out.push(Mark { lane: Lane::Removed, rows: old(&h.old_rows) });
         }
-        if n > 0 {
-            out.push(Mark { lane: Lane::Added, rows: start..start + n });
+        if !h.new_rows.is_empty() {
+            out.push(Mark { lane: Lane::Added, rows: new(&h.new_rows) });
         }
     }
     out
 }
 
-/// `rows` as the top and height of a ruler `height` px tall over `total` rows, at least [`MIN_MARK`] high.
+/// `rows` as the top and height of a ruler `height` px tall over `total` rows, at least [`MIN_MARK`] high and
+/// never past the ruler's ends.
 pub fn span(rows: Range<f64>, total: u32, height: f32) -> (f32, f32) {
     let per_row = height / total.max(1) as f32;
     let top = (rows.start as f32 * per_row).clamp(0., height);
     let bottom = (rows.end as f32 * per_row).clamp(top, height);
-    let tall = (bottom - top).max(MIN_MARK);
+    let tall = (bottom - top).max(MIN_MARK).min(height.max(0.));
     (top.min(height - tall).max(0.), tall)
 }
 
@@ -103,11 +92,11 @@ mod tests {
     }
 
     #[test]
-    fn marks_sit_on_the_aligned_rows_in_their_lanes() {
+    fn marks_sit_on_each_sides_display_rows_in_their_lanes() {
         let hunks = [hunk(1..2, 1..2), hunk(3..5, 3..3), hunk(6..6, 4..7)];
-        assert_eq!(aligned_starts(&hunks), [1, 3, 6]);
+        let wrapped_old = |r: &Range<u32>| r.start * 2..r.end * 2;
         let m = |lane, rows| Mark { lane, rows };
-        assert_eq!(marks(&hunks), [m(Lane::Removed, 1..2), m(Lane::Added, 1..2), m(Lane::Removed, 3..5), m(Lane::Added, 6..9)]);
+        assert_eq!(marks(&hunks, wrapped_old, |r| r.clone()), [m(Lane::Removed, 2..4), m(Lane::Added, 1..2), m(Lane::Removed, 6..10), m(Lane::Added, 4..7)]);
     }
 
     #[test]
@@ -115,6 +104,8 @@ mod tests {
         assert_eq!(span(10.0..20.0, 100, 200.), (20., 20.));
         assert_eq!(span(50.0..50.5, 1000, 100.), (5., MIN_MARK));
         assert_eq!(span(999.0..1000.0, 1000, 100.), (100. - MIN_MARK, MIN_MARK));
+        assert_eq!(span(1200.0..1250.0, 1000, 100.), (100. - MIN_MARK, MIN_MARK), "a view past the rows stays inside");
+        assert_eq!(span(0.0..80.0, 40, 100.), (0., 100.), "a view taller than the rows fills the ruler, no more");
     }
 
     #[test]
