@@ -5,7 +5,7 @@ mod load;
 mod render;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::rc::Rc;
 
@@ -63,6 +63,8 @@ pub struct WipPanel {
     repo: Option<Repo>,
     /// Bumped by each selection; a load that finishes under another one is dropped.
     token: u64,
+    /// The last read keeps the lists' state.
+    in_place: bool,
     state: State,
     /// The WIP row's lane colour, for the branch's pill.
     colour: usize,
@@ -80,6 +82,7 @@ impl WipPanel {
             hits,
             repo: None,
             token: 0,
+            in_place: false,
             state: State::Loading,
             colour: 0,
             view: FileView::Path,
@@ -107,8 +110,20 @@ impl WipPanel {
         }
     }
 
-    /// Reads the working directory again off the UI thread; the token of this read.
+    /// Reads the working directory again off the UI thread, its lists opened afresh; the token of this read.
     pub fn show(&mut self, colour: usize, cx: &mut Context<Self>) -> u64 {
+        self.in_place = false;
+        self.read(colour, cx)
+    }
+
+    /// [`WipPanel::show`] keeping the lists' open folders and selected files.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) -> u64 {
+        let token = self.read(self.colour, cx);
+        self.in_place = true;
+        token
+    }
+
+    fn read(&mut self, colour: usize, cx: &mut Context<Self>) -> u64 {
         self.token += 1;
         let token = self.token;
         self.colour = colour;
@@ -141,9 +156,11 @@ impl WipPanel {
             Ok(l) => {
                 for (list, tree) in [(&self.unstaged, l.unstaged_tree), (&self.staged, l.staged_tree)] {
                     list.tree.set_tree(tree);
-                    list.tree.expand_all();
-                    list.tree.select(None);
-                    list.paths.select(None);
+                    if !self.in_place {
+                        list.tree.expand_all();
+                        list.tree.select(None);
+                        list.paths.select(None);
+                    }
                 }
                 self.state = State::Shown(Rc::new(Shown { branch: l.branch, total: l.total, unstaged: l.unstaged, staged: l.staged }));
             }

@@ -60,8 +60,18 @@ impl Repo {
 
     /// `git <READ_ONLY> <args>` in `dir`, whatever its exit code.
     pub(crate) fn run(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<RawOutput, GitError> {
+        self.run_with(READ_ONLY.iter(), args, input)
+    }
+
+    /// [`Repo::run`] without `--literal-pathspecs`, for a command that takes paths and refuses pathspec magic
+    /// (`check-ignore`).
+    pub(crate) fn run_paths(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<RawOutput, GitError> {
+        self.run_with(READ_ONLY.iter().filter(|a| **a != "--literal-pathspecs"), args, input)
+    }
+
+    fn run_with<'a>(&self, read_only: impl Iterator<Item = &'a &'a str>, args: &[&str], input: Option<Vec<u8>>) -> Result<RawOutput, GitError> {
         let mut cmd = process::command(&self.git.path);
-        cmd.arg("-C").arg(&self.dir).args(READ_ONLY).args(args);
+        cmd.arg("-C").arg(&self.dir).args(read_only).args(args);
         cmd.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "").env("TERM", "dumb");
         REPO_ENV.iter().for_each(|var| {
             cmd.env_remove(var);

@@ -10,7 +10,7 @@ use crate::git_view::diff::{Content, DiffView, Mode, Of};
 use crate::git_view::tests::{open, redraw};
 use crate::git_view::{GitView, Selected};
 
-fn open_with_editor<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+pub(crate) fn open_with_editor<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         supraman_editor::init(supraman_ui::fonts::MONO, 13., cx);
         crate::git_view::diff::bind_keys(cx);
@@ -18,7 +18,7 @@ fn open_with_editor<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) ->
     open(folder, cx)
 }
 
-fn select_wip(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+pub(crate) fn select_wip(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     view.update(cx, |v, cx| v.select_wip(cx));
     cx.run_until_parked();
     redraw(view, cx);
@@ -33,14 +33,14 @@ fn listed(files: &[FileChange]) -> Vec<(&str, ChangeKind)> {
 }
 
 /// Hit keys of the next frame only.
-fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> HitTargets {
+pub(crate) fn repaint(view: &Entity<GitView>, cx: &mut VisualTestContext) -> HitTargets {
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     hits.borrow_mut().clear();
     redraw(view, cx);
     hits
 }
 
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
+pub(crate) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     let at = repaint(view, cx).borrow().get(key).unwrap_or_else(|| panic!("{key} is painted")).bounds.center();
     cx.simulate_click(at, Modifiers::none());
     cx.run_until_parked();
@@ -48,7 +48,7 @@ fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
 }
 
 /// Clicks `path`'s row in `section` and reads the diff it opens: its target and its two sides.
-fn open_file(view: &Entity<GitView>, section: Section, path: &str, cx: &mut VisualTestContext) -> (Entity<DiffView>, String, String) {
+pub(crate) fn open_file(view: &Entity<GitView>, section: Section, path: &str, cx: &mut VisualTestContext) -> (Entity<DiffView>, String, String) {
     click(view, &format!("{}-files-row-{path}", section.list()), cx);
     let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
     let (old, new) = d.read_with(cx, |d, cx| match d.content() {

@@ -157,3 +157,27 @@ fn a_conflicted_file_is_unmerged_in_the_status() {
     assert_eq!((a.kind, a.staged, a.unstaged), (EntryKind::Unmerged, Some(ChangeKind::Unmerged), Some(ChangeKind::Unmerged)));
     assert_eq!(s.operation, Some(Operation::Merge));
 }
+
+#[test]
+fn dirs_of_a_checkout_and_a_linked_worktree() {
+    let f = Fixture::new();
+    let same = |a: &std::path::Path, b: &std::path::Path| a.canonicalize().unwrap() == b.canonicalize().unwrap();
+    let main = dirs(&f.repo()).unwrap();
+    assert!(same(&main.top, &f.dir) && same(&main.git_dir, &f.dir.join(".git")) && same(&main.common_dir, &main.git_dir), "{main:?}");
+    let wt = dirs(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
+    assert!(same(&wt.top, &f.worktree) && same(&wt.common_dir, &main.git_dir), "{wt:?}");
+    assert!(same(&wt.git_dir, &f.dir.join(".git").join("worktrees").join("wt")), "a worktree's own git dir: {wt:?}");
+}
+
+#[test]
+fn ignored_names_the_ignored_paths_but_never_a_tracked_file() {
+    let f = Fixture::new();
+    f.write(".gitignore", b"target/\n*.log\na.txt\n");
+    std::fs::create_dir(f.dir.join("target")).unwrap();
+    f.write("target/out.bin", b"x");
+    let asked: Vec<String> = ["target/out.bin", "x.log", "a.txt", "u.txt", "sub/deep.log"].map(String::from).into();
+    let mut got: Vec<String> = ignored(&f.repo(), &asked).unwrap().into_iter().collect();
+    got.sort();
+    assert_eq!(got, ["sub/deep.log", "target/out.bin", "x.log"], "a.txt is tracked");
+    assert!(ignored(&f.repo(), &[]).unwrap().is_empty());
+}

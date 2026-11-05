@@ -109,16 +109,29 @@ pub fn first(home: Option<&Path>, folder: &Path) -> Result<First, Problem> {
         return Err(Problem::Git(problem));
     }
     let Located::Found(git) = located else { unreachable!() };
-    let repo = Repo::new(git, folder);
-    let failed = |e: supraman_gitman::GitError| Problem::Failed(e.to_string());
+    read(Repo::new(git, folder), FIRST_PAGE).map_err(Problem::Failed)
+}
+
+/// The refs, the status and the first `count` commits of `repo`, laid out afresh.
+pub fn read(repo: Repo, count: usize) -> Result<First, String> {
+    let failed = |e: supraman_gitman::GitError| e.to_string();
     let refs = supraman_gitman::refs(&repo).map_err(failed)?;
     let status = supraman_gitman::status(&repo).map_err(failed)?;
-    let dirty = !status.entries.is_empty() || status.operation.is_some();
-    let layout = Layout::new(&refs, dirty);
+    let layout = Layout::new(&refs, dirty(&status));
     let tips = refs.tips();
-    let page = page(&repo, &tips, 0, FIRST_PAGE, layout).map_err(Problem::Failed)?;
+    let page = page(&repo, &tips, 0, count, layout)?;
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
     Ok(First { repo, tips, wip, page })
+}
+
+fn dirty(status: &Status) -> bool {
+    !status.entries.is_empty() || status.operation.is_some()
+}
+
+/// The WIP row's counts, `None` for a clean tree.
+pub fn wip(repo: &Repo) -> Result<Option<Wip>, String> {
+    let status = supraman_gitman::status(repo).map_err(|e| e.to_string())?;
+    Ok(dirty(&status).then(|| Wip::of(&status)))
 }
 
 /// The page of `count` commits after the first `skip`, laid out after the rows `layout` has seen.
