@@ -287,7 +287,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | gpui_tokio | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_util | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
 | gpui_windows | 0.1.0 | Apache-2.0 | https://github.com/zed-industries/zed @ 03efd49220ba |
-| grammars | 0.1.0 | see  | https://github.com/zed-industries/zed @ 03efd49220ba |
+| grammars | 0.1.0 | see LICENSE-GPL | https://github.com/zed-industries/zed @ 03efd49220ba |
 | granit-parser | 1.0.0 | MIT OR Apache-2.0 | crates.io |
 | half | 2.7.1 | MIT OR Apache-2.0 | crates.io |
 | hash32 | 0.3.1 | MIT OR Apache-2.0 | crates.io |
@@ -347,7 +347,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | kv-log-macro | 1.0.7 | MIT OR Apache-2.0 | crates.io |
 | lalrpop-util | 0.23.1 | Apache-2.0 OR MIT | crates.io |
 | language | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
-| language_core | 0.1.0 | see  | https://github.com/zed-industries/zed @ 03efd49220ba |
+| language_core | 0.1.0 | see LICENSE-GPL | https://github.com/zed-industries/zed @ 03efd49220ba |
 | language_detection | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | language_model | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
 | language_model_core | 0.1.0 | GPL-3.0-or-later | https://github.com/zed-industries/zed @ 03efd49220ba |
