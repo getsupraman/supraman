@@ -216,7 +216,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
         }
         *SESSION_NAME.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.clone());
         let launched = Instant::now();
-        let out = Claude::default().run_in(&["--bg", "--name", &name, "--permission-mode", "auto", PROMPT], Some(&cwd), WRITE_TIMEOUT)?;
+        let out = Claude::default().run_in(&crate::selftest_launch::args(&name, &crate::selftest_launch::no_servers(&home)?, PROMPT), Some(&cwd), WRITE_TIMEOUT)?;
         let out = out.trim();
         println!(
             "step 2: launched {name} from {} in {} ms: {out}",
