@@ -2057,6 +2057,10 @@ mod tests {
         assert_eq!(sup.launcher().take(), [Call::Stop { id: "aaaa0001".into() }]);
         sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + SECOND);
         assert_eq!(sup.launcher().take(), []);
+        for later in [3, 60, 3_600] {
+            sup.tick(&[row(SessionState::Stopped, None, None)], &mut free(), NOW + later * SECOND);
+            assert_eq!(sup.launcher().take(), [], "{later} s after the stop nothing restarts it");
+        }
     }
 
     #[test]

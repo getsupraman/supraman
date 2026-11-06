@@ -71,6 +71,7 @@ impl Sections {
     }
 
     /// The rows shown top to bottom, each shown section's header first.
+    #[cfg(test)]
     pub fn visible(&self) -> Vec<SharedString> {
         let mut out = Vec::new();
         for section in Section::ALL.into_iter().filter(|s| self.shows(*s)) {
