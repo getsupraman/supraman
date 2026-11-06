@@ -111,7 +111,7 @@ fn nested_commit(f: &Fixture) -> String {
 fn nested() -> std::sync::Arc<(Fixture, String)> {
     static NESTED: Shared<(Fixture, String)> = Shared::new();
     NESTED.get(|| {
-        let f = Fixture::new();
+        let f = Fixture::copy();
         let sha = nested_commit(&f);
         (f, sha)
     })

@@ -125,7 +125,7 @@ fn wip_view_diffs_show_the_right_sides(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     f.conflict();
     let (view, cx) = open_with_editor(&f.worktree, cx);
     select_wip(&view, cx);
@@ -180,7 +180,7 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
 
 #[gpui::test]
 fn wip_view_shows_the_status_a_refresh_read_without_reading_it_again(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let (view, cx) = open(&f.dir, cx);
     select_wip(&view, cx);
     let reads = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.wip_panel().read(cx).status_reads);

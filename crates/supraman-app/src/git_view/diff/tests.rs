@@ -44,7 +44,7 @@ fn repo() -> std::sync::Arc<Repo> {
 }
 
 fn made() -> Repo {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     write(&f, "m.rs", M_OLD.as_bytes());
     write(&f, "gone.txt", b"bye\n");
     write(&f, "mv.txt", MOVED.as_bytes());

@@ -112,7 +112,7 @@ fn patches_of_a_commit_two_revs_and_the_work_in_progress() {
 
 #[test]
 fn work_in_progress_entries_and_a_merge_under_way() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let s = status(&f.repo()).unwrap();
     assert_eq!(s.branch, BranchStatus { oid: Some(f.sha("ahead").into()), head: Some("main".into()), upstream: Some("origin/main".into()), ahead: 1, behind: 0 });
     let entry = |path: &str| s.entries.iter().find(|e| e.path == path).unwrap_or_else(|| panic!("no {path} in {:?}", s.entries));
@@ -132,7 +132,7 @@ fn work_in_progress_entries_and_a_merge_under_way() {
 
 #[test]
 fn the_staged_and_the_worktree_side_of_a_file() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let repo = f.repo();
     assert_eq!(staged_blob(&repo, "a.txt").unwrap().bytes, b"staged
 ");
@@ -153,7 +153,7 @@ unstaged
 
 #[test]
 fn a_conflicted_file_is_unmerged_in_the_status() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     f.conflict();
     let s = status(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
     let a = s.entries.iter().find(|e| e.path == "a.txt").expect("a.txt is listed");
@@ -174,7 +174,7 @@ fn dirs_of_a_checkout_and_a_linked_worktree() {
 
 #[test]
 fn ignored_names_the_ignored_paths_but_never_a_tracked_file() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     f.write(".gitignore", b"target/\n*.log\na.txt\n");
     std::fs::create_dir(f.dir.join("target")).unwrap();
     f.write("target/out.bin", b"x");
@@ -205,14 +205,14 @@ fn stashes_from_the_reflog_newest_first_with_their_index_commit_base_branch_and_
 
 #[test]
 fn no_stashes_without_a_stash_ref() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     git_in(&f.git, &f.dir, &["update-ref", "-d", "refs/stash"], &[], None);
     assert!(stashes(&f.repo()).unwrap().is_empty());
 }
 
 #[test]
 fn head_detached_and_on_a_branch_with_no_commit_yet() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach"], &[], None);
     let wt = refs(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
     assert_eq!(wt.head, Head::Detached { sha: f.sha("second").into() });
@@ -224,7 +224,7 @@ fn head_detached_and_on_a_branch_with_no_commit_yet() {
 
 #[test]
 fn a_repo_that_knows_its_dirs_reads_them_instead_of_asking() {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let env = [("GIT_AUTHOR_DATE", "@1700001000 +0000".to_string()), ("GIT_COMMITTER_DATE", "@1700001000 +0000".to_string())];
     git_in(&f.git, &f.worktree, &["merge", "-q", "--no-ff", "--no-commit", "stale"], &env, None);
     let theirs = dirs(&Repo::new(f.git.clone(), &f.worktree)).unwrap();

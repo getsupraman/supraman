@@ -228,7 +228,7 @@ fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let (view, cx) = open(&f.dir, cx);
     view.read_with(cx, |v, _| {
         let top = &v.rows[0];
@@ -280,7 +280,7 @@ fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut T
 
 #[gpui::test]
 fn git_tab_gives_two_authors_their_initials_and_distinct_lane_rings(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let second = f.sha("second").to_string();
     let date = "@1700010000 +0000".to_string();
     let env = [

@@ -19,7 +19,7 @@ pub(super) fn tag(g: &Generated, name: &str) -> String {
 
 #[gpui::test]
 fn picking_a_ref_out_of_the_walk_loads_no_page_and_says_it_is_not_in_the_graph(cx: &mut TestAppContext) {
-    let g = Generated::new(4000);
+    let g = Generated::copy(4000);
     let t1 = tag(&g, "t1");
     let who = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"].map(|k| (k, "lone@example.test".to_string()));
     let lone = git_in(&g.git, &g.dir, &["commit-tree", "-p", &t1, "-m", "Lone", &format!("{t1}^{{tree}}")], &who, None);

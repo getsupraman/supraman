@@ -61,7 +61,7 @@ fn show(view: &Entity<GitView>, target: Target, cx: &mut VisualTestContext) -> E
 
 #[gpui::test]
 fn a_file_over_the_cap_shows_its_sizes_and_an_image_over_the_pixel_cap_its_dimensions(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     std::fs::write(f.worktree.join("huge.txt"), over_cap(b'a')).unwrap();
     std::fs::write(f.worktree.join("vast.png"), png_header(4, 4)).unwrap();
     let base = commit(&f, "Base");

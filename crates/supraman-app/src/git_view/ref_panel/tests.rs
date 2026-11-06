@@ -175,7 +175,7 @@ fn solo(f: &Fixture) -> String {
 fn soloed() -> std::sync::Arc<(Fixture, String)> {
     static SOLOED: Shared<(Fixture, String)> = Shared::new();
     SOLOED.get(|| {
-        let f = Fixture::new();
+        let f = Fixture::copy();
         let sha = solo(&f);
         (f, sha)
     })
@@ -269,7 +269,7 @@ fn branch_off_merge(f: &Fixture, name: &str) -> String {
 
 #[gpui::test]
 fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let (only, other) = (solo(&f), branch_off_merge(&f, "topic/other"));
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());

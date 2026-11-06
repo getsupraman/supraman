@@ -52,7 +52,7 @@ pub(super) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<su
 
 #[gpui::test]
 fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_within_three(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     follow(cx);
     let (view, cx) = open(&f.dir, cx);
     following(&view, cx);
@@ -77,7 +77,7 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
 
 #[gpui::test]
 fn live_refresh_keeps_the_selection_and_the_scroll_on_the_same_commit(cx: &mut TestAppContext) {
-    let g = Generated::new(400);
+    let g = Generated::copy(400);
     let (view, cx) = open(&g.dir, cx);
     let row = px(graph::ROW);
     let (sha, ix, top) = view.update(cx, |v, cx| {
@@ -108,7 +108,7 @@ fn live_refresh_keeps_the_selection_and_the_scroll_on_the_same_commit(cx: &mut T
 
 #[gpui::test]
 fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     follow(cx);
     let (view, cx) = open_with_editor(&f.dir, cx);
     following(&view, cx);
