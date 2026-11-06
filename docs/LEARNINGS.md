@@ -5878,3 +5878,17 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   while any is soloed, `without` keeps only the soloed branches and remote branches with the current branch, drops
   the stashes and the worktrees on no walked branch, and `ref_panel::tips` leaves the tags out of the tips while
   they still label the commits shown.
+
+## 2026-11-06 — refactor3/3 (U2) one shared target dir, safe across worktrees (X-601)
+
+- **Every worktree builds into one `CARGO_TARGET_DIR`** (`P:\Projects\LarchSys\AutoWork\target`): Zed's crates take
+  ~15 min cold and the disk has no room for a target per worktree. Cargo names a workspace member's artifacts by its
+  path below the workspace root, so each worktree's `supraman-core` test binary has the same file name and
+  fingerprints; a `cargo test` after another worktree's build saw them fresh and ran that worktree's code
+  (reproduced: the main checkout's binary, 0 tests matching, run from r3-u2).
+- **`scripts/heavy-lock.ps1` cleans the members on a switch**: for a cargo build, test, run, check, clippy, bench or
+  doc it reads the target dir's `.last-workspace`; when it names another workspace root (`cargo metadata`), it runs
+  `cargo clean -p <every member>` for `debug` and `release` under the lock, writes the marker and prints one
+  `heavy-lock: … cleaned` line. Third-party crates stay built. Cost: the clean ~2 s, then the members rebuild
+  (supraman-core alone ~20 s; every member ~6 min in release before `cargo test --workspace`), only when the worktree
+  changes. A cargo run outside heavy-lock writes no marker, so always build through it.
