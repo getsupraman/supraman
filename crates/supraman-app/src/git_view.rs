@@ -1,5 +1,6 @@
 //! The Git tab of one repository: its commit graph, read-only (C146), loaded off the UI thread page by page.
 
+mod cap;
 mod cells;
 mod colours;
 mod details;
@@ -155,6 +156,7 @@ pub struct GitView {
     panel_width: Pixels,
     ref_panel: Entity<RefPanel>,
     seek: Option<seek::Seek>,
+    marks: cap::Marks,
     /// Why a pick or a key selected nothing, over the graph.
     toast: ToastSlot,
     /// A ref's commit to reveal once the refresh under way walks it.
@@ -215,6 +217,7 @@ impl GitView {
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
+                marks: cap::Marks::default(),
                 toast: ToastSlot::default(),
                 reveal_after: None,
                 _panel_events: events,
@@ -448,6 +451,7 @@ impl GitView {
                 self.commits = first.page.rows.iter().filter(|r| !r.wip()).count();
                 self.rows = first.page.rows;
                 self.more = first.page.more;
+                self.marks.reset(self.rows.len(), self.commits, &first.page.layout);
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
                 self.heads = first.heads;
@@ -518,6 +522,7 @@ impl GitView {
                 self.rows.extend(page.rows);
                 self.measure_lanes_from(from);
                 self.more = page.more;
+                self.marks.push(self.rows.len(), self.commits, &page.layout);
                 self.layout = Some(page.layout);
             }
             Err(e) => {
@@ -550,6 +555,7 @@ impl GitView {
     }
 
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.trim_tail(cx);
         let palette = Palette::of(cx.theme());
         let footer = usize::from(self.paging || self.page_error.is_some());
         Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))

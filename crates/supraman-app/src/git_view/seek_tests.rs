@@ -62,3 +62,33 @@ fn a_parent_click_whose_page_is_not_loaded_reveals_it(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(deep.into())));
 }
+
+#[gpui::test]
+fn rows_past_the_cap_drop_while_the_view_is_far_above_and_page_in_again(cx: &mut TestAppContext) {
+    use super::cap::{KEEP_BELOW, MAX_ROWS};
+    let g = Generated::new(12_000);
+    let t1 = tag(&g, "t1");
+    let (view, cx) = open(&g.dir, cx);
+    view.update(cx, |v, cx| v.seek_sha(t1.clone().into(), cx));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(t1.clone().into())));
+    let loaded = rows(&view, cx);
+    assert!(loaded > MAX_ROWS, "{loaded} rows loaded");
+    let before: Vec<_> = view.read_with(cx, |v, _| v.rows.iter().map(|r| (r.sha.clone(), r.row.clone())).collect());
+
+    let top = view.read_with(cx, |v, _| v.rows[0].sha.clone());
+    view.update(cx, |v, cx| {
+        v.select_sha(&top, cx);
+        v.table.set_scroll_top(px(0.));
+    });
+    super::tests::redraw(&view, cx);
+    let kept = rows(&view, cx);
+    assert!(kept < MAX_ROWS && kept >= KEEP_BELOW, "the tail dropped to a page's end: {kept} rows");
+    assert!(view.read_with(cx, |v, _| v.more), "more to page in again");
+
+    view.update(cx, |v, cx| v.seek_sha(t1.clone().into(), cx));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(t1.into())), "paged in again");
+    let after: Vec<_> = view.read_with(cx, |v, _| v.rows.iter().map(|r| (r.sha.clone(), r.row.clone())).collect());
+    assert_eq!(after[..before.len().min(after.len())], before[..before.len().min(after.len())], "the same rows laid out the same");
+}
