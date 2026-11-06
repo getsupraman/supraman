@@ -13,13 +13,15 @@ pub const KEEP_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// Removes the files not modified for `keep_ms` before `now`: `events/*.jsonl` and their `.1`, and per
 /// workspace `outbox/*.json` (never `ready.json`), `inbox/sent` and `inbox/rejected`, then the
 /// `answered.json` entries of outbox files that are gone. A drop still waiting in the inbox stays. Then the
-/// schedules': `runs/*.jsonl.1`, the state of removed schedules, and spent run worktrees.
+/// schedules': `runs/*.jsonl.1`, the state of removed schedules, and spent run worktrees, and the prompt files a
+/// Send's launch left unread.
 /// Returns what could not be removed.
 pub fn prune(home: &Path, now: i64, keep_ms: i64) -> Vec<String> {
     let cutoff = now - keep_ms;
     let mut errors = Vec::new();
     remove_older(&events_dir(home), cutoff, |n| n.ends_with(".jsonl") || n.ends_with(".jsonl.1"), &mut errors);
     crate::schedule::prune_schedules(home, cutoff, &mut errors);
+    remove_older(&crate::home::prompts_dir(home), cutoff, |n| n.ends_with(".txt"), &mut errors);
     let Ok(workspaces) = fs::read_dir(home.join("relay")) else { return errors };
     for dir in workspaces.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()) {
         let outbox = dir.join("outbox");
@@ -114,5 +116,18 @@ mod tests {
         assert!(!sent.exists());
         assert!(!old_msg.exists() && new_msg.exists() && ready.exists());
         assert_eq!(read_answered(home.path(), "demo").unwrap().into_keys().collect::<Vec<_>>(), [name(&new_msg)]);
+    }
+
+    #[test]
+    fn prune_removes_old_prompt_files_left_by_a_send() {
+        let home = tempfile::tempdir().unwrap();
+        let prompts = crate::home::prompts_dir(home.path());
+        fs::create_dir_all(&prompts).unwrap();
+        let (old, new) = (prompts.join("1-abcdef.txt"), prompts.join("2-abcdef.txt"));
+        fs::write(&old, "the user's text").unwrap();
+        fs::write(&new, "the user's text").unwrap();
+        age(&old, 40);
+        assert_eq!(prune(home.path(), crate::time::now_ms(), KEEP_MS), Vec::<String>::new());
+        assert!(!old.exists() && new.exists());
     }
 }

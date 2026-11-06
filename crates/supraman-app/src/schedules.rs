@@ -182,26 +182,9 @@ pub fn read(home: &Path, workspaces: &[Workspace], store: &dyn SecretStore, now_
     (out, errors)
 }
 
-/// Each live file of `workspaces` whose sm is gone, recovered (`sm::fire::recover_if_dead`); the runs recovered.
+/// Each live file of `workspaces` whose sm is gone, recovered (`sm::fire::recover_workspace`); the runs recovered.
 pub fn recover(home: &Path, workspaces: &[Workspace]) -> Vec<String> {
-    let mut out = Vec::new();
-    for w in workspaces {
-        let Some(entries) = schedule::live_dir(home, &w.name).ok().and_then(|d| std::fs::read_dir(d).ok()) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.extension().and_then(|x| x.to_str()) != Some("json") {
-                continue;
-            }
-            if let Some(id) = path.file_stem().and_then(|x| x.to_str())
-                && let Some(run) = sm::fire::recover_if_dead(home, &w.name, id)
-            {
-                out.push(format!("{}/{run}", w.name));
-            }
-        }
-    }
-    out
+    workspaces.iter().flat_map(|w| sm::fire::recover_workspace(home, &w.name).into_iter().map(move |run| format!("{}/{run}", w.name))).collect()
 }
 
 fn session_of(run: &Run) -> Option<&str> {

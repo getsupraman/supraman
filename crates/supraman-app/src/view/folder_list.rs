@@ -43,6 +43,8 @@ pub enum RowAction {
 pub struct FolderList {
     pub rows: Vec<FolderRow>,
     pub removed: Vec<Folder>,
+    /// Folders a Rescan found gone from disk, taken out of the rows; Save drops them.
+    pub gone: Vec<String>,
     /// With no row marked, the first row is home.
     pub first_is_home: bool,
     owners: HashMap<String, String>,
@@ -51,7 +53,7 @@ pub struct FolderList {
 impl FolderList {
     /// `others`: every workspace but the one this list is of.
     pub fn new(others: &[Workspace], first_is_home: bool) -> Self {
-        Self { rows: Vec::new(), removed: Vec::new(), first_is_home, owners: owners(others) }
+        Self { rows: Vec::new(), removed: Vec::new(), gone: Vec::new(), first_is_home, owners: owners(others) }
     }
 
     pub fn of_workspace(w: &Workspace, others: &[Workspace]) -> Self {
@@ -106,6 +108,12 @@ impl FolderList {
             self.removed.push(row.folder);
             self.settle_home();
         }
+    }
+
+    pub fn drop_gone(&mut self, names: &[String]) {
+        self.rows.retain(|r| !names.contains(&r.folder.name));
+        self.gone.extend(names.iter().cloned());
+        self.settle_home();
     }
 
     fn settle_home(&mut self) {

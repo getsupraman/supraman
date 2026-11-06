@@ -582,6 +582,39 @@ pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String>
     recover_if_dead_with(home, workspace, id, supraman_core::time::now_ms(), &mut RealHost::new(home))
 }
 
+/// [`recover_if_dead`] for each schedule of `workspace` with a live or a dead file; the runs recovered.
+pub fn recover_workspace(home: &Path, workspace: &str) -> Vec<String> {
+    let ids = live_ids(home, workspace);
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    recover_ids(home, workspace, ids, supraman_core::time::now_ms(), &mut RealHost::new(home))
+}
+
+/// [`recover_workspace`] at `now` through `host`.
+pub fn recover_workspace_with(home: &Path, workspace: &str, now: i64, host: &mut dyn Host) -> Vec<String> {
+    recover_ids(home, workspace, live_ids(home, workspace), now, host)
+}
+
+fn recover_ids(home: &Path, workspace: &str, ids: std::collections::BTreeSet<String>, now: i64, host: &mut dyn Host) -> Vec<String> {
+    ids.iter().filter_map(|id| recover_if_dead_with(home, workspace, id, now, host)).collect()
+}
+
+/// The schedule ids of `<id>.json` and `<id>.dead.json` in `workspace`'s live folder, each once.
+fn live_ids(home: &Path, workspace: &str) -> std::collections::BTreeSet<String> {
+    let Some(entries) = schedule::live_dir(home, workspace).ok().and_then(|d| fs::read_dir(d).ok()) else {
+        return Default::default();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".json")?;
+            Some(stem.strip_suffix(".dead").unwrap_or(stem).to_string())
+        })
+        .collect()
+}
+
 /// [`recover_if_dead`] at `now` through `host`; it also tries a dead run's kept session again.
 pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, host: &mut dyn Host) -> Option<String> {
     let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
@@ -713,16 +746,21 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         restart.exists()
     };
     let mut cmd = script_command(env.folder, script, &s.action.script_args);
-    cmd.current_dir(env.folder)
-        .envs(supraman_core::home::home_env(env.home))
-        .env("SUPRAMAN_WORKSPACE", env.workspace)
-        .env("SUPRAMAN_SCHEDULE", env.id)
-        .env("SUPRAMAN_RUN", env.run)
-        .env("SUPRAMAN_FOLDER", env.folder)
-        .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
-        .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
-        .env("SUPRAMAN_STATE_DIR", &state)
-        .envs(secrets.iter().map(|(k, v)| (k, v)));
+    cmd.current_dir(env.folder).envs(supraman_core::home::home_env(env.home));
+    let vars: [(&str, std::ffi::OsString); 7] = [
+        ("WORKSPACE", env.workspace.into()),
+        ("SCHEDULE", env.id.into()),
+        ("RUN", env.run.into()),
+        ("FOLDER", env.folder.into()),
+        ("LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default().into()),
+        ("LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default().into()),
+        ("STATE_DIR", state.clone().into()),
+    ];
+    for (name, value) in &vars {
+        // FOREMAN_* keeps scripts approved before the rename working; removed in 0.2.0.
+        cmd.env(format!("SUPRAMAN_{name}"), value).env(format!("FOREMAN_{name}"), value);
+    }
+    cmd.envs(secrets.iter().map(|(k, v)| (k, v)));
     let ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
     let ms = u64::try_from(host.now_ms() - started).unwrap_or(0);
     let (ended, out) = match ran {

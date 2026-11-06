@@ -31,6 +31,11 @@ pub fn home_env(home: &Path) -> [(&'static str, String); 1] {
     [(HOME_VAR, home.display().to_string())]
 }
 
+/// Where a Send's prompt file waits for its launch to read it; `prune::prune` takes what is left.
+pub fn prompts_dir(home: &Path) -> PathBuf {
+    home.join("prompts")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

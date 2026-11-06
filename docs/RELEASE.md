@@ -133,7 +133,7 @@ on your desktop to watch it; it can then take your focus and read your held keys
 
 ## Release notes
 
-- The release after 0.1.5: the old Foreman names are gone: no `fm.exe`/`fmw.exe`, no `FOREMAN_*` env (`FOREMAN_HOME` included; sessions and schedule scripts get `SUPRAMAN_*`), and no copy of `%APPDATA%\Foreman`.
+- The release after 0.1.5: the old Foreman names are gone: no `fm.exe`/`fmw.exe`, no `FOREMAN_*` env for sessions (`FOREMAN_HOME` included; they get `SUPRAMAN_*`), and no copy of `%APPDATA%\Foreman`. A schedule's script gets each `SUPRAMAN_*` of its contract under its `FOREMAN_*` name too, until 0.2.0 removes them.
 
 ## How Supraman updates itself
 
