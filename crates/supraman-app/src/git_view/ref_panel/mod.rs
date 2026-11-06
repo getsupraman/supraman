@@ -14,11 +14,11 @@ mod tests;
 
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
+use gpui::{Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
 use supraman_gitman::Refs;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::menu::ContextMenu;
-use supraman_ui::text_input::TextInput;
+use supraman_ui::text_input::{self, TextInput};
 use supraman_ui::split::StackState;
 use supraman_ui::tree::Tree;
 
@@ -295,17 +295,6 @@ impl RefPanel {
     }
 
     fn filter_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        if let Some((input, _)) = &self.filter {
-            return input.clone();
-        }
-        let input = cx.new(|cx| TextInput::new("Filter refs", None, window, cx));
-        let sub = cx.subscribe(&input, |this, input, e: &supraman_ui::text_input::InputEvent, cx| {
-            if *e == supraman_ui::text_input::InputEvent::Edited {
-                let text = input.read(cx).text().to_string();
-                this.set_filter(&text, cx);
-            }
-        });
-        self.filter = Some((input.clone(), sub));
-        input
+        self.filter.get_or_insert_with(|| text_input::filter_box("Filter refs", Self::set_filter, window, cx)).0.clone()
     }
 }
