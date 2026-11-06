@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError};
 
-use crate::Git;
+use crate::{Dirs, Git};
 
 /// Before every subcommand (research §2): no lock a reader could leave behind, no pager, paths and
 /// messages as UTF-8 text, diffs with `a/` `b/` prefixes from the top, and no auto maintenance.
@@ -43,11 +44,21 @@ pub enum GitError {
 pub struct Repo {
     git: Git,
     dir: PathBuf,
+    dirs: Option<Arc<Dirs>>,
 }
 
 impl Repo {
     pub fn new(git: Git, dir: impl Into<PathBuf>) -> Repo {
-        Repo { git, dir: dir.into() }
+        Repo { git, dir: dir.into(), dirs: None }
+    }
+
+    /// The repo whose readers take `dirs` (as [`crate::dirs`] read them for `dir`) in place of asking git again.
+    pub fn with_dirs(self, dirs: Dirs) -> Repo {
+        Repo { dirs: Some(Arc::new(dirs)), ..self }
+    }
+
+    pub fn known_dirs(&self) -> Option<&Dirs> {
+        self.dirs.as_deref()
     }
 
     pub fn dir(&self) -> &Path {

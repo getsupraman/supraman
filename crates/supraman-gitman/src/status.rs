@@ -55,7 +55,10 @@ pub struct Status {
 pub fn status(repo: &Repo) -> Result<Status, GitError> {
     let args = ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--branch", "--renames"];
     let mut status = repo.read(&args, None, parse_status)?;
-    let git_dir = repo.read(&["rev-parse", "--absolute-git-dir"], None, |out| Ok(PathBuf::from(text(out).trim())))?;
+    let git_dir = match repo.known_dirs() {
+        Some(dirs) => dirs.git_dir.clone(),
+        None => repo.read(&["rev-parse", "--absolute-git-dir"], None, |out| Ok(PathBuf::from(text(out).trim())))?,
+    };
     status.operation = operation(&git_dir);
     Ok(status)
 }

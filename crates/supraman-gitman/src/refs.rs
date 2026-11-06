@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::parse::text;
 use crate::{GitError, Repo, Stash};
 
-const REF_FORMAT: &str = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(upstream:short)%00%(upstream:track)%00%(symref)";
+const REF_FORMAT: &str = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(upstream:short)%00%(upstream:track)%00%(symref)%00%(HEAD)";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Head {
@@ -92,34 +92,44 @@ impl Refs {
 }
 
 pub fn refs(repo: &Repo) -> Result<Refs, GitError> {
-    let mut refs = repo.read(&["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], None, parse_refs)?;
-    refs.head = head(repo)?;
+    let (mut refs, current) = repo.read(&["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], None, parse_refs)?;
+    refs.head = match current {
+        Some(b) => Head::Branch { name: refs.branches[b].name.clone(), sha: Some(refs.branches[b].sha.clone()) },
+        None => head(repo)?,
+    };
     refs.worktrees = repo.read(&["worktree", "list", "--porcelain", "-z"], None, |out| Ok(parse_worktrees(out)))?;
     refs.stashes = crate::stashes(repo)?;
     Ok(refs)
 }
 
+/// HEAD on no listed branch: detached, or on a branch with no commit yet.
 fn head(repo: &Repo) -> Result<Head, GitError> {
     let sha = repo.run(&["rev-parse", "-q", "--verify", "HEAD^{commit}"], None)?;
-    let sha = sha.success().then(|| text(&sha.stdout).trim().to_string());
+    if sha.success() {
+        return Ok(Head::Detached { sha: text(&sha.stdout).trim().to_string() });
+    }
     let name = repo.run(&["symbolic-ref", "-q", "HEAD"], None)?;
     let name = text(&name.stdout).trim().to_string();
-    match (name.strip_prefix("refs/heads/"), sha) {
-        (Some(branch), sha) => Ok(Head::Branch { name: branch.to_string(), sha }),
-        (None, Some(sha)) => Ok(Head::Detached { sha }),
-        (None, None) => Err(GitError::Parse { args: "symbolic-ref HEAD".into(), what: format!("HEAD is neither a branch nor a commit: {name:?}") }),
+    match name.strip_prefix("refs/heads/") {
+        Some(branch) => Ok(Head::Branch { name: branch.to_string(), sha: None }),
+        None => Err(GitError::Parse { args: "symbolic-ref HEAD".into(), what: format!("HEAD is neither a branch nor a commit: {name:?}") }),
     }
 }
 
-fn parse_refs(out: &[u8]) -> Result<Refs, String> {
+/// The refs, and which branch HEAD is on (`%(HEAD)`), if one is listed.
+fn parse_refs(out: &[u8]) -> Result<(Refs, Option<usize>), String> {
     let mut refs = Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() };
+    let mut current = None;
     for line in text(out).lines().filter(|l| !l.is_empty()) {
         let f: Vec<&str> = line.split('\0').collect();
-        let [refname, sha, kind, peeled, peeled_kind, upstream, track, symref] = f[..] else {
+        let [refname, sha, kind, peeled, peeled_kind, upstream, track, symref, head] = f[..] else {
             return Err(format!("for-each-ref line with {} fields: {line:?}", f.len()));
         };
         if let Some(name) = refname.strip_prefix("refs/heads/") {
             let upstream = (!upstream.is_empty()).then(|| parse_track(upstream, track)).transpose()?;
+            if head == "*" {
+                current = Some(refs.branches.len());
+            }
             refs.branches.push(Branch { name: name.into(), sha: sha.into(), upstream });
         } else if let Some(name) = refname.strip_prefix("refs/remotes/") {
             if symref.is_empty() {
@@ -135,7 +145,7 @@ fn parse_refs(out: &[u8]) -> Result<Refs, String> {
             refs.tags.push(Tag { name: name.into(), sha: sha.into(), annotated, commit });
         }
     }
-    Ok(refs)
+    Ok((refs, current))
 }
 
 /// `%(upstream:track)`: empty when even, `[ahead 1]`, `[behind 2]`, `[ahead 1, behind 2]` or `[gone]`.

@@ -30,7 +30,10 @@ pub fn staged_blob(repo: &Repo, path: &str) -> Result<Blob, GitError> {
 
 /// The bytes of `path` (relative to the top of the worktree, as `status` names it) read from the disk as they are.
 pub fn worktree_file(repo: &Repo, path: &str) -> Result<Blob, GitError> {
-    let top = repo.read(&["rev-parse", "--show-toplevel"], None, |out| Ok(PathBuf::from(text(out).trim())))?;
+    let top = match repo.known_dirs() {
+        Some(dirs) => dirs.top.clone(),
+        None => repo.read(&["rev-parse", "--show-toplevel"], None, |out| Ok(PathBuf::from(text(out).trim())))?,
+    };
     let bytes = std::fs::read(top.join(path)).map_err(|source| GitError::Read { path: path.to_string(), source })?;
     let binary = is_binary(&bytes);
     Ok(Blob { bytes, binary })

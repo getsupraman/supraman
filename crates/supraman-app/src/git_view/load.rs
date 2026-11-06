@@ -134,15 +134,17 @@ pub fn git_problem(located: &Located) -> Option<String> {
     }
 }
 
-/// git located per the settings in `home`, the refs, the status and the first page of `walk`.
+/// git located per the settings in `home`, the repo's dirs, the refs, the status and the first page of `walk`.
 pub fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, Problem> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-    let located = supraman_gitman::locate(&settings);
+    let located = supraman_gitman::located(&settings);
     if let Some(problem) = git_problem(&located) {
         return Err(Problem::Git(problem));
     }
     let Located::Found(git) = located else { unreachable!() };
-    read(Repo::new(git, folder), FIRST_PAGE, walk).map_err(Problem::Failed)
+    let repo = Repo::new(git, folder);
+    let dirs = supraman_gitman::dirs(&repo).map_err(|e| Problem::Failed(e.to_string()))?;
+    read(repo.with_dirs(dirs), FIRST_PAGE, walk).map_err(Problem::Failed)
 }
 
 /// The refs, the status and the first `count` commits of `repo` walked as `walk` says, laid out afresh.
