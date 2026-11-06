@@ -43,7 +43,7 @@ fn git_tabs(v: &FleetView, cx: &gpui::App, dir: &Path) -> Vec<(u64, Entity<GitVi
         .collect()
 }
 
-fn painted(v: &FleetView, key: &str) -> bool {
+pub(crate) fn painted(v: &FleetView, key: &str) -> bool {
     v.hits.borrow().contains_key(key)
 }
 
@@ -51,20 +51,20 @@ async fn bounds(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext
     until(view, cx, WITHIN, &format!("{key} painted"), |v| v.hits.borrow().get(key).map(|h| h.bounds)).await
 }
 
-fn probe(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWindowContext) -> Probe {
+pub(crate) fn probe(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWindowContext) -> Probe {
     view.read_with(cx, |_, cx| git.read(cx).probe(cx))
 }
 
 /// Waits until `f` holds of the tab's probe and the window's hits; the last probe is in the error.
-async fn until_probe<T>(view: &Entity<FleetView>, git: &Entity<GitView>, what: &str, cx: &mut AsyncWindowContext, f: impl Fn(&Probe, &FleetView) -> Option<T>) -> anyhow::Result<T> {
+pub(crate) async fn until_probe<T>(view: &Entity<FleetView>, git: &Entity<GitView>, what: &str, cx: &mut AsyncWindowContext, f: impl Fn(&Probe, &FleetView) -> Option<T>) -> anyhow::Result<T> {
     until_app(view, cx, WITHIN, what, |v, cx| f(&git.read(cx).probe(cx), v)).await.map_err(|e| {
         let p = probe(view, git, cx);
-        e.context(format!("selected {:?}, commit {:?}, wip {:?}, diff {:?}, {} rows", p.selected, p.commit, p.wip, p.diff, p.rows.len()))
+        e.context(format!("selected {:?}, commit {:?}, wip {:?}, diff {:?}, {} rows, ref panel shut {} counts {:?} hidden {:?}", p.selected, p.commit, p.wip, p.diff, p.rows.len(), p.refs.shut, p.refs.counts, p.refs.hidden))
     })
 }
 
 /// A click on `key` once a frame drawn after the last change painted it: a listener holds the state of its frame.
-async fn tap(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+pub(crate) async fn tap(view: &Entity<FleetView>, key: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     view.update(cx, |v, cx| {
         v.hits.borrow_mut().clear();
         cx.notify();
@@ -122,10 +122,11 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut
     let keys = keys(view, &git, f, cx).await?;
     let wip = wip(view, &git, f, cx).await?;
     let live = live(view, &git, f, cx).await?;
+    let ref_panel = crate::selftest_git_refs::check(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
     let themed = themed(view, &git, home, cx).await?;
-    Ok([opened, refs, selected, files, diff, stash, keys, wip, live, narrow, panel, themed].join("; "))
+    Ok([opened, refs, selected, files, diff, stash, keys, wip, live, ref_panel, narrow, panel, themed].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {

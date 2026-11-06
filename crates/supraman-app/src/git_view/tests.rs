@@ -49,7 +49,7 @@ fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
 }
 
 fn sizes() -> GitSizes {
-    GitSizes { widths: vec![200, 90, 300, 130, 70], panel: Some(360), message: Some(150) }
+    GitSizes { widths: vec![200, 90, 300, 130, 70], panel: Some(360), message: Some(150), refs: Some(210), refs_shut: true, hidden: vec!["refs/heads/feature".into(), "stash/0123".into()] }
 }
 
 #[gpui::test]
@@ -73,8 +73,7 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
 
     let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
     let saved = cx.update(|cx| {
-        let sizes = view.read(cx).sizes(cx);
-        SavedTab::Git { title: tabs[0].title.clone(), folder: view.read(cx).folder.clone(), widths: sizes.widths, panel: sizes.panel, message: sizes.message }
+        SavedTab::git(tabs[0].title.clone(), view.read(cx).folder.clone(), view.read(cx).sizes(cx))
     });
     let home = tempfile::tempdir().unwrap();
     saved_tabs::save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
@@ -82,8 +81,8 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
     assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
     let world = World { sessions: &[], now: 0, workspaces: &[], resume_on_click: false, is_dir: &|p| p.is_dir(), is_file: &|_| true, has_transcript: &|_, _| false };
     let Ok(Reopen::Git { title, folder, sizes: back }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
-    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), sizes()), "the columns, the panel and the message box keep their sizes");
-    let gone = SavedTab::Git { title: "Git · x".into(), folder: f.temp.path().join("gone"), widths: Vec::new(), panel: None, message: None };
+    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), sizes()), "the columns, the panels and the message box keep their sizes; the ref panel its state and hidden refs");
+    let gone = SavedTab::git("Git · x".into(), f.temp.path().join("gone"), GitSizes::default());
     assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
     let narrow = GitSizes { widths: vec![1, 1, 1, 1, 1], ..sizes() };
     let clamped = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx).read(cx).sizes(cx).widths);

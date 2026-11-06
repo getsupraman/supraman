@@ -2,7 +2,8 @@
 //! each level, expanded and collapsed per folder, filtered by a substring of the whole path, each folder
 //! carrying an aggregate of its subtree. Its rows are a headless [`Table`], so only the rows in view are
 //! laid out. [`TreeState`] keeps the tree, the open folders (by path, so a rebuild keeps them), the
-//! filter, the order and the selection.
+//! filter, the order and the selection. [`Tree::build_given`] keeps the entries' own order instead, and
+//! [`TreeState::match_with`] replaces the filter's substring test.
 
 use std::{cell::RefCell, collections::HashMap, collections::HashSet, rc::Rc};
 
@@ -48,12 +49,23 @@ pub struct Tree<T, A> {
     nodes: Vec<Node<T, A>>,
     roots: Vec<usize>,
     order: Order,
+    /// The entries' own order, never sorted.
+    given: bool,
 }
 
 impl<T, A: Default> Tree<T, A> {
     /// The tree of `entries` (`\` read as `/`), each folder's aggregate `fold`ed over every file below it.
     pub fn build(entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T), order: Order) -> Self {
-        let mut tree = Tree { nodes: Vec::new(), roots: Vec::new(), order: Order::Ascending };
+        let mut tree = Tree::build_given(entries, fold);
+        tree.given = false;
+        tree.order = order;
+        tree.sort_all();
+        tree
+    }
+
+    /// [`Tree::build`] in the order of `entries`, a folder where its first entry is; [`Tree::sort`] leaves it so.
+    pub fn build_given(entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T)) -> Self {
+        let mut tree = Tree { nodes: Vec::new(), roots: Vec::new(), order: Order::Ascending, given: true };
         let mut folders: HashMap<SharedString, usize> = HashMap::new();
         let mut aggregates: HashMap<usize, A> = HashMap::new();
         for (path, payload) in entries {
@@ -78,8 +90,6 @@ impl<T, A: Default> Tree<T, A> {
                 *aggregate = value;
             }
         }
-        tree.order = order;
-        tree.sort_all();
         tree
     }
 
@@ -112,7 +122,7 @@ impl<T, A> Tree<T, A> {
 
     /// Folders first at every level, then the names A–Z ignoring case (Z–A when `Descending`).
     pub fn sort(&mut self, order: Order) {
-        if order != self.order {
+        if order != self.order && !self.given {
             self.order = order;
             self.sort_all();
         }
@@ -164,15 +174,20 @@ impl<T, A> Tree<T, A> {
         })
     }
 
-    /// Which nodes `filter` keeps: a file whose path holds it, ignoring case, and every folder above one.
-    fn kept(&self, filter: &str) -> Option<Vec<bool>> {
+    /// Which nodes `filter` keeps: a file `matches` (else whose path holds it, ignoring case), and every folder above one.
+    fn kept(&self, filter: &str, matches: Option<&MatchFn<T>>) -> Option<Vec<bool>> {
         let needle = filter.replace('\\', "/");
         if needle.is_empty() {
             return None;
         }
         let mut kept = vec![false; self.nodes.len()];
         for (i, node) in self.nodes.iter().enumerate() {
-            if !matches!(node.kind, Kind::File(_)) || find_all(&node.path, &needle).is_empty() {
+            let Kind::File(payload) = &node.kind else { continue };
+            let hit = match matches {
+                Some(f) => f(payload, filter),
+                None => !find_all(&node.path, &needle).is_empty(),
+            };
+            if !hit {
                 continue;
             }
             kept[i] = true;
@@ -222,10 +237,13 @@ pub enum Item<'a, T, A> {
     Folder { aggregate: &'a A, open: bool },
 }
 
+type MatchFn<T> = dyn Fn(&T, &str) -> bool;
+
 struct Inner<T, A> {
     tree: Tree<T, A>,
     open: HashSet<SharedString>,
     filter: String,
+    matches: Option<Rc<MatchFn<T>>>,
     kept: Option<Vec<bool>>,
     order: Order,
     rows: Vec<usize>,
@@ -261,9 +279,10 @@ impl<T, A> Clone for TreeState<T, A> {
 impl<T: 'static, A: Default + 'static> TreeState<T, A> {
     pub fn new(cx: &mut App) -> Self {
         let inner = Inner {
-            tree: Tree { nodes: Vec::new(), roots: Vec::new(), order: Order::Ascending },
+            tree: Tree { nodes: Vec::new(), roots: Vec::new(), order: Order::Ascending, given: false },
             open: HashSet::new(),
             filter: String::new(),
+            matches: None,
             kept: None,
             order: Order::default(),
             rows: Vec::new(),
@@ -278,6 +297,11 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
     pub fn set_entries(&self, entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T)) {
         let order = self.inner.borrow().order;
         self.set_tree(Tree::build(entries, fold, order));
+    }
+
+    /// [`TreeState::set_entries`] in the entries' own order ([`Tree::build_given`]).
+    pub fn set_entries_given(&self, entries: impl IntoIterator<Item = (String, T)>, fold: impl Fn(&mut A, &T)) {
+        self.set_tree(Tree::build_given(entries, fold));
     }
 
     pub fn set_tree(&self, mut tree: Tree<T, A>) {
@@ -310,12 +334,17 @@ impl<T, A> TreeState<T, A> {
         self.inner.borrow().filter.clone()
     }
 
+    /// The filter keeps the files `matches(payload, filter)` holds of, in place of the path's substring.
+    pub fn match_with(&self, matches: impl Fn(&T, &str) -> bool + 'static) {
+        self.inner.borrow_mut().matches = Some(Rc::new(matches));
+    }
+
     /// Keeps the files whose whole path holds `filter` (ignoring case, `\` as `/`) with the folders above
     /// them, and opens those folders.
     pub fn set_filter(&self, filter: &str) {
         let mut inner = self.inner.borrow_mut();
         inner.filter = filter.to_string();
-        inner.kept = inner.tree.kept(filter);
+        inner.kept = inner.tree.kept(filter, inner.matches.as_deref());
         if let Some(kept) = &inner.kept {
             let opened: Vec<SharedString> = inner
                 .tree
@@ -668,6 +697,21 @@ mod tests {
         assert_eq!(paths(&state), ["z", "a", "c.rs", "b.rs", "A.rs"]);
         state.set_entries(names.iter().map(|n| (n.to_string(), Change::Added)), count);
         assert_eq!(paths(&state), ["z", "a", "c.rs", "b.rs", "A.rs"], "a rebuild keeps the order");
+    }
+
+    #[gpui::test]
+    fn a_given_tree_keeps_the_entries_order_and_filters_by_its_own_match(cx: &mut TestAppContext) {
+        let state = cx.update(|cx| TreeState::<Change, Badge>::new(cx));
+        let names = ["b/z.rs", "A.rs", "b/a.rs", "c.rs", "a/x.rs"];
+        state.set_entries_given(names.iter().map(|n| (n.to_string(), Change::Added)), count);
+        state.expand_all();
+        assert_eq!(paths(&state), ["b", "b/z.rs", "b/a.rs", "A.rs", "c.rs", "a", "a/x.rs"], "a folder where its first entry is");
+        state.set_order(Order::Descending);
+        assert_eq!(paths(&state)[..3], ["b", "b/z.rs", "b/a.rs"], "never sorted");
+        state.match_with(|change, filter| *change == Change::Modified && filter == "m");
+        state.set_entries_given([("x/m.rs".to_string(), Change::Modified), ("m.rs".to_string(), Change::Added)], count);
+        state.set_filter("m");
+        assert_eq!(paths(&state), ["x", "x/m.rs"], "the match decides, not the path");
     }
 
     struct Files {

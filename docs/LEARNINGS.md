@@ -5856,3 +5856,11 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **At the window's minimum width** (600 px: sidebar 280, tab area 320) the commit panel of fixed width pushed
   itself past the window; it shrinks to the tab now (`flex_shrink`), leaving the graph none. Step 7g checks the
   header cells, ref pills and the commit toolbar there, and the toolbar at the panel's minimum (259 px).
+- **The ref panel gives way first** (gv-25): at the window's minimum the tab is 320 px, and a 240 px ref panel left
+  the graph and the commit panel 80 px. The panel shrinks a thousand times faster than the rest
+  (`git_view.rs` `REFS_SHRINK`), whose basis is the two panes' minimums, so there it goes to nothing first.
+- **A selftest key goes where the window's focus is** (gv-25): `dispatch_keystroke` right after the ref panel's
+  Show all reached no `GitTab` binding; the step clicks a graph row first (the unit test sends Ctrl+J from a ref row).
+- **Hiding a ref is a walk without it** (gv-25): `ref_panel::without` drops the hidden branches, remote branches,
+  stashes and linked worktrees on a hidden branch before `Refs::tips` and `Layout::new`, so their labels go too;
+  the current branch never hides.

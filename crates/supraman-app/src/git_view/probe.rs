@@ -28,6 +28,15 @@ pub struct ProbeDiff {
     pub current: Option<usize>,
 }
 
+/// The ref panel: its rows' paths, each section's `(shown, total)`, collapsed, and the hidden refs.
+#[derive(Debug, Clone)]
+pub struct RefProbe {
+    pub rows: Vec<String>,
+    pub counts: [(usize, usize); 5],
+    pub shut: bool,
+    pub hidden: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Probe {
     pub rows: Vec<ProbeRow>,
@@ -39,6 +48,7 @@ pub struct Probe {
     pub wip: Option<(Vec<String>, Vec<String>)>,
     pub diff: Option<ProbeDiff>,
     pub panel_width: Pixels,
+    pub refs: RefProbe,
 }
 
 impl Probe {
@@ -63,7 +73,14 @@ impl GitView {
             let d = d.read(cx);
             ProbeDiff { path: d.target.path.clone(), mode: d.mode(), layout: d.layout(), changes: d.hunk_count(), current: d.current() }
         });
-        Probe { rows, selected: self.selected(), listed: self.listed(), commit, wip, diff, panel_width: self.panel_width }
+        let panel = self.ref_panel().read(cx);
+        let refs = RefProbe {
+            rows: panel.visible().iter().map(|p| p.to_string()).collect(),
+            counts: panel.counts().map(|c| (c.shown, c.total)),
+            shut: panel.shut(),
+            hidden: panel.hidden().iter().cloned().collect(),
+        };
+        Probe { rows, selected: self.selected(), listed: self.listed(), commit, wip, diff, panel_width: self.panel_width, refs }
     }
 }
 

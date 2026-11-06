@@ -10,9 +10,11 @@ use super::diff::{self, FileStep};
 use super::load::GraphRow;
 use super::{GitView, Selected};
 
-gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile]);
+gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs]);
 
 pub const KEY_CONTEXT: &str = "GitGraph";
+/// The whole tab's: the ref panel's keys work from the graph, the panels and the viewer.
+pub const TAB_CONTEXT: &str = "GitTab";
 /// How long a selection rests before the panel reads its commit without a key coming up.
 pub const SETTLE: Duration = Duration::from_millis(150);
 
@@ -24,6 +26,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("h", GoToHead, c),
         KeyBinding::new("shift-h", GoToUpstream, c),
         KeyBinding::new("right", OpenFirstFile, c),
+        KeyBinding::new("ctrl-j", ToggleRefs, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-alt-f", FilterRefs, Some(TAB_CONTEXT)),
     ]);
     diff::bind_keys(cx);
 }
