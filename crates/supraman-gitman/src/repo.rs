@@ -6,7 +6,7 @@ use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError, Strea
 
 use crate::{Dirs, Git};
 
-/// Before every subcommand (research §2): no lock a reader could leave behind, no pager, paths and
+/// Before every subcommand (docs/research/gitkraken-12.6.1.md §2): no lock a reader could leave behind, no pager, paths and
 /// messages as UTF-8 text, diffs with `a/` `b/` prefixes from the top, and no auto maintenance.
 const READ_ONLY: &[&str] = &[
     "--no-pager",

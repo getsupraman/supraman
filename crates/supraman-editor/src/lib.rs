@@ -1,4 +1,4 @@
-//! Zed's editor (rev 03efd49) without a Project, read-only: a file at a revision, and the diff of two
+//! Zed's editor without a Project, read-only: a file at a revision, and the diff of two
 //! texts inline or split side by side, highlighted by the grammars Zed bundles and those `languages` compiles in.
 
 mod diff;
