@@ -195,12 +195,9 @@ impl FleetView {
         let ready = cx.background_executor().spawn(async move { prompt_file(&command, home.as_deref(), &prompt) });
         cx.spawn(async move |this, cx| {
             let ready = ready.await;
-            this.update(cx, |this, cx| {
+            let orphan = this.update(cx, |this, cx| {
                 let Some(page) = this.start_page_mut(tab) else {
-                    if let Ok(file) = ready {
-                        let _ = std::fs::remove_file(file);
-                    }
-                    return;
+                    return ready.ok();
                 };
                 page.sending = false;
                 match ready {
@@ -214,8 +211,11 @@ impl FleetView {
                     Err(why) => page.error = Some(why),
                 }
                 cx.notify();
-            })
-            .ok();
+                None
+            });
+            if let Ok(Some(file)) = orphan {
+                cx.background_spawn(async move { std::fs::remove_file(file) }).await.ok();
+            }
         })
         .detach();
         cx.notify();
