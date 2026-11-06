@@ -20,6 +20,7 @@ pub mod menu;
 pub mod notices;
 pub mod nudge;
 pub mod open;
+pub mod placeholder;
 pub mod segmented;
 pub mod settings_page;
 pub mod split;

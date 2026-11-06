@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, App, ClickEvent, ClipboardItem, Context, Div, FontWeight, Hsla, Render, SharedString, Window, div, prelude::*, px};
 use supraman_core::time;
+use supraman_gitman::short_sha;
 use supraman_ui::button;
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
@@ -24,7 +25,7 @@ pub(crate) const PANEL_STEP: f32 = 0.025;
 const BOX_STEP: f32 = 0.06;
 
 fn short(sha: &str) -> SharedString {
-    SharedString::from(sha.get(..7).unwrap_or(sha).to_string())
+    SharedString::from(short_sha(sha).to_string())
 }
 
 /// The author's date as the graph's date column says it.
@@ -46,17 +47,7 @@ fn person_colour(email: &str) -> usize {
 }
 
 pub(crate) fn placeholder(title: &str, detail: Option<&str>, cx: &App) -> AnyElement {
-    let colors = cx.theme().colors().clone();
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap_1()
-        .pt_8()
-        .px_4()
-        .child(div().text_color(colors.text).child(SharedString::from(title.to_string())))
-        .children(detail.map(|d| div().text_xs().text_color(colors.text_muted).child(SharedString::from(d.to_string()))))
-        .into_any_element()
+    supraman_ui::placeholder::placeholder(title.to_string(), detail.map(str::to_string), cx).pt_8().px_4().into_any_element()
 }
 
 impl CommitPanel {

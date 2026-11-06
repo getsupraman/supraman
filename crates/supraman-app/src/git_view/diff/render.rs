@@ -3,9 +3,10 @@
 use gpui::{AnyElement, ClickEvent, Context, Div, SharedString, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
 use supraman_ui::button;
-use supraman_ui::clipped::clipped;
+use supraman_ui::clipped::path_label;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::stall;
 use supraman_ui::tooltip::Tooltip;
@@ -15,19 +16,9 @@ use super::image::{self, Picture};
 use super::{CloseDiff, Content, DiffView, FileStep, FirstFile, Go, KEY_CONTEXT, LastFile, Layout, Mode, NextChange, NextFile, PreviousChange, PreviousFile, Sizes, TooLarge};
 use crate::git_view::details::{kind_word, mark_icon};
 
-/// `dir/` muted and the name bright, cut from the left side when narrow.
 fn path(key: &str, path: &str, cx: &Context<DiffView>) -> Div {
     let colors = cx.theme().colors();
-    let (dir, name) = match path.rsplit_once('/') {
-        Some((dir, name)) => (format!("{dir}/"), name.to_string()),
-        None => (String::new(), path.to_string()),
-    };
-    div()
-        .flex()
-        .min_w_0()
-        .whitespace_nowrap()
-        .when(!dir.is_empty(), |d| d.child(clipped(format!("{key}-dir"), dir, true).flex_shrink(1.).text_color(colors.text_muted)))
-        .child(div().flex_none().text_color(colors.text).child(SharedString::from(name)))
+    path_label(format!("{key}-dir"), path, colors.text_muted, colors.text)
 }
 
 /// `Before: … After: …`, `Added: …` or `Deleted: …`.
@@ -117,17 +108,7 @@ impl DiffView {
     }
 
     fn message(title: &str, details: Vec<String>, cx: &Context<Self>) -> Div {
-        let colors = cx.theme().colors();
-        div()
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_1()
-            .child(div().text_color(colors.text).child(SharedString::from(title.to_string())))
-            .children(details.into_iter().map(|detail| div().text_xs().text_color(colors.text_muted).child(SharedString::from(detail))))
+        placeholder(title.to_string(), details, cx).relative().size_full()
     }
 
     fn binary(&self, sizes: Sizes, cx: &Context<Self>) -> AnyElement {
