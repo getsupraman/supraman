@@ -56,16 +56,28 @@ fn sides(path: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
 
 impl Fixture {
     pub(super) fn media(&mut self) {
-        let (mut old, mut new) = (String::new(), String::new());
+        let staged = self.temp.path().join("media-blobs");
+        std::fs::create_dir(&staged).expect("a blob dir");
+        let mut files = Vec::new();
         for path in MEDIA_FILES {
             let (before, after) = sides(path);
-            for (tree, bytes) in [(&mut old, before), (&mut new, after)] {
+            for (new, bytes) in [(false, before), (true, after)] {
                 if let Some(bytes) = bytes {
-                    let blob = git_in(&self.git, &self.dir, &["hash-object", "-w", "--stdin"], &[], Some(bytes));
-                    tree.push_str(&format!("100644 blob {blob}\t{path}\n"));
+                    let file = staged.join(format!("{}-{path}", files.len()));
+                    std::fs::write(&file, bytes).expect("a blob file");
+                    files.push((new, path, file));
                 }
             }
         }
+        let list: String = files.iter().map(|(_, _, file)| format!("{}\n", file.display())).collect();
+        let blobs = git_in(&self.git, &self.dir, &["hash-object", "-w", "--no-filters", "--stdin-paths"], &[], Some(list.into_bytes()));
+        std::fs::remove_dir_all(&staged).expect("the blob dir goes");
+        let (mut old, mut new) = (String::new(), String::new());
+        for ((is_new, path, _), blob) in files.iter().zip(blobs.lines()) {
+            let tree = if *is_new { &mut new } else { &mut old };
+            tree.push_str(&format!("100644 blob {blob}\t{path}\n"));
+        }
+        assert_eq!(files.len(), blobs.lines().count(), "a blob per file");
         let base = self.dangling(old, None, "Media base");
         let media = self.dangling(new, Some(&base), "Media");
         self.shas.insert("media_base", base);

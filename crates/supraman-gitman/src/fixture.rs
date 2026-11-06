@@ -36,7 +36,7 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
 
 fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
     let mut cmd = crate::repo::git_command(git, dir);
-    cmd.args(args);
+    cmd.args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"]).args(args);
     cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
     env.iter().for_each(|(k, v)| {
         cmd.env(k, v);
@@ -75,8 +75,8 @@ impl Fixture {
 
     /// One fixture for the tests that only read it, held while any of them runs; a test that writes takes [`Fixture::new`].
     pub fn shared() -> Arc<Fixture> {
-        static SHARED: Mutex<Weak<Fixture>> = Mutex::new(Weak::new());
-        shared_in(&SHARED, Fixture::new)
+        static SHARED: Shared<Fixture> = Shared::new();
+        SHARED.get(Fixture::new)
     }
 
     /// The same repository in a temp dir under `parent`.
@@ -248,20 +248,35 @@ impl Generated {
 
     /// [`Fixture::shared`] for a history of `commits`.
     pub fn shared(commits: usize) -> Arc<Generated> {
-        static SHARED: Mutex<BTreeMap<usize, Arc<Mutex<Weak<Generated>>>>> = Mutex::new(BTreeMap::new());
-        let slot = SHARED.lock().unwrap_or_else(PoisonError::into_inner).entry(commits).or_default().clone();
-        shared_in(&slot, || Generated::new(commits))
+        static SHARED: Mutex<BTreeMap<usize, Arc<Shared<Generated>>>> = Mutex::new(BTreeMap::new());
+        let slot = SHARED.lock().unwrap_or_else(PoisonError::into_inner).entry(commits).or_insert_with(|| Arc::new(Shared::new())).clone();
+        slot.get(|| Generated::new(commits))
     }
 }
 
-/// The repo in `slot` while a test holds it, else a new one; dropped (and its temp dir with it) when the last holder ends.
-fn shared_in<T>(slot: &Mutex<Weak<T>>, make: impl FnOnce() -> T) -> Arc<T> {
-    let mut held = slot.lock().unwrap_or_else(PoisonError::into_inner);
-    held.upgrade().unwrap_or_else(|| {
-        let made = Arc::new(make());
-        *held = Arc::downgrade(&made);
-        made
-    })
+/// A repo the tests that only read it share: made by the first, held while any of them runs, and dropped
+/// (its temp dir with it) when the last ends.
+pub struct Shared<T>(Mutex<Weak<T>>);
+
+impl<T> Shared<T> {
+    pub const fn new() -> Shared<T> {
+        Shared(Mutex::new(Weak::new()))
+    }
+
+    pub fn get(&self, make: impl FnOnce() -> T) -> Arc<T> {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        held.upgrade().unwrap_or_else(|| {
+            let made = Arc::new(make());
+            *held = Arc::downgrade(&made);
+            made
+        })
+    }
+}
+
+impl<T> Default for Shared<T> {
+    fn default() -> Self {
+        Shared::new()
+    }
 }
 
 fn fast_import_stream(commits: usize) -> String {
