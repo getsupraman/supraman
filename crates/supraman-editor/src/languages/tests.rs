@@ -102,8 +102,38 @@ const SAMPLES: &[(&str, &str, &[(&str, &str)])] = &[
     ("a.proto", "// note\nsyntax = \"proto3\";\nmessage A { string name = 1; }\n", &[("// note", "comment"), ("message", "keyword"), ("\"proto3\"", "string"), ("1", "number")]),
     ("main.tf", "# note\nresource \"aws_s3_bucket\" \"b\" {\n  count = 2\n  name = true\n}\n", &[("# note", "comment"), ("resource", "keyword"), ("aws_s3_bucket", "string"), ("2", "number"), ("true", "boolean")]),
     ("app.ini", "; note\n[section]\nkey = value\n", &[("; note\n", "comment"), ("section", "type"), ("key", "property")]),
+    ("Module1.vb", VB, &[("' note", "comment"), ("Public", "keyword"), ("\"hi\"", "string"), ("42", "number"), ("Integer", "type"), ("Greet", "function")]),
+    ("Index.cshtml", RAZOR, &[("@* note *@", "comment"), ("private", "keyword"), ("\"hi\"", "string"), ("42", "number"), ("int", "type"), ("Increment", "function")]),
     ("Makefile", "# note\ninclude rules.mk\nifeq ($(X),1)\nall: build\nendif\n", &[("# note", "comment"), ("include", "keyword"), ("ifeq", "keyword")]),
 ];
+
+const VB: &str = "' note
+Imports System
+Public Class Greeter
+    Private count As Integer = 42
+    Public Function Greet() As String
+        Dim s = \"hi\"
+        If count > 0 Then
+            Return s
+        End If
+        Return Nothing
+    End Function
+End Class
+";
+
+const RAZOR: &str = "@page \"/counter\"
+@using System
+@* note *@
+<h1 class=\"title\">Count: @count</h1>
+@if (count > 0)
+{
+    <p>positive</p>
+}
+@code {
+    private int count = 42;
+    private void Increment() { count++; var s = \"hi\"; }
+}
+";
 
 #[test]
 fn compiled_languages_highlight() {
@@ -157,8 +187,9 @@ fn compiled_languages_by_extension_and_name() {
         ("web.dockerfile", "Dockerfile"),
         ("site.scss", "SCSS"),
         ("site.less", "Less"),
-        ("Index.cshtml", "-"),
-        ("App.vb", "-"),
+        ("Index.cshtml", "Razor"),
+        ("Pages/Counter.razor", "Razor"),
+        ("App.vb", "VB.NET"),
         ("infra/main.tf", "HCL"),
         ("config.hcl", "HCL"),
         ("setup.ini", "INI"),
@@ -304,6 +335,20 @@ a { color: red; }
         });
         cx.run_until_parked();
         assert_csharp(&cx.update(|_, cx| highlighted(&editor, cx)), "\"hello\"", "file");
+    }
+
+    #[gpui::test]
+    fn vb_colours_its_keywords(cx: &mut TestAppContext) {
+        let runs = runs_of("Module1.vb", super::VB, cx);
+        let wanted = [("Imports", "keyword"), ("Class", "keyword"), ("Dim", "keyword"), ("If", "keyword"), ("End Function", "keyword"), ("' note", "comment"), ("\"hi\"", "string"), ("Greeter", "type"), ("count", "variable")];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
+    }
+
+    #[gpui::test]
+    fn razor_colours_its_directives_code_and_html(cx: &mut TestAppContext) {
+        let runs = runs_of("Pages/Index.cshtml", super::RAZOR, cx);
+        let wanted = [("@page", "preproc"), ("@code", "keyword"), ("@if", "keyword"), ("@* note *@", "comment"), ("private", "keyword"), ("\"hi\"", "string"), ("h1", "tag"), ("class", "attribute"), ("p", "tag")];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
     }
 
     #[gpui::test]

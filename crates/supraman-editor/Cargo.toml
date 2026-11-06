@@ -40,14 +40,17 @@ tree-sitter-php = "0.25.1"
 tree-sitter-powershell = "0.26.6"
 tree-sitter-proto = "0.6.0"
 tree-sitter-r = "1.3.0"
+tree-sitter-razor = "0.1.0"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-scala = "0.26.4"
 tree-sitter-scss = { package = "cortexkit-tree-sitter-scss", version = "1.0.1" }
 tree-sitter-sequel = "0.3.11"
 tree-sitter-swift = "0.7.4"
 tree-sitter-toml-ng = "0.7.0"
+tree-sitter-vb-dotnet = "0.1.0"
 tree-sitter-xml = "0.7.0"
 zed_actions = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c" }
 
 [dev-dependencies]
+supraman-ui = { path = "../supraman-ui" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "03efd49220ba06703d04f9c4732fdf814f9c523c", default-features = false, features = ["test-support"] }
