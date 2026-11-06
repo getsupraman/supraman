@@ -42,6 +42,7 @@ pub fn init(font: &str, size: f32, cx: &mut App) {
     editor::init(cx);
     bind_keys(cx);
     languages::warm(cx);
+    languages::follow_theme(cx);
 }
 
 fn bind_keys(cx: &mut App) {

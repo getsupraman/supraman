@@ -5,6 +5,7 @@
 //! The Git tab's lanes are [`lanes`]: a theme sets lane N with the style key `gitman.lane.N` (0–9).
 
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
@@ -20,6 +21,7 @@ use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
 
 pub mod lanes;
+pub mod syntax;
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
 pub const SUPRAMAN_DARK: &str = "Supraman Dark";
@@ -168,7 +170,7 @@ fields!(status_field, StatusColors, [
 /// A key the loader changed so the m5/26 floors hold.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Adjustment {
-    pub key: &'static str,
+    pub key: Cow<'static, str>,
     pub old: String,
     pub new: String,
     /// The contrast before and after, against the darkest-contrast surface.
@@ -218,6 +220,7 @@ pub fn supraman_dark() -> Loaded {
     let mut adjusted = fit_backgrounds(&mut theme);
     adjusted.extend(fit_placeholder(&mut theme));
     adjusted.extend(lanes::fit(&theme, &[None; lanes::LANES]));
+    adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
 
@@ -242,6 +245,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     let (mut applied, mut ignored, mut set) = (0, Vec::new(), HashSet::new());
     let mut lane_set = [None; lanes::LANES];
     let styles = &mut theme.styles;
+    styles.syntax = syntax::defaults(theme.appearance);
     for (key, value) in &zed.style {
         if let Some(lane) = lanes::key_lane(key) {
             match value.as_str().and_then(parse_color) {
@@ -277,8 +281,9 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
                     applied += 1;
                 }
             }
+            "syntax" => styles.syntax = syntax::merged(styles.syntax.clone(), value, &mut applied, &mut ignored),
             // known, and nothing Supraman paints
-            "syntax" | "background.appearance" => {}
+            "background.appearance" => {}
 
             _ => {
                 let field = key.replace('.', "_");
@@ -298,6 +303,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
     fill_unset(styles, &set);
     let mut adjusted = fit_floors(&mut theme);
     adjusted.extend(lanes::fit(&theme, &lane_set));
+    adjusted.extend(syntax::fit(&mut theme));
     Loaded { theme, applied, ignored, adjusted }
 }
 
@@ -459,7 +465,7 @@ pub fn fit_floors(theme: &mut Theme) -> Vec<Adjustment> {
             color.l += step;
         }
         *floor_color(theme, key) = color;
-        adjusted.push(Adjustment { key, old: hex(old), new: hex(color), was, now: worst_contrast(theme, color, alpha, on) });
+        adjusted.push(Adjustment { key: key.into(), old: hex(old), new: hex(color), was, now: worst_contrast(theme, color, alpha, on) });
     }
     adjusted.extend(fit_backgrounds(theme));
     adjusted.extend(fit_placeholder(theme));
@@ -501,7 +507,7 @@ pub fn fit_placeholder(theme: &mut Theme) -> Option<Adjustment> {
         }
     }
     theme.styles.colors.text_placeholder = color;
-    (hex(old) != hex(color)).then(|| Adjustment { key: "text.placeholder", old: hex(old), new: hex(color), was, now: placeholder_contrast(theme, color).0 })
+    (hex(old) != hex(color)).then(|| Adjustment { key: "text.placeholder".into(), old: hex(old), new: hex(color), was, now: placeholder_contrast(theme, color).0 })
 }
 
 /// Backgrounds text is painted on, over the panel: (key, the alpha of the theme's text on it, floor).
@@ -538,7 +544,7 @@ pub fn fit_backgrounds(theme: &mut Theme) -> Vec<Adjustment> {
         }
         let now = on_background(theme, key, alpha);
         if was < floor {
-            adjusted.push(Adjustment { key, old: hex(old), new: hex(*background_color(theme, key)), was, now });
+            adjusted.push(Adjustment { key: key.into(), old: hex(old), new: hex(*background_color(theme, key)), was, now });
         }
     }
     adjusted
@@ -726,9 +732,9 @@ mod tests {
         assert_eq!(hex(loaded.theme.players().local().cursor), "#AEAFAD");
         assert_eq!(loaded.theme.accents().0.len(), 9);
         assert_eq!(s.success, one_dark().status().success);
-        // 160 keys: syntax and background.appearance are skipped; the rest set a colour, are null or are unknown.
+        // 160 keys and 35 syntax entries: background.appearance is skipped; the rest set something, are null or are unknown.
         println!("ignored: {:?}", loaded.ignored);
-        assert_eq!(loaded.applied, 97);
+        assert_eq!(loaded.applied, 97 + 35);
         assert!(loaded.ignored.contains(&"version_control_conflict_ours_background".to_string()), "{:?}", loaded.ignored);
     }
 
@@ -806,8 +812,8 @@ mod tests {
                 println!("{} adjusted {}: {} -> {} ({:.2} -> {:.2})", loaded.theme.name, a.key, a.old, a.new, a.was, a.now);
             }
         }
-        let keys = |l: &Loaded| l.adjusted.iter().map(|a| (a.key, a.old.clone(), a.new.clone())).collect::<Vec<_>>();
-        let pinned = |e: &[(&'static str, &str, &str)]| e.iter().map(|(k, o, n)| (*k, o.to_string(), n.to_string())).collect::<Vec<_>>();
+        let keys = |l: &Loaded| l.adjusted.iter().filter(|a| !a.key.starts_with(syntax::ADJUSTED)).map(|a| (a.key.to_string(), a.old.clone(), a.new.clone())).collect::<Vec<_>>();
+        let pinned = |e: &[(&str, &str, &str)]| e.iter().map(|(k, o, n)| (k.to_string(), o.to_string(), n.to_string())).collect::<Vec<_>>();
         assert_eq!(keys(&modern), pinned(&EXPECTED_ADJUSTMENTS));
         assert_eq!(keys(&dark), pinned(&EXPECTED_SUPRAMAN_DARK));
     }
@@ -888,7 +894,7 @@ mod tests {
             "background": "#181818", "panel.background": "#181818", "editor.background": "#181818",
             "text": "#808080", "info": "#BFBFBF66" } }] }"##;
         let loaded = from_zed(&one_dark(), &parse_family(json).unwrap().themes[0]);
-        let keys: Vec<&str> = loaded.adjusted.iter().map(|a| a.key).collect();
+        let keys: Vec<&str> = loaded.adjusted.iter().map(|a| a.key.as_ref()).collect();
         assert!(keys.contains(&"text (names)") && keys.contains(&"info"), "{keys:?}");
         let info = loaded.adjusted.iter().find(|a| a.key == "info").unwrap();
         assert_eq!(info.old, "#BFBFBF66");

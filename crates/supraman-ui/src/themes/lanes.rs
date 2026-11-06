@@ -80,7 +80,7 @@ pub fn fit(theme: &Theme, set: &[Option<Hsla>; LANES]) -> Vec<Adjustment> {
         *lane = nearest_holding(theme, old);
         if hex(old) != hex(*lane) {
             let line = |c: Hsla| contrast(c, theme.colors().editor_background);
-            adjusted.push(Adjustment { key: KEYS[i], old: hex(old), new: hex(*lane), was: line(old), now: line(*lane) });
+            adjusted.push(Adjustment { key: KEYS[i].into(), old: hex(old), new: hex(*lane), was: line(old), now: line(*lane) });
         }
     }
     FITTED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default().insert(theme.id.clone(), lanes);

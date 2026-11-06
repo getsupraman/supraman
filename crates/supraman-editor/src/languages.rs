@@ -73,23 +73,38 @@ pub(crate) fn warm(cx: &App) {
     cx.background_spawn(async { built() }).detach();
 }
 
+static REGISTRY: OnceLock<Arc<LanguageRegistry>> = OnceLock::new();
+
 /// The registry of every language, where a buffer's injections resolve, coloured by the active theme.
 /// Only call it once `language_for` has returned a language: before, it would build them all here.
 pub(crate) fn registry(cx: &App) -> Arc<LanguageRegistry> {
-    static REGISTRY: OnceLock<Arc<LanguageRegistry>> = OnceLock::new();
-    static THEMED: Mutex<Option<Arc<Theme>>> = Mutex::new(None);
     let registry = REGISTRY.get_or_init(|| {
         let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         built().values().for_each(|language| registry.add(language.clone()));
         registry
     });
+    retheme(registry, cx);
+    registry.clone()
+}
+
+/// Each theme change re-colours every language, so open buffers paint in the new theme's syntax colours.
+pub(crate) fn follow_theme(cx: &mut App) {
+    cx.observe_global::<theme::GlobalTheme>(|cx| {
+        if let Some(registry) = REGISTRY.get() {
+            retheme(registry, cx);
+        }
+    })
+    .detach();
+}
+
+fn retheme(registry: &LanguageRegistry, cx: &App) {
+    static THEMED: Mutex<Option<Arc<Theme>>> = Mutex::new(None);
     let theme = cx.theme();
     let mut themed = THEMED.lock().unwrap_or_else(|e| e.into_inner());
     if !themed.as_ref().is_some_and(|t| Arc::ptr_eq(t, theme)) {
         registry.set_theme(theme.clone());
         *themed = Some(theme.clone());
     }
-    registry.clone()
 }
 
 fn aliases(name: &str) -> impl Iterator<Item = gpui::SharedString> {

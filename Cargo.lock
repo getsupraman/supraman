@@ -8672,6 +8672,7 @@ dependencies = [
  "semver",
  "serde_json",
  "settings",
+ "supraman-ui",
  "text",
  "theme",
  "theme_settings",
