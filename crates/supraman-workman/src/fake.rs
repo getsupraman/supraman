@@ -685,26 +685,53 @@ struct Row {
     launched_by: String,
     token: Option<String>,
     revoked: bool,
+    /// Epoch ms its token lapses at, under an idle window ([`FakeSessions::set_idle_window`]).
+    expires: Option<i64>,
 }
 
 /// Agent-session rows, one per name, by Workman 2.3.0's rules (`SessionStore.Tokens.cs`): a name whose token
-/// still works is refused (409) without `replace`; a revoked one is taken over in its row; another launcher's
-/// name is refused even with `replace`.
+/// still works is refused (409) without `replace`; a revoked or lapsed one is taken over in its row; another
+/// launcher's name is refused even with `replace`. Under an idle window a mint answers its `expiresAt`, and each
+/// use of a token slides it, on a clock the test sets.
 #[derive(Default)]
 pub struct FakeSessions {
     rows: Mutex<BTreeMap<String, Row>>,
     minted: Mutex<u64>,
+    /// `(now, window)` in ms, once set.
+    clock: Mutex<Option<(i64, i64)>>,
 }
 
 impl FakeSessions {
-    /// Whether `token` still answers: its row holds it and is not revoked.
+    /// From now on each token lapses `window_ms` after its mint or its last use; the clock reads `now_ms`.
+    pub fn set_idle_window(&self, window_ms: i64, now_ms: i64) {
+        *self.clock.lock().unwrap() = Some((now_ms, window_ms));
+    }
+
+    /// Sets the clock of [`Self::set_idle_window`].
+    pub fn set_now(&self, now_ms: i64) {
+        if let Some((now, _)) = self.clock.lock().unwrap().as_mut() {
+            *now = now_ms;
+        }
+    }
+
+    fn now(&self) -> Option<i64> {
+        self.clock.lock().unwrap().map(|(now, _)| now)
+    }
+
+    fn alive(row: &Row, now: Option<i64>) -> bool {
+        !row.revoked && row.token.is_some() && row.expires.zip(now).is_none_or(|(expires, now)| now < expires)
+    }
+
+    /// Whether `token` still answers: its row holds it, not revoked and not lapsed.
     pub fn live(&self, token: &str) -> bool {
-        self.rows.lock().unwrap().values().any(|r| !r.revoked && r.token.as_deref() == Some(token))
+        let now = self.now();
+        self.rows.lock().unwrap().values().any(|r| Self::alive(r, now) && r.token.as_deref() == Some(token))
     }
 
     /// The live token of the session named `name`.
     pub fn token_of(&self, name: &str) -> Option<String> {
-        self.rows.lock().unwrap().get(name).filter(|r| !r.revoked).and_then(|r| r.token.clone())
+        let now = self.now();
+        self.rows.lock().unwrap().get(name).filter(|r| Self::alive(r, now)).and_then(|r| r.token.clone())
     }
 
     /// Revokes the live token of the session named `name`, as a revoke elsewhere or its idle window would.
@@ -719,11 +746,25 @@ impl FakeSessions {
         self.rows.lock().unwrap().keys().cloned().collect()
     }
 
+    /// A use of `token`: whether it answers, its window slid when it does.
+    fn used(&self, token: &str) -> bool {
+        let clock = *self.clock.lock().unwrap();
+        let now = clock.map(|(now, _)| now);
+        let mut rows = self.rows.lock().unwrap();
+        let Some(row) = rows.values_mut().find(|r| Self::alive(r, now) && r.token.as_deref() == Some(token)) else {
+            return false;
+        };
+        if let Some((now, window)) = clock {
+            row.expires = Some(now + window);
+        }
+        true
+    }
+
     fn handle(&self, method: &str, target: &str, authorization: Option<&str>, body: &str) -> Option<Answer> {
         match (method, target) {
             ("POST", "/api/agent-sessions") => Some(self.mint(body)),
             ("POST", "/mcp") => Some(match authorization.and_then(|a| a.strip_prefix("Bearer ")) {
-                Some(token) if self.live(token) => Answer::json(r#"{"jsonrpc":"2.0","id":0,"result":{}}"#),
+                Some(token) if self.used(token) => Answer::json(r#"{"jsonrpc":"2.0","id":0,"result":{}}"#),
                 _ => Answer::status(401, r#"{"error":"invalid_token"}"#),
             }),
             ("DELETE", t) => {
@@ -749,21 +790,29 @@ impl FakeSessions {
             return Answer::status(400, r#"{"error":"name and launchedBy are required"}"#);
         };
         let replace = v["replace"].as_bool().unwrap_or(false);
+        let clock = *self.clock.lock().unwrap();
         let mut rows = self.rows.lock().unwrap();
         let mut n = self.minted.lock().unwrap();
         *n += 1;
         let token = format!("wss_fake_session{n}");
-        let row = rows.entry(name.to_string()).or_insert_with(|| Row { id: format!("s{n}"), launched_by: launched_by.to_string(), token: None, revoked: false });
+        let row = rows
+            .entry(name.to_string())
+            .or_insert_with(|| Row { id: format!("s{n}"), launched_by: launched_by.to_string(), token: None, revoked: false, expires: None });
         if row.launched_by != launched_by {
             return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" belongs to another launcher") }).to_string());
         }
-        if row.token.is_some() && !row.revoked && !replace {
+        if Self::alive(row, clock.map(|(now, _)| now)) && !replace {
             let error = format!("the session \"{name}\" already has a live token; pass replace: true to revoke it and mint a new one");
             return Answer::status(409, serde_json::json!({ "error": error }).to_string());
         }
         row.token = Some(token.clone());
         row.revoked = false;
-        Answer::status(201, serde_json::json!({ "sessionId": row.id, "token": token }).to_string())
+        row.expires = clock.map(|(now, window)| now + window);
+        let mut answer = serde_json::json!({ "sessionId": row.id, "token": token });
+        if let Some(expires) = row.expires {
+            answer["expiresAt"] = supraman_core::time::rfc3339_utc(expires).into();
+        }
+        Answer::status(201, answer.to_string())
     }
 }
 

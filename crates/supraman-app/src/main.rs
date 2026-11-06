@@ -5,6 +5,7 @@ mod elevate;
 mod fleet;
 mod hand;
 mod instance;
+mod keeping;
 mod row_details;
 mod saved_tabs;
 mod schedules;
@@ -302,6 +303,9 @@ fn main() {
         supraman_ui::init_globals(cx, env!("CARGO_PKG_VERSION"));
         supraman_ui::stall::watch(cx);
         let home = supraman_core::home_from_env();
+        if let Some(home) = home.clone() {
+            keeping::start(home, cx.background_executor());
+        }
         if let Some(problem) = settings_window::apply_theme(home.as_deref(), cx) {
             log::warn!("{problem}");
         }

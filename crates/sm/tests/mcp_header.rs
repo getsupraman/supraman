@@ -73,7 +73,7 @@ fn mcp_header_mints_afresh_when_workman_refuses_the_kept_token() {
     let session = MintedSession { session_id: minted.session_id, role: "workspace".into(), claude_session_id: None, last_active: None, origin: Some(fake.base().into()) };
     records.insert_minted(NAME, session, &request);
     records.save().unwrap();
-    let config = Keeper::open(home.path()).write(NAME, &fake.mcp_url(), &minted.token, &[]).unwrap();
+    let config = Keeper::open(home.path()).write(NAME, &fake.mcp_url(), &minted.token, minted.expires_at.as_deref(), &[]).unwrap();
     let text = std::fs::read_to_string(&config).unwrap();
     assert!(text.contains("headersHelper") && !text.contains("Bearer") && !text.contains("wss_"), "{text}");
 
