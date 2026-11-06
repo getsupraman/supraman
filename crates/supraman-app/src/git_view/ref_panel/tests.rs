@@ -295,11 +295,16 @@ fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut T
 fn ctrl_j_right_after_show_all_collapses_the_panel(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    let local = panel.read_with(cx, |p, _| p.counts()[0]);
     click("refpanel-mark-local/feature", &view, cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.counts()[0]), Count { shown: local.shown - 1, total: local.total }, "LOCAL counts the hidden ref out of those shown");
     cx.update(|window, cx| window.blur(cx));
     click("refpanel-show-all", &view, cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.walk().clone()), Walk::default(), "Show all shows it again");
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    assert!(!hits.borrow().contains_key("refpanel-show-all"), "and goes with nothing hidden");
     cx.simulate_keystrokes("ctrl-j");
-    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     assert!(panel.read_with(cx, |p, _| p.shut()), "Ctrl+J reaches the tab after a click on Show all");
 }
 
@@ -312,12 +317,18 @@ fn ctrl_j_collapses_the_panel_to_its_strip(cx: &mut TestAppContext) {
     assert!(shown("refpanel-row-local") && shown("refpanel-row-local/main") && !shown("refpanel-strip-local"));
     assert!(["local/feature", "local/main", "stashes/0", "remote/origin"].iter().all(|p| shown(&format!("refpanel-mark-{p}"))), "a mark on every ref and folder that hides or solos");
     assert!(!shown("refpanel-mark-tags/v1"), "none on a tag, which does neither");
+    assert!(Section::ALL.iter().all(|s| shown(&format!("refpanel-row-{}", s.key()))), "a header per section");
+    let refs = supraman_gitman::refs(&f.repo()).unwrap();
+    let want = [refs.branches.len(), refs.remotes.len(), refs.worktrees.len(), refs.stashes.len(), refs.tags.len()].map(|n| Count { shown: n, total: n });
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    assert_eq!(panel.read_with(cx, |p, _| p.counts()), want, "each section counts the fixture's refs");
     click("refpanel-row-local/feature", &view, cx);
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a ref's row selects its commit");
     cx.simulate_keystrokes("ctrl-j");
     hits.borrow_mut().clear();
     redraw(&view, cx);
-    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     assert!(panel.read_with(cx, |p, _| p.shut()));
+    assert!(!shown("refpanel-filter"), "the strip has no filter");
     assert!(Section::ALL.iter().all(|s| shown(&format!("refpanel-strip-{}", s.key()))) && shown("refpanel-expand") && !shown("refpanel-row-local"), "the strip: expand, then a section's icon each");
     let strip = hits.borrow().get("refpanel-strip-local").unwrap().bounds;
     assert!(strip.size.width <= STRIP, "{strip:?}");
@@ -363,6 +374,8 @@ fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and
     click("refpanel-strip-remote", &view, cx);
     click("refpanel-strip-remote", &view, cx);
     assert_eq!(overlay(cx), None, "a second click on its icon closes it");
+    click("refpanel-expand", &view, cx);
+    assert!(!panel.read_with(cx, |p, _| p.shut()) && hits.borrow().contains_key("refpanel-row-local/main"), "the expand button opens the panel again");
 }
 
 #[gpui::test]

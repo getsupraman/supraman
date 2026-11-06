@@ -123,12 +123,11 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut
     let keys = keys(view, &git, f, cx).await?;
     let wip = wip(view, &git, f, cx).await?;
     let live = live(view, &git, f, cx).await?;
-    let ref_panel = crate::selftest_git_refs::check(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
     let themed = themed(view, &git, home, cx).await?;
     let reopened = crate::selftest_git_reopen::check(view, &git, f, cx).await?;
-    Ok([opened, refs, selected, files, diff, media, stash, keys, wip, live, ref_panel, narrow, panel, themed, reopened].join("; "))
+    Ok([opened, refs, selected, files, diff, media, stash, keys, wip, live, narrow, panel, themed, reopened].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {

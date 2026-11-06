@@ -12,13 +12,13 @@ use crate::selftest_git::{git_tabs, painted, probe, tap, until_probe, FOLDER, WI
 use crate::selftest_tabs::drag_between;
 use crate::view::FleetView;
 
-const SOLO: &str = "refs/heads/topic/solo";
+const HIDDEN: &str = "refs/heads/feature";
 
 pub async fn check(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    if !probe(view, git, cx).refs.hidden.iter().any(|h| h == SOLO) {
-        tap(view, "refpanel-mark-local/topic/solo", cx).await?;
+    if !probe(view, git, cx).refs.hidden.iter().any(|h| h == HIDDEN) {
+        tap(view, "refpanel-mark-local/feature", cx).await?;
     }
-    until_probe(view, git, "topic/solo hidden", cx, |p, _| p.refs.hidden.iter().any(|h| h == SOLO).then_some(())).await?;
+    until_probe(view, git, "feature hidden", cx, |p, _| p.refs.hidden.iter().any(|h| h == HIDDEN).then_some(())).await?;
     let before = view.read_with(cx, |_, cx| git.read(cx).sizes(cx));
     let divider = until(view, cx, WITHIN, "the graph column's divider", |v| v.hits.borrow().get("git-divider-graph").map(|h| h.bounds.center())).await?;
     drag_between(divider, point(divider.x - px(40.), divider.y), None, cx).await?;
@@ -39,7 +39,7 @@ pub async fn check(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture,
     }
     let width = |s: &crate::git_view::GitSizes| s.widths.get(1).copied().unwrap_or_default();
     Ok(format!(
-        "closed and opened again, the tab keeps its columns (graph {} px, narrowed from {}), its panels ({:?} px) and {SOLO} hidden",
+        "closed and opened again, the tab keeps its columns (graph {} px, narrowed from {}), its panels ({:?} px) and {HIDDEN} hidden",
         width(&back),
         width(&before),
         back.panel.unwrap_or_default()
