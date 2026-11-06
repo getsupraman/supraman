@@ -171,6 +171,8 @@ pub struct Supervisor<L, T> {
     repo_of: fn(&Path) -> Option<MintRepo>,
     /// The sessions this supervisor minted a token for, by name.
     minted: MintedSessions,
+    /// The [`crate::sign_in_generation`] each was minted in by this process; one loaded from the file predates them all.
+    generations: BTreeMap<String, u64>,
     /// Where their tokens are kept and their configs written.
     keeper: Keeper,
     /// Their claude sessions missing from the snapshots: a deleted one revokes.
@@ -229,6 +231,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             minter: Box::new(HttpMinter::default()),
             repo_of: crate::git_repo,
             minted,
+            generations: BTreeMap::new(),
             keeper,
             absent: Absent::default(),
             needs: Vec::new(),
@@ -287,8 +290,19 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     /// The sign-out of `origin`: each session minted there ends ([`crate::mint::revoke`]); its grant revoke took the tokens.
     pub fn signed_out(&mut self, origin: &str) {
+        self.signed_out_as_of(origin, u64::MAX);
+    }
+
+    /// [`Self::signed_out`] queued in sign-in `generation`: a session minted on a later sign-in stays.
+    pub fn signed_out_as_of(&mut self, origin: &str, generation: u64) {
         let origin = api_base(origin);
-        let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
+        let names: Vec<String> = self
+            .minted
+            .names()
+            .filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str())))
+            .filter(|n| self.generations.get(*n).is_none_or(|g| *g <= generation))
+            .cloned()
+            .collect();
         for name in names {
             self.end(&name, Some(Bearer::SignedOut));
         }
@@ -532,6 +546,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         else {
             return Ok(None);
         };
+        let generation = crate::sign_in_generation();
         let identity = session_identity(&self.desired.workspace, w);
         let request = MintRequest {
             name: w.name.clone(),
@@ -556,6 +571,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             origin: Some(api_base(&t.url)),
         };
         self.minted.insert_minted(&w.name, session, &request);
+        self.generations.insert(w.name.clone(), generation);
         self.save_minted();
         Ok(Some((t.url, minted.token)))
     }
@@ -642,6 +658,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let Some(m) = self.minted.remove(name) else {
             return;
         };
+        self.generations.remove(name);
         let bearer = bearer.unwrap_or_else(|| Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token)))));
         self.notices.extend(crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices);
         self.save_minted();
@@ -1574,6 +1591,27 @@ mod tests {
         assert!(sup.minted().get("fm-demo-alpha").is_some(), "another server's stays");
         assert_helped(dir.path(), "fm-demo-alpha");
         assert!(sup.take_notices().is_empty());
+    }
+
+    #[test]
+    fn a_sign_out_queued_before_a_sign_in_keeps_what_the_new_grant_minted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        let queued = crate::sign_in_generation();
+        crate::signing_in();
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW + SECOND);
+        assert!(sup.minted().get("fm-demo-alpha").is_some(), "minted on the new grant");
+        minter.take();
+        sup.signed_out_as_of("http://127.0.0.1:1/", queued);
+        assert_eq!(minter.take(), [], "the grant revoke took the old tokens");
+        assert_eq!(sup.minted().get("fm-demo-workspace"), None, "the old grant's record ends");
+        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
+        assert!(sup.minted().get("fm-demo-alpha").is_some(), "the new grant's record stays");
+        assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2", "with its token");
+        assert_helped(dir.path(), "fm-demo-alpha");
     }
 
     #[test]
