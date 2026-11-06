@@ -335,3 +335,55 @@ fn layout_of_shas_and_parents_carries_on_as_of_commits() {
     rows.extend(mixed.extend_with(rest.iter().map(|(sha, parents)| (sha.as_str(), parents.as_slice()))));
     assert_eq!(rows, whole);
 }
+
+/// `n` commits on `lanes` long-lived lines, each its line's next older as parent, every 97th merging its neighbour's.
+fn wide(n: usize, lanes: usize) -> Vec<Commit> {
+    let sha = |i: usize| format!("w{i:06}");
+    (0..n)
+        .map(|i| {
+            let mut parents: Vec<String> = (i + lanes < n).then(|| sha(i + lanes)).into_iter().collect();
+            if i % 97 == 0 && i + 1 < n {
+                parents.push(sha(i + 1));
+            }
+            Commit { parents, ..commit(&sha(i), &[]) }
+        })
+        .collect()
+}
+
+/// FNV-1a over each row's lane and every edge it paints, in order.
+fn edge_digest(rows: &[Row]) -> (usize, u64) {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |v: usize| {
+        for b in (v as u64).to_le_bytes() {
+            hash = (hash ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+        }
+    };
+    let mut edges = 0;
+    for r in rows {
+        eat(r.lane);
+        eat(r.max_lane);
+        for e in r.edges.iter() {
+            edges += 1;
+            eat(e.kind as usize);
+            eat(e.lane);
+            eat(e.node);
+            eat(e.colour);
+            eat(usize::from(e.dashed));
+        }
+    }
+    (edges, hash)
+}
+
+#[test]
+fn layout_edges_of_the_20k_fixture_and_a_wide_history_stay_as_painted() {
+    let g = Generated::new(20_000);
+    let repo = g.repo();
+    let refs = refs(&repo).unwrap();
+    let all = history(&repo, &refs.tips(), 0, 20_000).unwrap();
+    let rows = Layout::new(&refs, true).extend(&all.commits);
+    assert_eq!(edge_digest(&rows), (46_000, 11_031_221_912_078_148_549), "the 20k fixture");
+    let rows = Layout::new(&no_refs(), true).extend(&synthetic(10_000));
+    assert_eq!(edge_digest(&rows), (28_798, 17_473_495_737_116_666_311), "the synthetic history");
+    let rows = Layout::new(&no_refs(), false).extend(&wide(10_000, 40));
+    assert_eq!(edge_digest(&rows), (408_466, 5_191_816_325_844_784_470), "forty lanes");
+}
