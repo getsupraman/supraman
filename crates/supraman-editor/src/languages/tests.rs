@@ -175,6 +175,17 @@ fn compiled_languages_by_extension_and_name() {
     assert!(language_for("Dockerfile.unknownext").is_none(), "a known name before an unknown extension stays plain");
 }
 
+#[test]
+fn every_injection_query_loads() {
+    for compiled in COMPILED.iter().filter(|c| !c.injections.is_empty()) {
+        let language = language_for(compiled.suffixes[0]).unwrap();
+        assert!(language.grammar().unwrap().injection_config.is_some(), "{}'s injections", compiled.name);
+    }
+    for name in ["Markdown", "Markdown-Inline", "JSDoc", "Regex"] {
+        assert!(built().values().any(|l| l.name().as_ref() == name), "{name} is built");
+    }
+}
+
 mod rendered {
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -187,6 +198,100 @@ mod rendered {
         for (text, key) in [("// note", "comment"), ("class", "keyword"), ("return", "keyword"), (string, "string"), ("Greeter", "type")] {
             assert!(runs.iter().any(|(t, k)| t == text && k.split('.').next() == Some(key)), "{side}: {text:?} painted as {key}; runs {runs:?}");
         }
+    }
+
+    fn runs_of(path: &str, text: &str, cx: &mut TestAppContext) -> Vec<(String, String)> {
+        cx.update(|cx| crate::init("Cascadia Mono", 13., cx));
+        let cx: &mut VisualTestContext = cx.add_empty_window();
+        let editor = cx.update(|window, cx| {
+            let buffer = read_only_buffer(text.into(), language_for(path), cx);
+            file_editor(buffer, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| highlighted(&editor, cx))
+    }
+
+    /// Each `(text, key)` of `wanted` no run of `runs` paints: a run holding `text` whose theme key is `key` or below it.
+    fn unpainted(runs: &[(String, String)], wanted: &[(&str, &str)]) -> Vec<String> {
+        let hit = |text: &str, key: &str| runs.iter().any(|(t, k)| t.contains(text) && (k == key || k.starts_with(&format!("{key}."))));
+        wanted.iter().filter(|(t, k)| !hit(t, k)).map(|(t, k)| format!("{t:?} as {k}")).collect()
+    }
+
+    const MARKDOWN: &str = "# Title
+
+- an item with `a code span`, **bold**, *italic* and [a link](https://example.com)
+
+| a | b |
+|---|---|
+| 1 | 2 |
+";
+
+    #[gpui::test]
+    fn markdown_colours_its_inline_text(cx: &mut TestAppContext) {
+        let runs = runs_of("README.md", MARKDOWN, cx);
+        let wanted = [
+            ("# Title", "title"),
+            ("-", "punctuation.list_marker"),
+            ("`a code span`", "text.literal"),
+            ("**bold**", "emphasis.strong"),
+            ("*italic*", "emphasis"),
+            ("a link", "link_text"),
+            ("https://example.com", "link_uri"),
+            ("|", "punctuation"),
+        ];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
+    }
+
+    #[gpui::test]
+    fn fenced_code_takes_its_language(cx: &mut TestAppContext) {
+        let text = "Some code:
+
+```rust
+fn main() { let s = \"hi\"; }
+```
+
+```csharp
+public class A { }
+```
+
+```toml
+[package]
+name = \"x\"
+```
+
+```powershell
+function Get-X { return 1 }
+```
+";
+        let runs = runs_of("notes.md", text, cx);
+        let wanted = [("fn", "keyword"), ("\"hi\"", "string"), ("public", "keyword"), ("A", "type"), ("package", "type"), ("\"x\"", "string"), ("function", "keyword")];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
+    }
+
+    #[gpui::test]
+    fn html_colours_its_script_and_style(cx: &mut TestAppContext) {
+        let text = "<p>hi</p>
+<script>
+const n = 42;
+function f() { return \"s\"; }
+</script>
+<style>
+a { color: red; }
+</style>
+";
+        let runs = runs_of("index.html", text, cx);
+        let wanted = [("p", "tag"), ("const", "keyword"), ("function", "keyword"), ("42", "number"), ("\"s\"", "string"), ("color", "property")];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
+    }
+
+    #[gpui::test]
+    fn php_colours_the_html_around_it(cx: &mut TestAppContext) {
+        let runs = runs_of("index.php", "<p class=\"x\">hi</p>
+<?php echo 'hi'; ?>
+<b>bye</b>
+", cx);
+        let wanted = [("p", "tag"), ("class", "attribute"), ("b", "tag"), ("echo", "keyword"), ("'hi'", "string")];
+        assert_eq!(unpainted(&runs, &wanted), Vec::<String>::new(), "runs {runs:?}");
     }
 
     #[gpui::test]
