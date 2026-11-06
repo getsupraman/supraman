@@ -392,6 +392,15 @@ pub fn contrast(fg: Hsla, bg: Hsla) -> f32 {
     (lf.max(lb) + 0.05) / (lf.min(lb) + 0.05)
 }
 
+/// `colour` at the lightness nearest its own, either way in 0.005 steps, where it `holds`; `None` where none does.
+fn nearest_holding(colour: Hsla, holds: impl Fn(Hsla) -> bool) -> Option<Hsla> {
+    std::iter::once(0.)
+        .chain((1..=200).flat_map(|k| [k as f32 * 0.005, k as f32 * -0.005]))
+        .map(|step| Hsla { l: colour.l + step, ..colour })
+        .filter(|c| (0. ..=1.).contains(&c.l))
+        .find(|c| holds(*c))
+}
+
 fn over(fg: Hsla, bg: Hsla) -> Rgba {
     let (f, b) = (Rgba::from(fg), Rgba::from(bg));
     let blend = |f: f32, b: f32| f * fg.a + b * (1. - fg.a);
