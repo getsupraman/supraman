@@ -1,7 +1,6 @@
 //! The ref panel's rows as plain values: each ref of [`Refs`] as an [`Entry`] at a tree path in its
 //! [`Section`], the order, the filter's match, the section counts, and the refs the graph walks ([`Walk`]).
 
-use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -168,9 +167,10 @@ impl Entry {
     }
 }
 
-/// A–Z ignoring case one name part at a time, so a folder sorts by its own name among the refs beside it.
-fn by_parts(a: &str, b: &str) -> Ordering {
-    a.to_lowercase().split('/').cmp(b.to_lowercase().split('/')).then_with(|| a.cmp(b))
+/// A–Z ignoring case one name part at a time, so a folder sorts by its own name among the refs beside it: `/` as
+/// the lowest character orders the parts as a list of them would.
+fn by_parts(name: &str) -> (String, String) {
+    (name.to_lowercase().replace('/', "\0"), name.to_string())
 }
 
 /// Every ref of `refs` at its tree path, in the panel's order: the sections in turn; a detached HEAD first,
@@ -185,13 +185,13 @@ pub fn entries(refs: &Refs) -> Vec<(String, Entry)> {
         }
     };
     let mut branches: Vec<_> = refs.branches.iter().collect();
-    branches.sort_by(|a, b| by_parts(&a.name, &b.name));
+    branches.sort_by_cached_key(|b| by_parts(&b.name));
     out.extend(branches.into_iter().map(|b| {
         let (ahead, behind) = b.upstream.as_ref().filter(|u| !u.gone).map_or((0, 0), |u| (u.ahead, u.behind));
         (format!("local/{}", b.name), Entry::Branch { name: b.name.clone(), sha: b.sha.clone(), current: current == Some(b.name.as_str()), ahead, behind })
     }));
     let mut remotes: Vec<_> = refs.remotes.iter().collect();
-    remotes.sort_by(|a, b| by_parts(&a.name, &b.name));
+    remotes.sort_by_cached_key(|r| by_parts(&r.name));
     out.extend(remotes.into_iter().map(|r| (format!("remote/{}", r.name), Entry::Remote { name: r.name.clone(), sha: r.sha.clone() })));
     out.extend(refs.worktrees.iter().enumerate().map(|(i, w)| {
         let folder = w.path.file_name().map_or_else(|| w.path.display().to_string(), |n| n.to_string_lossy().into_owned());
@@ -203,7 +203,7 @@ pub fn entries(refs: &Refs) -> Vec<(String, Entry)> {
         (format!("stashes/{i}"), Entry::Stash { sha: s.sha.clone(), index: s.index.clone(), label: s.label(), branch: s.branch.clone() })
     }));
     let mut tags: Vec<_> = refs.tags.iter().collect();
-    tags.sort_by(|a, b| by_parts(&a.name, &b.name));
+    tags.sort_by_cached_key(|t| by_parts(&t.name));
     out.extend(tags.into_iter().map(|t| (format!("tags/{}", t.name), Entry::Tag { name: t.name.clone(), commit: t.commit.clone() })));
     out
 }
