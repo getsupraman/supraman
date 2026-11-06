@@ -132,7 +132,8 @@ impl GitView {
         self.follow.wip_token += 1;
         let token = self.follow.graph_token;
         let count = self.commits.max(FIRST_PAGE);
-        let read = cx.background_spawn(async move { load::read(repo, count) });
+        let hidden = self.ref_panel.read(cx).hidden().clone();
+        let read = cx.background_spawn(async move { load::read(repo, count, &hidden) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |v, cx| v.apply_refresh(token, read, files, cx)).ok();
@@ -157,6 +158,8 @@ impl GitView {
         self.tips = first.tips.into();
         self.heads = first.heads;
         self.wip = first.wip;
+        self.ref_panel.update(cx, |p, cx| p.set_refs(&first.refs, cx));
+        self.seek = None;
         self.keep_selection(selected, cx);
         if let Some(anchor) = anchor {
             self.restore(anchor);

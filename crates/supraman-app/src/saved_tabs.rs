@@ -22,7 +22,8 @@ pub enum SavedTab {
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
     Work { title: String, workspace: String },
-    /// `widths` are its columns' widths, `panel` the commit panel's width and `message` its message box's height, in whole pixels.
+    /// `widths` are its columns' widths, `panel` the commit panel's width, `message` its message box's height and `refs`
+    /// the ref panel's width, in whole pixels; `refs_shut` the ref panel collapsed, `hidden` the refs hidden from the graph.
     Git {
         title: String,
         folder: PathBuf,
@@ -32,7 +33,20 @@ pub enum SavedTab {
         panel: Option<u32>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refs: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        refs_shut: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden: Vec<String>,
     },
+}
+
+impl SavedTab {
+    pub fn git(title: String, folder: PathBuf, sizes: GitSizes) -> SavedTab {
+        let GitSizes { widths, panel, message, refs, refs_shut, hidden } = sizes;
+        SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden }
+    }
 }
 
 impl SavedTab {
@@ -144,8 +158,9 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Shell { title, cwd, shell } => Ok(Reopen::Shell { title: title.clone(), cwd: cwd.clone(), shell: shell.clone().filter(|s| (world.is_file)(&s.program)) }),
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
-        SavedTab::Git { title, folder, widths, panel, message } => {
-            Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), sizes: GitSizes { widths: widths.clone(), panel: *panel, message: *message } })
+        SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden } => {
+            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone() };
+            Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), sizes })
         }
         SavedTab::Claude { title, .. } => {
             let session = saved.session().ok_or_else(|| "it has no conversation to resume".to_string())?;

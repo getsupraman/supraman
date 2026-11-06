@@ -1,5 +1,5 @@
 //! Case-insensitive matching (substring anywhere, prefix from the start) and the pieces of a results
-//! list: a label with its matches highlighted and a count badge. Substring matching, not fuzzy.
+//! list: a label with its matches highlighted and a count badge; [`subsequence`] for a fuzzy match.
 
 use std::ops::Range;
 
@@ -29,6 +29,26 @@ pub fn find_all(hay: &str, needle: &str) -> Vec<Range<usize>> {
         }
     }
     out
+}
+
+/// `needle`'s characters in order anywhere in `hay`, ignoring case, each taken at its first chance: the
+/// matched byte ranges of `hay`, neighbours joined; `None` when they do not all occur, empty for an empty needle.
+pub fn subsequence(hay: &str, needle: &str) -> Option<Vec<Range<usize>>> {
+    let mut wanted = needle.chars().peekable();
+    let mut out: Vec<Range<usize>> = Vec::new();
+    for (at, c) in hay.char_indices() {
+        let Some(&n) = wanted.peek() else { break };
+        if !same(c, n) {
+            continue;
+        }
+        wanted.next();
+        let end = at + c.len_utf8();
+        match out.last_mut() {
+            Some(last) if last.end == at => last.end = end,
+            _ => out.push(at..end),
+        }
+    }
+    wanted.peek().is_none().then_some(out)
 }
 
 /// Whether `hay` starts with `needle`, ignoring ASCII case; an empty needle never matches.
@@ -78,6 +98,15 @@ mod tests {
         assert_eq!(find_all("Grüße GRÜSSE", "grü"), [0..4, 8..12]);
         assert_eq!(find_all("abc", ""), Vec::<Range<usize>>::new());
         assert_eq!(find_all("ab", "abc"), Vec::<Range<usize>>::new());
+    }
+
+    #[test]
+    fn a_subsequence_matches_in_order_and_joins_neighbours() {
+        assert_eq!(subsequence("feature/Login-page", "flp"), Some(vec![0..1, 8..9, 14..15]));
+        assert_eq!(subsequence("origin/main", "MAIN"), Some(vec![7..11]));
+        assert_eq!(subsequence("Grüße", "gü"), Some(vec![0..1, 2..4]));
+        assert_eq!(subsequence("main", "nm"), None, "out of order");
+        assert_eq!(subsequence("abc", ""), Some(Vec::new()));
     }
 
     #[test]

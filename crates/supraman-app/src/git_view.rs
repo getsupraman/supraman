@@ -10,6 +10,7 @@ mod live;
 mod load;
 pub mod probe;
 mod refresh;
+pub mod ref_panel;
 mod wip;
 
 #[cfg(test)]
@@ -36,6 +37,7 @@ use details::{CommitPanel, PanelEvent};
 use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
 use load::{GraphRow, Heads, Problem, Wip};
+use ref_panel::{RefEvent, RefPanel};
 use wip::WipPanel;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
@@ -45,13 +47,21 @@ pub use keys::bind_keys;
 /// The near-end distance that asks for the next page.
 const NEAR_END: Pixels = px(1400.);
 const PANEL_WIDTH: Pixels = px(380.);
+const GRAPH_MIN: f32 = 320.;
+const PANEL_MIN: f32 = 260.;
+/// The ref panel shrinks this much faster than the graph and the commit panel beside it.
+const REFS_SHRINK: f32 = 1000.;
 
-/// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height.
+/// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height; the ref
+/// panel's width, whether it is collapsed, and the refs hidden from the graph.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitSizes {
     pub widths: Vec<u32>,
     pub panel: Option<u32>,
     pub message: Option<u32>,
+    pub refs: Option<u32>,
+    pub refs_shut: bool,
+    pub hidden: Vec<String>,
 }
 
 fn whole(p: Pixels) -> u32 {
@@ -118,7 +128,10 @@ pub struct GitView {
     panel: Entity<CommitPanel>,
     wip_panel: Entity<WipPanel>,
     panel_width: Pixels,
-    _panel_events: [Subscription; 2],
+    ref_panel: Entity<RefPanel>,
+    /// A ref's commit picked before its page is loaded: pages load until it is.
+    seek: Option<SharedString>,
+    _panel_events: [Subscription; 3],
     /// The file viewer in the graph's place, while one is open.
     diff: Option<(Entity<DiffView>, [Subscription; 2])>,
     /// The last viewer's mode and layout, the next one's start.
@@ -144,7 +157,8 @@ impl GitView {
             let widths = table::clamp(&defaults, &saved);
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
-            let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event)];
+            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), sizes.refs, sizes.refs_shut, &sizes.hidden, cx));
+            let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
             let mut view = GitView {
                 folder,
                 home,
@@ -168,6 +182,8 @@ impl GitView {
                 panel,
                 wip_panel,
                 panel_width: sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32)),
+                ref_panel,
+                seek: None,
                 _panel_events: events,
                 diff: None,
                 diff_mode: DiffMode::default(),
@@ -189,6 +205,28 @@ impl GitView {
         }
     }
 
+    fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {
+        match e {
+            RefEvent::Pick(sha) => self.reveal_sha(sha.clone(), cx),
+            RefEvent::Hidden => self.refresh_graph(None, cx),
+        }
+    }
+
+    pub fn ref_panel(&self) -> &Entity<RefPanel> {
+        &self.ref_panel
+    }
+
+    /// Selects the row of `sha`, loading pages until one holds it or none is left.
+    pub fn reveal_sha(&mut self, sha: SharedString, cx: &mut Context<Self>) {
+        self.close_diff(cx);
+        if self.rows.iter().any(|r| r.sha == sha) {
+            self.seek = None;
+            return self.select_sha(&sha, cx);
+        }
+        self.seek = self.more.then_some(sha);
+        self.load_more(cx);
+    }
+
     /// Opens `target`, or goes back to the graph when it is the one open.
     pub fn toggle_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
         if self.diff().is_none_or(|d| d.read(cx).target != target) {
@@ -207,7 +245,15 @@ impl GitView {
     }
 
     pub fn sizes(&self, cx: &App) -> GitSizes {
-        GitSizes { widths: self.widths.iter().map(|w| whole(*w)).collect(), panel: Some(whole(self.panel_width)), message: Some(whole(self.panel.read(cx).message_height())) }
+        let refs = self.ref_panel.read(cx);
+        GitSizes {
+            widths: self.widths.iter().map(|w| whole(*w)).collect(),
+            panel: Some(whole(self.panel_width)),
+            message: Some(whole(self.panel.read(cx).message_height())),
+            refs: Some(whole(refs.width())),
+            refs_shut: refs.shut(),
+            hidden: refs.hidden().iter().cloned().collect(),
+        }
     }
 
     #[cfg(test)]
@@ -299,8 +345,8 @@ impl GitView {
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.load = Load::Loading;
-        let (home, folder) = (self.home.clone(), self.folder.clone());
-        let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder) });
+        let (home, folder, hidden) = (self.home.clone(), self.folder.clone(), self.ref_panel.read(cx).hidden().clone());
+        let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder, &hidden) });
         cx.spawn(async move |this, cx| {
             let first = first.await;
             this.update(cx, |this, cx| this.apply_first(first, cx)).ok();
@@ -319,6 +365,7 @@ impl GitView {
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
                 self.heads = first.heads;
+                self.ref_panel.update(cx, |p, cx| p.set_refs(&first.refs, cx));
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
@@ -380,6 +427,9 @@ impl GitView {
                 self.page_error = Some(e);
             }
         }
+        if let Some(sha) = self.seek.take() {
+            self.reveal_sha(sha, cx);
+        }
         cx.notify();
     }
 
@@ -440,11 +490,31 @@ impl GitView {
         };
         let table = div().flex_1().min_w_0().h_full().child(first);
         let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
-        SplitPane { id: "git-split".into(), min_first: px(320.), min_second: px(260.), default: PANEL_WIDTH }
+        let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;
                 cx.notify();
             }, |_: &mut GitView, _| {}, cx)
+            .size_full();
+        self.with_refs(split.into_any_element(), cx)
+    }
+
+    /// `rest` right of the ref panel: beside a divider that drags its width, or beside its strip when collapsed.
+    /// In a tab too narrow for both, the panel gives its width before the graph and the commit panel do.
+    fn with_refs(&mut self, rest: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let refs = self.ref_panel.read(cx);
+        let (shut, width) = (refs.shut(), refs.width());
+        let panel = self.ref_panel.clone();
+        if shut {
+            let border = cx.theme().colors().border;
+            let strip = div().flex_none().h_full().border_r_1().border_color(border).child(panel);
+            return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(rest)).into_any_element();
+        }
+        let rest_min = px(GRAPH_MIN + PANEL_MIN + 1.);
+        let left = div().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel);
+        let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
+        SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH }
+            .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |_: &mut GitView, _| {}, cx)
             .size_full()
             .into_any_element()
     }
@@ -485,6 +555,13 @@ impl Render for GitView {
             Load::Problem(Problem::Failed(why)) => notice("Cannot read this repository", why.clone(), cx),
             Load::Ready => self.render_split(cx),
         };
-        div().size_full().bg(cx.theme().colors().editor_background).text_sm().child(content)
+        div()
+            .size_full()
+            .key_context(keys::TAB_CONTEXT)
+            .on_action(cx.listener(|this, _: &keys::ToggleRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.toggle_shut(cx))))
+            .on_action(cx.listener(|this, _: &keys::FilterRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.focus_filter(cx))))
+            .bg(cx.theme().colors().editor_background)
+            .text_sm()
+            .child(content)
     }
 }
