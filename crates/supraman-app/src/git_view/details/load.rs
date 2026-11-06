@@ -79,7 +79,7 @@ pub fn load_with(repo: &Repo, sha: &str, order: Order, all_files: bool) -> Resul
 pub fn load_stash(repo: &Repo, stash: Arc<Stash>, order: Order, all_files: bool) -> Result<Loaded, String> {
     let details = supraman_gitman::details(repo, &stash.sha).map_err(|e| e.to_string())?;
     let changes = supraman_gitman::changed_between(repo, &stash.base, &stash.sha).map_err(|e| e.to_string())?;
-    build(repo, &stash.sha.clone(), details, changes, Some(stash), order, all_files)
+    build(repo, &stash.sha, details, changes, Some(stash.clone()), order, all_files)
 }
 
 fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, stash: Option<Arc<Stash>>, order: Order, all_files: bool) -> Result<Loaded, String> {

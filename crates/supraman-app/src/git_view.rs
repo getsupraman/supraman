@@ -67,8 +67,7 @@ const PANEL_MIN: f32 = 260.;
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
 const REFS_SHRINK: f32 = 1000.;
 
-/// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height; the ref
-/// panel's width, whether it is collapsed, the refs hidden from the graph and soloed in it, and its collapsed folders.
+/// A tab's sizes in whole pixels and its ref panel's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GitSizes {
