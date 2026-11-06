@@ -157,7 +157,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
         SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden } => {
-            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone(), collapsed: Vec::new() };
+            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone(), collapsed: Vec::new(), solo: Vec::new() };
             Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), sizes })
         }
         SavedTab::Claude { title, .. } => {

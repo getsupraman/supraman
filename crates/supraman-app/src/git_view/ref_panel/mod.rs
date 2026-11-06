@@ -1,17 +1,18 @@
 //! The Git tab's left panel: the repository's refs in five sections (local and remote branches, worktrees,
-//! stashes, tags) on [`supraman_ui::tree`], a fuzzy filter over them, and the set of refs hidden from the graph.
-//! It reads nothing itself: the tab hands it the refs it loaded and walks the graph without the hidden ones.
+//! stashes, tags) on [`supraman_ui::tree`], a fuzzy filter over them, the refs hidden from the graph or soloed in
+//! it, and a section's overlay beside the collapsed strip. It reads nothing itself: the tab hands it the refs it
+//! loaded and walks the graph as its [`Walk`] says.
 
 mod entries;
+mod overlay;
 mod render;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, SharedString, Subscription, Window, px};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
 use supraman_gitman::Refs;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::TextInput;
@@ -19,7 +20,7 @@ use supraman_ui::tree::TreeState;
 
 use super::GitSizes;
 
-pub use entries::{Count, Entry, Section, counts, entries, without};
+pub use entries::{Count, Entry, Section, Walk, counts, entries, tips, without};
 
 /// The tree's id: its rows paint under `refpanel-row-<path>`.
 pub const LIST: &str = "refpanel";
@@ -28,19 +29,23 @@ pub const MIN_WIDTH: Pixels = px(160.);
 /// The collapsed panel's strip.
 pub const STRIP: Pixels = px(36.);
 
-/// The hide keys of the refs under a folder.
+/// The hide and solo keys of the refs under a folder.
 #[derive(Debug, Clone, Default)]
-pub struct Keys(pub Vec<String>);
+pub struct Keys {
+    pub hide: Vec<String>,
+    pub solo: Vec<String>,
+}
 
 fn fold(keys: &mut Keys, entry: &Entry) {
-    keys.0.extend(entry.hide_key());
+    keys.hide.extend(entry.hide_key());
+    keys.solo.extend(entry.solo_key());
 }
 
 pub enum RefEvent {
     /// A ref's row was picked: its commit.
     Pick(SharedString),
-    /// The hidden set changed.
-    Hidden,
+    /// The hidden or the soloed set changed.
+    Walk,
     /// The panel was collapsed or expanded, or a folder opened or closed.
     Layout,
 }
@@ -49,7 +54,7 @@ pub struct RefPanel {
     hits: HitTargets,
     entries: Rc<Vec<(String, Entry)>>,
     tree: TreeState<Entry, Keys>,
-    hidden: BTreeSet<String>,
+    walk: Walk,
     filter: Option<(Entity<TextInput>, Subscription)>,
     width: Pixels,
     shut: bool,
@@ -57,33 +62,38 @@ pub struct RefPanel {
     built: bool,
     /// The folders to close when the tree is first built.
     collapsed: Vec<String>,
+    overlay: Option<overlay::Overlay>,
+    /// The tab's own focus, where the keyboard goes when the overlay holding it closes.
+    tab: FocusHandle,
 }
 
 impl EventEmitter<RefEvent> for RefPanel {}
 
 impl RefPanel {
-    pub fn new(hits: HitTargets, cx: &mut Context<Self>) -> Self {
+    pub fn new(hits: HitTargets, tab: FocusHandle, cx: &mut Context<Self>) -> Self {
         let tree = TreeState::new(cx);
         tree.match_with(|entry: &Entry, filter| entry.matches(filter));
         RefPanel {
             hits,
             entries: Rc::new(Vec::new()),
             tree,
-            hidden: BTreeSet::new(),
+            walk: Walk::default(),
             filter: None,
             width: DEFAULT_WIDTH,
             shut: false,
             focus_filter: false,
             built: false,
             collapsed: Vec::new(),
+            overlay: None,
+            tab,
         }
     }
 
-    /// The ref panel's part of a repo's layout: its width, collapsed, the hidden refs and the folders closed.
+    /// The ref panel's part of a repo's layout: its width, collapsed, the hidden and soloed refs and the folders closed.
     pub fn restore(&mut self, sizes: &GitSizes, cx: &mut Context<Self>) {
         self.width = sizes.refs.map_or(DEFAULT_WIDTH, |w| px(w as f32)).max(MIN_WIDTH);
         self.shut = sizes.refs_shut;
-        self.hidden = sizes.hidden.iter().cloned().collect();
+        self.walk = Walk { hidden: sizes.hidden.iter().cloned().collect(), solo: sizes.solo.iter().cloned().collect() };
         self.collapsed = sizes.collapsed.clone();
         if self.built {
             self.close_collapsed();
@@ -100,6 +110,7 @@ impl RefPanel {
             self.close_collapsed();
         }
         self.entries = Rc::new(entries);
+        self.refill_overlay();
         cx.notify();
     }
 
@@ -116,36 +127,54 @@ impl RefPanel {
         self.tree.closed().iter().map(|p| p.to_string()).collect()
     }
 
-    pub fn hidden(&self) -> &BTreeSet<String> {
-        &self.hidden
+    pub fn walk(&self) -> &Walk {
+        &self.walk
     }
 
     /// Whether every one of `keys` is hidden; never for none.
     pub fn all_hidden(&self, keys: &[String]) -> bool {
-        !keys.is_empty() && keys.iter().all(|k| self.hidden.contains(k))
+        !keys.is_empty() && keys.iter().all(|k| self.walk.hidden.contains(k))
+    }
+
+    /// Whether every one of `keys` is soloed; never for none.
+    pub fn all_soloed(&self, keys: &[String]) -> bool {
+        !keys.is_empty() && keys.iter().all(|k| self.walk.solo.contains(k))
     }
 
     /// Shows `keys` when all are hidden, else hides them all.
     pub fn toggle_hidden(&mut self, keys: &[String], cx: &mut Context<Self>) {
-        if keys.is_empty() {
-            return;
+        let all = self.all_hidden(keys);
+        Self::toggle(&mut self.walk.hidden, keys, all);
+        self.walk_changed(cx);
+    }
+
+    /// Unsolos `keys` when all are soloed, else solos them all.
+    pub fn toggle_solo(&mut self, keys: &[String], cx: &mut Context<Self>) {
+        let all = self.all_soloed(keys);
+        Self::toggle(&mut self.walk.solo, keys, all);
+        self.walk_changed(cx);
+    }
+
+    fn toggle(set: &mut std::collections::BTreeSet<String>, keys: &[String], all: bool) {
+        for key in keys {
+            if all {
+                set.remove(key);
+            } else {
+                set.insert(key.clone());
+            }
         }
-        if self.all_hidden(keys) {
-            keys.iter().for_each(|k| {
-                self.hidden.remove(k);
-            });
-        } else {
-            self.hidden.extend(keys.iter().cloned());
-        }
-        cx.emit(RefEvent::Hidden);
+    }
+
+    fn walk_changed(&mut self, cx: &mut Context<Self>) {
+        cx.emit(RefEvent::Walk);
         cx.notify();
     }
 
+    /// Clears the hidden and the soloed refs.
     pub fn show_all(&mut self, cx: &mut Context<Self>) {
-        if !self.hidden.is_empty() {
-            self.hidden.clear();
-            cx.emit(RefEvent::Hidden);
-            cx.notify();
+        if self.walk != Walk::default() {
+            self.walk = Walk::default();
+            self.walk_changed(cx);
         }
     }
 
@@ -160,7 +189,7 @@ impl RefPanel {
 
     /// Each section's count as its header shows it, in [`Section::ALL`]'s order.
     pub fn counts(&self) -> [Count; 5] {
-        counts(&self.entries, &self.hidden, &self.filter())
+        counts(&self.entries, &self.walk, &self.filter())
     }
 
     pub fn width(&self) -> Pixels {
@@ -178,17 +207,7 @@ impl RefPanel {
 
     pub fn toggle_shut(&mut self, cx: &mut Context<Self>) {
         self.shut = !self.shut;
-        cx.emit(RefEvent::Layout);
-        cx.notify();
-    }
-
-    /// The panel open on `section`: its header open, selected and in view.
-    pub fn open_section(&mut self, section: Section, cx: &mut Context<Self>) {
-        self.shut = false;
-        if !self.tree.is_open(section.key()) {
-            self.tree.toggle(section.key());
-        }
-        self.tree.select(Some(section.key()));
+        self.overlay = None;
         cx.emit(RefEvent::Layout);
         cx.notify();
     }
@@ -196,6 +215,7 @@ impl RefPanel {
     /// The panel open with its filter box taking the keyboard on the next frame.
     pub fn focus_filter(&mut self, cx: &mut Context<Self>) {
         self.shut = false;
+        self.overlay = None;
         self.focus_filter = true;
         cx.notify();
     }
@@ -204,11 +224,11 @@ impl RefPanel {
         self.entries.iter().find(|(p, _)| p == path).map(|(_, e)| e)
     }
 
-    /// A row picked: its ref's commit to the graph.
-    fn picked(&mut self, path: &SharedString, cx: &mut Context<Self>) {
-        if let Some(sha) = self.entry(path).and_then(Entry::commit) {
-            cx.emit(RefEvent::Pick(SharedString::from(sha.to_string())));
-        }
+    /// A row picked: its ref's commit to the graph; whether it has one.
+    fn picked(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        let Some(sha) = self.entry(path).and_then(Entry::commit) else { return false };
+        cx.emit(RefEvent::Pick(SharedString::from(sha.to_string())));
+        true
     }
 
     /// The paths of the rows shown, top to bottom.

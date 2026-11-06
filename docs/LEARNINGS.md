@@ -5864,3 +5864,17 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
 - **Hiding a ref is a walk without it** (gv-25): `ref_panel::without` drops the hidden branches, remote branches,
   stashes and linked worktrees on a hidden branch before `Refs::tips` and `Layout::new`, so their labels go too;
   the current branch never hides.
+
+## 2026-11-06 — gitman-viewer/31-33 the ref panel's overlay, solo and Ctrl+J after Show all (gv-31)
+
+- **The window's root took the keyboard on every click** (gv-31, gitman-viewer/33): FleetView's left mouse-down
+  listener focused its own handle whenever that handle was not the focused one, after a focusable child had taken
+  focus on the same mouse-down. A table row gave focus back on its click; Show all, an eye or a strip icon took none,
+  so the keyboard stayed on the root, outside the `GitTab` key context, and Ctrl+J and Ctrl+Alt+F went nowhere. The
+  root now leaves a mouse-down a child's focus took (`window.default_prevented()`), and the Git tab tracks a focus
+  of its own, so a click on nothing focusable in it keeps the keyboard in the tab. Step 7g presses Ctrl+J right
+  after Show all.
+- **A solo is a walk of the soloed refs and HEAD** (gv-31): `ref_panel::Walk` holds the hidden and the soloed refs;
+  while any is soloed, `without` keeps only the soloed branches and remote branches with the current branch, drops
+  the stashes and the worktrees on no walked branch, and `ref_panel::tips` leaves the tags out of the tips while
+  they still label the commits shown.

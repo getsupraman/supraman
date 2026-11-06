@@ -17,7 +17,7 @@ const LOST: &str = "Git tabs open at their default layout, and none is kept unti
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct File {
-    /// The layout last kept in any repo, without its hidden refs and collapsed folders: a new repo's start.
+    /// The layout last kept in any repo, without its hidden and soloed refs and collapsed folders: a new repo's start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last: Option<GitSizes>,
     #[serde(default)]
@@ -48,7 +48,7 @@ impl File {
 
     /// Keeps `sizes` as `key`'s and as the last used; whether anything changed.
     pub fn remember(&mut self, key: &str, sizes: &GitSizes) -> bool {
-        let last = GitSizes { hidden: Vec::new(), collapsed: Vec::new(), ..sizes.clone() };
+        let last = GitSizes { hidden: Vec::new(), collapsed: Vec::new(), solo: Vec::new(), ..sizes.clone() };
         let changed = self.repos.get(key) != Some(sizes) || self.last.as_ref() != Some(&last);
         self.repos.insert(key.to_string(), sizes.clone());
         self.last = Some(last);
@@ -149,6 +149,7 @@ mod tests {
             refs_shut: false,
             hidden: vec!["refs/heads/topic".into()],
             collapsed: vec!["local/topic".into()],
+            solo: vec!["refs/remotes/origin/topic".into()],
         }
     }
 
@@ -157,7 +158,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let (mut store, notice) = load(Some(home.path()));
         assert!(notice.is_none() && store.get().repos.is_empty());
-        let (a, b) = (sizes(80), GitSizes { widths: vec![100, 60, 250, 140, 80], refs_shut: true, hidden: Vec::new(), collapsed: Vec::new(), ..sizes(0) });
+        let (a, b) = (sizes(80), GitSizes { widths: vec![100, 60, 250, 140, 80], refs_shut: true, hidden: Vec::new(), collapsed: Vec::new(), solo: Vec::new(), ..sizes(0) });
         store.edit(|f| f.remember("p:/a", &a)).expect("a change").write().unwrap();
         store.edit(|f| f.remember("p:/b", &b)).expect("a change").write().unwrap();
         assert!(store.edit(|f| f.remember("p:/b", &b)).is_none(), "no change, no save");
@@ -170,7 +171,7 @@ mod tests {
         let mut file = file.clone();
         file.remember("p:/a", &a);
         let fresh = file.opening("p:/c", &GitSizes::default()).sizes;
-        assert!(fresh.hidden.is_empty() && fresh.collapsed.is_empty() && fresh.widths == a.widths, "{fresh:?}");
+        assert!(fresh.hidden.is_empty() && fresh.collapsed.is_empty() && fresh.solo.is_empty() && fresh.widths == a.widths, "{fresh:?}");
         assert!(home.path().join("gitman").join("layout.json").is_file());
     }
 

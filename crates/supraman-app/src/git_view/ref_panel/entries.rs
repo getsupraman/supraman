@@ -1,5 +1,5 @@
 //! The ref panel's rows as plain values: each ref of [`Refs`] as an [`Entry`] at a tree path in its
-//! [`Section`], the order, the filter's match, the section counts, and the refs the graph walks with a set hidden.
+//! [`Section`], the order, the filter's match, the section counts, and the refs the graph walks ([`Walk`]).
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -98,6 +98,20 @@ impl Entry {
         }
     }
 
+    /// What the solo set holds for it: any branch, the current one too, and a remote branch.
+    pub fn solo_key(&self) -> Option<String> {
+        match self {
+            Entry::Branch { name, .. } => Some(branch_key(name)),
+            Entry::Remote { name, .. } => Some(remote_key(name)),
+            _ => None,
+        }
+    }
+
+    /// Whether the graph walks from it: a ref that never hides always.
+    pub fn walked(&self, walk: &Walk) -> bool {
+        self.hide_key().is_none_or(|k| walk.walks(&k))
+    }
+
     /// The commit a click selects in the graph.
     pub fn commit(&self) -> Option<&str> {
         match self {
@@ -194,39 +208,68 @@ pub fn entries(refs: &Refs) -> Vec<(String, Entry)> {
     out
 }
 
-/// A section's refs the filter keeps, and how many of those are not hidden.
+/// The refs hidden from the graph and the refs soloed in it: while any is soloed, the walk is the soloed refs
+/// and HEAD alone, the hidden set kept for when the last solo goes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Walk {
+    pub hidden: BTreeSet<String>,
+    pub solo: BTreeSet<String>,
+}
+
+impl Walk {
+    pub fn soloing(&self) -> bool {
+        !self.solo.is_empty()
+    }
+
+    /// Whether the ref of hide or solo key `key` is a tip of the walk.
+    pub fn walks(&self, key: &str) -> bool {
+        if self.soloing() { self.solo.contains(key) } else { !self.hidden.contains(key) }
+    }
+}
+
+/// A section's refs the filter keeps, and how many of those the graph walks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Count {
     pub shown: usize,
     pub total: usize,
 }
 
-pub fn counts(entries: &[(String, Entry)], hidden: &BTreeSet<String>, filter: &str) -> [Count; 5] {
+pub fn counts(entries: &[(String, Entry)], walk: &Walk, filter: &str) -> [Count; 5] {
     let mut counts = [Count::default(); 5];
     for (path, entry) in entries.iter().filter(|(_, e)| e.matches(filter)) {
         let Some(at) = Section::of(path).and_then(|s| Section::ALL.iter().position(|a| *a == s)) else { continue };
         counts[at].total += 1;
-        if entry.hide_key().is_none_or(|k| !hidden.contains(&k)) {
+        if entry.walked(walk) {
             counts[at].shown += 1;
         }
     }
     counts
 }
 
-/// `refs` without the hidden ones, the current branch always kept: the graph walks from these tips and labels these refs.
-pub fn without(refs: &Refs, hidden: &BTreeSet<String>) -> Refs {
-    if hidden.is_empty() {
+/// The refs the graph labels: `refs` without those out of the walk, the current branch always kept; while soloing,
+/// the stashes and the worktrees on no walked branch go too, and the tags only label (see [`tips`]).
+pub fn without(refs: &Refs, walk: &Walk) -> Refs {
+    if *walk == Walk::default() {
         return refs.clone();
     }
     let current = match &refs.head {
         Head::Branch { name, .. } => Some(name.clone()),
         Head::Detached { .. } => None,
     };
-    let shown = |name: &str| current.as_deref() == Some(name) || !hidden.contains(&branch_key(name));
+    let shown = |name: &str| current.as_deref() == Some(name) || walk.walks(&branch_key(name));
     let mut out = refs.clone();
     out.branches.retain(|b| shown(&b.name));
-    out.remotes.retain(|r| !hidden.contains(&remote_key(&r.name)));
-    out.stashes.retain(|s| !hidden.contains(&stash_key(&s.sha)));
-    out.worktrees.retain(|w| w.branch.as_deref().is_none_or(shown));
+    out.remotes.retain(|r| walk.walks(&remote_key(&r.name)));
+    out.stashes.retain(|s| walk.walks(&stash_key(&s.sha)));
+    let soloing = walk.soloing();
+    out.worktrees.retain(|w| w.branch.as_deref().map_or(!soloing, shown));
     out
+}
+
+/// The commits the graph walks from: `labelled`'s ([`without`]), its tags only while nothing is soloed.
+pub fn tips(labelled: &Refs, walk: &Walk) -> Vec<String> {
+    if !walk.soloing() {
+        return labelled.tips();
+    }
+    Refs { tags: Vec::new(), ..labelled.clone() }.tips()
 }
