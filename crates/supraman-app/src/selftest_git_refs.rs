@@ -1,17 +1,18 @@
 //! `--selftest` step 7g's ref panel: its sections and counts from the fixture, a branch's row selecting its commit,
-//! a branch soloed leaving only its commits and HEAD's, a branch hidden by its eye leaving the graph with the commit
+//! a branch soloed from its right-click menu leaving only its commits and HEAD's, a branch hidden by its mark leaving the graph with the commit
 //! only it reaches, Ctrl+J right after Show all collapsing the panel to its strip, and a section's overlay picking a
-//! ref. A unit test cannot click the real window's rows, eyes and solos or send Ctrl+J through the window's keymap
+//! ref. A unit test cannot click the real window's rows, marks and menus or send Ctrl+J through the window's keymap
 //! after the window's own focus handling.
 
 use std::sync::Arc;
 
 use anyhow::bail;
-use gpui::{AsyncWindowContext, Entity, Keystroke};
+use gpui::{AsyncWindowContext, Entity, Keystroke, MouseButton};
 use supraman_gitman::fixture::Fixture;
 
 use crate::git_view::{GitView, Selected};
 use crate::selftest_git::{painted, probe, tap, until_probe};
+use crate::selftest_manage::press_painted;
 use crate::view::FleetView;
 
 const SOLO: &str = "topic/solo";
@@ -68,22 +69,23 @@ async fn solo_branch(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Arc<Fi
 }
 
 async fn solo(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, only: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let (key, button) = (format!("refs/heads/{SOLO}"), format!("refpanel-solo-local/{SOLO}"));
+    let (key, mark) = (format!("refs/heads/{SOLO}"), format!("refpanel-mark-local/{SOLO}"));
     let stashes = probe(view, git, cx).rows.iter().filter(|r| r.stash).count();
-    tap(view, &button, cx).await?;
+    press_painted(view, &format!("refpanel-name-local/{SOLO}"), MouseButton::Right, cx).await?;
+    tap(view, "menu-ref-solo", cx).await?;
     until_probe(view, git, "topic/solo soloed: only its commit and HEAD's history walked", cx, |p, _| {
         let walked = p.row_of(only).is_some() && p.row_of(f.sha("ahead")).is_some() && p.rows.iter().all(|r| !r.stash);
         (p.refs.solo == [key.clone()] && walked && p.refs.counts[0].0 == 2).then_some(())
     })
     .await?;
-    tap(view, &button, cx).await?;
+    tap(view, &mark, cx).await?;
     until_probe(view, git, "the solo cleared and the stashes back", cx, |p, _| (p.refs.solo.is_empty() && p.rows.iter().filter(|r| r.stash).count() == stashes).then_some(())).await?;
-    Ok(format!("its solo walks {SOLO} and HEAD alone: its commit stays, the {stashes} stashes leave, LOCAL counts 2 shown; clearing it brings them back"))
+    Ok(format!("its menu's Solo walks {SOLO} and HEAD alone: its commit stays, the {stashes} stashes leave, LOCAL counts 2 shown; clearing it brings them back"))
 }
 
 async fn hide(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, only: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let local = probe(view, git, cx).refs.counts[0];
-    tap(view, &format!("refpanel-eye-local/{SOLO}"), cx).await?;
+    tap(view, &format!("refpanel-mark-local/{SOLO}"), cx).await?;
     let key = format!("refs/heads/{SOLO}");
     until_probe(view, git, "topic/solo hidden and its commit out of the graph", cx, |p, _| {
         (p.row_of(only).is_none() && p.row_of(f.sha("merge")).is_some() && p.refs.hidden == [key.clone()] && p.refs.counts[0] == (local.0 - 1, local.1)).then_some(())
@@ -95,7 +97,7 @@ async fn hide(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, only
         cx.notify();
     });
     until_probe(view, git, "Show all bringing topic/solo's commit back", cx, |p, v| (p.row_of(only).is_some() && p.refs.hidden.is_empty() && !painted(v, "refpanel-show-all")).then_some(())).await?;
-    Ok(format!("its eye hides {SOLO}: the commit only it reaches leaves the graph, LOCAL counts {}/{}; Show all brings it back", local.0 - 1, local.1))
+    Ok(format!("its mark hides {SOLO}: the commit only it reaches leaves the graph, LOCAL counts {}/{}; Show all brings it back", local.0 - 1, local.1))
 }
 
 /// Ctrl+J pressed with nothing clicked since Show all.

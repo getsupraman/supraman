@@ -1,4 +1,4 @@
-//! `--selftest` step 7g's reopen: a ref hidden by its eye and the graph column narrowed by its divider, the Git tab
+//! `--selftest` step 7g's reopen: a ref hidden by its mark and the graph column narrowed by its divider, the Git tab
 //! closed and opened again from the sidebar: its columns, panels and hidden refs come back from the layout file. A
 //! unit test cannot close a FleetView tab and click the sidebar's icon to open it again.
 
@@ -16,7 +16,7 @@ const SOLO: &str = "refs/heads/topic/solo";
 
 pub async fn check(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     if !probe(view, git, cx).refs.hidden.iter().any(|h| h == SOLO) {
-        tap(view, "refpanel-eye-local/topic/solo", cx).await?;
+        tap(view, "refpanel-mark-local/topic/solo", cx).await?;
     }
     until_probe(view, git, "topic/solo hidden", cx, |p, _| p.refs.hidden.iter().any(|h| h == SOLO).then_some(())).await?;
     let before = view.read_with(cx, |_, cx| git.read(cx).sizes(cx));

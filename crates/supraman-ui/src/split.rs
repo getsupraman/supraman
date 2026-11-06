@@ -1,7 +1,10 @@
-//! Two panels side by side with a draggable divider between them, and a box over a bar that drags its
-//! height. The owner keeps the width or height, sizes the panel or box by it, and persists it.
+//! Two panels side by side with a draggable divider between them, a box over a bar that drags its height,
+//! and panes stacked in a column whose borders drag height between neighbours. The owner keeps the width or
+//! heights, and persists them.
 
-use gpui::{ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, SharedString, Stateful, Window, div, prelude::*, px};
+use std::{cell::RefCell, rc::Rc};
+
+use gpui::{AnyElement, Bounds, ClickEvent, Context, CursorStyle, Div, DragMoveEvent, MouseButton, Pixels, SharedString, Stateful, Window, canvas, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
@@ -155,6 +158,114 @@ impl HeightBar {
     }
 }
 
+/// Panes in a column, each a header over a body: a closed pane is its header alone, the open ones share the
+/// rest in proportion to their heights. The border above a pane's header drags height between the nearest open
+/// pane above it and the nearest at or below it, each held at `min`; a double-click shares the height evenly.
+pub struct Stack {
+    /// The column's element id; its borders paint under `<id>-divider-<pane>`.
+    pub id: SharedString,
+    /// An open pane's least height, its header included.
+    pub min: Pixels,
+}
+
+/// One pane of a [`Stack`]: `body` `None` while it is closed; `height` the owner's, zero for an even share.
+pub struct Pane {
+    pub header: AnyElement,
+    pub body: Option<AnyElement>,
+    pub height: Pixels,
+}
+
+/// The panes' bounds as last laid out, which a drag measures from; the owner keeps it between frames.
+#[derive(Clone, Default)]
+pub struct StackState(Rc<RefCell<Vec<Option<Bounds<Pixels>>>>>);
+
+impl Stack {
+    /// `on_resize` gets every pane's height while a border is dragged (the open ones as laid out, a closed
+    /// one's its own) and all zero on a double-click; `on_resize_end` follows when the button is let go and
+    /// after a double-click.
+    pub fn render<V: 'static>(
+        &self,
+        state: &StackState,
+        panes: Vec<Pane>,
+        hits: &HitTargets,
+        on_resize: impl Fn(&mut V, Vec<Pixels>, &mut Context<V>) + Clone + 'static,
+        on_resize_end: impl Fn(&mut V, &mut Context<V>) + Clone + 'static,
+        cx: &mut Context<V>,
+    ) -> Div {
+        let given: Vec<(bool, Pixels)> = panes.iter().map(|p| (p.body.is_some(), p.height)).collect();
+        state.0.borrow_mut().resize(panes.len(), None);
+        let weights = weights(&given);
+        let (id, min, measured) = (self.id.clone(), self.min, state.clone());
+        let dragged = format!("{id}-divider-");
+        let drag = on_resize.clone();
+        let column = div().flex().flex_col().size_full().min_h_0().overflow_hidden().on_drag_move(cx.listener(move |this, e: &DragMoveEvent<DraggedDivider>, _, cx| {
+            let divider = e.drag(cx);
+            if !divider.0.starts_with(&dragged) {
+                return;
+            }
+            if let Some(heights) = dragged_heights(&measured.0.borrow(), &given, divider.1, e.event.position.y, min) {
+                drag(this, heights, cx);
+            }
+        }));
+        let count = panes.len();
+        let children = panes.into_iter().enumerate().map(|(i, pane)| {
+            let open = pane.body.is_some();
+            let border = (i > 0).then(|| {
+                let (reset, end, reset_end) = (on_resize.clone(), on_resize_end.clone(), on_resize_end.clone());
+                let key = format!("{id}-divider-{i}");
+                grip(key.clone().into(), i, CursorStyle::ResizeUpDown, move |this, cx| end(this, cx), move |this, cx| {
+                    reset(this, vec![px(0.); count], cx);
+                    reset_end(this, cx);
+                }, cx)
+                .absolute()
+                .left_0()
+                .top(px(-3.))
+                .w_full()
+                .h(px(7.))
+                .child(hit_target(hits, key))
+            });
+            let probe = state.clone();
+            let record = canvas(move |bounds, _, _| probe.0.borrow_mut()[i] = Some(bounds), |_, _, _, _| {}).absolute().top_0().left_0().size_full();
+            let mut pane_div = div().relative().flex().flex_col().min_h_0().child(record).child(div().relative().flex_none().child(pane.header).children(border));
+            if open {
+                pane_div.style().flex_grow = Some(weights[i]);
+                pane_div = pane_div.flex_shrink(1.).flex_basis(px(0.)).min_h(min).children(pane.body.map(|b| div().flex().flex_col().flex_1().min_h_0().child(b)));
+            } else {
+                pane_div = pane_div.flex_none();
+            }
+            pane_div
+        });
+        column.children(children)
+    }
+}
+
+/// Each open pane's flex weight: its height, or the mean of the set ones (one apiece when none is set).
+fn weights(given: &[(bool, Pixels)]) -> Vec<f32> {
+    let set: Vec<f32> = given.iter().filter(|(open, h)| *open && *h > px(0.)).map(|(_, h)| f32::from(*h)).collect();
+    let fill = if set.is_empty() { 1. } else { set.iter().sum::<f32>() / set.len() as f32 };
+    given.iter().map(|(_, h)| if *h > px(0.) { f32::from(*h) } else { fill }).collect()
+}
+
+/// Every pane's height with the border above pane `border` at `y`: the nearest open pane above it and the nearest
+/// open one at or below it trade height, each held at `min`; `None` without one on either side or unmeasured.
+fn dragged_heights(bounds: &[Option<Bounds<Pixels>>], given: &[(bool, Pixels)], border: usize, y: Pixels, min: Pixels) -> Option<Vec<Pixels>> {
+    let above = (0..border).rev().find(|i| given[*i].0)?;
+    let below = (border..given.len()).find(|i| given[*i].0)?;
+    let at = |i: usize| bounds.get(i).copied().flatten();
+    let (top, bottom) = (at(above)?.top(), at(below)?.bottom());
+    let fixed = |range: std::ops::Range<usize>| range.map(|i| at(i).map_or(px(0.), |b| b.size.height)).fold(px(0.), |s, h| s + h);
+    let (over, under) = (fixed(above + 1..border), fixed(border..below));
+    let shared = bottom - top - over - under;
+    if shared < min * 2. {
+        return None;
+    }
+    let first = (y - top - over).clamp(min, shared - min);
+    let mut heights: Vec<Pixels> = given.iter().enumerate().map(|(i, (open, h))| if *open { at(i).map_or(*h, |b| b.size.height) } else { *h }).collect();
+    heights[above] = first;
+    heights[below] = shared - first;
+    Some(heights)
+}
+
 /// The drag plumbing every divider and bar shares: a [`DraggedDivider`] drag the parent's `on_drag_move`
 /// follows, `on_end` when the button is let go, and `on_reset` on a double-click.
 fn grip<V: 'static>(
@@ -279,4 +390,60 @@ mod tests {
         let width = view.read_with(cx, |o, _| o.width);
         assert!(width >= px(259.) && width <= px(261.), "held at the second panel's min: {width:?}");
     }
+    struct Panes {
+        hits: HitTargets,
+        state: StackState,
+        heights: Vec<Pixels>,
+        ends: usize,
+    }
+
+    impl Render for Panes {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let panes = ["a", "b", "c"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| Pane {
+                    header: div().h(px(20.)).child(*name).into_any_element(),
+                    body: (i != 1).then(|| div().size_full().into_any_element()),
+                    height: self.heights[i],
+                })
+                .collect();
+            let stack = Stack { id: "stack".into(), min: px(60.) };
+            let column = stack.render(&self.state, panes, &self.hits, |this: &mut Panes, heights, cx| {
+                this.heights = heights;
+                cx.notify();
+            }, |this: &mut Panes, _| this.ends += 1, cx);
+            div().h(px(320.)).w(px(200.)).child(column)
+        }
+    }
+
+    #[gpui::test]
+    fn a_stacks_border_trades_height_between_the_open_panes_beside_it(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (view, cx) = cx.add_window_view(|_, _| Panes { hits: HitTargets::default(), state: StackState::default(), heights: vec![px(0.); 3], ends: 0 });
+        cx.run_until_parked();
+        let bounds = |cx: &mut VisualTestContext| view.read_with(cx, |p, _| p.state.0.borrow().iter().map(|b| b.unwrap().size.height).collect::<Vec<_>>());
+        assert_eq!(bounds(cx), [px(150.), px(20.), px(150.)], "the open panes share what the closed header leaves");
+        let border = |key: &str, cx: &mut VisualTestContext| view.read_with(cx, |p, _| p.hits.borrow().get(key).copied()).expect("a border paints").bounds.center();
+        let start = border("stack-divider-2", cx);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start + point(px(0.), px(10.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start + point(px(0.), px(30.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(start + point(px(0.), px(30.)), MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        let heights = view.read_with(cx, |p, _| p.heights.clone());
+        assert!((heights[0] - px(180.)).abs() < px(1.) && (heights[2] - px(120.)).abs() < px(1.) && heights[1] == px(0.), "below the closed pane, A and C trade: {heights:?}");
+        let laid = bounds(cx);
+        assert!((laid[0] - px(180.)).abs() < px(1.) && (laid[2] - px(120.)).abs() < px(1.), "laid out so: {laid:?}");
+        assert_eq!(view.read_with(cx, |p, _| p.ends), 1);
+        let start = border("stack-divider-1", cx);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(start - point(px(0.), px(20.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(point(start.x, px(1.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(point(start.x, px(1.)), MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        let heights = view.read_with(cx, |p, _| p.heights.clone());
+        assert!(heights[0] == px(60.) && (heights[2] - px(240.)).abs() < px(1.), "the border above the closed pane too, A held at its min: {heights:?}");
+    }
+
 }

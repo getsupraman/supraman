@@ -158,9 +158,12 @@ impl GitView {
         self.tips = first.tips.into();
         self.heads = first.heads;
         self.wip = first.wip;
-        self.ref_panel.update(cx, |p, cx| p.set_refs(&first.refs, cx));
+        self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
         self.seek = None;
-        self.keep_selection(selected, cx);
+        match self.reveal_after.take() {
+            Some(sha) => self.reveal_sha(sha, cx),
+            None => self.keep_selection(selected, cx),
+        }
         if let Some(anchor) = anchor {
             self.restore(anchor);
         }

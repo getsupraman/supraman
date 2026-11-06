@@ -6,7 +6,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, DragMoveEvent, FocusHandle, Hsla, KeyBinding, KeyDownEvent, Pixels, ScrollStrategy, SharedString,
-    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, uniform_list,
+    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, rems, uniform_list,
 };
 use theme::ActiveTheme as _;
 
@@ -23,6 +23,9 @@ pub use widths::{clamp, drag, fit};
 gpui::actions!(table, [SelectPrevious, SelectNext, SelectPageUp, SelectPageDown, SelectFirst, SelectLast]);
 
 pub const KEY_CONTEXT: &str = "Table";
+
+/// A cell's padding left and right, in rems.
+pub const CELL_PAD: f32 = 0.5;
 
 pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
@@ -325,14 +328,16 @@ impl<V: 'static> Table<V> {
     }
 
     pub fn render(self, cx: &mut Context<V>) -> Stateful<Div> {
-        let widths: Rc<[Pixels]> = {
+        let (widths, measured): (Rc<[Pixels]>, bool) = {
             let mut inner = self.state.inner.borrow_mut();
             inner.rows = self.rows.saturating_sub(self.footer);
             inner.row_height = self.row_height;
             let total = if inner.width > px(0.) { inner.width } else { clamp(&self.columns, &self.widths).iter().fold(px(0.), |s, w| s + *w) };
             inner.current = fit(&self.columns, &inner.current, &self.widths, total);
-            inner.current.as_slice().into()
+            (inner.current.as_slice().into(), inner.width > px(0.))
         };
+        // Columns fitted to a width not yet measured would jump on the next frame; the last column fills the row either way.
+        let unfitted = !measured && self.columns.len() > 1;
         let on_key = self.on_key.clone();
         let keys = cx.listener(move |this: &mut V, e: &KeyDownEvent, window, cx| {
             if on_key.as_ref().is_some_and(|f| f(this, e.keystroke.key.as_str(), window, cx)) {
@@ -359,8 +364,8 @@ impl<V: 'static> Table<V> {
             .min_w_0()
             .overflow_hidden()
             .child(width_probe(self.state.clone()))
-            .children(header)
-            .child(self.body(widths, cx))
+            .children(header.map(|h| h.when(unfitted, |h| h.invisible())))
+            .child(self.body(widths, cx).when(unfitted, |b| b.invisible()))
     }
 
     /// A key's action moving the selection as `step` says, then [`Table::on_select`] when it moved.
@@ -394,12 +399,7 @@ impl<V: 'static> Table<V> {
             };
             let divider = (i < last).then(|| self.divider(i, column, cx));
             cells.push(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .w(*width)
+                fill(div().relative().flex().items_center(), i == last, *width)
                     .h_full()
                     .px_2()
                     .when(i < last, |d| d.border_r_1().border_color(border))
@@ -470,7 +470,7 @@ impl<V: 'static> Table<V> {
         .child(hit_target(&self.hits, key))
     }
 
-    fn body(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> impl IntoElement {
+    fn body(self, widths: Rc<[Pixels]>, cx: &mut Context<V>) -> gpui::UniformList {
         let scroll = self.state.scroll.clone();
         let Self { id, state, hits, rows, row_height, cell, band, on_select, near_end, on_click, row_key, .. } = self;
         let list_id = SharedString::from(format!("{id}-rows"));
@@ -498,7 +498,7 @@ impl<V: 'static> Table<V> {
                     .enumerate()
                     .map(|(col, width)| {
                         let content = cell(this, ix, col, window, cx);
-                        div().flex().flex_none().items_center().w(*width).h_full().px_2().overflow_hidden().child(content).into_any_element()
+                        fill(div().flex().items_center().h_full().px(rems(CELL_PAD)).overflow_hidden(), col + 1 == widths.len(), *width).child(content).into_any_element()
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());
@@ -533,6 +533,11 @@ impl<V: 'static> Table<V> {
     }
 }
 
+/// A cell `width` wide; the last column's takes the rest of the row, so it fills it before the width is measured.
+fn fill(cell: Div, last: bool, width: Pixels) -> Div {
+    if last { cell.flex_1().min_w_0() } else { cell.flex_none().w(width) }
+}
+
 /// The owner's preferred widths with column `i`'s set to its current one.
 fn keep(state: &TableState, preferred: &[Pixels], i: usize) -> Vec<Pixels> {
     let inner = state.inner.borrow();
@@ -555,11 +560,12 @@ fn visible_end(scroll: &UniformListScrollHandle, row_height: Pixels) -> Option<u
 /// Records the table's width for the next frame's [`fit`], and asks for that frame when it changed.
 fn width_probe(state: TableState) -> impl IntoElement {
     canvas(
-        move |bounds, window, _| {
+        move |bounds, window, cx| {
             let mut inner = state.inner.borrow_mut();
             if inner.width != bounds.size.width {
                 inner.width = bounds.size.width;
-                window.refresh();
+                // gpui drops a refresh asked for while it draws
+                window.defer(cx, |window, _| window.refresh());
             }
         },
         |_, _, _, _| {},

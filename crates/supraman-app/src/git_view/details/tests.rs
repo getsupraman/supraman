@@ -250,3 +250,62 @@ fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &m
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").to_string().into())), "the base's click selects it");
 }
+
+/// Whether `key` painted wider than `min`.
+fn wide(hits: &supraman_ui::hit::HitTargets, key: &str, min: f32) -> bool {
+    hits.borrow().get(key).is_some_and(|h| h.bounds.size.width > px(min))
+}
+
+/// The hit keys of the one frame `act` leads to, drawn here if the update drew none.
+pub(crate) fn first_frame(view: &Entity<GitView>, cx: &mut VisualTestContext, act: impl FnOnce(&mut VisualTestContext)) -> supraman_ui::hit::HitTargets {
+    let hits = hits(view, cx);
+    hits.borrow_mut().clear();
+    act(cx);
+    if hits.borrow().is_empty() {
+        cx.update(|window, cx| {
+            let drawn = window.draw(cx);
+            drawn.clear(cx);
+        });
+    }
+    hits
+}
+
+#[gpui::test]
+fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    let painted = first_frame(&view, cx, |cx| panel.update(cx, |p, cx| p.set_all_files(true, cx)));
+    assert!(wide(&painted, "commit-name-docs", 20.) && wide(&painted, "commit-name-bin.dat", 30.), "View all files: whole names at once, never cut to nothing");
+    let painted = first_frame(&view, cx, |cx| {
+        panel.update(cx, |p, cx| {
+            p.set_all_files(false, cx);
+            p.set_view(FileView::Path, cx);
+        })
+    });
+    assert!(wide(&painted, "commit-files-row-src/app/main.rs", 100.));
+    assert_eq!(supraman_ui::clipped::cut_at("commit-dir-src/app/main.rs"), None, "Path: the folder part fits in the first frame");
+}
+
+#[gpui::test]
+fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit_loads(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("commit-tree-row-docs"));
+    view.update(cx, |v, cx| v.select_sha(f.sha("merge"), cx));
+    assert!(panel.read_with(cx, |p, _| p.stale()), "the next commit loads: the shown one's files are stale");
+    hits(&view, cx).borrow_mut().clear();
+    cx.update(|window, cx| {
+        let drawn = window.draw(cx);
+        drawn.clear(cx);
+    });
+    assert!(!hits(&view, cx).borrow().keys().any(|k| k.starts_with("commit-tree-row-")), "no row of the earlier commit paints meanwhile");
+    cx.run_until_parked();
+    assert!(!panel.read_with(cx, |p, _| p.stale()) && shown(&panel, cx).sha.as_ref() == f.sha("merge"), "then the new one shows in one go");
+}

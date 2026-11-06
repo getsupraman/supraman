@@ -77,6 +77,9 @@ pub struct GitSizes {
     pub collapsed: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub solo: Vec<String>,
+    /// The ref panel's sections' heights while open; none for an even share.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<u32>,
 }
 
 fn whole(p: Pixels) -> u32 {
@@ -146,6 +149,8 @@ pub struct GitView {
     ref_panel: Entity<RefPanel>,
     /// A ref's commit picked before its page is loaded: pages load until it is.
     seek: Option<SharedString>,
+    /// A ref's commit to reveal once the refresh under way walks it.
+    reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 3],
     /// The file viewer in the graph's place, while one is open.
     diff: Option<(Entity<DiffView>, [Subscription; 2])>,
@@ -202,6 +207,7 @@ impl GitView {
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
+                reveal_after: None,
                 _panel_events: events,
                 diff: None,
                 diff_mode: DiffMode::default(),
@@ -281,6 +287,7 @@ impl GitView {
                 self.refresh_graph(None, cx);
             }
             RefEvent::Layout => self.keep_layout(cx),
+            RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
         }
     }
 
@@ -327,6 +334,7 @@ impl GitView {
             hidden: refs.walk().hidden.iter().cloned().collect(),
             collapsed: refs.collapsed(),
             solo: refs.walk().solo.iter().cloned().collect(),
+            sections: refs.sections(),
         }
     }
 
@@ -439,7 +447,7 @@ impl GitView {
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
                 self.heads = first.heads;
-                self.ref_panel.update(cx, |p, cx| p.set_refs(&first.refs, cx));
+                self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));

@@ -195,6 +195,9 @@ impl CommitPanel {
     fn files(&mut self, shown: &Rc<Shown>, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let column = div().flex().flex_col().flex_1().min_h_0().px_1();
+        if self.stale {
+            return column;
+        }
         if !self.all_files && self.view == FileView::Path {
             let rows = shown.clone();
             let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), cx);
@@ -234,7 +237,7 @@ impl CommitPanel {
             .child(self.message(&shown, box_bg, cx))
             .child(self.author(&shown, &palette, cx))
             .children(self.co_authors(&shown, &palette, cx))
-            .child(self.counts(&shown, cx).pt_2())
+            .child(self.counts(&shown, cx).pt_2().when(self.stale, |d| d.invisible()))
             .child(self.toolbar(cx).border_b_1().border_color(border))
             .child(self.files(&shown, window, cx))
     }

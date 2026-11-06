@@ -1,25 +1,25 @@
 //! The panel painted: the filter bar, the section headers, folders and ref rows of the tree, and the strip the
-//! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-eye-<path>`,
-//! `refpanel-solo-<path>`, `refpanel-filter`, `refpanel-show-all`, `refpanel-collapse`, `refpanel-expand`,
-//! `refpanel-strip-<section>`.
+//! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-name-<path>`, `refpanel-mark-<path>`
+//! (a row's mark, [`super::marks`]), `refpanel-filter`, `refpanel-show-all`, `refpanel-collapse`, `refpanel-expand`,
+//! `refpanel-strip-<section>`, `refpanel-sections-divider-<pane>` (the border above a shown section's header).
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::matcher::highlighted;
+use supraman_ui::split::{Pane, Stack};
 use supraman_ui::stall;
-use supraman_ui::table::row_group;
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::tree::{Item, LEAD, Row, TreeList};
 use theme::ActiveTheme as _;
 
+use super::marks::MARK;
 use super::{Count, Entry, Keys, LIST, RefEvent, RefPanel, STRIP, Section, Walk};
 use crate::view::secondary;
 
 pub(super) const ROW: f32 = 24.;
 const ICON: f32 = 12.;
-const EYE: f32 = 18.;
 /// The row of a ref the graph does not walk.
 const DIMMED: f32 = 0.45;
 
@@ -31,33 +31,6 @@ impl RefPanel {
     fn count_of(&self, section: Section) -> Count {
         let at = Section::ALL.iter().position(|s| *s == section).unwrap_or(0);
         self.counts()[at]
-    }
-
-    /// The eye of a ref or folder whose refs hide: shown on the row's hover, struck and always shown while hidden.
-    fn eye(&self, list: &str, path: &SharedString, keys: Vec<String>, cx: &mut Context<Self>) -> AnyElement {
-        let hidden = self.all_hidden(&keys);
-        let (icon, tip) = if hidden { (Icon::EyeOff, "Show in the graph") } else { (Icon::Eye, "Hide from the graph") };
-        button::revealed(&self.hits, format!("{list}-eye-{path}"), icon.svg(ICON, secondary(cx)), px(EYE), row_group(list), hidden, cx)
-            .tooltip(Tooltip::text(tip))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.toggle_hidden(&keys, cx);
-            }))
-            .into_any_element()
-    }
-
-    /// The solo of a branch, remote branch or folder of them: shown on the row's hover, in the accent and always
-    /// shown while soloed.
-    fn solo(&self, list: &str, path: &SharedString, keys: Vec<String>, cx: &mut Context<Self>) -> AnyElement {
-        let soloed = self.all_soloed(&keys);
-        let (color, tip) = if soloed { (cx.theme().colors().text_accent, "Stop soloing") } else { (secondary(cx), "Solo: the graph shows only the soloed refs") };
-        button::revealed(&self.hits, format!("{list}-solo-{path}"), Icon::Solo.svg(ICON, color), px(EYE), row_group(list), soloed, cx)
-            .tooltip(Tooltip::text(tip))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.toggle_solo(&keys, cx);
-            }))
-            .into_any_element()
     }
 
     /// Whether the graph walks none of `keys`; never for none.
@@ -79,20 +52,17 @@ impl RefPanel {
             .into_any_element()
     }
 
-    fn folder(&self, list: &str, row: &Row<'_, Entry, Keys>, keys: &Keys, cx: &mut Context<Self>) -> AnyElement {
+    fn folder(&self, row: &Row<'_, Entry, Keys>, keys: &Keys, cx: &mut Context<Self>) -> Div {
         let dimmed = self.out_of_walk(&keys.hide);
-        let solo = (!keys.solo.is_empty()).then(|| self.solo(list, row.path, keys.solo.clone(), cx));
-        let eye = (!keys.hide.is_empty()).then(|| self.eye(list, row.path, keys.hide.clone(), cx));
         let name = div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(cx.theme().colors().text).child(row.name.clone());
-        div().flex().items_center().w_full().min_w_0().child(name.when(dimmed, |d| d.opacity(DIMMED))).children(solo).children(eye).into_any_element()
+        div().flex().items_center().w_full().min_w_0().child(name.when(dimmed, |d| d.opacity(DIMMED)))
     }
 
-    /// A ref's mark in the tree's lead slot: the current branch's tick, a worktree's house or tree.
+    /// A ref's icon in the tree's lead slot: a detached HEAD's branch, a worktree's house or tree.
     fn lead(entry: &Entry, cx: &App) -> Div {
         let slot = div().flex().flex_none().items_center().justify_center().w(px(LEAD));
         let muted = secondary(cx);
         match entry {
-            Entry::Branch { current: true, .. } => slot.child(button::tick(true, cx.theme().colors().text_accent, cx).size(px(12.))),
             Entry::Detached { .. } => slot.child(Icon::GitBranch.svg(ICON, muted)),
             Entry::Worktree { main: true, .. } => slot.child(Icon::Home.svg(ICON, muted)),
             Entry::Worktree { main: false, .. } => slot.child(Icon::Worktree.svg(ICON, muted)),
@@ -116,19 +86,17 @@ impl RefPanel {
         (!parts.is_empty()).then(|| parts.join(" "))
     }
 
-    fn file(&self, list: &str, row: &Row<'_, Entry, Keys>, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+    fn file(&self, list: &str, row: &Row<'_, Entry, Keys>, entry: &Entry, cx: &mut Context<Self>) -> Div {
         let (muted, text) = (secondary(cx), cx.theme().colors().text);
-        let keys: Vec<String> = entry.hide_key().into_iter().collect();
         let dimmed = !entry.walked(&self.walk);
-        let mut label = highlighted(format!("{list}-name-{}", row.path), entry.label(), &entry.marks(&self.filter()), cx).flex_shrink(1.).text_color(text);
+        let key = format!("{list}-name-{}", row.path);
+        let mut label = highlighted(key.clone(), entry.label(), &entry.marks(&self.filter()), cx).relative().flex_shrink(1.).text_color(text).child(hit_target(&self.hits, key));
         if let Entry::Stash { label: words, branch, .. } = entry {
             label = label.tooltip(Tooltip::text(format!("{words} on: {branch}")));
         }
         let after = Self::after(entry).map(|w| div().flex_none().max_w(px(120.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(muted).child(w));
         let content = div().flex().flex_1().min_w_0().items_center().gap_1().child(label).children(after);
         let track = Self::track(entry).map(|t| div().flex_none().px_1().text_xs().text_color(muted).child(t));
-        let solo = entry.solo_key().map(|key| self.solo(list, row.path, vec![key], cx));
-        let eye = (!keys.is_empty()).then(|| self.eye(list, row.path, keys, cx));
         div()
             .flex()
             .items_center()
@@ -137,21 +105,15 @@ impl RefPanel {
             .child(Self::lead(entry, cx))
             .child(content.when(dimmed, |d| d.opacity(DIMMED)))
             .children(track)
-            .children(solo)
-            .children(eye)
-            .into_any_element()
     }
 
-    /// A row of `list`: the panel's tree, whose roots are the section headers, or the overlay's.
+    /// A row of `list`: a section's pane in the panel, or the overlay's.
     pub(super) fn paint(&mut self, list: &str, row: Row<'_, Entry, Keys>, cx: &mut Context<Self>) -> AnyElement {
-        match row.item {
-            Item::Folder { open, .. } if list == LIST && row.depth == 0 => match Section::of(row.path) {
-                Some(section) => self.header(section, open, cx),
-                None => div().into_any_element(),
-            },
-            Item::Folder { aggregate, .. } => self.folder(list, &row, aggregate, cx),
+        let content = match row.item {
+            Item::Folder { aggregate, .. } => self.folder(&row, aggregate, cx),
             Item::File(entry) => self.file(list, &row, entry, cx),
-        }
+        };
+        self.interactive(list, row.path, content, cx)
     }
 
     fn bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -214,14 +176,63 @@ impl RefPanel {
         div().flex().flex_col().items_center().gap_2().pt_1().w(STRIP).h_full().child(expand).children(sections)
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
-        TreeList::new(LIST, &self.tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(LIST, row, cx))
+    /// A section's header, under `refpanel-row-<section>`: a click opens or closes it.
+    fn pane_header(&self, section: Section, open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+        let key = section.key();
+        button::ghost(&self.hits, format!("{LIST}-row-{key}"), cx)
+            .flex()
+            .items_center()
+            .h(px(ROW))
+            .px_2()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx))))
+            .child(self.header(section, open, cx))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.tree.toggle(key);
+                cx.emit(RefEvent::Layout);
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn section_list(&self, section: Section, cx: &mut Context<Self>) -> AnyElement {
+        TreeList::new(LIST, self.tree.get(section), &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(LIST, row, cx))
             .row_height(px(ROW))
+            .mark(px(MARK), |this, row, _, cx| this.paint_mark(LIST, row, cx))
             .on_select(|this, path, _, cx| {
                 this.picked(path, cx);
             })
             .on_toggle(|_, _, cx| cx.emit(RefEvent::Layout))
             .render(cx)
+            .size_full()
+            .into_any_element()
+    }
+
+    /// The sections the filter keeps, stacked: a closed one its header, the open ones sharing the rest by their
+    /// kept heights, else by their rows.
+    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let shown: Vec<Section> = Section::ALL.into_iter().filter(|s| self.tree.shows(*s)).collect();
+        let at = |section: Section| Section::ALL.iter().position(|s| *s == section).unwrap_or(0);
+        let panes = shown
+            .iter()
+            .map(|section| {
+                let open = self.tree.is_open(section.key());
+                let kept = self.heights[at(*section)];
+                let height = if kept > px(0.) { kept } else { px(ROW * (1 + self.tree.get(*section).row_count()) as f32) };
+                Pane { header: self.pane_header(*section, open, cx), body: open.then(|| self.section_list(*section, cx)), height }
+            })
+            .collect();
+        let stack = Stack { id: format!("{LIST}-sections").into(), min: px(ROW * 3.) };
+        let resized = shown.clone();
+        stack
+            .render(&self.stack, panes, &self.hits, move |this: &mut RefPanel, heights, cx| {
+                for (section, height) in resized.iter().zip(heights) {
+                    this.heights[at(*section)] = height;
+                }
+                cx.notify();
+            }, |_: &mut RefPanel, cx| cx.emit(RefEvent::Layout), cx)
             .flex_1()
             .min_h_0()
             .into_any_element()
@@ -234,9 +245,11 @@ impl Render for RefPanel {
         let bg: Hsla = cx.theme().colors().panel_background;
         if self.shut {
             let overlay = self.render_overlay(cx);
-            return div().relative().h_full().bg(bg).text_sm().child(self.strip(cx)).children(overlay);
+            let menu = self.render_menu(cx);
+            return div().relative().h_full().bg(bg).text_sm().child(self.strip(cx)).children(overlay).children(menu);
         }
         let bar = self.bar(window, cx);
-        div().size_full().flex().flex_col().bg(bg).text_sm().child(bar).child(self.list(cx))
+        let menu = self.render_menu(cx);
+        div().size_full().flex().flex_col().bg(bg).text_sm().child(bar).child(self.list(cx)).children(menu)
     }
 }

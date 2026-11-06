@@ -116,8 +116,8 @@ impl Heads {
 
 pub struct First {
     pub repo: Repo,
-    /// Every ref, the hidden ones too: the ref panel's.
-    pub refs: Refs,
+    /// Every ref, the hidden ones too, as the ref panel's rows.
+    pub refs: ref_panel::Built,
     pub tips: Vec<String>,
     pub heads: Heads,
     pub wip: Option<Wip>,
@@ -155,7 +155,7 @@ pub fn read(repo: Repo, count: usize, walk: &Walk) -> Result<First, String> {
     let tips = ref_panel::tips(&walked, walk);
     let page = page(&repo, &tips, 0, count, layout)?;
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
-    Ok(First { repo, heads: Heads::of(&walked), refs, tips, wip, page })
+    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, page })
 }
 
 fn dirty(status: &Status) -> bool {
