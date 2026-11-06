@@ -12,7 +12,7 @@ use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
 use super::image::{self, Picture};
-use super::{CloseDiff, Content, DiffView, FileStep, FirstFile, Go, KEY_CONTEXT, LastFile, Layout, Mode, NextChange, NextFile, PreviousChange, PreviousFile, Sizes};
+use super::{CloseDiff, Content, DiffView, FileStep, FirstFile, Go, KEY_CONTEXT, LastFile, Layout, Mode, NextChange, NextFile, PreviousChange, PreviousFile, Sizes, TooLarge};
 use crate::git_view::details::{kind_word, mark_icon};
 
 /// `dir/` muted and the name bright, cut from the left side when narrow.
@@ -30,12 +30,23 @@ fn path(key: &str, path: &str, cx: &Context<DiffView>) -> Div {
         .child(div().flex_none().text_color(colors.text).child(SharedString::from(name)))
 }
 
+/// `Before: … After: …`, `Added: …` or `Deleted: …`.
+fn sides<T>(old: Option<T>, new: Option<T>, said: impl Fn(T) -> String) -> String {
+    match (old, new) {
+        (Some(old), Some(new)) => format!("Before: {}    After: {}", said(old), said(new)),
+        (None, Some(new)) => format!("Added: {}", said(new)),
+        (Some(old), None) => format!("Deleted: {}", said(old)),
+        (None, None) => String::new(),
+    }
+}
+
 impl DiffView {
     /// The header's encoding slot: the text's encoding (`old → new` when it changed), `binary`, or the image's format.
     pub(crate) fn encoding_word(&self) -> SharedString {
         match &self.content {
             Content::Text(t) => SharedString::from(t.encoding.clone()),
             Content::Binary(_) => "binary".into(),
+            Content::TooLarge(_) => "too large".into(),
             Content::Image(i) => SharedString::from(format!("{} image", i.format.extension().to_uppercase())),
             _ => SharedString::default(),
         }
@@ -120,15 +131,20 @@ impl DiffView {
     }
 
     fn binary(&self, sizes: Sizes, cx: &Context<Self>) -> AnyElement {
-        let size = |n: usize| supraman_core::text::byte_size(n as u64);
-        let detail = match (sizes.old, sizes.new) {
-            (Some(old), Some(new)) => format!("Before: {}    After: {}", size(old), size(new)),
-            (None, Some(new)) => format!("Added: {}", size(new)),
-            (Some(old), None) => format!("Deleted: {}", size(old)),
-            (None, None) => String::new(),
-        };
+        let detail = sides(sizes.old, sizes.new, |n| supraman_core::text::byte_size(n as u64));
         let title = "A binary file: its bytes are not shown as text.";
         Self::message(title, vec![detail], cx).child(hit_target(&self.hits, "diff-binary".into())).into_any_element()
+    }
+
+    fn too_large(&self, why: TooLarge, cx: &Context<Self>) -> AnyElement {
+        let (title, detail) = match why {
+            TooLarge::Bytes(s) => (
+                format!("Too large to show: over {}.", supraman_core::text::byte_size(super::MAX_SHOWN_BYTES)),
+                sides(s.old, s.new, |n| supraman_core::text::byte_size(n as u64)),
+            ),
+            TooLarge::Pixels { old, new } => (format!("Too large to show: an image over {} megapixels.", image::MAX_PIXELS >> 20), sides(old, new, |(w, h)| format!("{w} × {h} px"))),
+        };
+        Self::message(&title, vec![detail], cx).child(hit_target(&self.hits, "diff-too-large".into())).into_any_element()
     }
 
     fn invisible(&self, said: &[String], cx: &Context<Self>) -> AnyElement {
@@ -171,6 +187,7 @@ impl DiffView {
             (Content::Loading, ..) => Self::placeholder("Reading the file…", None, cx),
             (Content::Failed(why), ..) => Self::placeholder("Cannot read this file", Some(why.clone()), cx),
             (Content::Binary(sizes), ..) => self.binary(*sizes, cx),
+            (Content::TooLarge(why), ..) => self.too_large(*why, cx),
             (Content::Image(_), mode, layout) => self.images(mode, layout, cx),
             (Content::Text(t), Mode::Diff, _) if !t.invisible.is_empty() => self.invisible(&t.invisible, cx),
             (Content::Text(_), Mode::File, _) => self.file_editor(window, cx).map_or_else(|| div().into_any_element(), |e| e.into_any_element()),

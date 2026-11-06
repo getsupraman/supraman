@@ -28,15 +28,39 @@ pub fn staged_blob(repo: &Repo, path: &str) -> Result<Blob, GitError> {
     Ok(Blob { bytes, binary })
 }
 
+fn top(repo: &Repo) -> Result<PathBuf, GitError> {
+    match repo.known_dirs() {
+        Some(dirs) => Ok(dirs.top.clone()),
+        None => repo.read(&["rev-parse", "--show-toplevel"], None, |out| Ok(PathBuf::from(text(out).trim()))),
+    }
+}
+
 /// The bytes of `path` (relative to the top of the worktree, as `status` names it) read from the disk as they are.
 pub fn worktree_file(repo: &Repo, path: &str) -> Result<Blob, GitError> {
-    let top = match repo.known_dirs() {
-        Some(dirs) => dirs.top.clone(),
-        None => repo.read(&["rev-parse", "--show-toplevel"], None, |out| Ok(PathBuf::from(text(out).trim())))?,
-    };
-    let bytes = std::fs::read(top.join(path)).map_err(|source| GitError::Read { path: path.to_string(), source })?;
+    let bytes = std::fs::read(top(repo)?.join(path)).map_err(|source| GitError::Read { path: path.to_string(), source })?;
     let binary = is_binary(&bytes);
     Ok(Blob { bytes, binary })
+}
+
+/// The size in bytes of the worktree file [`worktree_file`] reads, `None` when there is none.
+pub fn worktree_size(repo: &Repo, path: &str) -> Result<Option<u64>, GitError> {
+    Ok(std::fs::metadata(top(repo)?.join(path)).ok().map(|m| m.len()))
+}
+
+/// Each object's size in bytes (`rev:path`, `:0:path`) in one `cat-file --batch-check`, `None` for one git
+/// cannot find; an object name holding a newline is asked alone with `cat-file -s`.
+pub fn object_sizes(repo: &Repo, objects: &[&str]) -> Result<Vec<Option<u64>>, GitError> {
+    if objects.iter().any(|o| o.contains(['\n', '\r'])) {
+        return objects.iter().map(|o| Ok(repo.output(&["cat-file", "-s", "--end-of-options", o], None).ok().and_then(|out| text(&out).trim().parse().ok()))).collect();
+    }
+    if objects.is_empty() {
+        return Ok(Vec::new());
+    }
+    let input = objects.iter().flat_map(|o| [o.as_bytes(), b"\n"]).flatten().copied().collect();
+    repo.read(&["cat-file", "--batch-check=%(objectsize)"], Some(input), |out| {
+        let sizes: Vec<Option<u64>> = text(out).lines().map(|line| line.trim().parse().ok()).collect();
+        if sizes.len() == objects.len() { Ok(sizes) } else { Err(format!("{} answers for {} objects", sizes.len(), objects.len())) }
+    })
 }
 
 /// Binary as git decides it: a NUL among the first 8000 bytes.

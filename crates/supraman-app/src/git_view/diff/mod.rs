@@ -9,6 +9,8 @@ mod render;
 #[cfg(test)]
 mod media_tests;
 #[cfg(test)]
+mod cap_tests;
+#[cfg(test)]
 mod tests;
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, KeyBinding, Window};
@@ -17,7 +19,7 @@ use supraman_gitman::Repo;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 
-pub use load::{Of, Sizes, Target};
+pub use load::{MAX_SHOWN_BYTES, Of, Sizes, Target, TooLarge};
 
 gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff, PreviousFile, NextFile, FirstFile, LastFile]);
 
@@ -102,6 +104,7 @@ pub(crate) enum Content {
     Loading,
     Failed(String),
     Binary(Sizes),
+    TooLarge(TooLarge),
     Image(Box<image::Images>),
     Text(Box<Text>),
 }
@@ -155,6 +158,7 @@ impl DiffView {
         self.content = match loaded {
             Ok(load::Loaded::Text { old, new, encoding, invisible, language }) => return Some((Diff::compute(old, new, language, cx), encoding, invisible)),
             Ok(load::Loaded::Binary(sizes)) => Content::Binary(sizes),
+            Ok(load::Loaded::TooLarge(why)) => Content::TooLarge(why),
             Ok(load::Loaded::Image(images)) => Content::Image(images),
             Err(why) => Content::Failed(why),
         };
@@ -178,6 +182,11 @@ impl DiffView {
             Content::Loading => "loading".into(),
             Content::Failed(why) => format!("failed: {why}"),
             Content::Binary(s) => format!("binary {} → {}", size(s.old), size(s.new)),
+            Content::TooLarge(TooLarge::Bytes(s)) => format!("too large {} → {}", size(s.old), size(s.new)),
+            Content::TooLarge(TooLarge::Pixels { old, new }) => {
+                let px = |p: &Option<(u32, u32)>| p.map_or("none".to_string(), |(w, h)| format!("{w}×{h}"));
+                format!("too large {} → {}", px(old), px(new))
+            }
             Content::Image(i) => format!("image {} → {}", picture(&i.old), picture(&i.new)),
             Content::Text(t) if !t.invisible.is_empty() => format!("same text: {}", t.invisible.join("; ")),
             Content::Text(_) => "text".into(),

@@ -67,8 +67,20 @@ pub struct Sizes {
     pub new: Option<usize>,
 }
 
+/// The largest file the viewer reads; a larger side shows only its size.
+pub const MAX_SHOWN_BYTES: u64 = 6 * 1024 * 1024;
+
+/// Why a file is not shown: a side over [`MAX_SHOWN_BYTES`], or an image side over [`image::MAX_PIXELS`]
+/// (`width × height` per side).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TooLarge {
+    Bytes(Sizes),
+    Pixels { old: Option<(u32, u32)>, new: Option<(u32, u32)> },
+}
+
 pub enum Loaded {
     Binary(Sizes),
+    TooLarge(TooLarge),
     Image(Box<Images>),
     /// `invisible` says what changed when the bytes differ but the texts do not.
     Text { old: String, new: String, encoding: String, invisible: Vec<String>, language: Option<Arc<supraman_editor::Language>> },
@@ -117,6 +129,29 @@ fn read(repo: &Repo, side: Side<'_>) -> Result<Option<Blob>, String> {
     blob.map(Some).map_err(|e| e.to_string())
 }
 
+/// Each side's size in bytes, asked before either is read: one `cat-file --batch-check` for the git sides.
+fn sizes(repo: &Repo, old: Side<'_>, new: Side<'_>) -> Result<Sizes, String> {
+    let object = |side: Side<'_>| match side {
+        Side::Rev(rev, path) => Some(format!("{rev}:{path}")),
+        Side::Index(path) => Some(format!(":0:{path}")),
+        _ => None,
+    };
+    let objects: Vec<String> = [old, new].into_iter().filter_map(object).collect();
+    let objects: Vec<&str> = objects.iter().map(String::as_str).collect();
+    let mut asked = supraman_gitman::object_sizes(repo, &objects).map_err(|e| e.to_string())?.into_iter();
+    let mut size = |side: Side<'_>| -> Result<Option<usize>, String> {
+        let bytes = match side {
+            Side::Absent | Side::SameAsNew => None,
+            Side::Rev(..) | Side::Index(_) => asked.next().flatten(),
+            Side::Worktree(path) => supraman_gitman::worktree_size(repo, path).map_err(|e| e.to_string())?,
+        };
+        Ok(bytes.map(|b| usize::try_from(b).unwrap_or(usize::MAX)))
+    };
+    let old_size = size(old)?;
+    let new_size = size(new)?;
+    Ok(Sizes { old: if old == Side::SameAsNew { new_size } else { old_size }, new: new_size })
+}
+
 /// `\r\n` as `\n`, as the editor's buffers hold it, so a worktree file checked out with CRLF matches its blob.
 fn text_of(blob: &Blob) -> (String, Encoding) {
     let (text, encoding) = decode(&blob.bytes);
@@ -125,6 +160,11 @@ fn text_of(blob: &Blob) -> (String, Encoding) {
 
 fn images(target: &Target, old: Option<&Blob>, new: Option<&Blob>, svg: &SvgRenderer) -> Option<Loaded> {
     let format = image::format_of(&target.path)?;
+    let dimensions = |blob: Option<&Blob>| blob.and_then(|b| image::dimensions(format, &b.bytes));
+    let (old_px, new_px) = (dimensions(old), dimensions(new));
+    if [old_px, new_px].into_iter().flatten().any(|(w, h)| u64::from(w) * u64::from(h) > image::MAX_PIXELS) {
+        return Some(Loaded::TooLarge(TooLarge::Pixels { old: old_px, new: new_px }));
+    }
     let decoded = |blob: Option<&Blob>| blob.map(|b| image::decode(format, &b.bytes, svg).ok_or(())).transpose();
     let images = decoded(old).and_then(|old| decoded(new).map(|new| Images { format, old, new }));
     images.ok().map(|images| Loaded::Image(Box::new(images)))
@@ -132,6 +172,10 @@ fn images(target: &Target, old: Option<&Blob>, new: Option<&Blob>, svg: &SvgRend
 
 pub fn load(repo: &Repo, target: &Target, svg: &SvgRenderer) -> Result<Loaded, String> {
     let (old_side, new_side) = sides(target);
+    let sizes = sizes(repo, old_side, new_side)?;
+    if [sizes.old, sizes.new].into_iter().flatten().any(|b| b as u64 > MAX_SHOWN_BYTES) {
+        return Ok(Loaded::TooLarge(TooLarge::Bytes(sizes)));
+    }
     let new = read(repo, new_side)?;
     let old = if old_side == Side::SameAsNew { new.clone() } else { read(repo, old_side)? };
     let image_file = image::format_of(&target.path).is_some();

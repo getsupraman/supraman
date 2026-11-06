@@ -72,15 +72,21 @@ fn bind_keys(cx: &mut App) {
 
 /// A buffer nobody can edit, highlighted as `language` with what it injects (Markdown's inline text and fenced code).
 pub fn read_only_buffer(text: String, language: Option<Arc<Language>>, cx: &mut App) -> Entity<Buffer> {
-    cx.new(|cx| {
-        let mut buffer = Buffer::local(text, cx);
-        buffer.set_capability(Capability::ReadOnly, cx);
-        if let Some(language) = language {
-            buffer.set_language_registry(languages::registry(cx));
-            buffer.set_language(Some(language), cx);
-        }
-        buffer
-    })
+    cx.new(|cx| read_only(Buffer::local(text, cx), language, cx))
+}
+
+/// [`read_only_buffer`] of a rope built elsewhere (off the UI thread) with its line ending.
+pub(crate) fn read_only_buffer_of(rope: text::Rope, ending: text::LineEnding, language: Option<Arc<Language>>, cx: &mut App) -> Entity<Buffer> {
+    cx.new(|cx| read_only(Buffer::local_normalized(rope, ending, cx), language, cx))
+}
+
+fn read_only(mut buffer: Buffer, language: Option<Arc<Language>>, cx: &mut Context<Buffer>) -> Buffer {
+    buffer.set_capability(Capability::ReadOnly, cx);
+    if let Some(language) = language {
+        buffer.set_language_registry(languages::registry(cx));
+        buffer.set_language(Some(language), cx);
+    }
+    buffer
 }
 
 /// A full editor over `multi` that shows and selects but never edits.
