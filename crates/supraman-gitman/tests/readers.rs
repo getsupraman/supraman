@@ -3,7 +3,7 @@ use supraman_gitman::*;
 
 #[test]
 fn refs_name_branches_with_ahead_behind_tags_remotes_and_worktrees() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let r = refs(&f.repo()).unwrap();
     assert_eq!(r.head, Head::Branch { name: "main".into(), sha: Some(f.sha("ahead").into()) });
     let branch = |name: &str| r.branches.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("no {name} in {:?}", r.branches));
@@ -29,7 +29,7 @@ fn refs_name_branches_with_ahead_behind_tags_remotes_and_worktrees() {
 
 #[test]
 fn a_page_of_history_has_parents_and_says_whether_more_follow() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let repo = f.repo();
     let tips = refs(&repo).unwrap().tips();
     let first = history(&repo, &tips, 0, 4).unwrap();
@@ -51,7 +51,7 @@ fn a_page_of_history_has_parents_and_says_whether_more_follow() {
 
 #[test]
 fn details_split_the_message_and_name_the_co_authors() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let d = details(&f.repo(), f.sha("rename")).unwrap();
     assert_eq!(d.summary, "Move old.txt to new.txt");
     assert!(d.body.starts_with("The old name no longer fits.") && d.body.ends_with("<cy@example.test>"), "{:?}", d.body);
@@ -63,7 +63,7 @@ fn details_split_the_message_and_name_the_co_authors() {
 
 #[test]
 fn changed_files_of_a_rename_a_merge_against_its_first_parent_and_the_root() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let repo = f.repo();
     let renamed = FileChange { kind: ChangeKind::Renamed, path: "new.txt".into(), old_path: Some("old.txt".into()), similarity: Some(100) };
     assert_eq!(changed_files(&repo, f.sha("rename")).unwrap(), [renamed.clone()]);
@@ -77,7 +77,7 @@ fn changed_files_of_a_rename_a_merge_against_its_first_parent_and_the_root() {
 
 #[test]
 fn the_tree_and_its_blobs_text_and_binary() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let repo = f.repo();
     let files = tree(&repo, f.sha("merge")).unwrap();
     assert_eq!(files.iter().map(|t| (t.path.as_str(), t.mode)).collect::<Vec<_>>(), [("a.txt", 0o100644), ("b.txt", 0o100644), ("bin.dat", 0o100644), ("new.txt", 0o100644)]);
@@ -90,7 +90,7 @@ fn the_tree_and_its_blobs_text_and_binary() {
 
 #[test]
 fn patches_of_a_commit_two_revs_and_the_work_in_progress() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let repo = f.repo();
     let lines = |p: &[FilePatch]| -> Vec<(LineKind, String)> { p[0].hunks.iter().flat_map(|h| h.lines.iter().map(|l| (l.kind, l.text.clone()))).collect() };
     let second = patch(&repo, DiffOf::Commit(f.sha("second")), &["a.txt"]).unwrap();
@@ -163,7 +163,7 @@ fn a_conflicted_file_is_unmerged_in_the_status() {
 
 #[test]
 fn dirs_of_a_checkout_and_a_linked_worktree() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let same = |a: &std::path::Path, b: &std::path::Path| a.canonicalize().unwrap() == b.canonicalize().unwrap();
     let main = dirs(&f.repo()).unwrap();
     assert!(same(&main.top, &f.dir) && same(&main.git_dir, &f.dir.join(".git")) && same(&main.common_dir, &main.git_dir), "{main:?}");
@@ -187,7 +187,7 @@ fn ignored_names_the_ignored_paths_but_never_a_tracked_file() {
 
 #[test]
 fn stashes_from_the_reflog_newest_first_with_their_index_commit_base_branch_and_message() {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let all = stashes(&f.repo()).unwrap();
     let shas: Vec<&str> = all.iter().map(|s| s.sha.as_str()).collect();
     assert_eq!(shas, fixture::STASHES.map(|l| f.sha(l)));

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use supraman_core::process::{self, Kill};
@@ -70,6 +71,12 @@ pub const CO_AUTHORED: &str = "Move old.txt to new.txt\n\nThe old name no longer
 impl Fixture {
     pub fn new() -> Fixture {
         Fixture::of(tempfile::tempdir().expect("temp dir"))
+    }
+
+    /// One fixture for the tests that only read it, held while any of them runs; a test that writes takes [`Fixture::new`].
+    pub fn shared() -> Arc<Fixture> {
+        static SHARED: Mutex<Weak<Fixture>> = Mutex::new(Weak::new());
+        shared_in(&SHARED, Fixture::new)
     }
 
     /// The same repository in a temp dir under `parent`.
@@ -238,6 +245,23 @@ impl Generated {
     pub fn repo(&self) -> Repo {
         Repo::new(self.git.clone(), &self.dir)
     }
+
+    /// [`Fixture::shared`] for a history of `commits`.
+    pub fn shared(commits: usize) -> Arc<Generated> {
+        static SHARED: Mutex<BTreeMap<usize, Arc<Mutex<Weak<Generated>>>>> = Mutex::new(BTreeMap::new());
+        let slot = SHARED.lock().unwrap_or_else(PoisonError::into_inner).entry(commits).or_default().clone();
+        shared_in(&slot, || Generated::new(commits))
+    }
+}
+
+/// The repo in `slot` while a test holds it, else a new one; dropped (and its temp dir with it) when the last holder ends.
+fn shared_in<T>(slot: &Mutex<Weak<T>>, make: impl FnOnce() -> T) -> Arc<T> {
+    let mut held = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    held.upgrade().unwrap_or_else(|| {
+        let made = Arc::new(make());
+        *held = Arc::downgrade(&made);
+        made
+    })
 }
 
 fn fast_import_stream(commits: usize) -> String {
