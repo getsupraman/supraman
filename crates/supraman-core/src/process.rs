@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -88,7 +88,7 @@ pub fn run(cmd: &mut Command, timeout: Duration, kill: Kill) -> Result<Output, R
 /// [`run`] that also kills the child once `stop` returns true (asked every 20 ms). A killed child's output is
 /// what it wrote until then, and `code` is `None`.
 pub fn run_watched(cmd: &mut Command, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, Output)> {
-    let (ended, raw) = run_raw(cmd, None, timeout, kill, stop)?;
+    let (ended, raw) = run_raw(cmd, None, timeout, kill, Some(stop))?;
     let text = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
     Ok((ended, Output { code: raw.code, stdout: text(raw.stdout), stderr: text(raw.stderr) }))
 }
@@ -109,27 +109,32 @@ impl RawOutput {
 
 /// [`run`] that writes `input` to the child's stdin and closes it, and keeps both pipes as bytes.
 pub fn run_bytes(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill) -> Result<RawOutput, RunError> {
-    match run_raw(cmd, input, timeout, kill, &mut || false).map_err(RunError::Spawn)? {
+    match run_raw(cmd, input, timeout, kill, None).map_err(RunError::Spawn)? {
         (Ended::Exited, out) => Ok(out),
         _ => Err(RunError::Timeout(timeout)),
     }
 }
 
-fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill, stop: &mut dyn FnMut() -> bool) -> std::io::Result<(Ended, RawOutput)> {
+/// How often a [`run_watched`] `stop` is asked.
+const STOP_TICK: Duration = Duration::from_millis(20);
+
+fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: Kill, mut stop: Option<&mut dyn FnMut() -> bool>) -> std::io::Result<(Ended, RawOutput)> {
     let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
-    no_window(cmd).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn()?;
-    let tree = (kill == Kill::Tree).then(|| Job::adopt(&child)).flatten();
+    cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (mut child, tree) = spawn(cmd, kill)?;
     feed(child.stdin.take(), input);
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
+    let (done, settled) = mpsc::channel();
+    let stdout = drain(child.stdout.take(), done.clone());
+    let stderr = drain(child.stderr.take(), done);
     let deadline = Instant::now() + timeout;
     let (ended, code) = loop {
-        match child.try_wait() {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let wait = if stop.is_some() { left.min(STOP_TICK) } else { left };
+        match wait_exit(&mut child, wait) {
             Ok(Some(status)) => break (Ended::Exited, status.code()),
             Ok(None) if Instant::now() >= deadline => break (Ended::TimedOut, None),
-            Ok(None) if stop() => break (Ended::Stopped, None),
-            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Ok(None) if stop.as_mut().is_some_and(|stop| stop()) => break (Ended::Stopped, None),
+            Ok(None) => {}
             Err(e) => {
                 terminate(&mut child, tree.as_ref());
                 return Err(e);
@@ -145,11 +150,82 @@ fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: K
     }
     // A descendant that outlives the child (claude's background service, a `Kill::Child` survivor) keeps the pipes
     // open: take what was read by then.
-    let until = Instant::now() + PIPES_SETTLE;
-    while !(stdout.0.is_finished() && stderr.0.is_finished()) && Instant::now() < until {
-        thread::sleep(Duration::from_millis(10));
-    }
+    // Disconnected once both readers ended, as nothing is ever sent.
+    let _ = settled.recv_timeout(PIPES_SETTLE);
     Ok((ended, RawOutput { code, stdout: stdout.finish(), stderr: stderr.finish() }))
+}
+
+/// Starts `cmd` with no window; for [`Kill::Tree`] suspended, inside its job, and only then resumed, so nothing
+/// it starts escapes the job.
+fn spawn(cmd: &mut Command, kill: Kill) -> std::io::Result<(Child, Option<Job>)> {
+    if kill == Kill::Child {
+        return Ok((no_window(cmd).spawn()?, None));
+    }
+    let spawned = suspended(cmd).spawn();
+    no_window(cmd);
+    let mut child = spawned?;
+    let job = Job::adopt(&child);
+    if let Err(e) = resume(&child) {
+        terminate(&mut child, job.as_ref());
+        return Err(e);
+    }
+    Ok((child, job))
+}
+
+#[cfg(windows)]
+fn suspended(command: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt as _;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW | windows::Win32::System::Threading::CREATE_SUSPENDED.0)
+}
+
+#[cfg(not(windows))]
+fn suspended(command: &mut Command) -> &mut Command {
+    command
+}
+
+/// Resumes a child started [`suspended`]. `NtResumeProcess` resumes it by the process handle `Child` holds:
+/// std keeps no handle to its main thread, and finding that thread through Toolhelp32 snapshots every
+/// thread on the machine.
+#[cfg(windows)]
+fn resume(child: &Child) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle as _;
+    #[link(name = "ntdll", kind = "raw-dylib")]
+    unsafe extern "system" {
+        fn NtResumeProcess(process: *mut std::ffi::c_void) -> i32;
+    }
+    // SAFETY: the child's process handle, open while `child` lives.
+    let status = unsafe { NtResumeProcess(child.as_raw_handle()) };
+    if status >= 0 { Ok(()) } else { Err(std::io::Error::other(format!("NtResumeProcess failed: {status:#x}"))) }
+}
+
+#[cfg(not(windows))]
+fn resume(_child: &Child) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Waits up to `wait` for the child to exit; `None` while it still runs.
+#[cfg(windows)]
+fn wait_exit(child: &mut Child, wait: Duration) -> std::io::Result<Option<std::process::ExitStatus>> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows::Win32::Foundation::{HANDLE, WAIT_FAILED};
+    let ms = u32::try_from(wait.as_nanos().div_ceil(1_000_000)).unwrap_or(u32::MAX - 1);
+    // SAFETY: the child's process handle, open while `child` lives.
+    if unsafe { windows::Win32::System::Threading::WaitForSingleObject(HANDLE(child.as_raw_handle()), ms) } == WAIT_FAILED {
+        return Err(std::io::Error::last_os_error());
+    }
+    child.try_wait()
+}
+
+#[cfg(not(windows))]
+fn wait_exit(child: &mut Child, wait: Duration) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let until = Instant::now() + wait;
+    loop {
+        match child.try_wait()? {
+            None if Instant::now() < until => thread::sleep(Duration::from_millis(5)),
+            status => return Ok(status),
+        }
+    }
 }
 
 /// Writes `input` on its own thread, so a child that writes while it reads never blocks on a full pipe.
@@ -191,10 +267,12 @@ impl Drain {
     }
 }
 
-fn drain(pipe: Option<impl Read + Send + 'static>) -> Drain {
+/// Reads `pipe` until it closes; `done` drops after the last byte is in the buffer.
+fn drain(pipe: Option<impl Read + Send + 'static>, done: mpsc::Sender<()>) -> Drain {
     let buf = Arc::new(Mutex::new(Vec::new()));
     let into = Arc::clone(&buf);
     let handle = thread::spawn(move || {
+        let _done = done;
         let Some(mut pipe) = pipe else { return };
         let mut chunk = [0u8; 8192];
         while let Ok(n @ 1..) = pipe.read(&mut chunk) {
@@ -211,18 +289,20 @@ struct Job(windows::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 impl Job {
-    /// `None` when the job cannot be made or joined; the caller then kills the child alone.
+    /// `None` when the job cannot be made or joined, said on stderr; the caller then kills the child alone.
     fn adopt(child: &Child) -> Option<Self> {
         use std::os::windows::io::AsRawHandle as _;
         use windows::Win32::Foundation::HANDLE;
         use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE};
         // SAFETY: the job handle is owned by the returned value; the child's handle outlives the call.
-        unsafe {
-            let job = Job(CreateJobObjectW(None, windows::core::PCWSTR::null()).ok()?);
-            job.limit(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).ok()?;
-            AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle())).ok()?;
-            Some(job)
-        }
+        let made = unsafe {
+            CreateJobObjectW(None, windows::core::PCWSTR::null()).map(Job).and_then(|job| {
+                job.limit(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)?;
+                AssignProcessToJobObject(job.0, HANDLE(child.as_raw_handle()))?;
+                Ok(job)
+            })
+        };
+        made.inspect_err(|e| eprintln!("process {} runs outside a job, a timeout kills it alone: {e}", child.id())).ok()
     }
 
     fn release(&self) {
@@ -532,6 +612,52 @@ mod tests {
         assert!(!left, "the job's last handle closing ends the tree, as when sm dies");
     }
 
+    /// Every process now: pid, parent pid, exe name.
+    fn processes() -> Vec<(u32, u32, String)> {
+        use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
+        let mut found = Vec::new();
+        // SAFETY: a snapshot this function opens and closes, and an entry of the size it says.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).unwrap();
+            let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+            let mut more = Process32FirstW(snapshot, &mut entry).is_ok();
+            while more {
+                let name = &entry.szExeFile[..entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len())];
+                found.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(name)));
+                more = Process32NextW(snapshot, &mut entry).is_ok();
+            }
+            let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+        }
+        found
+    }
+
+    #[test]
+    fn a_grandchild_started_at_once_is_in_the_tree_a_timeout_kills() {
+        let me = std::process::id();
+        let probe = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let all = processes();
+                let ours = |parent: u32| all.iter().any(|(pid, up, name)| *pid == parent && *up == me && name.eq_ignore_ascii_case("cmd.exe"));
+                if let Some((pid, ..)) = all.iter().find(|(_, parent, name)| name.eq_ignore_ascii_case("ping.exe") && ours(*parent)) {
+                    return *pid;
+                }
+                assert!(Instant::now() < deadline, "no ping under our cmd");
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let err = run(command("cmd").args(["/C", "ping -n 60 127.0.0.1"]), Duration::from_secs(2), Kill::Tree).unwrap_err();
+        assert!(matches!(err, RunError::Timeout(_)), "{err:?}");
+        let pid = probe.join().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive(pid) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        let left = alive(pid);
+        end(pid);
+        assert!(!left, "the grandchild escaped the job");
+    }
+
     #[test]
     fn a_watched_run_keeps_what_a_killed_child_wrote_and_stops_when_asked() {
         let script = "[Console]::Error.Write('partial'); [Console]::Error.Flush(); Start-Sleep 60";
@@ -545,6 +671,54 @@ mod tests {
         let (ended, out) = run_watched(&mut powershell(&script), Duration::from_secs(60), Kill::Tree, &mut || flag.exists()).unwrap();
         assert_eq!((ended, out.stderr.as_str()), (Ended::Stopped, "partial"));
         assert!(started_at.elapsed() < Duration::from_secs(30), "{:?}", started_at.elapsed());
+    }
+
+    fn median_ms(runs: usize, mut once: impl FnMut()) -> f64 {
+        let mut took: Vec<f64> = (0..runs)
+            .map(|_| {
+                let at = Instant::now();
+                once();
+                at.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        took.sort_by(f64::total_cmp);
+        took[runs / 2]
+    }
+
+    #[test]
+    fn a_child_that_exits_at_once_costs_little_more_than_its_own_run() {
+        let exits = || {
+            let mut cmd = command("cmd");
+            cmd.args(["/C", "exit 0"]);
+            cmd
+        };
+        let (mut ours, mut bare) = (Vec::new(), Vec::new());
+        for _ in 0..20 {
+            ours.push(median_ms(1, || assert!(run_bytes(&mut exits(), None, Duration::from_secs(30), Kill::Tree).unwrap().success())));
+            bare.push(median_ms(1, || assert!(exits().output().unwrap().status.success())));
+        }
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let (ours, bare) = (median(ours), median(bare));
+        assert!(ours - bare < 10.0, "median {ours:.1} ms through run_bytes against {bare:.1} ms bare");
+    }
+
+    #[test]
+    #[ignore = "a measurement: cargo test -p supraman-core --release -- --ignored --nocapture child_overhead"]
+    fn child_overhead_measured() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for args in [&["--version"][..], &["rev-parse", "HEAD"]] {
+            let git = || {
+                let mut cmd = command("git");
+                cmd.args(args).current_dir(repo);
+                cmd
+            };
+            let ours = median_ms(50, || assert!(run_bytes(&mut git(), None, GIT_TIMEOUT, Kill::Tree).unwrap().success()));
+            let bare = median_ms(50, || assert!(git().output().unwrap().status.success()));
+            println!("git {}: run_bytes {ours:.1} ms, bare {bare:.1} ms (median of 50)", args.join(" "));
+        }
     }
 
     #[test]
