@@ -8,7 +8,7 @@ mod render;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -56,6 +56,8 @@ pub struct Shown {
     pub counts: Counts,
     /// The changed files in path order, Z–A when the order is.
     pub changes: Vec<FileChange>,
+    /// Each change's place in `changes` by its path.
+    index: HashMap<String, usize>,
     /// Every changed file, and once the whole tree is read every file at the commit.
     files: HashSet<String>,
 }
@@ -237,6 +239,7 @@ impl CommitPanel {
             co_authors: d.co_authors,
             stash: loaded.stash,
             counts: loaded.counts,
+            index: index(&changes),
             changes,
             files,
         }));
@@ -306,6 +309,7 @@ impl CommitPanel {
         if let Some(shown) = self.shown() {
             let mut shown = (*shown).clone();
             sort_changes(&mut shown.changes, order);
+            shown.index = index(&shown.changes);
             self.state = State::Shown(Rc::new(shown));
         }
         cx.notify();
@@ -387,7 +391,7 @@ impl CommitPanel {
         if !shown.files.contains(path) {
             return None;
         }
-        let change = shown.changes.iter().find(|c| c.path == path).cloned();
+        let change = shown.index.get(path).map(|at| shown.changes[*at].clone());
         let parent = shown.parents.first().map(|p| p.to_string());
         Some(super::diff::Target::commit(shown.sha.to_string(), parent, path.to_string(), change))
     }
@@ -423,6 +427,10 @@ impl CommitPanel {
         }
         cx.notify();
     }
+}
+
+fn index(changes: &[FileChange]) -> HashMap<String, usize> {
+    changes.iter().enumerate().map(|(at, c)| (c.path.clone(), at)).collect()
 }
 
 /// By path ignoring case, then as written; reversed for Z–A.

@@ -333,3 +333,28 @@ fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut T
     select(&view, f.sha("merge"), cx);
     assert_eq!(panel.read_with(cx, |p, _| p.whole), Whole::Read, "with View all files on, the next selection reads its tree with it");
 }
+
+#[gpui::test]
+fn commit_details_file_order_follows_the_list_on_show_with_each_files_change(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    let order = |cx: &mut VisualTestContext| -> Vec<(String, Option<supraman_gitman::ChangeKind>)> { panel.read_with(cx, |p, _| p.file_order(&sha).into_iter().map(|t| (t.path.clone(), t.kind())).collect()) };
+    use supraman_gitman::ChangeKind::{Added, Deleted, Modified};
+    let changed = [("a.txt", Some(Modified)), ("b.txt", Some(Deleted)), ("docs/guide.md", Some(Added)), ("src/app/lib.rs", Some(Added)), ("src/app/main.rs", Some(Added)), ("src/util.rs", Some(Added))];
+    let owned = |l: &[(&str, Option<supraman_gitman::ChangeKind>)]| l.iter().map(|(p, k)| (p.to_string(), *k)).collect::<Vec<_>>();
+    panel.update(cx, |p, cx| p.set_view(FileView::Path, cx));
+    assert_eq!(order(cx), owned(&changed), "Path: the changes A–Z");
+    panel.update(cx, |p, cx| p.set_order(Order::Descending, cx));
+    assert_eq!(order(cx), owned(&changed.iter().rev().copied().collect::<Vec<_>>()), "Path Z–A");
+    panel.update(cx, |p, cx| p.set_order(Order::Ascending, cx));
+    panel.update(cx, |p, cx| p.set_view(FileView::Tree, cx));
+    let tree = [changed[2], changed[3], changed[4], changed[5], changed[0], changed[1]];
+    assert_eq!(order(cx), owned(&tree), "Tree: folders first");
+    panel.update(cx, |p, cx| p.set_all_files(true, cx));
+    cx.run_until_parked();
+    let all = [changed[2], changed[3], changed[4], changed[5], changed[0], changed[1], ("bin.dat", None), ("old.txt", None)];
+    assert_eq!(order(cx), owned(&all), "View all files: every file, the unchanged ones without a change");
+}
