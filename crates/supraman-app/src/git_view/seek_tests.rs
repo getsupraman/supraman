@@ -13,7 +13,7 @@ fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
-fn tag(g: &Generated, name: &str) -> String {
+pub(super) fn tag(g: &Generated, name: &str) -> String {
     supraman_gitman::refs(&g.repo()).unwrap().tags.into_iter().find(|t| t.name == name).and_then(|t| t.commit).unwrap()
 }
 

@@ -155,9 +155,19 @@ fn run_raw(cmd: &mut Command, input: Option<Vec<u8>>, timeout: Duration, kill: K
     Ok((ended, RawOutput { code, stdout: stdout.finish(), stderr: stderr.finish() }))
 }
 
+thread_local! {
+    static SPAWNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many children this thread has started through this module, for a test that counts them.
+pub fn spawned_here() -> usize {
+    SPAWNED.get()
+}
+
 /// Starts `cmd` with no window; for [`Kill::Tree`] suspended, inside its job, and only then resumed, so nothing
 /// it starts escapes the job.
 fn spawn(cmd: &mut Command, kill: Kill) -> std::io::Result<(Child, Option<Job>)> {
+    SPAWNED.set(SPAWNED.get() + 1);
     if kill == Kill::Child {
         return Ok((no_window(cmd).spawn()?, None));
     }
@@ -246,6 +256,95 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<Output, RunError> {
     run(command("git").arg("-C").arg(dir).args(args), GIT_TIMEOUT, Kill::Tree)
 }
 
+/// How many chunks of stdout a [`Streaming`] child's reader runs ahead of its caller; past them the child
+/// blocks on its pipe until more are asked for.
+const AHEAD: usize = 2;
+const CHUNK: usize = 64 * 1024;
+
+/// A child whose stdout is read as it writes, chunk by chunk: no window, `input` on stdin, stderr kept, its
+/// tree in a job. Dropped before [`Streaming::finish`], its tree is killed without waiting.
+pub struct Streaming {
+    child: Child,
+    tree: Option<Job>,
+    chunks: mpsc::Receiver<Vec<u8>>,
+    stderr: Option<(Drain, mpsc::Receiver<()>)>,
+    finished: bool,
+}
+
+/// Starts `cmd` for [`Streaming`] reads.
+pub fn stream(cmd: &mut Command, input: Option<Vec<u8>>) -> std::io::Result<Streaming> {
+    let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+    cmd.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (mut child, tree) = spawn(cmd, Kill::Tree)?;
+    feed(child.stdin.take(), input);
+    let (to, chunks) = mpsc::sync_channel(AHEAD);
+    if let Some(mut pipe) = child.stdout.take() {
+        thread::spawn(move || loop {
+            let mut chunk = vec![0u8; CHUNK];
+            match pipe.read(&mut chunk) {
+                Ok(n @ 1..) => {
+                    chunk.truncate(n);
+                    if to.send(chunk).is_err() {
+                        return;
+                    }
+                }
+                _ => return,
+            }
+        });
+    }
+    let (done, settled) = mpsc::channel();
+    let stderr = drain(child.stderr.take(), done);
+    Ok(Streaming { child, tree, chunks, stderr: Some((stderr, settled)), finished: false })
+}
+
+impl Streaming {
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// The next bytes the child wrote, `None` once its stdout closed; none within `timeout` kills its tree.
+    pub fn next(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, RunError> {
+        match self.chunks.recv_timeout(timeout) {
+            Ok(chunk) => Ok(Some(chunk)),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.finished = true;
+                terminate(&mut self.child, self.tree.as_ref());
+                Err(RunError::Timeout(timeout))
+            }
+        }
+    }
+
+    /// After [`Streaming::next`] gave `None`: the exit code and stderr, the tree killed when it has not exited
+    /// within `timeout`.
+    pub fn finish(mut self, timeout: Duration) -> Result<RawOutput, RunError> {
+        self.finished = true;
+        let code = match wait_exit(&mut self.child, timeout).map_err(RunError::Spawn)? {
+            Some(status) => status.code(),
+            None => {
+                terminate(&mut self.child, self.tree.as_ref());
+                return Err(RunError::Timeout(timeout));
+            }
+        };
+        if let Some(job) = &self.tree {
+            job.release();
+        }
+        let stderr = self.stderr.take().map(|(drain, settled)| {
+            let _ = settled.recv_timeout(PIPES_SETTLE);
+            drain.finish()
+        });
+        Ok(RawOutput { code, stdout: Vec::new(), stderr: stderr.unwrap_or_default() })
+    }
+}
+
+impl Drop for Streaming {
+    fn drop(&mut self) {
+        if !self.finished && !self.tree.as_ref().is_some_and(Job::terminate) {
+            let _ = self.child.kill();
+        }
+    }
+}
+
 fn terminate(child: &mut Child, tree: Option<&Job>) {
     if !tree.is_some_and(Job::terminate) {
         let _ = child.kill();
@@ -329,6 +428,10 @@ impl Job {
         unsafe { windows::Win32::System::JobObjects::TerminateJobObject(self.0, 1).is_ok() }
     }
 }
+
+// SAFETY: a job handle may be used and closed from any thread.
+#[cfg(windows)]
+unsafe impl Send for Job {}
 
 #[cfg(windows)]
 impl Drop for Job {
@@ -671,6 +774,26 @@ mod tests {
         let (ended, out) = run_watched(&mut powershell(&script), Duration::from_secs(60), Kill::Tree, &mut || flag.exists()).unwrap();
         assert_eq!((ended, out.stderr.as_str()), (Ended::Stopped, "partial"));
         assert!(started_at.elapsed() < Duration::from_secs(30), "{:?}", started_at.elapsed());
+    }
+
+    #[test]
+    fn a_streamed_child_is_read_as_it_writes_and_dies_with_its_tree_when_dropped() {
+        let mut echo = stream(&mut powershell("[Console]::Out.Write([Console]::In.ReadToEnd()); [Console]::Error.Write('said')"), Some(b"in and out".to_vec())).unwrap();
+        let mut out = Vec::new();
+        while let Some(chunk) = echo.next(Duration::from_secs(30)).unwrap() {
+            out.extend(chunk);
+        }
+        let end = echo.finish(Duration::from_secs(30)).unwrap();
+        assert_eq!((out.as_slice(), end.code, end.stderr.as_slice()), (b"in and out".as_slice(), Some(0), b"said".as_slice()));
+
+        let before = spawned_here();
+        let mut endless = stream(&mut powershell("while ($true) { [Console]::Out.Write('x' * 65536) }"), None).unwrap();
+        assert_eq!(spawned_here(), before + 1);
+        assert!(!endless.next(Duration::from_secs(30)).unwrap().unwrap().is_empty());
+        let pid = endless.pid();
+        assert!(alive(pid), "the child waits on its full pipe");
+        drop(endless);
+        assert!(wait_any_exit(&[pid], Duration::from_secs(10)), "dropped, its tree is killed");
     }
 
     fn median_ms(runs: usize, mut once: impl FnMut()) -> f64 {

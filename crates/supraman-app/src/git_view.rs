@@ -27,12 +27,14 @@ mod keys_tests;
 mod refresh_tests;
 #[cfg(test)]
 mod seek_tests;
+#[cfg(test)]
+mod stream_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
-use supraman_gitman::{Layout, Repo};
+use supraman_gitman::{History, Layout, Repo};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
@@ -139,6 +141,8 @@ pub struct GitView {
     heads: Heads,
     /// Away while a page is laid out with it.
     layout: Option<Layout>,
+    /// The walk's `rev-list`, read on by the next page; away while a page reads it.
+    history: Option<History>,
     rows: Vec<GraphRow>,
     commits: usize,
     wip: Option<Wip>,
@@ -201,6 +205,7 @@ impl GitView {
                 tips: Arc::from([]),
                 heads: Heads::default(),
                 layout: None,
+                history: None,
                 rows: Vec::new(),
                 commits: 0,
                 wip: None,
@@ -434,6 +439,7 @@ impl GitView {
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.load = Load::Loading;
+        self.history = None;
         let (home, folder, walk) = (self.home.clone(), self.folder.clone(), self.ref_panel.read(cx).walk().clone());
         let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder, &walk) });
         cx.spawn(async move |this, cx| {
@@ -453,6 +459,7 @@ impl GitView {
                 self.more = first.page.more;
                 self.marks.reset(self.rows.len(), self.commits, &first.page.layout);
                 self.layout = Some(first.page.layout);
+                self.history = first.history;
                 self.tips = first.tips.into();
                 self.heads = first.heads;
                 self.follow.walked = first.walk;
@@ -502,8 +509,8 @@ impl GitView {
         }
         let (Some(repo), Some(layout)) = (self.repo.clone(), self.layout.take()) else { return };
         self.paging = true;
-        let (tips, skip, generation) = (self.tips.clone(), self.commits, self.follow.generation);
-        let page = cx.background_spawn(async move { load::next(&repo, &tips, skip, layout) });
+        let (tips, skip, generation, walker) = (self.tips.clone(), self.commits, self.follow.generation, self.history.take());
+        let page = cx.background_spawn(async move { load::next(&repo, &tips, skip, layout, walker) });
         cx.spawn(async move |this, cx| {
             let page = page.await;
             this.update(cx, |this, cx| if this.follow.generation == generation { this.apply_page(page, cx) }).ok();
@@ -512,11 +519,12 @@ impl GitView {
         cx.notify();
     }
 
-    fn apply_page(&mut self, page: Result<load::Page, String>, cx: &mut Context<Self>) {
+    fn apply_page(&mut self, page: Result<(load::Page, Option<History>), String>, cx: &mut Context<Self>) {
         let _stall = stall::section("git tab: next page");
         self.paging = false;
         match page {
-            Ok(page) => {
+            Ok((page, walker)) => {
+                self.history = walker;
                 self.commits += page.rows.len();
                 let from = self.rows.len();
                 self.rows.extend(page.rows);

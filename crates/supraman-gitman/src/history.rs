@@ -1,3 +1,5 @@
+use supraman_core::process::{GIT_TIMEOUT, Streaming};
+
 use crate::parse::{name_email, text};
 use crate::{GitError, Repo};
 
@@ -53,14 +55,95 @@ pub fn history(repo: &Repo, tips: &[String], skip: usize, count: usize) -> Resul
     if tips.is_empty() || count == 0 {
         return Ok(Page { commits: Vec::new(), more: false });
     }
-    let format = format!("--format=tformat:%x00{FIELDS}%x00%B%x00%x00");
-    let (skip, max) = (format!("--skip={skip}"), format!("--max-count={}", count + 1));
-    let input = tips.iter().flat_map(|t| [t.as_bytes(), b"\n"]).flatten().copied().collect();
-    let args = ["rev-list", &format, "--date-order", "--ignore-missing", &skip, &max, "--stdin"];
-    let mut commits = repo.read(&args, Some(input), |out| parse_commits(out, false).map(|v| v.into_iter().map(|(c, _)| c).collect::<Vec<_>>()))?;
-    let more = commits.len() > count;
-    commits.truncate(count);
-    Ok(Page { commits, more })
+    History::start(repo, tips, skip)?.page(count)
+}
+
+/// The commits reachable from `tips` in date order, one `rev-list` read page by page as pages are asked for;
+/// dropped, it kills git.
+pub struct History {
+    tips: Vec<String>,
+    git: Option<Streaming>,
+    args: String,
+    out: Vec<u8>,
+    /// Where each whole record in `out` ends.
+    ends: Vec<usize>,
+    scanned: usize,
+    /// The commits before the next one a page reads.
+    at: usize,
+}
+
+impl History {
+    /// The walk from `tips` after its first `skip` commits.
+    pub fn start(repo: &Repo, tips: &[String], skip: usize) -> Result<History, GitError> {
+        let format = format!("--format=tformat:%x00{FIELDS}%x00%B%x00%x00");
+        let from = format!("--skip={skip}");
+        let args = ["rev-list", &format, "--date-order", "--ignore-missing", &from, "--stdin"];
+        let input = tips.iter().flat_map(|t| [t.as_bytes(), b"\n"]).flatten().copied().collect();
+        let git = if tips.is_empty() { None } else { Some(repo.stream(&args, Some(input))?) };
+        Ok(History { tips: tips.to_vec(), git, args: args.join(" "), out: Vec::new(), ends: Vec::new(), scanned: 0, at: skip })
+    }
+
+    pub fn tips(&self) -> &[String] {
+        &self.tips
+    }
+
+    /// The commits before the next page.
+    pub fn at(&self) -> usize {
+        self.at
+    }
+
+    /// git's pid while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.git.as_ref().map(Streaming::pid)
+    }
+
+    /// The next `count` commits, read on from where the last page stopped.
+    pub fn page(&mut self, count: usize) -> Result<Page, GitError> {
+        self.read_records(count + 1)?;
+        let n = self.ends.len().min(count);
+        let cut = n.checked_sub(1).map_or(0, |last| self.ends[last]);
+        let commits = parse_commits(&self.out[..cut], false).map_err(|what| GitError::Parse { args: self.args.clone(), what })?;
+        self.out.drain(..cut);
+        self.ends.drain(..n);
+        self.ends.iter_mut().for_each(|end| *end -= cut);
+        self.scanned -= cut;
+        self.at += n;
+        if self.git.is_none() && self.ends.is_empty() && !self.out.is_empty() {
+            return Err(GitError::Parse { args: self.args.clone(), what: "a record without its end".into() });
+        }
+        Ok(Page { commits: commits.into_iter().map(|(c, _)| c).collect(), more: !self.ends.is_empty() })
+    }
+
+    /// Reads until `want` whole records wait or git ended.
+    fn read_records(&mut self, want: usize) -> Result<(), GitError> {
+        while self.ends.len() < want {
+            let Some(git) = self.git.as_mut() else { return Ok(()) };
+            match git.next(GIT_TIMEOUT).map_err(|source| GitError::Run { args: self.args.clone(), source })? {
+                Some(chunk) => {
+                    self.out.extend_from_slice(&chunk);
+                    self.scan();
+                }
+                None => self.end()?,
+            }
+        }
+        Ok(())
+    }
+
+    fn scan(&mut self) {
+        let from = self.scanned.saturating_sub(2).max(self.ends.last().copied().unwrap_or(0));
+        let found = self.out[from..].windows(3).enumerate().filter(|(_, w)| *w == b"\0\0\n").map(|(i, _)| from + i + 3);
+        self.ends.extend(found);
+        self.scanned = self.out.len();
+    }
+
+    fn end(&mut self) -> Result<(), GitError> {
+        let Some(git) = self.git.take() else { return Ok(()) };
+        let out = git.finish(GIT_TIMEOUT).map_err(|source| GitError::Run { args: self.args.clone(), source })?;
+        if out.success() {
+            return Ok(());
+        }
+        Err(GitError::Failed { args: self.args.clone(), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
+    }
 }
 
 /// One commit, its message split and its `Co-authored-by:` trailers.

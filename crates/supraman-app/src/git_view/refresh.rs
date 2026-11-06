@@ -172,6 +172,7 @@ impl GitView {
         self.follow.graph_token += 1;
         self.follow.wip_token += 1;
         let token = self.follow.graph_token;
+        self.history = None;
         let walk = self.ref_panel.read(cx).walk().clone();
         let loaded = (self.commits > FIRST_PAGE && walk == self.follow.walked).then(|| self.loaded());
         let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref()) });
@@ -211,6 +212,7 @@ impl GitView {
         self.more = more;
         self.marks.reset(self.rows.len(), self.commits, &layout);
         self.layout = Some(layout);
+        self.history = first.history;
         self.tips = first.tips.into();
         self.heads = first.heads;
         self.wip = first.wip;
