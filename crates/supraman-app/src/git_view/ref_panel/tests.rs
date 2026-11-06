@@ -373,3 +373,32 @@ fn a_sections_overlay_shows_nothing_until_its_tree_is_built(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(panel.read_with(cx, |p, _| p.overlay_rows().len()), 4, "then the card with all its rows");
 }
+
+#[gpui::test]
+fn a_sections_border_drags_height_between_its_neighbours_and_the_heights_persist(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let at = |key: &str| hits.borrow().get(key).unwrap_or_else(|| panic!("{key} not painted")).bounds;
+    let (local, remote) = (at("refpanel-row-local"), at("refpanel-row-remote"));
+    let start = at("refpanel-sections-divider-1").center();
+    assert!((start.y - remote.top()).abs() <= px(4.), "the border above REMOTE's header");
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(start + gpui::point(px(0.), px(20.)), gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_move(start + gpui::point(px(0.), px(48.)), gpui::MouseButton::Left, gpui::Modifiers::none());
+    cx.simulate_mouse_up(start + gpui::point(px(0.), px(48.)), gpui::MouseButton::Left, gpui::Modifiers::none());
+    redraw(&view, cx);
+    let moved = at("refpanel-row-remote");
+    assert!((moved.top() - remote.top() - px(48.)).abs() <= px(1.), "REMOTE's header follows the border: {remote:?} to {moved:?}");
+    assert_eq!(at("refpanel-row-local").top(), local.top(), "LOCAL's header stays");
+    let sizes = view.read_with(cx, |v, cx| v.sizes(cx));
+    assert_eq!(sizes.sections.len(), 5, "the tab keeps every section's height: {:?}", sizes.sections);
+    let back = serde_json::from_value::<GitSizes>(serde_json::to_value(&sizes).unwrap()).unwrap();
+    assert_eq!(back.sections, sizes.sections, "they round-trip through layout.json");
+
+    click("refpanel-row-remote", &view, cx);
+    assert!(!hits.borrow().contains_key("refpanel-row-remote/origin"), "a closed section is its header alone");
+    let header = at("refpanel-row-remote");
+    let next = Section::ALL.iter().skip(2).find_map(|s| hits.borrow().get(&format!("refpanel-row-{}", s.key())).map(|h| h.bounds));
+    assert!(next.is_some_and(|n| (n.top() - header.bottom()).abs() <= px(1.)), "the next section's header right under it");
+}

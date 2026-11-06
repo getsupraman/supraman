@@ -1,13 +1,14 @@
 //! The panel painted: the filter bar, the section headers, folders and ref rows of the tree, and the strip the
 //! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-name-<path>`, `refpanel-eye-<path>`,
 //! `refpanel-solo-<path>`, `refpanel-filter`, `refpanel-show-all`, `refpanel-collapse`, `refpanel-expand`,
-//! `refpanel-strip-<section>`.
+//! `refpanel-strip-<section>`, `refpanel-sections-divider-<pane>` (the border above a shown section's header).
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, SharedString, Window, div, prelude::*, px};
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::matcher::highlighted;
+use supraman_ui::split::{Pane, Stack};
 use supraman_ui::stall;
 use supraman_ui::table::row_group;
 use supraman_ui::tooltip::Tooltip;
@@ -143,13 +144,9 @@ impl RefPanel {
             .into_any_element()
     }
 
-    /// A row of `list`: the panel's tree, whose roots are the section headers, or the overlay's.
+    /// A row of `list`: a section's pane in the panel, or the overlay's.
     pub(super) fn paint(&mut self, list: &str, row: Row<'_, Entry, Keys>, cx: &mut Context<Self>) -> AnyElement {
         match row.item {
-            Item::Folder { open, .. } if list == LIST && row.depth == 0 => match Section::of(row.path) {
-                Some(section) => self.header(section, open, cx),
-                None => div().into_any_element(),
-            },
             Item::Folder { aggregate, .. } => self.folder(list, &row, aggregate, cx),
             Item::File(entry) => self.file(list, &row, entry, cx),
         }
@@ -215,14 +212,62 @@ impl RefPanel {
         div().flex().flex_col().items_center().gap_2().pt_1().w(STRIP).h_full().child(expand).children(sections)
     }
 
-    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
-        TreeList::new(LIST, &self.tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(LIST, row, cx))
+    /// A section's header, under `refpanel-row-<section>`: a click opens or closes it.
+    fn pane_header(&self, section: Section, open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+        let key = section.key();
+        button::ghost(&self.hits, format!("{LIST}-row-{key}"), cx)
+            .flex()
+            .items_center()
+            .h(px(ROW))
+            .px_2()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx))))
+            .child(self.header(section, open, cx))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.tree.toggle(key);
+                cx.emit(RefEvent::Layout);
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn section_list(&self, section: Section, cx: &mut Context<Self>) -> AnyElement {
+        TreeList::new(LIST, self.tree.get(section), &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(LIST, row, cx))
             .row_height(px(ROW))
             .on_select(|this, path, _, cx| {
                 this.picked(path, cx);
             })
             .on_toggle(|_, _, cx| cx.emit(RefEvent::Layout))
             .render(cx)
+            .size_full()
+            .into_any_element()
+    }
+
+    /// The sections the filter keeps, stacked: a closed one its header, the open ones sharing the rest by their
+    /// kept heights, else by their rows.
+    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let shown: Vec<Section> = Section::ALL.into_iter().filter(|s| self.tree.shows(*s)).collect();
+        let at = |section: Section| Section::ALL.iter().position(|s| *s == section).unwrap_or(0);
+        let panes = shown
+            .iter()
+            .map(|section| {
+                let open = self.tree.is_open(section.key());
+                let kept = self.heights[at(*section)];
+                let height = if kept > px(0.) { kept } else { px(ROW * (1 + self.tree.get(*section).row_count()) as f32) };
+                Pane { header: self.pane_header(*section, open, cx), body: open.then(|| self.section_list(*section, cx)), height }
+            })
+            .collect();
+        let stack = Stack { id: format!("{LIST}-sections").into(), min: px(ROW * 3.) };
+        let resized = shown.clone();
+        stack
+            .render(&self.stack, panes, &self.hits, move |this: &mut RefPanel, heights, cx| {
+                for (section, height) in resized.iter().zip(heights) {
+                    this.heights[at(*section)] = height;
+                }
+                cx.notify();
+            }, |_: &mut RefPanel, cx| cx.emit(RefEvent::Layout), cx)
             .flex_1()
             .min_h_0()
             .into_any_element()

@@ -248,11 +248,21 @@ struct Inner<T, A> {
     order: Order,
     rows: Vec<usize>,
     selected: Option<SharedString>,
+    roots_hidden: bool,
 }
 
 impl<T, A> Inner<T, A> {
     fn refresh(&mut self) {
         self.rows = self.tree.rows(Some(&self.open), self.kept.as_deref());
+        if self.roots_hidden {
+            let nodes = &self.tree.nodes;
+            self.rows.retain(|at| nodes[*at].parent.is_some() || matches!(nodes[*at].kind, Kind::File(_)));
+        }
+    }
+
+    /// A node's depth as its row shows it.
+    fn depth(&self, node: &Node<T, A>) -> usize {
+        if self.roots_hidden { node.depth.saturating_sub(1) } else { node.depth }
     }
 
     fn row_of(&self, path: &str) -> Option<usize> {
@@ -287,6 +297,7 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
             order: Order::default(),
             rows: Vec::new(),
             selected: None,
+            roots_hidden: false,
         };
         Self { inner: Rc::new(RefCell::new(inner)), table: TableState::new(cx) }
     }
@@ -321,6 +332,23 @@ impl<T, A> TreeState<T, A> {
 
     pub fn order(&self) -> Order {
         self.inner.borrow().order
+    }
+
+    /// The top-level folders are no rows, their rows a level less deep: the owner paints them (the ref panel's
+    /// section headers). A closed one still hides its rows.
+    pub fn hide_roots(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.roots_hidden = true;
+        inner.refresh();
+    }
+
+    /// Whether the filter keeps any file.
+    pub fn any_kept(&self) -> bool {
+        let inner = self.inner.borrow();
+        match &inner.kept {
+            Some(kept) => inner.tree.nodes.iter().zip(kept).any(|(n, k)| *k && matches!(n.kind, Kind::File(_))),
+            None => inner.tree.nodes.iter().any(|n| matches!(n.kind, Kind::File(_))),
+        }
     }
 
     pub fn set_order(&self, order: Order) {
@@ -397,6 +425,11 @@ impl<T, A> TreeState<T, A> {
         let mut inner = self.inner.borrow_mut();
         inner.open.clear();
         inner.refresh();
+    }
+
+    /// How many rows show.
+    pub fn row_count(&self) -> usize {
+        self.inner.borrow().rows.len()
     }
 
     /// The paths of the rows shown, top to bottom.
@@ -598,14 +631,15 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                 }
             };
             let selected = inner.selected.as_ref() == Some(&node.path);
-            let row = Row { name: &node.name, path: &node.path, depth: node.depth, item, selected };
+            let depth = inner.depth(node);
+            let row = Row { name: &node.name, path: &node.path, depth, item, selected };
             let content = paint(this, row, window, cx);
             div()
                 .flex()
                 .items_center()
                 .w_full()
                 .min_w_0()
-                .pl(indent * node.depth as f32)
+                .pl(indent * depth as f32)
                 .children(chevron.map(|c| div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted))))
                 .child(div().flex().flex_1().min_w_0().items_center().child(content))
                 .into_any_element()
@@ -855,4 +889,18 @@ mod tests {
         assert_eq!(inner, top + px(14.), "one level in is one indent");
         assert_eq!(x("name-src/main.rs", cx), inner, "a file beside a folder at its name");
     }
+    #[gpui::test]
+    fn hidden_roots_are_no_rows_but_still_close_their_rows(cx: &mut TestAppContext) {
+        let state = cx.update(state);
+        state.hide_roots();
+        state.expand_all();
+        assert_eq!(paths(&state), ["docs/guide.md", "src/ui", "src/ui/src", "src/ui/src/lib.rs", "src/ui/src/Mod.rs", "src/ui/view.rs", "src/main.rs", "README.md"]);
+        state.toggle("src");
+        assert_eq!(paths(&state), ["docs/guide.md", "README.md"], "a closed root hides its rows");
+        state.set_filter("nothing");
+        assert!(!state.any_kept());
+        state.set_filter("guide");
+        assert!(state.any_kept());
+    }
+
 }

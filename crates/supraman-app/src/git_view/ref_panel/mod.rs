@@ -6,6 +6,7 @@
 mod entries;
 mod overlay;
 mod render;
+mod sections;
 
 #[cfg(test)]
 mod tests;
@@ -16,7 +17,8 @@ use gpui::{AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, 
 use supraman_gitman::Refs;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::TextInput;
-use supraman_ui::tree::{Tree, TreeState};
+use supraman_ui::split::StackState;
+use supraman_ui::tree::Tree;
 
 use super::GitSizes;
 
@@ -44,13 +46,13 @@ fn fold(keys: &mut Keys, entry: &Entry) {
 /// The panel's rows of a [`Refs`], built off the UI thread ([`build`]).
 pub struct Built {
     entries: Vec<(String, Entry)>,
-    tree: Tree<Entry, Keys>,
+    trees: [Tree<Entry, Keys>; 5],
 }
 
 pub fn build(refs: &Refs) -> Built {
     let entries = entries(refs);
-    let tree = Tree::build_given(entries.iter().cloned(), fold);
-    Built { entries, tree }
+    let trees = Section::ALL.map(|section| Tree::build_given(entries.iter().filter(|(path, _)| Section::of(path) == Some(section)).cloned(), fold));
+    Built { entries, trees }
 }
 
 pub enum RefEvent {
@@ -65,7 +67,10 @@ pub enum RefEvent {
 pub struct RefPanel {
     hits: HitTargets,
     entries: Arc<Vec<(String, Entry)>>,
-    tree: TreeState<Entry, Keys>,
+    tree: sections::Sections,
+    /// Each section's height while open, in [`Section::ALL`]'s order; zero for an even share.
+    heights: [Pixels; 5],
+    stack: StackState,
     walk: Walk,
     filter: Option<(Entity<TextInput>, Subscription)>,
     width: Pixels,
@@ -83,12 +88,12 @@ impl EventEmitter<RefEvent> for RefPanel {}
 
 impl RefPanel {
     pub fn new(hits: HitTargets, tab: FocusHandle, cx: &mut Context<Self>) -> Self {
-        let tree = TreeState::new(cx);
-        tree.match_with(|entry: &Entry, filter| entry.matches(filter));
         RefPanel {
             hits,
             entries: Arc::new(Vec::new()),
-            tree,
+            tree: sections::Sections::new(cx),
+            heights: [px(0.); 5],
+            stack: StackState::default(),
             walk: Walk::default(),
             filter: None,
             width: DEFAULT_WIDTH,
@@ -107,6 +112,7 @@ impl RefPanel {
         self.shut = sizes.refs_shut;
         self.walk = Walk { hidden: sizes.hidden.iter().cloned().collect(), solo: sizes.solo.iter().cloned().collect() };
         self.collapsed = sizes.collapsed.clone();
+        self.heights = std::array::from_fn(|i| px(sizes.sections.get(i).copied().unwrap_or(0) as f32));
         if self.built {
             self.close_collapsed();
         }
@@ -121,7 +127,7 @@ impl RefPanel {
 
     /// The rows built; every folder open the first time but the collapsed ones, the open ones kept after.
     pub fn set_built(&mut self, built: Built, cx: &mut Context<Self>) {
-        self.tree.set_tree(built.tree);
+        self.tree.set(built.trees);
         if !std::mem::replace(&mut self.built, true) {
             self.tree.expand_all();
             self.close_collapsed();
@@ -137,6 +143,12 @@ impl RefPanel {
                 self.tree.toggle(&path);
             }
         }
+    }
+
+    /// Each section's height while open, in [`Section::ALL`]'s order; zero for an even share.
+    pub fn sections(&self) -> Vec<u32> {
+        let heights: Vec<u32> = self.heights.iter().map(|h| f32::from(*h).round().max(0.) as u32).collect();
+        if heights.iter().all(|h| *h == 0) { Vec::new() } else { heights }
     }
 
     /// The folders closed, sections included.

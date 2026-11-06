@@ -77,6 +77,9 @@ pub struct GitSizes {
     pub collapsed: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub solo: Vec<String>,
+    /// The ref panel's sections' heights while open; none for an even share.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<u32>,
 }
 
 fn whole(p: Pixels) -> u32 {
@@ -327,6 +330,7 @@ impl GitView {
             hidden: refs.walk().hidden.iter().cloned().collect(),
             collapsed: refs.collapsed(),
             solo: refs.walk().solo.iter().cloned().collect(),
+            sections: refs.sections(),
         }
     }
 
