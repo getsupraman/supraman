@@ -6,11 +6,13 @@ pub struct TranscriptsLoad {
     read: bool,
     progress: Option<(usize, usize)>,
     scans: u64,
+    /// Each continued closed session to the newest session of its chain ([`supraman_claude::chains`]).
+    pub continued: std::collections::HashMap<String, String>,
 }
 
 impl TranscriptsLoad {
     pub fn new(has_claude_dir: bool) -> Self {
-        Self { cache: None, read: !has_claude_dir, progress: None, scans: 0 }
+        Self { cache: None, read: !has_claude_dir, progress: None, scans: 0, continued: Default::default() }
     }
 
     /// Whether the cached rows are listed before the scan.

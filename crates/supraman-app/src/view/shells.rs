@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context};
+use gpui::{AppContext as _, Context, SharedString};
 use supraman_core::shells::{Shell, ShellSetting, Shells};
 use supraman_core::{Settings, TerminalSettings};
 use supraman_ui::menu::item;
@@ -12,12 +12,6 @@ use supraman_ui::menu::item;
 use super::menu::{ContextMenu, MenuAction, MenuItem};
 use super::{FleetView, TabKind, powershell_args};
 use crate::saved_tabs::SavedShell;
-
-/// Menu keys of the shells that no setting names; a machine with more lists the first of them.
-const SLOTS: [&str; 24] = [
-    "shell-0", "shell-1", "shell-2", "shell-3", "shell-4", "shell-5", "shell-6", "shell-7", "shell-8", "shell-9", "shell-10", "shell-11", "shell-12",
-    "shell-13", "shell-14", "shell-15", "shell-16", "shell-17", "shell-18", "shell-19", "shell-20", "shell-21", "shell-22", "shell-23",
-];
 
 /// What a tab of `shell` starts; a plain PowerShell takes `powershell` (the view's `shell_args`).
 pub(crate) fn command(shell: &Shell, powershell: &[String]) -> SavedShell {
@@ -48,18 +42,17 @@ fn group(shell: &Shell) -> &'static str {
     }
 }
 
-fn key(shell: &Shell, slot: &mut usize) -> Option<&'static str> {
-    Some(match &shell.setting {
-        Some(ShellSetting::Pwsh) => "shell-pwsh",
-        Some(ShellSetting::PowerShell) => "shell-powershell",
-        Some(ShellSetting::Cmd) => "shell-cmd",
-        Some(ShellSetting::Custom(_)) => "shell-custom",
+fn key(shell: &Shell, slot: &mut usize) -> SharedString {
+    match &shell.setting {
+        Some(ShellSetting::Pwsh) => "shell-pwsh".into(),
+        Some(ShellSetting::PowerShell) => "shell-powershell".into(),
+        Some(ShellSetting::Cmd) => "shell-cmd".into(),
+        Some(ShellSetting::Custom(_)) => "shell-custom".into(),
         _ => {
-            let key = SLOTS.get(*slot)?;
             *slot += 1;
-            key
+            format!("shell-{}", *slot - 1).into()
         }
-    })
+    }
 }
 
 /// The ⌄ menu: every shell in `shells`' order under its group's caption, `default` marked (and listed last
@@ -69,7 +62,7 @@ pub(crate) fn menu_items(shells: &Shells, default: &Shell) -> Vec<MenuItem> {
     let (mut slot, mut last) = (0, None);
     let mut items = Vec::new();
     for shell in shells.list.iter().chain(custom) {
-        let Some(key) = key(shell, &mut slot) else { continue };
+        let key = key(shell, &mut slot);
         let label = if shell == default { format!("{}  (default)", shell.label) } else { shell.label.clone() };
         let mut entry = item(key, label, MenuAction::NewShell(shell.clone()));
         if last != Some(group(shell)) {
@@ -81,28 +74,52 @@ pub(crate) fn menu_items(shells: &Shells, default: &Shell) -> Vec<MenuItem> {
     items
 }
 
-/// The `[terminal]` table + and the ⌄ menu start from, read off the UI thread: at start, by the ⌄ menu, from the
-/// Settings window, and from each supervisor tick, whose value counts only when it changed since the last tick's.
+/// This machine's shells once detected, and the `[terminal]` table + and the ⌄ menu start from, read off the UI
+/// thread: at start, by the ⌄ menu, from the Settings window, and from each supervisor tick, whose value counts only
+/// when it changed since the last tick's. The default is resolved again only when either changes.
 #[derive(Debug, Default)]
 pub(crate) struct ShellDefault {
+    found: Option<Arc<Shells>>,
     terminal: TerminalSettings,
     ticked: Option<TerminalSettings>,
+    resolved: Option<(Shell, Option<String>)>,
 }
 
 impl ShellDefault {
     pub(crate) fn new(terminal: TerminalSettings) -> Self {
-        Self { terminal, ticked: None }
+        Self { terminal, ..Self::default() }
+    }
+
+    pub(crate) fn found(&self) -> Option<&Arc<Shells>> {
+        self.found.as_ref()
+    }
+
+    /// The default shell and the notice when `auto` stands in for it; `None` while detection runs.
+    pub(crate) fn resolved(&self) -> Option<&(Shell, Option<String>)> {
+        self.resolved.as_ref()
+    }
+
+    pub(crate) fn detected(&mut self, shells: Shells) {
+        self.found = Some(Arc::new(shells));
+        self.resolve();
     }
 
     pub(crate) fn read(&mut self, terminal: TerminalSettings) {
-        self.terminal = terminal;
+        if self.terminal != terminal {
+            self.terminal = terminal;
+            self.resolve();
+        }
     }
 
     pub(crate) fn ticked(&mut self, terminal: TerminalSettings) {
         if self.ticked.as_ref() != Some(&terminal) {
-            self.terminal = terminal.clone();
+            self.read(terminal.clone());
         }
         self.ticked = Some(terminal);
+    }
+
+    fn resolve(&mut self) {
+        self.resolved = self.found.as_ref().map(|shells| shells.for_settings(&self.terminal));
     }
 }
 
@@ -111,7 +128,7 @@ impl FleetView {
         cx.spawn(async move |this, cx| {
             let shells = cx.background_spawn(async { supraman_core::shells::detect() }).await;
             this.update(cx, |this, cx| {
-                this.shells = Some(Arc::new(shells));
+                this.shell_default.detected(shells);
                 cx.notify();
             })
             .ok();
@@ -121,8 +138,7 @@ impl FleetView {
 
     /// The `[terminal] shell` default; its notice joins the tab notices. PowerShell while detection runs.
     fn default_of(&mut self) -> Option<Shell> {
-        let shells = self.shells.clone()?;
-        let (shell, notice) = shells.for_settings(&self.shell_default.terminal);
+        let (shell, notice) = self.shell_default.resolved()?.clone();
         if let Some(notice) = notice
             && !self.tab_notices.contains(&notice)
         {
@@ -172,10 +188,10 @@ impl FleetView {
 
     fn show_shell_menu(&mut self, cx: &mut Context<Self>) {
         let Some(default) = self.default_of() else {
-            self.pane_toast.show_why("Still finding this machine's shells.".into(),|v: &mut Self| &mut v.pane_toast, cx);
+            self.pane_toast.show_why("Still finding this machine's shells.".into(), |v: &mut Self| &mut v.pane_toast, cx);
             return;
         };
-        let shells = self.shells.clone().expect("default_of found the shells");
+        let shells = self.shell_default.found().cloned().expect("default_of found the shells");
         let position = self.hits.borrow().get("new-shell-menu").map(|h| h.bounds.bottom_left()).unwrap_or_default();
         self.menu = Some(ContextMenu { title: "New shell".into(), position, items: menu_items(&shells, &default) });
         cx.notify();
@@ -207,9 +223,9 @@ mod tests {
     fn the_shell_menu_lists_every_shell_in_order_under_captions_with_the_default_marked() {
         let shells = machine();
         let items = menu_items(&shells, &shells.list[2]);
-        let keys: Vec<&str> = items.iter().map(|i| i.key).collect();
+        let keys: Vec<&str> = items.iter().map(|i| &*i.key).collect();
         assert_eq!(keys, ["shell-pwsh", "shell-powershell", "shell-cmd", "shell-0", "shell-1", "shell-2"]);
-        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (i.key, c))).collect();
+        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (&*i.key, c))).collect();
         assert_eq!(captions, [("shell-pwsh", "PowerShell"), ("shell-cmd", "Command Prompt"), ("shell-0", "Visual Studio"), ("shell-2", "WSL")]);
         assert_eq!(items[2].label, "Command Prompt  (default)");
         assert!(items.iter().filter(|i| i.label.ends_with("(default)")).count() == 1);
@@ -218,7 +234,17 @@ mod tests {
         let bash = shell("bash", r"C:\Git\bin\bash.exe", &["--login"], Some(ShellSetting::Custom(r"C:\Git\bin\bash.exe".into())));
         let items = menu_items(&shells, &bash);
         let last = items.last().unwrap();
-        assert_eq!((last.key, last.label.as_str(), last.section.as_deref()), ("shell-custom", "bash  (default)", Some("[terminal] shell")));
+        assert_eq!((&*last.key, last.label.as_str(), last.section.as_deref()), ("shell-custom", "bash  (default)", Some("[terminal] shell")));
+    }
+
+    #[test]
+    fn the_shell_menu_lists_more_unnamed_shells_than_any_fixed_count() {
+        let distros: Vec<Shell> = (0..40).map(|n| shell(&format!("Distro {n}"), r"C:\Windows\System32\wsl.exe", &["-d"], Some(ShellSetting::Wsl(format!("d{n}"))))).collect();
+        let shells = Shells { list: distros, auto: machine().auto };
+        let items = menu_items(&shells, &shells.auto);
+        let keys: std::collections::HashSet<String> = items.iter().map(|i| i.key.to_string()).collect();
+        assert_eq!((items.len(), keys.len()), (41, 41), "every distro and the default, each under its own key");
+        assert_eq!(items[39].label, "Distro 39");
     }
 
     #[test]

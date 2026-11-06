@@ -46,7 +46,7 @@ fn row(v: &FleetView, session_id: &str) -> Option<(String, Health)> {
 async fn delete_from_menu(view: &Entity<FleetView>, session_id: &str, name: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Duration> {
     press_painted(view, &format!("session-row-{session_id}"), MouseButton::Right, cx).await?;
     let keys = menu_open(view, name, cx).await?;
-    if keys.last() != Some(&"delete") {
+    if keys.last().is_none_or(|k| k != "delete") {
         bail!("the menu of {name} has {keys:?}, Delete… not last");
     }
     click(view, "menu-delete", cx).await?;
@@ -88,7 +88,7 @@ async fn check(view: &Entity<FleetView>, home: &Path, own: &str, cx: &mut AsyncW
     crate::selftest::forget_own_transcript(&sid, &session.cwd);
     press_painted(view, &format!("session-row-{sid}"), MouseButton::Right, cx).await?;
     let keys = menu_open(view, own, cx).await?;
-    if keys.contains(&"delete") || !keys.contains(&"stop-session") {
+    if keys.iter().any(|k| k == "delete") || !keys.iter().any(|k| k == "stop-session") {
         bail!("the live {own}'s menu has {keys:?}");
     }
     click(view, "menu-stop-session", cx).await?;

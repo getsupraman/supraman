@@ -62,6 +62,7 @@ pub struct SettingsView {
     auth: Option<AuthStatus>,
     auth_reads: u64,
     _url_events: Subscription,
+    saves: crate::view::writes::Serial,
 }
 
 static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
@@ -155,6 +156,7 @@ impl SettingsView {
             auth: None,
             auth_reads: 0,
             _url_events: url_events,
+            saves: Default::default(),
         };
         if this.mono_fonts.is_none() {
             let text_system = cx.text_system().clone();
@@ -257,7 +259,8 @@ impl SettingsView {
     }
 
     fn set_theme(&mut self, name: String, terminal: TerminalColors, cx: &mut Context<Self>) {
-        self.change(|s| choose_theme(s, &name, terminal), cx);
+        let chosen = name.clone();
+        self.change(move |s| choose_theme(s, &chosen, terminal), cx);
         self.theme_picks += 1;
         let (pick, home) = (self.theme_picks, self.home.clone());
         let resolving = cx.background_spawn(async move { themes::resolve(Some(&name), terminal, home.as_deref()) });
@@ -312,24 +315,47 @@ impl SettingsView {
         supraman_ui::open::open_off_thread(dir, cx).detach();
     }
 
-    fn change(&mut self, edit: impl FnMut(&mut Settings), cx: &mut Context<Self>) {
+    fn change(&mut self, edit: impl FnOnce(&mut Settings) + Send + 'static, cx: &mut Context<Self>) {
+        self.change_then(edit, |_, _| {}, cx);
+    }
+
+    /// Saved off the UI thread after the changes before it; `then` runs once it is applied.
+    fn change_then(
+        &mut self,
+        edit: impl FnOnce(&mut Settings) + Send + 'static,
+        then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) {
         let Some(home) = self.home.clone() else {
             return;
         };
-        match Settings::update(&home, edit) {
-            Ok((settings, ())) => {
-                self.settings = settings;
-                self.error = None;
+        let previous = self.saves.previous();
+        let task = cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.await;
             }
-            Err(e) => self.error = Some(format!("Cannot save settings.toml: {e}")),
-        }
-        let terminal = self.settings.terminal.clone();
-        self.fleet.update(cx, |fleet, _| {
-            fleet.shell_default.read(terminal);
-            fleet.recheck_workman();
-        })
-        .ok();
-        cx.notify();
+            let saved = cx.background_spawn(async move { Settings::update(&home, edit) }).await;
+            this.update(cx, |this, cx| {
+                match saved {
+                    Ok((settings, ())) => {
+                        this.settings = settings;
+                        this.error = None;
+                    }
+                    Err(e) => this.error = Some(format!("Cannot save settings.toml: {e}")),
+                }
+                let terminal = this.settings.terminal.clone();
+                this.fleet
+                    .update(cx, |fleet, _| {
+                        fleet.shell_default.read(terminal);
+                        fleet.recheck_workman();
+                    })
+                    .ok();
+                then(this, cx);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.saves.push(task);
     }
 
     fn set_max_working(&mut self, n: usize, cx: &mut Context<Self>) {
@@ -348,10 +374,11 @@ impl SettingsView {
             return;
         };
         let path = Settings::path(&home);
-        if !path.exists() {
-            self.change(|_| {}, cx);
+        if path.exists() {
+            supraman_ui::open::open_off_thread(path, cx).detach();
+        } else {
+            self.change_then(|_| {}, move |_, cx| supraman_ui::open::open_off_thread(path, cx).detach(), cx);
         }
-        supraman_ui::open::open_off_thread(path, cx).detach();
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -382,7 +409,7 @@ impl SettingsView {
             })));
         let admin = self.settings.sessions.run_as_admin;
         let toggle = button::small("run-as-admin", if admin { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.run_as_admin = !admin, cx)));
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.run_as_admin = !admin, cx)));
         let now: SharedString = if supraman_claude::is_elevated() {
             "Supraman runs as administrator now.".into()
         } else {
@@ -391,10 +418,10 @@ impl SettingsView {
         let now = div().text_xs().text_color(cx.theme().colors().text_muted).child(now).into_any_element();
         let reopen = self.settings.sessions.reopen_tabs;
         let reopen_toggle = button::small("reopen-tabs", if reopen { "On" } else { "Off" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.reopen_tabs = !reopen, cx)));
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.reopen_tabs = !reopen, cx)));
         let on_click = self.settings.sessions.resume_tabs_on_click;
         let resume_toggle = button::small("resume-tabs-on-click", if on_click { "On a click" } else { "At once" }, cx)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(|s| s.sessions.resume_tabs_on_click = !on_click, cx)));
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.change(move |s| s.sessions.resume_tabs_on_click = !on_click, cx)));
         vec![
             row(
                 "Busy sessions at most",
@@ -657,10 +684,15 @@ impl SettingsView {
     }
 
     pub fn set_update_check(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.change(|s| s.updates.check = on, cx);
-        if on {
-            self.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
-        }
+        self.change_then(
+            move |s| s.updates.check = on,
+            move |this, cx| {
+                if on {
+                    this.fleet.update(cx, |fleet, _| fleet.check_updates_now()).ok();
+                }
+            },
+            cx,
+        );
     }
 
     pub fn updates_line(&self, cx: &App) -> String {
@@ -837,13 +869,20 @@ impl SettingsView {
     }
 
     pub fn set_shell(&mut self, shell: ShellSetting, cx: &mut Context<Self>) {
-        self.change(|s| s.terminal.set_shell(shell.clone()), cx);
+        self.change(move |s| s.terminal.set_shell(shell), cx);
     }
 
     fn render_shell(&self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
         let current = self.settings.terminal.shell();
-        let shells = self.fleet.upgrade().and_then(|f| f.read(cx).shells.clone());
+        let (shells, notice) = self
+            .fleet
+            .upgrade()
+            .map(|f| {
+                let default = &f.read(cx).shell_default;
+                (default.found().cloned(), default.resolved().and_then(|(_, notice)| notice.clone()))
+            })
+            .unwrap_or_default();
         let mut choices = div().flex().flex_wrap().gap_1().pt_2();
         let mut notes = Vec::new();
         match &shells {
@@ -857,7 +896,7 @@ impl SettingsView {
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_shell(setting.clone(), cx))),
                     );
                 }
-                notes.extend(shells.for_settings(&self.settings.terminal).1);
+                notes.extend(notice);
             }
             None => choices = choices.child(div().text_xs().text_color(colors.text_muted).child("finding this machine's shells…")),
         }

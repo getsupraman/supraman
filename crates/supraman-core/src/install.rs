@@ -70,6 +70,17 @@ pub fn sm_exe() -> io::Result<PathBuf> {
     Ok(exe_dir()?.join(crate::HOOK_EXE))
 }
 
+/// [`exe_dir`] when `sm.exe` is in it: the folder a [+] tab puts first on its `PATH`.
+pub fn sm_dir() -> Option<PathBuf> {
+    exe_dir().ok().filter(|d| d.join(crate::HOOK_EXE).is_file())
+}
+
+/// A child's `PATH`: [`exe_dir`] first, then this process's, so the `sm` it runs is this build's.
+pub fn sm_first_path() -> Option<String> {
+    let dir = exe_dir().ok()?;
+    Some(format!("{};{}", dir.display(), crate::paths::process_path().to_string_lossy()))
+}
+
 /// The install folder of an exe in `exe_dir`: the folder itself, or the install above `plugins\supraman\bin`.
 pub fn install_dir(exe_dir: &Path) -> PathBuf {
     let names: Vec<_> = exe_dir.components().rev().take(3).map(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase()).collect();

@@ -233,12 +233,12 @@ pub fn folders_holding(file: &str, path: &std::ffi::OsStr) -> Vec<PathBuf> {
 
 /// The file pwsh runs for a bare `name`: the first `PATH` folder holding `name.ps1` or `name` with a `PATHEXT` extension, `.ps1` first.
 pub fn pwsh_command(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
-    first_on_path(name, path, std::iter::once(".ps1").chain(pathext_list(pathext)))
+    first_on_path(name, path, std::iter::once(".ps1").chain(pathext_list(pathext)), false)
 }
 
-/// The program a bare `name` starts: the first `PATH` folder holding `name` with a `PATHEXT` extension.
+/// The program a bare `name` starts: the first absolute `PATH` folder holding `name` with a `PATHEXT` extension.
 pub fn executable(name: &str, path: &std::ffi::OsStr, pathext: &str) -> Option<PathBuf> {
-    first_on_path(name, path, pathext_list(pathext))
+    first_on_path(name, path, pathext_list(pathext), true)
 }
 
 /// [`executable`] on this process's `PATH` and `PATHEXT`.
@@ -252,9 +252,11 @@ pub fn pathext_list(pathext: &str) -> impl Iterator<Item = &str> {
     pathext.split(';').map(str::trim).filter(|e| !e.is_empty())
 }
 
-fn first_on_path<'a>(name: &str, path: &std::ffi::OsStr, exts: impl Iterator<Item = &'a str>) -> Option<PathBuf> {
+fn first_on_path<'a>(name: &str, path: &std::ffi::OsStr, exts: impl Iterator<Item = &'a str>, absolute_only: bool) -> Option<PathBuf> {
     let exts: Vec<String> = exts.map(str::to_ascii_lowercase).collect();
-    path_folders(path).find_map(|dir| exts.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|file| file.is_file()))
+    path_folders(path)
+        .filter(|dir| !absolute_only || dir.is_absolute())
+        .find_map(|dir| exts.iter().map(|ext| dir.join(format!("{name}{ext}"))).find(|file| file.is_file()))
 }
 
 /// A PowerShell to start: its absolute `path`, and its short `name` (`pwsh` or `powershell`) for a tab's title.
@@ -274,11 +276,7 @@ pub fn windows_powershell(system_root: Option<&std::ffi::OsStr>) -> PowerShell {
 
 /// The first `PATH` folder's `pwsh` with a `PATHEXT` extension, else [`windows_powershell`]; never a bare name.
 pub fn powershell(path: &std::ffi::OsStr, pathext: &str, system_root: Option<&std::ffi::OsStr>) -> PowerShell {
-    let exts: Vec<String> = pathext.split(';').map(str::trim).filter(|e| !e.is_empty()).map(str::to_ascii_lowercase).collect();
-    let pwsh = path_folders(path)
-        .filter(|dir| dir.is_absolute())
-        .find_map(|dir| exts.iter().map(|ext| dir.join(format!("pwsh{ext}"))).find(|file| file.is_file()));
-    match pwsh {
+    match executable("pwsh", path, pathext) {
         Some(path) => PowerShell { alias: is_app_alias(&path), path, name: "pwsh" },
         None => windows_powershell(system_root),
     }
@@ -302,9 +300,19 @@ fn is_app_alias(_: &Path) -> bool {
     false
 }
 
-fn process_env() -> (std::ffi::OsString, String, Option<std::ffi::OsString>) {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    (path, pathext(), std::env::var_os("SystemRoot"))
+/// This process's `PATH`, empty when unset.
+pub fn process_path() -> OsString {
+    std::env::var_os("PATH").unwrap_or_default()
+}
+
+/// This process's `PATH`, [`pathext`] and `SystemRoot`.
+pub fn process_env() -> (OsString, String, Option<OsString>) {
+    (process_path(), pathext(), std::env::var_os("SystemRoot"))
+}
+
+/// This process's `ProgramFiles(x86)`.
+pub fn program_files_x86() -> Option<OsString> {
+    std::env::var_os("ProgramFiles(x86)")
 }
 
 /// [`powershell`] for this process's `PATH`, `PATHEXT` and `SystemRoot`, looked up once: every terminal tab's.
@@ -371,6 +379,22 @@ mod command_tests {
         assert!(!driveless.is_absolute() && driveless.join("pwsh.exe").is_file(), "{} resolves on the current drive", driveless.display());
         let found = powershell(driveless.as_os_str(), ".EXE", Some(tmp.path().join("Windows").as_os_str()));
         assert_eq!(found.name, "powershell");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_relative_path_folder_is_searched_by_pwsh_but_never_for_a_program() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("tool.exe"), "").unwrap();
+        let driveless: PathBuf = bin.components().skip(1).collect();
+        assert!(!driveless.is_absolute() && driveless.join("tool.exe").is_file(), "{} resolves on the current drive", driveless.display());
+        let path = std::env::join_paths([&driveless]).unwrap();
+        assert_eq!(pwsh_command("tool", &path, ".EXE"), Some(driveless.join("tool.exe")), "pwsh runs from a relative folder");
+        assert_eq!(executable("tool", &path, ".EXE"), None);
+        let both = std::env::join_paths([&driveless, &bin]).unwrap();
+        assert_eq!(executable("tool", &both, ".EXE"), Some(bin.join("tool.exe")), "the absolute folder after it");
     }
 
     #[test]

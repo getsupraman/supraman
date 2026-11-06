@@ -96,8 +96,7 @@ pub fn cmd_refusal(file: Option<&Path>, prompt: &str) -> Option<String> {
 
 /// The prompt file a Send launches with, or why it does not: `claude` resolved on PATH and the file written whole.
 fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBuf, String> {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let pathext = supraman_core::paths::pathext();
+    let (path, pathext, _) = supraman_core::paths::process_env();
     if let Some(why) = cmd_refusal(launched_file(claude, &path, &pathext).as_deref(), prompt) {
         return Err(why);
     }
@@ -196,12 +195,9 @@ impl FleetView {
         let ready = cx.background_executor().spawn(async move { prompt_file(&command, home.as_deref(), &prompt) });
         cx.spawn(async move |this, cx| {
             let ready = ready.await;
-            this.update(cx, |this, cx| {
+            let orphan = this.update(cx, |this, cx| {
                 let Some(page) = this.start_page_mut(tab) else {
-                    if let Ok(file) = ready {
-                        let _ = std::fs::remove_file(file);
-                    }
-                    return;
+                    return ready.ok();
                 };
                 page.sending = false;
                 match ready {
@@ -215,8 +211,11 @@ impl FleetView {
                     Err(why) => page.error = Some(why),
                 }
                 cx.notify();
-            })
-            .ok();
+                None
+            });
+            if let Ok(Some(file)) = orphan {
+                cx.background_spawn(async move { std::fs::remove_file(file) }).await.ok();
+            }
         })
         .detach();
         cx.notify();

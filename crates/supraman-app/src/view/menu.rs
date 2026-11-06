@@ -118,7 +118,7 @@ enum Section {
 }
 
 fn section(items: Vec<MenuItem>, of: Section, caption: String) -> Vec<MenuItem> {
-    let mut items: Vec<MenuItem> = items.into_iter().map(|i| MenuItem { key: section_key(of, i.key), ..i }).collect();
+    let mut items: Vec<MenuItem> = items.into_iter().map(|i| MenuItem { key: section_key(of, &i.key).into(), ..i }).collect();
     if let Some(first) = items.first_mut() {
         first.section = Some(caption);
     }
@@ -126,7 +126,7 @@ fn section(items: Vec<MenuItem>, of: Section, caption: String) -> Vec<MenuItem> 
 }
 
 /// A [`session_items`] key inside the workspace menu, where it must not clash with the workspace's own.
-fn section_key(of: Section, key: &'static str) -> &'static str {
+fn section_key(of: Section, key: &str) -> &str {
     match (of, key) {
         (Section::Own, "attach") => "session-attach",
         (Section::Own, "resume") => "session-resume",
@@ -300,7 +300,7 @@ mod tests {
     }
 
     fn keys(items: &[MenuItem]) -> Vec<&str> {
-        items.iter().map(|i| i.key).collect()
+        items.iter().map(|i| &*i.key).collect()
     }
 
     fn row(json: &str, health: Health) -> SessionRow {
@@ -343,7 +343,7 @@ mod tests {
             ]
         );
         assert_eq!(items.len(), 10 + own_n + relay_n, "nothing dropped");
-        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (i.key, c))).collect();
+        let captions: Vec<(&str, &str)> = items.iter().filter_map(|i| i.section.as_deref().map(|c| (&*i.key, c))).collect();
         assert_eq!(captions, [("session-attach", "workspace session · fm-demo-workspace"), ("relay-attach", "relay · fm-demo-relay")]);
         assert!(matches!(&items[10].action, MenuAction::Attach { repo, session, .. } if repo == "workspace" && session.id == "aaaa0010"));
         assert_eq!(items[11].label, "Stop", "an fm- session stops without a question");
