@@ -20,6 +20,14 @@ impl Encoding {
             Encoding::Unknown => "Unknown (shown as UTF-8)",
         }
     }
+
+    /// The same encoding without its byte-order mark: UTF-8 with BOM as UTF-8; UTF-16 always carries one.
+    pub fn without_bom(self) -> Encoding {
+        match self {
+            Encoding::Utf8Bom => Encoding::Utf8,
+            other => other,
+        }
+    }
 }
 
 /// A byte count in the user's words: `512 B`, `1.5 KB`, `12 MB` (1 KB = 1,024 bytes, as Explorer counts).
@@ -65,6 +73,12 @@ mod tests {
         assert_eq!(decode(b"\xFF\xFEa\0b\0"), ("ab".into(), Encoding::Utf16Le));
         assert_eq!(decode(b"\xFE\xFF\0a\0b"), ("ab".into(), Encoding::Utf16Be));
         assert_eq!(decode(b"a\xFFb"), ("a\u{FFFD}b".into(), Encoding::Unknown));
+    }
+
+    #[test]
+    fn only_utf8_sheds_its_bom() {
+        assert_eq!(Encoding::Utf8Bom.without_bom(), Encoding::Utf8);
+        assert_eq!(Encoding::Utf16Le.without_bom(), Encoding::Utf16Le);
     }
 
     #[test]

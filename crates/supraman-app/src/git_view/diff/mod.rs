@@ -2,6 +2,7 @@
 //! inline, on Zed's editor (`supraman_editor`), read-only (C146), read off the UI thread.
 
 mod image;
+mod invisible;
 mod load;
 mod render;
 
@@ -88,7 +89,10 @@ pub struct Close;
 
 pub(crate) struct Text {
     pub diff: Diff,
+    /// One side's encoding, or `old → new`.
     pub encoding: String,
+    /// What changed when only bytes the text does not show did.
+    pub invisible: Vec<String>,
     file: Option<Entity<ZedEditor>>,
     inline: Option<Entity<ZedEditor>>,
     split: Option<Entity<SplitDiff>>,
@@ -138,18 +142,18 @@ impl DiffView {
         cx.spawn(async move |this: gpui::WeakEntity<DiffView>, cx| {
             let loaded = loaded.await;
             let diff = this.update(cx, |this, cx| if this.token == token { this.apply(loaded, cx) } else { None }).ok().flatten();
-            if let Some((diff, encoding)) = diff {
+            if let Some((diff, encoding, invisible)) = diff {
                 let diff = diff.await;
-                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, cx) }).ok();
+                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, invisible, cx) }).ok();
             }
         })
         .detach();
     }
 
-    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, String)> {
+    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, String, Vec<String>)> {
         let _stall = stall::section("diff view: buffers");
         self.content = match loaded {
-            Ok(load::Loaded::Text { old, new, encoding, language }) => return Some((Diff::compute(old, new, language, cx), encoding)),
+            Ok(load::Loaded::Text { old, new, encoding, invisible, language }) => return Some((Diff::compute(old, new, language, cx), encoding, invisible)),
             Ok(load::Loaded::Binary(sizes)) => Content::Binary(sizes),
             Ok(load::Loaded::Image(images)) => Content::Image(images),
             Err(why) => Content::Failed(why),
@@ -159,10 +163,10 @@ impl DiffView {
         None
     }
 
-    fn show(&mut self, diff: Diff, encoding: String, cx: &mut Context<Self>) {
+    fn show(&mut self, diff: Diff, encoding: String, invisible: Vec<String>, cx: &mut Context<Self>) {
         self.current = None;
         self.to_first = matches!(self.content, Content::Loading);
-        self.content = Content::Text(Box::new(Text { diff, encoding, file: None, inline: None, split: None }));
+        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, file: None, inline: None, split: None }));
         cx.notify();
     }
 
@@ -175,6 +179,7 @@ impl DiffView {
             Content::Failed(why) => format!("failed: {why}"),
             Content::Binary(s) => format!("binary {} → {}", size(s.old), size(s.new)),
             Content::Image(i) => format!("image {} → {}", picture(&i.old), picture(&i.new)),
+            Content::Text(t) if !t.invisible.is_empty() => format!("same text: {}", t.invisible.join("; ")),
             Content::Text(_) => "text".into(),
         }
     }

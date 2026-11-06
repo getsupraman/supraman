@@ -6,7 +6,7 @@ use super::*;
 use crate::git_view::GitView;
 use crate::git_view::tests::{open as open_tab, redraw};
 
-const KEYS: [&str; 3] = ["diff-image-old", "diff-image-new", "diff-binary"];
+const KEYS: [&str; 4] = ["diff-image-old", "diff-image-new", "diff-binary", "diff-invisible"];
 
 fn open<'a>(f: &Fixture, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
@@ -102,4 +102,29 @@ fn a_binary_or_an_undecodable_image_says_so_with_both_byte_sizes(cx: &mut TestAp
             assert_eq!(keys(&painted(&view, &d, mode, layout, cx)), ["diff-binary"], "{path}, {mode:?} {layout:?}");
         }
     }
+}
+
+#[gpui::test]
+fn a_change_only_bytes_show_is_named_and_a_text_change_keeps_its_hunks(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f, cx);
+    let cases = [
+        ("bom.txt", "same text: Byte-order mark added (UTF-8 → UTF-8 with BOM)", "UTF-8 → UTF-8 with BOM"),
+        ("unbom.txt", "same text: Byte-order mark removed (UTF-8 with BOM → UTF-8)", "UTF-8 with BOM → UTF-8"),
+        ("crlf.txt", "same text: Line endings changed from CRLF to LF on 2 lines", "UTF-8"),
+        ("lf.txt", "same text: Line endings changed from LF to CRLF on 2 lines", "UTF-8"),
+        ("invalid.txt", "same text: Bytes the text does not show changed (3 B → 3 B)", "Unknown (shown as UTF-8)"),
+    ];
+    for (path, shown, encoding) in cases {
+        let d = show(&view, &f, path, cx);
+        assert_eq!((d.read_with(cx, |d, _| d.shown()).as_str(), d.read_with(cx, |d, _| d.encoding_word()).as_ref()), (shown, encoding), "{path}");
+        assert_eq!(d.read_with(cx, |d, _| d.hunk_count()), 0);
+        for layout in [Layout::Split, Layout::Inline] {
+            assert_eq!(keys(&painted(&view, &d, Mode::Diff, layout, cx)), ["diff-invisible"], "{path}, {layout:?}");
+        }
+        assert!(painted(&view, &d, Mode::File, Layout::Split, cx).is_empty(), "{path}: File View shows the file");
+    }
+    let d = show(&view, &f, "text.txt", cx);
+    assert_eq!((d.read_with(cx, |d, _| d.shown()), d.read_with(cx, |d, _| d.hunk_count())), ("text".to_string(), 1));
+    assert!(painted(&view, &d, Mode::Diff, Layout::Split, cx).is_empty(), "a real change shows its hunks");
 }

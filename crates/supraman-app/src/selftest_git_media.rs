@@ -1,5 +1,5 @@
 //! `--selftest` step 7g's media diffs: a changed png painted on both sides in Split and Inline by the window's
-//! own renderer and atlas.
+//! own renderer and atlas, and a BOM-only change named instead of an empty diff.
 
 use std::sync::Arc;
 
@@ -26,7 +26,10 @@ pub(crate) async fn check(view: &Entity<FleetView>, git: &Entity<GitView>, f: &A
         let what = format!("{key}: changed.png's two images painted");
         until_probe(view, git, &what, cx, |p, v| p.diff.as_ref().filter(|d| d.shown == "image 4×3 → 8×6" && painted(v, "diff-image-old") && painted(v, "diff-image-new")).map(|_| ())).await?;
     }
+    open(view, git, f, "bom.txt", cx).await?;
+    let bom = "same text: Byte-order mark added (UTF-8 → UTF-8 with BOM)";
+    until_probe(view, git, "bom.txt's BOM named", cx, |p, v| p.diff.as_ref().filter(|d| d.shown == bom && painted(v, "diff-invisible")).map(|_| ())).await?;
     tap(view, "diff-close", cx).await?;
     until_probe(view, git, "the graph back after the media diffs", cx, |p, _| p.diff.is_none().then_some(())).await?;
-    Ok("changed.png's diff paints both images (4×3 → 8×6) in Inline and Split".into())
+    Ok("changed.png's diff paints both images (4×3 → 8×6) in Inline and Split; bom.txt says its byte-order mark was added".into())
 }

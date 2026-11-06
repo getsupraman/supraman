@@ -31,7 +31,7 @@ fn path(key: &str, path: &str, cx: &Context<DiffView>) -> Div {
 }
 
 impl DiffView {
-    /// The header's encoding slot: the text's encoding, `binary`, or the image's format.
+    /// The header's encoding slot: the text's encoding (`old → new` when it changed), `binary`, or the image's format.
     pub(crate) fn encoding_word(&self) -> SharedString {
         match &self.content {
             Content::Text(t) => SharedString::from(t.encoding.clone()),
@@ -131,6 +131,11 @@ impl DiffView {
         Self::message(title, vec![detail], cx).child(hit_target(&self.hits, "diff-binary".into())).into_any_element()
     }
 
+    fn invisible(&self, said: &[String], cx: &Context<Self>) -> AnyElement {
+        let title = "The text is the same on both sides; only bytes it does not show changed:";
+        Self::message(title, said.to_vec(), cx).child(hit_target(&self.hits, "diff-invisible".into())).into_any_element()
+    }
+
     fn pane(&self, side: &str, word: Option<&str>, picture: &Picture, cx: &Context<Self>) -> Div {
         let colors = cx.theme().colors();
         let label = image::label(word, picture);
@@ -167,6 +172,7 @@ impl DiffView {
             (Content::Failed(why), ..) => Self::placeholder("Cannot read this file", Some(why.clone()), cx),
             (Content::Binary(sizes), ..) => self.binary(*sizes, cx),
             (Content::Image(_), mode, layout) => self.images(mode, layout, cx),
+            (Content::Text(t), Mode::Diff, _) if !t.invisible.is_empty() => self.invisible(&t.invisible, cx),
             (Content::Text(_), Mode::File, _) => self.file_editor(window, cx).map_or_else(|| div().into_any_element(), |e| e.into_any_element()),
             (Content::Text(_), Mode::Diff, Layout::Inline) => self.inline_editor(window, cx).into_any_element(),
             (Content::Text(_), Mode::Diff, Layout::Split) => self.split(window, cx).into_any_element(),

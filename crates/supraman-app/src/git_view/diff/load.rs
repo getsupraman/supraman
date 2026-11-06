@@ -9,6 +9,7 @@ use supraman_gitman::{Blob, ChangeKind, FileChange, Repo};
 use supraman_editor::language_for;
 
 use super::image::{self, Images};
+use super::invisible;
 
 /// What a file's two sides are.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +70,8 @@ pub struct Sizes {
 pub enum Loaded {
     Binary(Sizes),
     Image(Box<Images>),
-    Text { old: String, new: String, encoding: String, language: Option<Arc<supraman_editor::Language>> },
+    /// `invisible` says what changed when the bytes differ but the texts do not.
+    Text { old: String, new: String, encoding: String, invisible: Vec<String>, language: Option<Arc<supraman_editor::Language>> },
 }
 
 /// Where one side of a file is read from.
@@ -138,6 +140,10 @@ pub fn load(repo: &Repo, target: &Target, svg: &SvgRenderer) -> Result<Loaded, S
     }
     let (new_text, new_enc) = new.as_ref().map(text_of).unzip();
     let (old_text, old_enc) = old.as_ref().map(text_of).unzip();
-    let encoding = new_enc.or(old_enc).unwrap_or(Encoding::Utf8).label().to_string();
-    Ok(Loaded::Text { old: old_text.unwrap_or_default(), new: new_text.unwrap_or_default(), encoding, language: language_for(&target.path) })
+    let invisible = match (&old, &new) {
+        (Some(o), Some(n)) if old_text == new_text => invisible::changes(&o.bytes, &n.bytes),
+        _ => Vec::new(),
+    };
+    let encoding = invisible::encoding_label(old_enc, new_enc);
+    Ok(Loaded::Text { old: old_text.unwrap_or_default(), new: new_text.unwrap_or_default(), encoding, invisible, language: language_for(&target.path) })
 }
