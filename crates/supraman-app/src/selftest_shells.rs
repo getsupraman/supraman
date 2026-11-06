@@ -48,13 +48,13 @@ fn is_cmd(program: &Path) -> bool {
 }
 
 async fn check(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    until(view, cx, WITHIN, "this machine's shells detected", |v| v.shells.as_ref().map(drop)).await?;
+    until(view, cx, WITHIN, "this machine's shells detected", |v| v.shell_default.found().map(drop)).await?;
     let (cmd, ()) = Settings::update(home, |s| s.terminal.set_shell(ShellSetting::Cmd)).context("[terminal] shell = cmd")?;
     view.update(cx, |v, _| v.shell_default.read(cmd.terminal));
 
     let cwd = view.read_with(cx, |v, _| v.new_shell_cwd()).context("+ has no folder")?;
     click(view, "new-shell-menu", cx).await?;
-    let keys = until(view, cx, WITHIN, "the ⌄ menu", |v| v.menu.as_ref().map(|m| m.items.iter().map(|i| (i.key, i.label.clone())).collect::<Vec<_>>())).await?;
+    let keys = until(view, cx, WITHIN, "the ⌄ menu", |v| v.menu.as_ref().map(|m| m.items.iter().map(|i| (i.key.clone(), i.label.clone())).collect::<Vec<_>>())).await?;
     if !keys.iter().any(|(k, l)| *k == "shell-cmd" && l.ends_with("(default)")) {
         bail!("the ⌄ menu has no Command Prompt marked as the default: {keys:?}");
     }

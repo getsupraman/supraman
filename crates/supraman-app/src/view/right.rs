@@ -13,7 +13,6 @@ impl FleetView {
             .map(|tab| {
                 let title = tab.label();
                 let card = self.tab_card(tab, title.clone());
-                let cwd = tab.cwd.clone();
                 let clipped = supraman_ui::clipped::clipped_with(format!("tab-title-{}", tab.id), title.clone(), false, false).max_w(px(280.));
                 TabHeader {
                     id: tab.id,
@@ -23,9 +22,7 @@ impl FleetView {
                         _ => clipped.into_any_element(),
                     },
                     title: title.into(),
-                    tooltip: Some(Box::new(hover_card::tooltip(move || {
-                        tab_card::Card { branch: cwd.as_deref().and_then(supraman_core::branch_at), ..card.clone() }.hover_card()
-                    }))),
+                    tooltip: Some(Box::new(hover_card::tooltip(move || card.hover_card()))),
                 }
             })
             .collect();
@@ -68,9 +65,24 @@ impl FleetView {
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.open_shell_menu(cx))),
         );
 
+        let content = self.render_tab_content(cx);
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .child(bar)
+            .child(div().relative().flex_1().min_h_0().child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx)))
+            .into_any_element()
+    }
+
+    /// The active tab's page or terminal, or what stands in for it.
+    fn render_tab_content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors().clone();
         let active = self.active.and_then(|id| self.tab(id));
         let status = cx.theme().status().clone();
-        let content: AnyElement = match active {
+        match active {
             Some(Tab { kind: TabKind::Work(view), .. }) => view.clone().into_any_element(),
             Some(Tab { kind: TabKind::Git(view), .. }) => view.clone().into_any_element(),
             Some(Tab { kind: TabKind::Schedule(page), .. }) => self
@@ -130,16 +142,31 @@ impl FleetView {
                 "Click [attach] on a live session to open it here, or + for a shell.".into(),
                 cx,
             ),
-        };
+        }
+    }
+}
 
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .child(bar)
-            .child(div().relative().flex_1().min_h_0().child(content).children(self.pane_toast.render(&self.hits, "pane-toast", cx)))
-            .into_any_element()
+impl FleetView {
+    /// Each tab's branch for its hover card, read off the UI thread.
+    pub(super) fn read_tab_branches(&mut self, cx: &mut Context<Self>) {
+        let mut cwds: Vec<PathBuf> = self.tabs.iter().filter_map(|t| t.cwd.clone()).collect();
+        cwds.sort();
+        cwds.dedup();
+        if cwds.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let read: Vec<(Option<String>, PathBuf)> =
+                cx.background_spawn(async move { cwds.into_iter().map(|cwd| (supraman_core::branch_at(&cwd), cwd)).collect() }).await;
+            this.update(cx, |this, _| {
+                for tab in &mut this.tabs {
+                    if let Some((branch, _)) = read.iter().find(|(_, cwd)| tab.cwd.as_ref() == Some(cwd)) {
+                        tab.branch = branch.clone();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }

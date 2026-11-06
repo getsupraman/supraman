@@ -9,15 +9,15 @@ use crate::hit::{HitTargets, hit_target};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MenuItem<A> {
     /// Unique within the menu; painted under `menu-<key>`.
-    pub key: &'static str,
+    pub key: SharedString,
     pub label: String,
     pub action: A,
     /// Starts a section: a rule, then this caption, above the item.
     pub section: Option<String>,
 }
 
-pub fn item<A>(key: &'static str, label: impl Into<String>, action: A) -> MenuItem<A> {
-    MenuItem { key, label: label.into(), action, section: None }
+pub fn item<A>(key: impl Into<SharedString>, label: impl Into<String>, action: A) -> MenuItem<A> {
+    MenuItem { key: key.into(), label: label.into(), action, section: None }
 }
 
 impl<A> MenuItem<A> {

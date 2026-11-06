@@ -196,7 +196,7 @@ async fn confirm_text(view: &Entity<FleetView>, what: &str, needle: &str, cx: &m
 async fn from_menu(view: &Entity<FleetView>, item: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     press_painted(view, &format!("sched-row-{WS}/{ID}"), MouseButton::Right, cx).await?;
     let keys = menu_open(view, &format!("{WS} · Gate"), cx).await?;
-    if !keys.contains(&item) {
+    if !keys.iter().any(|k| k == item) {
         bail!("no {item} in the schedule's menu: {keys:?}");
     }
     click(view, &format!("menu-{item}"), cx).await

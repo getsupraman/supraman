@@ -68,7 +68,7 @@ impl FleetView {
             TabKind::Work(view) => SavedTab::Work { title, workspace: view.read(cx).workspace.clone() },
             TabKind::Git(view) => SavedTab::git(title, view.read(cx).folder.clone()),
             TabKind::Shell if tab.hand => {
-                let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone()).map(|sid| self.continued.get(&sid).cloned().unwrap_or(sid));
+                let session_id = tab.claude.clone().or_else(|| tab.launched_session.clone()).map(|sid| self.transcripts.continued.get(&sid).cloned().unwrap_or(sid));
                 let name = session_id.as_deref().and_then(named).or_else(|| tab.session_name.clone()).unwrap_or_default();
                 SavedTab::Claude { title, cwd: tab.cwd.clone()?, session_id, name }
             }

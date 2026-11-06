@@ -1,14 +1,15 @@
 //! The full list, with the mouse, is docs/KEYS.md.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use supraman_core::Settings;
-use supraman_term::{Search, Terminal};
+use supraman_term::{Event as TerminalEvent, Search, Terminal, terminal_settings::CURSOR_BLINK_INTERVAL};
 use gpui::{AnyElement, App, Context, Entity, Keystroke, MouseButton, MouseDownEvent, Pixels, ScrollDelta, SharedString, Subscription, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
 use super::{FleetView, hit_target};
 use crate::text_input::{InputEvent, TextInput};
+use supraman_ui::nudge::{self, Nudge, Nudged};
 use supraman_ui::term_element::{FONT_SIZE, TermFont, step_font_size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,9 +338,107 @@ impl FleetView {
     }
 }
 
+/// The cursor-blink loop's wake-up: it sleeps until `nudge` while no terminal tab is active (`parked`).
+pub(super) struct CursorBlink {
+    nudge: Nudge,
+    parked: bool,
+}
+
+impl CursorBlink {
+    pub(super) fn start(cx: &mut Context<FleetView>) -> Self {
+        let (nudge, woken) = nudge::nudge();
+        FleetView::blink_cursor(woken, cx);
+        Self { nudge, parked: false }
+    }
+}
+
+impl FleetView {
+    fn blink_cursor(mut woken: Nudged, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            loop {
+                let wait = this.update(cx, |this, cx| {
+                    let now = Instant::now();
+                    let terminal = this.active_terminal();
+                    let next = terminal.map(|t| t.read(cx).cursor_blink(now).1);
+                    if next.is_some_and(|n| n.is_some()) {
+                        cx.notify();
+                    }
+                    let wait = blink_wait(next);
+                    this.blink.parked = wait.is_none();
+                    wait
+                });
+                match wait {
+                    Err(_) => return,
+                    Ok(Some(wait)) => executor.timer(wait).await,
+                    Ok(None) => {
+                        woken.wait(&executor, BLINK_PARKED_MAX).await;
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// A tab's terminal's event; the tab's watchers wake on each one acted on.
+    pub(super) fn on_terminal_event(&mut self, id: u64, emitter: &Entity<Terminal>, event: &TerminalEvent, cx: &mut Context<Self>) {
+        match event {
+            TerminalEvent::Wakeup => cx.notify(),
+            // The foreground process changed (pty_info.rs); the OSC title is BreadcrumbsChanged.
+            TerminalEvent::TitleChanged => {
+                self.resolve_tabs(cx);
+                cx.notify();
+            }
+            TerminalEvent::BreadcrumbsChanged => {
+                let title = emitter.read(cx).breadcrumb_text.clone();
+                if let Some(tab) = self.tab_mut(id) {
+                    tab.program_title = supraman_ui::tabs::sanitize(&title);
+                }
+                self.resolve_tabs(cx);
+                cx.notify();
+            }
+            TerminalEvent::CloseTerminal => {
+                if let Some(tab) = self.tab_mut(id) {
+                    tab.exited = true;
+                    tab.claude = None;
+                }
+                cx.notify();
+            }
+            TerminalEvent::Open(target) => self.open_link(target, cx),
+            _ => return,
+        }
+        if let Some(tab) = self.tab(id) {
+            tab.wake_watchers();
+        }
+    }
+
+    pub(super) fn wake_blink(&mut self) {
+        if self.blink.parked && self.active_terminal().is_some() {
+            self.blink.parked = false;
+            self.blink.nudge.wake();
+        }
+    }
+}
+
+const BLINK_PARKED_MAX: Duration = Duration::from_secs(60);
+
+/// The blink loop's sleep: to the next blink (a cursor move restarts it), or parked (`None`) with no terminal active.
+fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
+    next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_blink_loop_parks_without_an_active_terminal_and_never_sleeps_past_a_blink() {
+        assert_eq!(blink_wait(None), None);
+        let gap = Duration::from_millis(5);
+        assert_eq!(blink_wait(Some(None)), Some(CURSOR_BLINK_INTERVAL + gap), "a steady cursor may start blinking");
+        assert_eq!(blink_wait(Some(Some(Duration::from_millis(10)))), Some(Duration::from_millis(10) + gap));
+        assert_eq!(blink_wait(Some(Some(CURSOR_BLINK_INTERVAL * 3))), Some(CURSOR_BLINK_INTERVAL + gap));
+    }
     use gpui::Modifiers;
 
     fn k(key: &str, control: bool, shift: bool) -> Keystroke {

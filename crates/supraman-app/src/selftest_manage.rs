@@ -13,8 +13,8 @@ use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
 use supraman_core::Registry;
 use gpui::{
-    AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point,
-    px,
+    AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, SharedString,
+    point, px,
 };
 
 use crate::{
@@ -312,7 +312,7 @@ async fn row_details(view: &Entity<FleetView>, own: &Session, cx: &mut AsyncWind
 async fn details_tab(view: &Entity<FleetView>, row: &str, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<(u64, String)> {
     press_painted(view, row, MouseButton::Right, cx).await?;
     let keys = menu_open(view, title, cx).await?;
-    if !keys.contains(&"details") {
+    if !keys.iter().any(|k| k == "details") {
         bail!("the menu of {title} has {keys:?}, no details");
     }
     click(view, "menu-details", cx).await?;
@@ -559,9 +559,9 @@ pub(crate) async fn capture(out: PathBuf, title: Option<&str>, cx: &mut AsyncWin
         .await
 }
 
-pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<&'static str>> {
+pub(crate) async fn menu_open(view: &Entity<FleetView>, title: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<Vec<SharedString>> {
     let keys = until(view, cx, WITHIN, &format!("the menu of {title}"), |v| {
-        v.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key).collect::<Vec<_>>())
+        v.menu.as_ref().filter(|m| m.title == title).map(|m| m.items.iter().map(|i| i.key.clone()).collect::<Vec<_>>())
     })
     .await
     .map_err(|e| {

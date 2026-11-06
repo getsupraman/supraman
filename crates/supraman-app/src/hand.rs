@@ -8,7 +8,7 @@ use std::time::Duration;
 use supraman_core::home::home_env;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
-use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, MintedSession, MintedSessions, Minter, api_base, git_repo};
+use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo};
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -140,6 +140,26 @@ pub fn extras(config: &LaunchConfig, workspaces: &[Workspace], cwd: &Path, name:
         (None, None) => Vec::new(),
     };
     Extras { args: config.interactive_args(), env, path: sm_dir.map(Path::to_path_buf), prompt: None }
+}
+
+/// What a [+] tab's [`Extras`] are built from, taken on the UI thread.
+pub struct ExtrasFrom {
+    pub home: Option<PathBuf>,
+    pub plugin_dir: PathBuf,
+    pub workspaces: Vec<Workspace>,
+}
+
+impl ExtrasFrom {
+    /// Blocks: reads `settings.toml` and looks for `sm.exe`.
+    pub fn extras(&self, cwd: &Path, own: Option<&str>, launch: &Launch) -> Extras {
+        let name = match launch {
+            Launch::Minted { session, .. } => session.clone(),
+            _ => own.map(str::to_string).unwrap_or_else(|| plain_name(cwd)),
+        };
+        let settings = self.home.as_deref().and_then(|h| supraman_core::Settings::load(h).ok()).unwrap_or_default();
+        let config = crate::supervise::launch_config(self.home.clone(), Some(&self.plugin_dir), &settings);
+        extras(&config, &self.workspaces, cwd, &name, supraman_core::install::sm_dir().as_deref())
+    }
 }
 
 /// `hand-<folder>`: the session name of a [+] session without a token of its own.
@@ -369,32 +389,7 @@ impl Hands {
             notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
         }
-        // a 409 is a name whose token another process still uses, or another launcher's: never take it, use a fresh name
-        let wanted = request.name.clone();
-        let mut fresh = self.free_names(cwd).filter(|n| *n != wanted).take(FRESH_TRIES).collect::<Vec<_>>().into_iter();
-        let minted = loop {
-            let minted = self.minter.mint(&base, &bearer, &request);
-            log::info!(
-                "hand mint {name} as {}: replace {}, claude session {}: {}",
-                request.name,
-                request.replace,
-                request.claude_session_id.as_deref().unwrap_or("none"),
-                minted.as_ref().map_or_else(ToString::to_string, |m| format!("Workman session {}", m.session_id))
-            );
-            match minted {
-                Err(MintError::Refused { status: 409, reason }) => {
-                    let Some(next) = fresh.next() else {
-                        break Err(MintError::Refused { status: 409, reason });
-                    };
-                    notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
-                    name = next;
-                    request.name = name.clone();
-                    request.replace = false;
-                }
-                other => break other,
-            }
-        };
-        let minted = match minted {
+        let minted = match self.mint_fresh(&base, &bearer, cwd, &mut request, &mut name, &mut notice) {
             Ok(m) => m,
             Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")),
         };
@@ -412,6 +407,43 @@ impl Hands {
                     "This claude session runs without its own Workman token: cannot write its mcp config ({e}){}",
                     revoked.map(|r| format!("; {r}")).unwrap_or_default()
                 ))
+            }
+        }
+    }
+
+    /// A 409 is a name whose token another process still uses, or another launcher's: never taken, a fresh `name`
+    /// is tried instead, up to [`FRESH_TRIES`], and `notice` says so.
+    fn mint_fresh(
+        &self,
+        base: &str,
+        bearer: &str,
+        cwd: &Path,
+        request: &mut MintRequest,
+        name: &mut String,
+        notice: &mut Option<String>,
+    ) -> Result<Minted, MintError> {
+        let wanted = request.name.clone();
+        let mut fresh = self.free_names(cwd).filter(|n| *n != wanted).take(FRESH_TRIES).collect::<Vec<_>>().into_iter();
+        loop {
+            let minted = self.minter.mint(base, bearer, request);
+            log::info!(
+                "hand mint {name} as {}: replace {}, claude session {}: {}",
+                request.name,
+                request.replace,
+                request.claude_session_id.as_deref().unwrap_or("none"),
+                minted.as_ref().map_or_else(ToString::to_string, |m| format!("Workman session {}", m.session_id))
+            );
+            match minted {
+                Err(MintError::Refused { status: 409, reason }) => {
+                    let Some(next) = fresh.next() else {
+                        return Err(MintError::Refused { status: 409, reason });
+                    };
+                    *notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
+                    *name = next;
+                    request.name = name.clone();
+                    request.replace = false;
+                }
+                other => return other,
             }
         }
     }

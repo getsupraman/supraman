@@ -17,8 +17,8 @@ use supraman_core::{
 };
 use supraman_supervisor::{DesiredState, NeedsYou, workspace_session_name};
 use supraman_term::{
-    Event as TerminalEvent, MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
-    terminal_settings::{AlternateScroll, CURSOR_BLINK_INTERVAL, CursorShape},
+    MouseInputMode, Terminal, TerminalBuilder, TerminalMode,
+    terminal_settings::{AlternateScroll, CursorShape},
 };
 use supraman_ui::nudge::{self, Nudge, Nudged};
 use supraman_ui::open;
@@ -41,7 +41,7 @@ use util::paths::PathStyle;
 
 use crate::compose::{self, Compose};
 use crate::fleet::{self, HookSignal, SessionRow, Supervised, Tree};
-use crate::hand::{Extras, Hands, Launch};
+use crate::hand::{Extras, ExtrasFrom, Hands, Launch};
 use crate::settings_window::{self, SettingsView};
 use crate::dismissed_messages::DismissedMessages;
 use crate::stars::Stars;
@@ -70,6 +70,7 @@ pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
 pub(crate) mod workspace_dialog;
+pub(crate) mod writes;
 
 pub use links::Link;
 #[cfg(test)]
@@ -167,6 +168,8 @@ pub struct Tab {
     pub exited: bool,
     pub detach: Detach,
     pub cwd: Option<PathBuf>,
+    /// The branch at `cwd`, read off the UI thread ([`FleetView::read_tab_branches`]).
+    pub branch: Option<String>,
     pub find: Option<term::Find>,
     pub program_title: Option<String>,
     pub session: Option<String>,
@@ -213,6 +216,7 @@ impl Tab {
             exited: false,
             detach: Detach::None,
             cwd,
+            branch: None,
             find: None,
             program_title: None,
             session: None,
@@ -267,8 +271,6 @@ pub struct FleetView {
     pub active: Option<u64>,
     next_tab_id: u64,
     pub shell_args: Vec<String>,
-    /// This machine's shells, once detected.
-    pub shells: Option<Arc<supraman_core::shells::Shells>>,
     pub(crate) shell_default: shells::ShellDefault,
     focus: FocusHandle,
     pub probe: FrameProbe,
@@ -313,9 +315,7 @@ pub struct FleetView {
     pub answered:BTreeMap<String, BTreeMap<String, String>>,
     pub answered_route: BTreeMap<String, String>,
     pub compose: Option<Compose>,
-    sends: Serial,
-    /// The busy-session limit's writes, in the order set; a poll's report gives way to them ([`MaxWrites`]).
-    max_writes: MaxWrites,
+    writes: writes::Writes,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
@@ -342,8 +342,6 @@ pub struct FleetView {
     left_servers: std::collections::HashSet<String>,
     left_pending: Vec<String>,
     pub closed: Vec<Session>,
-    /// Each continued closed session to the newest session of its chain ([`supraman_claude::chains`]).
-    pub continued: StdHashMap<String, String>,
     /// A selftest's closed sessions, kept across transcript scans.
     pub injected_closed: Vec<Session>,
     tree_cache: RefCell<Option<CachedTree>>,
@@ -368,9 +366,7 @@ pub struct FleetView {
     search_marks: StdHashMap<String, crate::search::Marks>,
     tabs_resolving: bool,
     tabs_again: bool,
-    blink_nudge: Nudge,
-    /// The cursor-blink loop sleeps until `blink_nudge`: no terminal tab is active.
-    blink_parked: bool,
+    blink: term::CursorBlink,
     pub toast: ToastSlot,
     pub pane_toast: ToastSlot,
     pub updates: crate::updates::Updates,
@@ -662,9 +658,10 @@ impl FleetView {
                 };
                 if this
                     .update(cx, |this, cx| {
-                        this.max_writes.tick_starts();
+                        this.writes.max.tick_starts();
                         this.apply(refresh, cx);
                         this.refresh_details(cx);
+                        this.read_tab_branches(cx);
                         if this.other_scans == 0 {
                             this.scan_other_schedules(cx);
                         }
@@ -714,8 +711,7 @@ impl FleetView {
             }
         })
         .detach();
-        let (blink_nudge, blink_woken) = nudge::nudge();
-        Self::blink_cursor(blink_woken, cx);
+        let blink = term::CursorBlink::start(cx);
         let (workman_recheck, recheck) = nudge::nudge();
         Self::watch_workman(home.clone(), recheck, cx);
         let work_inbox = WorkInbox::shared(home.clone(), cx);
@@ -760,7 +756,6 @@ impl FleetView {
             active: None,
             next_tab_id: 1,
             shell_args: vec!["-NoLogo".into()],
-            shells: None,
             shell_default: shells::ShellDefault::new(loaded.terminal.clone()),
             focus,
             probe: FrameProbe::default(),
@@ -803,8 +798,7 @@ impl FleetView {
             answered: BTreeMap::new(),
             answered_route: BTreeMap::new(),
             compose: None,
-            sends: Serial::default(),
-            max_writes: MaxWrites::default(),
+            writes: writes::Writes::default(),
             work_live: Rc::default(),
             work_inbox,
             menu: None,
@@ -833,7 +827,6 @@ impl FleetView {
             left_servers: Default::default(),
             left_pending: Vec::new(),
             closed: Vec::new(),
-            continued: StdHashMap::new(),
             injected_closed: Vec::new(),
             tree_cache: RefCell::new(None),
             left_list: Default::default(),
@@ -856,8 +849,7 @@ impl FleetView {
             search_marks: StdHashMap::new(),
             tabs_resolving: false,
             tabs_again: false,
-            blink_nudge,
-            blink_parked: false,
+            blink,
             toast: ToastSlot::default(),
             pane_toast: ToastSlot::default(),
             updates,
@@ -1035,7 +1027,7 @@ impl FleetView {
         let save = self.stars.follow(&continued);
         self.save_off_thread(save, "Cannot save the starred sessions", cx);
         self.closed = fleet::without_continued(closed, &continued, &self.sessions);
-        self.continued = continued;
+        self.transcripts.continued = continued;
         self.closed.extend(self.injected_closed.iter().cloned());
         self.drop_deleted();
         self.invalidate_tree();
@@ -1427,7 +1419,7 @@ impl FleetView {
         self.needs = report.needs;
         let (workspaces, desired, own) = (&self.workspaces, &self.desired, self.own_prefix.as_deref());
         self.needs.retain(|n| !fleet::is_foreign(&n.name, workspaces, Some(desired), own));
-        if self.max_writes.report_counts() {
+        if self.writes.max.report_counts() {
             self.max_working = report.max_working;
         }
         self.shell_default.ticked(report.terminal);
@@ -1645,7 +1637,7 @@ impl FleetView {
         let (workspace, file, text) = (workspace.to_string(), file.to_string(), text.to_string());
         let no_relay = self.relay_refusal(&workspace);
         let line = compose::first_line(&text);
-        let previous = self.sends.previous();
+        let previous = self.writes.sends.previous();
         let task = cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
@@ -1674,7 +1666,7 @@ impl FleetView {
             })
             .ok();
         });
-        self.sends.push(task);
+        self.writes.sends.push(task);
     }
 
     pub fn approve(&mut self, workspace: &str, file: &str, cx: &mut Context<Self>) {
@@ -1695,21 +1687,21 @@ impl FleetView {
             return;
         };
         self.max_working = max_working;
-        let generation = self.max_writes.set();
-        let previous = self.max_writes.serial.previous();
+        let generation = self.writes.max.set();
+        let previous = self.writes.max.serial.previous();
         let task = cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
             }
             let saved = cx.background_executor().spawn(async move { supervise::set_max_working(&home, max_working) }).await;
             this.update(cx, |this, cx| {
-                this.max_writes.landed(generation);
+                this.writes.max.landed(generation);
                 this.action_error = saved.err().map(|e| format!("Cannot save the busy-session limit: {e:#}"));
                 cx.notify();
             })
             .ok();
         });
-        self.max_writes.serial.push(task);
+        self.writes.max.serial.push(task);
         cx.notify();
     }
 
@@ -1920,17 +1912,15 @@ impl FleetView {
             tab.launched_session = resumes.clone();
             tab.session_name = own.clone();
         }
-        let Some(hands) = self.hands.clone() else {
-            let extras = FirstPrompt::apply(first.as_ref(), self.hand_extras(&cwd, own.as_deref(), &Launch::Plain));
-            self.start_terminal_env(id, self.claude_shell(&Launch::Plain, &claude, &extras), Some(cwd), &extras, cx);
-            return id;
-        };
-        let named = own.clone();
-        let at = cwd.clone();
+        let (from, hands, at) = (self.extras_from(), self.hands.clone(), cwd.clone());
         let mint = hands.clone();
-        let launch = cx.background_executor().spawn(async move { mint.lock().unwrap_or_else(|e| e.into_inner()).launch_for(&at, own.as_deref(), resumes.as_deref()) });
+        let ready = cx.background_executor().spawn(async move {
+            let launch = mint.map_or(Launch::Plain, |m| m.lock().unwrap_or_else(|e| e.into_inner()).launch_for(&at, own.as_deref(), resumes.as_deref()));
+            let extras = from.map(|from| from.extras(&at, own.as_deref(), &launch)).unwrap_or_default();
+            (FirstPrompt::apply(first.as_ref(), extras), launch)
+        });
         cx.spawn(async move |this, cx| {
-            let launch = launch.await;
+            let (extras, launch) = ready.await;
             this.update(cx, |this, cx| {
                 if let Launch::Minted { name, session, notice, new_session, .. } = &launch {
                     if let Some(tab) = this.tab_mut(id) {
@@ -1943,12 +1933,12 @@ impl FleetView {
                     this.hand_notices.extend(notice.clone());
                 }
                 if this.tab(id).is_some() {
-                    let extras = FirstPrompt::apply(first.as_ref(), this.hand_extras(&cwd, named.as_deref(), &launch));
                     let shell = this.claude_shell(&launch, &claude, &extras);
                     this.start_terminal_env(id, shell, Some(cwd), &extras, cx);
                 }
             })
             .ok();
+            let Some(hands) = hands else { return };
             let name = match launch {
                 Launch::Minted { name, .. } => name,
                 Launch::Unminted(notice) => {
@@ -1961,51 +1951,47 @@ impl FleetView {
                 }
                 Launch::Plain => return,
             };
-            let executor = cx.background_executor().clone();
-            // claude's exit deletes the token file, then the shell prints its prompt: a wakeup
-            loop {
-                changed.wait(&executor, HAND_EXIT_FALLBACK).await;
-                let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
-                if open {
-                    let (hands, name) = (hands.clone(), name.clone());
-                    if !executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).ended(&name) }).await {
-                        executor.timer(HAND_CHECK_GAP).await;
-                        continue;
-                    }
-                }
-                let hands = hands.clone();
-                let notice = executor
-                    .spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) })
-                    .await;
-                if let Some(notice) = notice {
-                    this.update(cx, |this, cx| {
-                        this.hand_notices.push(notice);
-                        cx.notify();
-                    })
-                    .ok();
-                }
-                return;
-            }
+            Self::release_on_exit(this, id, hands, name, changed, cx).await;
         })
         .detach();
         id
     }
 
+    /// The hand's token goes once its claude has exited or its tab is closed.
+    async fn release_on_exit(this: gpui::WeakEntity<Self>, id: u64, hands: Arc<Mutex<Hands>>, name: String, mut changed: Nudged, cx: &mut gpui::AsyncApp) {
+        let executor = cx.background_executor().clone();
+        // claude's exit deletes the token file, then the shell prints its prompt: a wakeup
+        loop {
+            changed.wait(&executor, HAND_EXIT_FALLBACK).await;
+            let open = this.read_with(cx, |this, _| this.tab(id).is_some_and(|t| !t.exited)).unwrap_or(false);
+            if open {
+                let (hands, name) = (hands.clone(), name.clone());
+                if !executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).ended(&name) }).await {
+                    executor.timer(HAND_CHECK_GAP).await;
+                    continue;
+                }
+            }
+            let notice = executor.spawn(async move { hands.lock().unwrap_or_else(|e| e.into_inner()).release(&name) }).await;
+            if let Some(notice) = notice {
+                this.update(cx, |this, cx| {
+                    this.hand_notices.push(notice);
+                    cx.notify();
+                })
+                .ok();
+            }
+            return;
+        }
+    }
+
     /// A missing plugin starts plain claude and says so once.
-    fn hand_extras(&mut self, cwd: &Path, own: Option<&str>, launch: &Launch) -> Extras {
+    fn extras_from(&mut self) -> Option<ExtrasFrom> {
         let Some(plugin_dir) = self.plugin_dir.clone() else {
             if !self.hand_notices.iter().any(|n| n == NO_PLUGIN) {
                 self.hand_notices.push(NO_PLUGIN.into());
             }
-            return Extras::default();
+            return None;
         };
-        let name = match launch {
-            Launch::Minted { session, .. } => session.clone(),
-            _ => own.map(str::to_string).unwrap_or_else(|| crate::hand::plain_name(cwd)),
-        };
-        let settings = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-        let config = crate::supervise::launch_config(self.home.clone(), Some(&plugin_dir), &settings);
-        crate::hand::extras(&config, &self.workspaces, cwd, &name, supraman_core::install::sm_dir().as_deref())
+        Some(ExtrasFrom { home: self.home.clone(), plugin_dir, workspaces: self.workspaces.clone() })
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {
@@ -2019,42 +2005,8 @@ impl FleetView {
         powershell(self.shell_args.iter().cloned().chain(launch_args).collect())
     }
 
-    fn blink_cursor(mut woken: Nudged, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let executor = cx.background_executor().clone();
-            loop {
-                let wait = this.update(cx, |this, cx| {
-                    let now = Instant::now();
-                    let terminal = this.active_terminal();
-                    let next = terminal.map(|t| t.read(cx).cursor_blink(now).1);
-                    if next.is_some_and(|n| n.is_some()) {
-                        cx.notify();
-                    }
-                    let wait = blink_wait(next);
-                    this.blink_parked = wait.is_none();
-                    wait
-                });
-                match wait {
-                    Err(_) => return,
-                    Ok(Some(wait)) => executor.timer(wait).await,
-                    Ok(None) => {
-                        woken.wait(&executor, BLINK_PARKED_MAX).await;
-                    }
-                }
-            }
-        })
-        .detach();
-    }
-
     fn active_terminal(&self) -> Option<Entity<Terminal>> {
         self.active.and_then(|id| self.tab(id)).and_then(|t| t.terminal.clone())
-    }
-
-    fn wake_blink(&mut self) {
-        if self.blink_parked && self.active_terminal().is_some() {
-            self.blink_parked = false;
-            self.blink_nudge.wake();
-        }
     }
 
     pub fn tab(&self, id: u64) -> Option<&Tab> {
@@ -2228,7 +2180,7 @@ impl FleetView {
             workspace,
             repo,
             folder: tab.cwd.as_ref().map(|c| c.display().to_string()),
-            branch: None,
+            branch: tab.branch.clone(),
             session,
             kind,
             workman: tab.workman.clone().map(|w| match &tab.restart_to {
@@ -2280,6 +2232,7 @@ impl FleetView {
         let id = self.next_tab_id;
         self.next_tab_id += 1;
         self.tabs.push(Tab::new(id, title, kind, cwd));
+        self.read_tab_branches(cx);
         self.active = Some(id);
         cx.notify();
         id
@@ -2315,37 +2268,7 @@ impl FleetView {
                 match built {
                     Ok(builder) => {
                         let terminal = cx.new(|cx| builder.subscribe(cx));
-                        cx.subscribe(&terminal, move |this, emitter, event, cx| {
-                            match event {
-                                TerminalEvent::Wakeup => cx.notify(),
-                                // The foreground process changed (pty_info.rs); the OSC title is BreadcrumbsChanged.
-                                TerminalEvent::TitleChanged => {
-                                    this.resolve_tabs(cx);
-                                    cx.notify();
-                                }
-                                TerminalEvent::BreadcrumbsChanged => {
-                                    let title = emitter.read(cx).breadcrumb_text.clone();
-                                    if let Some(tab) = this.tab_mut(id) {
-                                        tab.program_title = supraman_ui::tabs::sanitize(&title);
-                                    }
-                                    this.resolve_tabs(cx);
-                                    cx.notify();
-                                }
-                                TerminalEvent::CloseTerminal => {
-                                    if let Some(tab) = this.tab_mut(id) {
-                                        tab.exited = true;
-                                        tab.claude = None;
-                                    }
-                                    cx.notify();
-                                }
-                                TerminalEvent::Open(target) => this.open_link(target, cx),
-                                _ => return,
-                            }
-                            if let Some(tab) = this.tab(id) {
-                                tab.wake_watchers();
-                            }
-                        })
-                        .detach();
+                        cx.subscribe(&terminal, move |this, emitter, event, cx| this.on_terminal_event(id, &emitter, event, cx)).detach();
                         match this.tab_mut(id) {
                             Some(tab) => {
                                 tab.terminal = Some(terminal);
@@ -2838,56 +2761,6 @@ pub mod tree_check {
     }
 }
 
-const BLINK_PARKED_MAX: Duration = Duration::from_secs(60);
-
-/// The blink loop's sleep: to the next blink (a cursor move restarts it), or parked (`None`) with no terminal active.
-fn blink_wait(next: Option<Option<Duration>>) -> Option<Duration> {
-    next.map(|next| next.unwrap_or(CURSOR_BLINK_INTERVAL).min(CURSOR_BLINK_INTERVAL) + Duration::from_millis(5))
-}
-
-/// The human's sends, each started only after the one before it has finished, so they arrive in the order sent.
-#[derive(Default)]
-struct Serial(Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>>);
-
-impl Serial {
-    fn previous(&self) -> Option<futures::future::Shared<futures::future::LocalBoxFuture<'static, ()>>> {
-        self.0.clone()
-    }
-
-    fn push(&mut self, next: impl std::future::Future<Output = ()> + 'static) {
-        self.0 = Some(next.boxed_local().shared());
-    }
-}
-
-/// The busy-session limit's writes behind the shown value. A tick reads `settings.toml`; its report's limit counts only
-/// when no write is pending and the tick started after the last one landed, so a stale read never undoes a click.
-#[derive(Default)]
-struct MaxWrites {
-    serial: Serial,
-    set: u64,
-    landed: u64,
-    tick_saw: u64,
-}
-
-impl MaxWrites {
-    fn set(&mut self) -> u64 {
-        self.set += 1;
-        self.set
-    }
-
-    fn landed(&mut self, generation: u64) {
-        self.landed = self.landed.max(generation);
-    }
-
-    fn tick_starts(&mut self) {
-        self.tick_saw = self.landed;
-    }
-
-    fn report_counts(&self) -> bool {
-        self.landed == self.set && self.tick_saw == self.landed
-    }
-}
-
 pub const SEND_SECTION: &str = "compose send";
 pub const APPROVE_SECTION: &str = "approve";
 
@@ -2907,75 +2780,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_blink_loop_parks_without_an_active_terminal_and_never_sleeps_past_a_blink() {
-        assert_eq!(blink_wait(None), None);
-        let gap = Duration::from_millis(5);
-        assert_eq!(blink_wait(Some(None)), Some(CURSOR_BLINK_INTERVAL + gap), "a steady cursor may start blinking");
-        assert_eq!(blink_wait(Some(Some(Duration::from_millis(10)))), Some(Duration::from_millis(10) + gap));
-        assert_eq!(blink_wait(Some(Some(CURSOR_BLINK_INTERVAL * 3))), Some(CURSOR_BLINK_INTERVAL + gap));
-    }
-
-    #[test]
     fn the_claude_dir_is_the_selftests_or_claudes_own_never_a_stray_env_var() {
         unsafe { std::env::set_var("SUPRAMAN_CLAUDE_DIR", r"C:\elsewhere") };
         assert_eq!(claude_dir_or(None), supraman_core::paths::claude_dir());
         let fake = Path::new(r"C:\scratch\fake-claude");
         assert_eq!(claude_dir_or(Some(fake)), Some(fake.to_path_buf()));
-    }
-
-    #[test]
-    fn a_poll_report_never_undoes_a_busy_limit_set_since_its_tick_started() {
-        let mut w = MaxWrites::default();
-        w.tick_starts();
-        assert!(w.report_counts(), "nothing set: the report is the file's value");
-        let one = w.set();
-        assert!(!w.report_counts(), "set, not yet written");
-        w.tick_starts();
-        w.landed(one);
-        assert!(!w.report_counts(), "this tick read the file before the write landed");
-        let two = w.set();
-        w.tick_starts();
-        assert!(!w.report_counts(), "a second set is pending");
-        w.landed(two);
-        assert!(!w.report_counts());
-        w.tick_starts();
-        assert!(w.report_counts(), "a tick started after the last write landed");
-        w.landed(one);
-        assert!(w.report_counts(), "an older generation never moves it back");
-    }
-
-    #[test]
-    fn a_send_starts_only_after_the_one_queued_before_it_has_finished() {
-        use futures::task::LocalSpawnExt as _;
-        let mut pool = futures::executor::LocalPool::new();
-        let spawner = pool.spawner();
-        let order = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut sends = Serial::default();
-        for (n, yields) in [(1, 50), (2, 0)] {
-            let (previous, order) = (sends.previous(), order.clone());
-            let handle = spawner
-                .spawn_local_with_handle(async move {
-                    if let Some(previous) = previous {
-                        previous.await;
-                    }
-                    for _ in 0..yields {
-                        let mut yielded = false;
-                        futures::future::poll_fn(|cx| {
-                            if std::mem::replace(&mut yielded, true) {
-                                return std::task::Poll::Ready(());
-                            }
-                            cx.waker().wake_by_ref();
-                            std::task::Poll::Pending
-                        })
-                        .await;
-                    }
-                    order.borrow_mut().push(n);
-                })
-                .unwrap();
-            sends.push(handle);
-        }
-        pool.run_until(sends.previous().unwrap());
-        assert_eq!(*order.borrow(), [1, 2]);
     }
 
     #[test]
