@@ -121,6 +121,7 @@ pub struct First {
     pub tips: Vec<String>,
     pub heads: Heads,
     pub wip: Option<Wip>,
+    pub status: Arc<Status>,
     pub page: Page,
 }
 
@@ -157,17 +158,17 @@ pub fn read(repo: Repo, count: usize, walk: &Walk) -> Result<First, String> {
     let tips = ref_panel::tips(&walked, walk);
     let page = page(&repo, &tips, 0, count, layout)?;
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
-    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, page })
+    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, status: Arc::new(status), page })
 }
 
 fn dirty(status: &Status) -> bool {
     !status.entries.is_empty() || status.operation.is_some()
 }
 
-/// The WIP row's counts, `None` for a clean tree.
-pub fn wip(repo: &Repo) -> Result<Option<Wip>, String> {
+/// The WIP row's counts, `None` for a clean tree, and the status they count.
+pub fn wip(repo: &Repo) -> Result<(Option<Wip>, Arc<Status>), String> {
     let status = supraman_gitman::status(repo).map_err(|e| e.to_string())?;
-    Ok(dirty(&status).then(|| Wip::of(&status)))
+    Ok((dirty(&status).then(|| Wip::of(&status)), Arc::new(status)))
 }
 
 /// The page of `count` commits after the first `skip`, laid out after the rows `layout` has seen.

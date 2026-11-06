@@ -2,10 +2,11 @@
 //! the UI thread, a late read dropped by its token, applied without losing the user's place.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use futures::StreamExt as _;
 use gpui::{AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
-use supraman_gitman::{FIRST_PAGE, Repo};
+use supraman_gitman::{FIRST_PAGE, Repo, Status};
 use supraman_ui::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
@@ -162,7 +163,7 @@ impl GitView {
         self.seek = None;
         match self.reveal_after.take() {
             Some(sha) => self.reveal_sha(sha, cx),
-            None => self.keep_selection(selected, cx),
+            None => self.keep_selection(selected, &first.status, cx),
         }
         if let Some(anchor) = anchor {
             self.restore(anchor);
@@ -176,7 +177,7 @@ impl GitView {
     }
 
     /// The same commit selected at its new row; the WIP row while there is one; else nothing.
-    fn keep_selection(&mut self, selected: Option<Selected>, cx: &mut Context<Self>) {
+    fn keep_selection(&mut self, selected: Option<Selected>, status: &Arc<Status>, cx: &mut Context<Self>) {
         let row = match &selected {
             None => return,
             Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
@@ -187,7 +188,7 @@ impl GitView {
         match (row, selected) {
             (None, _) => self.selection_moved(cx),
             (Some(_), Some(Selected::Wip)) => {
-                self.wip_panel.update(cx, |p, cx| p.refresh(cx));
+                self.wip_panel.update(cx, |p, cx| p.refresh(status.clone(), cx));
             }
             _ => {}
         }
@@ -219,17 +220,17 @@ impl GitView {
         .detach();
     }
 
-    fn apply_wip(&mut self, token: u64, read: Result<Option<Wip>, String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
+    fn apply_wip(&mut self, token: u64, read: Result<(Option<Wip>, Arc<Status>), String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         if token != self.follow.wip_token {
             return;
         }
-        let Ok(wip) = read else { return };
+        let Ok((wip, status)) = read else { return };
         if wip.is_some() != self.rows.first().is_some_and(GraphRow::wip) {
             return self.refresh_graph(files, cx);
         }
         self.wip = wip;
         if self.selected() == Some(Selected::Wip) {
-            self.wip_panel.update(cx, |p, cx| p.refresh(cx));
+            self.wip_panel.update(cx, |p, cx| p.refresh(status, cx));
         }
         self.reload_diff(files.as_ref(), cx);
         cx.notify();
