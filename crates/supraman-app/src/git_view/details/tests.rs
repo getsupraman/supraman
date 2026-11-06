@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
-use supraman_gitman::fixture::{Fixture, git_in};
+use supraman_gitman::fixture::{Fixture, Shared, git_in};
 use supraman_ui::tree::Order;
 
 use super::*;
@@ -41,7 +41,7 @@ fn names(people: &[supraman_gitman::Person]) -> Vec<&str> {
 
 #[gpui::test]
 fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
 
@@ -107,14 +107,24 @@ fn nested_commit(f: &Fixture) -> String {
     git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
 }
 
+/// The fixture with [`nested_commit`], shared by the tests that only read it.
+fn nested() -> std::sync::Arc<(Fixture, String)> {
+    static NESTED: Shared<(Fixture, String)> = Shared::new();
+    NESTED.get(|| {
+        let f = Fixture::new();
+        let sha = nested_commit(&f);
+        (f, sha)
+    })
+}
+
 fn visible(panel: &Entity<CommitPanel>, cx: &mut VisualTestContext) -> Vec<String> {
     panel.read_with(cx, |p, _| p.tree().0.visible().iter().map(|s| s.to_string()).collect())
 }
 
 #[gpui::test]
 fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
@@ -187,7 +197,7 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
 
 #[gpui::test]
 fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     let earlier = panel.update(cx, |p, cx| p.show(Some(Selected::Commit(f.sha("root").to_string().into())), 0, cx));
@@ -204,8 +214,8 @@ fn commit_details_drop_a_load_that_finishes_after_a_newer_selection(cx: &mut Tes
 
 #[gpui::test]
 fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = crate::git_view::wip::tests::open_with_editor(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
@@ -229,7 +239,7 @@ fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestA
 
 #[gpui::test]
 fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, f.sha("stash_feature_index"), cx);
@@ -272,8 +282,8 @@ pub(crate) fn first_frame(view: &Entity<GitView>, cx: &mut VisualTestContext, ac
 
 #[gpui::test]
 fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
@@ -294,8 +304,8 @@ fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAp
 
 #[gpui::test]
 fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit_loads(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
@@ -315,8 +325,8 @@ fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit
 
 #[gpui::test]
 fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
@@ -336,8 +346,8 @@ fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut T
 
 #[gpui::test]
 fn commit_details_file_order_follows_the_list_on_show_with_each_files_change(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let sha = nested_commit(&f);
+    let nested = nested();
+    let (f, sha) = (&nested.0, nested.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);

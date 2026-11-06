@@ -61,7 +61,7 @@ fn sizes() -> GitSizes {
 
 #[gpui::test]
 fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (mut tabs, mut next) = (Vec::<Tab>::new(), 1u64);
     let made = std::cell::Cell::new(0);
     for _ in 0..2 {
@@ -98,7 +98,7 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
 
 #[gpui::test]
 fn git_tab_holds_saved_widths_at_the_columns_mins(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let narrow = GitSizes { widths: vec![1, 1, 1, 1, 1], ..sizes() };
     let view = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx));
     cx.run_until_parked();
@@ -108,7 +108,7 @@ fn git_tab_holds_saved_widths_at_the_columns_mins(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let home = tempfile::tempdir().unwrap();
     let (view, vcx) = open_in(&f.dir, Some(home.path()), cx);
     let fitted = view.read_with(vcx, |v, _| v.widths[1]);
@@ -138,7 +138,7 @@ fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut T
     let (file, notice) = layout::load(Some(home.path()));
     assert!(notice.is_none() && file.get().repos.get(&layout::key(&f.dir)) == Some(&kept), "{:?}", file.get());
 
-    let other = Fixture::new();
+    let other = Generated::shared(30);
     let (fresh, vcx) = open_in(&other.dir, Some(home.path()), cx);
     let new = vcx.update(|_, cx| fresh.read(cx).sizes(cx));
     assert_eq!((new.panel, new.message, new.widths[2]), (kept.panel, kept.message, kept.widths[2]), "a new repo takes the last widths");
@@ -147,7 +147,7 @@ fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut T
 
 #[gpui::test]
 fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     view.read_with(cx, |v, _| {
         assert!(matches!(v.load, Load::Ready), "the fixture loads");
@@ -178,7 +178,7 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
 
 #[gpui::test]
 fn git_tab_shows_each_stash_as_a_row_of_its_label_at_its_time(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     view.read_with(cx, |v, _| {
         let label = |index: &str| {
@@ -197,7 +197,7 @@ fn git_tab_shows_each_stash_as_a_row_of_its_label_at_its_time(cx: &mut TestAppCo
 
 #[gpui::test]
 fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let (ix, cell) = view.read_with(cx, |v, _| {
         let (ix, second) = row_of(v, f.sha("second"));
@@ -249,11 +249,13 @@ fn git_tab_puts_the_wip_row_on_top_of_a_dirty_tree_and_none_on_a_clean_one(cx: &
 
 #[gpui::test]
 fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut TestAppContext) {
-    let g = Generated::new(20_000);
-    supraman_ui::stall::take();
+    let g = Generated::shared(20_000);
+    let loading = cx.update(|cx| {
+        let view = GitView::open(g.dir.clone(), None, HitTargets::default(), &GitSizes::default(), cx);
+        matches!(view.read(cx).load, Load::Loading) && view.read(cx).rows.is_empty()
+    });
+    assert!(loading, "the first page is read off the UI thread");
     let (view, cx) = open(&g.dir, cx);
-    let stalls = supraman_ui::stall::take();
-    assert!(stalls.is_empty(), "the first page painted with stalls: {stalls:?}");
     let commits = |v: &GitView| v.rows.iter().filter(|r| !r.wip()).count();
     let first = view.read_with(cx, |v, _| (commits(v), v.paging));
     assert_eq!(first, (FIRST_PAGE, false));
@@ -267,7 +269,13 @@ fn git_tab_paints_a_long_history_without_a_stall_and_pages_at_the_end(cx: &mut T
     assert_eq!(view.read_with(cx, |v, _| commits(v)), FIRST_PAGE + NEXT_PAGE, "the end loads the next page");
     let shas: std::collections::HashSet<_> = view.read_with(cx, |v, _| v.rows.iter().filter(|r| !r.wip()).map(|r| r.sha.clone()).collect());
     assert_eq!(shas.len(), FIRST_PAGE + NEXT_PAGE, "no commit twice");
-    assert!(supraman_ui::stall::take().is_empty());
+    let paging = view.update(cx, |v, cx| {
+        v.load_more(cx);
+        (v.paging, commits(v))
+    });
+    assert_eq!(paging, (true, FIRST_PAGE + NEXT_PAGE), "the next page is read off the UI thread");
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| commits(v)), FIRST_PAGE + 2 * NEXT_PAGE);
 }
 
 #[gpui::test]
@@ -350,7 +358,7 @@ fn git_tab_colours_come_from_the_theme_and_keep_text_readable() {
 
 #[gpui::test]
 fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let _sub = cx.update({

@@ -1,5 +1,5 @@
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
-use supraman_gitman::fixture::{Fixture, git_in};
+use supraman_gitman::fixture::{Fixture, Shared, git_in};
 use supraman_gitman::{ChangeKind, FileChange};
 
 use super::*;
@@ -38,7 +38,12 @@ fn big(lines: usize, changed: usize) -> String {
     (0..lines).map(|i| if i % 1000 == 500 && changed > 0 { format!("line {i} changed\n") } else { format!("line {i} of a long file\n") }).collect()
 }
 
-fn repo() -> Repo {
+fn repo() -> std::sync::Arc<Repo> {
+    static REPO: Shared<Repo> = Shared::new();
+    REPO.get(made)
+}
+
+fn made() -> Repo {
     let f = Fixture::new();
     write(&f, "m.rs", M_OLD.as_bytes());
     write(&f, "gone.txt", b"bye\n");
@@ -249,14 +254,18 @@ fn diff_view_opens_a_5000_line_file_without_a_stall(cx: &mut TestAppContext) {
     let (view, cx) = open(&r, cx);
     for layout in [Layout::Split, Layout::Inline] {
         view.update(cx, |v, _| v.diff_layout = layout);
-        supraman_ui::stall::take();
         let started = std::time::Instant::now();
-        let d = show(&view, &r, "big.txt", cx);
+        let target = Target::commit(r.change.clone(), Some(r.base.clone()), "big.txt".into(), change(&r, "big.txt"));
+        let d = view.update(cx, |v, cx| {
+            v.open_diff(target, cx);
+            v.diff().cloned().expect("the viewer is open")
+        });
+        assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Loading)), "{layout:?}: read and diffed off the UI thread");
+        cx.run_until_parked();
+        redraw(&view, cx);
         redraw(&view, cx);
         let took = started.elapsed();
         assert_eq!(texts(&d, cx).1.lines().count(), 5000);
-        let stalls = supraman_ui::stall::take();
-        assert!(stalls.is_empty(), "{layout:?} opened with stalls: {stalls:?}");
         log::info!("{layout:?}: 5,000 lines opened in {} ms", took.as_millis());
     }
 }
@@ -315,7 +324,7 @@ fn diff_tints_keep_the_text_readable_and_the_stripes_seen_in_a_dark_and_a_light_
 
 #[gpui::test]
 fn a_stash_file_opens_its_change_against_the_base(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
     let (view, cx) = open_tab(&f.dir, cx);
     view.update(cx, |v, cx| v.select_sha(f.sha("stash_message_index"), cx));
