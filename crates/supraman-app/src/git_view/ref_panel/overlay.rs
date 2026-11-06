@@ -2,7 +2,7 @@
 //! the open panel's rows and marks. Hit keys: `refpanel-overlay`, and `refpanel-overlay-row-<path>`,
 //! `-mark-<path>` with the path below the section.
 
-use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, SharedString, Window, deferred, div, prelude::*, px};
+use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, Window, deferred, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
 use supraman_ui::tree::{Tree, TreeList, TreeState};
 use theme::ActiveTheme as _;
@@ -39,7 +39,7 @@ impl RefPanel {
 
     /// The overlay's rows' paths below its section, top to bottom.
     #[cfg(test)]
-    pub fn overlay_rows(&self) -> Vec<SharedString> {
+    pub fn overlay_rows(&self) -> Vec<gpui::SharedString> {
         self.overlay.as_ref().map(|o| o.tree.visible()).unwrap_or_default()
     }
 
