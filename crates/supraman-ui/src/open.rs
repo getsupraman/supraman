@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use gpui::{App, Task};
 
@@ -23,7 +24,60 @@ pub fn refused(scheme: &str) -> String {
     format!("Not opened: a {scheme}: link. Only http, https, mailto and file links open.")
 }
 
-/// Opens `target`, an [`allowed`] URL or a path, with its handler; blocking, so never on the UI thread: ShellExecuteW
+/// Extensions of a file that runs, scripts, installs, links or registers something; `PATHEXT`'s are added to them.
+const RUNS: [&str; 50] = [
+    "exe", "com", "bat", "cmd", "ps1", "psm1", "psd1", "ps1xml", "psc1", "vb", "vbs", "vbe", "js", "jse", "ws", "wsf", "wsh",
+    "hta", "msi", "msp", "mst", "msc", "msix", "msixbundle", "appx", "appxbundle", "appinstaller", "cpl", "scr", "pif",
+    "lnk", "url", "website", "scf", "reg", "inf", "application", "appref-ms", "settingcontent-ms", "library-ms",
+    "searchconnector-ms", "diagcab", "chm", "gadget", "jar", "py", "pyw", "pyz", "sh", "xll",
+];
+
+/// The name Windows opens for `name`: an alternate stream's `:` part and trailing dots and spaces dropped.
+fn effective_name(name: &str) -> &str {
+    name.split(':').next().unwrap_or(name).trim_end_matches(['.', ' '])
+}
+
+/// `Some(true)` when `name`'s extension runs something, `Some(false)` when it is a document's, `None` without one.
+fn runs(name: &str, pathext: &str) -> Option<bool> {
+    let (_, ext) = effective_name(name).rsplit_once('.')?;
+    let pathext = supraman_core::paths::pathext_list(pathext).map(|e| e.trim_start_matches('.'));
+    Some(RUNS.into_iter().chain(pathext).any(|known| known.eq_ignore_ascii_case(ext)))
+}
+
+/// `Ok` for a folder or a document; else why the file `path` is not opened, since its handler would run it.
+/// Reads the disk and `PATHEXT`, so never on the UI thread.
+pub fn document(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    let name = path.file_name().map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy());
+    match runs(&name, &supraman_core::paths::pathext()) {
+        Some(false) => Ok(()),
+        Some(true) => Err(refused_file(&name)),
+        None => Err(refused_bare(&name)),
+    }
+}
+
+/// Why the file `name` was not opened: its extension runs it.
+pub fn refused_file(name: &str) -> String {
+    format!("Not opened: {name} runs as a program. Open its folder instead.")
+}
+
+/// Why the file `name` was not opened: without an extension Windows may still find a handler that runs it.
+pub fn refused_bare(name: &str) -> String {
+    format!("Not opened: {name} has no extension and may run as a program. Open its folder instead.")
+}
+
+/// The path a `file:` URL names, percent-decoded; else why it opens nothing.
+pub fn file_url_path(url: &str) -> Result<PathBuf, String> {
+    url::Url::parse(url)
+        .ok()
+        .filter(|u| u.scheme() == "file")
+        .and_then(|u| u.to_file_path().ok())
+        .ok_or_else(|| format!("Not opened: {url} names no file path."))
+}
+
+/// Opens `target`, an [`allowed`] URL or a path [`document`] passes, with its handler; blocking, so never on the UI thread: ShellExecuteW
 /// pumps its thread's messages, and there gpui re-enters inside the click's borrow (m5/68).
 pub fn open(target: &OsStr) -> Result<(), String> {
     supraman_core::process::shell_execute("open", target, None, None).map_err(|code| format!("ShellExecuteW returned {code}"))
@@ -49,5 +103,42 @@ mod tests {
         }
         assert_eq!(allowed("https://work.supraman.ai/authorize", &WEB_SCHEMES), Ok(()));
         assert_eq!(refused("ms-settings"), "Not opened: a ms-settings: link. Only http, https, mailto and file links open.");
+    }
+
+    #[test]
+    fn a_file_that_runs_scripts_installs_or_links_is_refused_by_its_extension_and_pathext() {
+        let pathext = ".COM;.EXE;.BAT;.CMD;.FOO";
+        for name in ["setup.bat", "x.js", "y.lnk", "z.msi", "tool.ps1", "page.hta", "fix.reg", "a.bat.", "a.bat. . ", "a.CMD", "A.Exe", "x.ps1:Zone", "plugin.foo", "app.appref-ms"] {
+            assert_eq!(runs(name, pathext), Some(true), "{name}");
+        }
+        assert_eq!(runs("plugin.foo", ".COM;.EXE"), Some(false), "an extension only PATHEXT lists");
+        for name in ["notes.txt", "README.md", "shot.png", "doc.pdf", "main.rs", ".bashrc", "a.bat.txt"] {
+            assert_eq!(runs(name, pathext), Some(false), "{name}");
+        }
+        for name in ["Makefile", "setup.", "setup . "] {
+            assert_eq!(runs(name, pathext), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_folder_or_document_opens_and_a_program_or_bare_file_is_refused_with_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("tools.bat");
+        std::fs::create_dir(&folder).unwrap();
+        for name in ["notes.txt", "README.md", "Makefile", "setup.bat"] {
+            std::fs::write(tmp.path().join(name), "").unwrap();
+        }
+        assert_eq!(document(&folder), Ok(()), "a folder opens whatever its name");
+        assert_eq!(document(&tmp.path().join("notes.txt")), Ok(()));
+        assert_eq!(document(&tmp.path().join("README.md")), Ok(()));
+        assert_eq!(document(&tmp.path().join("setup.bat")), Err("Not opened: setup.bat runs as a program. Open its folder instead.".into()));
+        assert_eq!(document(&tmp.path().join("SETUP.BAT.")), Err(refused_file("SETUP.BAT.")));
+        assert_eq!(document(&tmp.path().join("Makefile")), Err(refused_bare("Makefile")));
+    }
+
+    #[test]
+    fn a_file_url_is_its_decoded_path() {
+        assert_eq!(file_url_path("file:///C:/My%20Tools/x.cmd"), Ok(PathBuf::from(r"C:\My Tools\x.cmd")));
+        assert_eq!(file_url_path("https://example.com/x.cmd"), Err("Not opened: https://example.com/x.cmd names no file path.".into()));
     }
 }

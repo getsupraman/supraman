@@ -247,7 +247,8 @@ pub fn executable_on_path(name: &str) -> Option<PathBuf> {
     executable(name, &path, &pathext)
 }
 
-fn pathext_list(pathext: &str) -> impl Iterator<Item = &str> {
+/// The extensions of a `PATHEXT` value, each with its leading dot, as written.
+pub fn pathext_list(pathext: &str) -> impl Iterator<Item = &str> {
     pathext.split(';').map(str::trim).filter(|e| !e.is_empty())
 }
 
