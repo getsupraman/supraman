@@ -38,6 +38,8 @@ enum Kind<T, A> {
 
 struct Node<T, A> {
     name: SharedString,
+    /// `name` lowercased, the sort's first key.
+    key: SharedString,
     path: SharedString,
     depth: usize,
     parent: Option<usize>,
@@ -112,7 +114,7 @@ impl<T, A> Tree<T, A> {
     fn push(&mut self, name: &str, path: &str, parent: Option<usize>, kind: Kind<T, A>) -> usize {
         let at = self.nodes.len();
         let depth = parent.map_or(0, |p| self.nodes[p].depth + 1);
-        self.nodes.push(Node { name: name.to_string().into(), path: path.to_string().into(), depth, parent, kind });
+        self.nodes.push(Node { name: name.to_string().into(), key: name.to_lowercase().into(), path: path.to_string().into(), depth, parent, kind });
         match parent.map(|p| &mut self.nodes[p].kind) {
             Some(Kind::Folder { children, .. }) => children.push(at),
             _ => self.roots.push(at),
@@ -129,28 +131,48 @@ impl<T, A> Tree<T, A> {
     }
 
     fn sort_all(&mut self) {
-        let order = self.order;
-        let keys: Vec<(bool, String)> = self.nodes.iter().map(|n| (matches!(n.kind, Kind::File(_)), n.name.to_lowercase())).collect();
-        let by = |a: &usize, b: &usize| {
-            let names = keys[*a].1.cmp(&keys[*b].1).then_with(|| self.nodes[*a].name.cmp(&self.nodes[*b].name));
-            keys[*a].0.cmp(&keys[*b].0).then(if order == Order::Descending { names.reverse() } else { names })
-        };
-        let mut roots = std::mem::take(&mut self.roots);
-        roots.sort_by(by);
-        let mut lists: Vec<(usize, Vec<usize>)> = Vec::new();
-        for (i, node) in self.nodes.iter().enumerate() {
-            if let Kind::Folder { children, .. } = &node.kind {
-                let mut children = children.clone();
-                children.sort_by(by);
-                lists.push((i, children));
+        let mut lists = self.take_lists();
+        let keys = self.sort_keys();
+        sort_lists(&mut lists, &keys, self.order);
+        self.install(lists, self.order);
+    }
+
+    /// The roots' list (`None`) and each folder's children, taken off the tree.
+    fn take_lists(&mut self) -> Vec<(Option<usize>, Vec<usize>)> {
+        let mut lists = vec![(None, std::mem::take(&mut self.roots))];
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            if let Kind::Folder { children, .. } = &mut node.kind {
+                lists.push((Some(i), std::mem::take(children)));
             }
         }
-        for (i, sorted) in lists {
-            if let Kind::Folder { children, .. } = &mut self.nodes[i].kind {
-                *children = sorted;
+        lists
+    }
+
+    /// The lists [`Tree::take_lists`] takes, copied for a sort on another thread.
+    fn copy_lists(&self) -> Vec<(Option<usize>, Vec<usize>)> {
+        let folders = self.nodes.iter().enumerate().filter_map(|(i, n)| match &n.kind {
+            Kind::Folder { children, .. } => Some((Some(i), children.clone())),
+            Kind::File(_) => None,
+        });
+        std::iter::once((None, self.roots.clone())).chain(folders).collect()
+    }
+
+    fn sort_keys(&self) -> Vec<SortKey> {
+        self.nodes.iter().map(|n| (matches!(n.kind, Kind::File(_)), n.key.clone(), n.name.clone())).collect()
+    }
+
+    fn install(&mut self, lists: Vec<(Option<usize>, Vec<usize>)>, order: Order) {
+        for (at, list) in lists {
+            match at {
+                None => self.roots = list,
+                Some(i) => {
+                    if let Kind::Folder { children, .. } = &mut self.nodes[i].kind {
+                        *children = list;
+                    }
+                }
             }
         }
-        self.roots = roots;
+        self.order = order;
     }
 
     pub fn len(&self) -> usize {
@@ -219,6 +241,20 @@ impl<T, A> Tree<T, A> {
     }
 }
 
+/// A node's sort keys: whether it is a file (folders first), its lowercased name, its name.
+type SortKey = (bool, SharedString, SharedString);
+
+fn sort_lists(lists: &mut [(Option<usize>, Vec<usize>)], keys: &[SortKey], order: Order) {
+    let by = |a: &usize, b: &usize| {
+        let (ka, kb) = (&keys[*a], &keys[*b]);
+        let names = ka.1.cmp(&kb.1).then_with(|| ka.2.cmp(&kb.2));
+        ka.0.cmp(&kb.0).then(if order == Order::Descending { names.reverse() } else { names })
+    };
+    for (_, list) in lists {
+        list.sort_by(by);
+    }
+}
+
 fn normalize(path: &str) -> String {
     path.replace('\\', "/").trim_matches('/').to_string()
 }
@@ -248,6 +284,10 @@ struct Inner<T, A> {
     order: Order,
     rows: Vec<usize>,
     selected: Option<SharedString>,
+    /// `selected`'s row among `rows`, found again whenever either changes.
+    selected_row: Option<usize>,
+    /// Bumped by each new tree; a sort made off the UI thread for an earlier one is dropped.
+    generation: u64,
     roots_hidden: bool,
 }
 
@@ -258,6 +298,11 @@ impl<T, A> Inner<T, A> {
             let nodes = &self.tree.nodes;
             self.rows.retain(|at| nodes[*at].parent.is_some() || matches!(nodes[*at].kind, Kind::File(_)));
         }
+        self.reselect();
+    }
+
+    fn reselect(&mut self) {
+        self.selected_row = self.selected.as_ref().and_then(|p| self.row_of(p));
     }
 
     /// A node's depth as its row shows it.
@@ -297,6 +342,8 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
             order: Order::default(),
             rows: Vec::new(),
             selected: None,
+            selected_row: None,
+            generation: 0,
             roots_hidden: false,
         };
         Self { inner: Rc::new(RefCell::new(inner)), table: TableState::new(cx) }
@@ -319,6 +366,7 @@ impl<T: 'static, A: Default + 'static> TreeState<T, A> {
         let mut inner = self.inner.borrow_mut();
         tree.sort(inner.order);
         inner.tree = tree;
+        inner.generation += 1;
         let filter = std::mem::take(&mut inner.filter);
         drop(inner);
         self.set_filter(&filter);
@@ -356,6 +404,40 @@ impl<T, A> TreeState<T, A> {
         inner.order = order;
         inner.tree.sort(order);
         inner.refresh();
+    }
+
+    /// [`TreeState::set_order`] with the sort on the background executor: the rows keep the order shown until
+    /// the sorted lists are in; a tree set meanwhile drops them.
+    pub fn set_order_off_thread<V: 'static>(&self, order: Order, cx: &mut Context<V>)
+    where
+        T: 'static,
+        A: 'static,
+    {
+        let (generation, lists, keys) = {
+            let mut inner = self.inner.borrow_mut();
+            inner.order = order;
+            if inner.tree.given || inner.tree.order == order {
+                return;
+            }
+            (inner.generation, inner.tree.copy_lists(), inner.tree.sort_keys())
+        };
+        let sorted = cx.background_spawn(async move {
+            let mut lists = lists;
+            sort_lists(&mut lists, &keys, order);
+            lists
+        });
+        let state = self.clone();
+        cx.spawn(async move |this, cx| {
+            let lists = sorted.await;
+            let mut inner = state.inner.borrow_mut();
+            if inner.generation == generation && inner.order == order {
+                inner.tree.install(lists, order);
+                inner.refresh();
+            }
+            drop(inner);
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
     }
 
     pub fn filter(&self) -> String {
@@ -449,6 +531,11 @@ impl<T, A> TreeState<T, A> {
         self.inner.borrow().selected.clone()
     }
 
+    /// The selected path's row among the rows shown.
+    pub fn selected_row(&self) -> Option<usize> {
+        self.inner.borrow().selected_row
+    }
+
     /// Opens every folder above `path`, then selects it and scrolls it into view.
     pub fn select_opening(&self, path: &str) {
         {
@@ -469,7 +556,8 @@ impl<T, A> TreeState<T, A> {
         let row = {
             let mut inner = self.inner.borrow_mut();
             inner.selected = path.map(|p| SharedString::from(p.to_string()));
-            path.and_then(|p| inner.row_of(p))
+            inner.reselect();
+            inner.selected_row
         };
         if let Some(row) = row {
             self.table.reveal(row);
@@ -478,7 +566,11 @@ impl<T, A> TreeState<T, A> {
 
     fn select_row(&self, row: usize) -> Option<SharedString> {
         let path = self.inner.borrow().node(row).map(|n| n.path.clone());
-        self.inner.borrow_mut().selected = path.clone();
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.selected = path.clone();
+            inner.selected_row = path.is_some().then_some(row);
+        }
         self.table.select(Some(row));
         self.table.reveal(row);
         path
@@ -489,7 +581,7 @@ impl<T, A> TreeState<T, A> {
     fn arrow(&self, key: &str) -> Option<Arrow> {
         let (row, folder, open, parent) = {
             let inner = self.inner.borrow();
-            let row = inner.row_of(inner.selected.as_ref()?)?;
+            let row = inner.selected_row?;
             let node = inner.node(row)?;
             let parent = node.parent.and_then(|p| inner.row_of(&inner.tree.nodes[p].path));
             let folder = matches!(node.kind, Kind::Folder { .. }).then(|| node.path.clone());
@@ -583,7 +675,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
     pub fn render(self, cx: &mut Context<V>) -> Stateful<Div> {
         let (rows, selected) = {
             let inner = self.state.inner.borrow();
-            (inner.rows.len(), inner.selected.as_ref().and_then(|p| inner.row_of(p)))
+            (inner.rows.len(), inner.selected_row)
         };
         self.state.table.select(selected);
         let column = [Column::new("name", "", px(0.), px(0.))];
@@ -798,6 +890,45 @@ mod tests {
         state.set_entries_given([("x/m.rs".to_string(), Change::Modified), ("m.rs".to_string(), Change::Added)], count);
         state.set_filter("m");
         assert_eq!(paths(&state), ["x", "x/m.rs"], "the match decides, not the path");
+    }
+
+    #[gpui::test]
+    fn the_selected_row_follows_its_path_across_a_rebuild_and_a_filter(cx: &mut TestAppContext) {
+        let state = cx.update(state);
+        state.expand_all();
+        state.select(Some("src/main.rs"));
+        let row = |state: &TreeState<Change, Badge>| state.visible().iter().position(|p| p == "src/main.rs");
+        assert_eq!(state.selected_row(), row(&state));
+        let mut more = entries();
+        more.push(("src/a/new.rs".to_string(), Change::Added));
+        state.set_entries(more, count);
+        state.expand_all();
+        assert_eq!(state.selected_row(), row(&state), "a folder added above moves it down");
+        state.set_filter("main");
+        assert_eq!((state.selected_row(), row(&state)), (Some(1), Some(1)), "the filter moves it up");
+        state.set_filter("view");
+        assert_eq!(state.selected_row(), None, "filtered out, no row");
+    }
+
+    #[gpui::test]
+    fn an_order_sorted_off_the_ui_thread_lands_unless_a_new_tree_came_first(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (files, cx) = cx.add_window_view(|_, cx| {
+            let state = TreeState::new(cx);
+            state.set_entries(entries(), count);
+            Files { state, hits: HitTargets::default(), painted: Vec::new(), selected: Vec::new() }
+        });
+        files.update(cx, |f, cx| f.state.set_order_off_thread(Order::Descending, cx));
+        assert_eq!(files.read_with(cx, |f, _| paths(&f.state)), ["docs", "src", "README.md"], "the rows keep their order until the sort is in");
+        cx.run_until_parked();
+        assert_eq!(files.read_with(cx, |f, _| paths(&f.state)), ["src", "docs", "README.md"], "then Z–A");
+
+        files.update(cx, |f, cx| {
+            f.state.set_order_off_thread(Order::Ascending, cx);
+            f.state.set_tree(Tree::build(entries().into_iter().filter(|(p, _)| !p.starts_with("docs")), count, Order::Ascending));
+        });
+        cx.run_until_parked();
+        assert_eq!(files.read_with(cx, |f, _| (paths(&f.state), f.state.order())), (vec!["src".to_string(), "README.md".into()], Order::Ascending), "the newer tree stands");
     }
 
     struct Files {

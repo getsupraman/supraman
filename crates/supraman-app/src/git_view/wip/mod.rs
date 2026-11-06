@@ -198,8 +198,8 @@ impl WipPanel {
 
     pub fn set_order(&mut self, order: Order, cx: &mut Context<Self>) {
         self.order = order;
-        self.unstaged.tree.set_order(order);
-        self.staged.tree.set_order(order);
+        self.unstaged.tree.set_order_off_thread(order, cx);
+        self.staged.tree.set_order_off_thread(order, cx);
         if let Some(shown) = self.shown() {
             let mut shown = (*shown).clone();
             sort_changes(&mut shown.unstaged, order);

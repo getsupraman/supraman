@@ -304,8 +304,8 @@ impl CommitPanel {
 
     pub fn set_order(&mut self, order: Order, cx: &mut Context<Self>) {
         self.order = order;
-        self.changed.set_order(order);
-        self.all.set_order(order);
+        self.changed.set_order_off_thread(order, cx);
+        self.all.set_order_off_thread(order, cx);
         if let Some(shown) = self.shown() {
             let mut shown = (*shown).clone();
             sort_changes(&mut shown.changes, order);
@@ -435,8 +435,8 @@ fn index(changes: &[FileChange]) -> HashMap<String, usize> {
 
 /// By path ignoring case, then as written; reversed for Z–A.
 pub(crate) fn sort_changes(changes: &mut [FileChange], order: Order) {
-    changes.sort_by(|a, b| {
-        let by = a.path.to_lowercase().cmp(&b.path.to_lowercase()).then_with(|| a.path.cmp(&b.path));
-        if order == Order::Descending { by.reverse() } else { by }
-    });
+    changes.sort_by_cached_key(|c| (c.path.to_lowercase(), c.path.clone()));
+    if order == Order::Descending {
+        changes.reverse();
+    }
 }
