@@ -321,8 +321,7 @@ impl GitView {
         if lines.is_empty() {
             return None;
         }
-        Some(self.notice_banner("git-follow-notice-dismiss", lines.join("
-"), |this, _| {
+        Some(self.notice_banner("git-follow-notice-dismiss", lines.join("\n"), |this, _| {
             this.follow.not_following = None;
             this.follow.graph_failed = None;
             this.follow.wip_failed = None;
