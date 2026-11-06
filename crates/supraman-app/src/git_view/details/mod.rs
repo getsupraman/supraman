@@ -35,6 +35,8 @@ pub enum PanelEvent {
     Parent(SharedString),
     /// A file was clicked: its change in the shown commit, against the first parent.
     File(super::diff::Target),
+    /// The message box's height was dragged or reset.
+    Resized,
 }
 
 /// The commit shown, its texts ready to paint.
@@ -123,6 +125,11 @@ impl CommitPanel {
 
     pub fn message_height(&self) -> Pixels {
         self.message_height
+    }
+
+    pub fn set_message_height(&mut self, height: Option<Pixels>, cx: &mut Context<Self>) {
+        self.message_height = height.unwrap_or(MESSAGE_HEIGHT);
+        cx.notify();
     }
 
     pub fn state(&self) -> &State {

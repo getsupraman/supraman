@@ -6,6 +6,7 @@ mod details;
 pub mod diff;
 mod graph;
 mod keys;
+pub mod layout;
 mod live;
 mod load;
 pub mod probe;
@@ -26,9 +27,12 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::{Layout, Repo};
 use supraman_ui::hit::HitTargets;
+use supraman_ui::{banner, button};
+use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
 use supraman_ui::split::SplitPane;
 use supraman_ui::stall;
+use supraman_ui::store::save_off_thread;
 use supraman_ui::table::{self, Column, Table, TableState};
 use theme::ActiveTheme as _;
 
@@ -53,15 +57,24 @@ const PANEL_MIN: f32 = 260.;
 const REFS_SHRINK: f32 = 1000.;
 
 /// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height; the ref
-/// panel's width, whether it is collapsed, and the refs hidden from the graph.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// panel's width, whether it is collapsed, the refs hidden from the graph and its collapsed folders.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct GitSizes {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub widths: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub panel: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub refs: Option<u32>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub refs_shut: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub collapsed: Vec<String>,
 }
 
 fn whole(p: Pixels) -> u32 {
@@ -144,20 +157,20 @@ pub struct GitView {
     /// The panels' read of a selection a key moved, waiting for the key to come up.
     settle: Option<Task<()>>,
     follow: refresh::Follow,
+    /// The repo's key in the layout file, once read.
+    key: Option<String>,
+    own_graph: bool,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
 
 impl GitView {
-    /// `sizes` are the ones the tab was saved with.
-    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, sizes: &GitSizes, cx: &mut App) -> Entity<GitView> {
+    /// `saved` are the sizes a tab saved before the layout file kept them, read when the repo has no entry there.
+    pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
-            let defaults = columns(None);
-            let saved: Vec<Pixels> = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).filter(|w| **w > 0).map_or(c.default, |w| px(*w as f32))).collect();
-            let widths = table::clamp(&defaults, &saved);
-            let panel = cx.new(|cx| CommitPanel::new(hits.clone(), sizes.message.map(|h| px(h as f32)), cx));
+            let panel = cx.new(|cx| CommitPanel::new(hits.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
-            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), sizes.refs, sizes.refs_shut, &sizes.hidden, cx));
+            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
             let mut view = GitView {
                 folder,
@@ -175,13 +188,13 @@ impl GitView {
                 paging: false,
                 page_error: None,
                 table: TableState::new(cx),
-                widths,
+                widths: columns(None).iter().map(|c| c.default).collect(),
                 graph_max: None,
                 hover_ref: None,
                 over_list: None,
                 panel,
                 wip_panel,
-                panel_width: sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32)),
+                panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
                 _panel_events: events,
@@ -192,23 +205,76 @@ impl GitView {
                 focus_graph: false,
                 settle: None,
                 follow: refresh::Follow::default(),
+                key: None,
+                own_graph: false,
             };
-            view.reload(cx);
+            view.start(saved.clone(), cx);
             view
         })
+    }
+
+    /// Reads the repo's key and the layout file off the UI thread, then opens at the repo's layout.
+    fn start(&mut self, saved: GitSizes, cx: &mut Context<Self>) {
+        let ready = layout::ready(self.home.clone(), cx);
+        let folder = self.folder.clone();
+        let key = cx.background_spawn(async move { layout::key(&folder) });
+        cx.spawn(async move |this, cx| {
+            ready.await;
+            let key = key.await;
+            this.update(cx, |this, cx| this.open_at(key, &saved, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn open_at(&mut self, key: String, saved: &GitSizes, cx: &mut Context<Self>) {
+        let (opening, save) = layout::opening(&key, saved, cx);
+        self.apply(&opening.sizes, cx);
+        self.own_graph = opening.own_graph;
+        self.key = Some(key);
+        save_off_thread(save, cx, Self::kept);
+        self.reload(cx);
+    }
+
+    fn apply(&mut self, sizes: &GitSizes, cx: &mut Context<Self>) {
+        let defaults = columns(None);
+        let wanted: Vec<Pixels> = defaults.iter().enumerate().map(|(i, c)| sizes.widths.get(i).filter(|w| **w > 0).map_or(c.default, |w| px(*w as f32))).collect();
+        self.widths = table::clamp(&defaults, &wanted);
+        self.panel_width = sizes.panel.map_or(PANEL_WIDTH, |w| px(w as f32));
+        self.panel.update(cx, |p, cx| p.set_message_height(sizes.message.map(|h| px(h as f32)), cx));
+        self.ref_panel.update(cx, |p, cx| p.restore(sizes, cx));
+    }
+
+    /// Keeps the tab's sizes as its repo's layout.
+    fn keep_layout(&mut self, cx: &mut Context<Self>) {
+        let Some(key) = self.key.clone() else { return };
+        self.own_graph = true;
+        let save = layout::remember(&key, &self.sizes(cx), cx);
+        save_off_thread(save, cx, Self::kept);
+    }
+
+    fn kept(&mut self, saved: Result<(), String>, cx: &mut Context<Self>) {
+        if let Err(why) = saved {
+            layout::set_notice(Some(why), cx);
+            cx.notify();
+        }
     }
 
     fn panel_event<P>(&mut self, _: Entity<P>, e: &PanelEvent, cx: &mut Context<Self>) {
         match e {
             PanelEvent::Parent(sha) => self.select_sha(sha, cx),
             PanelEvent::File(target) => self.toggle_diff(target.clone(), cx),
+            PanelEvent::Resized => self.keep_layout(cx),
         }
     }
 
     fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {
         match e {
             RefEvent::Pick(sha) => self.reveal_sha(sha.clone(), cx),
-            RefEvent::Hidden => self.refresh_graph(None, cx),
+            RefEvent::Hidden => {
+                self.keep_layout(cx);
+                self.refresh_graph(None, cx);
+            }
+            RefEvent::Layout => self.keep_layout(cx),
         }
     }
 
@@ -253,6 +319,7 @@ impl GitView {
             refs: Some(whole(refs.width())),
             refs_shut: refs.shut(),
             hidden: refs.hidden().iter().cloned().collect(),
+            collapsed: refs.collapsed(),
         }
     }
 
@@ -381,9 +448,13 @@ impl GitView {
         cx.notify();
     }
 
-    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max.
+    /// Widens the graph column to hold the first page's lanes, never past [`graph::MAX_FIT`] or its max, unless the
+    /// repo keeps a graph width of its own.
     fn fit_graph(&mut self) {
         self.measure_lanes();
+        if self.own_graph {
+            return;
+        }
         let lanes = self.graph_max.unwrap_or(px(graph::MAX_FIT));
         if let Some(width) = self.widths.get_mut(1) {
             *width = (*width).max(lanes.min(px(graph::MAX_FIT))).min(lanes).max(px(graph::MIN_WIDTH));
@@ -463,6 +534,7 @@ impl GitView {
             .on_click(|this: &mut GitView, _, _, cx| this.settled(cx))
             .on_resize(|this: &mut GitView, widths, cx| {
                 this.widths = widths;
+                this.keep_layout(cx);
                 cx.notify();
             })
             .on_near_end(NEAR_END, |this: &mut GitView, _, cx| this.load_more(cx))
@@ -494,7 +566,7 @@ impl GitView {
             .render_second(table, panel, |this: &mut GitView, width, cx| {
                 this.panel_width = width;
                 cx.notify();
-            }, |_: &mut GitView, _| {}, cx)
+            }, |this: &mut GitView, cx| this.keep_layout(cx), cx)
             .size_full();
         self.with_refs(split.into_any_element(), cx)
     }
@@ -514,9 +586,24 @@ impl GitView {
         let left = div().flex_shrink(REFS_SHRINK).min_w_0().overflow_hidden().w(width).h_full().child(panel);
         let rest = div().flex_grow(1.).flex_basis(rest_min).min_w_0().h_full().child(rest);
         SplitPane { id: "refpanel-split".into(), min_first: ref_panel::MIN_WIDTH, min_second: rest_min, default: ref_panel::DEFAULT_WIDTH }
-            .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |_: &mut GitView, _| {}, cx)
+            .render(left, rest, |this: &mut GitView, width, cx| this.ref_panel.update(cx, |p, cx| p.set_width(width, cx)), |this: &mut GitView, cx| this.keep_layout(cx), cx)
             .size_full()
             .into_any_element()
+    }
+}
+
+impl GitView {
+    /// The layout file's trouble: unreadable, or a change not written.
+    fn layout_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let problem = layout::notice(cx)?;
+        let color = cx.theme().status().warning;
+        let dismiss = button::icon(&self.hits, "git-layout-notice-dismiss", Icon::Close.svg(14., cx.theme().colors().text_muted), px(20.), cx)
+            .tooltip(Tooltip::text("Dismiss"))
+            .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, cx| {
+                layout::set_notice(None, cx);
+                cx.notify();
+            }));
+        Some(banner::tinted(color).m_2().child(banner::dismissable(SharedString::from(problem), dismiss)).into_any_element())
     }
 }
 
@@ -562,6 +649,9 @@ impl Render for GitView {
             .on_action(cx.listener(|this, _: &keys::FilterRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.focus_filter(cx))))
             .bg(cx.theme().colors().editor_background)
             .text_sm()
-            .child(content)
+            .flex()
+            .flex_col()
+            .children(self.layout_notice(cx))
+            .child(div().flex_1().min_h_0().child(content))
     }
 }

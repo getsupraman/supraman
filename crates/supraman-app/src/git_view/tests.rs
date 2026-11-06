@@ -11,13 +11,20 @@ use crate::view::git_tab::open_or_focus;
 use crate::view::{Tab, TabKind};
 
 pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+    open_in(folder, None, cx)
+}
+
+/// A Git tab of `folder` whose layout file lives in `home`.
+fn open_in<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
-        supraman_ui::init_globals(cx, "test");
-        bind_keys(cx);
+        if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
+            supraman_ui::init_globals(cx, "test");
+            bind_keys(cx);
+        }
     });
-    let folder = folder.to_path_buf();
+    let (folder, home) = (folder.to_path_buf(), home.map(|h| h.to_path_buf()));
     let (view, cx) = cx.add_window_view(|_, cx| {
-        let view = GitView::open(folder, None, HitTargets::default(), &GitSizes::default(), cx);
+        let view = GitView::open(folder, home, HitTargets::default(), &GitSizes::default(), cx);
         Holder(view)
     });
     let view = view.read_with(cx, |h, _| h.0.clone());
@@ -49,7 +56,7 @@ fn names(groups: &[supraman_gitman::RefGroup]) -> Vec<&str> {
 }
 
 fn sizes() -> GitSizes {
-    GitSizes { widths: vec![200, 90, 300, 130, 70], panel: Some(360), message: Some(150), refs: Some(210), refs_shut: true, hidden: vec!["refs/heads/feature".into(), "stash/0123".into()] }
+    GitSizes { widths: vec![200, 90, 300, 130, 70], panel: Some(360), message: Some(150), refs: Some(210), refs_shut: true, hidden: vec!["refs/heads/feature".into(), "stash/0123".into()], collapsed: Vec::new() }
 }
 
 #[gpui::test]
@@ -72,21 +79,70 @@ fn git_tab_opens_once_per_folder_and_comes_back_after_a_restart(cx: &mut TestApp
     assert_eq!((id, new, tabs.len()), (2, true, 2), "another folder, another tab");
 
     let TabKind::Git(view) = &tabs[0].kind else { panic!("a Git tab") };
-    let saved = cx.update(|cx| {
-        SavedTab::git(tabs[0].title.clone(), view.read(cx).folder.clone(), view.read(cx).sizes(cx))
-    });
+    let saved = cx.update(|cx| SavedTab::git(tabs[0].title.clone(), view.read(cx).folder.clone()));
     let home = tempfile::tempdir().unwrap();
     saved_tabs::save(home.path(), &SavedTabs { tabs: vec![saved.clone()], active: Some(0) }).unwrap();
     let (back, notice) = saved_tabs::load(home.path());
     assert_eq!((back.tabs.as_slice(), notice), (std::slice::from_ref(&saved), None));
     let world = World { sessions: &[], now: 0, workspaces: &[], resume_on_click: false, is_dir: &|p| p.is_dir(), is_file: &|_| true, has_transcript: &|_, _| false };
     let Ok(Reopen::Git { title, folder, sizes: back }) = saved_tabs::plan(&back.tabs[0], &world) else { panic!("a Git tab reopens") };
-    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), sizes()), "the columns, the panels and the message box keep their sizes; the ref panel its state and hidden refs");
-    let gone = SavedTab::git("Git · x".into(), f.temp.path().join("gone"), GitSizes::default());
+    assert_eq!((title.as_str(), folder.as_path(), back), ("Git · repo", f.dir.as_path(), GitSizes::default()), "the sizes are the layout file's, not the tab's");
+    let gone = SavedTab::git("Git · x".into(), f.temp.path().join("gone"));
     assert!(saved_tabs::plan(&gone, &world).unwrap_err().contains("is gone"));
+
+    let old = serde_json::json!({ "kind": "git", "title": "Git · repo", "folder": f.dir, "widths": [200, 90, 300, 130, 70], "panel": 360, "message": 150, "refs": 210, "refs_shut": true, "hidden": ["refs/heads/feature", "stash/0123"] });
+    let old: SavedTab = serde_json::from_value(old).unwrap();
+    let Ok(Reopen::Git { sizes: back, .. }) = saved_tabs::plan(&old, &world) else { panic!("a Git tab reopens") };
+    assert_eq!(back, sizes(), "a tab saved before the layout file still hands over its sizes");
+}
+
+#[gpui::test]
+fn git_tab_holds_saved_widths_at_the_columns_mins(cx: &mut TestAppContext) {
+    let f = Fixture::new();
     let narrow = GitSizes { widths: vec![1, 1, 1, 1, 1], ..sizes() };
-    let clamped = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx).read(cx).sizes(cx).widths);
+    let view = cx.update(|cx| GitView::open(f.dir.clone(), None, HitTargets::default(), &narrow, cx));
+    cx.run_until_parked();
+    let clamped = cx.update(|cx| view.read(cx).sizes(cx).widths);
     assert_eq!(clamped, vec![32, graph::MIN_WIDTH as u32, 50, 50, 50], "saved widths are held at the columns' mins on load");
+}
+
+#[gpui::test]
+fn git_tab_reopens_at_its_repos_layout_and_a_new_repo_at_the_last_one(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let home = tempfile::tempdir().unwrap();
+    let (view, vcx) = open_in(&f.dir, Some(home.path()), cx);
+    let fitted = view.read_with(vcx, |v, _| v.widths[1]);
+    assert!(fitted > px(graph::MIN_WIDTH), "the first open fits the graph to its lanes: {fitted:?}");
+    let tags = view.read_with(vcx, |v, _| v.hits.borrow()["refpanel-row-tags"].bounds.center());
+    vcx.simulate_click(tags, Modifiers::none());
+    view.update(vcx, |v, cx| {
+        v.ref_panel.update(cx, |p, cx| p.toggle_hidden(&["refs/heads/feature".to_string()], cx));
+        v.panel.update(cx, |p, cx| p.set_message_height(Some(px(140.)), cx));
+        v.panel_width = px(420.);
+        v.widths[1] = px(graph::MIN_WIDTH);
+        v.widths[2] = px(260.);
+        v.keep_layout(cx);
+    });
+    vcx.run_until_parked();
+    let kept = vcx.update(|_, cx| view.read(cx).sizes(cx));
+    assert!(kept.collapsed == ["tags"] && kept.hidden == ["refs/heads/feature"], "{kept:?}");
+    drop(view);
+
+    let (again, vcx) = open_in(&f.dir, Some(home.path()), cx);
+    let back = vcx.update(|_, cx| again.read(cx).sizes(cx));
+    assert_eq!(back, kept, "the columns, the panels, the hidden refs and the collapsed folders come back");
+    assert_eq!(back.widths[1], graph::MIN_WIDTH as u32, "a narrowed graph column stays narrow");
+    let rows = again.read_with(vcx, |v, cx| v.ref_panel.read(cx).visible().iter().map(|p| p.to_string()).collect::<Vec<_>>());
+    assert!(rows.contains(&"tags".to_string()) && !rows.iter().any(|r| r.starts_with("tags/")), "{rows:?}");
+
+    let (file, notice) = layout::load(Some(home.path()));
+    assert!(notice.is_none() && file.get().repos.get(&layout::key(&f.dir)) == Some(&kept), "{:?}", file.get());
+
+    let other = Fixture::new();
+    let (fresh, vcx) = open_in(&other.dir, Some(home.path()), cx);
+    let new = vcx.update(|_, cx| fresh.read(cx).sizes(cx));
+    assert_eq!((new.panel, new.message, new.widths[2]), (kept.panel, kept.message, kept.widths[2]), "a new repo takes the last widths");
+    assert!(new.hidden.is_empty() && new.collapsed.is_empty(), "not the last repo's refs: {new:?}");
 }
 
 #[gpui::test]

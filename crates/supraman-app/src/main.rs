@@ -20,6 +20,7 @@ mod selftest_first_run;
 mod selftest_font;
 mod selftest_git;
 mod selftest_git_refs;
+mod selftest_git_reopen;
 mod selftest_hand;
 mod selftest_launch;
 mod selftest_left;

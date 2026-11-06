@@ -22,7 +22,7 @@ pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Pat
 }
 
 impl FleetView {
-    /// `Git · <repo>` for `folder`, at `sizes` when it opens.
+    /// `Git · <repo>` for `folder`, at its repo's layout; `sizes` a tab saved before the layout file kept them.
     pub fn open_git(&mut self, folder: PathBuf, title: String, sizes: &GitSizes, cx: &mut Context<Self>) -> u64 {
         let (home, hits) = (self.home.clone(), self.hits.clone());
         let make = |cx: &mut App| GitView::open(folder.clone(), home, hits, sizes, cx);

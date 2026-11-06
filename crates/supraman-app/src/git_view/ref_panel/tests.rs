@@ -38,8 +38,11 @@ fn refs() -> Refs {
 
 fn panel(cx: &mut TestAppContext, hidden: &[&str]) -> Entity<RefPanel> {
     let hidden: Vec<String> = hidden.iter().map(|h| h.to_string()).collect();
-    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), None, false, &hidden, cx)));
-    panel.update(cx, |p, cx| p.set_refs(&refs(), cx));
+    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx)));
+    panel.update(cx, |p, cx| {
+        p.restore(&GitSizes { hidden, ..GitSizes::default() }, cx);
+        p.set_refs(&refs(), cx);
+    });
     panel
 }
 
