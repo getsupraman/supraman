@@ -15,6 +15,8 @@ pub struct ProbeRow {
     pub sha: String,
     pub refs: usize,
     pub ghost: bool,
+    pub summary: String,
+    pub stash: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,7 +49,7 @@ impl Probe {
 
 impl GitView {
     pub fn probe(&self, cx: &App) -> Probe {
-        let rows = self.rows.iter().map(|r| ProbeRow { sha: r.sha.to_string(), refs: r.row.refs.len(), ghost: ref_cell(&r.row, false).ghost }).collect();
+        let rows = self.rows.iter().map(|r| ProbeRow { sha: r.sha.to_string(), refs: r.row.refs.len(), ghost: ref_cell(&r.row, false).ghost, summary: r.summary.to_string(), stash: r.stash().is_some() }).collect();
         let commit = match self.panel.read(cx).state() {
             PanelState::Shown(s) => Some((s.sha.to_string(), s.parents.iter().map(|p| p.to_string()).collect())),
             _ => None,

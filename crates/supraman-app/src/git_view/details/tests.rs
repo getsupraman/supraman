@@ -226,3 +226,27 @@ fn commit_details_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestA
     select(&view, f.sha("second"), cx);
     assert_eq!(shown(&panel, cx).summary.as_ref(), "Second", "the next commit selects as usual");
 }
+
+#[gpui::test]
+fn commit_details_show_a_stash_its_branch_time_and_files_against_its_base(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, f.sha("stash_feature_index"), cx);
+    let Some(Selected::Stash(stash)) = view.read_with(cx, |v, _| v.selected()) else { panic!("the stash row selects its stash") };
+    assert_eq!(stash.sha, f.sha("stash_feature"));
+    let s = shown(&panel, cx);
+    assert_eq!((s.sha.as_ref(), s.summary.as_ref(), s.body.as_ref()), (f.sha("stash_feature"), supraman_gitman::fixture::FEATURE_STASH, ""));
+    assert_eq!(s.stash.as_ref().map(|s| s.branch.as_str()), Some("feature"));
+    assert_eq!(s.parents, [SharedString::from(f.sha("rename").to_string())], "only the base, not the index commit");
+    assert_eq!(s.authored_ms, stash.time * 1000);
+    assert_eq!((s.counts, s.changes[0].path.as_str()), (Counts { modified: 1, ..Counts::default() }, "new.txt"));
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("commit-sha") && painted.borrow().contains_key("commit-parent-0"));
+    assert!(!painted.borrow().contains_key("commit-parent-1"));
+
+    let parent = painted.borrow()["commit-parent-0"].bounds.center();
+    cx.simulate_click(parent, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").to_string().into())), "the base's click selects it");
+}

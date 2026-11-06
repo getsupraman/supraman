@@ -24,11 +24,20 @@ pub struct Edge {
     pub dashed: bool,
 }
 
+/// Who opened a lane waiting for a commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum By {
+    Commit,
+    Stash,
+    /// A stash older than a real child already waiting: the parent keeps the child's lane.
+    OlderStash,
+}
+
 /// The open lanes between rows, each `Some(dashed)`, and the lanes waiting for each commit not placed yet.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Lanes {
     carry: Vec<Option<bool>>,
-    waiting: HashMap<String, Vec<usize>>,
+    waiting: HashMap<String, Vec<(usize, By)>>,
 }
 
 pub(super) struct Placed {
@@ -40,10 +49,11 @@ pub(super) struct Placed {
 impl Lanes {
     /// Places one row: the lowest lane reserved for it, else the lowest free; its first parent continues in
     /// its lane, a further parent joins the lane already waiting for it or opens the lowest free one.
-    pub fn place(&mut self, sha: &str, parents: &[String], dashed: bool) -> Placed {
-        let mut incoming = self.waiting.remove(sha).unwrap_or_default();
+    pub fn place(&mut self, sha: &str, parents: &[String], dashed: bool, stash: bool) -> Placed {
+        let waiting = self.waiting.remove(sha).unwrap_or_default();
+        let mut incoming: Vec<usize> = waiting.iter().map(|(l, _)| *l).collect();
         incoming.sort_unstable();
-        let lane = incoming.first().copied().unwrap_or_else(|| self.lowest_free(None, &incoming));
+        let lane = kept(&waiting).unwrap_or_else(|| self.lowest_free(None, &incoming));
         let mut edges = self.through(lane, &incoming);
         for &l in &incoming {
             self.carry[l] = None;
@@ -52,13 +62,18 @@ impl Lanes {
             if parents[..i].contains(parent) {
                 continue;
             }
-            let waiting = self.waiting.get(parent).and_then(|l| l.iter().min().copied());
+            let waiting = self.waiting.get(parent).and_then(|w| kept(w));
+            let by = match stash {
+                false => By::Commit,
+                true if self.waiting.get(parent).is_some_and(|w| w.iter().any(|(_, by)| *by == By::Commit)) => By::OlderStash,
+                true => By::Stash,
+            };
             let target = match (i, waiting) {
-                (0, _) => self.open(lane, parent, dashed),
+                (0, _) => self.open(lane, parent, dashed, by),
                 (_, Some(l)) => l,
                 (_, None) => {
                     let l = self.lowest_free(Some(lane), &incoming);
-                    self.open(l, parent, dashed)
+                    self.open(l, parent, dashed, by)
                 }
             };
             edges.push(Edge { lane: target, kind: EdgeKind::Starting, node: lane, colour: target % LANE_COLOURS, dashed });
@@ -80,12 +95,12 @@ impl Lanes {
         .collect()
     }
 
-    fn open(&mut self, lane: usize, parent: &str, dashed: bool) -> usize {
+    fn open(&mut self, lane: usize, parent: &str, dashed: bool, by: By) -> usize {
         if self.carry.len() <= lane {
             self.carry.resize(lane + 1, None);
         }
         self.carry[lane] = Some(dashed);
-        self.waiting.entry(parent.to_string()).or_default().push(lane);
+        self.waiting.entry(parent.to_string()).or_default().push((lane, by));
         lane
     }
 
@@ -93,4 +108,10 @@ impl Lanes {
     fn lowest_free(&self, node: Option<usize>, ending: &[usize]) -> usize {
         (0..).find(|&l| Some(l) != node && !ending.contains(&l) && self.carry.get(l).is_none_or(|c| c.is_none())).unwrap_or(0)
     }
+}
+
+/// The lane a commit takes of those waiting for it: the lowest one not opened by an older stash, else the lowest.
+fn kept(waiting: &[(usize, By)]) -> Option<usize> {
+    let lowest = |older: bool| waiting.iter().filter(|(_, by)| older || *by != By::OlderStash).map(|(l, _)| *l).min();
+    lowest(false).or_else(|| lowest(true))
 }

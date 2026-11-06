@@ -46,9 +46,10 @@ fn snapshot(f: &Fixture) -> Snapshot {
 
 fn read_everything(f: &Fixture, repo: &Repo) {
     let refs = refs(repo).unwrap();
+    assert_eq!(stashes(repo).unwrap().len(), 3);
     history(repo, &refs.tips(), 0, FIRST_PAGE).unwrap();
     details(repo, f.sha("rename")).unwrap();
-    for label in ["root", "rename", "merge"] {
+    for label in ["root", "rename", "merge", "stash_message"] {
         changed_files(repo, f.sha(label)).unwrap();
     }
     changed_between(repo, f.sha("root"), f.sha("ahead")).unwrap();

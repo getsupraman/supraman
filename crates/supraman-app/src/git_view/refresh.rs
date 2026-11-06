@@ -174,6 +174,7 @@ impl GitView {
         let row = match &selected {
             None => return,
             Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
+            Some(Selected::Stash(stash)) => self.rows.iter().position(|r| r.stash().is_some_and(|s| s.sha == stash.sha)),
             Some(Selected::Wip) => self.rows.first().is_some_and(GraphRow::wip).then_some(0),
         };
         self.table.select(row);

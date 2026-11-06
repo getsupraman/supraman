@@ -310,3 +310,20 @@ fn diff_tints_keep_the_text_readable_and_the_stripes_seen_in_a_dark_and_a_light_
         assert!(contrast(c.stripes, bg) > 1.15, "{}: the filler's stripes show", theme.name);
     }
 }
+
+#[gpui::test]
+fn a_stash_file_opens_its_change_against_the_base(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    cx.update(|cx| supraman_editor::init(supraman_ui::fonts::MONO, 13., cx));
+    let (view, cx) = open_tab(&f.dir, cx);
+    view.update(cx, |v, cx| v.select_sha(f.sha("stash_message_index"), cx));
+    cx.run_until_parked();
+    redraw(&view, cx);
+    let files = view.read_with(cx, |v, cx| v.panel.read(cx).file_order(f.sha("stash_message")));
+    let of: Vec<(&Of, &str)> = files.iter().map(|t| (&t.of, t.path.as_str())).collect();
+    assert_eq!(of, [(&Of::Commit { sha: f.sha("stash_message").into(), parent: Some(f.sha("merge").into()) }, "a.txt")], "the stash commit against its base");
+    view.update(cx, |v, cx| v.open_diff(files[0].clone(), cx));
+    cx.run_until_parked();
+    let d = view.read_with(cx, |v, _| v.diff().cloned()).expect("the viewer is open");
+    assert_eq!(texts(&d, cx), ("one\ntwo\n".to_string(), "one\ntwo\nstashed\n".to_string()));
+}

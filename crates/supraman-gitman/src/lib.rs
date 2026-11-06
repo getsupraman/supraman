@@ -11,6 +11,7 @@ mod parse;
 mod patch;
 mod refs;
 mod repo;
+mod stash;
 mod status;
 
 #[cfg(feature = "test-support")]
@@ -25,4 +26,5 @@ pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, j
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
 pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs};
 pub use repo::{GitError, Repo};
+pub use stash::{Stash, stashes};
 pub use status::{BranchStatus, Entry, EntryKind, Operation, Status, status};

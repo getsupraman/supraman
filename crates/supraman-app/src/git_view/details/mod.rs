@@ -1,4 +1,4 @@
-//! The commit panel right of the graph: the selected commit's message, author, parents and files, read
+//! The commit panel right of the graph: the selected commit's or stash's message, author, parents and files, read
 //! off the UI thread on each selection, read-only (C146).
 
 pub mod files;
@@ -10,9 +10,10 @@ mod tests;
 
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Pixels, ScrollHandle, SharedString, Subscription, Window, px};
-use supraman_gitman::{FileChange, Person, Repo};
+use supraman_gitman::{FileChange, Person, Repo, Stash};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
@@ -48,6 +49,8 @@ pub struct Shown {
     pub authored_ms: i64,
     pub parents: Vec<SharedString>,
     pub co_authors: Vec<Person>,
+    /// The stash shown, its parents only its base.
+    pub stash: Option<Arc<Stash>>,
     pub counts: Counts,
     /// The changed files in path order, Z–A when the order is.
     pub changes: Vec<FileChange>,
@@ -134,13 +137,19 @@ impl CommitPanel {
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
             (Some(Selected::Wip), _) => self.state = State::Empty,
-            (Some(Selected::Commit(_)), None) => self.state = State::Loading,
-            (Some(Selected::Commit(sha)), Some(repo)) => {
+            (Some(Selected::Commit(_) | Selected::Stash(_)), None) => self.state = State::Loading,
+            (Some(selected @ (Selected::Commit(_) | Selected::Stash(_))), Some(repo)) => {
                 if !matches!(self.state, State::Shown(_)) {
                     self.state = State::Loading;
                 }
                 let order = self.order;
-                let loaded = cx.background_spawn(async move { load::load(&repo, &sha, order) });
+                let loaded = cx.background_spawn(async move {
+                    match selected {
+                        Selected::Stash(stash) => load::load_stash(&repo, stash, order),
+                        Selected::Commit(sha) => load::load(&repo, &sha, order),
+                        Selected::Wip => unreachable!(),
+                    }
+                });
                 cx.spawn(async move |this, cx| {
                     let loaded = loaded.await;
                     this.update(cx, |this, cx| this.apply(token, loaded, cx)).ok();
@@ -179,13 +188,14 @@ impl CommitPanel {
         sort_changes(&mut changes, self.order);
         self.state = State::Shown(Rc::new(Shown {
             sha: loaded.sha.into(),
-            summary: d.summary.into(),
-            body: d.body.into(),
+            summary: loaded.stash.as_ref().map_or(d.summary, |s| s.label()).into(),
+            body: if loaded.stash.is_some() { SharedString::default() } else { d.body.into() },
             author: d.commit.author.name.into(),
             author_email: d.commit.author.email.into(),
-            authored_ms: d.commit.author.time * 1000,
-            parents: d.commit.parents.into_iter().map(SharedString::from).collect(),
+            authored_ms: loaded.stash.as_ref().map_or(d.commit.author.time, |s| s.time) * 1000,
+            parents: d.commit.parents.into_iter().take(if loaded.stash.is_some() { 1 } else { usize::MAX }).map(SharedString::from).collect(),
             co_authors: d.co_authors,
+            stash: loaded.stash,
             counts: loaded.counts,
             changes,
             files: loaded.files,

@@ -122,6 +122,25 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+fn git_tab_shows_each_stash_as_a_row_of_its_label_at_its_time(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    view.read_with(cx, |v, _| {
+        let label = |index: &str| {
+            let (_, row) = row_of(v, f.sha(index));
+            let stash = row.stash().unwrap_or_else(|| panic!("{index} is a stash's row"));
+            assert_eq!((row.time_ms, row.body.as_ref()), (stash.time * 1000, ""));
+            row.summary.to_string()
+        };
+        assert_eq!(label("stash_message_index"), supraman_gitman::fixture::MAIN_STASH);
+        assert_eq!(label("stash_feature_index"), supraman_gitman::fixture::FEATURE_STASH);
+        assert_eq!(label("stash_wip_index"), format!("{} Merge feature", &f.sha("merge")[..7]));
+        assert!(v.rows.iter().all(|r| r.sha.as_ref() != f.sha("stash_message")), "the stash commit itself has no row");
+        assert_eq!(v.rows.iter().filter(|r| r.stash().is_some()).count(), 3);
+    });
+}
+
+#[gpui::test]
 fn git_tab_stacks_a_rows_refs_and_lists_them_on_hover(cx: &mut TestAppContext) {
     let f = Fixture::new();
     let (view, cx) = open(&f.dir, cx);
