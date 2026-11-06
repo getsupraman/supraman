@@ -3,9 +3,12 @@
 
 use std::sync::Arc;
 
+use gpui::SvgRenderer;
 use supraman_core::text::{Encoding, decode};
 use supraman_gitman::{Blob, ChangeKind, FileChange, Repo};
 use supraman_editor::language_for;
+
+use super::image::{self, Images};
 
 /// What a file's two sides are.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,9 +59,17 @@ impl Target {
     }
 }
 
+/// Each side's size in bytes; `None` for a side that does not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sizes {
+    pub old: Option<usize>,
+    pub new: Option<usize>,
+}
+
 pub enum Loaded {
-    Binary,
-    Text { old: String, new: String, encoding: Encoding, language: Option<Arc<supraman_editor::Language>> },
+    Binary(Sizes),
+    Image(Box<Images>),
+    Text { old: String, new: String, encoding: String, language: Option<Arc<supraman_editor::Language>> },
 }
 
 /// Where one side of a file is read from.
@@ -110,17 +121,23 @@ fn text_of(blob: &Blob) -> (String, Encoding) {
     (if text.contains('\r') { text.replace("\r\n", "\n") } else { text }, encoding)
 }
 
-pub fn load(repo: &Repo, target: &Target) -> Result<Loaded, String> {
+fn images(target: &Target, old: Option<&Blob>, new: Option<&Blob>, svg: &SvgRenderer) -> Option<Loaded> {
+    let format = image::format_of(&target.path)?;
+    let decoded = |blob: Option<&Blob>| blob.map(|b| image::decode(format, &b.bytes, svg).ok_or(())).transpose();
+    let images = decoded(old).and_then(|old| decoded(new).map(|new| Images { format, old, new }));
+    images.ok().map(|images| Loaded::Image(Box::new(images)))
+}
+
+pub fn load(repo: &Repo, target: &Target, svg: &SvgRenderer) -> Result<Loaded, String> {
     let (old_side, new_side) = sides(target);
     let new = read(repo, new_side)?;
-    let old = read(repo, old_side)?;
-    if [&old, &new].into_iter().flatten().any(|b| b.binary) {
-        return Ok(Loaded::Binary);
+    let old = if old_side == Side::SameAsNew { new.clone() } else { read(repo, old_side)? };
+    let image_file = image::format_of(&target.path).is_some();
+    if image_file || [&old, &new].into_iter().flatten().any(|b| b.binary) {
+        return Ok(images(target, old.as_ref(), new.as_ref(), svg).unwrap_or(Loaded::Binary(Sizes { old: old.map(|b| b.bytes.len()), new: new.map(|b| b.bytes.len()) })));
     }
     let (new_text, new_enc) = new.as_ref().map(text_of).unzip();
     let (old_text, old_enc) = old.as_ref().map(text_of).unzip();
-    let encoding = new_enc.or(old_enc).unwrap_or(Encoding::Utf8);
-    let new = new_text.unwrap_or_default();
-    let old = if old_side == Side::SameAsNew { new.clone() } else { old_text.unwrap_or_default() };
-    Ok(Loaded::Text { old, new, encoding, language: language_for(&target.path) })
+    let encoding = new_enc.or(old_enc).unwrap_or(Encoding::Utf8).label().to_string();
+    Ok(Loaded::Text { old: old_text.unwrap_or_default(), new: new_text.unwrap_or_default(), encoding, language: language_for(&target.path) })
 }

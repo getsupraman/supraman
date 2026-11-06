@@ -26,6 +26,8 @@ pub struct ProbeDiff {
     pub layout: Layout,
     pub changes: usize,
     pub current: Option<usize>,
+    /// [`super::diff::DiffView::shown`].
+    pub shown: String,
 }
 
 /// The ref panel: its rows' paths, each section's `(shown, total)`, collapsed, and the hidden refs.
@@ -71,7 +73,7 @@ impl GitView {
         };
         let diff = self.diff().map(|d| {
             let d = d.read(cx);
-            ProbeDiff { path: d.target.path.clone(), mode: d.mode(), layout: d.layout(), changes: d.hunk_count(), current: d.current() }
+            ProbeDiff { path: d.target.path.clone(), mode: d.mode(), layout: d.layout(), changes: d.hunk_count(), current: d.current(), shown: d.shown() }
         });
         let panel = self.ref_panel().read(cx);
         let refs = RefProbe {

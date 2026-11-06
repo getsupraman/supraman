@@ -22,6 +22,21 @@ impl Encoding {
     }
 }
 
+/// A byte count in the user's words: `512 B`, `1.5 KB`, `12 MB` (1 KB = 1,024 bytes, as Explorer counts).
+pub fn byte_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut size = bytes as f64 / 1024.;
+    let mut unit = 0;
+    while size >= 1024. && unit + 1 < UNITS.len() {
+        size /= 1024.;
+        unit += 1;
+    }
+    if size < 10. { format!("{size:.1} {}", UNITS[unit]) } else { format!("{size:.0} {}", UNITS[unit]) }
+}
+
 /// UTF-16 with its BOM, UTF-8 with or without one, else UTF-8 with the invalid bytes replaced.
 pub fn decode(bytes: &[u8]) -> (String, Encoding) {
     let utf16 = |b: &[u8], le: bool| {
@@ -50,5 +65,14 @@ mod tests {
         assert_eq!(decode(b"\xFF\xFEa\0b\0"), ("ab".into(), Encoding::Utf16Le));
         assert_eq!(decode(b"\xFE\xFF\0a\0b"), ("ab".into(), Encoding::Utf16Be));
         assert_eq!(decode(b"a\xFFb"), ("a\u{FFFD}b".into(), Encoding::Unknown));
+    }
+
+    #[test]
+    fn byte_sizes_read_as_explorer_shows_them() {
+        assert_eq!(byte_size(0), "0 B");
+        assert_eq!(byte_size(1023), "1023 B");
+        assert_eq!(byte_size(1536), "1.5 KB");
+        assert_eq!(byte_size(20 * 1024), "20 KB");
+        assert_eq!(byte_size(3 * 1024 * 1024), "3.0 MB");
     }
 }

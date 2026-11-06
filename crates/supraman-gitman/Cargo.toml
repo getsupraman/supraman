@@ -7,9 +7,10 @@ license.workspace = true
 
 [features]
 # The fixture repos (a small one of every kind of change, a generated long history) for other crates' tests.
-test-support = ["dep:tempfile"]
+test-support = ["dep:tempfile", "dep:image"]
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 supraman-core = { path = "../supraman-core" }
 tempfile = { version = "3.27.0", optional = true }
