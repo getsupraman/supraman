@@ -54,16 +54,11 @@ fn a_seek_stops_after_its_pages_and_says_so(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_parent_click_whose_page_is_not_loaded_reveals_it(cx: &mut TestAppContext) {
     let g = Generated::new(4000);
+    let deep = tag(&g, "t1");
     let (view, cx) = open(&g.dir, cx);
-    let (last, parent) = view.read_with(cx, |v, _| {
-        let last = v.rows.last().unwrap();
-        (last.sha.clone(), last.parents[0].clone())
-    });
-    assert!(view.read_with(cx, |v, _| !v.rows.iter().any(|r| r.sha == parent)), "the parent lies past the first page");
-    view.update(cx, |v, cx| v.select_sha(&last, cx));
-    cx.run_until_parked();
+    assert!(view.read_with(cx, |v, _| !v.rows.iter().any(|r| r.sha.as_ref() == deep)), "the commit lies pages past the first");
     let panel = view.read_with(cx, |v, _| v.panel().clone());
-    panel.update(cx, |_, cx| cx.emit(PanelEvent::Parent(parent.clone())));
+    panel.update(cx, |_, cx| cx.emit(PanelEvent::Parent(deep.clone().into())));
     cx.run_until_parked();
-    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(parent)));
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(deep.into())));
 }
