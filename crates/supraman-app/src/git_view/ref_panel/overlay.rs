@@ -38,6 +38,7 @@ impl RefPanel {
     }
 
     /// The overlay's rows' paths below its section, top to bottom.
+    #[cfg(test)]
     pub fn overlay_rows(&self) -> Vec<SharedString> {
         self.overlay.as_ref().map(|o| o.tree.visible()).unwrap_or_default()
     }

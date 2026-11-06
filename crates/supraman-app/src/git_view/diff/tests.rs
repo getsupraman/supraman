@@ -199,6 +199,14 @@ fn diff_view_moves_between_changes_and_shows_the_whole_file(cx: &mut TestAppCont
     redraw(&view, cx);
     let file = d.update_in(cx, |d, window, cx| d.file_editor(window, cx)).expect("a text file");
     assert_eq!(cx.update(|_, cx| supraman_editor::text(&file, cx)), big(5000, 1), "File View: the whole file at the commit");
+    cx.simulate_click(view.read_with(cx, |v, _| v.hits.borrow()["diff-mode-diff"].bounds.center()), Modifiers::none());
+    redraw(&view, cx);
+    assert_eq!(d.read_with(cx, |d, _| d.mode()), Mode::Diff, "Diff View again");
+    for (key, layout) in [("diff-layout-split", Layout::Split), ("diff-layout-inline", Layout::Inline)] {
+        cx.simulate_click(view.read_with(cx, |v, _| v.hits.borrow()[key].bounds.center()), Modifiers::none());
+        redraw(&view, cx);
+        assert_eq!(d.read_with(cx, |d, _| d.layout()), layout, "{key}");
+    }
     let gone = show(&view, &r, "gone.txt", cx);
     gone.update(cx, |d, cx| d.set_mode(Mode::File, cx));
     redraw(&view, cx);

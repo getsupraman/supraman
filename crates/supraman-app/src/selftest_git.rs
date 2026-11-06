@@ -10,16 +10,11 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Pixels, Size, point, px, size};
 use supraman_core::paths::path_key;
 use supraman_core::{Folder, Registry, Workspace};
-use supraman_gitman::fixture::{Fixture, MAIN_STASH};
-use supraman_ui::themes::{self, NAME_FLOOR, SECONDARY_FLOOR, TerminalColors};
-use theme::ActiveTheme as _;
+use supraman_gitman::fixture::Fixture;
 
-use crate::git_view::diff::{Layout, Mode};
-use crate::git_view::probe::{Probe, worst_contrast};
+use crate::git_view::probe::Probe;
 use crate::git_view::{GitView, Selected};
 use crate::selftest::{click, until, until_app, until_with};
-use crate::selftest_left::move_to;
-use crate::selftest_manage::post_keys;
 use crate::selftest_tabs::drag_between;
 use crate::view::{FleetView, MIN_LEFT_WIDTH, TabKind};
 
@@ -30,7 +25,6 @@ pub(crate) const WITHIN: Duration = Duration::from_secs(10);
 const MIN_WINDOW: f32 = 600.;
 const PANEL_MIN: f32 = 260.;
 const TOOLBAR: [&str; 4] = ["commit-sort", "commit-view-path", "commit-view-tree", "commit-all-files"];
-const LIGHT: &str = "Selftest Light";
 
 pub(crate) fn git_tabs(v: &FleetView, cx: &gpui::App, dir: &Path) -> Vec<(u64, Entity<GitView>)> {
     let key = path_key(dir);
@@ -59,7 +53,7 @@ pub(crate) fn probe(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut As
 pub(crate) async fn until_probe<T>(view: &Entity<FleetView>, git: &Entity<GitView>, what: &str, cx: &mut AsyncWindowContext, f: impl Fn(&Probe, &FleetView) -> Option<T>) -> anyhow::Result<T> {
     until_app(view, cx, WITHIN, what, |v, cx| f(&git.read(cx).probe(cx), v)).await.map_err(|e| {
         let p = probe(view, git, cx);
-        e.context(format!("selected {:?}, commit {:?}, wip {:?}, diff {:?}, {} rows, ref panel shut {} counts {:?} hidden {:?}", p.selected, p.commit, p.wip, p.diff, p.rows.len(), p.refs.shut, p.refs.counts, p.refs.hidden))
+        e.context(format!("selected {:?}, commit {:?}, diff {:?}, {} rows, hidden {:?}", p.selected, p.commit, p.diff, p.rows.len(), p.hidden))
     })
 }
 
@@ -100,7 +94,7 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     let registry = Registry::at(home);
     registry.save(&Workspace::new(WS, &fixture.dir, vec![Folder::new(FOLDER, &fixture.dir)]), true)?;
     let (window, left) = (viewport(cx).await?, view.read_with(cx, |v, _| v.left_width));
-    let result = check(view, &fixture, home, cx).await;
+    let result = check(view, &fixture, cx).await;
     view.update(cx, |v, cx| {
         v.left_width = left;
         let tabs: Vec<u64> = git_tabs(v, cx, &fixture.dir).into_iter().map(|(id, _)| id).collect();
@@ -112,22 +106,14 @@ pub async fn run(view: &Entity<FleetView>, home: &Path, cx: &mut AsyncWindowCont
     result.map(|line| format!("{line}; {:.1} s", started.elapsed().as_secs_f32()))
 }
 
-async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let (git, opened) = open(view, f, cx).await?;
-    let refs = refs(view, &git, cx).await?;
-    let selected = select(view, &git, f, cx).await?;
-    let files = files(view, &git, f, cx).await?;
-    let diff = diff(view, &git, f, cx).await?;
     let media = crate::selftest_git_media::check(view, &git, f, cx).await?;
-    let stash = stash(view, &git, f, cx).await?;
-    let keys = keys(view, &git, f, cx).await?;
-    let wip = wip(view, &git, f, cx).await?;
     let live = live(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
-    let themed = themed(view, &git, home, cx).await?;
     let reopened = crate::selftest_git_reopen::check(view, &git, f, cx).await?;
-    Ok([opened, refs, selected, files, diff, media, stash, keys, wip, live, narrow, panel, themed, reopened].join("; "))
+    Ok([opened, media, live, narrow, panel, reopened].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {
@@ -152,43 +138,6 @@ async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext
     Ok((git, format!("{icon} opens Git · {FOLDER} with {rows} rows, a second click focuses it (one tab)")))
 }
 
-async fn refs(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let p = probe(view, git, cx);
-    let stacked = p.rows.iter().position(|r| r.refs > 1).ok_or_else(|| anyhow!("no row with stacked refs"))?;
-    move_to(bounds(view, &format!("git-refs-{stacked}"), cx).await?.center(), cx)?;
-    let last = format!("git-reflist-{stacked}-{}", p.rows[stacked].refs - 1);
-    let hovered = format!("git-reflist-{stacked}-0");
-    until_probe(view, git, "the stacked pill's list on hover", cx, |p, v| (p.listed == Some(stacked) && painted(v, &last) && painted(v, &hovered)).then_some(())).await?;
-    let pill = bounds(view, &format!("git-pill-{stacked}"), cx).await?;
-    let mut layer = Vec::new();
-    for i in 0..p.rows[stacked].refs {
-        layer.push(bounds(view, &format!("git-reflist-{stacked}-{i}"), cx).await?);
-    }
-    let top = layer[0];
-    if (top.left() - pill.left()).abs() > px(0.5) || (top.top() - pill.top()).abs() > px(0.5) {
-        bail!("the layer {top:?} does not lie on the row's pill {pill:?}");
-    }
-    for (above, below) in layer.iter().zip(&layer[1..]) {
-        if (below.top() - above.bottom()).abs() > px(0.5) || (below.left() - top.left()).abs() > px(0.5) {
-            bail!("the layer's groups are not one block under the pill: {above:?} then {below:?}");
-        }
-    }
-    if layer.iter().any(|b| (b.size.width - top.size.width).abs() > px(0.5)) || top.size.width < pill.size.width - px(0.5) {
-        bail!("the layer's groups are not one width at least the pill's {pill:?}: {layer:?}");
-    }
-    let ghost = p.rows.iter().position(|r| r.refs == 0 && r.ghost).ok_or_else(|| anyhow!("no ref-less row with a ghost"))?;
-    move_to(bounds(view, &format!("git-row-{ghost}"), cx).await?.center(), cx)?;
-    let (pill, cell) = (format!("git-ghost-{ghost}"), format!("git-refs-{ghost}"));
-    until_probe(view, git, "the ghost pill in its row's ref cell", cx, |p, v| {
-        let hits = v.hits.borrow();
-        let (g, c) = (hits.get(&pill)?.bounds, hits.get(&cell)?.bounds);
-        (p.listed.is_none() && g.left() >= c.left() && g.right() <= c.right() + px(0.5)).then_some(())
-    })
-    .await?;
-    move_to(point(px(1.), px(1.)), cx)?;
-    Ok(format!("row {stacked}'s stacked pill lists its {} groups on hover in one layer over it, one width, at least the pill's; ref-less row {ghost} paints its descendant's ghost pill in its cell", p.rows[stacked].refs))
-}
-
 async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parents: usize, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     until_probe(view, git, &format!("the panel on {sha} with {parents} parents"), cx, |p, v| {
         let (shown, ps) = p.commit.as_ref()?;
@@ -196,130 +145,6 @@ async fn show(view: &Entity<FleetView>, git: &Entity<GitView>, sha: &str, parent
         (p.selected == Some(Selected::Commit(sha.into())) && shown == sha && ps.len() == parents && keys && painted(v, "commit-sha")).then_some(())
     })
     .await
-}
-
-async fn select(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    for (label, parents) in [("ahead", 1), ("merge", 2)] {
-        tap(view, &row_key(&probe(view, git, cx), f.sha(label))?, cx).await?;
-        show(view, git, f.sha(label), parents, cx).await?;
-    }
-    tap(view, "commit-parent-1", cx).await?;
-    show(view, git, f.sha("rename"), 1, cx).await?;
-    tap(view, &row_key(&probe(view, git, cx), f.sha("root"))?, cx).await?;
-    show(view, git, f.sha("root"), 0, cx).await?;
-    Ok("a commit, a merge (two parents; its second parent clicked selects it) and the root (none): the panel's header and parents follow".into())
-}
-
-async fn files(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    tap(view, &row_key(&probe(view, git, cx), f.sha("ahead"))?, cx).await?;
-    show(view, git, f.sha("ahead"), 1, cx).await?;
-    let steps: [(&str, &str, &str); 4] = [
-        ("commit-view-path", "commit-files-row-a.txt", "Path's row"),
-        ("commit-view-tree", "commit-tree-row-a.txt", "Tree's row"),
-        ("commit-all-files", "commit-tree-row-bin.dat", "View all files' unchanged file"),
-        ("commit-filter", "commit-filter", "the filter box focused"),
-    ];
-    for (key, shows, what) in steps {
-        tap(view, key, cx).await?;
-        until(view, cx, WITHIN, what, |v| painted(v, shows).then_some(())).await?;
-    }
-    post_keys(&["n", "e", "w"], cx).await?;
-    until(view, cx, WITHIN, "the filter on new", |v| (painted(v, "commit-tree-row-new.txt") && !painted(v, "commit-tree-row-a.txt")).then_some(())).await?;
-    tap(view, "commit-all-files", cx).await?;
-    until(view, cx, WITHIN, "the changed files back", |v| (painted(v, "commit-tree-row-a.txt") && !painted(v, "commit-filter")).then_some(())).await?;
-    Ok("Path, Tree, View all files and its filter (\"new\" leaves new.txt) each paint their rows".into())
-}
-
-async fn diff(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let ahead = Selected::Commit(f.sha("ahead").into());
-    tap(view, "commit-tree-row-a.txt", cx).await?;
-    until_probe(view, git, "a.txt's diff with its change", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && d.changes > 0 && painted(v, "diff-next")).map(|_| ())).await?;
-    let steps: [(&str, Mode, Layout, Option<usize>); 5] = [
-        ("diff-layout-inline", Mode::Diff, Layout::Inline, None),
-        ("diff-layout-split", Mode::Diff, Layout::Split, None),
-        ("diff-next", Mode::Diff, Layout::Split, Some(0)),
-        ("diff-mode-file", Mode::File, Layout::Split, None),
-        ("diff-mode-diff", Mode::Diff, Layout::Split, None),
-    ];
-    for (key, mode, layout, current) in steps {
-        tap(view, key, cx).await?;
-        until_probe(view, git, key, cx, |p, _| p.diff.as_ref().filter(|d| d.mode == mode && d.layout == layout && (current.is_none() || d.current == current)).map(|_| ())).await?;
-    }
-    tap(view, "diff-close", cx).await?;
-    until_probe(view, git, "the graph back with the commit selected", cx, |p, v| (p.diff.is_none() && p.selected.as_ref() == Some(&ahead) && painted(v, "git-row-0")).then_some(())).await?;
-    tap(view, "commit-tree-row-a.txt", cx).await?;
-    until_probe(view, git, "a.txt's diff open again", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && painted(v, "diff-close")).map(|_| ())).await?;
-    tap(view, "commit-tree-row-a.txt", cx).await?;
-    until_probe(view, git, "a second click on a.txt back to the graph", cx, |p, v| (p.diff.is_none() && p.selected.as_ref() == Some(&ahead) && painted(v, "git-row-0")).then_some(())).await?;
-    tap(view, &row_key(&probe(view, git, cx), f.sha("rename"))?, cx).await?;
-    show(view, git, f.sha("rename"), 1, cx).await?;
-    Ok("a.txt's diff: Inline, Split, next change (1st), File View and back, × back to the graph with the commit still selected; a.txt clicked twice opens then closes its diff, the commit kept, and the next commit selects".into())
-}
-
-async fn stash(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let (index, sha, base) = (f.sha("stash_message_index"), f.sha("stash_message"), f.sha("merge"));
-    let p = probe(view, git, cx);
-    let ix = p.row_of(index).ok_or_else(|| anyhow!("no stash row"))?;
-    if !(p.rows[ix].stash && p.rows[ix].summary == MAIN_STASH) {
-        bail!("row {ix} is not the stash {MAIN_STASH:?}: {:?}", p.rows[ix]);
-    }
-    tap(view, &format!("git-row-{ix}"), cx).await?;
-    until_probe(view, git, "the panel on the stash, its base and its file", cx, |p, v| {
-        let stashed = matches!(&p.selected, Some(Selected::Stash(s)) if s.sha == sha);
-        let shown = p.commit.as_ref().is_some_and(|(shown, ps)| shown == sha && *ps == [base.to_string()]);
-        (stashed && shown && painted(v, "commit-tree-row-a.txt") && !painted(v, "commit-parent-1")).then_some(())
-    })
-    .await?;
-    tap(view, "commit-tree-row-a.txt", cx).await?;
-    until_probe(view, git, "the stashed a.txt's diff", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && d.changes > 0 && painted(v, "diff-close")).map(|_| ())).await?;
-    tap(view, "diff-close", cx).await?;
-    Ok(format!("stash row {ix} shows {MAIN_STASH:?}; selected, the panel shows the stash against its base with a.txt, whose diff opens"))
-}
-
-/// Keys posted to the window as the keyboard sends them: Right, Left and Page Down on the graph's rows.
-async fn keys(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let root = Selected::Commit(f.sha("root").into());
-    tap(view, &row_key(&probe(view, git, cx), f.sha("root"))?, cx).await?;
-    show(view, git, f.sha("root"), 0, cx).await?;
-    post_keys(&["right"], cx).await?;
-    until_probe(view, git, "Right: the root's first file at its first change", cx, |p, v| {
-        p.diff.as_ref().filter(|d| d.path == "a.txt" && d.mode == Mode::Diff && d.current == Some(0) && painted(v, "diff-close")).map(|_| ())
-    })
-    .await?;
-    post_keys(&["left"], cx).await?;
-    let row = until_probe(view, git, "Left: back to the root's row", cx, |p, v| {
-        let ix = p.row_of(f.sha("root"))?;
-        (p.diff.is_none() && p.selected.as_ref() == Some(&root) && painted(v, &format!("git-row-{ix}"))).then_some(ix)
-    })
-    .await?;
-    tap(view, "git-row-0", cx).await?;
-    until_probe(view, git, "the WIP row selected", cx, |p, _| (p.selected == Some(Selected::Wip)).then_some(())).await?;
-    post_keys(&["pagedown"], cx).await?;
-    let paged = until_probe(view, git, "Page Down: a page further", cx, |p, _| match &p.selected {
-        Some(Selected::Commit(sha)) => p.row_of(sha).filter(|ix| *ix > 0),
-        Some(Selected::Stash(s)) => p.row_of(&s.index),
-        _ => None,
-    })
-    .await?;
-    Ok(format!("Right on the root opens a.txt, its first file, at its first change; Left goes back to row {row}; Page Down from the WIP row selects row {paged}"))
-}
-
-async fn wip(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    tap(view, "git-row-0", cx).await?;
-    let (unstaged, staged) = until_probe(view, git, "the WIP panel's lists", cx, |p, v| {
-        let (u, s) = p.wip.clone()?;
-        let ok = p.selected == Some(Selected::Wip) && u.iter().any(|f| f == "u.txt") && s.iter().any(|f| f == "s.txt");
-        (ok && painted(v, "wip-unstaged-header") && painted(v, "wip-staged-header")).then_some((u.len(), s.len()))
-    })
-    .await?;
-    tap(view, "wip-unstaged-files-row-a.txt", cx).await?;
-    until_probe(view, git, "a.txt's working-tree diff", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && painted(v, "diff-close")).map(|_| ())).await?;
-    tap(view, "diff-close", cx).await?;
-    tap(view, &row_key(&probe(view, git, cx), f.sha("ahead"))?, cx).await?;
-    until(view, cx, WITHIN, "the dirty tree's banner over the commit", |v| painted(v, "wip-banner-view-change").then_some(())).await?;
-    tap(view, "wip-banner-view-change", cx).await?;
-    until_probe(view, git, "View Change selecting the WIP row", cx, |p, _| (p.selected == Some(Selected::Wip)).then_some(())).await?;
-    Ok(format!("the WIP row lists {unstaged} unstaged and {staged} staged files, opens a working-tree diff; the banner's View Change selects it"))
 }
 
 async fn live(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Arc<Fixture>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
@@ -390,33 +215,3 @@ async fn panel_min(view: &Entity<FleetView>, git: &Entity<GitView>, cx: &mut Asy
     Ok(format!("the commit panel dragged to its minimum ({:.0} px) keeps its toolbar inside", f32::from(width)))
 }
 
-async fn themed(view: &Entity<FleetView>, git: &Entity<GitView>, home: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    let dir = themes::themes_dir(home);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("selftest-light.json"), crate::selftest_schedules::LIGHT)?;
-    let apply = |name: Option<&str>, cx: &mut AsyncWindowContext| {
-        cx.update(|_, cx| {
-            themes::apply(cx, name, TerminalColors::Theme, Some(home));
-        })
-    };
-    apply(Some(LIGHT), cx)?;
-    let repainted = |view: &Entity<FleetView>, cx: &mut AsyncWindowContext| {
-        view.update(cx, |v, cx| {
-            v.hits.borrow_mut().clear();
-            cx.notify();
-        })
-    };
-    repainted(view, cx);
-    let light = until_probe(view, git, "the Git tab repainted in the light theme", cx, |p, v| (p.rows.len() > 1 && painted(v, "git-row-1")).then_some(())).await;
-    let contrast = cx.update(|_, cx| (cx.theme().name.to_string(), worst_contrast(cx)));
-    apply(None, cx)?;
-    std::fs::remove_file(dir.join("selftest-light.json")).ok();
-    repainted(view, cx);
-    light?;
-    let (name, (text, secondary)) = contrast?;
-    if name != LIGHT || text < NAME_FLOOR || secondary < SECONDARY_FLOOR {
-        bail!("in {name:?} the Git tab's text reads {text:.1}:1 on a band (floor {NAME_FLOOR}) and {secondary:.1}:1 on a pill or muted (floor {SECONDARY_FLOOR})");
-    }
-    until(view, cx, WITHIN, "the Git tab repainted in the default theme", |v| painted(v, "git-row-1").then_some(())).await?;
-    Ok(format!("in {LIGHT} it repaints with text at {text:.1}:1 on its bands and {secondary:.1}:1 on pills, then back"))
-}

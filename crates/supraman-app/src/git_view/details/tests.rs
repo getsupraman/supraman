@@ -70,6 +70,12 @@ fn commit_details_show_a_commit_a_merge_and_the_root(cx: &mut TestAppContext) {
     assert_eq!((s.counts, s.changes[0].path.as_str()), (Counts { renamed: 1, ..Counts::default() }, "new.txt"), "against its first parent");
     let painted = repaint(&view, cx);
     assert!(painted.borrow().contains_key("commit-parent-1") && !painted.borrow().contains_key("commit-coauthor-0"));
+    let second = painted.borrow()["commit-parent-1"].bounds.center();
+    cx.simulate_click(second, Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").to_string().into())), "the second parent's click selects it");
+    select(&view, f.sha("merge"), cx);
+    let painted = repaint(&view, cx);
 
     let parent = painted.borrow()["commit-parent-0"].bounds.center();
     cx.simulate_click(parent, Modifiers::none());
@@ -193,6 +199,23 @@ fn commit_details_list_path_tree_and_all_files_with_marks_badges_and_the_filter(
     assert!(after > before + px(35.) && after < before + px(45.), "the bar drags the box taller: {before:?} to {after:?}");
     let kept = cx.update(|_, cx| view.read(cx).sizes(cx).message);
     assert_eq!(kept, Some(f32::from(after).round() as u32), "the tab keeps the height");
+}
+
+#[gpui::test]
+fn commit_details_toolbar_clicks_switch_the_list_and_the_filter_takes_typing(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    select(&view, f.sha("ahead"), cx);
+    for (key, shows) in [("commit-view-path", "commit-files-row-a.txt"), ("commit-view-tree", "commit-tree-row-a.txt"), ("commit-all-files", "commit-tree-row-bin.dat"), ("commit-filter", "commit-filter")] {
+        click(&view, key, cx);
+        assert!(repaint(&view, cx).borrow().contains_key(shows), "after {key}, {shows} paints");
+    }
+    cx.simulate_input("new");
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("commit-tree-row-new.txt") && !painted.borrow().contains_key("commit-tree-row-a.txt"), "the typed filter leaves new.txt");
+    click(&view, "commit-all-files", cx);
+    let painted = repaint(&view, cx);
+    assert!(painted.borrow().contains_key("commit-tree-row-a.txt") && !painted.borrow().contains_key("commit-filter"), "the changed files back, the filter gone");
 }
 
 #[gpui::test]

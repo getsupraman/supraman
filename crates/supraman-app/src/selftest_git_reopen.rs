@@ -15,10 +15,10 @@ use crate::view::FleetView;
 const HIDDEN: &str = "refs/heads/feature";
 
 pub async fn check(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
-    if !probe(view, git, cx).refs.hidden.iter().any(|h| h == HIDDEN) {
+    if !probe(view, git, cx).hidden.iter().any(|h| h == HIDDEN) {
         tap(view, "refpanel-mark-local/feature", cx).await?;
     }
-    until_probe(view, git, "feature hidden", cx, |p, _| p.refs.hidden.iter().any(|h| h == HIDDEN).then_some(())).await?;
+    until_probe(view, git, "feature hidden", cx, |p, _| p.hidden.iter().any(|h| h == HIDDEN).then_some(())).await?;
     let before = view.read_with(cx, |_, cx| git.read(cx).sizes(cx));
     let divider = until(view, cx, WITHIN, "the graph column's divider", |v| v.hits.borrow().get("git-divider-graph").map(|h| h.bounds.center())).await?;
     drag_between(divider, point(divider.x - px(40.), divider.y), None, cx).await?;

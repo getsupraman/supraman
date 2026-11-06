@@ -289,6 +289,7 @@ impl RefPanel {
     }
 
     /// The paths of the rows shown, top to bottom.
+    #[cfg(test)]
     pub fn visible(&self) -> Vec<SharedString> {
         self.tree.visible()
     }

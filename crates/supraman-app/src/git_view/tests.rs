@@ -174,6 +174,10 @@ fn git_tab_shows_refs_messages_dates_and_shas_of_the_fixture(cx: &mut TestAppCon
         let ghost = ref_cell(&root.row, false);
         assert!(ghost.ghost && ghost.first.is_some() && root.row.refs.is_empty(), "a ref-less row offers its descendant's branch: {ghost:?}");
     });
+    let ix = view.read_with(cx, |v, _| row_of(v, f.sha("root")).0);
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let (pill, cell) = (hits.borrow()[&format!("git-ghost-{ix}")].bounds, hits.borrow()[&format!("git-refs-{ix}")].bounds);
+    assert!(pill.left() >= cell.left() && pill.right() <= cell.right() + px(0.5), "the ghost pill paints in its row's ref cell: {pill:?} {cell:?}");
 }
 
 #[gpui::test]
