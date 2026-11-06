@@ -2992,9 +2992,10 @@ mod tests {
 
     #[test]
     fn an_open_event_opens_web_mail_and_file_links_and_resolves_relative_paths() {
-        for uri in ["https://example.com/", "HTTP://example.com/a?b=c", "mailto:a@b.c", "file:///C:/tmp/a.txt"] {
+        for uri in ["https://example.com/", "HTTP://example.com/a?b=c", "mailto:a@b.c"] {
             assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Ok(Link::Url(uri.into())));
         }
+        assert_eq!(link_target(&MaybeNavigationTarget::Url("file:///C:/tmp/a%20b.txt".into())), Ok(Link::Path(PathBuf::from(r"C:\tmp\a b.txt"))));
         let relative = PathLikeTarget { maybe_path: "src/x.rs".into(), working_directory: Some(PathBuf::from("C:/repo")) };
         assert_eq!(link_target(&MaybeNavigationTarget::PathLike(relative)), Ok(Link::Path(PathBuf::from("C:/repo").join("src/x.rs"))));
         let absolute = PathLikeTarget { maybe_path: "C:/tmp/a.txt".into(), working_directory: Some(PathBuf::from("C:/repo")) };
@@ -3050,7 +3051,7 @@ mod tests {
             ("javascript:alert(1)", "javascript"),
             ("no-scheme", ""),
         ] {
-            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(scheme.into()), "{uri}");
+            assert_eq!(link_target(&MaybeNavigationTarget::Url(uri.into())), Err(supraman_ui::open::refused(scheme)), "{uri}");
         }
     }
 

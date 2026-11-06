@@ -15,10 +15,13 @@ pub enum Link {
     Path(PathBuf),
 }
 
-/// What a Ctrl+click on `target` opens, or the scheme it refuses; a path loses its `:line:column`.
+/// What a Ctrl+click on `target` opens, or why it opens nothing; a `file:` URL is its path, a path loses its `:line:column`.
 pub fn link_target(target: &MaybeNavigationTarget) -> Result<Link, String> {
     match target {
-        MaybeNavigationTarget::Url(url) => open::allowed(url, &open::LINK_SCHEMES).map(|()| Link::Url(url.clone())),
+        MaybeNavigationTarget::Url(url) => {
+            open::allowed(url, &open::LINK_SCHEMES).map_err(|scheme| open::refused(&scheme))?;
+            if open::scheme(url) == "file" { open::file_url_path(url).map(Link::Path) } else { Ok(Link::Url(url.clone())) }
+        }
         MaybeNavigationTarget::PathLike(link) => {
             let path = PathWithPosition::parse_str(&link.maybe_path).path;
             Ok(Link::Path(match &link.working_directory {
@@ -46,24 +49,32 @@ pub fn resolve(path: PathBuf) -> Result<PathBuf, String> {
         .ok_or(why)
 }
 
+/// What a Ctrl+click on `target` hands to the opener, or why it opens nothing: a refused scheme, a missing path, or a
+/// file that runs as a program. Reads the disk, so never on the UI thread.
+pub fn followed(target: &MaybeNavigationTarget) -> Result<Link, String> {
+    match link_target(target)? {
+        Link::Path(path) => {
+            let path = resolve(path)?;
+            open::document(&path)?;
+            Ok(Link::Path(path))
+        }
+        url => Ok(url),
+    }
+}
+
 impl FleetView {
     pub(super) fn open_link(&mut self, target: &MaybeNavigationTarget, cx: &mut Context<Self>) {
-        match link_target(target) {
-            Ok(Link::Path(path)) => {
-                let found = cx.background_executor().spawn(async move { resolve(path) });
-                cx.spawn(async move |this, cx| {
-                    let found = found.await;
-                    this.update(cx, |this, cx| match found {
-                        Ok(path) => (this.open_link_with)(&Link::Path(path), cx),
-                        Err(why) => this.pane_toast.show_why(why, |v: &mut Self| &mut v.pane_toast, cx),
-                    })
-                    .ok();
-                })
-                .detach();
-            }
-            Ok(link) => (self.open_link_with)(&link, cx),
-            Err(scheme) => self.pane_toast.show_why(open::refused(&scheme), |v: &mut Self| &mut v.pane_toast, cx),
-        }
+        let target = target.clone();
+        let found = cx.background_executor().spawn(async move { followed(&target) });
+        cx.spawn(async move |this, cx| {
+            let found = found.await;
+            this.update(cx, |this, cx| match found {
+                Ok(link) => (this.open_link_with)(&link, cx),
+                Err(why) => this.pane_toast.show_why(why, |v: &mut Self| &mut v.pane_toast, cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 
@@ -106,5 +117,28 @@ mod tests {
         assert_eq!(opened(&format!("{}, see", file.display())), Ok(file));
         let gone = tmp.path().join("no such thing");
         assert_eq!(opened(&gone.display().to_string()), Err(format!("Not opened: there is no file or folder {}.", gone.display())));
+    }
+
+    #[test]
+    fn a_ctrl_click_on_a_program_path_or_file_url_reaches_no_opener_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["setup.bat", "x.cmd", "notes.txt"] {
+            std::fs::write(tmp.path().join(name), "").unwrap();
+        }
+        let path = |shown: String| MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path: shown, working_directory: None });
+        let bat = path(format!(r"{}\setup.bat:3", tmp.path().display()));
+        assert_eq!(followed(&bat), Err(open::refused_file("setup.bat")));
+        let relative = MaybeNavigationTarget::PathLike(PathLikeTarget { maybe_path: "SETUP.BAT.".into(), working_directory: Some(tmp.path().into()) });
+        assert_eq!(followed(&relative), Err(open::refused_file("SETUP.BAT.")));
+        let file_url = |p: &Path| format!("file:///{}", p.display().to_string().replace('\\', "/").replace(' ', "%20"));
+        let url = file_url(&tmp.path().join("x.cmd"));
+        assert_eq!(followed(&MaybeNavigationTarget::Url(url)), Err(open::refused_file("x.cmd")));
+
+        let txt = tmp.path().join("notes.txt");
+        let txt_url = file_url(&txt);
+        assert_eq!(followed(&MaybeNavigationTarget::Url(txt_url)), Ok(Link::Path(txt.clone())));
+        assert_eq!(followed(&path(txt.display().to_string())), Ok(Link::Path(txt)));
+        assert_eq!(followed(&path(tmp.path().display().to_string())), Ok(Link::Path(tmp.path().into())), "a folder opens");
+        assert_eq!(followed(&MaybeNavigationTarget::Url("ms-settings:privacy".into())), Err(open::refused("ms-settings")));
     }
 }
