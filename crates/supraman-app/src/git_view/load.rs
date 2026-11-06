@@ -2,10 +2,11 @@
 //! history page by page, each page laid out with the state the last one left.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use gpui::SharedString;
 use supraman_core::Settings;
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Status};
+use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
@@ -27,6 +28,10 @@ pub struct GraphRow {
 impl GraphRow {
     pub fn wip(&self) -> bool {
         self.row.sha.is_none()
+    }
+
+    pub fn stash(&self) -> Option<&Arc<Stash>> {
+        self.row.stash.as_ref()
     }
 }
 
@@ -177,12 +182,16 @@ fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
         return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
     };
     let (summary, body) = c.message.split_once('\n').unwrap_or((&c.message, ""));
+    let (summary, body, time) = match &row.stash {
+        Some(stash) => (stash.label(), String::new(), stash.time),
+        None => (summary.trim_end().to_string(), body_start(body), c.author.time),
+    };
     GraphRow {
         sha: c.sha.clone().into(),
-        summary: summary.trim_end().to_string().into(),
-        body: body_start(body).into(),
+        summary: summary.into(),
+        body: body.into(),
         initials: initials(&c.author.name).into(),
-        time_ms: c.author.time * 1000,
+        time_ms: time * 1000,
         merge: c.parents.len() > 1,
         parents: c.parents.iter().map(|p| SharedString::from(p.clone())).collect(),
         row,

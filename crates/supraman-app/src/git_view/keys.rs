@@ -41,14 +41,17 @@ impl GitView {
     }
 
     /// The row of `ix`'s child: the WIP row for HEAD's commit, else the nearest row above whose first parent
-    /// it is, else the nearest that merged it.
+    /// it is, else the nearest that merged it, else the nearest stash made on it.
     pub(super) fn child(&self, ix: usize) -> Option<usize> {
         let row = self.rows.get(ix).filter(|r| !r.wip())?;
         if self.rows.first().is_some_and(GraphRow::wip) && self.heads.head.as_ref() == Some(&row.sha) {
             return Some(0);
         }
-        let above = || (0..ix).rev();
-        above().find(|i| self.rows[*i].parents.first() == Some(&row.sha)).or_else(|| above().find(|i| self.rows[*i].parents.contains(&row.sha)))
+        let above = |stash: bool| (0..ix).rev().filter(move |i| self.rows[*i].stash().is_some() == stash);
+        above(false)
+            .find(|i| self.rows[*i].parents.first() == Some(&row.sha))
+            .or_else(|| above(false).find(|i| self.rows[*i].parents.contains(&row.sha)))
+            .or_else(|| above(true).find(|i| self.rows[*i].parents.contains(&row.sha)))
     }
 
     /// Selects row `ix` as a key does: at once, the panel's read deferred.
@@ -81,6 +84,7 @@ impl GitView {
         match self.selected() {
             Some(Selected::Wip) => self.wip_panel.read(cx).file_order(),
             Some(Selected::Commit(sha)) => self.panel.read(cx).file_order(&sha),
+            Some(Selected::Stash(stash)) => self.panel.read(cx).file_order(&stash.sha),
             None => Vec::new(),
         }
     }

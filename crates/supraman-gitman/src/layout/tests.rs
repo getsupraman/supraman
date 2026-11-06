@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use super::*;
 use crate::fixture::{Fixture, Generated};
-use crate::{Branch, Head, RemoteBranch, Signature, Tag, Worktree, history, refs};
+use crate::{Branch, Head, RemoteBranch, Signature, Stash, Tag, Worktree, history, refs};
 use EdgeKind::{Ending as E, PassThrough as P, Starting as S};
 
 fn commit(sha: &str, parents: &[&str]) -> Commit {
@@ -11,7 +11,7 @@ fn commit(sha: &str, parents: &[&str]) -> Commit {
 }
 
 fn no_refs() -> Refs {
-    Refs { head: Head::Branch { name: "main".into(), sha: None }, branches: vec![], remotes: vec![], tags: vec![], worktrees: vec![] }
+    Refs { head: Head::Branch { name: "main".into(), sha: None }, branches: vec![], remotes: vec![], tags: vec![], worktrees: vec![], stashes: vec![] }
 }
 
 fn branch(name: &str, sha: &str) -> Branch {
@@ -126,7 +126,7 @@ fn layout_of_the_fixture_repo() {
     let page = history(&repo, &refs.tips(), 0, 100).unwrap();
     let rows = Layout::new(&refs, true).extend(&page.commits);
     let order: Vec<Option<&str>> = rows.iter().map(|r| r.sha.as_deref()).collect();
-    let labels = ["ahead", "merge", "main_work", "rename", "second", "root"];
+    let labels = ["ahead", "stash_wip_index", "stash_message_index", "merge", "main_work", "stash_feature_index", "rename", "second", "root"];
     let expected: Vec<Option<&str>> = [None].into_iter().chain(labels.iter().map(|l| Some(f.sha(l)))).collect();
     assert_eq!(order, expected);
     assert_eq!(
@@ -134,21 +134,25 @@ fn layout_of_the_fixture_repo() {
         vec![
             (0, vec![(S, 0, 0)]),
             (0, vec![(E, 0, 0), (S, 0, 0)]),
-            (0, vec![(E, 0, 0), (S, 0, 0), (S, 1, 0)]),
-            (0, vec![(E, 0, 0), (P, 1, 1), (S, 0, 0)]),
-            (1, vec![(P, 0, 0), (E, 1, 1), (S, 1, 1)]),
-            (0, vec![(E, 0, 0), (E, 1, 0), (S, 0, 0)]),
+            (1, vec![(P, 0, 0), (S, 1, 1)]),
+            (2, vec![(P, 0, 0), (P, 1, 1), (S, 2, 2)]),
+            (0, vec![(E, 0, 0), (E, 1, 0), (E, 2, 0), (S, 0, 0), (S, 3, 0)]),
+            (0, vec![(E, 0, 0), (P, 3, 3), (S, 0, 0)]),
+            (1, vec![(P, 0, 0), (P, 3, 3), (S, 1, 1)]),
+            (3, vec![(P, 0, 0), (E, 1, 3), (E, 3, 3), (S, 3, 3)]),
+            (0, vec![(E, 0, 0), (E, 3, 0), (S, 0, 0)]),
             (0, vec![(E, 0, 0)]),
         ]
     );
     let names = |r: &Row| r.refs.iter().map(|g| g.name.clone()).collect::<Vec<_>>();
     assert_eq!(names(&rows[1]), ["main"]);
-    assert_eq!(names(&rows[2]), ["main"]);
-    assert_eq!(names(&rows[3]), ["stale", "light"]);
-    assert_eq!(names(&rows[4]), ["feature"]);
-    assert_eq!(names(&rows[5]), ["side", "v1"]);
-    assert_eq!(rows[5].refs[0].kind(), RefKind::Worktree);
-    assert_eq!(rows[6].ghost.as_ref().unwrap()[0].name, "side");
+    assert_eq!(names(&rows[4]), ["main"]);
+    assert_eq!(names(&rows[5]), ["stale", "light"]);
+    assert_eq!(names(&rows[7]), ["feature"]);
+    assert_eq!(names(&rows[8]), ["side", "v1"]);
+    assert_eq!(rows[8].refs[0].kind(), RefKind::Worktree);
+    assert_eq!(rows[9].ghost.as_ref().unwrap()[0].name, "side");
+    assert!(rows[2].ghost.is_none() && rows[2].refs.is_empty(), "a stash row takes no ghost");
 }
 
 #[test]
@@ -186,6 +190,7 @@ fn ref_order_refs() -> Refs {
         remotes: vec![remote("origin/main", "x"), remote("upstream/main", "x"), remote("origin/dev", "x"), remote("origin/Beta", "x")],
         tags: vec![tag("v2", "x"), tag("main", "x")],
         worktrees: vec![Worktree { branch: Some("wt".into()), ..Worktree::default() }],
+        stashes: vec![],
     }
 }
 
@@ -240,6 +245,51 @@ fn layout_ghost_refs_follow_the_first_parent() {
     refs.branches = vec![branch("main", "m"), branch("topic", "x")];
     let rows = Layout::new(&refs, false).extend(&commits);
     assert_eq!(rows[2].ghost.as_ref().unwrap()[0].name, "topic");
+}
+
+fn stash_refs(index: &str, base: &str) -> Refs {
+    let stash = Stash { sha: "S".into(), index: index.into(), base: base.into(), branch: "main".into(), message: "m".into(), time: 0 };
+    Refs { stashes: vec![stash], ..no_refs() }
+}
+
+#[test]
+fn layout_a_stash_row_is_dashed_to_its_base_and_an_older_one_leaves_the_base_to_its_real_child() {
+    let older = [commit("t", &["z"]), commit("c", &["b"]), commit("z", &[]), commit("i", &["b"]), commit("b", &[])];
+    let rows = Layout::new(&stash_refs("i", "b"), false).extend(&older);
+    assert_eq!(rows[3].stash.as_ref().map(|s| s.sha.as_str()), Some("S"));
+    assert!(rows.iter().enumerate().all(|(ix, r)| r.stash.is_some() == (ix == 3)));
+    assert!(rows[3].ghost.is_none());
+    let starting: Vec<&Edge> = rows[3].edges.iter().filter(|e| e.kind == S).collect();
+    assert_eq!((starting.len(), starting[0].dashed, rows[3].lane), (1, true, 0));
+    assert_eq!(rows[4].lane, 1, "the base keeps its real child's lane");
+    assert!(rows[4].edges.iter().any(|e| e.kind == E && e.lane == 0 && e.dashed), "the stash's dashed edge ends at the base");
+    assert!(rows[4].edges.iter().any(|e| e.kind == E && e.lane == 1 && !e.dashed));
+
+    let newer = [commit("i", &["b"]), commit("c", &["b"]), commit("b", &[])];
+    let rows = Layout::new(&stash_refs("i", "b"), false).extend(&newer);
+    assert_eq!(shape(&rows), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)]), (0, vec![(E, 0, 0), (E, 1, 0)])]);
+    assert!(rows[1].edges[0].dashed && !rows[1].edges[1].dashed, "the stash's lane passes the child dashed");
+}
+
+#[test]
+fn layout_of_the_fixture_puts_each_stash_on_its_index_commit_at_its_time() {
+    let f = Fixture::new();
+    let repo = f.repo();
+    let refs = refs(&repo).unwrap();
+    let page = history(&repo, &refs.tips(), 0, 100).unwrap();
+    let rows = Layout::new(&refs, false).extend(&page.commits);
+    let at = |label: &str| rows.iter().position(|r| r.sha.as_deref() == Some(f.sha(label))).unwrap_or_else(|| panic!("no row of {label}"));
+    for stash in crate::fixture::STASHES {
+        assert!(rows.iter().all(|r| r.sha.as_deref() != Some(f.sha(stash))), "{stash}'s own commit has no row");
+        let row = &rows[at(&format!("{stash}_index"))];
+        assert_eq!(row.stash.as_ref().map(|s| s.sha.as_str()), Some(f.sha(stash)));
+        let starting: Vec<&Edge> = row.edges.iter().filter(|e| e.kind == S).collect();
+        assert!(starting.len() == 1 && starting[0].dashed, "{stash}: one dashed edge to its base: {:?}", row.edges);
+    }
+    assert_eq!([at("ahead"), at("stash_wip_index"), at("stash_message_index"), at("merge")], [0, 1, 2, 3]);
+    assert_eq!((rows[at("merge")].lane, rows[at("ahead")].lane), (0, 0), "the merge keeps HEAD's lane over its older stashes");
+    assert_eq!(rows[at("rename")].lane, rows[at("merge")].edges.iter().find(|e| e.kind == S && e.lane != 0).unwrap().lane, "the rename keeps its merge's lane");
+    assert_eq!(rows.iter().filter(|r| r.stash.is_some()).count(), 3);
 }
 
 /// 10,000 rows: a main line, every 10th commit a merge of a one-commit topic, every 50th of a 30-commit branch.

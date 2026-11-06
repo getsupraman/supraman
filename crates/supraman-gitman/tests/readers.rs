@@ -1,4 +1,4 @@
-use supraman_gitman::fixture::{BINARY, Fixture, git_in};
+use supraman_gitman::fixture::{self, BINARY, Fixture, git_in};
 use supraman_gitman::*;
 
 #[test]
@@ -20,10 +20,11 @@ fn refs_name_branches_with_ahead_behind_tags_remotes_and_worktrees() {
     assert_eq!(r.worktrees[0].branch.as_deref(), Some("main"));
     assert_eq!((r.worktrees[1].branch.as_deref(), r.worktrees[1].head.as_deref()), (Some("side"), Some(f.sha("second"))));
     let tips = r.tips();
-    for label in ["ahead", "merge", "rename", "main_work", "second"] {
+    for label in ["ahead", "merge", "rename", "main_work", "second", "stash_wip_index", "stash_message_index", "stash_feature_index"] {
         assert!(tips.iter().any(|t| t == f.sha(label)), "{label} is a tip");
     }
-    assert_eq!(tips.len(), 5, "each once: {tips:?}");
+    assert_eq!(tips.len(), 8, "each once: {tips:?}");
+    assert!(!tips.iter().any(|t| t == f.sha("stash_wip")), "a stash's own commit is no tip");
 }
 
 #[test]
@@ -31,19 +32,21 @@ fn a_page_of_history_has_parents_and_says_whether_more_follow() {
     let f = Fixture::new();
     let repo = f.repo();
     let tips = refs(&repo).unwrap().tips();
-    let first = history(&repo, &tips, 0, 3).unwrap();
+    let first = history(&repo, &tips, 0, 4).unwrap();
     let shas: Vec<&str> = first.commits.iter().map(|c| c.sha.as_str()).collect();
-    assert_eq!(shas, [f.sha("ahead"), f.sha("merge"), f.sha("main_work")]);
+    assert_eq!(shas, [f.sha("ahead"), f.sha("stash_wip_index"), f.sha("stash_message_index"), f.sha("merge")]);
     assert!(first.more);
-    assert_eq!(first.commits[1].parents, [f.sha("main_work"), f.sha("rename")]);
-    assert_eq!(first.commits[1].message, "Merge feature\n");
+    assert_eq!(first.commits[1].parents, [f.sha("merge")], "a stash's index commit has the base for its one parent");
+    assert_eq!(first.commits[3].parents, [f.sha("main_work"), f.sha("rename")]);
+    assert_eq!(first.commits[3].message, "Merge feature\n");
     let author = &first.commits[0].author;
     assert_eq!((author.name.as_str(), author.email.as_str(), author.time), ("Ada Fixture", "ada@example.test", 1_700_000_360));
-    let rest = history(&repo, &tips, 3, 3).unwrap();
-    assert_eq!(rest.commits.iter().map(|c| c.sha.as_str()).collect::<Vec<_>>(), [f.sha("rename"), f.sha("second"), f.sha("root")]);
+    let rest = history(&repo, &tips, 4, 5).unwrap();
+    let rest_shas: Vec<&str> = rest.commits.iter().map(|c| c.sha.as_str()).collect();
+    assert_eq!(rest_shas, [f.sha("main_work"), f.sha("stash_feature_index"), f.sha("rename"), f.sha("second"), f.sha("root")]);
     assert!(!rest.more);
-    assert!(rest.commits[2].parents.is_empty());
-    assert_eq!(history(&repo, &tips, 0, 100).unwrap().commits.len(), 6);
+    assert!(rest.commits[4].parents.is_empty());
+    assert_eq!(history(&repo, &tips, 0, 100).unwrap().commits.len(), 9);
 }
 
 #[test]
@@ -180,4 +183,29 @@ fn ignored_names_the_ignored_paths_but_never_a_tracked_file() {
     got.sort();
     assert_eq!(got, ["sub/deep.log", "target/out.bin", "x.log"], "a.txt is tracked");
     assert!(ignored(&f.repo(), &[]).unwrap().is_empty());
+}
+
+#[test]
+fn stashes_from_the_reflog_newest_first_with_their_index_commit_base_branch_and_message() {
+    let f = Fixture::new();
+    let all = stashes(&f.repo()).unwrap();
+    let shas: Vec<&str> = all.iter().map(|s| s.sha.as_str()).collect();
+    assert_eq!(shas, fixture::STASHES.map(|l| f.sha(l)));
+    let [wip, message, feature] = &all[..] else { panic!("three stashes: {all:?}") };
+    assert_eq!((message.branch.as_str(), message.label(), message.base.as_str()), ("main", fixture::MAIN_STASH.to_string(), f.sha("merge")));
+    assert_eq!(message.index, f.sha("stash_message_index"));
+    let short = &f.sha("merge")[..7];
+    assert_eq!((wip.branch.as_str(), wip.label()), ("main", format!("{short} Merge feature")));
+    assert_eq!((feature.branch.as_str(), feature.label(), feature.base.as_str()), ("feature", fixture::FEATURE_STASH.to_string(), f.sha("rename")));
+    assert_eq!(wip.time - message.time, 20);
+    assert_eq!(refs(&f.repo()).unwrap().stashes, all);
+    let changed = changed_between(&f.repo(), &message.base, &message.sha).unwrap();
+    assert_eq!(changed.iter().map(|c| (c.path.as_str(), c.kind)).collect::<Vec<_>>(), [("a.txt", ChangeKind::Modified)]);
+}
+
+#[test]
+fn no_stashes_without_a_stash_ref() {
+    let f = Fixture::new();
+    git_in(&f.git, &f.dir, &["update-ref", "-d", "refs/stash"], &[], None);
+    assert!(stashes(&f.repo()).unwrap().is_empty());
 }

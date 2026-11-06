@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::parse::text;
-use crate::{GitError, Repo};
+use crate::{GitError, Repo, Stash};
 
 const REF_FORMAT: &str = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(upstream:short)%00%(upstream:track)%00%(symref)";
 
@@ -66,10 +66,12 @@ pub struct Refs {
     pub remotes: Vec<RemoteBranch>,
     pub tags: Vec<Tag>,
     pub worktrees: Vec<Worktree>,
+    /// Newest first.
+    pub stashes: Vec<Stash>,
 }
 
 impl Refs {
-    /// Every commit a ref or a worktree points at, once each: the history's starting points.
+    /// Every commit a ref or a worktree points at, and each stash's index commit, once each: the history's starting points.
     pub fn tips(&self) -> Vec<String> {
         let head = match &self.head {
             Head::Branch { sha, .. } => sha.clone(),
@@ -81,6 +83,7 @@ impl Refs {
             .chain(self.remotes.iter().map(|r| r.sha.clone()))
             .chain(self.tags.iter().filter_map(|t| t.commit.clone()))
             .chain(self.worktrees.iter().filter_map(|w| w.head.clone()))
+            .chain(self.stashes.iter().map(|s| s.index.clone()))
             .collect();
         let mut seen = std::collections::HashSet::new();
         tips.retain(|sha| seen.insert(sha.clone()));
@@ -92,6 +95,7 @@ pub fn refs(repo: &Repo) -> Result<Refs, GitError> {
     let mut refs = repo.read(&["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes", "refs/tags"], None, parse_refs)?;
     refs.head = head(repo)?;
     refs.worktrees = repo.read(&["worktree", "list", "--porcelain", "-z"], None, |out| Ok(parse_worktrees(out)))?;
+    refs.stashes = crate::stashes(repo)?;
     Ok(refs)
 }
 
@@ -108,7 +112,7 @@ fn head(repo: &Repo) -> Result<Head, GitError> {
 }
 
 fn parse_refs(out: &[u8]) -> Result<Refs, String> {
-    let mut refs = Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new() };
+    let mut refs = Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() };
     for line in text(out).lines().filter(|l| !l.is_empty()) {
         let f: Vec<&str> = line.split('\0').collect();
         let [refname, sha, kind, peeled, peeled_kind, upstream, track, symref] = f[..] else {

@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail};
 use gpui::{AsyncWindowContext, Bounds, Entity, Pixels, Size, point, px, size};
 use supraman_core::paths::path_key;
 use supraman_core::{Folder, Registry, Workspace};
-use supraman_gitman::fixture::Fixture;
+use supraman_gitman::fixture::{Fixture, MAIN_STASH};
 use supraman_ui::themes::{self, NAME_FLOOR, SECONDARY_FLOOR, TerminalColors};
 use theme::ActiveTheme as _;
 
@@ -118,13 +118,14 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut
     let selected = select(view, &git, f, cx).await?;
     let files = files(view, &git, f, cx).await?;
     let diff = diff(view, &git, f, cx).await?;
+    let stash = stash(view, &git, f, cx).await?;
     let keys = keys(view, &git, f, cx).await?;
     let wip = wip(view, &git, f, cx).await?;
     let live = live(view, &git, f, cx).await?;
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
     let themed = themed(view, &git, home, cx).await?;
-    Ok([opened, refs, selected, files, diff, keys, wip, live, narrow, panel, themed].join("; "))
+    Ok([opened, refs, selected, files, diff, stash, keys, wip, live, narrow, panel, themed].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {
@@ -253,6 +254,26 @@ async fn diff(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: 
     Ok("a.txt's diff: Inline, Split, next change (1st), File View and back, × back to the graph with the commit still selected; a.txt clicked twice opens then closes its diff, the commit kept, and the next commit selects".into())
 }
 
+async fn stash(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let (index, sha, base) = (f.sha("stash_message_index"), f.sha("stash_message"), f.sha("merge"));
+    let p = probe(view, git, cx);
+    let ix = p.row_of(index).ok_or_else(|| anyhow!("no stash row"))?;
+    if !(p.rows[ix].stash && p.rows[ix].summary == MAIN_STASH) {
+        bail!("row {ix} is not the stash {MAIN_STASH:?}: {:?}", p.rows[ix]);
+    }
+    tap(view, &format!("git-row-{ix}"), cx).await?;
+    until_probe(view, git, "the panel on the stash, its base and its file", cx, |p, v| {
+        let stashed = matches!(&p.selected, Some(Selected::Stash(s)) if s.sha == sha);
+        let shown = p.commit.as_ref().is_some_and(|(shown, ps)| shown == sha && *ps == [base.to_string()]);
+        (stashed && shown && painted(v, "commit-tree-row-a.txt") && !painted(v, "commit-parent-1")).then_some(())
+    })
+    .await?;
+    tap(view, "commit-tree-row-a.txt", cx).await?;
+    until_probe(view, git, "the stashed a.txt's diff", cx, |p, v| p.diff.as_ref().filter(|d| d.path == "a.txt" && d.changes > 0 && painted(v, "diff-close")).map(|_| ())).await?;
+    tap(view, "diff-close", cx).await?;
+    Ok(format!("stash row {ix} shows {MAIN_STASH:?}; selected, the panel shows the stash against its base with a.txt, whose diff opens"))
+}
+
 /// Keys posted to the window as the keyboard sends them: Right, Left and Page Down on the graph's rows.
 async fn keys(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let root = Selected::Commit(f.sha("root").into());
@@ -274,6 +295,7 @@ async fn keys(view: &Entity<FleetView>, git: &Entity<GitView>, f: &Fixture, cx: 
     post_keys(&["pagedown"], cx).await?;
     let paged = until_probe(view, git, "Page Down: a page further", cx, |p, _| match &p.selected {
         Some(Selected::Commit(sha)) => p.row_of(sha).filter(|ix| *ix > 0),
+        Some(Selected::Stash(s)) => p.row_of(&s.index),
         _ => None,
     })
     .await?;

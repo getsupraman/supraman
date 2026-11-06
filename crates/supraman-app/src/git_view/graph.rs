@@ -4,6 +4,8 @@
 use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
+use supraman_ui::icon::Icon;
+use supraman_ui::tooltip::Tooltip;
 
 use super::colours::Palette;
 use super::load::GraphRow;
@@ -126,7 +128,7 @@ fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsl
 }
 
 /// A commit's circle with its author's initials, ringed in its lane; a merge's smaller dot; the WIP row's
-/// dashed hollow ring.
+/// dashed hollow ring; a stash's dashed square round its glyph.
 fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
     let colour = row.row.colour;
     let lane = palette.lane(colour);
@@ -142,6 +144,18 @@ fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
         .justify_center();
     if row.wip() {
         return at.border_2().border_dashed().border_color(lane).bg(palette.background).into_any_element();
+    }
+    if row.stash().is_some() {
+        return at
+            .id(SharedString::from(format!("git-stash-{}", row.sha)))
+            .border_1()
+            .border_dashed()
+            .rounded_sm()
+            .border_color(lane)
+            .bg(palette.background)
+            .child(Icon::Stash.svg(13., lane))
+            .tooltip(Tooltip::text("A stash: work set aside"))
+            .into_any_element();
     }
     if row.merge {
         return at.bg(lane).into_any_element();

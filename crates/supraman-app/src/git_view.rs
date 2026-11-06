@@ -78,6 +78,8 @@ fn columns(graph_max: Option<Pixels>) -> Vec<Column> {
 pub enum Selected {
     Wip,
     Commit(SharedString),
+    /// A stash's row, its index commit.
+    Stash(Arc<supraman_gitman::Stash>),
 }
 
 /// The selection changed; [`GitView::selected`] says to what.
@@ -252,7 +254,11 @@ impl GitView {
 
     pub fn selected(&self) -> Option<Selected> {
         let row = self.rows.get(self.table.selected()?)?;
-        Some(if row.wip() { Selected::Wip } else { Selected::Commit(row.sha.clone()) })
+        Some(match (row.wip(), row.stash()) {
+            (true, _) => Selected::Wip,
+            (false, Some(stash)) => Selected::Stash(stash.clone()),
+            (false, None) => Selected::Commit(row.sha.clone()),
+        })
     }
 
     fn selection_moved(&mut self, cx: &mut Context<Self>) {

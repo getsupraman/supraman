@@ -12,7 +12,7 @@ use std::sync::Arc;
 pub use groups::{RefGroup, RefKind, RefLabel};
 pub use lanes::{Edge, EdgeKind, LANE_COLOURS};
 
-use crate::{Commit, Refs};
+use crate::{Commit, Refs, Stash};
 use groups::RefIndex;
 use lanes::Lanes;
 
@@ -30,6 +30,8 @@ pub struct Row {
     /// The nearest descendant's branch groups, for a row with no refs of its own.
     pub ghost: Option<Arc<[RefGroup]>>,
     pub detached_head: bool,
+    /// The stash whose index commit the row is.
+    pub stash: Option<Arc<Stash>>,
 }
 
 impl Row {
@@ -52,6 +54,8 @@ pub struct Layout {
     lanes: Lanes,
     refs: Arc<RefIndex>,
     handed: HashMap<String, Handed>,
+    /// Each stash by its index commit, the newest of those sharing one.
+    stashes: Arc<HashMap<String, Arc<Stash>>>,
     wip: bool,
     rows: usize,
     none: Arc<[RefGroup]>,
@@ -60,9 +64,13 @@ pub struct Layout {
 impl Layout {
     /// With `wip`, the first page starts with a WIP row parented to HEAD's commit, when HEAD has one.
     pub fn new(refs: &Refs, wip: bool) -> Layout {
+        let mut stashes = HashMap::new();
+        for stash in refs.stashes.iter().rev() {
+            stashes.insert(stash.index.clone(), Arc::new(stash.clone()));
+        }
         let refs = RefIndex::new(refs);
         let wip = wip && refs.head.is_some();
-        Layout { lanes: Lanes::default(), refs: Arc::new(refs), handed: HashMap::new(), wip, rows: 0, none: Arc::from([]) }
+        Layout { lanes: Lanes::default(), refs: Arc::new(refs), handed: HashMap::new(), stashes: Arc::new(stashes), wip, rows: 0, none: Arc::from([]) }
     }
 
     /// The rows of the next page; pages laid out in turn give the rows of laying them out at once.
@@ -70,13 +78,16 @@ impl Layout {
         let mut rows = Vec::with_capacity(commits.len() + 1);
         if std::mem::take(&mut self.wip) {
             let head = self.refs.head.clone().into_iter().collect::<Vec<_>>();
-            let placed = self.lanes.place("", &head, true);
+            let placed = self.lanes.place("", &head, true, false);
             rows.push(self.row(None, placed, None));
         }
         for commit in commits {
-            let placed = self.lanes.place(&commit.sha, &commit.parents, false);
-            let ghost = self.ghost(&commit.sha, &commit.parents);
-            rows.push(self.row(Some(commit.sha.clone()), placed, ghost));
+            let stash = self.stashes.get(&commit.sha).cloned();
+            let placed = self.lanes.place(&commit.sha, &commit.parents, stash.is_some(), stash.is_some());
+            let ghost = if stash.is_some() { None } else { self.ghost(&commit.sha, &commit.parents) };
+            let mut row = self.row(Some(commit.sha.clone()), placed, ghost);
+            row.stash = stash;
+            rows.push(row);
         }
         rows
     }
@@ -85,7 +96,7 @@ impl Layout {
         self.rows += 1;
         let refs = sha.as_ref().and_then(|s| self.refs.groups.get(s)).cloned().unwrap_or_else(|| self.none.clone());
         let detached_head = sha.is_some() && sha == self.refs.detached;
-        Row { sha, lane: placed.lane, colour: placed.lane % LANE_COLOURS, edges: placed.edges, max_lane: placed.max_lane, refs, ghost, detached_head }
+        Row { sha, lane: placed.lane, colour: placed.lane % LANE_COLOURS, edges: placed.edges, max_lane: placed.max_lane, refs, ghost, detached_head, stash: None }
     }
 
     /// A commit with branch refs hands them to its parents; one with no refs takes the best it was handed and

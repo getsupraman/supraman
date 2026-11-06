@@ -72,7 +72,7 @@ fn graph_keys_walk_parents_children_head_and_upstream(cx: &mut TestAppContext) {
         ("shift-down", commit(f.sha("merge")), "Shift+Down: the first parent"),
         ("shift-down", commit(f.sha("main_work")), "a merge's first parent, not its second"),
         ("shift-up", commit(f.sha("merge")), "Shift+Up: the child"),
-        ("shift-up", commit(f.sha("ahead")), "and its child"),
+        ("shift-up", commit(f.sha("ahead")), "and its child, not a stash made on the merge"),
         ("shift-up", Some(Selected::Wip), "HEAD's child is the WIP row"),
         ("h", commit(f.sha("ahead")), "H: HEAD's commit"),
     ];
@@ -86,6 +86,10 @@ fn graph_keys_walk_parents_children_head_and_upstream(cx: &mut TestAppContext) {
     click_row(&view, rename, cx);
     keys(&view, "shift-up", cx);
     assert_eq!(selected_sha(&view, cx), commit(f.sha("merge")), "a merged commit's child is the merge");
+    let stash = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("stash_message_index")).unwrap());
+    click_row(&view, stash, cx);
+    keys(&view, "shift-down", cx);
+    assert_eq!(selected_sha(&view, cx), commit(f.sha("merge")), "Shift+Down from a stash: its base");
     keys(&view, "ctrl-end", cx);
     let last = view.read_with(cx, |v, _| v.rows.last().map(|r| r.sha.to_string()));
     assert_eq!(selected_sha(&view, cx), last.as_deref().and_then(commit), "Ctrl+End: the last loaded commit");

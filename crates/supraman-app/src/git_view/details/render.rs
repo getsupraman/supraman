@@ -32,6 +32,14 @@ pub(super) fn authored(shown: &Shown) -> String {
     time::stamp(shown.authored_ms)
 }
 
+fn parents_word(shown: &Shown) -> &'static str {
+    match (shown.stash.is_some(), shown.parents.len()) {
+        (true, _) => "base:",
+        (false, 1) => "parent:",
+        (false, _) => "parents:",
+    }
+}
+
 /// A co-author's colour: one of the lanes, picked by their email so it stays theirs.
 fn person_colour(email: &str) -> usize {
     email.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % supraman_gitman::LANE_COLOURS
@@ -55,7 +63,11 @@ impl CommitPanel {
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().colors().text_muted;
         let sha = shown.sha.clone();
-        div().flex().flex_none().justify_center().items_baseline().gap_1().py_1p5().child(div().text_color(muted).child("commit:")).child(
+        let what: SharedString = match &shown.stash {
+            Some(stash) => format!("stash on {}:", stash.branch).into(),
+            None => "commit:".into(),
+        };
+        div().flex().flex_none().justify_center().items_baseline().gap_1().py_1p5().child(div().text_color(muted).child(what)).child(
             fonts::figures(button::ghost(&self.hits, "commit-sha", cx))
                 .px_1()
                 .rounded_sm()
@@ -119,14 +131,15 @@ impl CommitPanel {
             .items_baseline()
             .gap_0p5()
             .text_xs()
-            .when(!shown.parents.is_empty(), |d| d.child(div().text_color(colors.text_muted).child(if shown.parents.len() > 1 { "parents:" } else { "parent:" })))
+            .when(!shown.parents.is_empty(), |d| d.child(div().text_color(colors.text_muted).child(parents_word(shown))))
             .children(parents);
         let name = div()
             .id("commit-author")
             .text_color(colors.text)
             .child(shown.author.clone())
             .tooltip(Tooltip::text(format!("{} <{}>", shown.author, shown.author_email)));
-        let when = div().flex().gap_1().text_xs().child(div().text_color(colors.text_muted).child("authored")).child(div().text_color(colors.text).child(SharedString::from(authored(shown))));
+        let when_word = if shown.stash.is_some() { "stashed" } else { "authored" };
+        let when = div().flex().gap_1().text_xs().child(div().text_color(colors.text_muted).child(when_word)).child(div().text_color(colors.text).child(SharedString::from(authored(shown))));
         div()
             .flex()
             .flex_none()

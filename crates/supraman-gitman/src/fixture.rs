@@ -41,7 +41,7 @@ fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: 
 }
 
 /// One repository with a commit of every kind: a root, a rename with co-authors on `feature`, a `--no-ff` merge,
-/// tags (annotated `v1`, light `light`), `origin` (a bare repo beside it) with `main` one ahead and `stale` two
+/// three stashes (one on `feature`, two on the merge: with a message and without), tags (annotated `v1`, light `light`), `origin` (a bare repo beside it) with `main` one ahead and `stale` two
 /// behind, a worktree on `side`, and work in progress (staged, unstaged, a staged rename, a deletion,
 /// an untracked file, and `bin.dat` rewritten unchanged with an old mtime, so a status that may write refreshes the index).
 pub struct Fixture {
@@ -55,6 +55,12 @@ pub struct Fixture {
 
 /// `bin.dat`'s bytes: a NUL early, so git calls it binary.
 pub const BINARY: &[u8] = &[0x89, b'P', b'N', b'G', 0, 1, 2, 3, 0xff, 0xfe, b'\n'];
+
+/// The stashes, newest first: `stash_wip` (no message, on `main`), `stash_message` (on `main`), `stash_feature`.
+pub const STASHES: [&str; 3] = ["stash_wip", "stash_message", "stash_feature"];
+const STASH_INDEX: [&str; 3] = ["stash_wip_index", "stash_message_index", "stash_feature_index"];
+pub const MAIN_STASH: &str = "Try a third line";
+pub const FEATURE_STASH: &str = "Feature idea";
 
 pub const CO_AUTHORED: &str = "Move old.txt to new.txt\n\nThe old name no longer fits.\n\nCo-authored-by: Bea Two <bea@example.test>\nCo-authored-by: Cy Three <cy@example.test>\n";
 
@@ -83,7 +89,8 @@ impl Fixture {
         Repo::new(self.git.clone(), &self.dir)
     }
 
-    /// A commit by its label: `root`, `second`, `rename`, `main_work`, `merge`, `ahead`.
+    /// A commit by its label: `root`, `second`, `rename`, `main_work`, `merge`, `ahead`, a [`STASHES`] label
+    /// or one with `_index` for its index commit.
     pub fn sha(&self, label: &str) -> &str {
         self.shas.get(label).unwrap_or_else(|| panic!("no commit {label}"))
     }
@@ -134,6 +141,7 @@ impl Fixture {
         self.git(&["checkout", "-q", "-b", "feature"]);
         self.git(&["mv", "old.txt", "new.txt"]);
         self.commit("rename", CO_AUTHORED);
+        self.stash("stash_feature", 30, "new.txt", b"rename me\nline 2 on feature\nline 3\nline 4\n", Some(FEATURE_STASH));
         self.git(&["checkout", "-q", "main"]);
         self.write("b.txt", b"b\nb2\n");
         self.git(&["add", "b.txt"]);
@@ -145,6 +153,25 @@ impl Fixture {
         git_in(&self.git, &self.dir, &["merge", "-q", "--no-ff", "--no-verify", "-m", "Merge feature", "feature"], &env, None);
         let merge = self.git(&["rev-parse", "HEAD"]);
         self.shas.insert("merge", merge);
+        self.stash("stash_message", 20, "a.txt", b"one\ntwo\nstashed\n", Some(MAIN_STASH));
+        self.stash("stash_wip", 40, "b.txt", b"b\nb2\nstashed\n", None);
+    }
+
+    /// `path` rewritten and stashed `after` seconds after the last commit, with `message` or git's own;
+    /// `label` names the stash commit, `<label>_index` its index commit.
+    fn stash(&mut self, label: &'static str, after: i64, path: &str, bytes: &[u8], message: Option<&str>) {
+        let date = format!("@{} +0000", self.time + after);
+        let env = [("GIT_AUTHOR_DATE", date.clone()), ("GIT_COMMITTER_DATE", date)];
+        self.write(path, bytes);
+        let mut args = vec!["stash", "push", "-q"];
+        if let Some(message) = message {
+            args.extend(["-m", message]);
+        }
+        git_in(&self.git, &self.dir, &args, &env, None);
+        let sha = self.git(&["rev-parse", "refs/stash"]);
+        let index = self.git(&["rev-parse", "refs/stash^2"]);
+        self.shas.insert(label, sha);
+        self.shas.insert(STASH_INDEX[STASHES.iter().position(|l| *l == label).expect("a stash label")], index);
     }
 
     fn remote_and_worktree(&mut self) {

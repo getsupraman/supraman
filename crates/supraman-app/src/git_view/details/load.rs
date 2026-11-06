@@ -1,9 +1,10 @@
-//! What the commit panel reads for one commit, blocking, for `cx.background_spawn`: its details, its changed
-//! files and the whole tree at it, with both file trees built.
+//! What the commit panel reads for one commit or stash, blocking, for `cx.background_spawn`: its details, its
+//! changed files and the whole tree at it, with both file trees built.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use supraman_gitman::{ChangeKind, Details, FileChange, Repo};
+use supraman_gitman::{ChangeKind, Details, FileChange, Repo, Stash};
 use supraman_ui::tree::{Order, Tree};
 
 /// A file's change in this commit; `None` on a file the commit left as it was.
@@ -43,6 +44,7 @@ pub type FileTree = Tree<Mark, Counts>;
 pub struct Loaded {
     pub sha: String,
     pub details: Details,
+    pub stash: Option<Arc<Stash>>,
     pub changes: Vec<FileChange>,
     pub counts: Counts,
     /// The changed files as a tree.
@@ -55,6 +57,17 @@ pub struct Loaded {
 pub fn load(repo: &Repo, sha: &str, order: Order) -> Result<Loaded, String> {
     let details = supraman_gitman::details(repo, sha).map_err(|e| e.to_string())?;
     let changes = supraman_gitman::changed_files(repo, sha).map_err(|e| e.to_string())?;
+    build(repo, sha, details, changes, None, order)
+}
+
+/// A stash's commit and its work-tree changes against its base.
+pub fn load_stash(repo: &Repo, stash: Arc<Stash>, order: Order) -> Result<Loaded, String> {
+    let details = supraman_gitman::details(repo, &stash.sha).map_err(|e| e.to_string())?;
+    let changes = supraman_gitman::changed_between(repo, &stash.base, &stash.sha).map_err(|e| e.to_string())?;
+    build(repo, &stash.sha.clone(), details, changes, Some(stash), order)
+}
+
+fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, stash: Option<Arc<Stash>>, order: Order) -> Result<Loaded, String> {
     let tree = supraman_gitman::tree(repo, sha).map_err(|e| e.to_string())?;
     let mut counts = Counts::default();
     changes.iter().for_each(|c| counts.add(&Some(c.kind)));
@@ -62,7 +75,7 @@ pub fn load(repo: &Repo, sha: &str, order: Order) -> Result<Loaded, String> {
     let files = all.iter().map(|(p, _)| p.clone()).collect();
     let changed = Tree::build(changes.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order);
     let all = Tree::build(all, Counts::add, order);
-    Ok(Loaded { sha: sha.to_string(), details, changes, counts, changed, all, files })
+    Ok(Loaded { sha: sha.to_string(), details, stash, changes, counts, changed, all, files })
 }
 
 /// The tree's files, each marked with its change, then every changed path the tree does not list.
