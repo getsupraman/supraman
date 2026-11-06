@@ -2,6 +2,7 @@
 //! and a toast over the graph says when it is not there.
 
 use gpui::{Context, SharedString};
+use supraman_gitman::short_sha;
 
 use super::GitView;
 
@@ -13,10 +14,6 @@ pub(super) struct Seek {
     pub sha: SharedString,
     /// The pages it may still load.
     pub pages: usize,
-}
-
-fn short(sha: &str) -> &str {
-    &sha[..sha.len().min(7)]
 }
 
 impl GitView {
@@ -61,9 +58,9 @@ impl GitView {
     /// Says `sha` has no row: `beyond` the pages a seek loads, else not in the graph at all.
     fn not_found(&mut self, sha: &str, beyond: bool, cx: &mut Context<Self>) {
         let text = if beyond {
-            format!("{} is more than {SEEK_PAGES} pages down: scroll down to load it.", short(sha))
+            format!("{} is more than {SEEK_PAGES} pages down: scroll down to load it.", short_sha(sha))
         } else {
-            format!("{} is not in the graph.", short(sha))
+            format!("{} is not in the graph.", short_sha(sha))
         };
         self.toast.show_why(text, |v: &mut GitView| &mut v.toast, cx);
     }

@@ -20,7 +20,7 @@ pub mod fixture;
 pub use blob::{Blob, blob, is_binary, object_sizes, staged_blob, worktree_file, worktree_size};
 pub use changes::{ChangeKind, FileChange, TreeFile, changed_between, changed_files, tree};
 pub use dirs::{Dirs, dirs, ignored};
-pub use history::{Commit, Details, FIRST_PAGE, History, NEXT_PAGE, Page, Person, Signature, details, history};
+pub use history::{Commit, Details, FIRST_PAGE, History, NEXT_PAGE, Page, Person, Signature, details, history, short_sha};
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row};
 pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located};
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
