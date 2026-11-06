@@ -1099,7 +1099,7 @@ mod tests {
     /// A tab's PowerShell running `args` with `path` first on PATH; -NoExit's prompt reads stdin, and a closed one ends it.
     #[cfg(windows)]
     fn tab(shell: &str, args: Vec<String>, path: &Path, env: &[(&str, &Path)]) -> std::process::Output {
-        let path = format!("{};{}", path.display(), std::env::var("PATH").unwrap_or_default());
+        let path = format!("{};{}", path.display(), supraman_core::paths::process_path().to_string_lossy());
         let mut command = supraman_core::process::command(shell);
         command.args(args).env("PATH", path).stdin(std::process::Stdio::null());
         env.iter().for_each(|(k, v)| {

@@ -107,12 +107,8 @@ pub struct Machine {
 
 impl Machine {
     pub fn current() -> Self {
-        Self {
-            path: std::env::var_os("PATH").unwrap_or_default(),
-            pathext: crate::paths::pathext(),
-            system_root: std::env::var_os("SystemRoot"),
-            program_files_x86: std::env::var_os("ProgramFiles(x86)"),
-        }
+        let (path, pathext, system_root) = crate::paths::process_env();
+        Self { path, pathext, system_root, program_files_x86: crate::paths::program_files_x86() }
     }
 
     fn system32(&self) -> PathBuf {
@@ -141,7 +137,7 @@ pub fn detect() -> Shells {
 }
 
 /// [`detect`] with `run(program, args)` giving a tool's stdout, or `None` when it is missing, failed or timed out.
-pub fn detect_on(machine: &Machine, run: &mut dyn FnMut(&Path, &[&str]) -> Option<String>) -> Shells {
+pub fn detect_on(machine: &Machine, run: &mut dyn FnMut(&Path, &[&str]) -> Option<Vec<u8>>) -> Shells {
     let found = powershell(&machine.path, &machine.pathext, machine.system_root.as_deref());
     let windows = windows_powershell(machine.system_root.as_deref());
     let auto = powershell_shell(&found);
@@ -158,7 +154,7 @@ pub fn detect_on(machine: &Machine, run: &mut dyn FnMut(&Path, &[&str]) -> Optio
     }
     if let Some(vswhere) = machine.vswhere() {
         let json = run(&vswhere, &["-products", "*", "-format", "json", "-utf8", "-nologo"]).unwrap_or_default();
-        for vs in parse_vswhere(&json) {
+        for vs in parse_vswhere(&crate::text::decode(&json).0) {
             list.extend(dev_shells(&vs, &found.path, &cmd));
         }
     }
@@ -179,13 +175,13 @@ fn bypass() -> Vec<String> {
     vec!["-ExecutionPolicy".into(), "Bypass".into()]
 }
 
-fn probe(program: &Path, args: &[&str]) -> Option<String> {
+fn probe(program: &Path, args: &[&str]) -> Option<Vec<u8>> {
     if !program.is_file() {
         return None;
     }
     let mut cmd = crate::process::command(program);
     cmd.args(args).env("WSL_UTF8", "1");
-    crate::process::run(&mut cmd, PROBE_TIMEOUT, crate::process::Kill::Tree).ok().filter(|out| out.success()).map(|out| out.stdout)
+    crate::process::run_bytes(&mut cmd, None, PROBE_TIMEOUT, crate::process::Kill::Tree).ok().filter(|out| out.success()).map(|out| out.stdout)
 }
 
 /// One Visual Studio install as `vswhere -format json` lists it.
@@ -231,16 +227,15 @@ fn dev_shells(vs: &VsInstance, powershell: &Path, cmd: &Path) -> Vec<Shell> {
     out
 }
 
-/// The distros in `wsl.exe -l -q` output, UTF-8 or UTF-16LE, without Docker Desktop's own `docker-desktop*`.
-pub fn parse_wsl(text: &str) -> Vec<String> {
-    let text = if text.contains('\0') {
-        let bytes: Vec<u8> = text.chars().map(|c| c as u32 as u8).collect();
-        String::from_utf16_lossy(&bytes.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect::<Vec<_>>())
-    } else {
-        text.to_string()
+/// The distros in `wsl.exe -l -q` output, UTF-8 or UTF-16LE with or without a BOM, without Docker Desktop's own
+/// `docker-desktop*`.
+pub fn parse_wsl(bytes: &[u8]) -> Vec<String> {
+    let text = match crate::text::decode(bytes) {
+        (_, crate::text::Encoding::Utf8 | crate::text::Encoding::Unknown) if bytes.contains(&0) => crate::text::utf16(bytes, true),
+        (text, _) => text,
     };
     text.lines()
-        .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c == '\0'))
+        .map(|line| line.trim_matches(|c: char| c.is_whitespace() || c == '\0'))
         .filter(|name| !name.is_empty() && !name.to_ascii_lowercase().starts_with("docker-desktop"))
         .map(str::to_string)
         .collect()
@@ -348,10 +343,10 @@ mod tests {
 
     const WSL_UTF16: &str = "U\0b\0u\0n\0t\0u\0\r\0\n\0d\0o\0c\0k\0e\0r\0-\0d\0e\0s\0k\0t\0o\0p\0-\0d\0a\0t\0a\0\r\0\n\0d\0o\0c\0k\0e\0r\0-\0d\0e\0s\0k\0t\0o\0p\0\r\0\n\0";
 
-    fn tools(vswhere: Option<String>, wsl: Option<&str>) -> impl FnMut(&Path, &[&str]) -> Option<String> {
+    fn tools(vswhere: Option<String>, wsl: Option<&str>) -> impl FnMut(&Path, &[&str]) -> Option<Vec<u8>> {
         move |program, _| match program.file_name()?.to_str()? {
-            "vswhere.exe" => vswhere.clone(),
-            "wsl.exe" => wsl.map(str::to_string),
+            "vswhere.exe" => vswhere.clone().map(String::into_bytes),
+            "wsl.exe" => wsl.map(|w| w.as_bytes().to_vec()),
             other => panic!("ran {other}"),
         }
     }
@@ -448,9 +443,19 @@ mod tests {
 
     #[test]
     fn shells_wsl_list_hides_docker_desktop_in_either_encoding() {
-        assert_eq!(parse_wsl(WSL_UTF16), ["Ubuntu"]);
-        assert_eq!(parse_wsl("\u{feff}Ubuntu-22.04\r\ndocker-desktop\r\nDebian\r\n\r\nDocker-Desktop-Data\n"), ["Ubuntu-22.04", "Debian"]);
-        assert!(parse_wsl("").is_empty());
+        assert_eq!(parse_wsl(WSL_UTF16.as_bytes()), ["Ubuntu"]);
+        assert_eq!(parse_wsl("\u{feff}Ubuntu-22.04\r\ndocker-desktop\r\nDebian\r\n\r\nDocker-Desktop-Data\n".as_bytes()), ["Ubuntu-22.04", "Debian"]);
+        assert!(parse_wsl(b"").is_empty());
+    }
+
+    #[test]
+    fn shells_wsl_list_keeps_a_non_ascii_distro_name() {
+        let utf16 = |text: &str, bom: bool| -> Vec<u8> { bom.then_some(0xFEFF).into_iter().chain(text.encode_utf16()).flat_map(u16::to_le_bytes).collect() };
+        let printed = "Ubuntu\r\nDébian-Été\r\n日本語\r\ndocker-desktop\r\n";
+        for bom in [false, true] {
+            assert_eq!(parse_wsl(&utf16(printed, bom)), ["Ubuntu", "Débian-Été", "日本語"], "UTF-16 LE, BOM {bom}");
+        }
+        assert_eq!(parse_wsl(printed.as_bytes()), ["Ubuntu", "Débian-Été", "日本語"], "WSL_UTF8");
     }
 
     #[test]

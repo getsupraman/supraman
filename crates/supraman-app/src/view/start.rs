@@ -96,8 +96,7 @@ pub fn cmd_refusal(file: Option<&Path>, prompt: &str) -> Option<String> {
 
 /// The prompt file a Send launches with, or why it does not: `claude` resolved on PATH and the file written whole.
 fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBuf, String> {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let pathext = supraman_core::paths::pathext();
+    let (path, pathext, _) = supraman_core::paths::process_env();
     if let Some(why) = cmd_refusal(launched_file(claude, &path, &pathext).as_deref(), prompt) {
         return Err(why);
     }

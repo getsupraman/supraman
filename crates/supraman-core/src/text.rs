@@ -45,12 +45,14 @@ pub fn byte_size(bytes: u64) -> String {
     if size < 10. { format!("{size:.1} {}", UNITS[unit]) } else { format!("{size:.0} {}", UNITS[unit]) }
 }
 
+/// UTF-16 without a BOM, little-endian when `le`; an odd last byte is dropped.
+pub fn utf16(bytes: &[u8], le: bool) -> String {
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
+    String::from_utf16_lossy(&units)
+}
+
 /// UTF-16 with its BOM, UTF-8 with or without one, else UTF-8 with the invalid bytes replaced.
 pub fn decode(bytes: &[u8]) -> (String, Encoding) {
-    let utf16 = |b: &[u8], le: bool| {
-        let units: Vec<u16> = b.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
-        String::from_utf16_lossy(&units)
-    };
     match bytes {
         [0xFF, 0xFE, rest @ ..] => (utf16(rest, true), Encoding::Utf16Le),
         [0xFE, 0xFF, rest @ ..] => (utf16(rest, false), Encoding::Utf16Be),
