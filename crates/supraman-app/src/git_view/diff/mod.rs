@@ -98,6 +98,23 @@ pub(crate) struct Text {
     file: Option<Entity<ZedEditor>>,
     inline: Option<Entity<ZedEditor>>,
     split: Option<Entity<SplitDiff>>,
+    /// The top rows of the editors a reload replaced, each set on its editor as it is made.
+    place: Place,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Place {
+    file: Option<f64>,
+    inline: Option<f64>,
+    split: Option<f64>,
+}
+
+impl Text {
+    fn place(&self, cx: &mut App) -> Place {
+        let split = self.split.as_ref().map(|s| s.read(cx).new.clone());
+        let row = |editor: Option<&Entity<ZedEditor>>, cx: &mut App| editor.map(|e| supraman_editor::scroll_row(e, cx));
+        Place { file: row(self.file.as_ref(), cx), inline: row(self.inline.as_ref(), cx), split: row(split.as_ref(), cx) }
+    }
 }
 
 pub(crate) enum Content {
@@ -167,10 +184,20 @@ impl DiffView {
         None
     }
 
+    /// The text read; a reload of a text keeps its editors' top rows and the current change.
     fn show(&mut self, diff: Diff, encoding: String, invisible: Vec<String>, cx: &mut Context<Self>) {
-        self.current = None;
+        let place = match &self.content {
+            Content::Text(text) => {
+                self.current = self.current.filter(|c| *c < diff.hunks.len());
+                text.place(cx)
+            }
+            _ => {
+                self.current = None;
+                Place::default()
+            }
+        };
         self.to_first = matches!(self.content, Content::Loading);
-        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, file: None, inline: None, split: None }));
+        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, file: None, inline: None, split: None, place }));
         cx.notify();
     }
 
@@ -301,19 +328,44 @@ impl DiffView {
     pub fn file_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<ZedEditor>> {
         let deleted = self.target.kind() == Some(supraman_gitman::ChangeKind::Deleted);
         let text = self.text_mut()?;
+        if let Some(editor) = &text.file {
+            return Some(editor.clone());
+        }
         let buffer = if deleted { text.diff.old.clone() } else { text.diff.new.clone() };
-        Some(text.file.get_or_insert_with(|| supraman_editor::file_editor(buffer, window, cx)).clone())
+        let editor = supraman_editor::file_editor(buffer, window, cx);
+        text.file = Some(editor.clone());
+        if let Some(row) = text.place.file.take() {
+            supraman_editor::set_scroll_row(&editor, row, window, cx);
+        }
+        Some(editor)
     }
 
     pub fn inline_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ZedEditor> {
         let text = self.text_mut().expect("a diff is shown");
-        let diff = text.diff.clone();
-        text.inline.get_or_insert_with(|| supraman_editor::inline_editor(&diff, window, cx)).clone()
+        if let Some(editor) = &text.inline {
+            return editor.clone();
+        }
+        let editor = supraman_editor::inline_editor(&text.diff, window, cx);
+        text.inline = Some(editor.clone());
+        if let Some(row) = text.place.inline.take() {
+            supraman_editor::set_scroll_row(&editor, row, window, cx);
+        }
+        editor
     }
 
     pub fn split(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<SplitDiff> {
         let text = self.text_mut().expect("a diff is shown");
+        if let Some(split) = &text.split {
+            return split.clone();
+        }
         let diff = text.diff.clone();
-        text.split.get_or_insert_with(|| cx.new(|cx| SplitDiff::new(&diff, window, cx))).clone()
+        let split = cx.new(|cx| SplitDiff::new(&diff, window, cx));
+        text.split = Some(split.clone());
+        if let Some(row) = text.place.split.take() {
+            let (old, new) = split.read_with(cx, |s, _| (s.old.clone(), s.new.clone()));
+            supraman_editor::set_scroll_row(&new, row, window, cx);
+            supraman_editor::set_scroll_row(&old, row, window, cx);
+        }
+        split
     }
 }

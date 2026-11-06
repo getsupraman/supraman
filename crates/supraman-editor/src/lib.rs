@@ -138,6 +138,14 @@ pub fn scroll_row(editor: &Entity<Editor>, cx: &mut App) -> f64 {
     editor.update(cx, |e, cx| e.scroll_position(cx).y)
 }
 
+/// Scrolls `editor` to put display `row` at the top of its view.
+pub fn set_scroll_row(editor: &Entity<Editor>, row: f64, window: &mut Window, cx: &mut App) {
+    editor.update(cx, |e, cx| {
+        let x = e.scroll_position(cx).x;
+        e.set_scroll_position(gpui::point(x, row), window, cx);
+    });
+}
+
 /// The text of `editor`'s buffer, as a test reads it.
 pub fn text(editor: &Entity<Editor>, cx: &App) -> String {
     editor.read(cx).buffer().read(cx).snapshot(cx).text()
