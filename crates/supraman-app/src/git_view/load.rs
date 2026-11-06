@@ -148,12 +148,16 @@ pub fn git_problem(located: &Located) -> Option<String> {
         Located::Missing { at: None } => Some("No git on PATH. Install Git for Windows, or set [gitman] git to a git.exe.".into()),
         Located::TooOld { path, version, floor } => Some(format!("{} is git {version}; the Git tab needs {floor} or newer.", path.display())),
         Located::Unusable { path, reason } => Some(format!("{} does not run as git: {reason}", path.display())),
+        Located::BadSetting(notice) => Some(notice.clone()),
     }
 }
 
 /// git located per the settings in `home`, the repo's dirs, the refs, the status and the first page of `walk`.
 pub fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, Problem> {
-    let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
+    let settings = match home.map(Settings::load_with_notices).transpose() {
+        Ok(loaded) => loaded.map(|(settings, _)| settings).unwrap_or_default(),
+        Err(e) => return Err(Problem::Git(format!("[gitman] git is not read: {e}"))),
+    };
     let located = supraman_gitman::located(&settings);
     if let Some(problem) = git_problem(&located) {
         return Err(Problem::Git(problem));

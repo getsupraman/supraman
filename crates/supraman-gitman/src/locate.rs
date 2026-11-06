@@ -60,11 +60,20 @@ pub enum Located {
     TooOld { path: PathBuf, version: Version, floor: Version },
     /// It did not run, or did not answer like git.
     Unusable { path: PathBuf, reason: String },
+    /// `[gitman]` in `settings.toml` is not GitMan's table: its notice.
+    BadSetting(String),
+}
+
+fn section(settings: &Settings) -> Result<GitmanSettings, String> {
+    settings.section_or_notice(SECTION).map(Option::unwrap_or_default)
 }
 
 /// The `[gitman] git` override, else the first git on `PATH`, checked once by running it.
 pub fn locate(settings: &Settings) -> Located {
-    let section: GitmanSettings = settings.section(SECTION).unwrap_or_default();
+    let section = match section(settings) {
+        Ok(section) => section,
+        Err(notice) => return Located::BadSetting(notice),
+    };
     match section.git.or_else(|| supraman_core::paths::executable_on_path("git")) {
         Some(path) => check(&path),
         None => Located::Missing { at: None },
@@ -74,7 +83,10 @@ pub fn locate(settings: &Settings) -> Located {
 /// [`locate`], a git it found kept for the process per `[gitman] git` setting while its file is there.
 pub fn located(settings: &Settings) -> Located {
     static FOUND: Mutex<Vec<(Option<PathBuf>, Git)>> = Mutex::new(Vec::new());
-    let setting = settings.section::<GitmanSettings>(SECTION).unwrap_or_default().git;
+    let setting = match section(settings) {
+        Ok(section) => section.git,
+        Err(notice) => return Located::BadSetting(notice),
+    };
     let kept = FOUND.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(s, _)| *s == setting).map(|(_, git)| git.clone());
     if let Some(git) = kept.filter(|g| g.path.is_file()) {
         return Located::Found(git);

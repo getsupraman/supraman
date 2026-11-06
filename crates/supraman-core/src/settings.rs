@@ -373,6 +373,15 @@ impl Settings {
         self.other.get(key)?.clone().try_into().ok()
     }
 
+    /// [`Settings::section`], with why a `[key]` that is there is not `T` as its notice.
+    pub fn section_or_notice<T: DeserializeOwned>(&self, key: &str) -> std::result::Result<Option<T>, String> {
+        assert!(!OWNED.contains(&key), "[{key}] is a field of Settings");
+        match self.other.get(key) {
+            None => Ok(None),
+            Some(value) => value.clone().try_into().map(Some).map_err(|e: toml::de::Error| format!("[{key}] in settings.toml is ignored: {}", e.message())),
+        }
+    }
+
     pub fn set_section<T: Serialize>(&mut self, key: &str, value: &T) -> std::result::Result<(), toml::ser::Error> {
         assert!(!OWNED.contains(&key), "[{key}] is a field of Settings");
         self.other.insert(key.into(), Value::try_from(value)?);

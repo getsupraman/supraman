@@ -13,6 +13,20 @@ fn an_override_to_nothing_is_missing() {
 }
 
 #[test]
+fn a_gitman_section_that_is_not_its_table_is_said_not_skipped() {
+    let mut settings = Settings::default();
+    #[derive(serde::Serialize)]
+    struct NotGitman {
+        git: u32,
+    }
+    settings.set_section(SECTION, &NotGitman { git: 5 }).unwrap();
+    for found in [locate(&settings), located(&settings)] {
+        let Located::BadSetting(notice) = found else { panic!("{found:?}") };
+        assert!(notice.starts_with("[gitman] in settings.toml is ignored"), "{notice}");
+    }
+}
+
+#[test]
 fn a_version_below_the_floor_is_too_old() {
     let path = Path::new("git.exe");
     assert_eq!(
