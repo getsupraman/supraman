@@ -56,8 +56,17 @@ pub struct Shown {
     pub counts: Counts,
     /// The changed files in path order, Z–A when the order is.
     pub changes: Vec<FileChange>,
-    /// Every file at the commit and every changed one.
+    /// Every changed file, and once the whole tree is read every file at the commit.
     files: HashSet<String>,
+}
+
+/// The whole tree's read for the shown commit, made only with View all files on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Whole {
+    Unread,
+    /// Being read for the selection of this token.
+    Reading(u64),
+    Read,
 }
 
 pub enum State {
@@ -85,6 +94,9 @@ pub struct CommitPanel {
     colour: usize,
     view: FileView,
     all_files: bool,
+    whole: Whole,
+    /// Expand All (`true`) or Collapse All pressed while the whole tree is read, for when it is in.
+    whole_expand: Option<bool>,
     order: Order,
     changed: TreeState<Mark, Counts>,
     all: TreeState<Mark, Counts>,
@@ -110,6 +122,8 @@ impl CommitPanel {
             colour: 0,
             view: FileView::Tree,
             all_files: false,
+            whole: Whole::Unread,
+            whole_expand: None,
             order: Order::Ascending,
             changed: TreeState::new(cx),
             all: TreeState::new(cx),
@@ -155,11 +169,11 @@ impl CommitPanel {
                 } else {
                     self.state = State::Loading;
                 }
-                let order = self.order;
+                let (order, all_files) = (self.order, self.all_files);
                 let loaded = cx.background_spawn(async move {
                     match selected {
-                        Selected::Stash(stash) => load::load_stash(&repo, stash, order),
-                        Selected::Commit(sha) => load::load(&repo, &sha, order),
+                        Selected::Stash(stash) => load::load_stash(&repo, stash, order, all_files),
+                        Selected::Commit(sha) => load::load_with(&repo, &sha, order, all_files),
                         Selected::Wip => unreachable!(),
                     }
                 });
@@ -193,7 +207,19 @@ impl CommitPanel {
         if self.changed_expanded {
             self.changed.expand_all();
         }
-        self.all.set_tree(loaded.all);
+        let files = match loaded.all {
+            Some(whole) => {
+                self.all.set_tree(whole.tree);
+                self.whole = Whole::Read;
+                whole.files
+            }
+            None => {
+                self.all.set_tree(load::FileTree::build(std::iter::empty(), Counts::add, self.order));
+                self.whole = Whole::Unread;
+                loaded.files
+            }
+        };
+        self.whole_expand = None;
         self.changed.select(None);
         self.all.select(None);
         self.paths.select(None);
@@ -212,9 +238,58 @@ impl CommitPanel {
             stash: loaded.stash,
             counts: loaded.counts,
             changes,
-            files: loaded.files,
+            files,
         }));
+        self.read_whole(cx);
         cx.notify();
+    }
+
+    /// Reads the shown commit's whole tree off the UI thread when View all files is on and it is not read yet.
+    fn read_whole(&mut self, cx: &mut Context<Self>) {
+        let (Some(shown), Some(repo)) = (self.shown(), self.repo.clone()) else { return };
+        if !self.all_files || self.stale || self.whole != Whole::Unread {
+            return;
+        }
+        let token = self.token;
+        self.whole = Whole::Reading(token);
+        let order = self.order;
+        let (sha, changes) = (shown.sha.to_string(), shown.changes.clone());
+        let whole = cx.background_spawn(async move { load::whole(&repo, &sha, &changes, order) });
+        cx.spawn(async move |this, cx| {
+            let whole = whole.await;
+            this.update(cx, |this, cx| this.apply_whole(token, whole, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn apply_whole(&mut self, token: u64, whole: Result<load::Whole, String>, cx: &mut Context<Self>) {
+        if token != self.token || self.whole != Whole::Reading(token) {
+            return;
+        }
+        let _stall = stall::section("commit panel: whole tree");
+        match whole {
+            Ok(whole) => {
+                self.all.set_tree(whole.tree);
+                match self.whole_expand.take() {
+                    Some(true) => self.all.expand_all(),
+                    Some(false) => self.all.collapse_all(),
+                    None => {}
+                }
+                if let Some(shown) = self.shown() {
+                    let mut shown = (*shown).clone();
+                    shown.files = whole.files;
+                    self.state = State::Shown(Rc::new(shown));
+                }
+                self.whole = Whole::Read;
+            }
+            Err(why) => self.state = State::Failed(why),
+        }
+        cx.notify();
+    }
+
+    /// Whether View all files waits for the whole tree.
+    fn whole_reading(&self) -> bool {
+        self.all_files && self.whole != Whole::Read
     }
 
     fn shown(&self) -> Option<Rc<Shown>> {
@@ -243,6 +318,7 @@ impl CommitPanel {
 
     pub fn set_all_files(&mut self, on: bool, cx: &mut Context<Self>) {
         self.all_files = on;
+        self.read_whole(cx);
         cx.notify();
     }
 
@@ -261,6 +337,9 @@ impl CommitPanel {
         let (tree, expanded) = self.tree();
         let tree = tree.clone();
         if expanded { tree.collapse_all() } else { tree.expand_all() }
+        if self.whole_reading() {
+            self.whole_expand = Some(!expanded);
+        }
         if self.all_files { self.all_expanded = !expanded } else { self.changed_expanded = !expanded }
         cx.notify();
     }

@@ -198,6 +198,10 @@ impl CommitPanel {
         if self.stale {
             return column;
         }
+        if self.whole_reading() {
+            let reading = div().relative().px_2().pt_2().text_xs().text_color(colors.text_muted).child("Reading every file at this commit…");
+            return column.child(reading.child(supraman_ui::hit::hit_target(&self.hits, "commit-files-reading".into())));
+        }
         if !self.all_files && self.view == FileView::Path {
             let rows = shown.clone();
             let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), cx);

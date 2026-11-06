@@ -277,7 +277,10 @@ fn commit_details_paint_a_list_whole_in_the_first_frame_it_shows(cx: &mut TestAp
     let (view, cx) = open(&f.dir, cx);
     let panel = panel_of(&view, cx);
     select(&view, &sha, cx);
-    let painted = first_frame(&view, cx, |cx| panel.update(cx, |p, cx| p.set_all_files(true, cx)));
+    let painted = first_frame(&view, cx, |cx| {
+        panel.update(cx, |p, cx| p.set_all_files(true, cx));
+        cx.run_until_parked();
+    });
     assert!(wide(&painted, "commit-name-docs", 20.) && wide(&painted, "commit-name-bin.dat", 30.), "View all files: whole names at once, never cut to nothing");
     let painted = first_frame(&view, cx, |cx| {
         panel.update(cx, |p, cx| {
@@ -308,4 +311,25 @@ fn commit_details_keep_the_last_counts_and_files_unpainted_while_the_next_commit
     assert!(!hits(&view, cx).borrow().keys().any(|k| k.starts_with("commit-tree-row-")), "no row of the earlier commit paints meanwhile");
     cx.run_until_parked();
     assert!(!panel.read_with(cx, |p, _| p.stale()) && shown(&panel, cx).sha.as_ref() == f.sha("merge"), "then the new one shows in one go");
+}
+
+#[gpui::test]
+fn commit_details_read_the_whole_tree_only_while_view_all_files_is_on(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let sha = nested_commit(&f);
+    let (view, cx) = open(&f.dir, cx);
+    let panel = panel_of(&view, cx);
+    select(&view, &sha, cx);
+    assert_eq!(panel.read_with(cx, |p, _| (p.whole, p.all.row_count())), (Whole::Unread, 0), "a selection with View all files off reads no whole tree");
+
+    let painted = first_frame(&view, cx, |cx| panel.update(cx, |p, cx| p.set_all_files(true, cx)));
+    assert!(painted.borrow().contains_key("commit-files-reading"), "the frame after the click says the tree is read");
+    assert!(!painted.borrow().keys().any(|k| k.starts_with("commit-tree-row-")), "and paints no partial tree");
+    cx.run_until_parked();
+    panel.update(cx, |p, cx| p.expand_or_collapse(cx));
+    assert!(visible(&panel, cx).iter().any(|p| p == "bin.dat"), "then the whole tree shows, an unchanged file in it");
+    assert!(shown(&panel, cx).files.contains("bin.dat"), "and its unchanged files open");
+
+    select(&view, f.sha("merge"), cx);
+    assert_eq!(panel.read_with(cx, |p, _| p.whole), Whole::Read, "with View all files on, the next selection reads its tree with it");
 }

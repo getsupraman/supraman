@@ -49,33 +49,54 @@ pub struct Loaded {
     pub counts: Counts,
     /// The changed files as a tree.
     pub changed: FileTree,
-    /// Every file at the commit, the changed ones marked, and the deleted ones it no longer holds.
-    pub all: FileTree,
+    /// Every file at the commit, the changed ones marked, and the deleted ones it no longer holds; read only
+    /// with View all files on.
+    pub all: Option<Whole>,
+    /// The changed files' paths.
     pub files: HashSet<String>,
 }
 
+/// The whole tree at a commit ([`whole`]) and every path in it.
+pub struct Whole {
+    pub tree: FileTree,
+    pub files: HashSet<String>,
+}
+
+/// A commit's details and changed files, without the whole tree.
+#[cfg(test)]
 pub fn load(repo: &Repo, sha: &str, order: Order) -> Result<Loaded, String> {
+    load_with(repo, sha, order, false)
+}
+
+/// [`load`], with the whole tree when `all_files`.
+pub fn load_with(repo: &Repo, sha: &str, order: Order, all_files: bool) -> Result<Loaded, String> {
     let details = supraman_gitman::details(repo, sha).map_err(|e| e.to_string())?;
     let changes = supraman_gitman::changed_files(repo, sha).map_err(|e| e.to_string())?;
-    build(repo, sha, details, changes, None, order)
+    build(repo, sha, details, changes, None, order, all_files)
 }
 
 /// A stash's commit and its work-tree changes against its base.
-pub fn load_stash(repo: &Repo, stash: Arc<Stash>, order: Order) -> Result<Loaded, String> {
+pub fn load_stash(repo: &Repo, stash: Arc<Stash>, order: Order, all_files: bool) -> Result<Loaded, String> {
     let details = supraman_gitman::details(repo, &stash.sha).map_err(|e| e.to_string())?;
     let changes = supraman_gitman::changed_between(repo, &stash.base, &stash.sha).map_err(|e| e.to_string())?;
-    build(repo, &stash.sha.clone(), details, changes, Some(stash), order)
+    build(repo, &stash.sha.clone(), details, changes, Some(stash), order, all_files)
 }
 
-fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, stash: Option<Arc<Stash>>, order: Order) -> Result<Loaded, String> {
-    let tree = supraman_gitman::tree(repo, sha).map_err(|e| e.to_string())?;
+fn build(repo: &Repo, sha: &str, details: Details, changes: Vec<FileChange>, stash: Option<Arc<Stash>>, order: Order, all_files: bool) -> Result<Loaded, String> {
+    let all = if all_files { Some(whole(repo, sha, &changes, order)?) } else { None };
     let mut counts = Counts::default();
     changes.iter().for_each(|c| counts.add(&Some(c.kind)));
-    let all = all_files(tree.into_iter().map(|f| f.path), &changes);
-    let files = all.iter().map(|(p, _)| p.clone()).collect();
+    let files = changes.iter().map(|c| c.path.clone()).collect();
     let changed = Tree::build(changes.iter().map(|c| (c.path.clone(), Some(c.kind))), Counts::add, order);
-    let all = Tree::build(all, Counts::add, order);
     Ok(Loaded { sha: sha.to_string(), details, stash, changes, counts, changed, all, files })
+}
+
+/// Every file at `sha` (`ls-tree -r`) with `changes` marked, as a tree.
+pub fn whole(repo: &Repo, sha: &str, changes: &[FileChange], order: Order) -> Result<Whole, String> {
+    let tree = supraman_gitman::tree(repo, sha).map_err(|e| e.to_string())?;
+    let all = all_files(tree.into_iter().map(|f| f.path), changes);
+    let files = all.iter().map(|(p, _)| p.clone()).collect();
+    Ok(Whole { tree: Tree::build(all, Counts::add, order), files })
 }
 
 /// The tree's files, each marked with its change, then every changed path the tree does not list.
