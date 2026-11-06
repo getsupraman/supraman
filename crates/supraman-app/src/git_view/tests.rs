@@ -16,14 +16,6 @@ pub(crate) fn open<'a>(folder: &std::path::Path, cx: &'a mut TestAppContext) -> 
 
 /// A Git tab of `folder` whose layout file lives in `home`.
 fn open_in<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
-    let (view, cx) = opening(folder, home, cx);
-    cx.run_until_parked();
-    redraw(&view, cx);
-    (view, cx)
-}
-
-/// [`open_in`] while its first load is still on its way.
-fn opening<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         if !cx.has_global::<supraman_term::terminal_settings::TerminalConfig>() {
             supraman_ui::init_globals(cx, "test");
@@ -36,6 +28,8 @@ fn opening<'a>(folder: &std::path::Path, home: Option<&std::path::Path>, cx: &'a
         Holder(view)
     });
     let view = view.read_with(cx, |h, _| h.0.clone());
+    cx.run_until_parked();
+    redraw(&view, cx);
     (view, cx)
 }
 
@@ -386,8 +380,13 @@ fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext)
 #[gpui::test]
 fn git_tab_walks_as_a_ref_hidden_before_its_first_load_ended(cx: &mut TestAppContext) {
     let f = Fixture::shared();
-    let (view, cx) = opening(&f.dir, None, cx);
-    view.update(cx, |v, cx| v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&["refs/heads/main".to_string()], cx)));
+    let (view, cx) = open(&f.dir, cx);
+    let first = load::first(None, &f.dir, &ref_panel::Walk::default());
+    view.update(cx, |v, cx| {
+        (v.repo, v.load) = (None, Load::Loading);
+        v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&["refs/heads/main".to_string()], cx));
+    });
+    view.update(cx, |v, cx| v.apply_first(first, cx));
     cx.run_until_parked();
     view.read_with(cx, |v, cx| assert_eq!(v.follow.walked, *v.ref_panel.read(cx).walk(), "the graph walks as the panel says"));
 }
