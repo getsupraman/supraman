@@ -65,7 +65,7 @@ fn work_key(workspace: &str, row: &supraman_workman::InboxRow) -> String {
 
 const SEAM_GAP: f32 = 6.;
 
-pub(crate) use supraman_ui::themes::{DIMMED, QUIET, SECONDARY};
+pub(crate) use supraman_ui::themes::{DIMMED, QUIET};
 use supraman_ui::themes::{MESSAGE_TINT, MESSAGE_TINT_HOVER};
 
 pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
@@ -73,7 +73,7 @@ pub(crate) fn quiet(cx: &gpui::App) -> Hsla {
 }
 
 pub(crate) fn secondary(cx: &gpui::App) -> Hsla {
-    cx.theme().colors().text.opacity(SECONDARY)
+    supraman_ui::themes::secondary(cx.theme().colors())
 }
 
 fn seam_color(cx: &gpui::App) -> Hsla {

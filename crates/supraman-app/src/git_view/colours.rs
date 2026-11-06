@@ -21,7 +21,7 @@ pub struct Palette {
 impl Palette {
     pub fn of(theme: &Theme) -> Palette {
         let c = theme.colors();
-        Palette { lanes: lanes::lanes(theme), background: c.editor_background, text: c.text, muted: c.text.opacity(supraman_ui::themes::SECONDARY) }
+        Palette { lanes: lanes::lanes(theme), background: c.editor_background, text: c.text, muted: supraman_ui::themes::secondary(c) }
     }
 
     pub fn lane(&self, colour: usize) -> Hsla {

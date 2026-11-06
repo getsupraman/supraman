@@ -41,6 +41,11 @@ pub const DIMMED: f32 = 0.8;
 pub const NAME_FLOOR: f32 = 7.;
 pub const SECONDARY_FLOOR: f32 = 4.5;
 
+/// Secondary text: the theme's text in [`SECONDARY`].
+pub fn secondary(colors: &ThemeColors) -> Hsla {
+    colors.text.opacity(SECONDARY)
+}
+
 /// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer.
 pub const MESSAGE_TINT: f32 = 0.10;
 pub const MESSAGE_TINT_HOVER: f32 = 0.16;
