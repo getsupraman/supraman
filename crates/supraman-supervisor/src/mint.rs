@@ -549,8 +549,8 @@ impl Absent {
     }
 }
 
-/// Each scheduled run's record whose claude session `absent` finds deleted in `observed` (read without error):
-/// revoked ([`revoke`]) and its file gone. What failed.
+/// Each scheduled run's record whose claude session `absent` finds deleted in `observed` (read without error): its
+/// name revoked ([`revoke`]) and taken out of its file, the file gone once empty. What failed.
 pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, absent: &mut Absent, observed: &[Session]) -> Vec<String> {
     let runs = runs_of(&keeper.home);
     let bound: Vec<(String, String)> = runs.iter().flat_map(|(_, r)| r.bound()).collect();
@@ -560,18 +560,20 @@ pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl Fn
     }
     let bearer = bearer();
     let mut notices = Vec::new();
-    for (path, records) in runs {
+    for (path, mut records) in runs {
         let gone: Vec<(String, String)> = records.bound().into_iter().filter(|(_, sid)| deleted.contains(sid)).collect();
         for (name, sid) in &gone {
             log::info!("scheduled run {name}: its claude session {sid} is deleted, so its Workman token is revoked");
-            if let Some(m) = records.get(name) {
-                notices.extend(revoke(keeper, minter, &bearer, name, m).notices);
+            if let Some(m) = records.remove(name) {
+                notices.extend(revoke(keeper, minter, &bearer, name, &m).notices);
             }
         }
-        if !gone.is_empty()
-            && let Err(e) = std::fs::remove_file(&path)
-        {
-            notices.push(format!("Cannot delete {}: {e}", path.display()));
+        if gone.is_empty() {
+            continue;
+        }
+        let (verb, done) = if records.names().next().is_none() { ("delete", std::fs::remove_file(&path)) } else { ("save", records.save()) };
+        if let Err(e) = done {
+            notices.push(format!("Cannot {verb} {}: {e}", path.display()));
         }
     }
     notices
@@ -937,6 +939,28 @@ mod tests {
         assert!(!sessions.live(&token), "revoked");
         assert!(!record.exists() && keeper.kept(NAME).is_none(), "its record and kept token go");
         assert!(!supraman_claude::mcp_config_path(keeper.mcp_dir(), NAME).unwrap().exists(), "its config goes");
+    }
+
+    #[test]
+    fn a_deleted_run_leaves_the_other_names_of_its_file() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(Vec::new());
+        let sessions = fake.enable_sessions();
+        let record = MintedSessions::run_path(home.path(), NAME);
+        let (keeper, token) = kept_at(home.path(), &fake, record.clone());
+        let other = "bbbb0002-0000-4000-8000-000000000002";
+        let mut records = MintedSessions::load(Some(record.clone())).unwrap();
+        let session = MintedSession { session_id: "9".into(), role: "workspace".into(), claude_session_id: Some(other.into()), last_active: None, origin: Some(fake.base().to_string()) };
+        records.insert_minted("fm-demo-other", session, &request());
+        records.save().unwrap();
+        let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
+        let mut absent = Absent::default();
+        for _ in 0..2 {
+            assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, &[listed(other)]).is_empty());
+        }
+        assert!(!sessions.live(&token) && keeper.kept(NAME).is_none(), "the gone name is revoked");
+        let left = MintedSessions::load(Some(record)).unwrap();
+        assert_eq!(left.names().collect::<Vec<_>>(), ["fm-demo-other"], "the other name stays in its file");
     }
 
     #[test]
