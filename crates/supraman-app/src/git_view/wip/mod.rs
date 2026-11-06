@@ -7,6 +7,7 @@ mod render;
 #[cfg(test)]
 pub(crate) mod tests;
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -197,8 +198,8 @@ impl WipPanel {
 
     pub fn set_order(&mut self, order: Order, cx: &mut Context<Self>) {
         self.order = order;
-        self.unstaged.tree.set_order(order);
-        self.staged.tree.set_order(order);
+        self.unstaged.tree.set_order_off_thread(order, cx);
+        self.staged.tree.set_order_off_thread(order, cx);
         if let Some(shown) = self.shown() {
             let mut shown = (*shown).clone();
             sort_changes(&mut shown.unstaged, order);
@@ -253,8 +254,8 @@ impl WipPanel {
         [Section::Unstaged, Section::Staged]
             .into_iter()
             .flat_map(|section| {
-                let files = shown.files(section);
-                self.paths(section, &shown).into_iter().filter_map(move |p| files.iter().find(|f| f.path == p).map(|f| section.target(f))).collect::<Vec<_>>()
+                let files: HashMap<&str, &FileChange> = shown.files(section).iter().map(|f| (f.path.as_str(), f)).collect();
+                self.paths(section, &shown).into_iter().filter_map(|p| files.get(p.as_str()).map(|f| section.target(f))).collect::<Vec<_>>()
             })
             .collect()
     }

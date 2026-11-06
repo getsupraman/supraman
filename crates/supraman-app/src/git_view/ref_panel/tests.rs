@@ -490,3 +490,41 @@ fn a_double_click_on_a_hidden_ref_shows_it_and_selects_its_commit(cx: &mut TestA
     assert_eq!(panel.read_with(cx, |p, _| p.walk().clone()), Walk::default(), "shown again");
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(only.into())), "and its commit selected");
 }
+
+#[gpui::test]
+fn ref_counts_are_made_once_per_change_not_per_frame(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    let fresh = |p: &RefPanel| counts(&p.entries, &p.walk, &p.filter());
+    let before = panel.read_with(cx, |p, _| p.recounts);
+    for _ in 0..3 {
+        redraw(&view, cx);
+    }
+    panel.read_with(cx, |p, _| {
+        assert_eq!(p.recounts, before, "frames make no counts");
+        assert_eq!(p.counts(), fresh(p));
+    });
+    for change in 0..3 {
+        panel.update(cx, |p, cx| match change {
+            0 => p.set_filter("ma", cx),
+            1 => p.toggle_hidden(&["refs/heads/feature".to_string()], cx),
+            _ => p.show_all(cx),
+        });
+        panel.read_with(cx, |p, _| assert_eq!(p.counts(), fresh(p), "change {change}: the counts follow"));
+    }
+}
+
+#[test]
+fn refs_sort_by_name_parts_ignoring_case_as_before() {
+    let old = |a: &str, b: &str| a.to_lowercase().split('/').cmp(b.to_lowercase().split('/')).then_with(|| a.cmp(b));
+    let names = ["a-b", "a/b", "A/c", "a", "a/b/c", "ab", "a.b", "B", "b", "a/B", "a /b", "Zed/x", "zed", "z-ed/a"];
+    let mut want: Vec<&str> = names.to_vec();
+    want.sort_by(|a, b| old(a, b));
+    let refs = Refs { branches: names.iter().map(|n| branch(n, "s")).collect(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new(), head: Head::Detached { sha: "s".into() } };
+    let got: Vec<String> = entries(&refs).into_iter().filter_map(|(_, e)| match e {
+        Entry::Branch { name, .. } => Some(name),
+        _ => None,
+    }).collect();
+    assert_eq!(got, want);
+}

@@ -9,6 +9,8 @@ use supraman_ui::hit::{Hit, HitTargets};
 use theme::ThemeColors;
 
 const MAX_SCALE: f32 = 2.;
+/// The most pixels a side may have to be decoded: 64 Mpx is 256 MB of RGBA.
+pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 const CELL: f32 = 8.;
 
 /// One side of an image: its pixels, its size in pixels and in bytes.
@@ -38,6 +40,21 @@ pub fn format_of(path: &str) -> Option<ImageFormat> {
         "svg" => ImageFormat::Svg,
         _ => return None,
     })
+}
+
+/// A raster image's `width × height` from its header alone, without decoding its pixels; `None` for an SVG
+/// or a header that does not read.
+pub fn dimensions(format: ImageFormat, bytes: &[u8]) -> Option<(u32, u32)> {
+    let format = match format {
+        ImageFormat::Png => ::image::ImageFormat::Png,
+        ImageFormat::Jpeg => ::image::ImageFormat::Jpeg,
+        ImageFormat::Gif => ::image::ImageFormat::Gif,
+        ImageFormat::Webp => ::image::ImageFormat::WebP,
+        ImageFormat::Bmp => ::image::ImageFormat::Bmp,
+        ImageFormat::Ico => ::image::ImageFormat::Ico,
+        _ => return None,
+    };
+    ::image::ImageReader::with_format(std::io::Cursor::new(bytes), format).into_dimensions().ok()
 }
 
 /// `bytes` decoded, blocking; `None` when they do not decode or have no pixels.

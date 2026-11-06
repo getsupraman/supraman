@@ -58,6 +58,15 @@ impl GitView {
             .or_else(|| above(true).find(|i| self.rows[*i].parents.contains(&row.sha)))
     }
 
+    /// Selects the row of `sha` as a key does, or seeks it when its page is not loaded.
+    fn go_to(&mut self, sha: Option<gpui::SharedString>, cx: &mut Context<Self>) {
+        let Some(sha) = sha else { return };
+        match self.row_of(&sha) {
+            Some(ix) => self.select_by_key(Some(ix), cx),
+            None => self.seek_sha(sha, cx),
+        }
+    }
+
     /// Selects row `ix` as a key does: at once, the panel's read deferred.
     fn select_by_key(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         let Some(ix) = ix.filter(|ix| self.table.selected() != Some(*ix)) else { return };
@@ -127,14 +136,8 @@ impl GitView {
                 let to = this.table.selected().and_then(|ix| this.child(ix));
                 this.select_by_key(to, cx)
             }))
-            .on_action(cx.listener(|this, _: &GoToHead, _, cx| {
-                let to = this.heads.head.clone().and_then(|sha| this.row_of(&sha));
-                this.select_by_key(to, cx)
-            }))
-            .on_action(cx.listener(|this, _: &GoToUpstream, _, cx| {
-                let to = this.heads.upstream.clone().and_then(|sha| this.row_of(&sha));
-                this.select_by_key(to, cx)
-            }))
+            .on_action(cx.listener(|this, _: &GoToHead, _, cx| this.go_to(this.heads.head.clone(), cx)))
+            .on_action(cx.listener(|this, _: &GoToUpstream, _, cx| this.go_to(this.heads.upstream.clone(), cx)))
             .on_action(cx.listener(|this, _: &OpenFirstFile, _, cx| this.open_first_file(cx)))
             .on_key_up(cx.listener(|this, _: &KeyUpEvent, _, cx| this.settled(cx)))
             .child(self.render_table(cx))

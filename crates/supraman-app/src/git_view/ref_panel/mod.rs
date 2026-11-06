@@ -59,8 +59,8 @@ pub fn build(refs: &Refs) -> Built {
 }
 
 pub enum RefEvent {
-    /// A ref's row was picked: its commit.
-    Pick(SharedString),
+    /// A ref's row was picked: its commit, and whether the graph walks from it.
+    Pick(SharedString, bool),
     /// The hidden or the soloed set changed.
     Walk,
     /// The panel was collapsed or expanded, or a folder opened or closed.
@@ -77,6 +77,10 @@ pub struct RefPanel {
     heights: [Pixels; 5],
     stack: StackState,
     walk: Walk,
+    /// Each section's count, made again when the refs, the walk or the filter change.
+    counts: [Count; 5],
+    #[cfg(test)]
+    pub recounts: usize,
     filter: Option<(Entity<TextInput>, Subscription)>,
     width: Pixels,
     shut: bool,
@@ -101,6 +105,9 @@ impl RefPanel {
             heights: [px(0.); 5],
             stack: StackState::default(),
             walk: Walk::default(),
+            counts: [Count::default(); 5],
+            #[cfg(test)]
+            recounts: 0,
             filter: None,
             width: DEFAULT_WIDTH,
             shut: false,
@@ -120,6 +127,7 @@ impl RefPanel {
         self.walk = Walk { hidden: sizes.hidden.iter().cloned().collect(), solo: sizes.solo.iter().cloned().collect() };
         self.collapsed = sizes.collapsed.clone();
         self.heights = std::array::from_fn(|i| px(sizes.sections.get(i).copied().unwrap_or(0) as f32));
+        self.recount();
         if self.built {
             self.close_collapsed();
         }
@@ -140,6 +148,7 @@ impl RefPanel {
             self.close_collapsed();
         }
         self.entries = Arc::new(built.entries);
+        self.recount();
         self.refill_overlay(cx);
         cx.notify();
     }
@@ -202,6 +211,7 @@ impl RefPanel {
     }
 
     fn walk_changed(&mut self, cx: &mut Context<Self>) {
+        self.recount();
         cx.emit(RefEvent::Walk);
         cx.notify();
     }
@@ -220,12 +230,21 @@ impl RefPanel {
 
     pub fn set_filter(&mut self, filter: &str, cx: &mut Context<Self>) {
         self.tree.set_filter(filter);
+        self.recount();
         cx.notify();
+    }
+
+    fn recount(&mut self) {
+        self.counts = counts(&self.entries, &self.walk, &self.filter());
+        #[cfg(test)]
+        {
+            self.recounts += 1;
+        }
     }
 
     /// Each section's count as its header shows it, in [`Section::ALL`]'s order.
     pub fn counts(&self) -> [Count; 5] {
-        counts(&self.entries, &self.walk, &self.filter())
+        self.counts
     }
 
     pub fn width(&self) -> Pixels {
@@ -260,10 +279,12 @@ impl RefPanel {
         self.entries.iter().find(|(p, _)| p == path).map(|(_, e)| e)
     }
 
-    /// A row picked: its ref's commit to the graph; whether it has one.
-    fn picked(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
-        let Some(sha) = self.entry(path).and_then(Entry::commit) else { return false };
-        cx.emit(RefEvent::Pick(SharedString::from(sha.to_string())));
+    /// A row picked: its ref's commit to the graph, and whether the graph walks from it; whether it has one.
+    pub(super) fn picked(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        let Some(entry) = self.entry(path) else { return false };
+        let Some(sha) = entry.commit() else { return false };
+        let walked = entry.tip_of(&self.walk);
+        cx.emit(RefEvent::Pick(SharedString::from(sha.to_string()), walked));
         true
     }
 

@@ -209,6 +209,7 @@ impl GitView {
         self.commits = rows.iter().filter(|r| !r.wip()).count();
         self.rows = rows;
         self.more = more;
+        self.marks.reset(self.rows.len(), self.commits, &layout);
         self.layout = Some(layout);
         self.tips = first.tips.into();
         self.heads = first.heads;

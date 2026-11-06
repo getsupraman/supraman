@@ -4,9 +4,8 @@ use std::sync::Arc;
 use buffer_diff::BufferDiff;
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
 use language::{Buffer, Language};
-use text::{Point, ToPoint as _};
+use text::{LineEnding, Point, Rope, ToPoint as _};
 
-use crate::read_only_buffer;
 
 /// One change: the rows it covers in the old text and in the new one (either may be empty), and the
 /// changed words inside them as byte ranges of each text ([`crate::words::word_ranges`]).
@@ -27,6 +26,27 @@ pub struct Diff {
     pub hunks: Arc<[Hunk]>,
 }
 
+/// One side's text as read and as the rope its buffer takes, built off the UI thread.
+struct Side {
+    text: Arc<str>,
+    rope: Rope,
+    ending: LineEnding,
+}
+
+impl Side {
+    fn of(text: String) -> Side {
+        let shared = Arc::from(text.as_str());
+        let ending = LineEnding::detect(&text);
+        let mut text = text;
+        LineEnding::normalize(&mut text);
+        Side { text: shared, rope: Rope::from(text.as_str()), ending }
+    }
+
+    fn buffer(self, language: Option<Arc<Language>>, cx: &mut App) -> Entity<Buffer> {
+        crate::read_only_buffer_of(self.rope, self.ending, language, cx)
+    }
+}
+
 /// Rows `range` covers: a range ending at a line's start stops before that line.
 fn rows(range: Range<Point>) -> Range<u32> {
     let end = if range.end.column > 0 { range.end.row + 1 } else { range.end.row };
@@ -34,16 +54,22 @@ fn rows(range: Range<Point>) -> Range<u32> {
 }
 
 impl Diff {
-    /// Builds the buffers now, diffs their lines and then the words inside each hunk on the background executor.
+    /// Builds the ropes on the background executor and the buffers from them, then diffs their lines and the
+    /// words inside each hunk on the background executor.
     pub fn compute(old: String, new: String, language: Option<Arc<Language>>, cx: &mut App) -> Task<Diff> {
-        let (old_text, new_text): (Arc<str>, Arc<str>) = (Arc::from(old.as_str()), Arc::from(new.as_str()));
-        let old = read_only_buffer(old, language.clone(), cx);
-        let new = read_only_buffer(new, language, cx);
-        let snapshot = new.read(cx).text_snapshot();
-        let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text_buffer(&snapshot, old.clone(), cx));
-        let base = old.read(cx).snapshot();
-        let update = buffer_diff.read(cx).update_diff(snapshot, &base, Some(old_text.clone()), cx);
+        let texts = cx.background_spawn(async move { (Side::of(old), Side::of(new)) });
         cx.spawn(async move |cx: &mut AsyncApp| {
+            let (old, new) = texts.await;
+            let (old_text, new_text) = (old.text.clone(), new.text.clone());
+            let (old, new, buffer_diff, update) = cx.update(|cx| {
+                let old = old.buffer(language.clone(), cx);
+                let new = new.buffer(language, cx);
+                let snapshot = new.read(cx).text_snapshot();
+                let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text_buffer(&snapshot, old.clone(), cx));
+                let base = old.read(cx).snapshot();
+                let update = buffer_diff.read(cx).update_diff(snapshot, &base, Some(old_text.clone()), cx);
+                (old, new, buffer_diff, update)
+            });
             let update = update.await;
             let rows = cx.update(|cx| {
                 buffer_diff.update(cx, |d, cx| d.set_snapshot(update, cx));
