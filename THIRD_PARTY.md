@@ -62,7 +62,7 @@ Supraman reads the file unchanged. It adjusts one key when it loads the file, so
 
 ## Rust crates
 
-The 790 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
+The 792 crates `supraman.exe`, `sm.exe` and `smw.exe` are built from (x86_64-pc-windows-msvc, without dev- and
 build-dependencies). Their licence texts and copyright notices, as each package ships them, are in a release's
 `licenses\rust-crates.txt`.
 
@@ -702,6 +702,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tree-sitter-proto | 0.6.0 | MIT | crates.io |
 | tree-sitter-python | 0.25.0 | MIT | crates.io |
 | tree-sitter-r | 1.3.0 | MIT | crates.io |
+| tree-sitter-razor | 0.1.0 | MIT | crates.io |
 | tree-sitter-regex | 0.24.3 | MIT | crates.io |
 | tree-sitter-ruby | 0.23.1 | MIT | crates.io |
 | tree-sitter-rust | 0.24.2 | MIT | crates.io |
@@ -710,6 +711,7 @@ build-dependencies). Their licence texts and copyright notices, as each package 
 | tree-sitter-swift | 0.7.4 | MIT | crates.io |
 | tree-sitter-toml-ng | 0.7.0 | MIT | crates.io |
 | tree-sitter-typescript | 0.23.2 | MIT | https://github.com/zed-industries/tree-sitter-typescript @ e2c53597d6a5 |
+| tree-sitter-vb-dotnet | 0.1.0 | MIT | crates.io |
 | tree-sitter-xml | 0.7.0 | MIT | crates.io |
 | tree-sitter-yaml | 0.6.1 | MIT | https://github.com/zed-industries/tree-sitter-yaml @ baff0b51c64e |
 | try-lock | 0.2.5 | MIT | crates.io |

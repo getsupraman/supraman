@@ -8695,11 +8695,13 @@ dependencies = [
  "tree-sitter-powershell",
  "tree-sitter-proto",
  "tree-sitter-r",
+ "tree-sitter-razor",
  "tree-sitter-ruby",
  "tree-sitter-scala",
  "tree-sitter-sequel",
  "tree-sitter-swift",
  "tree-sitter-toml-ng",
+ "tree-sitter-vb-dotnet",
  "tree-sitter-xml",
  "zed_actions",
 ]
@@ -9905,6 +9907,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-razor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c99d14709439f7c7383c8376765219ece638eddb86ccc2b434a4853c64838c5"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-regex"
 version = "0.24.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9978,6 +9990,16 @@ dependencies = [
 name = "tree-sitter-typescript"
 version = "0.23.2"
 source = "git+https://github.com/zed-industries/tree-sitter-typescript?rev=e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899#e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-vb-dotnet"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "180e4a199378505f9305c3d01d6ece8a8d34035f310de1c727693f8a2296025e"
 dependencies = [
  "cc",
  "tree-sitter-language",

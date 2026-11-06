@@ -18,6 +18,18 @@ const PHP_TEXT_IS_HTML: &str = "((text) @injection.content (#set! injection.lang
 
 pub(crate) const COMPILED: &[Compiled] = &[
     Compiled { name: "C#", suffixes: &["cs", "csx"], grammar: || tree_sitter_c_sharp::LANGUAGE.into(), highlights: tree_sitter_c_sharp::HIGHLIGHTS_QUERY, inherits: None, injections: &[] },
+    Compiled {
+        name: "VB.NET",
+        suffixes: &["vb"],
+        grammar: || tree_sitter_vb_dotnet::LANGUAGE.into(),
+        highlights: include_str!("../../queries/vb/highlights.scm"), inherits: None, injections: &[],
+    },
+    Compiled {
+        name: "Razor",
+        suffixes: &["cshtml", "razor"],
+        grammar: || tree_sitter_razor::LANGUAGE.into(),
+        highlights: include_str!("../../queries/razor/highlights.scm"), inherits: None, injections: &[include_str!("../../queries/razor/injections.scm")],
+    },
     Compiled { name: "Java", suffixes: &["java"], grammar: || tree_sitter_java::LANGUAGE.into(), highlights: tree_sitter_java::HIGHLIGHTS_QUERY, inherits: None, injections: &[] },
     Compiled { name: "Kotlin", suffixes: &["kt", "kts"], grammar: || tree_sitter_kotlin_sg::LANGUAGE.into(), highlights: tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY, inherits: None, injections: &[] },
     Compiled { name: "PHP", suffixes: &["php", "phtml"], grammar: || tree_sitter_php::LANGUAGE_PHP.into(), highlights: tree_sitter_php::HIGHLIGHTS_QUERY, inherits: None, injections: &[tree_sitter_php::INJECTIONS_QUERY, PHP_TEXT_IS_HTML] },

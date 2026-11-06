@@ -1,0 +1,21 @@
+; The grammar hides tag and attribute names: each outermost element is HTML of its own.
+([
+  (compilation_unit (element) @injection.content)
+  (razor_block (element) @injection.content)
+  (razor_if (element) @injection.content)
+  (razor_else (element) @injection.content)
+  (razor_else_if (element) @injection.content)
+  (razor_for (element) @injection.content)
+  (razor_foreach (element) @injection.content)
+  (razor_while (element) @injection.content)
+  (razor_do_while (element) @injection.content)
+  (razor_switch_case (element) @injection.content)
+  (razor_switch_default (element) @injection.content)
+  (razor_try (element) @injection.content)
+  (razor_catch (element) @injection.content)
+  (razor_finally (element) @injection.content)
+  (razor_lock (element) @injection.content)
+  (razor_section (element) @injection.content)
+  (razor_compound_using (element) @injection.content)
+]
+  (#set! injection.language "html"))
