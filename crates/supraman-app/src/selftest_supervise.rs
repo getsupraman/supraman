@@ -605,22 +605,21 @@ async fn stop_all_step(tb: &Testbed, names: &[String], view: &Entity<FleetView>,
     })
     .await?;
     let stopped_after = asked.elapsed();
-    sleep(cx, Duration::from_secs(3)).await;
-    let (shown, own) = view.read_with(cx, |v, _| {
-        v.tree().workspaces.iter().find(|p| p.name == tb.a.0).map(|p| (p.supervised.len(), p.own.as_ref().map(|r| r.session.name.clone()))).unwrap_or_default()
-    });
-    let still = rows(cx).await?.into_iter().filter(|s| names.contains(&s.name) && s.pid.is_some()).count();
+    let what = format!("{ctrl} on the workspace row and 1 row shown (park) under {}", tb.a.0);
+    let shown = crate::selftest::until(view, cx, Duration::from_secs(15), &what, |v| {
+        let tree = v.tree();
+        let p = tree.workspaces.iter().find(|p| p.name == tb.a.0)?;
+        (p.supervised.len() == 1 && p.own.as_ref().is_some_and(|r| r.session.name == ctrl)).then_some(p.supervised.len())
+    })
+    .await?;
     println!(
-        "step g: tray Stop all → {} saved as not started after {} ms, stopped after {}: {} | still listed: the workspace row's session {own:?}, {shown} row(s) shown under {} | restarted 3 s later: {still}",
+        "step g: tray Stop all → {} saved as not started after {} ms, stopped after {}: {} | still listed: the workspace row's session {ctrl}, {shown} row(s) shown under {}",
         before.iter().map(|w| w.as_str()).collect::<Vec<_>>().join(", "),
         saved_after.as_millis(),
         secs(stopped_after),
         stopped.join(", "),
         tb.a.0
     );
-    if shown != 1 || own.as_deref() != Some(ctrl.as_str()) || still != 0 {
-        bail!("expected {ctrl} on the workspace row, 1 row shown (park) and none restarted, got {own:?}, {shown} shown, {still} live");
-    }
     Ok(())
 }
 

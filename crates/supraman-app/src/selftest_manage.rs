@@ -335,7 +335,7 @@ async fn no_card_on(view: &Entity<FleetView>, row: &str, icon: &str, cx: &mut As
     sleep(cx, Duration::from_millis(100)).await;
     supraman_ui::hover_card::LAST_CARD.with(|l| l.borrow_mut().take());
     let started = Instant::now();
-    // past the card's 500 ms delay: a row that would show one has shown it by then
+    // past the card's 500 ms delay; no gpui test builds FleetView's sidebar, so only the window can show a card's absence
     while started.elapsed() < Duration::from_millis(800) {
         crate::selftest_left::move_to(position, cx)?;
         sleep(cx, Duration::from_millis(50)).await;
