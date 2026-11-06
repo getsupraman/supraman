@@ -9,6 +9,10 @@ use tempfile::TempDir;
 
 use crate::{Git, Located, Repo};
 
+mod media;
+
+pub use media::{MEDIA_FILES, png};
+
 const AUTHOR: (&str, &str) = ("Ada Fixture", "ada@example.test");
 const FIRST_TIME: i64 = 1_700_000_000;
 const TIMEOUT: Duration = Duration::from_secs(300);
@@ -82,6 +86,7 @@ impl Fixture {
         f.history();
         f.remote_and_worktree();
         f.work_in_progress();
+        f.media();
         f
     }
 
@@ -90,7 +95,7 @@ impl Fixture {
     }
 
     /// A commit by its label: `root`, `second`, `rename`, `main_work`, `merge`, `ahead`, a [`STASHES`] label
-    /// or one with `_index` for its index commit.
+    /// or one with `_index` for its index commit, or `media_base` and `media` (no ref reaches them; [`MEDIA_FILES`]).
     pub fn sha(&self, label: &str) -> &str {
         self.shas.get(label).unwrap_or_else(|| panic!("no commit {label}"))
     }

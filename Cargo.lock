@@ -8707,6 +8707,7 @@ dependencies = [
 name = "supraman-gitman"
 version = "0.1.11"
 dependencies = [
+ "image",
  "serde",
  "supraman-core",
  "supraman-gitman",

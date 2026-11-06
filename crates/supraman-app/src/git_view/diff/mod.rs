@@ -1,20 +1,23 @@
 //! A file's change in the graph's place: the file at the commit, or its diff against the parent split or
 //! inline, on Zed's editor (`supraman_editor`), read-only (C146), read off the UI thread.
 
+mod image;
+mod invisible;
 mod load;
 mod render;
 
 #[cfg(test)]
+mod media_tests;
+#[cfg(test)]
 mod tests;
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, KeyBinding, Window};
-use supraman_core::text::Encoding;
 use supraman_editor::{Diff, SplitDiff, ZedEditor};
 use supraman_gitman::Repo;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 
-pub use load::{Of, Target};
+pub use load::{Of, Sizes, Target};
 
 gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff, PreviousFile, NextFile, FirstFile, LastFile]);
 
@@ -86,7 +89,10 @@ pub struct Close;
 
 pub(crate) struct Text {
     pub diff: Diff,
-    pub encoding: Encoding,
+    /// One side's encoding, or `old → new`.
+    pub encoding: String,
+    /// What changed when only bytes the text does not show did.
+    pub invisible: Vec<String>,
     file: Option<Entity<ZedEditor>>,
     inline: Option<Entity<ZedEditor>>,
     split: Option<Entity<SplitDiff>>,
@@ -95,7 +101,8 @@ pub(crate) struct Text {
 pub(crate) enum Content {
     Loading,
     Failed(String),
-    Binary,
+    Binary(Sizes),
+    Image(Box<image::Images>),
     Text(Box<Text>),
 }
 
@@ -130,41 +137,51 @@ impl DiffView {
     /// Reads the file's two sides again off the UI thread; what is shown stays until they are in.
     pub fn reload(&mut self, repo: Repo, cx: &mut Context<Self>) {
         self.token += 1;
-        let (token, job) = (self.token, self.target.clone());
-        let loaded = cx.background_spawn(async move { load::load(&repo, &job) });
+        let (token, job, svg) = (self.token, self.target.clone(), cx.svg_renderer());
+        let loaded = cx.background_spawn(async move { load::load(&repo, &job, &svg) });
         cx.spawn(async move |this: gpui::WeakEntity<DiffView>, cx| {
             let loaded = loaded.await;
             let diff = this.update(cx, |this, cx| if this.token == token { this.apply(loaded, cx) } else { None }).ok().flatten();
-            if let Some((diff, encoding)) = diff {
+            if let Some((diff, encoding, invisible)) = diff {
                 let diff = diff.await;
-                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, cx) }).ok();
+                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, invisible, cx) }).ok();
             }
         })
         .detach();
     }
 
-    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, Encoding)> {
+    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, String, Vec<String>)> {
         let _stall = stall::section("diff view: buffers");
-        match loaded {
-            Ok(load::Loaded::Text { old, new, encoding, language }) => Some((Diff::compute(old, new, language, cx), encoding)),
-            Ok(load::Loaded::Binary) => {
-                self.content = Content::Binary;
-                cx.notify();
-                None
-            }
-            Err(why) => {
-                self.content = Content::Failed(why);
-                cx.notify();
-                None
-            }
-        }
+        self.content = match loaded {
+            Ok(load::Loaded::Text { old, new, encoding, invisible, language }) => return Some((Diff::compute(old, new, language, cx), encoding, invisible)),
+            Ok(load::Loaded::Binary(sizes)) => Content::Binary(sizes),
+            Ok(load::Loaded::Image(images)) => Content::Image(images),
+            Err(why) => Content::Failed(why),
+        };
+        self.current = None;
+        cx.notify();
+        None
     }
 
-    fn show(&mut self, diff: Diff, encoding: Encoding, cx: &mut Context<Self>) {
+    fn show(&mut self, diff: Diff, encoding: String, invisible: Vec<String>, cx: &mut Context<Self>) {
         self.current = None;
         self.to_first = matches!(self.content, Content::Loading);
-        self.content = Content::Text(Box::new(Text { diff, encoding, file: None, inline: None, split: None }));
+        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, file: None, inline: None, split: None }));
         cx.notify();
+    }
+
+    /// What the viewer shows, in words, for the selftest's probe.
+    pub fn shown(&self) -> String {
+        let size = |s: Option<usize>| s.map_or("none".to_string(), |b| supraman_core::text::byte_size(b as u64));
+        let picture = |p: &Option<image::Picture>| p.as_ref().map_or("none".to_string(), |p| format!("{}×{}", p.width, p.height));
+        match &self.content {
+            Content::Loading => "loading".into(),
+            Content::Failed(why) => format!("failed: {why}"),
+            Content::Binary(s) => format!("binary {} → {}", size(s.old), size(s.new)),
+            Content::Image(i) => format!("image {} → {}", picture(&i.old), picture(&i.new)),
+            Content::Text(t) if !t.invisible.is_empty() => format!("same text: {}", t.invisible.join("; ")),
+            Content::Text(_) => "text".into(),
+        }
     }
 
     pub fn mode(&self) -> Mode {

@@ -19,6 +19,7 @@ mod selftest_drop;
 mod selftest_first_run;
 mod selftest_font;
 mod selftest_git;
+mod selftest_git_media;
 mod selftest_git_refs;
 mod selftest_git_reopen;
 mod selftest_hand;

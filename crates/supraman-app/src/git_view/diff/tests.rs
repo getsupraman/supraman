@@ -150,11 +150,11 @@ fn TWO() {}
     assert_eq!(rows(&d, cx), [], "a pure rename changes no line");
 
     let d = show(&view, &r, "pic.bin", cx);
-    assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Binary)), "binary: a placeholder");
+    assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Binary(_))), "binary: a placeholder");
     for layout in [Layout::Split, Layout::Inline] {
         d.update(cx, |d, cx| d.set_layout(layout, cx));
         redraw(&view, cx);
-        assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Binary) && d.text().is_none()), "no editor for a binary file");
+        assert!(d.read_with(cx, |d, _| matches!(d.content(), Content::Binary(_)) && d.text().is_none()), "no editor for a binary file");
     }
 }
 
@@ -308,6 +308,8 @@ fn diff_tints_keep_the_text_readable_and_the_stripes_seen_in_a_dark_and_a_light_
             assert!(contrast(line, bg) > 1.15, "{}: a changed line stands out ({:.2}:1)", theme.name, contrast(line, bg));
         }
         assert!(contrast(c.stripes, bg) > 1.15, "{}: the filler's stripes show", theme.name);
+        let (light, dark) = super::image::cells(theme.colors());
+        assert!(contrast(crate::git_view::colours::blend(dark, light), light) > 1.15, "{}: the checkerboard's cells differ", theme.name);
     }
 }
 
