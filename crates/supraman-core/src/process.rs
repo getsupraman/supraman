@@ -787,12 +787,12 @@ mod tests {
         assert_eq!((out.as_slice(), end.code, end.stderr.as_slice()), (b"in and out".as_slice(), Some(0), b"said".as_slice()));
 
         let before = spawned_here();
-        let mut endless = stream(&mut powershell("while ($true) { [Console]::Out.Write('x' * 65536) }"), None).unwrap();
+        let mut quiet = stream(&mut powershell("[Console]::Out.Write('x'); [Console]::Out.Flush(); Start-Sleep 60"), None).unwrap();
         assert_eq!(spawned_here(), before + 1);
-        assert!(!endless.next(Duration::from_secs(30)).unwrap().unwrap().is_empty());
-        let pid = endless.pid();
-        assert!(alive(pid), "the child waits on its full pipe");
-        drop(endless);
+        assert_eq!(quiet.next(Duration::from_secs(30)).unwrap().unwrap(), b"x");
+        let pid = quiet.pid();
+        assert!(alive(pid), "the child sleeps, its pipe open");
+        drop(quiet);
         assert!(wait_any_exit(&[pid], Duration::from_secs(10)), "dropped, its tree is killed");
     }
 
