@@ -16,7 +16,7 @@ use supraman_supervisor::{
 
 pub use supraman_core::sm_allowed_tools;
 
-use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, forget_runs, revoke_deleted_runs, sign_in_generation};
+use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, revoke_deleted_runs, runs_signed_out, sign_in_generation};
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -31,7 +31,7 @@ pub fn signed_out(origin: &str) {
 }
 
 /// Signs out of `auth`'s configured server, whose grant revoke takes every session token minted there; the hands,
-/// supervised sessions and scheduled runs minted there end. What failed.
+/// supervised sessions and scheduled runs minted there are marked signed out for the next sign-in. What failed.
 pub fn sign_out(auth: &supraman_workman::Auth, hands: Option<std::sync::Arc<Mutex<crate::hand::Hands>>>) -> Vec<String> {
     let origin = auth.configured_origin();
     let mut notices: Vec<String> = auth.sign_out(&origin).err().into_iter().collect();
@@ -288,8 +288,8 @@ pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings:
 }
 
 impl Supervision {
-    /// A sign-out since the last tick ends the sessions minted there before it. A scheduled run's record is
-    /// forgotten only while no sign-in followed: `sm` mints it, so its generation is unknown here.
+    /// A sign-out since the last tick marks the sessions minted there before it signed out. A scheduled run's record
+    /// is marked only while no sign-in followed: `sm` mints it, so its generation is unknown here.
     fn end_signed_out(&mut self) -> Vec<String> {
         let keeper = Keeper::open(&self.home);
         let mut notices = Vec::new();
@@ -298,7 +298,7 @@ impl Supervision {
                 s.signed_out_as_of(&origin, generation);
             }
             if sign_in_generation() == generation {
-                notices.extend(forget_runs(&keeper, &origin));
+                notices.extend(runs_signed_out(&keeper, &origin));
             }
         }
         notices

@@ -116,7 +116,7 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
     spec.mcp_config = None;
     let mut without_workstate = None;
     match &mint {
-        Some(m) => match keeper.launch(spec.clone(), &m.url, &m.token) {
+        Some(m) => match keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()) {
             Ok(with) => spec = with,
             Err(why) => {
                 end_mint(host, &keeper, ctx.home, &spec.name, Some(m));
@@ -227,6 +227,7 @@ fn capped(stdout: &str) -> String {
 struct Mint {
     url: String,
     token: String,
+    expires_at: Option<String>,
     session_id: String,
     /// The run's record, at [`MintedSessions::run_path`]: only this sm writes it.
     record: MintedSessions,
@@ -271,7 +272,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
     };
     record.insert_minted(&spec.name, session, &request);
     record.save().map_err(|e| format!("cannot record the Workman session of {}: {e}", spec.name))?;
-    Ok(Some(Mint { url: t.url, token: minted.token, session_id: minted.session_id, record }))
+    Ok(Some(Mint { url: t.url, token: minted.token, expires_at: minted.expires_at, session_id: minted.session_id, record }))
 }
 
 /// A run that never got going: its session cannot come back, so its token is revoked ([`supraman_supervisor::revoke`])

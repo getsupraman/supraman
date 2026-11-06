@@ -6,7 +6,7 @@ use supraman_core::AGENTS_SERVER;
 
 use crate::mint::{Absent, Bearer, Keeper};
 use crate::{
-    Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
+    Action, Budget, DesiredState, Failure, HttpMinter, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Millis, Minter, NeedsKind,
     NeedsYou, Policy, Remedy, SECOND, SupervisorMemory, WantedSession, adopt_prompt, api_base, is_live, mid_turn, reconcile,
 };
 
@@ -221,7 +221,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         let keeper = match &config.supraman_home {
             Some(home) => Keeper::new(home, &config.mcp_dir, supraman_core::secret::default_store(home)),
-            None => Keeper::new(config.mcp_dir.parent().unwrap_or(&config.mcp_dir), &config.mcp_dir, std::sync::Arc::new(supraman_core::secret::MemoryStore::default())),
+            None => Keeper::new(&config.mcp_dir, &config.mcp_dir, std::sync::Arc::new(supraman_core::secret::MemoryStore::default())),
         };
         Self {
             desired,
@@ -291,7 +291,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         &self.keeper
     }
 
-    /// The sign-out of `origin`: each session minted there ends ([`crate::mint::revoke`]); its grant revoke took the tokens.
+    /// The sign-out of `origin`, whose grant revoke took the tokens minted there: each session minted there is
+    /// [`Keeper::signed_out`], its record, kept token and config left for the re-mint after the next sign-in.
     pub fn signed_out(&mut self, origin: &str) {
         self.signed_out_as_of(origin, u64::MAX);
     }
@@ -306,9 +307,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .filter(|n| self.generations.get(*n).is_none_or(|g| *g <= generation))
             .cloned()
             .collect();
-        for name in names {
-            self.end(&name, Some(Bearer::SignedOut));
-        }
+        let notices = self.keeper.signed_out(&names);
+        self.notices.extend(notices);
     }
 
     pub fn launcher(&self) -> &L {
@@ -529,8 +529,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.resume = Some(from.clone());
             spec.prompt = adopt_prompt(&self.desired.workspace, w);
         }
-        if let Some((url, token)) = self.mint(w, None, now)? {
-            spec = self.keeper.launch(spec, &url, &token).map_err(Failure::Other)?;
+        if let Some((url, minted)) = self.mint(w, None, now)? {
+            spec = self.keeper.launch(spec, &url, &minted.token, minted.expires_at.as_deref()).map_err(Failure::Other)?;
         }
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
     }
@@ -542,7 +542,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// `claude_session_id` is the uuid a resume wakes, which `--bg --resume` keeps; a `--bg` launch
     /// ignores `--session-id`, so a launch sends none and its row's id is PATCHed later
     /// ([`Self::bind_claude_sessions`]).
-    fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, String)>, Failure> {
+    fn mint(&mut self, w: &WantedSession, claude_session_id: Option<&str>, now: Millis) -> Result<Option<(String, Minted)>, Failure> {
         let Some(t) = self
             .tokens
             .token(&w.role)
@@ -568,7 +568,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             .mint(&api_base(&t.url), &t.token, &request)
             .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?;
         let session = MintedSession {
-            session_id: minted.session_id,
+            session_id: minted.session_id.clone(),
             role: w.role.clone(),
             claude_session_id: claude_session_id.map(str::to_string),
             last_active: Some(now),
@@ -577,13 +577,13 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.minted.insert_minted(&w.name, session, &request);
         self.generations.insert(w.name.clone(), generation);
         self.save_minted();
-        Ok(Some((t.url, minted.token)))
+        Ok(Some((t.url, minted)))
     }
 
     /// Before the resume of `claude_session_id`: a fresh token into the session's config file.
     fn remint(&mut self, w: &WantedSession, claude_session_id: &str, now: Millis) -> Result<(), Failure> {
-        if let Some((url, token)) = self.mint(w, Some(claude_session_id), now)? {
-            self.keeper.write(&w.name, &url, &token, &self.config.plugin_servers(&w.name)).map_err(Failure::Other)?;
+        if let Some((url, minted)) = self.mint(w, Some(claude_session_id), now)? {
+            self.keeper.write(&w.name, &url, &minted.token, minted.expires_at.as_deref(), &self.config.plugin_servers(&w.name)).map_err(Failure::Other)?;
         }
         Ok(())
     }
@@ -654,7 +654,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         deleted.retain(|sid| !crate::mint::still_has_transcript(self.config.claude_dir.as_deref(), sid));
         for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
             log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
-            self.end(&name, None);
+            self.end(&name);
         }
     }
 
@@ -681,17 +681,17 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.unwanted = counts;
         for name in due {
             log::info!("{name}: never bound to a claude session and no longer wanted, so its Workman token is revoked");
-            self.end(&name, None);
+            self.end(&name);
         }
     }
 
-    /// [`crate::mint::revoke`] of `name` with `bearer`, else its role's; forgotten here.
-    fn end(&mut self, name: &str, bearer: Option<Bearer>) {
+    /// [`crate::mint::revoke`] of `name` with its role's bearer; forgotten here.
+    fn end(&mut self, name: &str) {
         let Some(m) = self.minted.remove(name) else {
             return;
         };
         self.generations.remove(name);
-        let bearer = bearer.unwrap_or_else(|| Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token)))));
+        let bearer = Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token))));
         self.notices.extend(crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices);
         self.save_minted();
     }
@@ -1675,8 +1675,15 @@ mod tests {
         assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
     }
 
+    /// The names `kept.json` under `home`'s `supervisor` marks signed out.
+    fn signed_out_marks(home: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(home.join("supervisor").join("kept.json")).unwrap_or_default();
+        let table: BTreeMap<String, serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+        table.into_iter().filter(|(_, k)| k["signedOut"] == true).map(|(n, _)| n).collect()
+    }
+
     #[test]
-    fn a_sign_out_ends_every_session_minted_on_that_server() {
+    fn a_sign_out_marks_every_session_minted_on_that_server_and_keeps_its_files() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minting(true, dir.path());
         sup.desired.sessions.push(alpha());
@@ -1685,9 +1692,10 @@ mod tests {
         sup.minted.get_mut("fm-demo-alpha").unwrap().origin = Some("https://b.example".into());
         sup.signed_out("http://127.0.0.1:1/");
         assert_eq!(minter.take(), [], "the grant revoke took the tokens");
-        assert_eq!(sup.minted().get("fm-demo-workspace"), None);
-        assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
-        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
+        assert!(sup.minted().get("fm-demo-workspace").is_some(), "the record stays for the re-mint after the next sign-in");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1", "the kept token stays for its helper");
+        assert_eq!(signed_out_marks(dir.path()), ["fm-demo-workspace"]);
         assert!(sup.minted().get("fm-demo-alpha").is_some(), "another server's stays");
         assert_helped(dir.path(), "fm-demo-alpha");
         assert!(sup.take_notices().is_empty());
@@ -1707,8 +1715,9 @@ mod tests {
         minter.take();
         sup.signed_out_as_of("http://127.0.0.1:1/", queued);
         assert_eq!(minter.take(), [], "the grant revoke took the old tokens");
-        assert_eq!(sup.minted().get("fm-demo-workspace"), None, "the old grant's record ends");
-        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
+        assert!(sup.minted().get("fm-demo-workspace").is_some(), "the old grant's record stays");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1", "with its kept token");
+        assert_eq!(signed_out_marks(dir.path()), ["fm-demo-workspace"], "marked signed out: only the old grant's");
         assert!(sup.minted().get("fm-demo-alpha").is_some(), "the new grant's record stays");
         assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2", "with its token");
         assert_helped(dir.path(), "fm-demo-alpha");

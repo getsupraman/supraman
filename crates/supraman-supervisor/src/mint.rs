@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use supraman_claude::Session;
 use supraman_core::secret::SecretStore;
 
+mod keeping;
+
+pub use keeping::{CHECK_EVERY, Keeping, PING_TIMEOUT, RENEW_MARGIN};
+
 /// `POST /api/agent-sessions`. `role` is the Workman role (never above the bearer's),
 /// `external_role` Supraman's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -419,21 +423,40 @@ impl Keeper {
         supraman_claude::mcp_header_command(&self.sm, &self.home, name)
     }
 
-    fn keep(&self, name: &str, token: &str) -> Result<(), String> {
+    fn keep_token(&self, name: &str, token: &str) -> Result<(), String> {
         self.store.set(&supraman_claude::mcp_token_key(name), token).map_err(|e| format!("cannot keep the Workman token of {name}: {e}"))
     }
 
-    /// Keeps `token` for `name` and writes its helped config with `servers` beside Workman's.
-    pub fn write(&self, name: &str, url: &str, token: &str, servers: &[(String, String)]) -> Result<PathBuf, String> {
-        self.keep(name, token)?;
+    /// `expires_at` (the mint's RFC 3339 `expiresAt`) as what [`Keeping`] knows of `name`'s token, while
+    /// [`keeping::lock`] is held.
+    fn note_locked(&self, name: &str, expires_at: Option<&str>) {
+        let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), signed_out: false };
+        if let Err(e) = keeping::edit_locked(&self.home, |t| drop(t.insert(name.to_string(), kept))) {
+            log::warn!("{name}: {e}; its token is renewed once Workman refuses it");
+        }
+    }
+
+    fn keep(&self, name: &str, token: &str, expires_at: Option<&str>) -> Result<(), String> {
+        let held = keeping::lock(&self.home);
+        self.keep_token(name, token)?;
+        match held {
+            Ok(_held) => self.note_locked(name, expires_at),
+            Err(e) => log::warn!("{name}: {e}; its token is renewed once Workman refuses it"),
+        }
+        Ok(())
+    }
+
+    /// Keeps `token` (minted with `expires_at`) for `name` and writes its helped config with `servers` beside Workman's.
+    pub fn write(&self, name: &str, url: &str, token: &str, expires_at: Option<&str>, servers: &[(String, String)]) -> Result<PathBuf, String> {
+        self.keep(name, token, expires_at)?;
         supraman_claude::write_mcp_config_helped(&self.mcp_dir, name, url, &self.helper(name), servers)
             .map_err(|e| format!("cannot write the mcp config of {name}: {e}"))
     }
 
-    /// `spec` with `token` kept for its name and its helped config.
-    pub fn launch(&self, spec: supraman_claude::LaunchSpec, url: &str, token: &str) -> Result<supraman_claude::LaunchSpec, String> {
+    /// `spec` with `token` (minted with `expires_at`) kept for its name and its helped config.
+    pub fn launch(&self, spec: supraman_claude::LaunchSpec, url: &str, token: &str, expires_at: Option<&str>) -> Result<supraman_claude::LaunchSpec, String> {
         let name = spec.name.clone();
-        self.keep(&name, token)?;
+        self.keep(&name, token, expires_at)?;
         spec.with_helped_config(&self.mcp_dir, &name, url, &self.helper(&name))
             .map_err(|e| format!("cannot write the mcp config of {name}: {e}"))
     }
@@ -447,7 +470,24 @@ impl Keeper {
         if let Err(e) = self.store.delete(&supraman_claude::mcp_token_key(name)) {
             failed.push(format!("Cannot delete the kept Workman token of {name}: {e}"));
         }
+        if let Err(e) = keeping::edit(&self.home, |t| drop(t.remove(name))) {
+            failed.push(format!("{}{}", e[..1].to_uppercase(), &e[1..]));
+        }
         failed
+    }
+
+    /// After a sign-out whose grant revoke took their tokens: `names` marked signed out, their kept tokens and configs
+    /// left for their helpers, so [`Keeping`] mints them afresh after the next sign-in. What failed.
+    pub fn signed_out(&self, names: &[String]) -> Vec<String> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let marked = keeping::edit(&self.home, |t| {
+            for name in names {
+                t.entry(name.clone()).or_default().signed_out = true;
+            }
+        });
+        marked.err().map(|e| format!("{}{}; they are renewed once Workman refuses them", e[..1].to_uppercase(), &e[1..])).into_iter().collect()
     }
 }
 
@@ -481,9 +521,9 @@ pub struct Revoked {
     pub notices: Vec<String>,
 }
 
-/// The one end of a minted session, once it cannot come back (its claude session deleted, or a sign-out): revokes
-/// `m`'s token with `bearer`, unless the token is from another server than `bearer`'s, and deletes `name`'s config and
-/// kept token.
+/// The one end of a minted session, once it cannot come back (its claude session deleted): revokes `m`'s token with
+/// `bearer`, unless the token is from another server than `bearer`'s, and deletes `name`'s config and kept token. A
+/// sign-out is no end: [`Keeper::signed_out`].
 pub fn revoke(keeper: &Keeper, minter: &dyn Minter, bearer: &Bearer, name: &str, m: &MintedSession) -> Revoked {
     let mut done = Revoked::default();
     let failed = match bearer {
@@ -518,7 +558,9 @@ pub fn header(keeper: &Keeper, name: &str, bearer: impl FnOnce() -> Bearer, mint
     supraman_claude::mcp_header(keeper.store(), name)
 }
 
+/// The one re-mint of a kept token: `replace` on its record's mint, kept with its `expiresAt` under [`keeping::lock`].
 fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> Result<(), String> {
+    let _held = keeping::lock(&keeper.home)?;
     let (m, request) = MintedSessions::find(&keeper.home, name).ok_or_else(|| format!("no record of {name}"))?;
     let Bearer::Signed { url, token } = bearer else {
         return Err("Supraman is not signed in to Workman".into());
@@ -527,7 +569,9 @@ fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> R
         return Err(format!("its token is from {}, not {}", m.origin.unwrap_or_default(), api_base(&url)));
     }
     let minted = minter.mint(&api_base(&url), &token, &request).map_err(|e| e.to_string())?;
-    keeper.keep(name, &minted.token)
+    keeper.keep_token(name, &minted.token)?;
+    keeper.note_locked(name, minted.expires_at.as_deref());
+    Ok(())
 }
 
 /// The claude sessions of records that `claude agents --json --all` stopped listing: deleted once missing from two
@@ -593,24 +637,14 @@ pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl Fn
     notices
 }
 
-/// After a sign-out of `origin`: each scheduled run's record of it gone, with its config and kept token.
-pub fn forget_runs(keeper: &Keeper, origin: &str) -> Vec<String> {
+/// After a sign-out of `origin`: each scheduled run's record of it [`Keeper::signed_out`].
+pub fn runs_signed_out(keeper: &Keeper, origin: &str) -> Vec<String> {
     let origin = api_base(origin);
-    let mut notices = Vec::new();
-    for (path, records) in runs_of(&keeper.home) {
-        let names: Vec<String> = records.names().filter(|n| records.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
-        for name in &names {
-            if let Some(m) = records.get(name) {
-                notices.extend(revoke(keeper, &HttpMinter::default(), &Bearer::SignedOut, name, m).notices);
-            }
-        }
-        if !names.is_empty()
-            && let Err(e) = std::fs::remove_file(&path)
-        {
-            notices.push(format!("Cannot delete {}: {e}", path.display()));
-        }
-    }
-    notices
+    let names: Vec<String> = runs_of(&keeper.home)
+        .iter()
+        .flat_map(|(_, records)| records.names().filter(|n| records.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect::<Vec<_>>())
+        .collect();
+    keeper.signed_out(&names)
 }
 
 fn runs_of(home: &Path) -> Vec<(PathBuf, MintedSessions)> {
@@ -866,7 +900,7 @@ mod tests {
         };
         records.insert_minted(NAME, session, &req);
         records.save().unwrap();
-        keeper.write(NAME, &fake.mcp_url(), &minted.token, &[]).unwrap();
+        keeper.write(NAME, &fake.mcp_url(), &minted.token, None, &[]).unwrap();
         (keeper, minted.token)
     }
 
@@ -1000,16 +1034,18 @@ mod tests {
     }
 
     #[test]
-    fn a_sign_out_forgets_the_runs_minted_there() {
+    fn a_sign_out_marks_the_runs_minted_there_and_keeps_their_files() {
         let home = tempfile::tempdir().unwrap();
         let fake = FakeWorkman::start(Vec::new());
         fake.enable_sessions();
         let record = MintedSessions::run_path(home.path(), NAME);
-        let (keeper, _) = kept_at(home.path(), &fake, record.clone());
-        assert!(forget_runs(&keeper, "https://b.example").is_empty());
-        assert!(record.exists(), "another server's sign-out");
-        assert!(forget_runs(&keeper, &format!("{}/", fake.base())).is_empty());
-        assert!(!record.exists() && keeper.kept(NAME).is_none());
+        let (keeper, token) = kept_at(home.path(), &fake, record.clone());
+        let marked = || keeping::read(home.path()).unwrap().get(NAME).is_some_and(|k| k.signed_out);
+        assert!(runs_signed_out(&keeper, "https://b.example").is_empty());
+        assert!(record.exists() && !marked(), "another server's sign-out");
+        assert!(runs_signed_out(&keeper, &format!("{}/", fake.base())).is_empty());
+        assert!(record.exists() && keeper.kept(NAME).as_deref() == Some(token.as_str()) && marked());
+        assert!(supraman_claude::mcp_config_url(keeper.mcp_dir(), NAME).is_some(), "its config stays");
         assert!(fake.seen().iter().all(|s| s.method != "DELETE"), "the grant revoke took it");
     }
 

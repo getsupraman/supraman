@@ -74,6 +74,16 @@ pub fn rfc3339_local(at: &str) -> String {
     rfc3339_in(at, &Local)
 }
 
+/// An RFC 3339 time in epoch milliseconds; `None` when it does not parse.
+pub fn rfc3339_ms(at: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(at).ok().map(|t| t.timestamp_millis())
+}
+
+/// Epoch milliseconds as an RFC 3339 time in UTC, as a server writes it.
+pub fn rfc3339_utc(ms: i64) -> String {
+    chrono::Utc.timestamp_millis_opt(ms).single().map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)).unwrap_or_default()
+}
+
 /// [`rfc3339_local`] in `zone`.
 pub fn rfc3339_in<Tz: TimeZone>(at: &str, zone: &Tz) -> String
 where
@@ -216,6 +226,14 @@ mod tests {
         assert_eq!(ago(3_599_999), "59 min ago");
         assert_eq!(ago(3_600_000), "1 h ago");
         assert_eq!(ago(50 * 3_600_000), "50 h ago");
+    }
+
+    #[test]
+    fn rfc3339_round_trips_through_epoch_ms() {
+        assert_eq!(rfc3339_utc(NOW), "2027-01-15T08:00:00.000Z");
+        assert_eq!(rfc3339_ms(&rfc3339_utc(NOW + 1)), Some(NOW + 1));
+        assert_eq!(rfc3339_ms("2027-01-15T09:00:00+01:00"), Some(NOW));
+        assert_eq!(rfc3339_ms("soon"), None);
     }
 
     #[test]

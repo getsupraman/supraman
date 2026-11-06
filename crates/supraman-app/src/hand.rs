@@ -374,8 +374,8 @@ impl Hands {
         Keeper::new(&self.home, &self.mcp_dir(), store).with_sm(sm)
     }
 
-    fn write_config(&self, name: &str, url: &str, token: &str) -> std::io::Result<PathBuf> {
-        self.keeper().write(name, url, token, &[]).map_err(std::io::Error::other)
+    fn write_config(&self, name: &str, url: &str, token: &str, expires_at: Option<&str>) -> std::io::Result<PathBuf> {
+        self.keeper().write(name, url, token, expires_at, &[]).map_err(std::io::Error::other)
     }
 
     /// claude's session registry lists `claude_session` with a running pid.
@@ -485,7 +485,7 @@ impl Hands {
             notice = Some(notice.map_or(unsaved.clone(), |n| format!("{n}; {unsaved}")));
         }
         self.sessions.insert(name.clone(), request.name.clone());
-        match self.write_config(&name, &url, &minted.token) {
+        match self.write_config(&name, &url, &minted.token, minted.expires_at.as_deref()) {
             Ok(config) => Launch::Minted { name, session: request.name, config, notice, new_session },
             Err(e) => {
                 let revoked = self.release(&name);
@@ -509,14 +509,14 @@ impl Hands {
             self.sessions.remove(name);
             return self.save();
         }
-        self.end(name, None)
+        self.end(name)
     }
 
-    /// [`supraman_supervisor::revoke`] of `name` with `bearer`, else the sign-in's; forgotten here.
-    fn end(&mut self, name: &str, bearer: Option<Bearer>) -> Option<String> {
+    /// [`supraman_supervisor::revoke`] of `name` with the sign-in's bearer; forgotten here.
+    fn end(&mut self, name: &str) -> Option<String> {
         let m = self.minted.remove(name)?;
         self.sessions.remove(name);
-        let bearer = bearer.unwrap_or_else(|| Bearer::of(self.bearer()));
+        let bearer = Bearer::of(self.bearer());
         let done = supraman_supervisor::revoke(&self.keeper(), &*self.minter, &bearer, name, &m);
         if let Some(other) = done.left
             && !self.left.contains(&other)
@@ -530,11 +530,12 @@ impl Hands {
         }
     }
 
-    /// The sign-out of `origin`: each hand minted there ends; its grant revoke took the tokens.
+    /// The sign-out of `origin`, whose grant revoke took the tokens minted there: each hand minted there is
+    /// [`Keeper::signed_out`].
     pub fn signed_out(&mut self, origin: &str) -> Vec<String> {
         let origin = api_base(origin);
         let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
-        names.iter().filter_map(|n| self.end(n, Some(Bearer::SignedOut))).collect()
+        self.keeper().signed_out(&names)
     }
 
     pub fn release_session(&mut self, claude_session_id: &str) -> Vec<String> {
@@ -681,6 +682,25 @@ mod tests {
         assert!(hands.take_left().is_empty());
         assert!(seen_b.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no DELETE of A's session id on B");
         assert!(seen_a.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_sign_out_marks_a_hand_and_keeps_its_record_kept_token_and_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, seen, _) = fake_workman(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&a));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let Launch::Minted { name, config, .. } = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        seen.recv_timeout(WAIT).unwrap();
+        assert!(hands.signed_out("https://b.example").is_empty());
+        assert!(!std::fs::read_to_string(home.join("supervisor").join("kept.json")).unwrap_or_default().contains("signedOut"), "another server's sign-out");
+        assert!(hands.signed_out(&format!("{a}/")).is_empty());
+        assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "no DELETE: the grant revoke took it");
+        assert!(hands.minted.get(&name).is_some() && config.exists(), "its record and config stay");
+        let kept = hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(&name)).unwrap();
+        assert_eq!(kept.as_deref(), Some("wss_fake1"), "its kept token stays for its helper");
+        let marks = std::fs::read_to_string(home.join("supervisor").join("kept.json")).unwrap_or_default();
+        assert!(marks.contains(r#""signedOut": true"#), "{marks}");
     }
 
     #[test]
