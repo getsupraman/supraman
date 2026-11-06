@@ -259,7 +259,7 @@ fn layout_a_stash_row_is_dashed_to_its_base_and_an_older_one_leaves_the_base_to_
     assert_eq!(rows[3].stash.as_ref().map(|s| s.sha.as_str()), Some("S"));
     assert!(rows.iter().enumerate().all(|(ix, r)| r.stash.is_some() == (ix == 3)));
     assert!(rows[3].ghost.is_none());
-    let starting: Vec<&Edge> = rows[3].edges.iter().filter(|e| e.kind == S).collect();
+    let starting: Vec<Edge> = rows[3].edges.iter().filter(|e| e.kind == S).collect();
     assert_eq!((starting.len(), starting[0].dashed, rows[3].lane), (1, true, 0));
     assert_eq!(rows[4].lane, 1, "the base keeps its real child's lane");
     assert!(rows[4].edges.iter().any(|e| e.kind == E && e.lane == 0 && e.dashed), "the stash's dashed edge ends at the base");
@@ -268,7 +268,7 @@ fn layout_a_stash_row_is_dashed_to_its_base_and_an_older_one_leaves_the_base_to_
     let newer = [commit("i", &["b"]), commit("c", &["b"]), commit("b", &[])];
     let rows = Layout::new(&stash_refs("i", "b"), false).extend(&newer);
     assert_eq!(shape(&rows), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)]), (0, vec![(E, 0, 0), (E, 1, 0)])]);
-    assert!(rows[1].edges[0].dashed && !rows[1].edges[1].dashed, "the stash's lane passes the child dashed");
+    assert!(rows[1].edges().next().unwrap().dashed && !rows[1].edges().nth(1).unwrap().dashed, "the stash's lane passes the child dashed");
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn layout_of_the_fixture_puts_each_stash_on_its_index_commit_at_its_time() {
         assert!(rows.iter().all(|r| r.sha.as_deref() != Some(f.sha(stash))), "{stash}'s own commit has no row");
         let row = &rows[at(&format!("{stash}_index"))];
         assert_eq!(row.stash.as_ref().map(|s| s.sha.as_str()), Some(f.sha(stash)));
-        let starting: Vec<&Edge> = row.edges.iter().filter(|e| e.kind == S).collect();
+        let starting: Vec<Edge> = row.edges.iter().filter(|e| e.kind == S).collect();
         assert!(starting.len() == 1 && starting[0].dashed, "{stash}: one dashed edge to its base: {:?}", row.edges);
     }
     assert_eq!([at("ahead"), at("stash_wip_index"), at("stash_message_index"), at("merge")], [0, 1, 2, 3]);

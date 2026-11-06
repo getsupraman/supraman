@@ -1,5 +1,6 @@
 //! The commit graph's rows: lanes, edges, ref groups and ghost refs, laid out page by page off the UI thread.
 
+mod edges;
 mod groups;
 mod lanes;
 
@@ -13,6 +14,7 @@ pub use groups::{RefGroup, RefKind, RefLabel};
 pub use lanes::{Edge, EdgeKind, LANE_COLOURS};
 
 use crate::{Commit, Refs, Stash};
+use edges::Edges;
 use groups::RefIndex;
 use lanes::Lanes;
 
@@ -22,7 +24,7 @@ pub struct Row {
     pub sha: Option<String>,
     pub lane: usize,
     pub colour: usize,
-    pub edges: Vec<Edge>,
+    edges: Edges,
     /// The highest lane any edge or the node uses in this row.
     pub max_lane: usize,
     /// In order; the row shows the first and `+(len - 1)`.
@@ -35,6 +37,11 @@ pub struct Row {
 }
 
 impl Row {
+    /// The edges the row paints: ending and passing by lane, then starting.
+    pub fn edges(&self) -> impl Iterator<Item = Edge> + '_ {
+        self.edges.iter()
+    }
+
     /// The `+N` beside the first group.
     pub fn more(&self) -> usize {
         self.refs.len().saturating_sub(1)

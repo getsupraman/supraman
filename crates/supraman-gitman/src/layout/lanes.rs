@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use super::edges::{Edges, open_set};
 
 /// The theme's lane palette has this many colours; a lane paints in `lane % LANE_COLOURS`.
 pub const LANE_COLOURS: usize = 10;
@@ -38,11 +41,13 @@ enum By {
 pub(super) struct Lanes {
     carry: Vec<Option<bool>>,
     waiting: HashMap<String, Vec<(usize, By)>>,
+    /// The last row's open lanes, for the next row to share.
+    open: Option<Arc<[u64]>>,
 }
 
 pub(super) struct Placed {
     pub lane: usize,
-    pub edges: Vec<Edge>,
+    pub edges: Edges,
     pub max_lane: usize,
 }
 
@@ -54,7 +59,11 @@ impl Lanes {
         let mut incoming: Vec<usize> = waiting.iter().map(|(l, _)| *l).collect();
         incoming.sort_unstable();
         let lane = kept(&waiting).unwrap_or_else(|| self.lowest_free(None, &incoming));
-        let mut edges = self.through(lane, &incoming);
+        let open = self.open_above();
+        let mut ending: Vec<usize> = incoming.iter().copied().filter(|&l| self.carry.get(l).is_some_and(Option::is_some)).collect();
+        ending.dedup();
+        let mut max_lane = self.carry.len().saturating_sub(1).max(lane);
+        let mut starting = Vec::with_capacity(parents.len());
         for &l in &incoming {
             self.carry[l] = None;
         }
@@ -76,23 +85,22 @@ impl Lanes {
                     self.open(l, parent, dashed, by)
                 }
             };
-            edges.push(Edge { lane: target, kind: EdgeKind::Starting, node: lane, colour: target % LANE_COLOURS, dashed });
+            starting.push(target);
+            max_lane = max_lane.max(target);
         }
         while matches!(self.carry.last(), Some(None)) {
             self.carry.pop();
         }
-        let max_lane = edges.iter().map(|e| e.lane).chain([lane]).max().unwrap_or(lane);
-        Placed { lane, edges, max_lane }
+        Placed { lane, edges: Edges::new(open, &ending, &starting, lane, dashed), max_lane }
     }
 
-    /// The edges of every lane open above the row: ending at it or passing it.
-    fn through(&self, lane: usize, incoming: &[usize]) -> Vec<Edge> {
-        let open = self.carry.iter().enumerate().filter_map(|(l, c)| c.map(|dashed| (l, dashed)));
-        open.map(|(l, dashed)| {
-            let (kind, node) = if incoming.contains(&l) { (EdgeKind::Ending, lane) } else { (EdgeKind::PassThrough, l) };
-            Edge { lane: l, kind, node, colour: l % LANE_COLOURS, dashed }
-        })
-        .collect()
+    /// The lanes open above the row, the last row's when they are the same.
+    fn open_above(&mut self) -> Arc<[u64]> {
+        let set = open_set(&self.carry);
+        match &self.open {
+            Some(last) if **last == *set => last.clone(),
+            _ => self.open.insert(Arc::from(set)).clone(),
+        }
     }
 
     fn open(&mut self, lane: usize, parent: &str, dashed: bool, by: By) -> usize {

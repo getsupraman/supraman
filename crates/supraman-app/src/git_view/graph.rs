@@ -41,7 +41,7 @@ pub fn width_for(lanes: usize) -> f32 {
 
 /// How many lanes `rows` use.
 pub fn lanes(rows: &[GraphRow]) -> usize {
-    rows.iter().flat_map(|r| r.row.edges.iter().map(|e| e.lane.max(e.node)).chain([r.row.lane])).max().map_or(0, |l| l + 1)
+    rows.iter().map(|r| r.row.max_lane).max().map_or(0, |l| l + 1)
 }
 
 /// A row's band in a graph cell of `bounds`: from the centre of its node's `lane` to the column's right edge, `GAP / 2`
@@ -53,7 +53,7 @@ pub fn band(lane: usize, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
 }
 
 pub fn cell(row: &GraphRow, connector: bool, palette: &Palette) -> AnyElement {
-    let edges: Vec<(Edge, Hsla)> = row.row.edges.iter().map(|e| (*e, palette.lane(e.colour))).collect();
+    let edges: Vec<(Edge, Hsla)> = row.row.edges().map(|e| (e, palette.lane(e.colour))).collect();
     let (lane, colour) = (row.row.lane, row.row.colour);
     let link = connector.then(|| palette.connector(colour));
     let shade = palette.band(colour);
