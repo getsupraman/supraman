@@ -106,7 +106,7 @@ fn prompt_file(claude: &str, home: Option<&Path>, prompt: &str) -> Result<PathBu
 
 /// Written whole before the launch; the launch script deletes it once read.
 fn write_prompt(home: Option<&Path>, text: &str) -> std::io::Result<PathBuf> {
-    let dir = home.map_or_else(|| std::env::temp_dir().join("supraman-prompts"), |h| h.join("prompts"));
+    let dir = home.map_or_else(|| std::env::temp_dir().join("supraman-prompts"), supraman_core::home::prompts_dir);
     std::fs::create_dir_all(&dir)?;
     let file = dir.join(format!("{}-{}.txt", supraman_core::time::now_ms(), supraman_core::time::hex6()));
     supraman_core::fs::write_atomic(&file, text.as_bytes())?;
