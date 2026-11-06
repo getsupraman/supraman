@@ -746,16 +746,21 @@ fn script_stage(env: &ScriptEnv, s: &Schedule, secrets: &[(String, String)], res
         restart.exists()
     };
     let mut cmd = script_command(env.folder, script, &s.action.script_args);
-    cmd.current_dir(env.folder)
-        .envs(supraman_core::home::home_env(env.home))
-        .env("SUPRAMAN_WORKSPACE", env.workspace)
-        .env("SUPRAMAN_SCHEDULE", env.id)
-        .env("SUPRAMAN_RUN", env.run)
-        .env("SUPRAMAN_FOLDER", env.folder)
-        .env("SUPRAMAN_LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default())
-        .env("SUPRAMAN_LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default())
-        .env("SUPRAMAN_STATE_DIR", &state)
-        .envs(secrets.iter().map(|(k, v)| (k, v)));
+    cmd.current_dir(env.folder).envs(supraman_core::home::home_env(env.home));
+    let vars: [(&str, std::ffi::OsString); 7] = [
+        ("WORKSPACE", env.workspace.into()),
+        ("SCHEDULE", env.id.into()),
+        ("RUN", env.run.into()),
+        ("FOLDER", env.folder.into()),
+        ("LAST_RUN", env.last.map(|(ts, _)| ts.to_string()).unwrap_or_default().into()),
+        ("LAST_OUTCOME", env.last.and_then(|(_, o)| o).map(outcome_name).unwrap_or_default().into()),
+        ("STATE_DIR", state.clone().into()),
+    ];
+    for (name, value) in &vars {
+        // FOREMAN_* keeps scripts approved before the rename working; removed in 0.2.0.
+        cmd.env(format!("SUPRAMAN_{name}"), value).env(format!("FOREMAN_{name}"), value);
+    }
+    cmd.envs(secrets.iter().map(|(k, v)| (k, v)));
     let ran = process::run_watched(&mut cmd, timeout, Kill::Tree, &mut stop);
     let ms = u64::try_from(host.now_ms() - started).unwrap_or(0);
     let (ended, out) = match ran {
