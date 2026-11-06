@@ -1595,9 +1595,7 @@ impl FleetView {
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section(SEND_SECTION);
-        let Some(c) = &self.compose else {
-            return;
-        };
+        let Some(c) = &self.compose else { return };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
         if c.sending {
             return;
