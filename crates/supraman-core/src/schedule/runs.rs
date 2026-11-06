@@ -223,14 +223,16 @@ pub(crate) fn prune(home: &Path, cutoff: i64, errors: &mut Vec<String>) {
     }
 }
 
-/// Removes `wt` and its branch when `git status` is clean and no commit is reachable only from it; leaves it
-/// otherwise, for René to see.
-fn remove_if_spent(wt: &Path) -> std::result::Result<(), String> {
-    let git = |dir: &Path, args: &[&str]| crate::process::git(dir, args).map_err(|e| e.to_string());
-    let Some(main) = crate::paths::main_checkout(wt).filter(|m| crate::paths::path_key(m) != crate::paths::path_key(wt)) else { return Ok(()) };
+fn git(dir: &Path, args: &[&str]) -> std::result::Result<crate::process::Output, String> {
+    crate::process::git(dir, args).map_err(|e| e.to_string())
+}
+
+/// `wt`'s main checkout and branch when it is a linked worktree, clean, with no commit only it reaches.
+pub(super) fn spent(wt: &Path) -> std::result::Result<Option<(PathBuf, String)>, String> {
+    let Some(main) = crate::paths::main_checkout(wt).filter(|m| crate::paths::path_key(m) != crate::paths::path_key(wt)) else { return Ok(None) };
     let status = git(wt, &["status", "--porcelain"])?;
     if !status.success() || !status.stdout.trim().is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let branch = git(wt, &["symbolic-ref", "-q", "--short", "HEAD"])?.stdout.trim().to_string();
     let mut only_here = vec!["rev-list", "--count", "HEAD", "--not"];
@@ -241,8 +243,14 @@ fn remove_if_spent(wt: &Path) -> std::result::Result<(), String> {
     only_here.extend(["--branches", "--remotes", "--tags"]);
     let unique = git(wt, &only_here)?;
     if !unique.success() || unique.stdout.trim() != "0" {
-        return Ok(());
+        return Ok(None);
     }
+    Ok(Some((main, branch)))
+}
+
+/// Removes `wt` and its branch when it is [`spent`]; leaves it otherwise, for René to see.
+fn remove_if_spent(wt: &Path) -> std::result::Result<(), String> {
+    let Some((main, branch)) = spent(wt)? else { return Ok(()) };
     let wt_arg = wt.to_string_lossy();
     let removed = git(&main, &["worktree", "remove", &wt_arg])?;
     if !removed.success() {

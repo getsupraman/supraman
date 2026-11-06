@@ -19,7 +19,7 @@ pub(super) fn tag(g: &Generated, name: &str) -> String {
 
 #[gpui::test]
 fn picking_a_ref_out_of_the_walk_loads_no_page_and_says_it_is_not_in_the_graph(cx: &mut TestAppContext) {
-    let g = Generated::new(4000);
+    let g = Generated::copy(4000);
     let t1 = tag(&g, "t1");
     let who = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"].map(|k| (k, "lone@example.test".to_string()));
     let lone = git_in(&g.git, &g.dir, &["commit-tree", "-p", &t1, "-m", "Lone", &format!("{t1}^{{tree}}")], &who, None);
@@ -38,7 +38,7 @@ fn picking_a_ref_out_of_the_walk_loads_no_page_and_says_it_is_not_in_the_graph(c
 
 #[gpui::test]
 fn a_seek_stops_after_its_pages_and_says_so(cx: &mut TestAppContext) {
-    let g = Generated::new(4000);
+    let g = Generated::shared(4000);
     let t1 = tag(&g, "t1");
     let (view, cx) = open(&g.dir, cx);
     let loaded = rows(&view, cx);
@@ -53,7 +53,7 @@ fn a_seek_stops_after_its_pages_and_says_so(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_parent_click_whose_page_is_not_loaded_reveals_it(cx: &mut TestAppContext) {
-    let g = Generated::new(4000);
+    let g = Generated::shared(4000);
     let deep = tag(&g, "t1");
     let (view, cx) = open(&g.dir, cx);
     assert!(view.read_with(cx, |v, _| !v.rows.iter().any(|r| r.sha.as_ref() == deep)), "the commit lies pages past the first");
@@ -66,7 +66,7 @@ fn a_parent_click_whose_page_is_not_loaded_reveals_it(cx: &mut TestAppContext) {
 #[gpui::test]
 fn rows_past_the_cap_drop_while_the_view_is_far_above_and_page_in_again(cx: &mut TestAppContext) {
     use super::cap::{KEEP_BELOW, MAX_ROWS};
-    let g = Generated::new(12_000);
+    let g = Generated::shared(12_000);
     let t1 = tag(&g, "t1");
     let (view, cx) = open(&g.dir, cx);
     view.update(cx, |v, cx| v.seek_sha(t1.clone().into(), cx));

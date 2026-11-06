@@ -631,9 +631,58 @@ fn run_records_rotate_at_one_mib_and_read_across_both_files() {
     assert!(all.windows(2).all(|w| w[0].ts < w[1].ts), "oldest first");
 }
 
+/// `git args` in `dir` with no user or system config, retried while Defender or the indexer holds a fresh file.
 fn git(dir: &Path, args: &[&str]) {
-    let out = crate::process::git(dir, args).unwrap();
-    assert!(out.success(), "git {args:?}: {}", out.stderr);
+    let mut out = None;
+    for _ in 0..5 {
+        let mut cmd = crate::process::command("git");
+        crate::process::without_user_config(cmd.arg("-C").arg(dir).args(args));
+        let ran = crate::process::run(&mut cmd, crate::process::GIT_TIMEOUT, crate::process::Kill::Tree).unwrap();
+        if ran.success() {
+            return;
+        }
+        out = Some(ran);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    panic!("git {args:?}: {}", out.map(|o| o.stderr).unwrap_or_default());
+}
+
+/// [`crate::prune::prune`], again a few times while it cannot remove a file made a moment ago.
+fn prune_settled(home: &Path, now: i64) -> Vec<String> {
+    let mut errors = crate::prune::prune(home, now, crate::prune::KEEP_MS);
+    for _ in 0..5 {
+        if errors.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        errors = crate::prune::prune(home, now, crate::prune::KEEP_MS);
+    }
+    errors
+}
+
+/// `f`'s folder as a repo with three run worktrees: `clean`, `dirty` (a file not committed) and `ahead` (a commit only it has).
+fn run_worktrees_of(f: &Fixture) -> impl Fn(&str) -> PathBuf {
+    git(&f.folder, &["init", "-q"]);
+    git(&f.folder, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+    let wts = f.folder.join(".claude").join("worktrees");
+    let wt = move |n: &str| wts.join(format!("fm-sched-autofix-prod-bugs-{n}"));
+    for n in ["clean", "dirty", "ahead"] {
+        git(&f.folder, &["worktree", "add", "-q", "-b", &format!("sched/x/{n}"), wt(n).to_str().unwrap(), "HEAD"]);
+    }
+    fs::write(wt("dirty").join("wip.txt"), "unsaved").unwrap();
+    git(&wt("ahead"), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);
+    wt
+}
+
+#[test]
+fn a_run_worktree_is_spent_when_clean_and_without_a_commit_of_its_own() {
+    let f = fixture();
+    let wt = run_worktrees_of(&f);
+    let (main, branch) = super::runs::spent(&wt("clean")).unwrap().expect("clean is spent");
+    assert_eq!((crate::paths::path_key(&main), branch.as_str()), (crate::paths::path_key(&f.folder), "sched/x/clean"));
+    assert_eq!(super::runs::spent(&wt("dirty")).unwrap(), None, "uncommitted work");
+    assert_eq!(super::runs::spent(&wt("ahead")).unwrap(), None, "a commit only it has");
+    assert_eq!(super::runs::spent(&f.folder).unwrap(), None, "the main checkout is no run worktree");
 }
 
 #[test]
@@ -655,25 +704,17 @@ fn prune_takes_old_rotated_runs_the_state_of_removed_schedules_and_spent_worktre
     fs::create_dir_all(unreadable.join("x")).unwrap();
     fs::write(f.home.join("schedules").join("broken.toml"), "not toml [").unwrap();
 
-    git(&f.folder, &["init", "-q"]);
-    git(&f.folder, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
-    let wts = f.folder.join(".claude").join("worktrees");
-    let wt = |n: &str| wts.join(format!("fm-sched-autofix-prod-bugs-{n}"));
-    for n in ["clean", "dirty", "ahead"] {
-        git(&f.folder, &["worktree", "add", "-q", "-b", &format!("sched/x/{n}"), wt(n).to_str().unwrap(), "HEAD"]);
-    }
-    fs::write(wt("dirty").join("wip.txt"), "unsaved").unwrap();
-    git(&wt("ahead"), &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work"]);
+    let wt = run_worktrees_of(&f);
     assert_eq!(run_worktrees(&f.home).len(), 3);
 
     let now = crate::time::now_ms();
-    assert_eq!(crate::prune::prune(&f.home, now, crate::prune::KEEP_MS), Vec::<String>::new());
+    assert_eq!(prune_settled(&f.home, now), Vec::<String>::new());
     assert!(runs.join("demo.jsonl.1").exists() && wt("clean").exists(), "nothing is old yet");
     assert!(!state.join("removed").exists(), "the state of a removed schedule goes");
     assert!(state.join("autofix-prod-bugs").exists() && unreadable.join("x").exists(), "kept, and kept when unsure");
 
     let later = now + crate::prune::KEEP_MS + 24 * 3600 * 1000;
-    assert_eq!(crate::prune::prune(&f.home, later, crate::prune::KEEP_MS), Vec::<String>::new());
+    assert_eq!(prune_settled(&f.home, later), Vec::<String>::new());
     assert!(!runs.join("demo.jsonl.1").exists() && runs.join("demo.jsonl").exists(), "only the rotated file ages out");
     assert!(!wt("clean").exists(), "a clean worktree with nothing of its own goes");
     let branches = crate::process::git(&f.folder, &["branch", "--list", "sched/*"]).unwrap().stdout;

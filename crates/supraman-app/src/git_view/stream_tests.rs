@@ -21,7 +21,7 @@ fn git_pid(view: &Entity<GitView>, cx: &mut VisualTestContext) -> u32 {
 
 #[gpui::test]
 fn paging_ten_pages_reads_on_from_the_first_pages_git(cx: &mut TestAppContext) {
-    let g = Generated::new(FIRST_PAGE + 12 * NEXT_PAGE);
+    let g = Generated::shared(FIRST_PAGE + 12 * NEXT_PAGE);
     let (view, cx) = open(&g.dir, cx);
     let before = process::spawned_here();
     paged(&view, 10, cx);
@@ -33,7 +33,7 @@ fn paging_ten_pages_reads_on_from_the_first_pages_git(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_walk_change_and_closing_the_tab_kill_the_walks_git(cx: &mut TestAppContext) {
-    let g = Generated::new(FIRST_PAGE + 20 * NEXT_PAGE);
+    let g = Generated::shared(FIRST_PAGE + 20 * NEXT_PAGE);
     let (view, cx) = open(&g.dir, cx);
     let first = git_pid(&view, cx);
     let key = "refs/heads/topic/240".to_string();
@@ -51,7 +51,7 @@ fn a_walk_change_and_closing_the_tab_kill_the_walks_git(cx: &mut TestAppContext)
 #[gpui::test]
 fn paging_after_the_tail_dropped_reads_what_a_fresh_read_does(cx: &mut TestAppContext) {
     let total = 12_000;
-    let g = Generated::new(total);
+    let g = Generated::shared(total);
     let (view, cx) = open(&g.dir, cx);
     view.update(cx, |v, cx| v.seek_sha(tag(&g, "t1").into(), cx));
     cx.run_until_parked();

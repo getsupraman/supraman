@@ -44,7 +44,7 @@ fn blob_size(f: &Fixture, sha: &str, path: &str) -> String {
 
 #[gpui::test]
 fn a_changed_png_shows_both_sides_with_their_sizes_in_split_inline_and_file_view(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f, cx);
     let d = show(&view, &f, "changed.png", cx);
     assert_eq!(d.read_with(cx, |d, _| d.shown()), "image 4×3 → 8×6");
@@ -73,7 +73,7 @@ fn a_changed_png_shows_both_sides_with_their_sizes_in_split_inline_and_file_view
 
 #[gpui::test]
 fn an_added_or_deleted_png_and_an_svg_show_as_images(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f, cx);
     let d = show(&view, &f, "added.png", cx);
     assert_eq!(d.read_with(cx, |d, _| d.shown()), "image none → 3×3");
@@ -91,7 +91,7 @@ fn an_added_or_deleted_png_and_an_svg_show_as_images(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_binary_or_an_undecodable_image_says_so_with_both_byte_sizes(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f, cx);
     let (base, media) = (f.sha("media_base"), f.sha("media"));
     for path in ["data.bin", "broken.png"] {
@@ -106,7 +106,7 @@ fn a_binary_or_an_undecodable_image_says_so_with_both_byte_sizes(cx: &mut TestAp
 
 #[gpui::test]
 fn a_change_only_bytes_show_is_named_and_a_text_change_keeps_its_hunks(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f, cx);
     let cases = [
         ("bom.txt", "same text: Byte-order mark added (UTF-8 → UTF-8 with BOM)", "UTF-8 → UTF-8 with BOM"),

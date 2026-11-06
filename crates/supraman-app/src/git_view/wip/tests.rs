@@ -59,7 +59,7 @@ pub(crate) fn open_file(view: &Entity<GitView>, section: Section, path: &str, cx
 
 #[gpui::test]
 fn wip_view_lists_each_file_in_its_section_with_its_mark(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     select_wip(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Wip));
@@ -100,7 +100,7 @@ fn wip_view_lists_each_file_in_its_section_with_its_mark(cx: &mut TestAppContext
 
 #[gpui::test]
 fn wip_view_diffs_show_the_right_sides(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open_with_editor(&f.dir, cx);
     select_wip(&view, cx);
 
@@ -125,7 +125,7 @@ fn wip_view_diffs_show_the_right_sides(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     f.conflict();
     let (view, cx) = open_with_editor(&f.worktree, cx);
     select_wip(&view, cx);
@@ -141,7 +141,7 @@ fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, vcx) = open(&f.worktree, cx);
     view.update(vcx, |v, cx| v.select_sha(f.sha("second"), cx));
     vcx.run_until_parked();
@@ -162,7 +162,7 @@ fn wip_view_banner_view_change_selects_the_wip_row(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open_with_editor(&f.dir, cx);
     select_wip(&view, cx);
     open_file(&view, Section::Unstaged, "a.txt", cx);
@@ -180,7 +180,7 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
 
 #[gpui::test]
 fn wip_view_shows_the_status_a_refresh_read_without_reading_it_again(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let (view, cx) = open(&f.dir, cx);
     select_wip(&view, cx);
     let reads = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.wip_panel().read(cx).status_reads);

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext, px};
-use supraman_gitman::fixture::{Fixture, Generated};
+use supraman_gitman::fixture::{Fixture, Generated, Shared};
 use supraman_gitman::{Branch, Head, Refs, RemoteBranch, Stash, Tag, Upstream, Worktree};
 use supraman_ui::hit::HitTargets;
 
@@ -171,14 +171,24 @@ fn solo(f: &Fixture) -> String {
     sha
 }
 
+/// The fixture with [`solo`], shared by the tests that only read it.
+fn soloed() -> std::sync::Arc<(Fixture, String)> {
+    static SOLOED: Shared<(Fixture, String)> = Shared::new();
+    SOLOED.get(|| {
+        let f = Fixture::copy();
+        let sha = solo(&f);
+        (f, sha)
+    })
+}
+
 fn has(view: &Entity<GitView>, sha: &str, cx: &mut VisualTestContext) -> bool {
     view.read_with(cx, |v, _| v.rows.iter().any(|r| r.sha.as_ref() == sha))
 }
 
 #[gpui::test]
 fn hiding_a_branch_prunes_its_own_commits_from_the_graph_and_show_all_restores_them(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let only = solo(&f);
+    let soloed = soloed();
+    let (f, only) = (&soloed.0, soloed.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     assert!(has(&view, &only, cx) && has(&view, f.sha("stash_feature_index"), cx));
@@ -200,7 +210,7 @@ fn hiding_a_branch_prunes_its_own_commits_from_the_graph_and_show_all_restores_t
 
 #[gpui::test]
 fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     panel.update(cx, |p, cx| p.picked("local/feature", cx));
@@ -210,7 +220,7 @@ fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut T
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a section's header picks nothing");
 
-    let g = Generated::new(4000);
+    let g = Generated::shared(4000);
     let deep = g.repo();
     let t1 = supraman_gitman::refs(&deep).unwrap().tags.into_iter().find(|t| t.name == "t1").and_then(|t| t.commit).unwrap();
     view.update(cx, |v, cx| {
@@ -259,7 +269,7 @@ fn branch_off_merge(f: &Fixture, name: &str) -> String {
 
 #[gpui::test]
 fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::copy();
     let (only, other) = (solo(&f), branch_off_merge(&f, "topic/other"));
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
@@ -283,7 +293,7 @@ fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut T
 
 #[gpui::test]
 fn ctrl_j_right_after_show_all_collapses_the_panel(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     click("refpanel-mark-local/feature", &view, cx);
     cx.update(|window, cx| window.blur(cx));
@@ -295,7 +305,7 @@ fn ctrl_j_right_after_show_all_collapses_the_panel(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn ctrl_j_collapses_the_panel_to_its_strip(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     let shown = |key: &str| hits.borrow().contains_key(key);
@@ -322,7 +332,7 @@ fn ctrl_j_collapses_the_panel_to_its_strip(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and_closes_it(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     panel.update(cx, |p, cx| p.toggle_shut(cx));
@@ -357,7 +367,7 @@ fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and
 
 #[gpui::test]
 fn ref_panel_and_a_sections_overlay_paint_their_rows_whole_in_their_first_frame(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     let width = |key: &str| hits.borrow().get(key).map(|h| h.bounds.size.width).unwrap_or_else(|| panic!("{key} not painted"));
@@ -373,7 +383,7 @@ fn ref_panel_and_a_sections_overlay_paint_their_rows_whole_in_their_first_frame(
 
 #[gpui::test]
 fn a_sections_overlay_shows_nothing_until_its_tree_is_built(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     panel.update(cx, |p, cx| p.toggle_shut(cx));
@@ -393,7 +403,7 @@ fn a_sections_overlay_shows_nothing_until_its_tree_is_built(cx: &mut TestAppCont
 
 #[gpui::test]
 fn a_sections_border_drags_height_between_its_neighbours_and_the_heights_persist(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     let at = |key: &str| hits.borrow().get(key).unwrap_or_else(|| panic!("{key} not painted")).bounds;
@@ -422,8 +432,8 @@ fn a_sections_border_drags_height_between_its_neighbours_and_the_heights_persist
 
 #[gpui::test]
 fn every_ref_rows_mark_sits_at_the_rows_left_edge_whatever_its_depth(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    solo(&f);
+    let soloed = soloed();
+    let f = &soloed.0;
     let (view, cx) = open(&f.dir, cx);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     redraw(&view, cx);
@@ -437,7 +447,7 @@ fn every_ref_rows_mark_sits_at_the_rows_left_edge_whatever_its_depth(cx: &mut Te
 
 #[gpui::test]
 fn a_rows_mark_is_the_current_tick_or_hides_or_shows_or_stops_soloing(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     let walk = |cx: &mut VisualTestContext| panel.read_with(cx, |p, _| p.walk().clone());
@@ -466,7 +476,7 @@ fn a_refs_menu_solos_and_hides_and_has_no_hide_for_the_current_branch(cx: &mut T
 
 #[gpui::test]
 fn a_right_click_opens_the_refs_menu_and_its_solo_solos_it(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     right_click("refpanel-name-local/feature", &view, cx);
@@ -478,8 +488,8 @@ fn a_right_click_opens_the_refs_menu_and_its_solo_solos_it(cx: &mut TestAppConte
 
 #[gpui::test]
 fn a_double_click_on_a_hidden_ref_shows_it_and_selects_its_commit(cx: &mut TestAppContext) {
-    let f = Fixture::new();
-    let only = solo(&f);
+    let soloed = soloed();
+    let (f, only) = (&soloed.0, soloed.1.clone());
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     click("refpanel-mark-local/topic/solo", &view, cx);
@@ -493,7 +503,7 @@ fn a_double_click_on_a_hidden_ref_shows_it_and_selects_its_commit(cx: &mut TestA
 
 #[gpui::test]
 fn ref_counts_are_made_once_per_change_not_per_frame(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
     let fresh = |p: &RefPanel| counts(&p.entries, &p.walk, &p.filter());

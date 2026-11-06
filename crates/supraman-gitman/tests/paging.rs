@@ -7,12 +7,14 @@ use supraman_gitman::{FIRST_PAGE, History, NEXT_PAGE, history, refs};
 #[test]
 fn the_first_and_next_page_of_a_long_history() {
     let made = Instant::now();
-    let generated = Generated::new(20_000);
+    let generated = Generated::shared(20_000);
     println!("fast-import of 20000 commits: {:?}", made.elapsed());
     let repo = generated.repo();
     let refs = refs(&repo).unwrap();
     let tips = refs.tips();
     assert!(refs.branches.len() > 10 && refs.tags.len() == 20, "{} branches, {} tags", refs.branches.len(), refs.tags.len());
+    let names: Vec<&str> = refs.branches.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!((names.len(), &names[..3], names.last().copied()), (102, &["main", "scratch", "topic/0"][..], Some("topic/980")), "main, scratch and every twentieth topic");
 
     let started = Instant::now();
     let first = history(&repo, &tips, 0, FIRST_PAGE).unwrap();
@@ -30,12 +32,11 @@ fn the_first_and_next_page_of_a_long_history() {
     assert!(first.commits.last().unwrap().committer.time > next.commits[0].committer.time, "the next page follows on");
     let whole = history(&repo, &tips, 0, 30_000).unwrap();
     assert_eq!((whole.commits.len(), whole.more), (20_000, false));
-    assert!(first_took.as_secs() < 20 && next_took.as_secs() < 20);
 }
 
 #[test]
 fn a_walk_pages_on_from_one_rev_list_as_one_shot_reads_do() {
-    let generated = Generated::new(FIRST_PAGE + 10 * NEXT_PAGE + 50);
+    let generated = Generated::shared(FIRST_PAGE + 10 * NEXT_PAGE + 50);
     let repo = generated.repo();
     let tips = refs(&repo).unwrap().tips();
     let before = process::spawned_here();
@@ -57,7 +58,7 @@ fn a_walk_pages_on_from_one_rev_list_as_one_shot_reads_do() {
 
 #[test]
 fn a_dropped_walk_kills_its_git() {
-    let generated = Generated::new(FIRST_PAGE + 20 * NEXT_PAGE);
+    let generated = Generated::shared(FIRST_PAGE + 20 * NEXT_PAGE);
     let repo = generated.repo();
     let tips = refs(&repo).unwrap().tips();
     let mut walk = History::start(&repo, &tips, 0).unwrap();

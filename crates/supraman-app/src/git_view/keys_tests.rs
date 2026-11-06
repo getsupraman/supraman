@@ -61,7 +61,7 @@ fn a_file_step_wraps_at_both_ends() {
 
 #[gpui::test]
 fn graph_keys_walk_parents_children_head_and_upstream(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let upstream = f.git(&["rev-parse", "origin/main"]);
     assert_eq!(upstream, f.sha("merge"), "the fixture's origin/main");
@@ -101,7 +101,7 @@ fn graph_keys_walk_parents_children_head_and_upstream(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn page_keys_move_a_page_and_keep_the_selection_in_view(cx: &mut TestAppContext) {
-    let g = Generated::new(1_000);
+    let g = Generated::shared(1_000);
     let (view, cx) = open(&g.dir, cx);
     click_row(&view, 0, cx);
     let page = view.read_with(cx, |v, _| v.table.page());
@@ -118,7 +118,7 @@ fn page_keys_move_a_page_and_keep_the_selection_in_view(cx: &mut TestAppContext)
 
 #[gpui::test]
 fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppContext) {
-    let g = Generated::new(200);
+    let g = Generated::shared(200);
     let (view, cx) = open(&g.dir, cx);
     click_row(&view, 0, cx);
     let token = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.panel.read(cx).token());
@@ -147,7 +147,7 @@ fn a_held_key_reads_the_commit_once_it_comes_up_or_settles(cx: &mut TestAppConte
 
 #[gpui::test]
 fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let root = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
@@ -180,7 +180,7 @@ fn right_opens_the_first_file_and_left_or_escape_go_back_to_the_row(cx: &mut Tes
 
 #[gpui::test]
 fn up_and_down_in_the_viewer_walk_the_files_and_wrap(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let root = view.read_with(cx, |v, _| v.rows.iter().position(|r| r.sha.as_ref() == f.sha("root")).unwrap());
     click_row(&view, root, cx);
@@ -200,7 +200,7 @@ fn up_and_down_in_the_viewer_walk_the_files_and_wrap(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn on_the_wip_row_right_opens_an_unstaged_file_first_and_the_walk_goes_on_into_the_staged(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     click_row(&view, 0, cx);
     let files = view.read_with(cx, |v, cx| v.wip_panel.read(cx).file_order());

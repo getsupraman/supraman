@@ -256,6 +256,11 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<Output, RunError> {
     run(command("git").arg("-C").arg(dir).args(args), GIT_TIMEOUT, Kill::Tree)
 }
 
+/// `cmd`, a git, with no system or user config: only the repository's own (a test's repo, C151).
+pub fn without_user_config(cmd: &mut Command) -> &mut Command {
+    cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null")
+}
+
 /// How many chunks of stdout a [`Streaming`] child's reader runs ahead of its caller; past them the child
 /// blocks on its pipe until more are asked for.
 const AHEAD: usize = 2;
@@ -630,7 +635,7 @@ mod tests {
     /// The child starts a grandchild that would outlive it; a tree timeout kills both, a child one only the child.
     #[test]
     fn a_timeout_kills_the_tree_or_only_the_child() {
-        for (kill, grandchild_left) in [(Kill::Tree, false), (Kill::Child, true)] {
+        let cases = [(Kill::Tree, false), (Kill::Child, true)].map(|(kill, grandchild_left)| thread::spawn(move || {
             let dir = tempfile::tempdir().unwrap();
             let pid_file = dir.path().join("pid");
             let script = format!(
@@ -651,6 +656,9 @@ mod tests {
             if grandchild_left {
                 let _ = command("taskkill").args(["/PID", &pid.to_string(), "/F"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
             }
+        }));
+        for case in cases {
+            case.join().unwrap();
         }
     }
 
