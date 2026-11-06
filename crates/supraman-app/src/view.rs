@@ -2005,8 +2005,7 @@ impl FleetView {
         };
         let settings = self.home.as_deref().and_then(|h| Settings::load(h).ok()).unwrap_or_default();
         let config = crate::supervise::launch_config(self.home.clone(), Some(&plugin_dir), &settings);
-        let sm_dir = supraman_core::install::exe_dir().ok().filter(|d| d.join(supraman_core::HOOK_EXE).is_file());
-        crate::hand::extras(&config, &self.workspaces, cwd, &name, sm_dir.as_deref())
+        crate::hand::extras(&config, &self.workspaces, cwd, &name, supraman_core::install::sm_dir().as_deref())
     }
 
     fn claude_shell(&self, launch: &Launch, claude: &str, extras: &Extras) -> util::shell::Shell {

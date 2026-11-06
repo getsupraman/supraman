@@ -147,7 +147,7 @@ impl LaunchConfig {
         let mut settings = serde_json::Map::new();
         let mut env = self.session_env(workspace, name, role, repo, extra);
         if !env.is_empty() {
-            env.extend(sm_first_path());
+            env.extend(supraman_core::install::sm_first_path().map(|path| ("PATH".to_string(), path)));
             let env: serde_json::Map<String, serde_json::Value> = env.into_iter().map(|(k, v)| (k, v.into())).collect();
             settings.insert("env".into(), env.into());
         }
@@ -156,13 +156,6 @@ impl LaunchConfig {
         }
         (!settings.is_empty()).then(|| serde_json::Value::Object(settings).to_string())
     }
-}
-
-/// A background session's `PATH`: the folder of the `sm` beside this exe first, so its `sm` is this build's.
-fn sm_first_path() -> Option<(String, String)> {
-    let dir = supraman_core::install::exe_dir().ok()?;
-    let rest = std::env::var("PATH").unwrap_or_default();
-    Some(("PATH".to_string(), format!("{};{rest}", dir.display())))
 }
 
 /// One workspace's supervisor: desired state + memory, driven by [`Supervisor::tick`].
