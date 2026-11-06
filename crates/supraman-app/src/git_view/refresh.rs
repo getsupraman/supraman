@@ -6,11 +6,13 @@ use std::sync::Arc;
 
 use futures::StreamExt as _;
 use gpui::{AnyElement, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
-use supraman_gitman::{FIRST_PAGE, Repo, Status};
+use supraman_gitman::{FIRST_PAGE, Layout, Repo, Status};
 use supraman_ui::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
-use super::load::{self, First, GraphRow, Wip};
+use super::load::{self, First, GraphRow, Kept, Wip};
+use super::ref_panel::Walk;
+use super::splice::Loaded;
 use super::{GitView, Selected, graph};
 
 /// What the tab keeps to follow its repository.
@@ -27,6 +29,8 @@ pub struct Follow {
     hidden: bool,
     /// What changed while the tab was hidden, read when it is shown.
     pub(super) pending: Option<Refresh>,
+    /// The walk the loaded rows were read with.
+    pub(super) walked: Walk,
     not_following: Option<String>,
     pub(super) graph_failed: Option<String>,
     wip_failed: Option<String>,
@@ -161,15 +165,16 @@ impl GitView {
         }
     }
 
-    /// The refs, the WIP and as many commits as are loaded, read again; `files` the work dir's changed ones.
+    /// The refs, the WIP and the first page read again, the commits loaded below it kept while the walk below is
+    /// the same; `files` the work dir's changed ones.
     pub fn refresh_graph(&mut self, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
         self.follow.graph_token += 1;
         self.follow.wip_token += 1;
         let token = self.follow.graph_token;
-        let count = self.commits.max(FIRST_PAGE);
         let walk = self.ref_panel.read(cx).walk().clone();
-        let read = cx.background_spawn(async move { load::read(repo, count, &walk) });
+        let loaded = (self.commits > FIRST_PAGE && walk == self.follow.walked).then(|| self.loaded());
+        let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref()) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |v, cx| v.apply_refresh(token, read, files, cx)).ok();
@@ -192,13 +197,19 @@ impl GitView {
         self.follow.graph_failed = None;
         self.follow.wip_failed = None;
         let (selected, anchor) = (self.selected(), self.anchor());
+        let (mut rows, mut more, mut layout) = (first.page.rows, first.page.more, first.page.layout);
+        if let Some((kept, kept_layout, kept_more)) = first.kept.and_then(|k| self.take_kept(k)) {
+            rows.extend(kept);
+            (more, layout) = (kept_more, kept_layout);
+        }
         self.follow.generation += 1;
+        self.follow.walked = first.walk;
         self.paging = false;
         self.page_error = None;
-        self.commits = first.page.rows.iter().filter(|r| !r.wip()).count();
-        self.rows = first.page.rows;
-        self.more = first.page.more;
-        self.layout = Some(first.page.layout);
+        self.commits = rows.iter().filter(|r| !r.wip()).count();
+        self.rows = rows;
+        self.more = more;
+        self.layout = Some(layout);
         self.tips = first.tips.into();
         self.heads = first.heads;
         self.wip = first.wip;
@@ -218,6 +229,22 @@ impl GitView {
             self.follow.refreshes += 1;
         }
         cx.notify();
+    }
+
+    fn loaded(&self) -> Loaded {
+        let commits = self.rows.iter().filter(|r| !r.wip()).map(|r| (r.sha.clone(), r.parents.clone())).collect();
+        Loaded { tips: self.tips.clone(), commits, more: self.more }
+    }
+
+    /// The rows `kept` lays out again, unless they changed since they were asked for.
+    fn take_kept(&mut self, kept: Kept) -> Option<(Vec<GraphRow>, Layout, bool)> {
+        let start = kept.from + usize::from(self.rows.first().is_some_and(GraphRow::wip));
+        let loaded = self.rows.get(start..start + kept.rows.len())?;
+        if loaded.iter().zip(&kept.rows).any(|(g, r)| r.sha.as_deref() != Some(g.sha.as_ref())) {
+            return None;
+        }
+        let rows = std::mem::take(&mut self.rows).into_iter().skip(start).zip(kept.rows).map(|(g, row)| GraphRow { row, ..g }).collect();
+        Some((rows, kept.layout, kept.more))
     }
 
     /// The same commit selected at its new row; the WIP row while there is one; else nothing.

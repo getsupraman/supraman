@@ -1,5 +1,6 @@
 use gpui::{TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Generated, git_in};
+use supraman_gitman::{FIRST_PAGE, NEXT_PAGE, Row};
 
 use super::live::{FOCUS_DELAY, Refresh};
 use super::live_tests::{close, follow, following};
@@ -95,4 +96,73 @@ fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext
     activated(&view, cx);
     assert_eq!(refreshes(&view, cx), before, "the watchers cover the window coming back");
     close(view, cx);
+}
+
+fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
+    for _ in 0..pages {
+        view.update(cx, |v, cx| v.load_more(cx));
+        cx.run_until_parked();
+    }
+}
+
+/// The rows of the repo's first `count` commits laid out in one go.
+fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
+    let repo = g.repo();
+    let refs = supraman_gitman::refs(&repo).unwrap();
+    let history = supraman_gitman::history(&repo, &refs.tips(), 0, count).unwrap();
+    supraman_gitman::Layout::new(&refs, wip).extend(&history.commits)
+}
+
+fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
+    view.read_with(cx, |v, _| v.rows.iter().map(|r| r.row.clone()).collect())
+}
+
+#[gpui::test]
+fn refresh_after_a_commit_on_top_keeps_the_rows_paged_below_and_the_place(cx: &mut TestAppContext) {
+    let total = FIRST_PAGE + 3 * NEXT_PAGE;
+    let g = Generated::new(total);
+    let (view, cx) = open(&g.dir, cx);
+    paged(&view, 2, cx);
+    let loaded = FIRST_PAGE + 2 * NEXT_PAGE;
+    assert_eq!(view.read_with(cx, |v, _| v.commits), loaded);
+    let row = px(graph::ROW);
+    let (sha, ix, top) = view.update(cx, |v, cx| {
+        let sha = v.rows[loaded - 100].sha.clone();
+        v.select_sha(&sha, cx);
+        v.table.set_scroll_top(row * (loaded - 110) as f32);
+        (sha, v.table.selected().unwrap(), v.table.scroll_top())
+    });
+    redraw(&view, cx);
+    let wip = view.read_with(cx, |v, _| v.rows[0].wip());
+    let on_top = commit_on(&g, "main", "main", "On top");
+    refreshed(&view, cx);
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.commits, loaded + 1, "the paged rows stay below the new commit");
+        assert!(v.rows.iter().any(|r| r.sha.as_ref() == on_top));
+        assert_eq!(v.selected(), Some(Selected::Commit(sha.clone())), "the same commit selected");
+        assert_eq!(v.table.selected(), Some(ix + 1), "one row down");
+        assert_eq!(v.table.scroll_top(), top + row, "the scroll followed it");
+        assert!(v.more);
+    });
+    assert_eq!(rows(&view, cx), fresh(&g, wip, loaded + 1), "laid out as a fresh read of as many commits");
+    paged(&view, 1, cx);
+    assert_eq!(rows(&view, cx), fresh(&g, wip, total + 1), "and pages on from there as a fresh read does");
+}
+
+#[gpui::test]
+fn refresh_after_a_rewrite_or_a_hidden_ref_reads_the_first_page_afresh(cx: &mut TestAppContext) {
+    let g = Generated::new(FIRST_PAGE + 3 * NEXT_PAGE);
+    let (view, cx) = open(&g.dir, cx);
+    paged(&view, 2, cx);
+    let rewritten = commit_on(&g, "main~1", "main", "Rewritten");
+    refreshed(&view, cx);
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.commits, FIRST_PAGE, "the old tip is gone: the first page only");
+        assert!(v.more && v.rows.iter().any(|r| r.sha.as_ref() == rewritten));
+    });
+    paged(&view, 2, cx);
+    let key = "refs/heads/topic/240".to_string();
+    view.update(cx, |v, cx| v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&[key], cx)));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |v, _| v.commits), FIRST_PAGE, "a hidden ref: the first page only");
 }

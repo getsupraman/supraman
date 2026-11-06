@@ -49,7 +49,7 @@ pub(super) struct Placed {
 impl Lanes {
     /// Places one row: the lowest lane reserved for it, else the lowest free; its first parent continues in
     /// its lane, a further parent joins the lane already waiting for it or opens the lowest free one.
-    pub fn place(&mut self, sha: &str, parents: &[String], dashed: bool, stash: bool) -> Placed {
+    pub fn place<P: AsRef<str>>(&mut self, sha: &str, parents: &[P], dashed: bool, stash: bool) -> Placed {
         let waiting = self.waiting.remove(sha).unwrap_or_default();
         let mut incoming: Vec<usize> = waiting.iter().map(|(l, _)| *l).collect();
         incoming.sort_unstable();
@@ -58,8 +58,8 @@ impl Lanes {
         for &l in &incoming {
             self.carry[l] = None;
         }
-        for (i, parent) in parents.iter().enumerate() {
-            if parents[..i].contains(parent) {
+        for (i, parent) in parents.iter().map(AsRef::as_ref).enumerate() {
+            if parents[..i].iter().any(|p| p.as_ref() == parent) {
                 continue;
             }
             let waiting = self.waiting.get(parent).and_then(|w| kept(w));
