@@ -514,6 +514,24 @@ fn a_dead_runs_session_that_would_not_end_is_tried_again_then_given_up() {
     assert!(log.contains("its session fm-demo-sched-gate-x is ended") && log.contains("given up on its session fm-demo-sched-gate-x after 5 tries: gone"), "{log}");
 }
 
+/// The window's poll lists a run by its `<id>.dead.json` too, so a dead run's session whose stop failed is tried again.
+#[test]
+fn the_polls_recovery_tries_a_dead_runs_kept_session_again() {
+    let f = fixture();
+    f.add_approved(script_schedule("gate", "exit0.cmd", ActionKind::Script));
+    fs::create_dir_all(f.live()).unwrap();
+    let pid = common::exited_pid();
+    let session = r#"{"name":"fm-demo-sched-gate-x","id":"abcd1234"}"#;
+    fs::write(f.live().join("gate.json"), format!(r#"{{"run":"gate-20261101-070000","fm_pid":{pid},"started_at":1,"stage":"session","session":{session}}}"#)).unwrap();
+    let dead = f.live().join("gate.dead.json");
+    let mut host = TestHost::at(&f, 1_000_000);
+    host.ends = VecDeque::from([Err("claude stop abcd1234: unreachable".to_string())]);
+    assert_eq!(fire::recover_workspace_with(&f.home, "demo", 1_000_000, &mut host), vec!["gate-20261101-070000".to_string()]);
+    assert!(!f.live().join("gate.json").exists() && dead.exists(), "the session is kept for another try");
+    assert_eq!(fire::recover_workspace_with(&f.home, "demo", 1_000_000 + 60_000, &mut host), Vec::<String>::new());
+    assert_eq!((host.ended, dead.exists()), (2, false), "the kept session is ended on the poll's second try");
+}
+
 /// A live file whose sm is gone is ended as interrupted, by the next fire and by the window's poll; one whose sm
 /// runs, or whose lock a fire holds, is left alone.
 #[test]

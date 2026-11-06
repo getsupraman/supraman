@@ -582,6 +582,39 @@ pub fn recover_if_dead(home: &Path, workspace: &str, id: &str) -> Option<String>
     recover_if_dead_with(home, workspace, id, supraman_core::time::now_ms(), &mut RealHost::new(home))
 }
 
+/// [`recover_if_dead`] for each schedule of `workspace` with a live or a dead file; the runs recovered.
+pub fn recover_workspace(home: &Path, workspace: &str) -> Vec<String> {
+    let ids = live_ids(home, workspace);
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    recover_ids(home, workspace, ids, supraman_core::time::now_ms(), &mut RealHost::new(home))
+}
+
+/// [`recover_workspace`] at `now` through `host`.
+pub fn recover_workspace_with(home: &Path, workspace: &str, now: i64, host: &mut dyn Host) -> Vec<String> {
+    recover_ids(home, workspace, live_ids(home, workspace), now, host)
+}
+
+fn recover_ids(home: &Path, workspace: &str, ids: std::collections::BTreeSet<String>, now: i64, host: &mut dyn Host) -> Vec<String> {
+    ids.iter().filter_map(|id| recover_if_dead_with(home, workspace, id, now, host)).collect()
+}
+
+/// The schedule ids of `<id>.json` and `<id>.dead.json` in `workspace`'s live folder, each once.
+fn live_ids(home: &Path, workspace: &str) -> std::collections::BTreeSet<String> {
+    let Some(entries) = schedule::live_dir(home, workspace).ok().and_then(|d| fs::read_dir(d).ok()) else {
+        return Default::default();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".json")?;
+            Some(stem.strip_suffix(".dead").unwrap_or(stem).to_string())
+        })
+        .collect()
+}
+
 /// [`recover_if_dead`] at `now` through `host`; it also tries a dead run's kept session again.
 pub fn recover_if_dead_with(home: &Path, workspace: &str, id: &str, now: i64, host: &mut dyn Host) -> Option<String> {
     let live = Paths::new(schedule::live_dir(home, workspace).ok()?, id);
