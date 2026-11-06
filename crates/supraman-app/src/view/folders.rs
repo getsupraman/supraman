@@ -53,9 +53,22 @@ fn verb(edit: &Edit) -> String {
     }
 }
 
+/// A Save refused part way: the edits applied before it, with the sessions they stopped, and why.
+#[derive(Debug)]
+pub struct Refused {
+    pub applied: Option<(Edited, Vec<String>)>,
+    pub why: String,
+}
+
+impl From<String> for Refused {
+    fn from(why: String) -> Self {
+        Self { applied: None, why }
+    }
+}
+
 /// Applies `edits` in turn, stopping at the first refused, and releases the sessions of every folder removed or
 /// disabled on the way (stop, never rm). Returns the edits' sum and the sessions stopped.
-pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<String>), String> {
+pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<String>), Refused> {
     let registry = Registry::at(home);
     let (mut sum, mut released, mut refused): (Option<Edited>, Vec<String>, Option<String>) = (None, Vec::new(), None);
     for edit in edits {
@@ -85,12 +98,24 @@ pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<S
         }
     }
     let names: Vec<&str> = released.iter().map(String::as_str).collect();
-    let stopped = DesiredState::release(home, w, &names).map_err(|e| e.to_string())?;
+    let stopped = match DesiredState::release(home, w, &names) {
+        Ok(stopped) => stopped,
+        Err(e) => return Err(Refused { applied: sum.map(|s| (s, Vec::new())), why: e.to_string() }),
+    };
     match (refused, sum) {
         (None, Some(sum)) => Ok((sum, stopped)),
-        (Some(e), _) => Err(e),
-        (None, None) => Err("nothing to change".into()),
+        (Some(why), sum) => Err(Refused { applied: sum.map(|s| (s, stopped)), why }),
+        (None, None) => Err("nothing to change".to_string().into()),
     }
+}
+
+/// What a refused Save says: what it applied before the refusal, then why.
+pub fn refusal_words(w: &str, refused: &Refused) -> String {
+    let Some((done, stopped)) = &refused.applied else {
+        return refused.why.clone();
+    };
+    let what = if done.added.is_empty() && done.removed.is_empty() { format!("{w}: part of the change.") } else { summary(w, done) };
+    format!("Applied {what}{} Refused: {}", edited_note(done, stopped, &[]), refused.why)
 }
 
 /// What Rescan offers: the workspace, the subfolders new to it, and its folders gone from disk.
@@ -219,7 +244,7 @@ impl FleetView {
         .detach();
     }
 
-    fn edits_applied(&mut self, w: &str, result: Result<(Edited, Vec<String>), String>, cx: &mut Context<Self>) {
+    fn edits_applied(&mut self, w: &str, result: Result<(Edited, Vec<String>), Refused>, cx: &mut Context<Self>) {
         let dialog = self.editing(w, cx);
         match result {
             Ok((done, stopped)) => {
@@ -235,14 +260,24 @@ impl FleetView {
                 let what = if done.added.is_empty() && done.removed.is_empty() { format!("Saved {w}.") } else { summary(w, &done) };
                 self.show_toast(format!("{what}{}", edited_note(&done, &stopped, &live_in)), cx);
             }
-            Err(e) => match dialog {
-                Some(dialog) => dialog.update(cx, |d, cx| {
-                    d.saving = false;
-                    d.error = Some(e);
-                    cx.notify();
-                }),
-                None => self.action_error = Some(e),
-            },
+            Err(refused) => {
+                let words = refusal_words(w, &refused);
+                let applied = refused.applied.map(|(done, _)| done.workspace);
+                if let Some(workspace) = &applied {
+                    self.put_workspace(workspace.clone());
+                }
+                match dialog {
+                    Some(dialog) => dialog.update(cx, |d, cx| {
+                        d.saving = false;
+                        d.error = Some(words);
+                        if let (Mode::Edit(original), Some(workspace)) = (&mut d.mode, applied) {
+                            *original = workspace;
+                        }
+                        cx.notify();
+                    }),
+                    None => self.action_error = Some(words),
+                }
+            }
         }
         self.reload_workspaces(cx);
         cx.notify();
@@ -374,6 +409,28 @@ mod tests {
         assert_eq!((names(&saved), saved.home.clone()), (vec!["alpha", "extra"], Some(parent.join("alpha"))));
         assert_eq!(saved.scans[0].exclude, [parent.join("beta")], "× on a folder keeps it out of the next Rescan");
         assert!(edits_of(&saved, &FolderList::of_workspace(&saved, &[])).is_empty(), "no change, no edit");
+    }
+
+    #[test]
+    fn a_save_refused_part_way_says_what_it_applied_and_the_next_save_repeats_none_of_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, parent) = registered(tmp.path());
+        let original = Registry::at(&home).load("demo").unwrap();
+        let mut list = FolderList::of_workspace(&original, &[]);
+        list.remove(1);
+        list.push(Folder { kind: FolderKind::Plain, ..Folder::new("missing", tmp.path().join("missing")) }, None);
+        let refused = edit_all(&home, "demo", edits_of(&original, &list)).unwrap_err();
+        let words = refusal_words("demo", &refused);
+        assert!(words.starts_with("Applied demo: removed beta. Refused: "), "{words}");
+        let (done, _) = refused.applied.unwrap();
+        assert_eq!(names(&done.workspace), ["alpha"]);
+
+        let shown = done.workspace;
+        list.remove(1);
+        list.push(Folder { kind: FolderKind::Plain, ..Folder::new("extra", dir(&tmp.path().join("extra"))) }, None);
+        let (again, _) = edit_all(&home, "demo", edits_of(&shown, &list)).unwrap();
+        assert_eq!(names(&again.workspace), ["alpha", "extra"]);
+        assert_eq!(Registry::at(&home).load("demo").unwrap().scans[0].exclude, [parent.join("beta")]);
     }
 
     #[test]
