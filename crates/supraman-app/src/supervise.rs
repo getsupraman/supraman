@@ -306,7 +306,7 @@ impl Supervision {
 
     /// A scheduled run whose claude session is deleted is revoked. `observed` was read without error.
     fn end_deleted_runs(&mut self, observed: &[Session]) -> Vec<String> {
-        let keeper = Keeper::open(&self.home);
+        let keeper = Keeper::open(&self.home).with_claude_dir(supraman_core::paths::claude_dir());
         let auth = crate::signin::auth(&self.home);
         revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed)
     }

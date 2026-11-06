@@ -645,12 +645,13 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Ends each minted session whose claude session is deleted ([`Absent`]). Stop, `sm unwant`, give-up and a
+    /// Ends each minted session whose claude session is deleted ([`Absent`]) with its transcript. Stop, `sm unwant`, give-up and a
     /// workspace's removal keep token, config and kept token: the session can come back, and Workman's idle window
     /// lapses an unused token.
     fn revoke_deleted(&mut self, observed: &[Session]) {
         let bound = self.minted.bound();
-        let deleted = self.absent.deleted(&bound, observed);
+        let mut deleted = self.absent.deleted(&bound, observed);
+        deleted.retain(|sid| !crate::mint::still_has_transcript(self.config.claude_dir.as_deref(), sid));
         for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
             log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
             self.end(&name, None);
@@ -1591,6 +1592,24 @@ mod tests {
         sup.tick(&[another()], &mut free(), NOW + 5 * SECOND);
         assert_eq!(minter.take(), [], "revoked once");
         assert!(sup.take_notices().is_empty());
+    }
+
+    #[test]
+    fn a_claude_session_missing_from_the_listing_whose_transcript_remains_is_not_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minted_and_stopped(dir.path());
+        let claude = dir.path().join("claude");
+        let project = claude.join("projects").join("C--demo-cwd");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("aaaa0001-0000-4000-8000-000000000001.jsonl"), "{}
+").unwrap();
+        sup.config.claude_dir = Some(claude);
+        for t in 3..7 {
+            sup.tick(&[another()], &mut free(), NOW + t * SECOND);
+        }
+        assert_eq!(minter.take(), [], "its transcript says it is not deleted");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
     }
 
     #[test]

@@ -91,3 +91,33 @@ fn mcp_header_mints_afresh_when_workman_refuses_the_kept_token() {
         fake.seen().iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").map(|s| serde_json::from_str(&s.body).unwrap()).collect();
     assert_eq!((mints.len(), &mints[1]["replace"], &mints[1]["name"]), (2, &true.into(), &NAME.into()));
 }
+
+/// The `headersHelper` line run as claude runs it on Windows (cmd).
+fn through_cmd(command: &str) -> Output {
+    use std::os::windows::process::CommandExt as _;
+    supraman_core::process::command("cmd").args(["/d", "/s", "/c"]).raw_arg(format!("\"{command}\"")).env_remove("APPDATA").output().unwrap()
+}
+
+#[test]
+fn a_home_a_shell_would_expand_reaches_mcp_header_as_written_and_a_written_config_still_works() {
+    let root = tempfile::tempdir().unwrap();
+    let sm = Path::new(env!("CARGO_BIN_EXE_sm"));
+    let key = supraman_claude::mcp_token_key("hand-alpha-1");
+    let odd = root.path().join("a%TEMP%b$x");
+    std::fs::create_dir_all(&odd).unwrap();
+    FileStore::new(&odd).set(&key, TOKEN).unwrap();
+    let command = supraman_claude::mcp_header_command(sm, &odd, "hand-alpha-1");
+    assert!(!command.contains(['%', '$']), "nothing a shell expands: {command}");
+    let out = through_cmd(&command);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(printed["Authorization"] == format!("Bearer {TOKEN}"), "the token kept in the home as written");
+
+    let plain = root.path().join("plain home");
+    FileStore::new(&plain).set(&key, TOKEN).unwrap();
+    let written = format!("\"{}\" mcp-header --home \"{}\" hand-alpha-1", sm.display(), plain.display());
+    assert_eq!(supraman_claude::mcp_header_command(sm, &plain, "hand-alpha-1"), written, "a plain home keeps its line");
+    let out = through_cmd(&written);
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(printed["Authorization"] == format!("Bearer {TOKEN}"), "a config written before still works");
+}

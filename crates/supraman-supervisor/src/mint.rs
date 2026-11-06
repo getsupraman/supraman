@@ -379,12 +379,18 @@ pub struct Keeper {
     mcp_dir: PathBuf,
     sm: PathBuf,
     store: Arc<dyn SecretStore>,
+    /// Where a deleted run's transcript is looked for ([`still_has_transcript`]); `None`: the listing is trusted.
+    claude_dir: Option<PathBuf>,
 }
 
 impl Keeper {
     pub fn new(home: &Path, mcp_dir: &Path, store: Arc<dyn SecretStore>) -> Self {
         let sm = supraman_core::install::sm_exe().unwrap_or_else(|_| PathBuf::from(supraman_core::HOOK_EXE));
-        Self { home: home.to_path_buf(), mcp_dir: mcp_dir.to_path_buf(), sm, store }
+        Self { home: home.to_path_buf(), mcp_dir: mcp_dir.to_path_buf(), sm, store, claude_dir: None }
+    }
+
+    pub fn with_claude_dir(self, claude_dir: Option<PathBuf>) -> Self {
+        Self { claude_dir, ..self }
     }
 
     /// This keeper with `sm` as the `sm.exe` its configs run.
@@ -549,12 +555,20 @@ impl Absent {
     }
 }
 
-/// Each scheduled run's record whose claude session `absent` finds deleted in `observed` (read without error): its
-/// name revoked ([`revoke`]) and taken out of its file, the file gone once empty. What failed.
+/// Whether `claude_session`'s transcript is still under `claude_dir`: a session a listing misses while its transcript
+/// remains is not taken as deleted. Without a `claude_dir`, never.
+pub fn still_has_transcript(claude_dir: Option<&Path>, claude_session: &str) -> bool {
+    claude_dir.is_some_and(|dir| supraman_claude::find_transcript(dir, claude_session, None).is_some())
+}
+
+/// Each scheduled run's record whose claude session `absent` finds deleted in `observed` (read without error), and
+/// whose transcript is gone: its name revoked ([`revoke`]) and taken out of its file, the file gone once empty. What
+/// failed.
 pub fn revoke_deleted_runs(keeper: &Keeper, minter: &dyn Minter, bearer: impl FnOnce() -> Bearer, absent: &mut Absent, observed: &[Session]) -> Vec<String> {
     let runs = runs_of(&keeper.home);
     let bound: Vec<(String, String)> = runs.iter().flat_map(|(_, r)| r.bound()).collect();
-    let deleted = absent.deleted(&bound, observed);
+    let mut deleted = absent.deleted(&bound, observed);
+    deleted.retain(|sid| !still_has_transcript(keeper.claude_dir.as_deref(), sid));
     if deleted.is_empty() {
         return Vec::new();
     }
@@ -961,6 +975,28 @@ mod tests {
         assert!(!sessions.live(&token) && keeper.kept(NAME).is_none(), "the gone name is revoked");
         let left = MintedSessions::load(Some(record)).unwrap();
         assert_eq!(left.names().collect::<Vec<_>>(), ["fm-demo-other"], "the other name stays in its file");
+    }
+
+    #[test]
+    fn a_run_missing_from_the_listing_whose_transcript_remains_is_not_revoked() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(Vec::new());
+        let sessions = fake.enable_sessions();
+        let record = MintedSessions::run_path(home.path(), NAME);
+        let (keeper, token) = kept_at(home.path(), &fake, record.clone());
+        let claude = home.path().join("claude");
+        let project = claude.join("projects").join("C--demo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join(format!("{SID}.jsonl")), "{}
+").unwrap();
+        let keeper = keeper.with_claude_dir(Some(claude));
+        let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
+        let other = listed("bbbb0002-0000-4000-8000-000000000002");
+        let mut absent = Absent::default();
+        for _ in 0..4 {
+            assert!(revoke_deleted_runs(&keeper, &HttpMinter::default(), signed, &mut absent, std::slice::from_ref(&other)).is_empty());
+        }
+        assert!(sessions.live(&token) && record.exists() && keeper.kept(NAME).is_some(), "its transcript says it is not deleted");
     }
 
     #[test]

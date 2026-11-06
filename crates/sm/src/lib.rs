@@ -256,6 +256,10 @@ fn run(args: &[String]) -> Result<(), Failure> {
         ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),
         ["mcp-header", "--home", home, name] => mcp_header(std::path::Path::new(home), name),
+        ["mcp-header", "--home-hex", hex, name] => {
+            let home = supraman_claude::mcp_header_home(hex).ok_or_else(|| Failure::Usage(format!("not a hex home: {hex}")))?;
+            mcp_header(&home, name)
+        }
         ["update", rest @ ..] => update::update(rest),
         ["plugin", "install", dir] => {
             let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate sm.exe: {e}")))?;
