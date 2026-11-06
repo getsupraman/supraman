@@ -2735,7 +2735,7 @@ impl Render for FleetView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| {
-                    if !this.focus.is_focused(window) {
+                    if !window.default_prevented() && !this.focus.is_focused(window) {
                         this.focus.focus(window, cx);
                     }
                 }),

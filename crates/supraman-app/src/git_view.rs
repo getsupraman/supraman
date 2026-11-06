@@ -24,7 +24,7 @@ mod keys_tests;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::{Layout, Repo};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::{banner, button};
@@ -57,7 +57,7 @@ const PANEL_MIN: f32 = 260.;
 const REFS_SHRINK: f32 = 1000.;
 
 /// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height; the ref
-/// panel's width, whether it is collapsed, the refs hidden from the graph and its collapsed folders.
+/// panel's width, whether it is collapsed, the refs hidden from the graph and soloed in it, and its collapsed folders.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GitSizes {
@@ -75,6 +75,8 @@ pub struct GitSizes {
     pub hidden: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub collapsed: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub solo: Vec<String>,
 }
 
 fn whole(p: Pixels) -> u32 {
@@ -160,6 +162,8 @@ pub struct GitView {
     /// The repo's key in the layout file, once read.
     key: Option<String>,
     own_graph: bool,
+    /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
+    focus: FocusHandle,
 }
 
 impl EventEmitter<GitEvent> for GitView {}
@@ -170,7 +174,8 @@ impl GitView {
         cx.new(|cx| {
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
-            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), cx));
+            let focus = cx.focus_handle();
+            let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
             let mut view = GitView {
                 folder,
@@ -207,6 +212,7 @@ impl GitView {
                 follow: refresh::Follow::default(),
                 key: None,
                 own_graph: false,
+                focus,
             };
             view.start(saved.clone(), cx);
             view
@@ -270,7 +276,7 @@ impl GitView {
     fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {
         match e {
             RefEvent::Pick(sha) => self.reveal_sha(sha.clone(), cx),
-            RefEvent::Hidden => {
+            RefEvent::Walk => {
                 self.keep_layout(cx);
                 self.refresh_graph(None, cx);
             }
@@ -318,8 +324,9 @@ impl GitView {
             message: Some(whole(self.panel.read(cx).message_height())),
             refs: Some(whole(refs.width())),
             refs_shut: refs.shut(),
-            hidden: refs.hidden().iter().cloned().collect(),
+            hidden: refs.walk().hidden.iter().cloned().collect(),
             collapsed: refs.collapsed(),
+            solo: refs.walk().solo.iter().cloned().collect(),
         }
     }
 
@@ -412,8 +419,8 @@ impl GitView {
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.load = Load::Loading;
-        let (home, folder, hidden) = (self.home.clone(), self.folder.clone(), self.ref_panel.read(cx).hidden().clone());
-        let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder, &hidden) });
+        let (home, folder, walk) = (self.home.clone(), self.folder.clone(), self.ref_panel.read(cx).walk().clone());
+        let first = cx.background_spawn(async move { load::first(home.as_deref(), &folder, &walk) });
         cx.spawn(async move |this, cx| {
             let first = first.await;
             this.update(cx, |this, cx| this.apply_first(first, cx)).ok();
@@ -644,6 +651,7 @@ impl Render for GitView {
         };
         div()
             .size_full()
+            .track_focus(&self.focus)
             .key_context(keys::TAB_CONTEXT)
             .on_action(cx.listener(|this, _: &keys::ToggleRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.toggle_shut(cx))))
             .on_action(cx.listener(|this, _: &keys::FilterRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.focus_filter(cx))))

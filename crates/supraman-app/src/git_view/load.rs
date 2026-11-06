@@ -1,13 +1,12 @@
 //! Everything the Git tab reads, blocking, for `cx.background_spawn`: git located, the refs, the status and the
 //! history page by page, each page laid out with the state the last one left.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
 use gpui::SharedString;
 use supraman_core::Settings;
-use super::ref_panel;
+use super::ref_panel::{self, Walk};
 use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status};
 
 /// One row of the graph, its texts ready to paint.
@@ -135,25 +134,25 @@ pub fn git_problem(located: &Located) -> Option<String> {
     }
 }
 
-/// git located per the settings in `home`, the refs, the status and the first page without the `hidden` refs.
-pub fn first(home: Option<&Path>, folder: &Path, hidden: &BTreeSet<String>) -> Result<First, Problem> {
+/// git located per the settings in `home`, the refs, the status and the first page of `walk`.
+pub fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, Problem> {
     let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
     let located = supraman_gitman::locate(&settings);
     if let Some(problem) = git_problem(&located) {
         return Err(Problem::Git(problem));
     }
     let Located::Found(git) = located else { unreachable!() };
-    read(Repo::new(git, folder), FIRST_PAGE, hidden).map_err(Problem::Failed)
+    read(Repo::new(git, folder), FIRST_PAGE, walk).map_err(Problem::Failed)
 }
 
-/// The refs, the status and the first `count` commits of `repo` walked from the refs not `hidden`, laid out afresh.
-pub fn read(repo: Repo, count: usize, hidden: &BTreeSet<String>) -> Result<First, String> {
+/// The refs, the status and the first `count` commits of `repo` walked as `walk` says, laid out afresh.
+pub fn read(repo: Repo, count: usize, walk: &Walk) -> Result<First, String> {
     let failed = |e: supraman_gitman::GitError| e.to_string();
     let refs = supraman_gitman::refs(&repo).map_err(failed)?;
     let status = supraman_gitman::status(&repo).map_err(failed)?;
-    let walked = ref_panel::without(&refs, hidden);
+    let walked = ref_panel::without(&refs, walk);
     let layout = Layout::new(&walked, dirty(&status));
-    let tips = walked.tips();
+    let tips = ref_panel::tips(&walked, walk);
     let page = page(&repo, &tips, 0, count, layout)?;
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
     Ok(First { repo, heads: Heads::of(&walked), refs, tips, wip, page })

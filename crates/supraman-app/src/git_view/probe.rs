@@ -30,13 +30,16 @@ pub struct ProbeDiff {
     pub shown: String,
 }
 
-/// The ref panel: its rows' paths, each section's `(shown, total)`, collapsed, and the hidden refs.
+/// The ref panel: its rows' paths, each section's `(shown, total)`, collapsed, the hidden and soloed refs, and
+/// the open overlay's section key with its rows' paths.
 #[derive(Debug, Clone)]
 pub struct RefProbe {
     pub rows: Vec<String>,
     pub counts: [(usize, usize); 5],
     pub shut: bool,
     pub hidden: Vec<String>,
+    pub solo: Vec<String>,
+    pub overlay: Option<(&'static str, Vec<String>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +83,9 @@ impl GitView {
             rows: panel.visible().iter().map(|p| p.to_string()).collect(),
             counts: panel.counts().map(|c| (c.shown, c.total)),
             shut: panel.shut(),
-            hidden: panel.hidden().iter().cloned().collect(),
+            hidden: panel.walk().hidden.iter().cloned().collect(),
+            solo: panel.walk().solo.iter().cloned().collect(),
+            overlay: panel.overlay().map(|s| (s.key(), panel.overlay_rows().iter().map(|p| p.to_string()).collect())),
         };
         Probe { rows, selected: self.selected(), listed: self.listed(), commit, wip, diff, panel_width: self.panel_width, refs }
     }

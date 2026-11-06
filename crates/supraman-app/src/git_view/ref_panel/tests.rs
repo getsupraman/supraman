@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext, px};
 use supraman_gitman::fixture::{Fixture, Generated};
 use supraman_gitman::{Branch, Head, Refs, RemoteBranch, Stash, Tag, Upstream, Worktree};
 use supraman_ui::hit::HitTargets;
@@ -38,7 +38,7 @@ fn refs() -> Refs {
 
 fn panel(cx: &mut TestAppContext, hidden: &[&str]) -> Entity<RefPanel> {
     let hidden: Vec<String> = hidden.iter().map(|h| h.to_string()).collect();
-    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx)));
+    let panel = cx.update(|cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx.focus_handle(), cx)));
     panel.update(cx, |p, cx| {
         p.restore(&GitSizes { hidden, ..GitSizes::default() }, cx);
         p.set_refs(&refs(), cx);
@@ -121,13 +121,47 @@ fn ref_panel_labels_worktrees_and_stashes() {
 #[test]
 fn hidden_refs_leave_the_walk_but_the_current_branch_stays() {
     let hidden: BTreeSet<String> = ["refs/heads/main", "refs/heads/fix/a", "refs/remotes/origin/main", "stash/s1", "refs/heads/side"].iter().map(|s| s.to_string()).collect();
-    let walked = without(&refs(), &hidden);
+    let walked = without(&refs(), &Walk { hidden, ..Walk::default() });
     let names: Vec<&str> = walked.branches.iter().map(|b| b.name.as_str()).collect();
     assert!(names.contains(&"main") && !names.contains(&"fix/a") && names.len() == 7, "{names:?}");
     assert_eq!(walked.remotes.len(), 2);
     assert_eq!(walked.stashes.iter().map(|s| s.sha.as_str()).collect::<Vec<_>>(), ["s0"]);
     assert_eq!(walked.worktrees.len(), 2, "the worktree on a hidden branch is no tip either");
-    assert_eq!(without(&refs(), &BTreeSet::new()), refs());
+    assert_eq!(without(&refs(), &Walk::default()), refs());
+}
+
+fn keys(keys: &[&str]) -> BTreeSet<String> {
+    keys.iter().map(|k| k.to_string()).collect()
+}
+
+#[gpui::test]
+fn soloing_walks_only_the_soloed_refs_and_head_and_counts_them(cx: &mut TestAppContext) {
+    let walk = Walk { hidden: keys(&["refs/heads/fix/a", "refs/heads/zeta"]), solo: keys(&["refs/heads/fix/a", "refs/remotes/upstream/dev"]) };
+    let walked = without(&refs(), &walk);
+    let names: Vec<&str> = walked.branches.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["main", "fix/a"], "the soloed branch, hidden or not, and the current one");
+    assert_eq!(walked.remotes.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["upstream/dev"]);
+    assert!(walked.stashes.is_empty(), "no stash is soloed");
+    assert_eq!(walked.worktrees.iter().map(|w| w.path.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["C:/src/repo"], "only the worktree on a walked branch");
+    assert_eq!(walked.tags.len(), 3, "the tags still label");
+    let tips = tips(&walked, &walk);
+    assert_eq!(tips, ["m", "fix/a-sha", "upstream/dev-sha", "C:/src/repo-head"], "HEAD and the soloed refs; no tag is a tip");
+    let panel = panel(cx, &["refs/heads/zeta"]);
+    panel.update(cx, |p, cx| p.toggle_solo(&["refs/heads/fix/a".to_string(), "refs/remotes/upstream/dev".to_string()], cx));
+    let words = |c: Count| (c.shown, c.total);
+    assert_eq!(panel.read_with(cx, |p, _| p.counts().map(words)), [(2, 8), (1, 3), (3, 3), (0, 2), (3, 3)], "shown: the refs in the walk");
+    let folder = panel.read_with(cx, |p, _| p.tree.aggregate("local/fix").unwrap().solo);
+    panel.update(cx, |p, cx| p.toggle_solo(&folder, cx));
+    assert_eq!(panel.read_with(cx, |p, _| p.walk().solo.clone()), keys(&["refs/heads/fix/a", "refs/heads/fix/b", "refs/remotes/upstream/dev"]), "a folder's solo solos all its refs");
+    panel.update(cx, |p, cx| p.toggle_solo(&folder, cx));
+    panel.update(cx, |p, cx| p.toggle_solo(&["refs/remotes/upstream/dev".to_string()], cx));
+    assert!(!panel.read_with(cx, |p, _| p.walk().soloing()));
+    assert_eq!(panel.read_with(cx, |p, _| p.counts()[0]), Count { shown: 7, total: 8 }, "the last solo cleared: the hidden set again");
+    panel.update(cx, |p, cx| {
+        p.toggle_solo(&["refs/heads/fix/a".to_string()], cx);
+        p.show_all(cx);
+    });
+    assert_eq!(panel.read_with(cx, |p, _| p.walk().clone()), Walk::default(), "Show all clears both");
 }
 
 /// The fixture with `topic/solo`, one commit of its own on `main`'s merge: hiding it drops that commit.
@@ -152,7 +186,7 @@ fn hiding_a_branch_prunes_its_own_commits_from_the_graph_and_show_all_restores_t
     cx.run_until_parked();
     assert!(!has(&view, &only, cx), "a commit only the hidden branch reaches leaves the graph");
     assert!(has(&view, f.sha("merge"), cx), "its parent, reachable from main, stays");
-    let keys = panel.read_with(cx, |p, _| p.tree.aggregate("stashes").unwrap().0);
+    let keys = panel.read_with(cx, |p, _| p.tree.aggregate("stashes").unwrap().hide);
     panel.update(cx, |p, cx| p.toggle_hidden(&keys, cx));
     cx.run_until_parked();
     assert!(!has(&view, f.sha("stash_feature_index"), cx) && view.read_with(cx, |v, _| v.rows.iter().all(|r| r.stash().is_none())), "a folder's eye hides every stash");
@@ -169,10 +203,10 @@ fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut T
     let f = Fixture::new();
     let (view, cx) = open(&f.dir, cx);
     let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
-    panel.update(cx, |p, cx| p.picked(&"local/feature".into(), cx));
+    panel.update(cx, |p, cx| p.picked("local/feature", cx));
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())));
-    panel.update(cx, |p, cx| p.picked(&"local".into(), cx));
+    panel.update(cx, |p, cx| p.picked("local", cx));
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a section's header picks nothing");
 
@@ -185,22 +219,73 @@ fn picking_a_ref_selects_its_commit_and_loads_pages_until_it_is_there(cx: &mut T
     });
     cx.run_until_parked();
     assert!(!has(&view, &t1, cx), "t1 lies past the first page");
-    panel.update(cx, |p, cx| p.picked(&"tags/t1".into(), cx));
+    panel.update(cx, |p, cx| p.picked("tags/t1", cx));
     cx.run_until_parked();
     assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(t1.into())), "pages load until its row is there");
 }
 
+fn click(key: &str, view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    hits.borrow_mut().clear();
+    redraw(view, cx);
+    let at = hits.borrow().get(key).unwrap_or_else(|| panic!("{key} not painted")).bounds.center();
+    cx.simulate_click(at, gpui::Modifiers::none());
+    hits.borrow_mut().clear();
+    redraw(view, cx);
+}
+
+/// A branch with one commit of its own on `main`'s merge.
+fn branch_off_merge(f: &Fixture, name: &str) -> String {
+    let sha = f.git(&["commit-tree", "-p", f.sha("merge"), "-m", name, &format!("{}^{{tree}}", f.sha("merge"))]);
+    f.git(&["branch", name, &sha]);
+    sha
+}
+
 #[gpui::test]
-fn ctrl_j_collapses_the_panel_to_its_strip_and_a_section_icon_opens_it_there(cx: &mut TestAppContext) {
+fn a_solo_walks_only_its_branch_and_head_and_persists_with_the_layout(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (only, other) = (solo(&f), branch_off_merge(&f, "topic/other"));
+    let (view, cx) = open(&f.dir, cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    assert!(has(&view, &only, cx) && has(&view, &other, cx) && has(&view, f.sha("stash_feature_index"), cx));
+    click("refpanel-solo-local/topic/solo", &view, cx);
+    assert!(has(&view, &only, cx) && has(&view, f.sha("ahead"), cx), "the soloed branch and HEAD walk");
+    assert!(!has(&view, &other, cx), "another branch's own commit leaves the graph");
+    assert!(view.read_with(cx, |v, _| v.rows.iter().all(|r| r.stash().is_none())), "and every stash");
+    assert_eq!(view.read_with(cx, |v, cx| v.sizes(cx).solo), ["refs/heads/topic/solo"], "the solo is the tab's to save");
+    let local = panel.read_with(cx, |p, _| p.counts()[0]);
+    assert_eq!(local.shown, 2, "LOCAL counts main and topic/solo: {local:?}");
+    let sizes = view.read_with(cx, |v, cx| v.sizes(cx));
+    let back = serde_json::from_value::<GitSizes>(serde_json::to_value(&sizes).unwrap()).unwrap();
+    let restored = cx.update(|_, cx| cx.new(|cx| RefPanel::new(HitTargets::default(), cx.focus_handle(), cx)));
+    restored.update(cx, |p, cx| p.restore(&back, cx));
+    assert_eq!(restored.read_with(cx, |p, _| p.walk().clone()), panel.read_with(cx, |p, _| p.walk().clone()), "the solo comes back from the saved sizes");
+    click("refpanel-solo-local/topic/solo", &view, cx);
+    assert!(has(&view, &other, cx) && has(&view, f.sha("stash_feature_index"), cx), "the last solo cleared: every ref walks again");
+}
+
+#[gpui::test]
+fn ctrl_j_right_after_show_all_collapses_the_panel(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    click("refpanel-eye-local/feature", &view, cx);
+    cx.update(|window, cx| window.blur(cx));
+    click("refpanel-show-all", &view, cx);
+    cx.simulate_keystrokes("ctrl-j");
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    assert!(panel.read_with(cx, |p, _| p.shut()), "Ctrl+J reaches the tab after a click on Show all");
+}
+
+#[gpui::test]
+fn ctrl_j_collapses_the_panel_to_its_strip(cx: &mut TestAppContext) {
     let f = Fixture::new();
     let (view, cx) = open(&f.dir, cx);
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     let shown = |key: &str| hits.borrow().contains_key(key);
     assert!(shown("refpanel-row-local") && shown("refpanel-row-local/main") && !shown("refpanel-strip-local"));
     assert!(shown("refpanel-eye-local/feature") && shown("refpanel-eye-stashes/0") && shown("refpanel-eye-remote/origin") && !shown("refpanel-eye-local/main"), "an eye on every ref that hides; none on the current branch");
-    let feature = hits.borrow().get("refpanel-row-local/feature").unwrap().bounds.center();
-    cx.simulate_click(feature, gpui::Modifiers::none());
-    redraw(&view, cx);
+    assert!(shown("refpanel-solo-local/main") && shown("refpanel-solo-remote/origin") && !shown("refpanel-solo-stashes/0") && !shown("refpanel-solo-tags/v1"), "a solo on every branch and remote; none on a stash or tag");
+    click("refpanel-row-local/feature", &view, cx);
     cx.simulate_keystrokes("ctrl-j");
     hits.borrow_mut().clear();
     redraw(&view, cx);
@@ -209,19 +294,46 @@ fn ctrl_j_collapses_the_panel_to_its_strip_and_a_section_icon_opens_it_there(cx:
     assert!(Section::ALL.iter().all(|s| shown(&format!("refpanel-strip-{}", s.key()))) && shown("refpanel-expand") && !shown("refpanel-row-local"), "the strip: expand, then a section's icon each");
     let strip = hits.borrow().get("refpanel-strip-local").unwrap().bounds;
     assert!(strip.size.width <= STRIP, "{strip:?}");
-    panel.update(cx, |p, cx| {
-        p.tree.toggle("tags");
-        p.open_section(Section::Tags, cx)
-    });
-    hits.borrow_mut().clear();
-    redraw(&view, cx);
-    assert!(panel.read_with(cx, |p, _| !p.shut() && p.tree.is_open("tags") && p.tree.selected().as_deref() == Some("tags")));
-    assert!(shown("refpanel-row-tags/v1"), "the panel open on its tags");
     view.update_in(cx, |v, window, cx| window.focus(v.table.focus_handle(), cx));
     cx.simulate_keystrokes("ctrl-alt-f");
     redraw(&view, cx);
     cx.simulate_input("lig");
     redraw(&view, cx);
     let rows: Vec<String> = panel.read_with(cx, |p, _| p.visible().iter().map(|p| p.to_string()).collect());
-    assert_eq!(rows, ["tags", "tags/light"], "Ctrl+Alt+F types into the filter");
+    assert_eq!(rows, ["tags", "tags/light"], "Ctrl+Alt+F opens the panel and types into the filter");
+}
+
+#[gpui::test]
+fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and_closes_it(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    panel.update(cx, |p, cx| p.toggle_shut(cx));
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let overlay = |cx: &mut VisualTestContext| panel.read_with(cx, |p, _| p.overlay());
+    click("refpanel-strip-local", &view, cx);
+    assert_eq!(overlay(cx), Some(Section::Local));
+    let rows: Vec<String> = panel.read_with(cx, |p, _| p.overlay_rows().iter().map(|r| r.to_string()).collect());
+    assert_eq!(rows, ["feature", "main", "side", "stale"], "just LOCAL's refs, below its header");
+    let card = hits.borrow().get("refpanel-overlay").unwrap().bounds;
+    let graph = hits.borrow().get("git-row-0").unwrap().bounds;
+    assert!(card.left() >= STRIP && card.left() < graph.right() && card.intersects(&graph), "beside the strip, over the graph: {card:?}");
+    assert!(panel.read_with(cx, |p, _| p.shut()) && hits.borrow().contains_key("refpanel-overlay-eye-feature"), "the panel stays collapsed; the rows have their eyes");
+    click("refpanel-overlay-row-feature", &view, cx);
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(f.sha("rename").into())), "a pick selects its commit");
+    assert_eq!(overlay(cx), None, "and closes the overlay");
+    click("refpanel-strip-tags", &view, cx);
+    assert_eq!(overlay(cx), Some(Section::Tags));
+    cx.simulate_keystrokes("escape");
+    assert_eq!(overlay(cx), None, "Esc closes it");
+    cx.simulate_keystrokes("ctrl-j");
+    assert!(!panel.read_with(cx, |p, _| p.shut()), "the keyboard back in the tab");
+    panel.update(cx, |p, cx| p.toggle_shut(cx));
+    click("refpanel-strip-remote", &view, cx);
+    let row = hits.borrow().get("git-row-2").unwrap().bounds;
+    cx.simulate_click(gpui::point(row.right() - px(8.), row.center().y), gpui::Modifiers::none());
+    assert_eq!(overlay(cx), None, "a click outside closes it");
+    click("refpanel-strip-remote", &view, cx);
+    click("refpanel-strip-remote", &view, cx);
+    assert_eq!(overlay(cx), None, "a second click on its icon closes it");
 }
