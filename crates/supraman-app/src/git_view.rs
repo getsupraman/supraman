@@ -613,14 +613,19 @@ impl GitView {
     /// The layout file's trouble: unreadable, or a change not written.
     fn layout_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let problem = layout::notice(cx)?;
+        Some(self.notice_banner("git-layout-notice-dismiss", problem, |_, cx| layout::set_notice(None, cx), cx))
+    }
+
+    /// A warning over the tab whose × under `key` runs `dismiss`.
+    fn notice_banner(&self, key: &'static str, text: String, dismiss: impl Fn(&mut GitView, &mut Context<GitView>) + 'static, cx: &mut Context<Self>) -> AnyElement {
         let color = cx.theme().status().warning;
-        let dismiss = button::icon(&self.hits, "git-layout-notice-dismiss", Icon::Close.svg(14., cx.theme().colors().text_muted), px(20.), cx)
+        let close = button::icon(&self.hits, key, Icon::Close.svg(14., cx.theme().colors().text_muted), px(20.), cx)
             .tooltip(Tooltip::text("Dismiss"))
-            .on_click(cx.listener(|_, _: &gpui::ClickEvent, _, cx| {
-                layout::set_notice(None, cx);
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                dismiss(this, cx);
                 cx.notify();
             }));
-        Some(banner::tinted(color).m_2().child(banner::dismissable(SharedString::from(problem), dismiss)).into_any_element())
+        banner::tinted(color).m_2().child(banner::dismissable(SharedString::from(text), close)).into_any_element()
     }
 }
 
@@ -670,6 +675,7 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .children(self.layout_notice(cx))
+            .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
     }
 }

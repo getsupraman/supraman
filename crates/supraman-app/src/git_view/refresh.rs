@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures::StreamExt as _;
-use gpui::{AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
+use gpui::{AnyElement, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
 use supraman_gitman::{FIRST_PAGE, Repo, Status};
 use supraman_ui::stall;
 
@@ -24,6 +24,9 @@ pub struct Follow {
     pub generation: u64,
     activation: Option<Subscription>,
     focus: Option<Task<()>>,
+    not_following: Option<String>,
+    pub(super) graph_failed: Option<String>,
+    wip_failed: Option<String>,
     #[cfg(test)]
     pub refreshes: usize,
 }
@@ -85,6 +88,11 @@ impl GitView {
                 }
                 Err(why) => {
                     log::warn!("git tab: not following the repository: {why}");
+                    this.update(cx, |v, cx| {
+                        v.follow.not_following = Some(format!("Not following this repository's changes: {why}"));
+                        cx.notify();
+                    })
+                    .ok();
                     return;
                 }
             };
@@ -146,8 +154,16 @@ impl GitView {
         if token != self.follow.graph_token {
             return;
         }
-        let Ok(first) = read else { return };
+        let first = match read {
+            Ok(first) => first,
+            Err(why) => {
+                self.follow.graph_failed = Some(format!("Could not read the repository again: {why}"));
+                return cx.notify();
+            }
+        };
         let _stall = stall::section("git tab: refresh");
+        self.follow.graph_failed = None;
+        self.follow.wip_failed = None;
         let (selected, anchor) = (self.selected(), self.anchor());
         self.follow.generation += 1;
         self.paging = false;
@@ -225,7 +241,14 @@ impl GitView {
         if token != self.follow.wip_token {
             return;
         }
-        let Ok((wip, status)) = read else { return };
+        let (wip, status) = match read {
+            Ok(read) => read,
+            Err(why) => {
+                self.follow.wip_failed = Some(format!("Could not read the working directory again: {why}"));
+                return cx.notify();
+            }
+        };
+        self.follow.wip_failed = None;
         if wip.is_some() != self.rows.first().is_some_and(GraphRow::wip) {
             return self.refresh_graph(files, cx);
         }
@@ -235,6 +258,21 @@ impl GitView {
         }
         self.reload_diff(files.as_ref(), cx);
         cx.notify();
+    }
+
+    /// Why the tab may show a stale repository: its watchers did not start, or its last read failed.
+    pub(super) fn follow_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let f = &self.follow;
+        let lines: Vec<&str> = [&f.not_following, &f.graph_failed, &f.wip_failed].into_iter().flatten().map(String::as_str).collect();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(self.notice_banner("git-follow-notice-dismiss", lines.join("
+"), |this, _| {
+            this.follow.not_following = None;
+            this.follow.graph_failed = None;
+            this.follow.wip_failed = None;
+        }, cx))
     }
 
     /// The open working-tree diff read again when its file is among `files` (`None`: any may have changed).
