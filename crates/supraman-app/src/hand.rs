@@ -181,10 +181,12 @@ pub fn encoded_command(script: &str) -> String {
 pub struct Hands {
     home: PathBuf,
     auth: Arc<Auth>,
-    minter: Box<dyn Minter + Send>,
+    minter: Arc<dyn Minter + Send + Sync>,
     repo_of: fn(&Path) -> Option<MintRepo>,
     minted: MintedSessions,
     sessions: std::collections::HashMap<String, String>,
+    /// Names a launch holds while its mint runs outside the lock, with their Workman session names.
+    picked: std::collections::HashMap<String, String>,
     /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
     left: Vec<String>,
     /// Where `continued-in` chains and claude's live sessions are read; without it a session is its own newest.
@@ -209,6 +211,64 @@ pub fn release_all_within(hands: Arc<Mutex<Hands>>, within: Duration) -> Option<
     rx.recv_timeout(within).ok()
 }
 
+/// [`Hands::launch_for`] with the lock held only to pick the name and to record the mint, never across a mint.
+pub fn launch_locked(hands: &Mutex<Hands>, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
+    let lock = || hands.lock().unwrap_or_else(|e| e.into_inner());
+    let mut pending = match lock().pick(cwd, own, claude_session) {
+        Ok(p) => p,
+        Err(launch) => return launch,
+    };
+    let minted = pending.mint(|wanted, tried, held| lock().next_fresh(cwd, wanted, tried, held));
+    lock().finish(pending, minted)
+}
+
+/// A launch between [`Hands::pick`] and [`Hands::finish`]: `name` keys the file and is held for it meanwhile.
+struct Pending {
+    url: String,
+    base: String,
+    bearer: String,
+    minter: Arc<dyn Minter + Send + Sync>,
+    request: MintRequest,
+    name: String,
+    notice: Option<String>,
+    new_session: Option<String>,
+    claude_session: Option<String>,
+}
+
+impl Pending {
+    /// A 409 is a name whose token another process still uses, or another launcher's: never taken, a fresh name from
+    /// `fresh(wanted, tried, held)` is tried instead, up to [`FRESH_TRIES`], and the notice says so.
+    fn mint(&mut self, mut fresh: impl FnMut(&str, &[String], &str) -> Option<String>) -> Result<Minted, MintError> {
+        let wanted = self.request.name.clone();
+        let mut tried = vec![wanted.clone()];
+        loop {
+            let minted = self.minter.mint(&self.base, &self.bearer, &self.request);
+            log::info!(
+                "hand mint {} as {}: replace {}, claude session {}: {}",
+                self.name,
+                self.request.name,
+                self.request.replace,
+                self.request.claude_session_id.as_deref().unwrap_or("none"),
+                minted.as_ref().map_or_else(ToString::to_string, |m| format!("Workman session {}", m.session_id))
+            );
+            match minted {
+                Err(MintError::Refused { status: 409, reason }) => {
+                    let next = (tried.len() <= FRESH_TRIES).then(|| fresh(&wanted, &tried, &self.name)).flatten();
+                    let Some(next) = next else {
+                        return Err(MintError::Refused { status: 409, reason });
+                    };
+                    self.notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
+                    tried.push(next.clone());
+                    self.name = next.clone();
+                    self.request.name = next;
+                    self.request.replace = false;
+                }
+                other => return other,
+            }
+        }
+    }
+}
+
 pub fn session_name(raw: &str) -> Option<String> {
     let line = supraman_ui::tabs::sanitize(raw)?;
     let cut: String = line.chars().take(MAX_NAME).collect();
@@ -231,7 +291,7 @@ impl Hands {
     pub fn with(
         home: &Path,
         auth: Arc<Auth>,
-        minter: impl Minter + Send + 'static,
+        minter: impl Minter + Send + Sync + 'static,
         repo_of: fn(&Path) -> Option<MintRepo>,
     ) -> (Self, Option<String>) {
         let path = Self::path(home);
@@ -246,10 +306,11 @@ impl Hands {
         let hands = Self {
             home: home.to_path_buf(),
             auth,
-            minter: Box::new(minter),
+            minter: Arc::new(minter),
             repo_of,
             minted,
             sessions: Default::default(),
+            picked: Default::default(),
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
@@ -276,12 +337,13 @@ impl Hands {
     }
 
     fn next_name(&self, cwd: &Path) -> String {
-        self.free_names(cwd).next().unwrap()
+        self.free_names(cwd, "").next().unwrap()
     }
 
-    fn free_names(&self, cwd: &Path) -> impl Iterator<Item = String> + '_ {
+    /// Names no record has and no other launch holds; `held` is the caller's own.
+    fn free_names<'a>(&'a self, cwd: &Path, held: &'a str) -> impl Iterator<Item = String> + 'a {
         let folder = folder_slug(cwd);
-        (1..).map(move |n| format!("hand-{folder}-{n}")).filter(|n| self.minted.get(n).is_none())
+        (1..).map(move |n| format!("hand-{folder}-{n}")).filter(move |n| self.minted.get(n).is_none() && (n == held || !self.picked.contains_key(n)))
     }
 
     /// The claude that last held `claude_session`'s token here has exited (its config is gone) and no live
@@ -354,10 +416,20 @@ impl Hands {
 
     /// `claude_session` is its full uuid; anything else is not sent.
     pub fn launch_for(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Launch {
+        let mut pending = match self.pick(cwd, own, claude_session) {
+            Ok(p) => p,
+            Err(launch) => return launch,
+        };
+        let minted = pending.mint(|wanted, tried, held| self.next_fresh(cwd, wanted, tried, held));
+        self.finish(pending, minted)
+    }
+
+    /// The name of a launch, held for it until [`Self::finish`], and the mint to make.
+    fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Result<Pending, Launch> {
         let (url, bearer) = match self.bearer() {
             Ok(Some(b)) => b,
-            Ok(None) => return Launch::Plain,
-            Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: {e}")),
+            Ok(None) => return Err(Launch::Plain),
+            Err(e) => return Err(Launch::Unminted(format!("This claude session runs without its own Workman token: {e}"))),
         };
         let mut notice = self.follow_chains();
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
@@ -367,7 +439,6 @@ impl Hands {
             .or_else(|| new_session.clone());
         let mut name = self.next_name(cwd);
         let folder = cwd.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        let base = api_base(&url);
         let mut request = MintRequest {
             name: own.and_then(session_name).unwrap_or_else(|| name.clone()),
             role: ROLE.into(),
@@ -385,11 +456,26 @@ impl Hands {
         {
             name = held.clone();
         }
-        if self.sessions.values().any(|s| *s == request.name) {
+        if self.sessions.values().chain(self.picked.values()).any(|s| *s == request.name) {
             notice = Some(format!("Workman session {name}, not {}: another tab holds that name", request.name));
             request.name = name.clone();
         }
-        let minted = match self.mint_fresh(&base, &bearer, cwd, &mut request, &mut name, &mut notice) {
+        self.picked.insert(name.clone(), request.name.clone());
+        Ok(Pending { base: api_base(&url), url, bearer, minter: self.minter.clone(), request, name, notice, new_session, claude_session })
+    }
+
+    /// The next free name after a 409 for the launch holding `held`, held for it instead; never `wanted` or one `tried`.
+    fn next_fresh(&mut self, cwd: &Path, wanted: &str, tried: &[String], held: &str) -> Option<String> {
+        let next = self.free_names(cwd, held).find(|n| n != wanted && !tried.contains(n))?;
+        let session = self.picked.remove(held).unwrap_or_default();
+        self.picked.insert(next.clone(), session);
+        Some(next)
+    }
+
+    fn finish(&mut self, pending: Pending, minted: Result<Minted, MintError>) -> Launch {
+        let Pending { url, base, request, name, mut notice, new_session, claude_session, .. } = pending;
+        self.picked.remove(&name);
+        let minted = match minted {
             Ok(m) => m,
             Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")),
         };
@@ -407,43 +493,6 @@ impl Hands {
                     "This claude session runs without its own Workman token: cannot write its mcp config ({e}){}",
                     revoked.map(|r| format!("; {r}")).unwrap_or_default()
                 ))
-            }
-        }
-    }
-
-    /// A 409 is a name whose token another process still uses, or another launcher's: never taken, a fresh `name`
-    /// is tried instead, up to [`FRESH_TRIES`], and `notice` says so.
-    fn mint_fresh(
-        &self,
-        base: &str,
-        bearer: &str,
-        cwd: &Path,
-        request: &mut MintRequest,
-        name: &mut String,
-        notice: &mut Option<String>,
-    ) -> Result<Minted, MintError> {
-        let wanted = request.name.clone();
-        let mut fresh = self.free_names(cwd).filter(|n| *n != wanted).take(FRESH_TRIES).collect::<Vec<_>>().into_iter();
-        loop {
-            let minted = self.minter.mint(base, bearer, request);
-            log::info!(
-                "hand mint {name} as {}: replace {}, claude session {}: {}",
-                request.name,
-                request.replace,
-                request.claude_session_id.as_deref().unwrap_or("none"),
-                minted.as_ref().map_or_else(ToString::to_string, |m| format!("Workman session {}", m.session_id))
-            );
-            match minted {
-                Err(MintError::Refused { status: 409, reason }) => {
-                    let Some(next) = fresh.next() else {
-                        return Err(MintError::Refused { status: 409, reason });
-                    };
-                    *notice = Some(format!("Workman session {next}, not {wanted}: {reason}"));
-                    *name = next;
-                    request.name = name.clone();
-                    request.replace = false;
-                }
-                other => return other,
             }
         }
     }
@@ -935,6 +984,72 @@ mod tests {
         assert_eq!(revoked.load(std::sync::atomic::Ordering::SeqCst), 0);
         let (left, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         assert_eq!(left.names().len(), 3, "what quit did not reach stays for the next start");
+    }
+
+    /// Mints that wait while `held` is set; each one entering says so on `entered`.
+    struct HeldMints {
+        held: Arc<(Mutex<bool>, std::sync::Condvar)>,
+        entered: Mutex<std::sync::mpsc::Sender<()>>,
+        minted: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Minter for HeldMints {
+        fn mint(&self, _: &str, _: &str, _: &MintRequest) -> Result<supraman_supervisor::Minted, MintError> {
+            self.entered.lock().unwrap().send(()).unwrap();
+            let (held, turned) = &*self.held;
+            drop(turned.wait_while(held.lock().unwrap(), |h| *h).unwrap());
+            let n = self.minted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(supraman_supervisor::Minted { session_id: format!("s{n}"), token: format!("wss_held{n}"), expires_at: None })
+        }
+
+        fn bind(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            Ok(())
+        }
+
+        fn revoke(&self, _: &str, _: &str, _: &str) -> Result<(), MintError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_launch_mints_outside_the_hands_lock_and_two_at_once_take_two_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, _seen, _oauth) = fake_workman(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&url));
+        let held = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let (entered, mints) = std::sync::mpsc::channel();
+        let minter = HeldMints { held: held.clone(), entered: Mutex::new(entered), minted: Default::default() };
+        let (hands, _) = Hands::with(&home, auth, minter, a_repo);
+        let hands = Arc::new(Mutex::new(hands));
+        let alpha = Path::new(r"C:\demo\alpha");
+        let Launch::Minted { name: first, .. } = launch_locked(&hands, alpha, None, None) else { panic!() };
+        mints.recv_timeout(WAIT).unwrap();
+
+        *held.0.lock().unwrap() = true;
+        let launches: Vec<_> = (0..2)
+            .map(|_| {
+                let hands = hands.clone();
+                std::thread::spawn(move || launch_locked(&hands, alpha, None, None))
+            })
+            .collect();
+        for _ in 0..2 {
+            mints.recv_timeout(WAIT).expect("both launches mint at once");
+        }
+        let mut locked = hands.try_lock().expect("no mint holds the lock");
+        assert_eq!(locked.release(&first), None, "another tab's release goes through");
+        drop(locked);
+
+        *held.0.lock().unwrap() = false;
+        held.1.notify_all();
+        let mut names: Vec<String> = launches
+            .into_iter()
+            .map(|l| match l.join().unwrap() {
+                Launch::Minted { name, .. } => name,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, ["hand-alpha-2", "hand-alpha-3"], "each launch held its own name");
     }
 
     #[test]

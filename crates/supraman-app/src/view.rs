@@ -1595,9 +1595,7 @@ impl FleetView {
 
     pub fn send_compose(&mut self, cx: &mut Context<Self>) {
         let _stall = supraman_ui::stall::section(SEND_SECTION);
-        let Some(c) = &self.compose else {
-            return;
-        };
+        let Some(c) = &self.compose else { return };
         let (workspace, reply_to, text) = (c.workspace.clone(), c.reply_to.clone(), c.text(cx).trim().to_string());
         if c.sending {
             return;
@@ -1621,7 +1619,8 @@ impl FleetView {
                     c.sending = false;
                     c.error = Some(e.clone());
                 }),
-                _ => {}
+                Err(e) => this.action_error = Some(e),
+                Ok(_) => {}
             }
         });
     }
@@ -1915,7 +1914,7 @@ impl FleetView {
         let (from, hands, at) = (self.extras_from(), self.hands.clone(), cwd.clone());
         let mint = hands.clone();
         let ready = cx.background_executor().spawn(async move {
-            let launch = mint.map_or(Launch::Plain, |m| m.lock().unwrap_or_else(|e| e.into_inner()).launch_for(&at, own.as_deref(), resumes.as_deref()));
+            let launch = mint.map_or(Launch::Plain, |m| crate::hand::launch_locked(&m, &at, own.as_deref(), resumes.as_deref()));
             let extras = from.map(|from| from.extras(&at, own.as_deref(), &launch)).unwrap_or_default();
             (FirstPrompt::apply(first.as_ref(), extras), launch)
         });

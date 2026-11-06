@@ -16,17 +16,18 @@ use supraman_supervisor::{
 
 pub use supraman_core::sm_allowed_tools;
 
-use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, forget_runs, revoke_deleted_runs};
+use supraman_supervisor::{Absent, AppTokens, Bearer, HttpMinter, Keeper, bearer, forget_runs, revoke_deleted_runs, sign_in_generation};
 
 /// The selftest's cleanup turns this off and takes [`TICK`], so nothing it removes is resumed.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 pub static TICK: Mutex<()> = Mutex::new(());
 
-/// Origins signed out of since the last tick: the sessions minted there end at the next.
-static SIGNED_OUT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Origins signed out of since the last tick, each with its sign-in generation: the sessions minted there before it
+/// end at the next.
+static SIGNED_OUT: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
 
 pub fn signed_out(origin: &str) {
-    SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner()).push(origin.to_string());
+    SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner()).push((origin.to_string(), supraman_supervisor::sign_in_generation()));
 }
 
 /// Signs out of `auth`'s configured server, whose grant revoke takes every session token minted there; the hands,
@@ -287,20 +288,27 @@ pub fn launch_config(home: Option<PathBuf>, plugin_dir: Option<&Path>, settings:
 }
 
 impl Supervision {
-    /// A sign-out since the last tick ends the sessions minted there; a scheduled run whose claude session is
-    /// deleted is revoked. `observed` was read without error.
-    fn end_sessions(&mut self, observed: &[Session]) -> Vec<String> {
+    /// A sign-out since the last tick ends the sessions minted there before it. A scheduled run's record is
+    /// forgotten only while no sign-in followed: `sm` mints it, so its generation is unknown here.
+    fn end_signed_out(&mut self) -> Vec<String> {
         let keeper = Keeper::open(&self.home);
         let mut notices = Vec::new();
-        for origin in std::mem::take(&mut *SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner())) {
+        for (origin, generation) in std::mem::take(&mut *SIGNED_OUT.lock().unwrap_or_else(|e| e.into_inner())) {
             for s in self.supervisors.values_mut() {
-                s.signed_out(&origin);
+                s.signed_out_as_of(&origin, generation);
             }
-            notices.extend(forget_runs(&keeper, &origin));
+            if sign_in_generation() == generation {
+                notices.extend(forget_runs(&keeper, &origin));
+            }
         }
-        let auth = crate::signin::auth(&self.home);
-        notices.extend(revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed));
         notices
+    }
+
+    /// A scheduled run whose claude session is deleted is revoked. `observed` was read without error.
+    fn end_deleted_runs(&mut self, observed: &[Session]) -> Vec<String> {
+        let keeper = Keeper::open(&self.home).with_claude_dir(supraman_core::paths::claude_dir());
+        let auth = crate::signin::auth(&self.home);
+        revoke_deleted_runs(&keeper, &HttpMinter::default(), || Bearer::of(bearer(&auth)), &mut self.runs_absent, observed)
     }
 
     pub fn new(home: PathBuf, plugin_dir: Option<PathBuf>) -> Self {
@@ -361,6 +369,8 @@ impl Supervision {
                 }
             }
         }
+        let signed_out = self.end_signed_out();
+        self.notices.extend(signed_out);
         let server = signed_in_server(&crate::signin::auth(&self.home), &settings);
         for (name, s) in &mut self.supervisors {
             let stale = s.server_changed(server.as_deref());
@@ -402,7 +412,7 @@ impl Supervision {
             self.daemon_logged = self.daemon.why.clone();
         }
         report.daemon_hold = self.daemon.why.clone();
-        let ended = self.end_sessions(observed);
+        let ended = self.end_deleted_runs(observed);
         self.notices.extend(ended);
         for s in self.supervisors.values_mut() {
             self.notices.extend(s.take_notices());

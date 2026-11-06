@@ -171,10 +171,14 @@ pub struct Supervisor<L, T> {
     repo_of: fn(&Path) -> Option<MintRepo>,
     /// The sessions this supervisor minted a token for, by name.
     minted: MintedSessions,
+    /// The [`crate::sign_in_generation`] each was minted in by this process; one loaded from the file predates them all.
+    generations: BTreeMap<String, u64>,
     /// Where their tokens are kept and their configs written.
     keeper: Keeper,
     /// Their claude sessions missing from the snapshots: a deleted one revokes.
     absent: Absent,
+    /// Unbound records whose name is neither wanted nor listed, with the non-empty snapshots in a row that showed so.
+    unwanted: BTreeMap<String, u32>,
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
@@ -229,8 +233,10 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             minter: Box::new(HttpMinter::default()),
             repo_of: crate::git_repo,
             minted,
+            generations: BTreeMap::new(),
             keeper,
             absent: Absent::default(),
+            unwanted: BTreeMap::new(),
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
@@ -287,8 +293,19 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
 
     /// The sign-out of `origin`: each session minted there ends ([`crate::mint::revoke`]); its grant revoke took the tokens.
     pub fn signed_out(&mut self, origin: &str) {
+        self.signed_out_as_of(origin, u64::MAX);
+    }
+
+    /// [`Self::signed_out`] queued in sign-in `generation`: a session minted on a later sign-in stays.
+    pub fn signed_out_as_of(&mut self, origin: &str, generation: u64) {
         let origin = api_base(origin);
-        let names: Vec<String> = self.minted.names().filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str()))).cloned().collect();
+        let names: Vec<String> = self
+            .minted
+            .names()
+            .filter(|n| self.minted.get(n).is_some_and(|m| m.origin.as_deref() == Some(origin.as_str())))
+            .filter(|n| self.generations.get(*n).is_none_or(|g| *g <= generation))
+            .cloned()
+            .collect();
         for name in names {
             self.end(&name, Some(Bearer::SignedOut));
         }
@@ -444,6 +461,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
         self.revoke_deleted(observed);
+        self.end_unwanted_unbound(observed);
         self.track_activity(observed, now);
         let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
             .into_iter()
@@ -532,6 +550,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         else {
             return Ok(None);
         };
+        let generation = crate::sign_in_generation();
         let identity = session_identity(&self.desired.workspace, w);
         let request = MintRequest {
             name: w.name.clone(),
@@ -556,6 +575,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             origin: Some(api_base(&t.url)),
         };
         self.minted.insert_minted(&w.name, session, &request);
+        self.generations.insert(w.name.clone(), generation);
         self.save_minted();
         Ok(Some((t.url, minted.token)))
     }
@@ -625,14 +645,42 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
     }
 
-    /// Ends each minted session whose claude session is deleted ([`Absent`]). Stop, `sm unwant`, give-up and a
+    /// Ends each minted session whose claude session is deleted ([`Absent`]) with its transcript. Stop, `sm unwant`, give-up and a
     /// workspace's removal keep token, config and kept token: the session can come back, and Workman's idle window
     /// lapses an unused token.
     fn revoke_deleted(&mut self, observed: &[Session]) {
         let bound = self.minted.bound();
-        let deleted = self.absent.deleted(&bound, observed);
+        let mut deleted = self.absent.deleted(&bound, observed);
+        deleted.retain(|sid| !crate::mint::still_has_transcript(self.config.claude_dir.as_deref(), sid));
         for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
             log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
+            self.end(&name, None);
+        }
+    }
+
+    /// Ends each record never bound to a claude session whose name no snapshot lists and the desired state left for
+    /// [`UNWANTED_UNBOUND_TICKS`] non-empty snapshots in a row: no session can use its token. An empty snapshot
+    /// proves nothing and starts the count over.
+    fn end_unwanted_unbound(&mut self, observed: &[Session]) {
+        let mut counts = BTreeMap::new();
+        let mut due = Vec::new();
+        if !observed.is_empty() {
+            for name in self.minted.names() {
+                let unbound = self.minted.get(name).is_some_and(|m| m.claude_session_id.is_none());
+                if !unbound || self.desired.sessions.iter().any(|w| &w.name == name) || observed.iter().any(|s| &s.name == name) {
+                    continue;
+                }
+                let times = self.unwanted.get(name).copied().unwrap_or(0) + 1;
+                if times >= UNWANTED_UNBOUND_TICKS {
+                    due.push(name.clone());
+                } else {
+                    counts.insert(name.clone(), times);
+                }
+            }
+        }
+        self.unwanted = counts;
+        for name in due {
+            log::info!("{name}: never bound to a claude session and no longer wanted, so its Workman token is revoked");
             self.end(&name, None);
         }
     }
@@ -642,6 +690,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let Some(m) = self.minted.remove(name) else {
             return;
         };
+        self.generations.remove(name);
         let bearer = bearer.unwrap_or_else(|| Bearer::of(self.tokens.token(&m.role).map(|t| t.map(|t| (t.url, t.token)))));
         self.notices.extend(crate::mint::revoke(&self.keeper, &*self.minter, &bearer, name, &m).notices);
         self.save_minted();
@@ -837,6 +886,8 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
 
 /// From this many failed `claude stop`s in a row, the name gets a [`NeedsKind::StopFailed`] row.
 pub const STOP_FAILURES_SHOWN: u32 = 3;
+/// The non-empty snapshots in a row an unbound record's name must be unwanted and unlisted before it ends.
+pub const UNWANTED_UNBOUND_TICKS: u32 = 30;
 /// The plugin whose MCP server ([`AGENTS_SERVER`]) every supervised session gets in its own config.
 const AGENTS_PLUGIN: &str = "workman";
 
@@ -1544,6 +1595,72 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_session_missing_from_the_listing_whose_transcript_remains_is_not_revoked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minted_and_stopped(dir.path());
+        let claude = dir.path().join("claude");
+        let project = claude.join("projects").join("C--demo-cwd");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("aaaa0001-0000-4000-8000-000000000001.jsonl"), "{}
+").unwrap();
+        sup.config.claude_dir = Some(claude);
+        for t in 3..7 {
+            sup.tick(&[another()], &mut free(), NOW + t * SECOND);
+        }
+        assert_eq!(minter.take(), [], "its transcript says it is not deleted");
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1");
+    }
+
+    #[test]
+    fn a_record_never_bound_ends_once_its_name_is_unwanted_and_unlisted_long_enough() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        sup.desired.unwant("fm-demo-alpha");
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        let mut now = NOW + SECOND;
+        let mut tick = |sup: &mut Supervisor<FakeLauncher, FakeTokens>, observed: &[Session]| {
+            sup.tick(observed, &mut free(), now);
+            now += SECOND;
+        };
+        for _ in 1..UNWANTED_UNBOUND_TICKS {
+            tick(&mut sup, std::slice::from_ref(&live));
+        }
+        tick(&mut sup, &[]);
+        for _ in 1..UNWANTED_UNBOUND_TICKS {
+            tick(&mut sup, std::slice::from_ref(&live));
+        }
+        assert!(minter.take().iter().all(|c| !matches!(c, MintCall::Revoke { .. })), "an empty snapshot started the count over");
+        assert_helped(dir.path(), "fm-demo-alpha");
+        tick(&mut sup, std::slice::from_ref(&live));
+        let revokes: Vec<MintCall> = minter.take().into_iter().filter(|c| matches!(c, MintCall::Revoke { .. })).collect();
+        assert_eq!(revokes, [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-1".into() }]);
+        assert_eq!(sup.minted().get("fm-demo-alpha"), None);
+        assert_eq!(sup.keeper().kept("fm-demo-alpha"), None);
+        assert!(!dir.path().join("workstate-fm-demo-alpha.json").exists(), "its config goes");
+        assert!(sup.minted().get("fm-demo-workspace").is_some(), "the bound one stays");
+    }
+
+    #[test]
+    fn an_unwanted_unbound_name_a_snapshot_still_lists_keeps_its_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        sup.desired.unwant("fm-demo-alpha");
+        let listed = Session { name: "fm-demo-alpha".into(), id: "cccc0003".into(), session_id: "cccc0003-0000-4000-8000-000000000003".into(), ..row(SessionState::Stopped, None, None) };
+        for t in 1..=2 * UNWANTED_UNBOUND_TICKS as i64 {
+            sup.tick(std::slice::from_ref(&listed), &mut free(), NOW + t * SECOND);
+        }
+        assert!(minter.take().iter().all(|c| !matches!(c, MintCall::Revoke { .. })));
+        assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2");
+    }
+
+    #[test]
     fn an_empty_snapshot_revokes_nothing_and_starts_the_count_over() {
         let dir = tempfile::tempdir().unwrap();
         let (mut sup, minter) = minted_and_stopped(dir.path());
@@ -1574,6 +1691,27 @@ mod tests {
         assert!(sup.minted().get("fm-demo-alpha").is_some(), "another server's stays");
         assert_helped(dir.path(), "fm-demo-alpha");
         assert!(sup.take_notices().is_empty());
+    }
+
+    #[test]
+    fn a_sign_out_queued_before_a_sign_in_keeps_what_the_new_grant_minted() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        let queued = crate::sign_in_generation();
+        crate::signing_in();
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW + SECOND);
+        assert!(sup.minted().get("fm-demo-alpha").is_some(), "minted on the new grant");
+        minter.take();
+        sup.signed_out_as_of("http://127.0.0.1:1/", queued);
+        assert_eq!(minter.take(), [], "the grant revoke took the old tokens");
+        assert_eq!(sup.minted().get("fm-demo-workspace"), None, "the old grant's record ends");
+        assert_eq!(sup.keeper().kept("fm-demo-workspace"), None);
+        assert!(sup.minted().get("fm-demo-alpha").is_some(), "the new grant's record stays");
+        assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2", "with its token");
+        assert_helped(dir.path(), "fm-demo-alpha");
     }
 
     #[test]

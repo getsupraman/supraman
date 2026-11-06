@@ -1,6 +1,7 @@
 //! The access token is never logged and never reaches a file; only a session's minted `wss_` token does.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use supraman_workman::{Auth, AuthError};
 
@@ -18,6 +19,18 @@ impl TokenProvider for AppTokens {
         };
         Ok(bearer(&self.auth)?.map(|(url, token)| RoleToken { url, token, role: ws_role.into() }))
     }
+}
+
+static SIGN_INS: AtomicU64 = AtomicU64::new(0);
+
+/// Called as a sign-in starts: a token minted from here on is newer than every sign-out queued before.
+pub fn signing_in() {
+    SIGN_INS.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The sign-ins of this process so far; a mint and a queued sign-out each take it, read after the bearer.
+pub fn sign_in_generation() -> u64 {
+    SIGN_INS.load(Ordering::SeqCst)
 }
 
 /// `(MCP URL, access token)`.

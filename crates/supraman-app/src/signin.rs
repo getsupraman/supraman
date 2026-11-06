@@ -30,6 +30,7 @@ pub fn browser() -> Box<dyn Fn(&str) -> Result<(), String> + Send + Sync> {
 
 pub fn sign_in(home: &Path, origin: &str) -> Result<supraman_workman::AuthStatus, supraman_workman::AuthError> {
     let auth = auth(home);
+    supraman_supervisor::signing_in();
     let status = auth.sign_in(origin, &browser())?;
     if let Some(issuer) = auth.issuer_of(origin) {
         ISSUERS.lock().unwrap_or_else(|e| e.into_inner()).push((home.to_path_buf(), issuer));

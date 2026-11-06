@@ -204,9 +204,22 @@ pub fn mcp_token_key(agent: &str) -> String {
     format!("mcp-token/{agent}")
 }
 
-/// The `headersHelper` command for `agent`: `sm mcp-header`, with the home its token is kept in.
+/// The `headersHelper` command for `agent`: `sm mcp-header`, with the home its token is kept in. A home holding a
+/// character a shell expands goes as hex ([`mcp_header_home`]), so cmd and bash alike pass it as written.
 pub fn mcp_header_command(sm: &Path, home: &Path, agent: &str) -> String {
-    format!("\"{}\" mcp-header --home \"{}\" {agent}", sm.display(), home.display())
+    let shown = home.display().to_string();
+    if shown.contains(SHELL_EXPANDS) {
+        format!("\"{}\" mcp-header --home-hex {} {agent}", sm.display(), supraman_core::hex::encode(shown.as_bytes()))
+    } else {
+        format!("\"{}\" mcp-header --home \"{shown}\" {agent}", sm.display())
+    }
+}
+
+const SHELL_EXPANDS: [char; 4] = ['%', '$', '`', '!'];
+
+/// The home of a `--home-hex` argument of [`mcp_header_command`].
+pub fn mcp_header_home(hex: &str) -> Option<PathBuf> {
+    String::from_utf8(supraman_core::hex::decode(hex)?).ok().map(PathBuf::from)
 }
 
 /// What `sm mcp-header` prints for `agent`: `{"Authorization":"Bearer <token>"}` from `store`. The error never
