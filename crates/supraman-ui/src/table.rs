@@ -376,7 +376,8 @@ impl<V: 'static> Table<V> {
 
     fn header(&self, widths: &[Pixels], cx: &mut Context<V>) -> Stateful<Div> {
         let colors = cx.theme().colors();
-        let (border, background, text) = (colors.border_variant, colors.panel_background, colors.text_muted);
+        let (border, background) = (colors.border_variant, colors.panel_background);
+        let (text, size) = caption(colors);
         let last = self.columns.len().saturating_sub(1);
         let mut cells = Vec::with_capacity(self.columns.len());
         for (i, (column, width)) in self.columns.iter().zip(widths).enumerate() {
@@ -417,7 +418,7 @@ impl<V: 'static> Table<V> {
             .bg(background)
             .border_b_1()
             .border_color(border)
-            .text_xs()
+            .text_size(size)
             .text_color(text)
             .on_drag_move(self.follow_drag(cx))
             .children(cells)
@@ -569,6 +570,11 @@ fn width_probe(state: TableState) -> impl IntoElement {
     .size_full()
 }
 
+/// The header's captions: the theme's secondary shade, a step under the rows' `text_xs`.
+fn caption(colors: &theme::ThemeColors) -> (Hsla, Pixels) {
+    (colors.text.opacity(crate::themes::SECONDARY), px(11.))
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{Entity, TestAppContext, VisualTestContext};
@@ -591,6 +597,13 @@ mod tests {
 
     fn near(a: Pixels, b: f32) -> bool {
         (a - px(b)).abs() <= px(1.)
+    }
+
+    #[test]
+    fn the_header_captions_are_the_secondary_shade_a_step_smaller() {
+        let theme = crate::themes::dark_modern().theme;
+        let colors = theme.colors();
+        assert_eq!(caption(colors), (colors.text.opacity(crate::themes::SECONDARY), px(11.)));
     }
 
     #[test]

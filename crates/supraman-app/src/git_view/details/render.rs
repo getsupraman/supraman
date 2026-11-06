@@ -221,7 +221,7 @@ impl CommitPanel {
             .child(self.message(&shown, box_bg, cx))
             .child(self.author(&shown, &palette, cx))
             .children(self.co_authors(&shown, &palette, cx))
-            .child(self.counts(&shown, cx).pt_1())
+            .child(self.counts(&shown, cx).pt_2())
             .child(self.toolbar(cx).border_b_1().border_color(border))
             .child(self.files(&shown, window, cx))
     }

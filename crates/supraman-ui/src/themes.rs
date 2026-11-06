@@ -2,6 +2,7 @@
 //! base theme, the bundled VS Code Dark Modern (the default) and Supraman Dark (One Dark with Campbell's
 //! ANSI colours), files in `<SUPRAMAN_HOME>\themes\*.json`, and the terminal colours
 //! switch. Everything the app paints reads `cx.theme()`, so [`apply`] is the one place a theme changes.
+//! The Git tab's lanes are [`lanes`]: a theme sets lane N with the style key `gitman.lane.N` (0–9).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,6 +18,8 @@ use gpui::{App, BorrowAppContext as _, Hsla, Rgba};
 use serde::Deserialize;
 use serde_json::Value;
 use theme::{AccentColors, Appearance, StatusColors, Theme, ThemeColors};
+
+pub mod lanes;
 
 pub const DARK_MODERN: &str = "VS Code Dark Modern";
 pub const SUPRAMAN_DARK: &str = "Supraman Dark";
@@ -191,6 +194,13 @@ fn fresh_id(name: &str) -> String {
     format!("{name}#{}", GENERATION.fetch_add(1, Ordering::Relaxed))
 }
 
+/// A fresh id for a changed theme, its lanes kept.
+fn reid(theme: &mut Theme) {
+    let id = fresh_id(&theme.name);
+    lanes::carry(&theme.id, &id);
+    theme.id = id;
+}
+
 /// One Dark: the base every loaded key falls back to.
 pub fn one_dark() -> Theme {
     let registry = theme::ThemeRegistry::default();
@@ -207,6 +217,7 @@ pub fn supraman_dark() -> Loaded {
     set_ansi(&mut theme.styles.colors, campbell());
     let mut adjusted = fit_backgrounds(&mut theme);
     adjusted.extend(fit_placeholder(&mut theme));
+    adjusted.extend(lanes::fit(&theme, &[None; lanes::LANES]));
     Loaded { theme, applied: 0, ignored: Vec::new(), adjusted }
 }
 
@@ -214,7 +225,7 @@ pub fn dark_modern() -> Loaded {
     let family = parse_family(DARK_MODERN_JSON).expect("the bundled theme parses");
     let mut loaded = from_zed(&one_dark(), &family.themes[0]);
     loaded.theme.name = DARK_MODERN.into();
-    loaded.theme.id = fresh_id(DARK_MODERN);
+    reid(&mut loaded.theme);
     loaded
 }
 
@@ -229,8 +240,20 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
         _ => Appearance::Dark,
     };
     let (mut applied, mut ignored, mut set) = (0, Vec::new(), HashSet::new());
+    let mut lane_set = [None; lanes::LANES];
     let styles = &mut theme.styles;
     for (key, value) in &zed.style {
+        if let Some(lane) = lanes::key_lane(key) {
+            match value.as_str().and_then(parse_color) {
+                Some(colour) => {
+                    lane_set[lane] = Some(colour);
+                    applied += 1;
+                }
+                None if value.is_null() => {}
+                None => ignored.push(key.clone()),
+            }
+            continue;
+        }
         match key.as_str() {
             "players" => {
                 if let Some(local) = value.as_array().and_then(|a| a.first()) {
@@ -256,6 +279,7 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
             }
             // known, and nothing Supraman paints
             "syntax" | "background.appearance" => {}
+
             _ => {
                 let field = key.replace('.', "_");
                 let slot = color_field(&mut styles.colors, &field).or_else(|| status_field(&mut styles.status, &field));
@@ -271,6 +295,14 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
             }
         }
     }
+    fill_unset(styles, &set);
+    let mut adjusted = fit_floors(&mut theme);
+    adjusted.extend(lanes::fit(&theme, &lane_set));
+    Loaded { theme, applied, ignored, adjusted }
+}
+
+/// The keys a file leaves out that follow one it sets: the terminal's from its own colours, the selection from the player's.
+fn fill_unset(styles: &mut theme::ThemeStyles, set: &HashSet<String>) {
     let colors = &mut styles.colors;
     let has = |k: &str| set.contains(k);
     if has("terminal_background") && !has("terminal_ansi_background") {
@@ -298,8 +330,6 @@ pub fn from_zed(base: &Theme, zed: &ZedTheme) -> Loaded {
         }
         styles.colors.element_selection_background = selection;
     }
-    let adjusted = fit_floors(&mut theme);
-    Loaded { theme, applied, ignored, adjusted }
 }
 
 fn dim(mut color: Hsla) -> Hsla {
@@ -518,7 +548,7 @@ pub fn fit_backgrounds(theme: &mut Theme) -> Vec<Adjustment> {
 pub fn with_terminal(mut theme: Theme, terminal: TerminalColors) -> Theme {
     if terminal == TerminalColors::Campbell {
         set_ansi(&mut theme.styles.colors, campbell());
-        theme.id = fresh_id(&theme.name);
+        reid(&mut theme);
     }
     theme
 }
