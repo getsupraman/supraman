@@ -8,7 +8,7 @@ use gpui::SharedString;
 use supraman_core::Settings;
 use super::ref_panel::{self, Walk};
 use super::splice::{self, Loaded};
-use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status};
+use supraman_gitman::{ChangeKind, Commit, EntryKind, FIRST_PAGE, Head, History, Layout, Located, NEXT_PAGE, Refs, Repo, Row, Stash, Status};
 
 /// One row of the graph, its texts ready to paint.
 #[derive(Debug, Clone)]
@@ -127,6 +127,8 @@ pub struct First {
     /// The walk read, its hidden and soloed refs.
     pub walk: Walk,
     pub kept: Option<Kept>,
+    /// The walk's `rev-list` read on below the first page, unless rows were kept below it.
+    pub history: Option<History>,
 }
 
 /// The commits loaded below a refresh's first page, laid out again after it.
@@ -171,7 +173,8 @@ pub fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>) -> Result<First, S
     let walked = ref_panel::without(&refs, walk);
     let layout = Layout::new(&walked, dirty(&status));
     let tips = ref_panel::tips(&walked, walk);
-    let history = supraman_gitman::history(&repo, &tips, 0, FIRST_PAGE).map_err(failed)?;
+    let mut walker = History::start(&repo, &tips, 0).map_err(failed)?;
+    let history = walker.page(FIRST_PAGE).map_err(failed)?;
     let kept_from = loaded.filter(|_| history.more).and_then(|l| Some((l, splice::kept_from(l, &tips, &history.commits)?)));
     let page = lay_out(history, layout);
     let kept = kept_from.map(|(loaded, from)| {
@@ -180,7 +183,8 @@ pub fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>) -> Result<First, S
         Kept { from, rows, layout, more: loaded.more }
     });
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
-    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept })
+    let history = (kept.is_none() && page.more).then_some(walker);
+    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history })
 }
 
 fn dirty(status: &Status) -> bool {
@@ -193,12 +197,6 @@ pub fn wip(repo: &Repo) -> Result<(Option<Wip>, Arc<Status>), String> {
     Ok((dirty(&status).then(|| Wip::of(&status)), Arc::new(status)))
 }
 
-/// The page of `count` commits after the first `skip`, laid out after the rows `layout` has seen.
-pub fn page(repo: &Repo, tips: &[String], skip: usize, count: usize, layout: Layout) -> Result<Page, String> {
-    let history = supraman_gitman::history(repo, tips, skip, count).map_err(|e| e.to_string())?;
-    Ok(lay_out(history, layout))
-}
-
 fn lay_out(history: supraman_gitman::Page, mut layout: Layout) -> Page {
     let rows = layout.extend(&history.commits);
     let mut commits = history.commits.iter();
@@ -206,8 +204,18 @@ fn lay_out(history: supraman_gitman::Page, mut layout: Layout) -> Page {
     Page { rows, more: history.more, layout }
 }
 
-pub fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout) -> Result<Page, String> {
-    page(repo, tips, skip, NEXT_PAGE, layout)
+/// The page after the first `skip` commits, read on from `walker` and laid out after the rows `layout` has seen;
+/// the walker to read the next one from while more follow.
+pub fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout, walker: Option<History>) -> Result<(Page, Option<History>), String> {
+    let failed = |e: supraman_gitman::GitError| e.to_string();
+    // Rows the walker already passed (a dropped tail, rows a refresh kept) cost a new walk from `skip`.
+    let mut walker = match walker.filter(|w| w.at() == skip && w.tips() == tips) {
+        Some(walker) => walker,
+        None => History::start(repo, tips, skip).map_err(failed)?,
+    };
+    let page = lay_out(walker.page(NEXT_PAGE).map_err(failed)?, layout);
+    let walker = page.more.then_some(walker);
+    Ok((page, walker))
 }
 
 fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {

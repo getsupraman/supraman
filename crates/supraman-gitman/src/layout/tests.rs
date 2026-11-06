@@ -259,7 +259,7 @@ fn layout_a_stash_row_is_dashed_to_its_base_and_an_older_one_leaves_the_base_to_
     assert_eq!(rows[3].stash.as_ref().map(|s| s.sha.as_str()), Some("S"));
     assert!(rows.iter().enumerate().all(|(ix, r)| r.stash.is_some() == (ix == 3)));
     assert!(rows[3].ghost.is_none());
-    let starting: Vec<&Edge> = rows[3].edges.iter().filter(|e| e.kind == S).collect();
+    let starting: Vec<Edge> = rows[3].edges.iter().filter(|e| e.kind == S).collect();
     assert_eq!((starting.len(), starting[0].dashed, rows[3].lane), (1, true, 0));
     assert_eq!(rows[4].lane, 1, "the base keeps its real child's lane");
     assert!(rows[4].edges.iter().any(|e| e.kind == E && e.lane == 0 && e.dashed), "the stash's dashed edge ends at the base");
@@ -268,7 +268,7 @@ fn layout_a_stash_row_is_dashed_to_its_base_and_an_older_one_leaves_the_base_to_
     let newer = [commit("i", &["b"]), commit("c", &["b"]), commit("b", &[])];
     let rows = Layout::new(&stash_refs("i", "b"), false).extend(&newer);
     assert_eq!(shape(&rows), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)]), (0, vec![(E, 0, 0), (E, 1, 0)])]);
-    assert!(rows[1].edges[0].dashed && !rows[1].edges[1].dashed, "the stash's lane passes the child dashed");
+    assert!(rows[1].edges().next().unwrap().dashed && !rows[1].edges().nth(1).unwrap().dashed, "the stash's lane passes the child dashed");
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn layout_of_the_fixture_puts_each_stash_on_its_index_commit_at_its_time() {
         assert!(rows.iter().all(|r| r.sha.as_deref() != Some(f.sha(stash))), "{stash}'s own commit has no row");
         let row = &rows[at(&format!("{stash}_index"))];
         assert_eq!(row.stash.as_ref().map(|s| s.sha.as_str()), Some(f.sha(stash)));
-        let starting: Vec<&Edge> = row.edges.iter().filter(|e| e.kind == S).collect();
+        let starting: Vec<Edge> = row.edges.iter().filter(|e| e.kind == S).collect();
         assert!(starting.len() == 1 && starting[0].dashed, "{stash}: one dashed edge to its base: {:?}", row.edges);
     }
     assert_eq!([at("ahead"), at("stash_wip_index"), at("stash_message_index"), at("merge")], [0, 1, 2, 3]);
@@ -334,4 +334,56 @@ fn layout_of_shas_and_parents_carries_on_as_of_commits() {
     let rest: Vec<(String, Vec<Box<str>>)> = all.commits[300..].iter().map(|c| (c.sha.clone(), c.parents.iter().map(|p| p.as_str().into()).collect())).collect();
     rows.extend(mixed.extend_with(rest.iter().map(|(sha, parents)| (sha.as_str(), parents.as_slice()))));
     assert_eq!(rows, whole);
+}
+
+/// `n` commits on `lanes` long-lived lines, each its line's next older as parent, every 97th merging its neighbour's.
+fn wide(n: usize, lanes: usize) -> Vec<Commit> {
+    let sha = |i: usize| format!("w{i:06}");
+    (0..n)
+        .map(|i| {
+            let mut parents: Vec<String> = (i + lanes < n).then(|| sha(i + lanes)).into_iter().collect();
+            if i % 97 == 0 && i + 1 < n {
+                parents.push(sha(i + 1));
+            }
+            Commit { parents, ..commit(&sha(i), &[]) }
+        })
+        .collect()
+}
+
+/// FNV-1a over each row's lane and every edge it paints, in order.
+fn edge_digest(rows: &[Row]) -> (usize, u64) {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    let mut eat = |v: usize| {
+        for b in (v as u64).to_le_bytes() {
+            hash = (hash ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+        }
+    };
+    let mut edges = 0;
+    for r in rows {
+        eat(r.lane);
+        eat(r.max_lane);
+        for e in r.edges.iter() {
+            edges += 1;
+            eat(e.kind as usize);
+            eat(e.lane);
+            eat(e.node);
+            eat(e.colour);
+            eat(usize::from(e.dashed));
+        }
+    }
+    (edges, hash)
+}
+
+#[test]
+fn layout_edges_of_the_20k_fixture_and_a_wide_history_stay_as_painted() {
+    let g = Generated::new(20_000);
+    let repo = g.repo();
+    let refs = refs(&repo).unwrap();
+    let all = history(&repo, &refs.tips(), 0, 20_000).unwrap();
+    let rows = Layout::new(&refs, true).extend(&all.commits);
+    assert_eq!(edge_digest(&rows), (46_000, 11_031_221_912_078_148_549), "the 20k fixture");
+    let rows = Layout::new(&no_refs(), true).extend(&synthetic(10_000));
+    assert_eq!(edge_digest(&rows), (28_798, 17_473_495_737_116_666_311), "the synthetic history");
+    let rows = Layout::new(&no_refs(), false).extend(&wide(10_000, 40));
+    assert_eq!(edge_digest(&rows), (408_466, 5_191_816_325_844_784_470), "forty lanes");
 }

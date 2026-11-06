@@ -98,7 +98,7 @@ fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext
     close(view, cx);
 }
 
-fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
+pub(super) fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
     for _ in 0..pages {
         view.update(cx, |v, cx| v.load_more(cx));
         cx.run_until_parked();
@@ -106,14 +106,14 @@ fn paged(view: &Entity<GitView>, pages: usize, cx: &mut VisualTestContext) {
 }
 
 /// The rows of the repo's first `count` commits laid out in one go.
-fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
+pub(super) fn fresh(g: &Generated, wip: bool, count: usize) -> Vec<Row> {
     let repo = g.repo();
     let refs = supraman_gitman::refs(&repo).unwrap();
     let history = supraman_gitman::history(&repo, &refs.tips(), 0, count).unwrap();
     supraman_gitman::Layout::new(&refs, wip).extend(&history.commits)
 }
 
-fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
+pub(super) fn rows(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<Row> {
     view.read_with(cx, |v, _| v.rows.iter().map(|r| r.row.clone()).collect())
 }
 

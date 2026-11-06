@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
-use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError};
+use supraman_core::process::{self, GIT_TIMEOUT, Kill, RawOutput, RunError, Streaming};
 
 use crate::{Dirs, Git};
 
@@ -81,13 +82,24 @@ impl Repo {
     }
 
     fn run_with<'a>(&self, read_only: impl Iterator<Item = &'a &'a str>, args: &[&str], input: Option<Vec<u8>>) -> Result<RawOutput, GitError> {
+        let mut cmd = self.command(read_only, args);
+        process::run_bytes(&mut cmd, input, GIT_TIMEOUT, Kill::Tree).map_err(|source| GitError::Run { args: args.join(" "), source })
+    }
+
+    /// [`Repo::run`] as a child whose stdout is read as git writes it.
+    pub(crate) fn stream(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<Streaming, GitError> {
+        let mut cmd = self.command(READ_ONLY.iter(), args);
+        process::stream(&mut cmd, input).map_err(|e| GitError::Run { args: args.join(" "), source: RunError::Spawn(e) })
+    }
+
+    fn command<'a>(&self, read_only: impl Iterator<Item = &'a &'a str>, args: &[&str]) -> Command {
         let mut cmd = process::command(&self.git.path);
         cmd.arg("-C").arg(&self.dir).args(read_only).args(args);
         cmd.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "").env("TERM", "dumb");
         REPO_ENV.iter().for_each(|var| {
             cmd.env_remove(var);
         });
-        process::run_bytes(&mut cmd, input, GIT_TIMEOUT, Kill::Tree).map_err(|source| GitError::Run { args: args.join(" "), source })
+        cmd
     }
 
     /// [`Repo::run`]'s stdout, an error unless git exited 0.
