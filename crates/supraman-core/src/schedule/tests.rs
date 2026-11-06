@@ -631,8 +631,7 @@ fn run_records_rotate_at_one_mib_and_read_across_both_files() {
     assert!(all.windows(2).all(|w| w[0].ts < w[1].ts), "oldest first");
 }
 
-/// `git args` in `dir` with no user or system config, again a few times while Defender or the indexer holds a
-/// file the last one made.
+/// `git args` in `dir` with no user or system config, retried while Defender or the indexer holds a fresh file.
 fn git(dir: &Path, args: &[&str]) {
     let mut out = None;
     for _ in 0..5 {

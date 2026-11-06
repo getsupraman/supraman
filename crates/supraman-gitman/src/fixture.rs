@@ -254,8 +254,7 @@ impl Generated {
     }
 }
 
-/// A repo the tests that only read it share: made by the first, held while any of them runs, and dropped
-/// (its temp dir with it) when the last ends.
+/// A repo the tests that only read it share: made by the first, dropped with its temp dir when the last ends.
 pub struct Shared<T>(Mutex<Weak<T>>);
 
 impl<T> Shared<T> {

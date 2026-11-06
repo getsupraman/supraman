@@ -227,8 +227,7 @@ fn git(dir: &Path, args: &[&str]) -> std::result::Result<crate::process::Output,
     crate::process::git(dir, args).map_err(|e| e.to_string())
 }
 
-/// `wt`'s main checkout and branch when `wt` is a linked worktree whose `git status` is clean and from which
-/// no commit is reachable only; `None` otherwise.
+/// `wt`'s main checkout and branch when it is a linked worktree, clean, with no commit only it reaches.
 pub(super) fn spent(wt: &Path) -> std::result::Result<Option<(PathBuf, String)>, String> {
     let Some(main) = crate::paths::main_checkout(wt).filter(|m| crate::paths::path_key(m) != crate::paths::path_key(wt)) else { return Ok(None) };
     let status = git(wt, &["status", "--porcelain"])?;
