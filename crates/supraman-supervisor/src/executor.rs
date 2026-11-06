@@ -177,6 +177,8 @@ pub struct Supervisor<L, T> {
     keeper: Keeper,
     /// Their claude sessions missing from the snapshots: a deleted one revokes.
     absent: Absent,
+    /// Unbound records whose name is neither wanted nor listed, with the non-empty snapshots in a row that showed so.
+    unwanted: BTreeMap<String, u32>,
     needs: Vec<NeedsYou>,
     notices: Vec<String>,
     /// Names whose Re-mint was pressed: the next tick stops their live row, and the resume that
@@ -234,6 +236,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             generations: BTreeMap::new(),
             keeper,
             absent: Absent::default(),
+            unwanted: BTreeMap::new(),
             needs: Vec::new(),
             notices,
             remint_due: Vec::new(),
@@ -458,6 +461,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
         self.revoke_deleted(observed);
+        self.end_unwanted_unbound(observed);
         self.track_activity(observed, now);
         let mut needs: Vec<NeedsYou> = reconcile(&self.desired, observed, &self.memory, &self.policy, budget.free, now)
             .into_iter()
@@ -649,6 +653,33 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         let deleted = self.absent.deleted(&bound, observed);
         for (name, sid) in bound.into_iter().filter(|(_, sid)| deleted.contains(sid)) {
             log::info!("{name}: its claude session {sid} is deleted, so its Workman token is revoked");
+            self.end(&name, None);
+        }
+    }
+
+    /// Ends each record never bound to a claude session whose name no snapshot lists and the desired state left for
+    /// [`UNWANTED_UNBOUND_TICKS`] non-empty snapshots in a row: no session can use its token. An empty snapshot
+    /// proves nothing and starts the count over.
+    fn end_unwanted_unbound(&mut self, observed: &[Session]) {
+        let mut counts = BTreeMap::new();
+        let mut due = Vec::new();
+        if !observed.is_empty() {
+            for name in self.minted.names() {
+                let unbound = self.minted.get(name).is_some_and(|m| m.claude_session_id.is_none());
+                if !unbound || self.desired.sessions.iter().any(|w| &w.name == name) || observed.iter().any(|s| &s.name == name) {
+                    continue;
+                }
+                let times = self.unwanted.get(name).copied().unwrap_or(0) + 1;
+                if times >= UNWANTED_UNBOUND_TICKS {
+                    due.push(name.clone());
+                } else {
+                    counts.insert(name.clone(), times);
+                }
+            }
+        }
+        self.unwanted = counts;
+        for name in due {
+            log::info!("{name}: never bound to a claude session and no longer wanted, so its Workman token is revoked");
             self.end(&name, None);
         }
     }
@@ -854,6 +885,8 @@ pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
 
 /// From this many failed `claude stop`s in a row, the name gets a [`NeedsKind::StopFailed`] row.
 pub const STOP_FAILURES_SHOWN: u32 = 3;
+/// The non-empty snapshots in a row an unbound record's name must be unwanted and unlisted before it ends.
+pub const UNWANTED_UNBOUND_TICKS: u32 = 30;
 /// The plugin whose MCP server ([`AGENTS_SERVER`]) every supervised session gets in its own config.
 const AGENTS_PLUGIN: &str = "workman";
 
@@ -1558,6 +1591,54 @@ mod tests {
         sup.tick(&[another()], &mut free(), NOW + 5 * SECOND);
         assert_eq!(minter.take(), [], "revoked once");
         assert!(sup.take_notices().is_empty());
+    }
+
+    #[test]
+    fn a_record_never_bound_ends_once_its_name_is_unwanted_and_unlisted_long_enough() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        sup.desired.unwant("fm-demo-alpha");
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        let mut now = NOW + SECOND;
+        let mut tick = |sup: &mut Supervisor<FakeLauncher, FakeTokens>, observed: &[Session]| {
+            sup.tick(observed, &mut free(), now);
+            now += SECOND;
+        };
+        for _ in 1..UNWANTED_UNBOUND_TICKS {
+            tick(&mut sup, std::slice::from_ref(&live));
+        }
+        tick(&mut sup, &[]);
+        for _ in 1..UNWANTED_UNBOUND_TICKS {
+            tick(&mut sup, std::slice::from_ref(&live));
+        }
+        assert!(minter.take().iter().all(|c| !matches!(c, MintCall::Revoke { .. })), "an empty snapshot started the count over");
+        assert_helped(dir.path(), "fm-demo-alpha");
+        tick(&mut sup, std::slice::from_ref(&live));
+        let revokes: Vec<MintCall> = minter.take().into_iter().filter(|c| matches!(c, MintCall::Revoke { .. })).collect();
+        assert_eq!(revokes, [MintCall::Revoke { bearer: STATIC.into(), session_id: "ws-1".into() }]);
+        assert_eq!(sup.minted().get("fm-demo-alpha"), None);
+        assert_eq!(sup.keeper().kept("fm-demo-alpha"), None);
+        assert!(!dir.path().join("workstate-fm-demo-alpha.json").exists(), "its config goes");
+        assert!(sup.minted().get("fm-demo-workspace").is_some(), "the bound one stays");
+    }
+
+    #[test]
+    fn an_unwanted_unbound_name_a_snapshot_still_lists_keeps_its_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, dir.path());
+        sup.desired.sessions.push(alpha());
+        sup.tick(&[], &mut free(), NOW);
+        minter.take();
+        sup.desired.unwant("fm-demo-alpha");
+        let listed = Session { name: "fm-demo-alpha".into(), id: "cccc0003".into(), session_id: "cccc0003-0000-4000-8000-000000000003".into(), ..row(SessionState::Stopped, None, None) };
+        for t in 1..=2 * UNWANTED_UNBOUND_TICKS as i64 {
+            sup.tick(std::slice::from_ref(&listed), &mut free(), NOW + t * SECOND);
+        }
+        assert!(minter.take().iter().all(|c| !matches!(c, MintCall::Revoke { .. })));
+        assert_eq!(kept(&sup, "fm-demo-alpha"), "wss_fake2");
     }
 
     #[test]
