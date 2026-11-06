@@ -48,15 +48,15 @@ impl Follow {
 #[cfg(test)]
 thread_local! {
     /// gpui's test scheduler refuses wake-ups from the watchers' threads unless a test allows parking.
-    pub static FOLLOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static FOLLOW: std::cell::Cell<Option<live::Debounces>> = const { std::cell::Cell::new(None) };
 }
 
-/// Whether a loaded tab starts following its repository.
-pub(super) fn follows() -> bool {
+/// Whether a loaded tab starts following its repository, and with which debounces.
+pub(super) fn follows() -> Option<live::Debounces> {
     #[cfg(test)]
     return FOLLOW.get();
     #[cfg(not(test))]
-    true
+    Some(live::DEBOUNCES)
 }
 
 /// The first commit row at or below the top of the view, and how far below the top it starts.
@@ -79,12 +79,12 @@ fn merge(a: Refresh, b: Refresh) -> Refresh {
 
 impl GitView {
     /// Starts the watchers of `repo` off the UI thread, once.
-    pub(super) fn follow(&mut self, repo: Repo, cx: &mut Context<Self>) {
+    pub(super) fn follow(&mut self, repo: Repo, debounces: live::Debounces, cx: &mut Context<Self>) {
         if self.follow.live.is_some() || self.follow.starting {
             return;
         }
         self.follow.starting = true;
-        let started = cx.background_spawn(async move { live::start(&repo) });
+        let started = cx.background_spawn(async move { live::start(&repo, debounces) });
         cx.spawn(async move |this, cx| {
             let mut rx = match started.await {
                 Ok((live, rx)) => {

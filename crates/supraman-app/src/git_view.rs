@@ -467,8 +467,8 @@ impl GitView {
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
-                if refresh::follows() {
-                    self.follow(first.repo.clone(), cx);
+                if let Some(debounces) = refresh::follows() {
+                    self.follow(first.repo.clone(), debounces, cx);
                 }
                 self.repo = Some(first.repo);
                 self.wip = first.wip;

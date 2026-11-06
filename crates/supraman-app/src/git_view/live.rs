@@ -10,8 +10,15 @@ use supraman_core::paths::within;
 use supraman_core::watch::{Batch, Watch, Watcher};
 use supraman_gitman::{Dirs, Repo};
 
-pub const GIT_DEBOUNCE: Duration = Duration::from_millis(200);
-pub const WORK_DEBOUNCE: Duration = Duration::from_secs(2);
+/// How long the git dirs' and the work dir's watchers gather changes into one batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Debounces {
+    pub git: Duration,
+    pub work: Duration,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub const DEBOUNCES: Debounces = Debounces { git: Duration::from_millis(200), work: Duration::from_secs(2) };
 /// After the window comes back to the front, the one full refresh waits this long.
 pub const FOCUS_DELAY: Duration = Duration::from_millis(500);
 
@@ -37,7 +44,7 @@ impl Live {
 }
 
 /// Watches the repository of `repo`; blocking (it asks git where its dirs are).
-pub fn start(repo: &Repo) -> Result<(Live, UnboundedReceiver<Refresh>), String> {
+pub fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, UnboundedReceiver<Refresh>), String> {
     let dirs = supraman_gitman::dirs(repo).map_err(|e| e.to_string())?;
     let (tx, rx) = unbounded();
     let mut git_dirs = vec![Watch::tree(&dirs.common_dir)];
@@ -46,7 +53,7 @@ pub fn start(repo: &Repo) -> Result<(Live, UnboundedReceiver<Refresh>), String> 
     }
     let git = {
         let (tx, dirs) = (tx.clone(), dirs.clone());
-        Watcher::new(&git_dirs, GIT_DEBOUNCE, move |batch| {
+        Watcher::new(&git_dirs, debounces.git, move |batch| {
             if let Some(r) = git_refresh(&dirs, &batch) {
                 tx.unbounded_send(r).ok();
             }
@@ -54,7 +61,7 @@ pub fn start(repo: &Repo) -> Result<(Live, UnboundedReceiver<Refresh>), String> 
     };
     let work = {
         let top = Repo::new(repo.git().clone(), &dirs.top);
-        Watcher::new(&[Watch::tree(&dirs.top)], WORK_DEBOUNCE, move |batch| {
+        Watcher::new(&[Watch::tree(&dirs.top)], debounces.work, move |batch| {
             if let Some(r) = work_refresh(&top, &dirs, &batch) {
                 tx.unbounded_send(r).ok();
             }

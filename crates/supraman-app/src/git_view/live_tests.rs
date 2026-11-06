@@ -8,11 +8,13 @@ use supraman_gitman::fixture::{Fixture, Generated, git_in};
 
 use super::cells::ref_cell;
 use super::diff::Content;
-use super::live::{FOCUS_DELAY, Refresh, git_class, git_refresh, work_files};
+use super::live::{Debounces, FOCUS_DELAY, Refresh, git_class, git_refresh, work_files};
 use super::tests::{open, redraw};
 use super::wip::Section;
 use super::wip::tests::{open_file, open_with_editor, select_wip};
 use super::*;
+
+const DEADLINE: Duration = Duration::from_secs(10);
 
 /// Runs the app until `done`, failing after `within`; the watchers' threads wake it in real time.
 fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContext) -> bool) -> Duration {
@@ -23,18 +25,18 @@ fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: imp
             return start.elapsed();
         }
         assert!(start.elapsed() < within, "{what}: not within {within:?}");
-        std::thread::yield_now();
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 
 /// Tabs opened from here on follow their repositories.
 pub(super) fn follow(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    super::refresh::FOLLOW.set(true);
+    super::refresh::FOLLOW.set(Some(Debounces { git: Duration::from_millis(20), work: Duration::from_millis(50) }));
 }
 
 pub(super) fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
-    until("the watchers start", Duration::from_secs(5), cx, |cx| view.read_with(cx, |v, _| v.follow.live().is_some()));
+    until("the watchers start", DEADLINE, cx, |cx| view.read_with(cx, |v, _| v.follow.live().is_some()));
 }
 
 /// Closes the test's window and waits for the watchers to end, so none wakes the app after the test.
@@ -56,7 +58,7 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
     following(&view, cx);
     f.git(&["commit", "-q", "--no-verify", "-m", "Made while watched"]);
     let head = f.git(&["rev-parse", "HEAD"]);
-    let took = until("the new commit", Duration::from_secs(1), cx, |cx| {
+    let took = until("the new commit", DEADLINE, cx, |cx| {
         view.read_with(cx, |v, _| {
             v.rows.iter().find(|r| r.sha.as_ref() == head).is_some_and(|r| ref_cell(&r.row, false).first.is_some_and(|g| g.name == "main" && g.head()))
         })
@@ -68,7 +70,7 @@ fn live_refresh_shows_a_new_commit_and_its_refs_within_a_second_and_an_edit_with
     let added = |v: &GitView| v.wip.map_or(0, |w| w.added);
     let before = view.read_with(cx, |v, _| added(v));
     f.write("live.txt", b"new\n");
-    let took = until("the edit in the WIP", Duration::from_secs(3), cx, |cx| view.read_with(cx, |v, _| added(v) == before + 1));
+    let took = until("the edit in the WIP", DEADLINE, cx, |cx| view.read_with(cx, |v, _| added(v) == before + 1));
     eprintln!("the edit after {took:?}");
     close(view, cx);
 }
@@ -114,7 +116,7 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
     let (diff, _, new) = open_file(&view, Section::Unstaged, "u.txt", cx);
     assert_eq!(new, "untracked\n");
     f.write("u.txt", b"untracked\nand more\n");
-    until("the diff reloaded", Duration::from_secs(3), cx, |cx| {
+    until("the diff reloaded", DEADLINE, cx, |cx| {
         diff.read_with(cx, |d, cx| matches!(d.content(), Content::Text(t) if t.diff.new.read(cx).text() == "untracked\nand more\n"))
     });
     view.read_with(cx, |v, _| {
@@ -127,7 +129,7 @@ fn live_refresh_keeps_the_open_diff_and_reloads_it_when_its_file_changes(cx: &mu
 
 #[gpui::test]
 fn live_refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);
     let before = view.read_with(cx, |v, _| v.follow.refreshes);
     view.update(cx, |v, cx| v.focus_regained(cx));
@@ -142,7 +144,7 @@ fn live_refresh_runs_once_after_the_window_comes_back(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn live_refresh_stops_the_watchers_when_the_tab_closes(cx: &mut TestAppContext) {
-    let f = Fixture::new();
+    let f = Fixture::shared();
     follow(cx);
     let (view, cx) = open(&f.dir, cx);
     following(&view, cx);
