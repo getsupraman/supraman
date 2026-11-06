@@ -94,13 +94,18 @@ fn tree(files: &[FileChange], order: Order) -> FileTree {
 
 pub fn load(repo: &Repo, order: Order) -> Result<Loaded, String> {
     let status = supraman_gitman::status(repo).map_err(|e| e.to_string())?;
+    Ok(of_status(&status, order))
+}
+
+/// The lists of a status read already.
+pub fn of_status(status: &Status, order: Order) -> Loaded {
     let branch = match &status.branch.head {
         Some(name) => Branch::Named(name.clone()),
         None => Branch::Detached(status.branch.oid.as_ref().map(|oid| oid.chars().take(7).collect())),
     };
-    let (mut unstaged, mut staged) = sections(&status);
+    let (mut unstaged, mut staged) = sections(status);
     sort_changes(&mut unstaged, order);
     sort_changes(&mut staged, order);
     let (unstaged_tree, staged_tree) = (tree(&unstaged, order), tree(&staged, order));
-    Ok(Loaded { branch, total: status.entries.len(), unstaged, staged, unstaged_tree, staged_tree })
+    Loaded { branch, total: status.entries.len(), unstaged, staged, unstaged_tree, staged_tree }
 }

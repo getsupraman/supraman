@@ -4,6 +4,7 @@ use super::*;
 
 impl FleetView {
     pub(super) fn render_right(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.show_git_tabs(cx);
         let _stall = supraman_ui::stall::section("render: right");
         let colors = cx.theme().colors().clone();
         let headers = self

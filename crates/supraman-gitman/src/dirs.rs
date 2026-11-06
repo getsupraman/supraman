@@ -14,6 +14,9 @@ pub struct Dirs {
 }
 
 pub fn dirs(repo: &Repo) -> Result<Dirs, GitError> {
+    if let Some(dirs) = repo.known_dirs() {
+        return Ok(dirs.clone());
+    }
     let args = ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"];
     repo.read(&args, None, |out| match text(out).lines().collect::<Vec<_>>().as_slice() {
         [top, git_dir, common_dir] => Ok(Dirs { top: top.into(), git_dir: git_dir.into(), common_dir: common_dir.into() }),

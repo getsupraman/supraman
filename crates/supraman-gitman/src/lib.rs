@@ -22,7 +22,7 @@ pub use changes::{ChangeKind, FileChange, TreeFile, changed_between, changed_fil
 pub use dirs::{Dirs, dirs, ignored};
 pub use history::{Commit, Details, FIRST_PAGE, NEXT_PAGE, Page, Person, Signature, details, history};
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row};
-pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate};
+pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located};
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
 pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs};
 pub use repo::{GitError, Repo};

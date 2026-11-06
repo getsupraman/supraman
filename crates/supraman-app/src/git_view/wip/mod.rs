@@ -8,9 +8,10 @@ mod render;
 pub(crate) mod tests;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{App, AppContext as _, Context, EventEmitter, SharedString};
-use supraman_gitman::{ChangeKind, FileChange, Repo};
+use supraman_gitman::{ChangeKind, FileChange, Repo, Status};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
@@ -73,6 +74,8 @@ pub struct WipPanel {
     order: Order,
     unstaged: List,
     staged: List,
+    #[cfg(test)]
+    pub status_reads: usize,
 }
 
 impl EventEmitter<PanelEvent> for WipPanel {}
@@ -90,6 +93,8 @@ impl WipPanel {
             order: Order::Ascending,
             unstaged: List::new(cx),
             staged: List::new(cx),
+            #[cfg(test)]
+            status_reads: 0,
         }
     }
 
@@ -114,17 +119,17 @@ impl WipPanel {
     /// Reads the working directory again off the UI thread, its lists opened afresh; the token of this read.
     pub fn show(&mut self, colour: usize, cx: &mut Context<Self>) -> u64 {
         self.in_place = false;
-        self.read(colour, cx)
+        self.read(colour, None, cx)
     }
 
-    /// [`WipPanel::show`] keeping the lists' open folders and selected files.
-    pub fn refresh(&mut self, cx: &mut Context<Self>) -> u64 {
-        let token = self.read(self.colour, cx);
+    /// [`WipPanel::show`] of `status`, read already, keeping the lists' open folders and selected files.
+    pub fn refresh(&mut self, status: Arc<Status>, cx: &mut Context<Self>) -> u64 {
+        let token = self.read(self.colour, Some(status), cx);
         self.in_place = true;
         token
     }
 
-    fn read(&mut self, colour: usize, cx: &mut Context<Self>) -> u64 {
+    fn read(&mut self, colour: usize, status: Option<Arc<Status>>, cx: &mut Context<Self>) -> u64 {
         self.token += 1;
         let token = self.token;
         self.colour = colour;
@@ -137,7 +142,16 @@ impl WipPanel {
             self.state = State::Loading;
         }
         let order = self.order;
-        let loaded = cx.background_spawn(async move { load::load(&repo, order) });
+        #[cfg(test)]
+        {
+            self.status_reads += usize::from(status.is_none());
+        }
+        let loaded = cx.background_spawn(async move {
+            match status {
+                Some(status) => Ok(load::of_status(&status, order)),
+                None => load::load(&repo, order),
+            }
+        });
         cx.spawn(async move |this, cx| {
             let loaded = loaded.await;
             this.update(cx, |this, cx| this.apply(token, loaded, cx)).ok();

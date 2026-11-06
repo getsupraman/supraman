@@ -28,17 +28,17 @@ fn until(what: &str, within: Duration, cx: &mut VisualTestContext, mut done: imp
 }
 
 /// Tabs opened from here on follow their repositories.
-fn follow(cx: &mut TestAppContext) {
+pub(super) fn follow(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     super::refresh::FOLLOW.set(true);
 }
 
-fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+pub(super) fn following(view: &Entity<GitView>, cx: &mut VisualTestContext) {
     until("the watchers start", Duration::from_secs(5), cx, |cx| view.read_with(cx, |v, _| v.follow.live().is_some()));
 }
 
 /// Closes the test's window and waits for the watchers to end, so none wakes the app after the test.
-fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<supraman_core::watch::Stopped> {
+pub(super) fn close(view: Entity<GitView>, cx: &mut VisualTestContext) -> Vec<supraman_core::watch::Stopped> {
     let stopped = view.read_with(cx, |v, _| v.follow.live().expect("following").stopped());
     drop(view);
     cx.update(|window, _| window.remove_window());

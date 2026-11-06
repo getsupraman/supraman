@@ -209,3 +209,28 @@ fn no_stashes_without_a_stash_ref() {
     git_in(&f.git, &f.dir, &["update-ref", "-d", "refs/stash"], &[], None);
     assert!(stashes(&f.repo()).unwrap().is_empty());
 }
+
+#[test]
+fn head_detached_and_on_a_branch_with_no_commit_yet() {
+    let f = Fixture::new();
+    git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach"], &[], None);
+    let wt = refs(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
+    assert_eq!(wt.head, Head::Detached { sha: f.sha("second").into() });
+    assert_eq!(refs(&f.repo()).unwrap().head, Head::Branch { name: "main".into(), sha: Some(f.sha("ahead").into()) }, "the main checkout's own HEAD");
+    let empty = f.temp.path().join("empty");
+    git_in(&f.git, f.temp.path(), &["init", "-q", "-b", "fresh", "empty"], &[], None);
+    assert_eq!(refs(&Repo::new(f.git.clone(), &empty)).unwrap().head, Head::Branch { name: "fresh".into(), sha: None });
+}
+
+#[test]
+fn a_repo_that_knows_its_dirs_reads_them_instead_of_asking() {
+    let f = Fixture::new();
+    let env = [("GIT_AUTHOR_DATE", "@1700001000 +0000".to_string()), ("GIT_COMMITTER_DATE", "@1700001000 +0000".to_string())];
+    git_in(&f.git, &f.worktree, &["merge", "-q", "--no-ff", "--no-commit", "stale"], &env, None);
+    let theirs = dirs(&Repo::new(f.git.clone(), &f.worktree)).unwrap();
+    let told = f.repo().with_dirs(theirs.clone());
+    assert_eq!(dirs(&told).unwrap(), theirs);
+    assert_eq!(status(&told).unwrap().operation, Some(Operation::Merge), "the operation of the git dir it was told");
+    std::fs::write(theirs.top.join("a.txt"), b"theirs\n").unwrap();
+    assert_eq!(worktree_file(&told, "a.txt").unwrap().bytes, b"theirs\n", "the file under the top it was told");
+}

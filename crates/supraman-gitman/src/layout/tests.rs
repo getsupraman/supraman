@@ -321,3 +321,17 @@ fn layout_ten_thousand_rows_fast() {
         assert!(took.as_millis() < 50, "{took:?}");
     }
 }
+
+#[test]
+fn layout_of_shas_and_parents_carries_on_as_of_commits() {
+    let g = Generated::new(700);
+    let repo = g.repo();
+    let refs = refs(&repo).unwrap();
+    let all = history(&repo, &refs.tips(), 0, 1000).unwrap();
+    let whole = Layout::new(&refs, true).extend(&all.commits);
+    let mut mixed = Layout::new(&refs, true);
+    let mut rows = mixed.extend(&all.commits[..300]);
+    let rest: Vec<(String, Vec<Box<str>>)> = all.commits[300..].iter().map(|c| (c.sha.clone(), c.parents.iter().map(|p| p.as_str().into()).collect())).collect();
+    rows.extend(mixed.extend_with(rest.iter().map(|(sha, parents)| (sha.as_str(), parents.as_slice()))));
+    assert_eq!(rows, whole);
+}

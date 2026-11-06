@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use supraman_core::Settings;
@@ -68,6 +69,23 @@ pub fn locate(settings: &Settings) -> Located {
         Some(path) => check(&path),
         None => Located::Missing { at: None },
     }
+}
+
+/// [`locate`], a git it found kept for the process per `[gitman] git` setting while its file is there.
+pub fn located(settings: &Settings) -> Located {
+    static FOUND: Mutex<Vec<(Option<PathBuf>, Git)>> = Mutex::new(Vec::new());
+    let setting = settings.section::<GitmanSettings>(SECTION).unwrap_or_default().git;
+    let kept = FOUND.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|(s, _)| *s == setting).map(|(_, git)| git.clone());
+    if let Some(git) = kept.filter(|g| g.path.is_file()) {
+        return Located::Found(git);
+    }
+    let located = locate(settings);
+    let mut found = FOUND.lock().unwrap_or_else(PoisonError::into_inner);
+    found.retain(|(s, _)| *s != setting);
+    if let Located::Found(git) = &located {
+        found.push((setting, git.clone()));
+    }
+    located
 }
 
 /// Runs `path --version` and judges the answer.

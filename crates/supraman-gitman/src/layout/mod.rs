@@ -75,17 +75,22 @@ impl Layout {
 
     /// The rows of the next page; pages laid out in turn give the rows of laying them out at once.
     pub fn extend(&mut self, commits: &[Commit]) -> Vec<Row> {
+        self.extend_with(commits.iter().map(|c| (c.sha.as_str(), c.parents.as_slice())))
+    }
+
+    /// [`Layout::extend`] over commits as their shas and parents, such as rows read before.
+    pub fn extend_with<'a, P: AsRef<str> + 'a>(&mut self, commits: impl ExactSizeIterator<Item = (&'a str, &'a [P])>) -> Vec<Row> {
         let mut rows = Vec::with_capacity(commits.len() + 1);
         if std::mem::take(&mut self.wip) {
             let head = self.refs.head.clone().into_iter().collect::<Vec<_>>();
             let placed = self.lanes.place("", &head, true, false);
             rows.push(self.row(None, placed, None));
         }
-        for commit in commits {
-            let stash = self.stashes.get(&commit.sha).cloned();
-            let placed = self.lanes.place(&commit.sha, &commit.parents, stash.is_some(), stash.is_some());
-            let ghost = if stash.is_some() { None } else { self.ghost(&commit.sha, &commit.parents) };
-            let mut row = self.row(Some(commit.sha.clone()), placed, ghost);
+        for (sha, parents) in commits {
+            let stash = self.stashes.get(sha).cloned();
+            let placed = self.lanes.place(sha, parents, stash.is_some(), stash.is_some());
+            let ghost = if stash.is_some() { None } else { self.ghost(sha, parents) };
+            let mut row = self.row(Some(sha.to_string()), placed, ghost);
             row.stash = stash;
             rows.push(row);
         }
@@ -101,7 +106,7 @@ impl Layout {
 
     /// A commit with branch refs hands them to its parents; one with no refs takes the best it was handed and
     /// hands that on.
-    fn ghost(&mut self, sha: &str, parents: &[String]) -> Option<Arc<[RefGroup]>> {
+    fn ghost<P: AsRef<str>>(&mut self, sha: &str, parents: &[P]) -> Option<Arc<[RefGroup]>> {
         let handed = self.handed.remove(sha).map(|h| h.groups);
         let (ghost, pass) = match self.refs.branches.get(sha) {
             Some(own) => (None, Some(own.clone())),
@@ -110,7 +115,7 @@ impl Layout {
         };
         if let Some(groups) = pass {
             for (i, parent) in parents.iter().enumerate() {
-                self.hand(parent, (i, self.rows), &groups);
+                self.hand(parent.as_ref(), (i, self.rows), &groups);
             }
         }
         ghost

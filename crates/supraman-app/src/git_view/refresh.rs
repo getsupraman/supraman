@@ -2,14 +2,17 @@
 //! the UI thread, a late read dropped by its token, applied without losing the user's place.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use futures::StreamExt as _;
-use gpui::{AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
-use supraman_gitman::{FIRST_PAGE, Repo};
+use gpui::{AnyElement, AppContext as _, Context, Pixels, SharedString, Subscription, Task, Window, px};
+use supraman_gitman::{FIRST_PAGE, Layout, Repo, Status};
 use supraman_ui::stall;
 
 use super::live::{self, FOCUS_DELAY, Live, Refresh};
-use super::load::{self, First, GraphRow, Wip};
+use super::load::{self, First, GraphRow, Kept, Wip};
+use super::ref_panel::Walk;
+use super::splice::Loaded;
 use super::{GitView, Selected, graph};
 
 /// What the tab keeps to follow its repository.
@@ -23,6 +26,14 @@ pub struct Follow {
     pub generation: u64,
     activation: Option<Subscription>,
     focus: Option<Task<()>>,
+    hidden: bool,
+    /// What changed while the tab was hidden, read when it is shown.
+    pub(super) pending: Option<Refresh>,
+    /// The walk the loaded rows were read with.
+    pub(super) walked: Walk,
+    not_following: Option<String>,
+    pub(super) graph_failed: Option<String>,
+    wip_failed: Option<String>,
     #[cfg(test)]
     pub refreshes: usize,
 }
@@ -84,6 +95,11 @@ impl GitView {
                 }
                 Err(why) => {
                     log::warn!("git tab: not following the repository: {why}");
+                    this.update(cx, |v, cx| {
+                        v.follow.not_following = Some(format!("Not following this repository's changes: {why}"));
+                        cx.notify();
+                    })
+                    .ok();
                     return;
                 }
             };
@@ -99,7 +115,8 @@ impl GitView {
         .detach();
     }
 
-    /// One full refresh `FOCUS_DELAY` after the window becomes active, from the first frame on.
+    /// A refresh `FOCUS_DELAY` after the window becomes active, from the first frame on, for a tab not following
+    /// its repository.
     pub(super) fn watch_activation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.follow.activation.is_some() {
             return;
@@ -114,26 +131,50 @@ impl GitView {
     pub fn focus_regained(&mut self, cx: &mut Context<Self>) {
         self.follow.focus = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FOCUS_DELAY).await;
-            this.update(cx, |v, cx| v.refresh_graph(None, cx)).ok();
+            this.update(cx, |v, cx| {
+                if v.follow.live.is_none() {
+                    v.live_refresh(Refresh::Graph, cx);
+                }
+            })
+            .ok();
         }));
     }
 
+    /// Whether the tab is the one shown; a hidden tab keeps what changed and reads it when shown.
+    pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if self.follow.hidden != shown {
+            return;
+        }
+        self.follow.hidden = !shown;
+        if let Some(refresh) = self.follow.pending.take().filter(|_| shown) {
+            self.live_refresh(refresh, cx);
+        }
+    }
+
     pub fn live_refresh(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
+        if self.follow.hidden {
+            self.follow.pending = Some(match self.follow.pending.take() {
+                Some(pending) => merge(pending, refresh),
+                None => refresh,
+            });
+            return;
+        }
         match refresh {
             Refresh::Graph => self.refresh_graph(None, cx),
             Refresh::Wip { files } => self.refresh_wip(files, cx),
         }
     }
 
-    /// The refs, the WIP and as many commits as are loaded, read again; `files` the work dir's changed ones.
+    /// The refs, the WIP and the first page read again, the commits loaded below it kept while the walk below is
+    /// the same; `files` the work dir's changed ones.
     pub fn refresh_graph(&mut self, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
         self.follow.graph_token += 1;
         self.follow.wip_token += 1;
         let token = self.follow.graph_token;
-        let count = self.commits.max(FIRST_PAGE);
         let walk = self.ref_panel.read(cx).walk().clone();
-        let read = cx.background_spawn(async move { load::read(repo, count, &walk) });
+        let loaded = (self.commits > FIRST_PAGE && walk == self.follow.walked).then(|| self.loaded());
+        let read = cx.background_spawn(async move { load::read(repo, &walk, loaded.as_ref()) });
         cx.spawn(async move |this, cx| {
             let read = read.await;
             this.update(cx, |v, cx| v.apply_refresh(token, read, files, cx)).ok();
@@ -145,24 +186,39 @@ impl GitView {
         if token != self.follow.graph_token {
             return;
         }
-        let Ok(first) = read else { return };
+        let first = match read {
+            Ok(first) => first,
+            Err(why) => {
+                self.follow.graph_failed = Some(format!("Could not read the repository again: {why}"));
+                return cx.notify();
+            }
+        };
         let _stall = stall::section("git tab: refresh");
+        self.follow.graph_failed = None;
+        self.follow.wip_failed = None;
         let (selected, anchor) = (self.selected(), self.anchor());
+        let (mut rows, mut more, mut layout) = (first.page.rows, first.page.more, first.page.layout);
+        if let Some((kept, kept_layout, kept_more)) = first.kept.and_then(|k| self.take_kept(k)) {
+            rows.extend(kept);
+            (more, layout) = (kept_more, kept_layout);
+        }
         self.follow.generation += 1;
+        self.follow.walked = first.walk;
         self.paging = false;
         self.page_error = None;
-        self.commits = first.page.rows.iter().filter(|r| !r.wip()).count();
-        self.rows = first.page.rows;
-        self.more = first.page.more;
-        self.layout = Some(first.page.layout);
+        self.commits = rows.iter().filter(|r| !r.wip()).count();
+        self.rows = rows;
+        self.more = more;
+        self.layout = Some(layout);
         self.tips = first.tips.into();
         self.heads = first.heads;
         self.wip = first.wip;
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
+        self.measure_lanes();
         self.seek = None;
         match self.reveal_after.take() {
             Some(sha) => self.reveal_sha(sha, cx),
-            None => self.keep_selection(selected, cx),
+            None => self.keep_selection(selected, &first.status, cx),
         }
         if let Some(anchor) = anchor {
             self.restore(anchor);
@@ -175,8 +231,24 @@ impl GitView {
         cx.notify();
     }
 
+    fn loaded(&self) -> Loaded {
+        let commits = self.rows.iter().filter(|r| !r.wip()).map(|r| (r.sha.clone(), r.parents.clone())).collect();
+        Loaded { tips: self.tips.clone(), commits, more: self.more }
+    }
+
+    /// The rows `kept` lays out again, unless they changed since they were asked for.
+    fn take_kept(&mut self, kept: Kept) -> Option<(Vec<GraphRow>, Layout, bool)> {
+        let start = kept.from + usize::from(self.rows.first().is_some_and(GraphRow::wip));
+        let loaded = self.rows.get(start..start + kept.rows.len())?;
+        if loaded.iter().zip(&kept.rows).any(|(g, r)| r.sha.as_deref() != Some(g.sha.as_ref())) {
+            return None;
+        }
+        let rows = std::mem::take(&mut self.rows).into_iter().skip(start).zip(kept.rows).map(|(g, row)| GraphRow { row, ..g }).collect();
+        Some((rows, kept.layout, kept.more))
+    }
+
     /// The same commit selected at its new row; the WIP row while there is one; else nothing.
-    fn keep_selection(&mut self, selected: Option<Selected>, cx: &mut Context<Self>) {
+    fn keep_selection(&mut self, selected: Option<Selected>, status: &Arc<Status>, cx: &mut Context<Self>) {
         let row = match &selected {
             None => return,
             Some(Selected::Commit(sha)) => self.rows.iter().position(|r| r.sha == *sha),
@@ -187,7 +259,7 @@ impl GitView {
         match (row, selected) {
             (None, _) => self.selection_moved(cx),
             (Some(_), Some(Selected::Wip)) => {
-                self.wip_panel.update(cx, |p, cx| p.refresh(cx));
+                self.wip_panel.update(cx, |p, cx| p.refresh(status.clone(), cx));
             }
             _ => {}
         }
@@ -219,20 +291,42 @@ impl GitView {
         .detach();
     }
 
-    fn apply_wip(&mut self, token: u64, read: Result<Option<Wip>, String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
+    fn apply_wip(&mut self, token: u64, read: Result<(Option<Wip>, Arc<Status>), String>, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
         if token != self.follow.wip_token {
             return;
         }
-        let Ok(wip) = read else { return };
+        let (wip, status) = match read {
+            Ok(read) => read,
+            Err(why) => {
+                self.follow.wip_failed = Some(format!("Could not read the working directory again: {why}"));
+                return cx.notify();
+            }
+        };
+        self.follow.wip_failed = None;
         if wip.is_some() != self.rows.first().is_some_and(GraphRow::wip) {
             return self.refresh_graph(files, cx);
         }
         self.wip = wip;
         if self.selected() == Some(Selected::Wip) {
-            self.wip_panel.update(cx, |p, cx| p.refresh(cx));
+            self.wip_panel.update(cx, |p, cx| p.refresh(status, cx));
         }
         self.reload_diff(files.as_ref(), cx);
         cx.notify();
+    }
+
+    /// Why the tab may show a stale repository: its watchers did not start, or its last read failed.
+    pub(super) fn follow_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let f = &self.follow;
+        let lines: Vec<&str> = [&f.not_following, &f.graph_failed, &f.wip_failed].into_iter().flatten().map(String::as_str).collect();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(self.notice_banner("git-follow-notice-dismiss", lines.join("
+"), |this, _| {
+            this.follow.not_following = None;
+            this.follow.graph_failed = None;
+            this.follow.wip_failed = None;
+        }, cx))
     }
 
     /// The open working-tree diff read again when its file is among `files` (`None`: any may have changed).

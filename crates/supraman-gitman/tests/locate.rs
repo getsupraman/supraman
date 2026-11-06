@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use supraman_core::Settings;
-use supraman_gitman::{FLOOR, GitmanSettings, Located, SECTION, Version, check, judge, locate};
+use supraman_gitman::{FLOOR, GitmanSettings, Located, SECTION, Version, check, judge, locate, located};
 
 #[test]
 fn an_override_to_nothing_is_missing() {
@@ -32,4 +32,19 @@ fn without_an_override_the_git_on_path_is_found_and_checked() {
         Located::Found(git) => assert!(git.version >= FLOOR && git.path.is_file(), "{git:?}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn a_found_git_is_kept_per_setting_while_its_file_is_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = dir.path().join("git.cmd");
+    std::fs::write(&fake, "@echo git version 2.40.0\r\n").unwrap();
+    let mut settings = Settings::default();
+    settings.set_section(SECTION, &GitmanSettings { git: Some(fake.clone()) }).unwrap();
+    let Located::Found(first) = located(&settings) else { panic!("the fake git answers 2.40.0") };
+    std::fs::write(&fake, "@echo git version 2.1.0\r\n").unwrap();
+    assert_eq!(located(&settings), Located::Found(first), "not run again for the same setting");
+    assert!(matches!(locate(&settings), Located::TooOld { .. }), "locate itself runs it");
+    std::fs::remove_file(&fake).unwrap();
+    assert_eq!(located(&settings), Located::Missing { at: Some(fake) }, "a kept git whose file is gone is looked for again");
 }

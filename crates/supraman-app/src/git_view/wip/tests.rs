@@ -177,3 +177,22 @@ fn wip_view_a_second_click_on_the_open_file_closes_its_diff(cx: &mut TestAppCont
     });
     assert!(deselected, "no file stays selected");
 }
+
+#[gpui::test]
+fn wip_view_shows_the_status_a_refresh_read_without_reading_it_again(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    select_wip(&view, cx);
+    let reads = |cx: &mut VisualTestContext| view.read_with(cx, |v, cx| v.wip_panel().read(cx).status_reads);
+    let before = reads(cx);
+    let has = |s: &Shown, path: &str| s.unstaged.iter().any(|f| f.path == path);
+    f.write("batch.txt", b"new\n");
+    view.update(cx, |v, cx| v.refresh_wip(None, cx));
+    cx.run_until_parked();
+    assert!(has(&shown(&view, cx), "batch.txt"), "the WIP batch's file is listed");
+    f.write("graph.txt", b"new\n");
+    view.update(cx, |v, cx| v.refresh_graph(None, cx));
+    cx.run_until_parked();
+    assert!(has(&shown(&view, cx), "graph.txt"), "the graph refresh's file is listed");
+    assert_eq!(reads(cx), before, "the panel took each refresh's status");
+}
