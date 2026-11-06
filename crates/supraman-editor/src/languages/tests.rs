@@ -207,6 +207,13 @@ fn compiled_languages_by_extension_and_name() {
 }
 
 #[test]
+fn an_extension_matches_in_any_case() {
+    for (path, want) in [("Build.PS1", "PowerShell"), ("X.CS", "C#"), ("README.MD", "Markdown"), ("main.Rs", "Rust")] {
+        assert_eq!(name(path).as_deref().unwrap_or("-"), want, "{path}");
+    }
+}
+
+#[test]
 fn every_injection_query_loads() {
     for compiled in COMPILED.iter().filter(|c| !c.injections.is_empty()) {
         let language = language_for(compiled.suffixes[0]).unwrap();
