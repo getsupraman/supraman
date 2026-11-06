@@ -160,6 +160,7 @@ impl GitView {
         self.heads = first.heads;
         self.wip = first.wip;
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
+        self.measure_lanes();
         self.seek = None;
         match self.reveal_after.take() {
             Some(sha) => self.reveal_sha(sha, cx),

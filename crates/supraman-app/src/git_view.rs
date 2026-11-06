@@ -20,6 +20,8 @@ mod tests;
 mod live_tests;
 #[cfg(test)]
 mod keys_tests;
+#[cfg(test)]
+mod refresh_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
