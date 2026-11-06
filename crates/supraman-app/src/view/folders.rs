@@ -34,6 +34,7 @@ pub fn edited_note(done: &Edited, stopped: &[String], live_in: &[(String, String
 pub fn stops(workspace: &Workspace, edit: &Edit, wanted: &[String]) -> Vec<String> {
     let folders: Vec<&Folder> = match edit {
         Edit::RemoveFolder(f) | Edit::SetEnabled { folder: f, enabled: false } => workspace.find_folder(f).into_iter().collect(),
+        Edit::DropGone(names) => names.iter().filter_map(|f| workspace.find_folder(f)).collect(),
         Edit::RemoveScan(path) => {
             let rest: Vec<&Path> = workspace.scans.iter().map(|s| s.path.as_path()).filter(|p| !supraman_core::same_path(p, path)).collect();
             workspace.folders.iter().filter(|f| !f.added && within(&f.path, path) && !rest.iter().any(|r| within(&f.path, r))).collect()
@@ -47,6 +48,7 @@ fn verb(edit: &Edit) -> String {
     match edit {
         Edit::RemoveFolder(f) => format!("Remove folder {f}"),
         Edit::SetEnabled { folder, .. } => format!("Disable folder {folder}"),
+        Edit::DropGone(names) => format!("Remove {}, gone from disk,", names.join(", ")),
         _ => "Change it".into(),
     }
 }
@@ -91,16 +93,16 @@ pub fn edit_all(home: &Path, w: &str, edits: Vec<Edit>) -> Result<(Edited, Vec<S
     }
 }
 
-/// What Rescan offers: the workspace (its gone folders dropped), the subfolders new to it, and the drop's result.
+/// What Rescan offers: the workspace, the subfolders new to it, and its folders gone from disk.
 #[derive(Debug)]
 pub struct Offer {
     pub workspace: Workspace,
     pub found: Vec<Folder>,
-    pub gone: Option<(Edited, Vec<String>)>,
+    pub gone: Vec<String>,
 }
 
-/// Looks in the workspace's parent folders again: the folders gone from disk are dropped ([`Edit::DropGone`]),
-/// the new ones only offered.
+/// Looks in the workspace's parent folders again and changes nothing: Save adds the new ones it is given and
+/// drops the gone ones ([`Edit::DropGone`]) through [`FleetView::request_edits`].
 pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
     let workspace = Registry::at(home).load(name).map_err(|e| e.to_string())?;
     if workspace.scans.is_empty() {
@@ -108,11 +110,7 @@ pub fn rescan_offer(home: &Path, name: &str) -> Result<Offer, String> {
     }
     let (next, added, gone) = rescan(&workspace).map_err(|e| e.to_string())?;
     let found = next.folders.into_iter().filter(|f| added.contains(&f.name)).collect();
-    if gone.is_empty() {
-        return Ok(Offer { workspace, found, gone: None });
-    }
-    let (done, stopped) = edit_all(home, name, vec![Edit::DropGone])?;
-    Ok(Offer { workspace: done.workspace.clone(), found, gone: Some((done, stopped)) })
+    Ok(Offer { workspace, found, gone })
 }
 
 impl FleetView {
@@ -131,12 +129,12 @@ impl FleetView {
         };
         self.scan_other_schedules(cx);
         let name = name.to_string();
-        let task = cx.background_executor().spawn(async move { rescan_offer(&home, &name).map(|o| (name, o)) });
+        let task = cx.background_executor().spawn(async move { rescan_offer(&home, &name) });
         cx.spawn_in(window, async move |this, cx| {
             let done = task.await;
             this.update_in(cx, |this, window, cx| {
                 match done {
-                    Ok((name, offer)) => this.offered(&name, offer, window, cx),
+                    Ok(offer) => this.offered(offer, window, cx),
                     Err(e) => this.toast.show_why(e, |this: &mut Self| &mut this.toast, cx),
                 }
                 cx.notify();
@@ -146,18 +144,12 @@ impl FleetView {
         .detach();
     }
 
-    fn offered(&mut self, name: &str, offer: Offer, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((done, stopped)) = &offer.gone {
-            self.put_workspace(done.workspace.clone());
-            self.reload_workspaces(cx);
-            let gone: Vec<&str> = done.removed.iter().map(|f| f.name.as_str()).collect();
-            self.show_toast(format!("{name}: {} gone from disk, removed.{}", gone.join(", "), edited_note(done, stopped, &[])), cx);
-        }
-        let note = offer.found.is_empty().then(|| "No new subfolders: nothing to add.".to_string());
+    fn offered(&mut self, offer: Offer, window: &mut Window, cx: &mut Context<Self>) {
+        let note = offer_note(&offer);
         self.open_add(Mode::Edit(offer.workspace), window, cx);
         if let Some(dialog) = self.add_dialog().cloned() {
             dialog.update(cx, |d, _| {
-                d.offer(offer.found);
+                d.offer(offer.found, &offer.gone);
                 d.note = note;
             });
         }
@@ -267,6 +259,17 @@ impl FleetView {
         }
         out
     }
+}
+
+fn offer_note(offer: &Offer) -> Option<String> {
+    let mut parts = Vec::new();
+    if !offer.gone.is_empty() {
+        parts.push(format!("{} gone from disk: Save removes it.", offer.gone.join(", ")));
+    }
+    if offer.found.is_empty() {
+        parts.push("No new subfolders: nothing to add.".to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 fn summary(w: &str, done: &Edited) -> String {
@@ -380,7 +383,7 @@ mod tests {
         dir(&parent.join("fresh"));
         let offer = rescan_offer(&home, "demo").unwrap();
         assert_eq!(offer.found.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["fresh"]);
-        assert!(offer.gone.is_none());
+        assert!(offer.gone.is_empty());
         assert_eq!(names(&Registry::at(&home).load("demo").unwrap()), ["alpha", "beta"], "nothing saved before Save");
 
         let mut list = FolderList::of_workspace(&offer.workspace, &[]);
@@ -399,10 +402,23 @@ mod tests {
         assert_eq!(names(&Registry::at(&home).load("demo").unwrap()), ["beta", "fresh"]);
         assert!(rescan_offer(&home, "demo").unwrap().found.is_empty(), "a folder taken is not offered again");
 
+        DesiredState::update(&home, "demo", |d| {
+            d.want(repo_session("demo", "beta", &parent.join("beta").display().to_string(), "p").unwrap());
+        })
+        .unwrap();
         std::fs::remove_dir_all(parent.join("beta")).unwrap();
         let gone = rescan_offer(&home, "demo").unwrap();
-        let (done, _) = gone.gone.unwrap();
-        assert_eq!(done.removed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["beta"]);
+        assert_eq!(gone.gone, ["beta"]);
+        assert_eq!(names(&Registry::at(&home).load("demo").unwrap()), ["beta", "fresh"], "nothing dropped before Save");
+        assert_eq!(DesiredState::load(&home, "demo").unwrap().unwrap().sessions.len(), 1, "nothing stopped before Save");
+        let mut list = FolderList::of_workspace(&gone.workspace, &[]);
+        list.drop_gone(&gone.gone);
+        assert_eq!(list.rows.iter().map(|r| r.folder.name.as_str()).collect::<Vec<_>>(), ["fresh"], "the dialog lists beta no more");
+        let edits = edits_of(&gone.workspace, &list);
+        assert_eq!(edits, [Edit::DropGone(vec!["beta".into()])]);
+        assert_eq!(stops(&gone.workspace, &edits[0], &["fm-demo-beta".into()]), ["fm-demo-beta"], "Save asks first");
+        let (done, stopped) = edit_all(&home, "demo", edits).unwrap();
+        assert_eq!((done.removed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), stopped), (vec!["beta"], vec!["fm-demo-beta".to_string()]));
         let saved = Registry::at(&home).load("demo").unwrap();
         assert_eq!((names(&saved), saved.scans[0].exclude.clone()), (vec!["fresh"], vec![parent.join("alpha")]), "gone: dropped, not skipped");
 

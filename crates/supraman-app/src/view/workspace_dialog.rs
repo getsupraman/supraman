@@ -122,11 +122,15 @@ fn workspace_of(name: String, mode: &Mode, list: &FolderList) -> Workspace {
     }
 }
 
-/// What Save changes in a registered workspace: its folders taken out, the rows new to it (an unticked one is
-/// neither added nor skipped) and its home.
+/// What Save changes in a registered workspace: its folders taken out (a gone one dropped, not skipped), the rows
+/// new to it (an unticked one is neither added nor skipped) and its home.
 pub fn edits_of(original: &Workspace, list: &FolderList) -> Vec<Edit> {
     let listed = |f: &Folder| list.rows.iter().any(|r| path_key(&r.folder.path) == path_key(&f.path));
-    let mut edits: Vec<Edit> = original.folders.iter().filter(|f| !listed(f)).map(|f| Edit::RemoveFolder(f.name.clone())).collect();
+    let (gone, taken): (Vec<&Folder>, Vec<&Folder>) = original.folders.iter().filter(|f| !listed(f)).partition(|f| list.gone.contains(&f.name));
+    let mut edits: Vec<Edit> = taken.iter().map(|f| Edit::RemoveFolder(f.name.clone())).collect();
+    if !gone.is_empty() {
+        edits.push(Edit::DropGone(gone.iter().map(|f| f.name.clone()).collect()));
+    }
     let new = list.rows.iter().filter(|r| r.included != Some(false) && original.folder_at(&r.folder.path).is_none());
     edits.extend(new.map(|r| Edit::AddFolder { path: r.folder.path.clone(), enable: true }));    let home = match list.home_index() {
         None => original.home.clone(),
@@ -211,11 +215,12 @@ impl WorkspaceDialog {
         .detach();
     }
 
-    /// A rescan's new subfolders, unticked.
-    pub fn offer(&mut self, found: Vec<Folder>) {
+    /// A rescan's new subfolders, unticked, and its folders gone from disk, out of the list until Save drops them.
+    pub fn offer(&mut self, found: Vec<Folder>, gone: &[String]) {
         for f in found {
             self.list.push(f, Some(false));
         }
+        self.list.drop_gone(gone);
     }
 
     fn prefix(&self) -> &'static str {

@@ -20,8 +20,8 @@ pub enum Edit {
     AddScan { path: PathBuf, depth: usize },
     /// The folders only it found go with it.
     RemoveScan(PathBuf),
-    /// The scanned folders a [`rescan`] no longer finds go; no scan skips them.
-    DropGone,
+    /// Of these folders, those a [`rescan`] no longer finds go; no scan skips them.
+    DropGone(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,9 +138,9 @@ impl Registry {
                 w.folders = kept;
                 out.removed = gone;
             }
-            Edit::DropGone => {
+            Edit::DropGone(seen) => {
                 let (_, _, gone) = rescan(&w)?;
-                let (removed, kept): (Vec<Folder>, Vec<Folder>) = w.folders.drain(..).partition(|f| gone.contains(&f.name));
+                let (removed, kept): (Vec<Folder>, Vec<Folder>) = w.folders.drain(..).partition(|f| gone.contains(&f.name) && seen.contains(&f.name));
                 w.folders = kept;
                 out.removed = removed;
             }
@@ -288,7 +288,7 @@ mod tests {
         reg.edit("v", Edit::AddScan { path: parent.clone(), depth: 1 }).unwrap();
         fs::remove_dir_all(parent.join("A")).unwrap();
         repo_dir(&parent.join("C"));
-        let e = reg.edit("v", Edit::DropGone).unwrap();
+        let e = reg.edit("v", Edit::DropGone(vec!["A".into()])).unwrap();
         assert_eq!(e.removed.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["A"]);
         assert!(e.added.is_empty(), "a new folder is not taken");
         let w = reg.load("v").unwrap();
