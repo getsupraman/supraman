@@ -1,6 +1,8 @@
 use gpui::{TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Generated, git_in};
 
+use super::live::{FOCUS_DELAY, Refresh};
+use super::live_tests::{close, follow, following};
 use super::tests::{open, redraw};
 use super::wip::tests::repaint;
 use super::*;
@@ -49,4 +51,48 @@ fn refresh_that_fails_says_so_over_the_graph_until_one_succeeds(cx: &mut TestApp
     assert_eq!(view.read_with(cx, |v, _| v.rows.len()), rows, "the rows read before stay");
     refreshed(&view, cx);
     assert!(!notice(cx), "a good read takes the notice away");
+}
+
+fn refreshes(view: &Entity<GitView>, cx: &mut VisualTestContext) -> usize {
+    view.read_with(cx, |v, _| v.follow.refreshes)
+}
+
+fn activated(view: &Entity<GitView>, cx: &mut VisualTestContext) {
+    view.update(cx, |v, cx| v.focus_regained(cx));
+    cx.executor().advance_clock(FOCUS_DELAY * 2);
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn refresh_of_a_hidden_tab_waits_until_it_is_shown(cx: &mut TestAppContext) {
+    let g = Generated::new(30);
+    let (view, cx) = open(&g.dir, cx);
+    view.update(cx, |v, cx| v.set_shown(false, cx));
+    let before = refreshes(&view, cx);
+    activated(&view, cx);
+    view.update(cx, |v, cx| v.live_refresh(Refresh::Wip { files: None }, cx));
+    view.update(cx, |v, cx| v.live_refresh(Refresh::Graph, cx));
+    cx.run_until_parked();
+    assert_eq!(refreshes(&view, cx), before, "a hidden tab reads nothing");
+    let top = commit_on(&g, "main", "main", "While hidden");
+    view.update(cx, |v, cx| v.set_shown(true, cx));
+    cx.run_until_parked();
+    assert_eq!(refreshes(&view, cx), before + 1, "shown, it reads once what changed");
+    assert!(view.read_with(cx, |v, _| v.rows.iter().any(|r| r.sha.as_ref() == top)), "the commit made while hidden");
+    view.update(cx, |v, cx| v.set_shown(false, cx));
+    view.update(cx, |v, cx| v.set_shown(true, cx));
+    cx.run_until_parked();
+    assert_eq!(refreshes(&view, cx), before + 1, "nothing changed meanwhile, nothing read");
+}
+
+#[gpui::test]
+fn refresh_on_activation_only_for_a_tab_without_watchers(cx: &mut TestAppContext) {
+    let g = Generated::new(30);
+    follow(cx);
+    let (view, cx) = open(&g.dir, cx);
+    following(&view, cx);
+    let before = refreshes(&view, cx);
+    activated(&view, cx);
+    assert_eq!(refreshes(&view, cx), before, "the watchers cover the window coming back");
+    close(view, cx);
 }

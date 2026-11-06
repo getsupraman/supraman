@@ -22,6 +22,16 @@ pub(crate) fn open_or_focus(tabs: &mut Vec<Tab>, next_id: &mut u64, folder: &Pat
 }
 
 impl FleetView {
+    /// Tells each Git tab whether it is the one shown.
+    pub(super) fn show_git_tabs(&self, cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            if let TabKind::Git(view) = &tab.kind {
+                let shown = self.active == Some(tab.id);
+                view.update(cx, |v, cx| v.set_shown(shown, cx));
+            }
+        }
+    }
+
     /// `Git · <repo>` for `folder`, at its repo's layout; `sizes` a tab saved before the layout file kept them.
     pub fn open_git(&mut self, folder: PathBuf, title: String, sizes: &GitSizes, cx: &mut Context<Self>) -> u64 {
         let (home, hits) = (self.home.clone(), self.hits.clone());

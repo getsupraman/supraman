@@ -24,6 +24,9 @@ pub struct Follow {
     pub generation: u64,
     activation: Option<Subscription>,
     focus: Option<Task<()>>,
+    hidden: bool,
+    /// What changed while the tab was hidden, read when it is shown.
+    pub(super) pending: Option<Refresh>,
     not_following: Option<String>,
     pub(super) graph_failed: Option<String>,
     wip_failed: Option<String>,
@@ -108,7 +111,8 @@ impl GitView {
         .detach();
     }
 
-    /// One full refresh `FOCUS_DELAY` after the window becomes active, from the first frame on.
+    /// A refresh `FOCUS_DELAY` after the window becomes active, from the first frame on, for a tab not following
+    /// its repository.
     pub(super) fn watch_activation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.follow.activation.is_some() {
             return;
@@ -123,11 +127,34 @@ impl GitView {
     pub fn focus_regained(&mut self, cx: &mut Context<Self>) {
         self.follow.focus = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(FOCUS_DELAY).await;
-            this.update(cx, |v, cx| v.refresh_graph(None, cx)).ok();
+            this.update(cx, |v, cx| {
+                if v.follow.live.is_none() {
+                    v.live_refresh(Refresh::Graph, cx);
+                }
+            })
+            .ok();
         }));
     }
 
+    /// Whether the tab is the one shown; a hidden tab keeps what changed and reads it when shown.
+    pub fn set_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if self.follow.hidden != shown {
+            return;
+        }
+        self.follow.hidden = !shown;
+        if let Some(refresh) = self.follow.pending.take().filter(|_| shown) {
+            self.live_refresh(refresh, cx);
+        }
+    }
+
     pub fn live_refresh(&mut self, refresh: Refresh, cx: &mut Context<Self>) {
+        if self.follow.hidden {
+            self.follow.pending = Some(match self.follow.pending.take() {
+                Some(pending) => merge(pending, refresh),
+                None => refresh,
+            });
+            return;
+        }
         match refresh {
             Refresh::Graph => self.refresh_graph(None, cx),
             Refresh::Wip { files } => self.refresh_wip(files, cx),
