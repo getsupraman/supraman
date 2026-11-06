@@ -337,3 +337,39 @@ fn a_strip_icon_opens_its_sections_overlay_over_the_graph_and_a_pick_selects_and
     click("refpanel-strip-remote", &view, cx);
     assert_eq!(overlay(cx), None, "a second click on its icon closes it");
 }
+
+#[gpui::test]
+fn ref_panel_and_a_sections_overlay_paint_their_rows_whole_in_their_first_frame(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    let width = |key: &str| hits.borrow().get(key).map(|h| h.bounds.size.width).unwrap_or_else(|| panic!("{key} not painted"));
+    assert!(width("refpanel-name-local/feature") > px(30.), "the open panel's names whole");
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    panel.update(cx, |p, cx| p.toggle_shut(cx));
+    redraw(&view, cx);
+    panel.update_in(cx, |p, window, cx| p.toggle_overlay(Section::Local, window, cx));
+    let hits = crate::git_view::details::tests::first_frame(&view, cx, |cx| cx.run_until_parked());
+    let width = |key: &str| hits.borrow().get(key).map(|h| h.bounds.size.width).unwrap_or_else(|| panic!("{key} not painted"));
+    assert!(width("refpanel-overlay-name-feature") > px(30.), "the overlay's names whole in the frame it first shows");
+}
+
+#[gpui::test]
+fn a_sections_overlay_shows_nothing_until_its_tree_is_built(cx: &mut TestAppContext) {
+    let f = Fixture::new();
+    let (view, cx) = open(&f.dir, cx);
+    let panel = view.read_with(cx, |v, _| v.ref_panel().clone());
+    panel.update(cx, |p, cx| p.toggle_shut(cx));
+    redraw(&view, cx);
+    panel.update_in(cx, |p, window, cx| p.toggle_overlay(Section::Local, window, cx));
+    assert!(panel.read_with(cx, |p, _| p.overlay_rows().is_empty()), "built off the UI thread");
+    let hits = view.read_with(cx, |v, _| v.hits.clone());
+    hits.borrow_mut().clear();
+    cx.update(|window, cx| {
+        let drawn = window.draw(cx);
+        drawn.clear(cx);
+    });
+    assert!(!hits.borrow().contains_key("refpanel-overlay"), "no card without its rows");
+    cx.run_until_parked();
+    assert_eq!(panel.read_with(cx, |p, _| p.overlay_rows().len()), 4, "then the card with all its rows");
+}

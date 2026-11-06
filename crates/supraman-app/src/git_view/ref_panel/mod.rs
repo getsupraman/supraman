@@ -10,13 +10,13 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
 use supraman_gitman::Refs;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::TextInput;
-use supraman_ui::tree::TreeState;
+use supraman_ui::tree::{Tree, TreeState};
 
 use super::GitSizes;
 
@@ -41,6 +41,18 @@ fn fold(keys: &mut Keys, entry: &Entry) {
     keys.solo.extend(entry.solo_key());
 }
 
+/// The panel's rows of a [`Refs`], built off the UI thread ([`build`]).
+pub struct Built {
+    entries: Vec<(String, Entry)>,
+    tree: Tree<Entry, Keys>,
+}
+
+pub fn build(refs: &Refs) -> Built {
+    let entries = entries(refs);
+    let tree = Tree::build_given(entries.iter().cloned(), fold);
+    Built { entries, tree }
+}
+
 pub enum RefEvent {
     /// A ref's row was picked: its commit.
     Pick(SharedString),
@@ -52,7 +64,7 @@ pub enum RefEvent {
 
 pub struct RefPanel {
     hits: HitTargets,
-    entries: Rc<Vec<(String, Entry)>>,
+    entries: Arc<Vec<(String, Entry)>>,
     tree: TreeState<Entry, Keys>,
     walk: Walk,
     filter: Option<(Entity<TextInput>, Subscription)>,
@@ -75,7 +87,7 @@ impl RefPanel {
         tree.match_with(|entry: &Entry, filter| entry.matches(filter));
         RefPanel {
             hits,
-            entries: Rc::new(Vec::new()),
+            entries: Arc::new(Vec::new()),
             tree,
             walk: Walk::default(),
             filter: None,
@@ -101,16 +113,21 @@ impl RefPanel {
         cx.notify();
     }
 
-    /// The rows of `refs`; every folder open the first time but the collapsed ones, the open ones kept after.
+    /// The rows of `refs`, built here: [`RefPanel::set_built`] of a few refs.
+    #[cfg(test)]
     pub fn set_refs(&mut self, refs: &Refs, cx: &mut Context<Self>) {
-        let entries = entries(refs);
-        self.tree.set_entries_given(entries.iter().cloned(), fold);
+        self.set_built(build(refs), cx);
+    }
+
+    /// The rows built; every folder open the first time but the collapsed ones, the open ones kept after.
+    pub fn set_built(&mut self, built: Built, cx: &mut Context<Self>) {
+        self.tree.set_tree(built.tree);
         if !std::mem::replace(&mut self.built, true) {
             self.tree.expand_all();
             self.close_collapsed();
         }
-        self.entries = Rc::new(entries);
-        self.refill_overlay();
+        self.entries = Arc::new(built.entries);
+        self.refill_overlay(cx);
         cx.notify();
     }
 

@@ -1,5 +1,5 @@
 //! The panel painted: the filter bar, the section headers, folders and ref rows of the tree, and the strip the
-//! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-eye-<path>`,
+//! collapsed panel leaves with its section's overlay. Hit keys: `refpanel-row-<path>`, `refpanel-name-<path>`, `refpanel-eye-<path>`,
 //! `refpanel-solo-<path>`, `refpanel-filter`, `refpanel-show-all`, `refpanel-collapse`, `refpanel-expand`,
 //! `refpanel-strip-<section>`.
 
@@ -120,7 +120,8 @@ impl RefPanel {
         let (muted, text) = (secondary(cx), cx.theme().colors().text);
         let keys: Vec<String> = entry.hide_key().into_iter().collect();
         let dimmed = !entry.walked(&self.walk);
-        let mut label = highlighted(format!("{list}-name-{}", row.path), entry.label(), &entry.marks(&self.filter()), cx).flex_shrink(1.).text_color(text);
+        let key = format!("{list}-name-{}", row.path);
+        let mut label = highlighted(key.clone(), entry.label(), &entry.marks(&self.filter()), cx).relative().flex_shrink(1.).text_color(text).child(hit_target(&self.hits, key));
         if let Entry::Stash { label: words, branch, .. } = entry {
             label = label.tooltip(Tooltip::text(format!("{words} on: {branch}")));
         }

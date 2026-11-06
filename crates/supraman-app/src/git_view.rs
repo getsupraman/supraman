@@ -439,7 +439,7 @@ impl GitView {
                 self.layout = Some(first.page.layout);
                 self.tips = first.tips.into();
                 self.heads = first.heads;
-                self.ref_panel.update(cx, |p, cx| p.set_refs(&first.refs, cx));
+                self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));

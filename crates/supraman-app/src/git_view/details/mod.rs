@@ -6,7 +6,7 @@ mod load;
 mod render;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -79,6 +79,8 @@ pub struct CommitPanel {
     /// Bumped by each selection; a load that finishes under another one is dropped.
     token: u64,
     state: State,
+    /// The shown commit's counts and files belong to an earlier selection while the next one loads: they keep their place, unpainted.
+    stale: bool,
     /// The selected row's lane colour, for the author's avatar.
     colour: usize,
     view: FileView,
@@ -104,6 +106,7 @@ impl CommitPanel {
             repo: None,
             token: 0,
             state: State::Empty,
+            stale: false,
             colour: 0,
             view: FileView::Tree,
             all_files: false,
@@ -141,12 +144,15 @@ impl CommitPanel {
         self.token += 1;
         let token = self.token;
         self.colour = colour;
+        self.stale = false;
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
             (Some(Selected::Wip), _) => self.state = State::Empty,
             (Some(Selected::Commit(_) | Selected::Stash(_)), None) => self.state = State::Loading,
             (Some(selected @ (Selected::Commit(_) | Selected::Stash(_))), Some(repo)) => {
-                if !matches!(self.state, State::Shown(_)) {
+                if matches!(self.state, State::Shown(_)) {
+                    self.stale = true;
+                } else {
                     self.state = State::Loading;
                 }
                 let order = self.order;
@@ -174,6 +180,7 @@ impl CommitPanel {
             return;
         }
         let _stall = stall::section("commit panel: apply");
+        self.stale = false;
         let loaded = match loaded {
             Ok(loaded) => loaded,
             Err(why) => {
@@ -271,6 +278,11 @@ impl CommitPanel {
         });
         self.filter = Some((input.clone(), sub));
         input
+    }
+
+    #[cfg(test)]
+    pub fn stale(&self) -> bool {
+        self.stale
     }
 
     #[cfg(test)]
