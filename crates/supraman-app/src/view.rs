@@ -1621,7 +1621,8 @@ impl FleetView {
                     c.sending = false;
                     c.error = Some(e.clone());
                 }),
-                _ => {}
+                Err(e) => this.action_error = Some(e),
+                Ok(_) => {}
             }
         });
     }
