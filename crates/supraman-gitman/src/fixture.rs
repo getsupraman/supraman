@@ -73,10 +73,22 @@ impl Fixture {
         Fixture::of(tempfile::tempdir().expect("temp dir"))
     }
 
-    /// One fixture for the tests that only read it, held while any of them runs; a test that writes takes [`Fixture::new`].
+    /// One fixture for the tests that only read it, held while any of them runs; a test that writes takes [`Fixture::copy`].
     pub fn shared() -> Arc<Fixture> {
         static SHARED: Shared<Fixture> = Shared::new();
         SHARED.get(Fixture::new)
+    }
+
+    /// A test's own copy of [`Fixture::shared`]: the same commits and shas, its worktree and `origin` its own.
+    pub fn copy() -> Fixture {
+        let shared = Fixture::shared();
+        let temp = tempfile::tempdir().expect("temp dir");
+        copy_dir(shared.temp.path(), temp.path());
+        for file in ["wt/.git", "repo/.git/worktrees/wt/gitdir", "repo/.git/config"] {
+            relocate(&temp.path().join(file), shared.temp.path(), temp.path());
+        }
+        let (dir, worktree) = (temp.path().join("repo"), temp.path().join("wt"));
+        Fixture { git: shared.git.clone(), temp, dir, worktree, shas: shared.shas.clone(), time: shared.time }
     }
 
     /// The same repository in a temp dir under `parent`.
@@ -252,6 +264,39 @@ impl Generated {
         let slot = SHARED.lock().unwrap_or_else(PoisonError::into_inner).entry(commits).or_insert_with(|| Arc::new(Shared::new())).clone();
         slot.get(|| Generated::new(commits))
     }
+
+    /// [`Fixture::copy`] for a history of `commits`.
+    pub fn copy(commits: usize) -> Generated {
+        let shared = Generated::shared(commits);
+        let temp = tempfile::tempdir().expect("temp dir");
+        copy_dir(shared.temp.path(), temp.path());
+        let dir = temp.path().join("repo");
+        Generated { git: shared.git.clone(), temp, dir }
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("a copy's dir");
+    for entry in std::fs::read_dir(from).expect("a fixture dir reads").flatten() {
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("a file type").is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("a fixture file copies");
+        }
+    }
+}
+
+/// `file` with every spelling of the absolute path `from` (as is, with `/`, and escaped as in a git config) made `to`.
+fn relocate(file: &Path, from: &Path, to: &Path) {
+    let text = std::fs::read_to_string(file).expect("a fixture file reads");
+    let spellings = |p: &Path| {
+        let plain = p.to_string_lossy().into_owned();
+        [plain.replace('\\', "\\\\"), plain.replace('\\', "/"), plain]
+    };
+    let moved = spellings(from).iter().zip(spellings(to)).fold(text, |text, (old, new)| text.replace(old.as_str(), &new));
+    assert!(spellings(from).iter().all(|old| !moved.contains(old.as_str())), "{} still names {}: {moved}", file.display(), from.display());
+    std::fs::write(file, moved).expect("a fixture file writes");
 }
 
 /// A repo the tests that only read it share: made by the first, dropped with its temp dir when the last ends.
