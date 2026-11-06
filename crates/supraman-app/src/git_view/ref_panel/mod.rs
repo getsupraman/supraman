@@ -59,8 +59,8 @@ pub fn build(refs: &Refs) -> Built {
 }
 
 pub enum RefEvent {
-    /// A ref's row was picked: its commit.
-    Pick(SharedString),
+    /// A ref's row was picked: its commit, and whether the graph walks from it.
+    Pick(SharedString, bool),
     /// The hidden or the soloed set changed.
     Walk,
     /// The panel was collapsed or expanded, or a folder opened or closed.
@@ -279,10 +279,12 @@ impl RefPanel {
         self.entries.iter().find(|(p, _)| p == path).map(|(_, e)| e)
     }
 
-    /// A row picked: its ref's commit to the graph; whether it has one.
-    fn picked(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
-        let Some(sha) = self.entry(path).and_then(Entry::commit) else { return false };
-        cx.emit(RefEvent::Pick(SharedString::from(sha.to_string())));
+    /// A row picked: its ref's commit to the graph, and whether the graph walks from it; whether it has one.
+    pub(super) fn picked(&mut self, path: &str, cx: &mut Context<Self>) -> bool {
+        let Some(entry) = self.entry(path) else { return false };
+        let Some(sha) = entry.commit() else { return false };
+        let walked = entry.tip_of(&self.walk);
+        cx.emit(RefEvent::Pick(SharedString::from(sha.to_string()), walked));
         true
     }
 

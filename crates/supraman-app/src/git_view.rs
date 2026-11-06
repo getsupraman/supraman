@@ -11,6 +11,7 @@ mod live;
 mod load;
 pub mod probe;
 mod refresh;
+mod seek;
 pub mod ref_panel;
 mod splice;
 mod wip;
@@ -23,6 +24,8 @@ mod live_tests;
 mod keys_tests;
 #[cfg(test)]
 mod refresh_tests;
+#[cfg(test)]
+mod seek_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,6 +40,7 @@ use supraman_ui::split::SplitPane;
 use supraman_ui::stall;
 use supraman_ui::store::save_off_thread;
 use supraman_ui::table::{self, Column, Table, TableState};
+use supraman_ui::toast::ToastSlot;
 use theme::ActiveTheme as _;
 
 use cells::ref_cell;
@@ -150,8 +154,9 @@ pub struct GitView {
     wip_panel: Entity<WipPanel>,
     panel_width: Pixels,
     ref_panel: Entity<RefPanel>,
-    /// A ref's commit picked before its page is loaded: pages load until it is.
-    seek: Option<SharedString>,
+    seek: Option<seek::Seek>,
+    /// Why a pick or a key selected nothing, over the graph.
+    toast: ToastSlot,
     /// A ref's commit to reveal once the refresh under way walks it.
     reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 3],
@@ -210,6 +215,7 @@ impl GitView {
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
+                toast: ToastSlot::default(),
                 reveal_after: None,
                 _panel_events: events,
                 diff: None,
@@ -276,7 +282,7 @@ impl GitView {
 
     fn panel_event<P>(&mut self, _: Entity<P>, e: &PanelEvent, cx: &mut Context<Self>) {
         match e {
-            PanelEvent::Parent(sha) => self.select_sha(sha, cx),
+            PanelEvent::Parent(sha) => self.seek_sha(sha.clone(), cx),
             PanelEvent::File(target) => self.toggle_diff(target.clone(), cx),
             PanelEvent::Resized => self.keep_layout(cx),
         }
@@ -284,7 +290,7 @@ impl GitView {
 
     fn ref_event(&mut self, _: Entity<RefPanel>, e: &RefEvent, cx: &mut Context<Self>) {
         match e {
-            RefEvent::Pick(sha) => self.reveal_sha(sha.clone(), cx),
+            RefEvent::Pick(sha, walked) => self.picked(sha.clone(), *walked, cx),
             RefEvent::Walk => {
                 self.keep_layout(cx);
                 self.refresh_graph(None, cx);
@@ -298,15 +304,10 @@ impl GitView {
         &self.ref_panel
     }
 
-    /// Selects the row of `sha`, loading pages until one holds it or none is left.
+    /// Closes the viewer and selects the row of `sha` ([`GitView::seek_sha`]).
     pub fn reveal_sha(&mut self, sha: SharedString, cx: &mut Context<Self>) {
         self.close_diff(cx);
-        if self.rows.iter().any(|r| r.sha == sha) {
-            self.seek = None;
-            return self.select_sha(&sha, cx);
-        }
-        self.seek = self.more.then_some(sha);
-        self.load_more(cx);
+        self.seek_sha(sha, cx);
     }
 
     /// Opens `target`, or goes back to the graph when it is the one open.
@@ -484,6 +485,12 @@ impl GitView {
         self.graph_max = Some(px(graph::width_for(graph::lanes(&self.rows))));
     }
 
+    /// [`GitView::measure_lanes`] of the rows from `from` on, kept when wider.
+    fn measure_lanes_from(&mut self, from: usize) {
+        let added = px(graph::width_for(graph::lanes(&self.rows[from.min(self.rows.len())..])));
+        self.graph_max = Some(self.graph_max.map_or(added, |max| max.max(added)));
+    }
+
     /// The next page, unless one is on its way or none is left.
     pub fn load_more(&mut self, cx: &mut Context<Self>) {
         if self.paging || !self.more {
@@ -507,8 +514,9 @@ impl GitView {
         match page {
             Ok(page) => {
                 self.commits += page.rows.len();
+                let from = self.rows.len();
                 self.rows.extend(page.rows);
-                self.measure_lanes();
+                self.measure_lanes_from(from);
                 self.more = page.more;
                 self.layout = Some(page.layout);
             }
@@ -517,9 +525,7 @@ impl GitView {
                 self.page_error = Some(e);
             }
         }
-        if let Some(sha) = self.seek.take() {
-            self.reveal_sha(sha, cx);
-        }
+        self.seek_on(cx);
         cx.notify();
     }
 
@@ -579,7 +585,7 @@ impl GitView {
             Some((view, _)) => view.clone().into_any_element(),
             None => self.render_graph(cx),
         };
-        let table = div().flex_1().min_w_0().h_full().child(first);
+        let table = div().relative().flex_1().min_w_0().h_full().child(first).children(self.toast.render(&self.hits, "git-toast", cx));
         let panel = div().flex_shrink(1.).min_w_0().flex().flex_col().w(self.panel_width).h_full().child(self.render_panel(cx));
         let split = SplitPane { id: "git-split".into(), min_first: px(GRAPH_MIN), min_second: px(PANEL_MIN), default: PANEL_WIDTH }
             .render_second(table, panel, |this: &mut GitView, width, cx| {

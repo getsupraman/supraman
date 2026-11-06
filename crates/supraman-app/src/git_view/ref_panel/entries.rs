@@ -111,6 +111,11 @@ impl Entry {
         self.hide_key().is_none_or(|k| walk.walks(&k))
     }
 
+    /// Whether the graph walks from it as a tip: [`Entry::walked`], and a tag only while nothing is soloed ([`tips`]).
+    pub fn tip_of(&self, walk: &Walk) -> bool {
+        self.walked(walk) && !(matches!(self, Entry::Tag { .. }) && walk.soloing())
+    }
+
     /// The commit a click selects in the graph.
     pub fn commit(&self) -> Option<&str> {
         match self {
