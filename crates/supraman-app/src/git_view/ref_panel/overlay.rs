@@ -1,12 +1,13 @@
 //! A section of the collapsed panel floating over the graph beside its strip icon: its header, then its tree with
-//! the open panel's rows, eyes and solos. Hit keys: `refpanel-overlay`, and `refpanel-overlay-row-<path>`,
-//! `-eye-<path>`, `-solo-<path>` with the path below the section.
+//! the open panel's rows and marks. Hit keys: `refpanel-overlay`, and `refpanel-overlay-row-<path>`,
+//! `-mark-<path>` with the path below the section.
 
 use gpui::{AnyElement, Context, FocusHandle, KeyDownEvent, MouseDownEvent, Pixels, Point, SharedString, Window, deferred, div, prelude::*, px};
 use supraman_ui::hit::hit_target;
 use supraman_ui::tree::{Tree, TreeList, TreeState};
 use theme::ActiveTheme as _;
 
+use super::marks::MARK;
 use super::render::ROW;
 use super::{Entry, Keys, LIST, RefPanel, STRIP, Section, fold};
 
@@ -106,6 +107,7 @@ impl RefPanel {
         let rows = tree.visible().len().clamp(1, MOST_ROWS);
         let list = TreeList::new(OVERLAY, &tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(OVERLAY, row, cx))
             .row_height(px(ROW))
+            .mark(px(MARK), |this, row, _, cx| this.paint_mark(OVERLAY, row, cx))
             .on_select(|this, path, window, cx| this.overlay_picked(path, window, cx))
             .render(cx)
             .flex_shrink(1.)

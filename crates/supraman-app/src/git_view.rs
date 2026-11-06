@@ -149,6 +149,8 @@ pub struct GitView {
     ref_panel: Entity<RefPanel>,
     /// A ref's commit picked before its page is loaded: pages load until it is.
     seek: Option<SharedString>,
+    /// A ref's commit to reveal once the refresh under way walks it.
+    reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 3],
     /// The file viewer in the graph's place, while one is open.
     diff: Option<(Entity<DiffView>, [Subscription; 2])>,
@@ -205,6 +207,7 @@ impl GitView {
                 panel_width: PANEL_WIDTH,
                 ref_panel,
                 seek: None,
+                reveal_after: None,
                 _panel_events: events,
                 diff: None,
                 diff_mode: DiffMode::default(),
@@ -284,6 +287,7 @@ impl GitView {
                 self.refresh_graph(None, cx);
             }
             RefEvent::Layout => self.keep_layout(cx),
+            RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
         }
     }
 

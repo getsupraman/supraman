@@ -13,7 +13,7 @@ use theme::ActiveTheme as _;
 use crate::hit::HitTargets;
 use crate::icon::Icon;
 use crate::matcher::find_all;
-use crate::table::{Column, Table, TableState};
+use crate::table::{CELL_PAD, Column, Table, TableState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Order {
@@ -525,6 +525,7 @@ pub const LEAD: f32 = 16.;
 type PaintFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement;
 type SelectFn<V> = dyn Fn(&mut V, &SharedString, &mut Window, &mut Context<V>);
 type ToggleFn<V> = dyn Fn(&mut V, &SharedString, &mut Context<V>);
+type MarkFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement>;
 
 /// One frame's tree list, built in the owner's render. Rows paint under `<id>-row-<path>`.
 pub struct TreeList<V, T, A> {
@@ -536,6 +537,7 @@ pub struct TreeList<V, T, A> {
     paint: Rc<PaintFn<V, T, A>>,
     on_select: Option<Rc<SelectFn<V>>>,
     on_toggle: Option<Rc<ToggleFn<V>>>,
+    mark: Option<(Pixels, Rc<MarkFn<V, T, A>>)>,
 }
 
 impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
@@ -546,7 +548,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         hits: &HitTargets,
         paint: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement + 'static,
     ) -> Self {
-        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None, on_toggle: None }
+        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None, on_toggle: None, mark: None }
     }
 
     pub fn row_height(mut self, height: Pixels) -> Self {
@@ -562,6 +564,13 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
     /// Called after a click or a key selects a row.
     pub fn on_select(mut self, f: impl Fn(&mut V, &SharedString, &mut Window, &mut Context<V>) + 'static) -> Self {
         self.on_select = Some(Rc::new(f));
+        self
+    }
+
+    /// A slot `width` wide at every row's left edge, whatever its depth, holding what `mark` paints for the row;
+    /// the rows' contents start right of it.
+    pub fn mark(mut self, width: Pixels, mark: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement> + 'static) -> Self {
+        self.mark = Some((width, Rc::new(mark)));
         self
     }
 
@@ -618,28 +627,36 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
     }
 
     fn cell(&self) -> impl Fn(&mut V, usize, usize, &mut Window, &mut Context<V>) -> AnyElement + 'static {
-        let (state, paint, indent) = (self.state.clone(), self.paint.clone(), self.indent);
+        let (state, paint, indent, mark) = (self.state.clone(), self.paint.clone(), self.indent, self.mark.clone());
         move |this, ix, _, window, cx| {
             let inner = state.inner.borrow();
             let Some(node) = inner.node(ix) else { return div().into_any_element() };
             let muted = cx.theme().colors().text_muted;
-            let (item, chevron) = match &node.kind {
-                Kind::File(payload) => (Item::File(payload), None),
-                Kind::Folder { aggregate, .. } => {
-                    let open = inner.open.contains(&node.path);
-                    (Item::Folder { aggregate, open }, Some(if open { Icon::ChevronDown } else { Icon::ChevronRight }))
-                }
+            let row = || {
+                let item = match &node.kind {
+                    Kind::File(payload) => Item::File(payload),
+                    Kind::Folder { aggregate, .. } => Item::Folder { aggregate, open: inner.open.contains(&node.path) },
+                };
+                Row { name: &node.name, path: &node.path, depth: inner.depth(node), item, selected: inner.selected.as_ref() == Some(&node.path) }
             };
-            let selected = inner.selected.as_ref() == Some(&node.path);
+            let chevron = match &node.kind {
+                Kind::File(_) => None,
+                Kind::Folder { .. } => Some(if inner.open.contains(&node.path) { Icon::ChevronDown } else { Icon::ChevronRight }),
+            };
             let depth = inner.depth(node);
-            let row = Row { name: &node.name, path: &node.path, depth, item, selected };
-            let content = paint(this, row, window, cx);
+            let content = paint(this, row(), window, cx);
+            let marked = mark.as_ref().map(|(width, f)| {
+                let slot = div().absolute().top_0().bottom_0().left(gpui::rems(-CELL_PAD)).w(*width).flex().items_center().justify_center();
+                (*width, slot.children(f(this, row(), window, cx)))
+            });
             div()
+                .relative()
                 .flex()
                 .items_center()
                 .w_full()
                 .min_w_0()
-                .pl(indent * depth as f32)
+                .pl(indent * depth as f32 + marked.as_ref().map_or(px(0.), |(w, _)| *w))
+                .children(marked.map(|(_, slot)| slot))
                 .children(chevron.map(|c| div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted))))
                 .child(div().flex().flex_1().min_w_0().items_center().child(content))
                 .into_any_element()

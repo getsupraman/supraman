@@ -6,7 +6,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, DragMoveEvent, FocusHandle, Hsla, KeyBinding, KeyDownEvent, Pixels, ScrollStrategy, SharedString,
-    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, uniform_list,
+    Stateful, UniformListScrollHandle, Window, canvas, div, prelude::*, px, rems, uniform_list,
 };
 use theme::ActiveTheme as _;
 
@@ -23,6 +23,9 @@ pub use widths::{clamp, drag, fit};
 gpui::actions!(table, [SelectPrevious, SelectNext, SelectPageUp, SelectPageDown, SelectFirst, SelectLast]);
 
 pub const KEY_CONTEXT: &str = "Table";
+
+/// A cell's padding left and right, in rems.
+pub const CELL_PAD: f32 = 0.5;
 
 pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
@@ -495,7 +498,7 @@ impl<V: 'static> Table<V> {
                     .enumerate()
                     .map(|(col, width)| {
                         let content = cell(this, ix, col, window, cx);
-                        fill(div().flex().items_center().h_full().px_2().overflow_hidden(), col + 1 == widths.len(), *width).child(content).into_any_element()
+                        fill(div().flex().items_center().h_full().px(rems(CELL_PAD)).overflow_hidden(), col + 1 == widths.len(), *width).child(content).into_any_element()
                     })
                     .collect();
                 let (state, on_select, on_click) = (state.clone(), on_select.clone(), on_click.clone());

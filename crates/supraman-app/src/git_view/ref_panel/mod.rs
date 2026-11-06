@@ -4,6 +4,7 @@
 //! loaded and walks the graph as its [`Walk`] says.
 
 mod entries;
+mod marks;
 mod overlay;
 mod render;
 mod sections;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use gpui::{AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, SharedString, Subscription, Window, px};
 use supraman_gitman::Refs;
 use supraman_ui::hit::HitTargets;
+use supraman_ui::menu::ContextMenu;
 use supraman_ui::text_input::TextInput;
 use supraman_ui::split::StackState;
 use supraman_ui::tree::Tree;
@@ -23,6 +25,7 @@ use supraman_ui::tree::Tree;
 use super::GitSizes;
 
 pub use entries::{Count, Entry, Section, Walk, counts, entries, tips, without};
+pub use marks::RefAction;
 
 /// The tree's id: its rows paint under `refpanel-row-<path>`.
 pub const LIST: &str = "refpanel";
@@ -62,6 +65,8 @@ pub enum RefEvent {
     Walk,
     /// The panel was collapsed or expanded, or a folder opened or closed.
     Layout,
+    /// A hidden ref was shown by a double-click: its commit, to select once the graph walks it.
+    Shown(SharedString),
 }
 
 pub struct RefPanel {
@@ -80,6 +85,7 @@ pub struct RefPanel {
     /// The folders to close when the tree is first built.
     collapsed: Vec<String>,
     overlay: Option<overlay::Overlay>,
+    menu: Option<ContextMenu<RefAction>>,
     /// The tab's own focus, where the keyboard goes when the overlay holding it closes.
     tab: FocusHandle,
 }
@@ -102,6 +108,7 @@ impl RefPanel {
             built: false,
             collapsed: Vec::new(),
             overlay: None,
+            menu: None,
             tab,
         }
     }

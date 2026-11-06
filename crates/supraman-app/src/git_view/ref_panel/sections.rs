@@ -37,7 +37,6 @@ impl Sections {
     }
 
     /// The folder at `path`'s aggregate, a section's own included.
-    #[cfg(test)]
     pub fn aggregate(&self, path: &str) -> Option<Keys> {
         self.trees[at(path)].aggregate(path)
     }
