@@ -37,7 +37,7 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
 fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
     let mut cmd = crate::repo::git_command(git, dir);
     cmd.args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"]).args(args);
-    cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
+    process::without_user_config(&mut cmd);
     env.iter().for_each(|(k, v)| {
         cmd.env(k, v);
     });
