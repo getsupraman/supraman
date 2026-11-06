@@ -34,10 +34,9 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
 }
 
 fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
-    let mut cmd = process::command(&git.path);
-    cmd.arg("-C").arg(dir).args(args);
+    let mut cmd = crate::repo::git_command(git, dir);
+    cmd.args(args);
     cmd.env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null");
-    cmd.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "");
     env.iter().for_each(|(k, v)| {
         cmd.env(k, v);
     });

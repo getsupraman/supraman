@@ -28,6 +28,17 @@ const READ_ONLY: &[&str] = &[
 /// Inherited from a hook or a shell, these would point git at another repository than `dir`.
 const REPO_ENV: &[&str] = &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_NAMESPACE"];
 
+/// `git -C dir` with no prompt, no editor, a dumb terminal, and none of [`REPO_ENV`]: it acts on `dir` only.
+pub(crate) fn git_command(git: &Git, dir: &Path) -> Command {
+    let mut cmd = process::command(&git.path);
+    cmd.arg("-C").arg(dir);
+    cmd.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "").env("TERM", "dumb");
+    REPO_ENV.iter().for_each(|var| {
+        cmd.env_remove(var);
+    });
+    cmd
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
     #[error("git {args}: {source}")]
@@ -93,12 +104,8 @@ impl Repo {
     }
 
     fn command<'a>(&self, read_only: impl Iterator<Item = &'a &'a str>, args: &[&str]) -> Command {
-        let mut cmd = process::command(&self.git.path);
-        cmd.arg("-C").arg(&self.dir).args(read_only).args(args);
-        cmd.env("GIT_TERMINAL_PROMPT", "0").env("GIT_EDITOR", "").env("TERM", "dumb");
-        REPO_ENV.iter().for_each(|var| {
-            cmd.env_remove(var);
-        });
+        let mut cmd = git_command(&self.git, &self.dir);
+        cmd.args(read_only).args(args);
         cmd
     }
 
