@@ -13,7 +13,7 @@ use supraman_ui::tooltip::Tooltip;
 use supraman_ui::tree::{Item, LEAD, Row, TreeList};
 use theme::ActiveTheme as _;
 
-use super::{Count, Entry, Keys, LIST, RefPanel, STRIP, Section};
+use super::{Count, Entry, Keys, LIST, RefEvent, RefPanel, STRIP, Section};
 use crate::view::secondary;
 
 const ROW: f32 = 24.;
@@ -191,6 +191,7 @@ impl RefPanel {
         TreeList::new(LIST, &self.tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(row, cx))
             .row_height(px(ROW))
             .on_select(|this, path, _, cx| this.picked(path, cx))
+            .on_toggle(|_, _, cx| cx.emit(RefEvent::Layout))
             .render(cx)
             .flex_1()
             .min_h_0()

@@ -108,7 +108,7 @@ impl CommitPanel {
         bar.render(boxed, self.message_height, &self.hits, |this: &mut CommitPanel, height, cx| {
             this.message_height = height;
             cx.notify();
-        }, |_: &mut CommitPanel, _| {}, cx)
+        }, |_: &mut CommitPanel, cx| cx.emit(PanelEvent::Resized), cx)
         .flex_none()
         .px_2()
     }

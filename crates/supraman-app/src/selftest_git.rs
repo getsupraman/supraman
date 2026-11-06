@@ -23,16 +23,16 @@ use crate::selftest_manage::post_keys;
 use crate::selftest_tabs::drag_between;
 use crate::view::{FleetView, MIN_LEFT_WIDTH, TabKind};
 
-const WS: &str = "selftest-git";
-const FOLDER: &str = "gitman";
-const WITHIN: Duration = Duration::from_secs(10);
+pub(crate) const WS: &str = "selftest-git";
+pub(crate) const FOLDER: &str = "gitman";
+pub(crate) const WITHIN: Duration = Duration::from_secs(10);
 /// The narrowest window the layout allows: the sidebar's minimum and the tab area's.
 const MIN_WINDOW: f32 = 600.;
 const PANEL_MIN: f32 = 260.;
 const TOOLBAR: [&str; 4] = ["commit-sort", "commit-view-path", "commit-view-tree", "commit-all-files"];
 const LIGHT: &str = "Selftest Light";
 
-fn git_tabs(v: &FleetView, cx: &gpui::App, dir: &Path) -> Vec<(u64, Entity<GitView>)> {
+pub(crate) fn git_tabs(v: &FleetView, cx: &gpui::App, dir: &Path) -> Vec<(u64, Entity<GitView>)> {
     let key = path_key(dir);
     v.tabs
         .iter()
@@ -126,7 +126,8 @@ async fn check(view: &Entity<FleetView>, f: &Arc<Fixture>, home: &Path, cx: &mut
     let narrow = narrow(view, &git, f, cx).await?;
     let panel = panel_min(view, &git, cx).await?;
     let themed = themed(view, &git, home, cx).await?;
-    Ok([opened, refs, selected, files, diff, stash, keys, wip, live, ref_panel, narrow, panel, themed].join("; "))
+    let reopened = crate::selftest_git_reopen::check(view, &git, f, cx).await?;
+    Ok([opened, refs, selected, files, diff, stash, keys, wip, live, ref_panel, narrow, panel, themed, reopened].join("; "))
 }
 
 async fn open(view: &Entity<FleetView>, f: &Fixture, cx: &mut AsyncWindowContext) -> anyhow::Result<(Entity<GitView>, String)> {

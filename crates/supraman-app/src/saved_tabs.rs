@@ -22,8 +22,7 @@ pub enum SavedTab {
     Claude { title: String, cwd: PathBuf, session_id: Option<String>, name: String },
     Attach { title: String, cwd: PathBuf, id: String, session_id: Option<String>, name: String },
     Work { title: String, workspace: String },
-    /// `widths` are its columns' widths, `panel` the commit panel's width, `message` its message box's height and `refs`
-    /// the ref panel's width, in whole pixels; `refs_shut` the ref panel collapsed, `hidden` the refs hidden from the graph.
+    /// The sizes are read only, as a repo's layout until `git_view::layout` keeps one; dropped in 0.1.13.
     Git {
         title: String,
         folder: PathBuf,
@@ -43,9 +42,8 @@ pub enum SavedTab {
 }
 
 impl SavedTab {
-    pub fn git(title: String, folder: PathBuf, sizes: GitSizes) -> SavedTab {
-        let GitSizes { widths, panel, message, refs, refs_shut, hidden } = sizes;
-        SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden }
+    pub fn git(title: String, folder: PathBuf) -> SavedTab {
+        SavedTab::Git { title, folder, widths: Vec::new(), panel: None, message: None, refs: None, refs_shut: false, hidden: Vec::new() }
     }
 }
 
@@ -159,7 +157,7 @@ pub fn plan(saved: &SavedTab, world: &World) -> Result<Reopen, String> {
         SavedTab::Work { workspace, .. } if world.workspaces.contains(workspace) => Ok(Reopen::Work { workspace: workspace.clone() }),
         SavedTab::Work { workspace, .. } => Err(format!("workspace {workspace} is gone")),
         SavedTab::Git { title, folder, widths, panel, message, refs, refs_shut, hidden } => {
-            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone() };
+            let sizes = GitSizes { widths: widths.clone(), panel: *panel, message: *message, refs: *refs, refs_shut: *refs_shut, hidden: hidden.clone(), collapsed: Vec::new() };
             Ok(Reopen::Git { title: title.clone(), folder: folder.clone(), sizes })
         }
         SavedTab::Claude { title, .. } => {

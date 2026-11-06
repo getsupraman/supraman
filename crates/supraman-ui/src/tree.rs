@@ -371,6 +371,12 @@ impl<T, A> TreeState<T, A> {
         self.inner.borrow().open.contains(path)
     }
 
+    /// The folders not open, in the tree's order.
+    pub fn closed(&self) -> Vec<SharedString> {
+        let inner = self.inner.borrow();
+        inner.tree.folders().filter(|f| !inner.open.contains(*f)).cloned().collect()
+    }
+
     /// Opens a closed folder and closes an open one.
     pub fn toggle(&self, path: &str) {
         let mut inner = self.inner.borrow_mut();
@@ -446,8 +452,8 @@ impl<T, A> TreeState<T, A> {
     }
 
     /// Left closes the selected open folder, else selects its folder; Right opens a closed folder, else
-    /// selects its first row. The newly selected path, if the selection moved.
-    fn arrow(&self, key: &str) -> Option<Option<SharedString>> {
+    /// selects its first row.
+    fn arrow(&self, key: &str) -> Option<Arrow> {
         let (row, folder, open, parent) = {
             let inner = self.inner.borrow();
             let row = inner.row_of(inner.selected.as_ref()?)?;
@@ -458,15 +464,26 @@ impl<T, A> TreeState<T, A> {
             (row, folder, open, parent)
         };
         match (key, folder) {
-            ("left", Some(f)) if open => self.toggle(&f),
-            ("left", _) => return Some(parent.and_then(|p| self.select_row(p))),
-            ("right", Some(f)) if !open => self.toggle(&f),
-            ("right", Some(_)) => return Some(self.select_row(row + 1)),
-            ("right", None) => {}
-            _ => return None,
+            ("left", Some(f)) if open => {
+                self.toggle(&f);
+                Some(Arrow::Toggled(f))
+            }
+            ("left", _) => Some(Arrow::Moved(parent.and_then(|p| self.select_row(p)))),
+            ("right", Some(f)) if !open => {
+                self.toggle(&f);
+                Some(Arrow::Toggled(f))
+            }
+            ("right", Some(_)) => Some(Arrow::Moved(self.select_row(row + 1))),
+            ("right", None) => Some(Arrow::Moved(None)),
+            _ => None,
         }
-        Some(None)
     }
+}
+
+/// What an arrow key did: the newly selected path, if the selection moved, or the folder it opened or closed.
+enum Arrow {
+    Moved(Option<SharedString>),
+    Toggled(SharedString),
 }
 
 /// A folder's chevron slot; a file's painter starts with a slot this wide, so its name lines up with its sibling folders'.
@@ -474,6 +491,7 @@ pub const LEAD: f32 = 16.;
 
 type PaintFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement;
 type SelectFn<V> = dyn Fn(&mut V, &SharedString, &mut Window, &mut Context<V>);
+type ToggleFn<V> = dyn Fn(&mut V, &SharedString, &mut Context<V>);
 
 /// One frame's tree list, built in the owner's render. Rows paint under `<id>-row-<path>`.
 pub struct TreeList<V, T, A> {
@@ -484,6 +502,7 @@ pub struct TreeList<V, T, A> {
     indent: Pixels,
     paint: Rc<PaintFn<V, T, A>>,
     on_select: Option<Rc<SelectFn<V>>>,
+    on_toggle: Option<Rc<ToggleFn<V>>>,
 }
 
 impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
@@ -494,7 +513,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         hits: &HitTargets,
         paint: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement + 'static,
     ) -> Self {
-        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None }
+        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None, on_toggle: None }
     }
 
     pub fn row_height(mut self, height: Pixels) -> Self {
@@ -513,6 +532,12 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         self
     }
 
+    /// Called after a click or a key opens or closes a folder.
+    pub fn on_toggle(mut self, f: impl Fn(&mut V, &SharedString, &mut Context<V>) + 'static) -> Self {
+        self.on_toggle = Some(Rc::new(f));
+        self
+    }
+
     pub fn render(self, cx: &mut Context<V>) -> Stateful<Div> {
         let (rows, selected) = {
             let inner = self.state.inner.borrow();
@@ -522,6 +547,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         let column = [Column::new("name", "", px(0.), px(0.))];
         let (keys, picked, clicked, arrows) = (self.state.clone(), self.state.clone(), self.state.clone(), self.state.clone());
         let (on_select, on_arrow) = (self.on_select.clone(), self.on_select.clone());
+        let (toggled, arrow_toggled) = (self.on_toggle.clone(), self.on_toggle.clone());
         Table::new(self.id.clone(), &self.state.table, &self.hits, column, &[px(0.)], rows, self.cell())
             .headless()
             .row_height(self.row_height)
@@ -531,17 +557,26 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                     f(this, &path, window, cx);
                 }
             })
-            .on_click(move |_, ix, _, _| {
+            .on_click(move |this, ix, _, cx| {
                 let folder = clicked.inner.borrow().node(ix).filter(|n| matches!(n.kind, Kind::Folder { .. })).map(|n| n.path.clone());
                 if let Some(folder) = folder {
                     clicked.toggle(&folder);
+                    if let Some(f) = &toggled {
+                        f(this, &folder, cx);
+                    }
                 }
             })
             .on_key(move |this, key, window, cx| match arrows.arrow(key) {
                 None => false,
-                Some(moved) => {
+                Some(Arrow::Moved(moved)) => {
                     if let (Some(path), Some(f)) = (moved, &on_arrow) {
                         f(this, &path, window, cx);
+                    }
+                    true
+                }
+                Some(Arrow::Toggled(folder)) => {
+                    if let Some(f) = &arrow_toggled {
+                        f(this, &folder, cx);
                     }
                     true
                 }

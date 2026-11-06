@@ -17,6 +17,8 @@ use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::TextInput;
 use supraman_ui::tree::TreeState;
 
+use super::GitSizes;
+
 pub use entries::{Count, Entry, Section, counts, entries, without};
 
 /// The tree's id: its rows paint under `refpanel-row-<path>`.
@@ -39,6 +41,8 @@ pub enum RefEvent {
     Pick(SharedString),
     /// The hidden set changed.
     Hidden,
+    /// The panel was collapsed or expanded, or a folder opened or closed.
+    Layout,
 }
 
 pub struct RefPanel {
@@ -51,36 +55,65 @@ pub struct RefPanel {
     shut: bool,
     focus_filter: bool,
     built: bool,
+    /// The folders to close when the tree is first built.
+    collapsed: Vec<String>,
 }
 
 impl EventEmitter<RefEvent> for RefPanel {}
 
 impl RefPanel {
-    pub fn new(hits: HitTargets, width: Option<u32>, shut: bool, hidden: &[String], cx: &mut Context<Self>) -> Self {
+    pub fn new(hits: HitTargets, cx: &mut Context<Self>) -> Self {
         let tree = TreeState::new(cx);
         tree.match_with(|entry: &Entry, filter| entry.matches(filter));
         RefPanel {
             hits,
             entries: Rc::new(Vec::new()),
             tree,
-            hidden: hidden.iter().cloned().collect(),
+            hidden: BTreeSet::new(),
             filter: None,
-            width: width.map_or(DEFAULT_WIDTH, |w| px(w as f32)).max(MIN_WIDTH),
-            shut,
+            width: DEFAULT_WIDTH,
+            shut: false,
             focus_filter: false,
             built: false,
+            collapsed: Vec::new(),
         }
     }
 
-    /// The rows of `refs`; every folder open the first time, the open ones kept after.
+    /// The ref panel's part of a repo's layout: its width, collapsed, the hidden refs and the folders closed.
+    pub fn restore(&mut self, sizes: &GitSizes, cx: &mut Context<Self>) {
+        self.width = sizes.refs.map_or(DEFAULT_WIDTH, |w| px(w as f32)).max(MIN_WIDTH);
+        self.shut = sizes.refs_shut;
+        self.hidden = sizes.hidden.iter().cloned().collect();
+        self.collapsed = sizes.collapsed.clone();
+        if self.built {
+            self.close_collapsed();
+        }
+        cx.notify();
+    }
+
+    /// The rows of `refs`; every folder open the first time but the collapsed ones, the open ones kept after.
     pub fn set_refs(&mut self, refs: &Refs, cx: &mut Context<Self>) {
         let entries = entries(refs);
         self.tree.set_entries_given(entries.iter().cloned(), fold);
         if !std::mem::replace(&mut self.built, true) {
             self.tree.expand_all();
+            self.close_collapsed();
         }
         self.entries = Rc::new(entries);
         cx.notify();
+    }
+
+    fn close_collapsed(&mut self) {
+        for path in std::mem::take(&mut self.collapsed) {
+            if self.tree.is_open(&path) {
+                self.tree.toggle(&path);
+            }
+        }
+    }
+
+    /// The folders closed, sections included.
+    pub fn collapsed(&self) -> Vec<String> {
+        self.tree.closed().iter().map(|p| p.to_string()).collect()
     }
 
     pub fn hidden(&self) -> &BTreeSet<String> {
@@ -145,6 +178,7 @@ impl RefPanel {
 
     pub fn toggle_shut(&mut self, cx: &mut Context<Self>) {
         self.shut = !self.shut;
+        cx.emit(RefEvent::Layout);
         cx.notify();
     }
 
@@ -155,6 +189,7 @@ impl RefPanel {
             self.tree.toggle(section.key());
         }
         self.tree.select(Some(section.key()));
+        cx.emit(RefEvent::Layout);
         cx.notify();
     }
 
