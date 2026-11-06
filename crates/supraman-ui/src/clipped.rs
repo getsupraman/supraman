@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use gpui::{Bounds, Div, ElementId, Pixels, SharedString, Stateful, canvas, div, prelude::*};
+use gpui::{Bounds, Div, ElementId, Hsla, Pixels, SharedString, Stateful, canvas, div, prelude::*};
 
 use crate::tooltip::Tooltip;
 
@@ -75,6 +75,20 @@ pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>,
     };
     let label = label.child(text.clone()).child(measure);
     if tooltip && own_tooltip { label.tooltip(Tooltip::text(text)) } else { label }
+}
+
+/// A `/` path as one line: its `dir/` in `folder`, cut in the middle under `dir_key` when narrow, then its name in `name`.
+pub fn path_label(dir_key: impl Into<SharedString>, path: &str, folder: Hsla, name: Hsla) -> Div {
+    let (dir, file) = match path.rsplit_once('/') {
+        Some((dir, file)) => (format!("{dir}/"), file.to_string()),
+        None => (String::new(), path.to_string()),
+    };
+    div()
+        .flex()
+        .min_w_0()
+        .whitespace_nowrap()
+        .when(!dir.is_empty(), |d| d.child(clipped(dir_key, dir, true).flex_shrink(1.).text_color(folder)))
+        .child(div().flex_none().text_color(name).child(SharedString::from(file)))
 }
 
 #[cfg(test)]

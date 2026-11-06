@@ -15,7 +15,7 @@ use std::{
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Task, TextRun, UTF16Selection, UnderlineStyle,
+    LineLayout, PaintQuad, Pixels, Point, ScrollEvent, SharedString, Style, Subscription, Task, TextRun, UTF16Selection, UnderlineStyle,
     Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
 use supraman_term::{blink_phase, terminal_settings::CURSOR_BLINK_INTERVAL};
@@ -600,6 +600,23 @@ pub struct TextInput {
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
+
+/// A filter field of `V`: the input, and the subscription that hands `on_edit` its text after every edit; keep both.
+pub fn filter_box<V: 'static>(
+    placeholder: &'static str,
+    on_edit: impl Fn(&mut V, &str, &mut Context<V>) + 'static,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> (Entity<TextInput>, Subscription) {
+    let input = cx.new(|cx| TextInput::new(placeholder, None, window, cx));
+    let sub = cx.subscribe(&input, move |this, input, e: &InputEvent, cx| {
+        if *e == InputEvent::Edited {
+            let text = input.read(cx).text().to_string();
+            on_edit(this, &text, cx);
+        }
+    });
+    (input, sub)
+}
 
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {

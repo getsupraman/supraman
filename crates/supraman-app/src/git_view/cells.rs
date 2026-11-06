@@ -1,7 +1,7 @@
 //! The Branch / Tag, Commit Message, Date and Sha cells.
 
 use gpui::{AnyElement, Context, Div, SharedString, deferred, div, prelude::*, px, relative};
-use supraman_gitman::{RefGroup, RefKind, Row};
+use supraman_gitman::{RefGroup, RefKind, Row, short_sha};
 use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
 use supraman_ui::hit::{HitTargets, hit_target};
@@ -153,7 +153,7 @@ pub fn date_text(row: &GraphRow) -> String {
 }
 
 pub fn sha_text(row: &GraphRow) -> &str {
-    row.sha.get(..7).unwrap_or(&row.sha)
+    short_sha(&row.sha)
 }
 
 /// Muted in [`fonts::figures`]: the date and sha columns share one face and keep their digits aligned.

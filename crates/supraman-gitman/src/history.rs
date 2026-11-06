@@ -7,6 +7,11 @@ use crate::{GitError, Repo};
 pub const FIRST_PAGE: usize = 2000;
 pub const NEXT_PAGE: usize = 200;
 
+/// A commit's sha as the UI shows it: its first seven characters.
+pub fn short_sha(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}
+
 const FIELDS: &str = "%P%x00%an%x00%ae%x00%at%x00%cn%x00%ce%x00%ct";
 const CO_AUTHORS: &str = "%(trailers:key=Co-authored-by,valueonly,unfold,separator=%x1f)";
 

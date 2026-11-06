@@ -1,17 +1,23 @@
 //! An image file's two sides: decoded off the UI thread with gpui's decoders, painted fitted to their pane
 //! (down to fit, up to at most 2×) on a checkerboard of theme colours (C152).
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
-use gpui::{Bounds, Corners, Hsla, ImageFormat, Pixels, RenderImage, SMOOTH_SVG_SCALE_FACTOR, SvgRenderer, Window, canvas, fill, point, prelude::*, px, size};
+use gpui::{Bounds, Corners, Hsla, ImageFormat, Pixels, RenderImage, Rgba, SMOOTH_SVG_SCALE_FACTOR, SvgRenderer, Window, canvas, point, prelude::*, px, size};
 use supraman_core::text::byte_size;
 use supraman_ui::hit::{Hit, HitTargets};
+use supraman_ui::themes::lanes::blend;
 use theme::ThemeColors;
 
 const MAX_SCALE: f32 = 2.;
 /// The most pixels a side may have to be decoded: 64 Mpx is 256 MB of RGBA.
 pub const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 const CELL: f32 = 8.;
+/// A tile's side in cells, even so tiles continue the pattern.
+const TILE: u32 = 32;
+/// The tiles kept: a scale or theme switched back to finds its own.
+const TILES_KEPT: usize = 4;
 
 /// One side of an image: its pixels, its size in pixels and in bytes.
 pub struct Picture {
@@ -86,15 +92,58 @@ pub fn fitted(bounds: Bounds<Pixels>, width: u32, height: u32) -> Bounds<Pixels>
     Bounds::new(origin, shown)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct TileKey {
+    cell: u32,
+    light: [u8; 4],
+    dark: [u8; 4],
+}
+
+thread_local! {
+    static TILES: RefCell<Vec<(TileKey, Arc<RenderImage>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn bgra(colour: Hsla) -> [u8; 4] {
+    let Rgba { r, g, b, .. } = colour.into();
+    let byte = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
+    [byte(b), byte(g), byte(r), 255]
+}
+
+/// [`TILE`] × [`TILE`] cells of `key.cell` device pixels, `dark` where the row and column add up even.
+fn tile_pixels(key: TileKey) -> ::image::RgbaImage {
+    let side = key.cell * TILE;
+    ::image::RgbaImage::from_fn(side, side, |x, y| ::image::Rgba(if (x / key.cell + y / key.cell) % 2 == 0 { key.dark } else { key.light }))
+}
+
+/// The tile of the window's scale and these colours, made once.
+fn tile(light: Hsla, dark: Hsla, window: &mut Window) -> Arc<RenderImage> {
+    let key = TileKey { cell: (CELL * window.scale_factor()).round().max(1.) as u32, light: bgra(light), dark: bgra(blend(dark, 1., light)) };
+    TILES.with_borrow_mut(|kept| {
+        if let Some((_, image)) = kept.iter().find(|(k, _)| *k == key) {
+            return image.clone();
+        }
+        let image = Arc::new(RenderImage::new(vec![::image::Frame::new(tile_pixels(key))]));
+        kept.push((key, image.clone()));
+        if kept.len() > TILES_KEPT {
+            let (_, old) = kept.remove(0);
+            window.drop_image(old).ok();
+        }
+        image
+    })
+}
+
+/// The checkerboard under `area`: one cached tile repeated, the last ones cut at its edges.
 fn checkerboard(area: Bounds<Pixels>, light: Hsla, dark: Hsla, window: &mut Window) {
-    window.paint_quad(fill(area, light));
-    let (w, h) = (f32::from(area.size.width), f32::from(area.size.height));
-    let (columns, rows) = ((w / CELL).ceil() as usize, (h / CELL).ceil() as usize);
+    let tile = tile(light, dark, window);
+    let side = CELL * TILE as f32;
+    let (columns, rows) = ((f32::from(area.size.width) / side).ceil() as usize, (f32::from(area.size.height) / side).ceil() as usize);
     for row in 0..rows {
-        for column in (row % 2..columns).step_by(2) {
-            let (x, y) = (column as f32 * CELL, row as f32 * CELL);
-            let cell = Bounds::new(point(area.origin.x + px(x), area.origin.y + px(y)), size(px(CELL.min(w - x)), px(CELL.min(h - y))));
-            window.paint_quad(fill(cell, dark));
+        for column in 0..columns {
+            let at = Bounds::new(point(area.origin.x + px(column as f32 * side), area.origin.y + px(row as f32 * side)), size(px(side), px(side)));
+            if let Err(e) = window.paint_image(area, at, Corners::default(), tile.clone(), 0, false) {
+                log::warn!("diff view: painting the checkerboard: {e:#}");
+                return;
+            }
         }
     }
 }
@@ -119,6 +168,16 @@ pub fn painted(picture: &Picture, key: String, hits: &HitTargets, cells: (Hsla, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tile_alternates_its_cells_from_a_dark_one() {
+        let (light, dark) = ([1, 1, 1, 255], [2, 2, 2, 255]);
+        let pixels = tile_pixels(TileKey { cell: 2, light, dark });
+        assert_eq!(pixels.dimensions(), (2 * TILE, 2 * TILE));
+        let row = |y: u32| (0..5).map(|x| pixels.get_pixel(x, y).0).collect::<Vec<_>>();
+        assert_eq!(row(0), [dark, dark, light, light, dark]);
+        assert_eq!(row(2), [light, light, dark, dark, light]);
+    }
 
     #[test]
     fn an_image_fits_its_pane_and_grows_at_most_twice() {

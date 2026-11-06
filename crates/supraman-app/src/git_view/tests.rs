@@ -376,3 +376,45 @@ fn git_tab_reports_a_click_and_up_down_as_the_selection(cx: &mut TestAppContext)
     let ahead = Selected::Commit(f.sha("ahead").to_string().into());
     assert_eq!(*seen.borrow(), vec![Some(ahead.clone()), Some(Selected::Wip), Some(ahead)]);
 }
+
+#[gpui::test]
+fn git_tab_walks_as_a_ref_hidden_before_its_first_load_ended(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    let first = load::first(None, &f.dir, &ref_panel::Walk::default());
+    view.update(cx, |v, cx| {
+        (v.repo, v.load) = (None, Load::Loading);
+        v.ref_panel().update(cx, |p, cx| p.toggle_hidden(&["refs/heads/main".to_string()], cx));
+    });
+    view.update(cx, |v, cx| v.apply_first(first, cx));
+    cx.run_until_parked();
+    view.read_with(cx, |v, cx| assert_eq!(v.follow.walked, *v.ref_panel.read(cx).walk(), "the graph walks as the panel says"));
+}
+
+#[gpui::test]
+fn git_tab_says_why_its_settings_give_no_git_and_retries(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let home = tempfile::tempdir().unwrap();
+    let settings = home.path().join("settings.toml");
+    let said = |view: &Entity<GitView>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| match &v.load {
+            Load::Problem(Problem::Git(why)) => why.clone(),
+            Load::Problem(Problem::Failed(why)) => format!("failed: {why}"),
+            Load::Loading => "loading".into(),
+            Load::Ready => "ready".into(),
+        })
+    };
+    std::fs::write(&settings, "[gitman]
+git = 5
+").unwrap();
+    let (view, cx) = open_in(&f.dir, Some(home.path()), cx);
+    assert!(said(&view, cx).starts_with("[gitman] in settings.toml is ignored"), "{}", said(&view, cx));
+    std::fs::write(&settings, "not toml [").unwrap();
+    super::wip::tests::click(&view, "git-retry", cx);
+    cx.run_until_parked();
+    assert!(said(&view, cx).starts_with("[gitman] git is not read"), "{}", said(&view, cx));
+    std::fs::remove_file(&settings).unwrap();
+    super::wip::tests::click(&view, "git-retry", cx);
+    cx.run_until_parked();
+    assert_eq!(said(&view, cx), "ready", "Retry loads the graph");
+}

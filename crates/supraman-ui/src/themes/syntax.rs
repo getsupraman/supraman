@@ -7,7 +7,7 @@ use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
 use serde_json::Value;
 use theme::{Appearance, SyntaxTheme, Theme};
 
-use super::{Adjustment, SECONDARY_FLOOR, contrast, hex, over, parse_color};
+use super::{Adjustment, SECONDARY_FLOOR, contrast, hex, nearest_holding, over, parse_color};
 
 /// Code is text: every syntax colour against the editor background (WCAG AA).
 pub const SYNTAX_FLOOR: f32 = SECONDARY_FLOOR;
@@ -103,18 +103,17 @@ pub fn entries(syntax: &SyntaxTheme) -> Vec<(String, HighlightStyle)> {
     (0..).map_while(|i: usize| Some((syntax.get_capture_name(i)?.to_string(), *syntax.get(i)?))).collect()
 }
 
-/// Makes each syntax colour opaque over the editor background, then lightens it (darkens it on a light theme)
-/// until it holds [`SYNTAX_FLOOR`] there. Returns what changed, keyed `syntax.<capture>`.
+/// Makes each syntax colour opaque over the editor background, then moves it to the nearest lightness that holds
+/// [`SYNTAX_FLOOR`] there (the far end its theme's appearance points to where none does). Returns what changed,
+/// keyed `syntax.<capture>`.
 pub fn fit(theme: &mut Theme) -> Vec<Adjustment> {
     let bg = theme.colors().editor_background;
-    let step = if theme.appearance.is_light() { -0.005 } else { 0.005 };
+    let far = if theme.appearance.is_light() { 0. } else { 1. };
     let mut adjusted = Vec::new();
     let fitted = entries(theme.syntax()).into_iter().map(|(key, mut style)| {
         if let Some(old) = style.color {
-            let mut color: Hsla = over(old, bg).into();
-            while contrast(color, bg) < SYNTAX_FLOOR && (0. ..=1.).contains(&(color.l + step)) {
-                color.l += step;
-            }
+            let opaque: Hsla = over(old, bg).into();
+            let color = nearest_holding(opaque, |c| contrast(c, bg) >= SYNTAX_FLOOR).unwrap_or(Hsla { l: far, ..opaque });
             if hex(color) != hex(old) {
                 let name = Cow::Owned(format!("{ADJUSTED}{key}"));
                 adjusted.push(Adjustment { key: name, old: hex(old), new: hex(color), was: contrast(old, bg), now: contrast(color, bg) });
@@ -186,6 +185,19 @@ mod tests {
         assert_eq!(moved.old, "#C8C8FF");
         assert!(moved.was < SYNTAX_FLOOR && moved.now >= SYNTAX_FLOOR, "{moved:?}");
         assert_eq!(hex(color(&loaded.theme, "keyword")), moved.new);
+    }
+
+    #[test]
+    fn a_dark_theme_on_a_light_editor_still_holds_the_floor() {
+        let mut zed = light(serde_json::json!({ "keyword": { "color": "#C8C8FF" } }));
+        zed.appearance = Some("dark".into());
+        let theme = from_zed(&one_dark(), &zed).theme;
+        let bg = theme.colors().editor_background;
+        for (key, style) in entries(theme.syntax()) {
+            if let Some(c) = style.color {
+                assert!(contrast(c, bg) >= SYNTAX_FLOOR, "{key} {} on {}: {:.2}", hex(c), hex(bg), contrast(c, bg));
+            }
+        }
     }
 
     /// The bundled themes' code colours, each held on their editor background; what moved is printed and pinned.

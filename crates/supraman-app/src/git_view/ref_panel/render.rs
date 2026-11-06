@@ -4,6 +4,7 @@
 //! `refpanel-strip-<section>`, `refpanel-sections-divider-<pane>` (the border above a shown section's header).
 
 use gpui::{AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, IntoElement, Render, Window, div, prelude::*, px};
+use supraman_gitman::short_sha;
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
@@ -75,7 +76,7 @@ impl RefPanel {
         match entry {
             Entry::Worktree { folder, .. } => folder.clone(),
             Entry::Stash { branch, .. } => Some(format!("on: {branch}")),
-            Entry::Detached { sha } => Some(sha.chars().take(7).collect()),
+            Entry::Detached { sha } => Some(short_sha(sha).to_string()),
             _ => None,
         }
     }

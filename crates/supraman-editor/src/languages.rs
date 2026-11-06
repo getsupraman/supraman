@@ -64,7 +64,7 @@ pub fn language_for(path: &str) -> Option<Arc<Language>> {
     let ext = file.rsplit_once('.').map(|(_, e)| e);
     let known = known();
     let by = |hit: &dyn Fn(&str) -> bool| known.suffixes.iter().find(|(_, s)| s.iter().any(|s| hit(s))).map(|(n, _)| *n);
-    let name = by(&|s| s == file).or_else(|| by(&|s| Some(s) == ext))?;
+    let name = by(&|s| s == file).or_else(|| by(&|s| ext.is_some_and(|e| e.eq_ignore_ascii_case(s))))?;
     built().get(name).cloned()
 }
 

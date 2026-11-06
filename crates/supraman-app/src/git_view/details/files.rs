@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Stateful, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
 use supraman_ui::button;
-use supraman_ui::clipped::clipped;
+use supraman_ui::clipped::{clipped, path_label};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::segmented::{Segment, segmented};
@@ -95,11 +95,6 @@ fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App)
 
 /// A Path row: the mark, the folder part muted and the file name bright.
 fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &App) -> AnyElement {
-    let colors = cx.theme().colors().clone();
-    let (dir, name) = match path.rsplit_once('/') {
-        Some((dir, name)) => (format!("{dir}/"), name.to_string()),
-        None => (String::new(), path.to_string()),
-    };
     div()
         .flex()
         .items_center()
@@ -108,8 +103,7 @@ fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &Ap
         .min_w_0()
         .whitespace_nowrap()
         .child(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))
-        .when(!dir.is_empty(), |d| d.child(clipped(format!("{list}-dir-{path}"), dir, true).flex_shrink(1.).text_color(secondary(cx))))
-        .child(div().flex_none().text_color(colors.text).child(SharedString::from(name)))
+        .child(path_label(format!("{list}-dir-{path}"), path, secondary(cx), cx.theme().colors().text).flex_1())
         .into_any_element()
 }
 

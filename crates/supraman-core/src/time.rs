@@ -158,6 +158,8 @@ fn pattern<Tz: TimeZone>(at: &DateTime<Tz>, pattern: &str, locale: &Locale) -> S
         match c {
             'd' if run >= 3 => out.push_str(&at.weekday().to_string()),
             'd' => out.push_str(&format!("{:02}", at.day())),
+            'M' if run == 3 => out.push_str(&at.date_naive().format("%b").to_string()),
+            'M' if run > 3 => out.push_str(&at.date_naive().format("%B").to_string()),
             'M' => out.push_str(&format!("{:02}", at.month())),
             'y' => out.push_str(&format!("{:04}", at.year())),
             'H' if run == 1 => out.push_str(&at.hour().to_string()),
@@ -169,18 +171,32 @@ fn pattern<Tz: TimeZone>(at: &DateTime<Tz>, pattern: &str, locale: &Locale) -> S
             't' if run == 1 => out.extend(designator.chars().next()),
             't' => out.push_str(designator),
             'g' => {}
-            '\'' => {
-                i -= run - 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    out.push(chars[i]);
-                    i += 1;
-                }
-                i += 1;
-            }
+            '\'' => i = quoted(&chars, i - run, &mut out),
             _ => out.extend(std::iter::repeat_n(c, run)),
         }
     }
     out.trim().to_string()
+}
+
+/// The literal from the quote at `start` pushed to `out` (`''` is a quote, inside or out); the index past it.
+fn quoted(chars: &[char], start: usize, out: &mut String) -> usize {
+    let mut i = start + 1;
+    if chars.get(i) == Some(&'\'') {
+        out.push('\'');
+        return i + 1;
+    }
+    while let Some(&c) = chars.get(i) {
+        i += 1;
+        if c != '\'' {
+            out.push(c);
+        } else if chars.get(i) == Some(&'\'') {
+            out.push('\'');
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    i
 }
 
 #[cfg(test)]
@@ -245,6 +261,13 @@ mod tests {
         assert_eq!(stamp_in(&evening, &locale("yyyy-MM-dd", "H.mm 'h'")), "2026-11-05 @ 17.10 h");
         assert_eq!(stamp_in(&evening, &locale("d.M.yy", "tt hh:mm")), "05.11.2026 @ PM 05:10");
         assert_eq!(stamp(i64::MAX), "");
+    }
+
+    #[test]
+    fn a_named_month_and_a_quoted_quote_are_written_out() {
+        let evening = chrono::Utc.with_ymd_and_hms(2026, 11, 5, 21, 10, 0).unwrap();
+        assert_eq!(stamp_in(&evening, &locale("dd-MMM-yy", "h 'o''clock'")), "05-Nov-2026 @ 9 o'clock");
+        assert_eq!(stamp_in(&evening, &locale("d MMMM yyyy", "HH''mm")), "05 November 2026 @ 21'10");
     }
 
     #[test]

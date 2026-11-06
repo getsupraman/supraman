@@ -196,11 +196,10 @@ impl WipPanel {
         self.order = order;
         self.unstaged.tree.set_order_off_thread(order, cx);
         self.staged.tree.set_order_off_thread(order, cx);
-        if let Some(shown) = self.shown() {
-            let mut shown = (*shown).clone();
+        if let State::Shown(shown) = &mut self.state {
+            let shown = Rc::make_mut(shown);
             sort_changes(&mut shown.unstaged, order);
             sort_changes(&mut shown.staged, order);
-            self.state = State::Shown(Rc::new(shown));
         }
         cx.notify();
     }

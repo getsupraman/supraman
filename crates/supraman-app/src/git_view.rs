@@ -33,12 +33,13 @@ mod stream_tests;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::{History, Layout, Repo};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
+use supraman_ui::placeholder::placeholder;
 use supraman_ui::split::SplitPane;
 use supraman_ui::stall;
 use supraman_ui::store::save_off_thread;
@@ -66,8 +67,7 @@ const PANEL_MIN: f32 = 260.;
 /// The ref panel shrinks this much faster than the graph and the commit panel beside it.
 const REFS_SHRINK: f32 = 1000.;
 
-/// A tab's sizes in whole pixels: the columns', the commit panel's width and its message box's height; the ref
-/// panel's width, whether it is collapsed, the refs hidden from the graph and soloed in it, and its collapsed folders.
+/// A tab's sizes in whole pixels and its ref panel's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GitSizes {
@@ -473,6 +473,9 @@ impl GitView {
                 self.repo = Some(first.repo);
                 self.wip = first.wip;
                 self.load = Load::Ready;
+                if *self.ref_panel.read(cx).walk() != self.follow.walked {
+                    self.refresh_graph(None, cx);
+                }
             }
             Err(problem) => self.load = Load::Problem(problem),
         }
@@ -638,6 +641,16 @@ impl GitView {
         Some(self.notice_banner("git-layout-notice-dismiss", problem, |_, cx| layout::set_notice(None, cx), cx))
     }
 
+    /// Why the tab shows no graph, with a Retry that loads it again.
+    fn problem(&self, problem: &Problem, cx: &mut Context<Self>) -> AnyElement {
+        let (title, why) = match problem {
+            Problem::Git(why) => ("Git is missing or too old", why),
+            Problem::Failed(why) => ("Cannot read this repository", why),
+        };
+        let retry = button::bordered(&self.hits, "git-retry", "Retry", cx).on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| this.reload(cx)));
+        notice(title, why.clone(), cx).child(div().pt_2().child(retry)).into_any_element()
+    }
+
     /// A warning over the tab whose × under `key` runs `dismiss`.
     fn notice_banner(&self, key: &'static str, text: String, dismiss: impl Fn(&mut GitView, &mut Context<GitView>) + 'static, cx: &mut Context<Self>) -> AnyElement {
         let color = cx.theme().status().warning;
@@ -651,20 +664,8 @@ impl GitView {
     }
 }
 
-fn notice(title: &str, detail: String, cx: &App) -> AnyElement {
-    let colors = cx.theme().colors();
-    div()
-        .size_full()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .px_6()
-        .bg(colors.editor_background)
-        .child(div().text_color(colors.text).child(SharedString::from(title.to_string())))
-        .child(div().text_sm().text_color(colors.text_muted).child(SharedString::from(detail)))
-        .into_any_element()
+fn notice(title: &str, detail: String, cx: &App) -> Div {
+    placeholder(title.to_string(), [detail], cx).size_full().gap_2().px_6().bg(cx.theme().colors().editor_background)
 }
 
 impl Render for GitView {
@@ -681,9 +682,8 @@ impl Render for GitView {
             window.focus(self.table.focus_handle(), cx);
         }
         let content = match &self.load {
-            Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx),
-            Load::Problem(Problem::Git(why)) => notice("Git is missing or too old", why.clone(), cx),
-            Load::Problem(Problem::Failed(why)) => notice("Cannot read this repository", why.clone(), cx),
+            Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
+            Load::Problem(problem) => self.problem(problem, cx),
             Load::Ready => self.render_split(cx),
         };
         div()

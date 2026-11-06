@@ -1,4 +1,4 @@
-//! Zed's editor (rev 03efd49) without a Project, read-only: a file at a revision, and the diff of two
+//! Zed's editor without a Project, read-only: a file at a revision, and the diff of two
 //! texts inline or split side by side, highlighted by the grammars Zed bundles and those `languages` compiles in.
 
 mod diff;
@@ -136,6 +136,14 @@ pub fn cursor_row(editor: &Entity<Editor>, cx: &mut App) -> u32 {
 /// The display row at the top of `editor`'s view.
 pub fn scroll_row(editor: &Entity<Editor>, cx: &mut App) -> f64 {
     editor.update(cx, |e, cx| e.scroll_position(cx).y)
+}
+
+/// Scrolls `editor` to put display `row` at the top of its view.
+pub fn set_scroll_row(editor: &Entity<Editor>, row: f64, window: &mut Window, cx: &mut App) {
+    editor.update(cx, |e, cx| {
+        let x = e.scroll_position(cx).x;
+        e.set_scroll_position(gpui::point(x, row), window, cx);
+    });
 }
 
 /// The text of `editor`'s buffer, as a test reads it.

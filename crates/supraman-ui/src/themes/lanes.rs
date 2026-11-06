@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Mutex};
 use gpui::Hsla;
 use theme::Theme;
 
-use super::{Adjustment, NAME_FLOOR, SECONDARY_FLOOR, contrast, hex, over, parse_color};
+use super::{Adjustment, NAME_FLOOR, SECONDARY_FLOOR, contrast, hex, nearest_holding, over, parse_color};
 
 pub const LANES: usize = 10;
 
@@ -77,7 +77,7 @@ pub fn fit(theme: &Theme, set: &[Option<Hsla>; LANES]) -> Vec<Adjustment> {
     let mut adjusted = Vec::new();
     for (i, lane) in lanes.iter_mut().enumerate() {
         let old = set[i].map(|c| Hsla { a: 1., ..c }).unwrap_or(*lane);
-        *lane = nearest_holding(theme, old);
+        *lane = nearest_holding(old, |c| margin(theme, c) >= 1.).unwrap_or(old);
         if hex(old) != hex(*lane) {
             let line = |c: Hsla| contrast(c, theme.colors().editor_background);
             adjusted.push(Adjustment { key: KEYS[i].into(), old: hex(old), new: hex(*lane), was: line(old), now: line(*lane) });
@@ -85,18 +85,6 @@ pub fn fit(theme: &Theme, set: &[Option<Hsla>; LANES]) -> Vec<Adjustment> {
     }
     FITTED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_default().insert(theme.id.clone(), lanes);
     adjusted
-}
-
-fn nearest_holding(theme: &Theme, colour: Hsla) -> Hsla {
-    if margin(theme, colour) >= 1. {
-        return colour;
-    }
-    (1..=200)
-        .flat_map(|k| [k as f32 * 0.005, k as f32 * -0.005])
-        .map(|step| Hsla { l: colour.l + step, ..colour })
-        .filter(|c| (0. ..=1.).contains(&c.l))
-        .find(|c| margin(theme, *c) >= 1.)
-        .unwrap_or(colour)
 }
 
 /// Keeps `from`'s lanes for the same theme under its new id.

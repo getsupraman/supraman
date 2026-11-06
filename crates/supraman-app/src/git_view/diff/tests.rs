@@ -239,6 +239,41 @@ fn diff_view_opens_at_its_first_change_split_and_inline(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn diff_view_reloaded_after_a_change_below_keeps_its_top_row_and_change(cx: &mut TestAppContext) {
+    let r = repo();
+    let (view, cx) = open(&r, cx);
+    for layout in [Layout::Split, Layout::Inline] {
+        view.update(cx, |v, cx| {
+            v.close_diff(cx);
+            v.diff_layout = layout;
+        });
+        let d = show(&view, &r, "big.txt", cx);
+        d.update_in(cx, |d, window, cx| d.next_change(window, cx));
+        redraw(&view, cx);
+        let editor = |d: &Entity<DiffView>, cx: &mut VisualTestContext| match layout {
+            Layout::Split => d.update_in(cx, |d, window, cx| d.split(window, cx)).read_with(cx, |s, _| s.new.clone()),
+            Layout::Inline => d.update_in(cx, |d, window, cx| d.inline_editor(window, cx)),
+        };
+        let top = |d: &Entity<DiffView>, cx: &mut VisualTestContext| {
+            let editor = editor(d, cx);
+            cx.update(|_, cx| supraman_editor::scroll_row(&editor, cx))
+        };
+        let before = top(&d, cx);
+        assert!(before > 1000., "{layout:?}: on the second change: top {before}");
+        let (old, new) = texts(&d, cx);
+        let below = new.replace("line 4990 of a long file", "line 4990 edited by an agent");
+        let task = cx.update(|_, cx| Diff::compute(old, below, None, cx));
+        cx.run_until_parked();
+        let diff = cx.foreground_executor().block_test(task);
+        d.update(cx, |d, cx| d.show(diff, "UTF-8".into(), Vec::new(), cx));
+        redraw(&view, cx);
+        assert_eq!(rows(&d, cx).len(), 6, "{layout:?}: the reload has one more change");
+        assert_eq!(top(&d, cx), before, "{layout:?}: the same row on top");
+        assert_eq!(d.read_with(cx, |d, _| d.current()), Some(1), "{layout:?}: the same change current");
+    }
+}
+
+#[gpui::test]
 fn diff_view_compares_a_merge_with_its_first_parent(cx: &mut TestAppContext) {
     let r = repo();
     let (view, cx) = open(&r, cx);

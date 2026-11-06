@@ -17,7 +17,7 @@ use supraman_gitman::{FileChange, Person, Repo, Stash};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
-use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::text_input::{self, TextInput};
 use supraman_ui::tree::{Order, TreeState};
 
 pub use files::{kind_word, mark_icon};
@@ -33,7 +33,6 @@ pub const MESSAGE_HEIGHT: Pixels = px(140.);
 pub enum PanelEvent {
     /// Select this parent in the graph.
     Parent(SharedString),
-    /// A file was clicked: its change in the shown commit, against the first parent.
     File(super::diff::Target),
     /// The message box's height was dragged or reset.
     Resized,
@@ -59,7 +58,7 @@ pub struct Shown {
     /// Each change's place in `changes` by its path.
     index: HashMap<String, usize>,
     /// Every changed file, and once the whole tree is read every file at the commit.
-    files: HashSet<String>,
+    files: Rc<HashSet<String>>,
 }
 
 /// The whole tree's read for the shown commit, made only with View all files on.
@@ -241,7 +240,7 @@ impl CommitPanel {
             counts: loaded.counts,
             index: index(&changes),
             changes,
-            files,
+            files: Rc::new(files),
         }));
         self.read_whole(cx);
         cx.notify();
@@ -278,10 +277,8 @@ impl CommitPanel {
                     Some(false) => self.all.collapse_all(),
                     None => {}
                 }
-                if let Some(shown) = self.shown() {
-                    let mut shown = (*shown).clone();
-                    shown.files = whole.files;
-                    self.state = State::Shown(Rc::new(shown));
+                if let State::Shown(shown) = &mut self.state {
+                    Rc::make_mut(shown).files = Rc::new(whole.files);
                 }
                 self.whole = Whole::Read;
             }
@@ -306,11 +303,10 @@ impl CommitPanel {
         self.order = order;
         self.changed.set_order_off_thread(order, cx);
         self.all.set_order_off_thread(order, cx);
-        if let Some(shown) = self.shown() {
-            let mut shown = (*shown).clone();
+        if let State::Shown(shown) = &mut self.state {
+            let shown = Rc::make_mut(shown);
             sort_changes(&mut shown.changes, order);
             shown.index = index(&shown.changes);
-            self.state = State::Shown(Rc::new(shown));
         }
         cx.notify();
     }
@@ -349,18 +345,7 @@ impl CommitPanel {
     }
 
     fn filter_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        if let Some((input, _)) = &self.filter {
-            return input.clone();
-        }
-        let input = cx.new(|cx| TextInput::new("Filter files", None, window, cx));
-        let sub = cx.subscribe(&input, |this, input, e: &InputEvent, cx| {
-            if *e == InputEvent::Edited {
-                let text = input.read(cx).text().to_string();
-                this.set_filter(&text, cx);
-            }
-        });
-        self.filter = Some((input.clone(), sub));
-        input
+        self.filter.get_or_insert_with(|| text_input::filter_box("Filter files", Self::set_filter, window, cx)).0.clone()
     }
 
     #[cfg(test)]

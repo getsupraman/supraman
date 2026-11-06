@@ -578,7 +578,7 @@ fn width_probe(state: TableState) -> impl IntoElement {
 
 /// The header's captions: the theme's secondary shade, a step under the rows' `text_xs`.
 fn caption(colors: &theme::ThemeColors) -> (Hsla, Pixels) {
-    (colors.text.opacity(crate::themes::SECONDARY), px(11.))
+    (crate::themes::secondary(colors), px(11.))
 }
 
 #[cfg(test)]

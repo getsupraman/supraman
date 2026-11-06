@@ -41,6 +41,11 @@ pub const DIMMED: f32 = 0.8;
 pub const NAME_FLOOR: f32 = 7.;
 pub const SECONDARY_FLOOR: f32 = 4.5;
 
+/// Secondary text: the theme's text in [`SECONDARY`].
+pub fn secondary(colors: &ThemeColors) -> Hsla {
+    colors.text.opacity(SECONDARY)
+}
+
 /// A Messages row's tint over the panel (its status colour at this alpha), and under the pointer.
 pub const MESSAGE_TINT: f32 = 0.10;
 pub const MESSAGE_TINT_HOVER: f32 = 0.16;
@@ -385,6 +390,15 @@ pub fn palette(theme: &Theme) -> TerminalPalette {
 pub fn contrast(fg: Hsla, bg: Hsla) -> f32 {
     let (lf, lb) = (luminance(over(fg, bg)), luminance(Rgba::from(bg)));
     (lf.max(lb) + 0.05) / (lf.min(lb) + 0.05)
+}
+
+/// `colour` at the lightness nearest its own, either way in 0.005 steps, where it `holds`; `None` where none does.
+fn nearest_holding(colour: Hsla, holds: impl Fn(Hsla) -> bool) -> Option<Hsla> {
+    std::iter::once(0.)
+        .chain((1..=200).flat_map(|k| [k as f32 * 0.005, k as f32 * -0.005]))
+        .map(|step| Hsla { l: colour.l + step, ..colour })
+        .filter(|c| (0. ..=1.).contains(&c.l))
+        .find(|c| holds(*c))
 }
 
 fn over(fg: Hsla, bg: Hsla) -> Rgba {
