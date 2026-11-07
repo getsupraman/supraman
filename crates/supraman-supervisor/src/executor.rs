@@ -51,9 +51,12 @@ impl std::fmt::Debug for RoleToken {
 
 /// Where the bearer comes from: the app's sign-in.
 pub trait TokenProvider {
-    /// `Ok(None)`: not signed in, so the role launches without a Workman server. `Err`: signed in but
-    /// no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
+    /// `Ok(None)`: not signed in, so the role launches with a token-less helped config at [`Self::mcp_url`]. `Err`:
+    /// signed in but no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
     fn token(&self, role: &str) -> Result<Option<RoleToken>, String>;
+
+    /// The MCP URL a session's config names while it has no token: [`crate::mcp_url`].
+    fn mcp_url(&self) -> String;
 }
 
 /// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
@@ -193,6 +196,8 @@ pub struct Supervisor<L, T> {
     origin: Option<String>,
     /// The server [`Self::server_changed`] last scheduled re-mints for.
     checked: Option<String>,
+    /// Set by a sign-in ([`Self::server_changed`]): the next tick runs [`Self::mint_unminted`].
+    mint_unminted_due: bool,
     /// While set, no launch or resume goes: they would only fail after 45 s. Why, and since when.
     held: Option<(String, Millis)>,
     /// Why a `--bg` that could not reach the background service will keep failing, if it will:
@@ -244,6 +249,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             unconfirmed: Vec::new(),
             origin: None,
             checked: None,
+            mint_unminted_due: false,
             held: None,
             daemon_check: supraman_claude::daemon_mismatch,
         }
@@ -337,7 +343,8 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     /// tick and resumed (by its full uuid) with a token minted on `origin`, `replace: true`, in the same
     /// config file; a stopped one gets it at its next resume anyway. Returns those (name, its origin).
     pub fn server_changed(&mut self, origin: Option<&str>) -> Vec<(String, Option<String>)> {
-        self.origin = origin.map(api_base);
+        let was = std::mem::replace(&mut self.origin, origin.map(api_base));
+        self.mint_unminted_due |= was.is_none() && self.origin.is_some();
         let Some(origin) = self.origin.clone() else {
             return Vec::new();
         };
@@ -458,6 +465,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             }
         }
         self.record_stops(stops, now);
+        self.mint_unminted(observed, now);
         self.settle_forks(observed);
         self.bind_claude_sessions(observed, now);
         self.revoke_deleted(observed);
@@ -529,9 +537,11 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             spec.resume = Some(from.clone());
             spec.prompt = adopt_prompt(&self.desired.workspace, w);
         }
-        if let Some((url, minted)) = self.mint(w, None, now)? {
-            spec = self.keeper.launch(spec, &url, &minted.token, minted.expires_at.as_deref()).map_err(Failure::Other)?;
+        spec = match self.mint(w, None, now)? {
+            Some((url, minted)) => self.keeper.launch(spec, &url, &minted.token, minted.expires_at.as_deref()),
+            None => self.keeper.launch_unminted(spec, &self.tokens.mcp_url()),
         }
+        .map_err(Failure::Other)?;
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
     }
 
@@ -585,6 +595,32 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             self.keeper.write(&w.name, &url, &minted.token, minted.expires_at.as_deref(), &self.config.plugin_servers(&w.name)).map_err(Failure::Other)?;
         }
         Ok(())
+    }
+
+    /// Once per sign-in: each live wanted session launched with a token-less config gets its token kept for its
+    /// helper, without a stop; the session reaches it at its next connect.
+    fn mint_unminted(&mut self, observed: &[Session], now: Millis) {
+        if !std::mem::take(&mut self.mint_unminted_due) {
+            return;
+        }
+        let due: Vec<(WantedSession, String)> = self
+            .desired
+            .sessions
+            .iter()
+            .filter(|w| self.minted.get(&w.name).is_none() && supraman_claude::mcp_config_url(self.keeper.mcp_dir(), &w.name).is_some())
+            .filter_map(|w| {
+                let mut rows = observed.iter().filter(|s| s.name == w.name && is_live(s, now));
+                match (rows.next(), rows.next()) {
+                    (Some(row), None) if !row.session_id.is_empty() => Some((w.clone(), row.session_id.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+        for (w, claude_session_id) in due {
+            if let Err(Failure::Other(e)) = self.remint(&w, &claude_session_id, now) {
+                self.notices.push(format!("{} runs without its Workman token after the sign-in: {e}", w.name));
+            }
+        }
     }
 
     /// [`DesiredState::forked`] for each adopted session whose own row shows, in the file too.
@@ -1004,8 +1040,13 @@ mod tests {
             };
             Ok(Some(t))
         }
+
+        fn mcp_url(&self) -> String {
+            SIGNED_OUT_URL.into()
+        }
     }
 
+    const SIGNED_OUT_URL: &str = "http://127.0.0.1:2/mcp";
     const STATIC: &str = "fake-static-role-token";
 
     fn static_token() -> Option<RoleToken> {
@@ -1916,21 +1957,57 @@ mod tests {
         sup.tick(&[], &mut free(), NOW);
         assert_eq!(sup.launcher().take().len(), 1);
         assert_eq!(minter.take(), []);
-        assert!(!dir.path().join("workstate-fm-demo-workspace.json").exists());
+        assert_helped(dir.path(), "fm-demo-workspace");
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "", "no token is kept");
     }
 
     #[test]
-    fn no_token_launches_without_mcp_config() {
+    fn signed_out_launches_with_the_helped_config_under_strict() {
         let dir = tempfile::tempdir().unwrap();
         let mut sup = supervisor(true, None, dir.path());
         sup.tick(&[], &mut free(), NOW);
-        match sup.launcher().take().as_slice() {
-            [Call::Launch { argv, .. }] => {
-                assert!(!argv.iter().any(|a| a == "--mcp-config"), "{argv:?}");
-                assert!(argv.iter().any(|a| a == "--strict-mcp-config"), "never the user-scope server: {argv:?}");
+        let argv = match sup.launcher().take().as_slice() {
+            [Call::Launch { argv, .. }] => argv.clone(),
+            other => panic!("{other:?}"),
+        };
+        let config = argv.iter().position(|a| a == "--mcp-config").map(|i| argv[i + 1].clone());
+        assert_eq!(config.as_deref().map(Path::new), Some(dir.path().join("workstate-fm-demo-workspace.json").as_path()), "{argv:?}");
+        assert!(argv.iter().any(|a| a == "--strict-mcp-config"), "never the user-scope server: {argv:?}");
+        assert_eq!(supraman_claude::mcp_config_url(dir.path(), "fm-demo-workspace").as_deref(), Some(SIGNED_OUT_URL));
+        assert_helped(dir.path(), "fm-demo-workspace");
+    }
+
+    #[test]
+    fn a_sign_in_keeps_a_token_for_a_live_session_launched_signed_out_without_stopping_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let minter = FakeMinter::default();
+        let mut sup = supervisor(true, None, dir.path()).with_minter(minter.clone());
+        sup.tick(&[], &mut free(), NOW);
+        sup.launcher().take();
+        let live = row(SessionState::Working, Some(Status::Busy), Some(1));
+        sup.server_changed(None);
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + SECOND);
+        assert_eq!(minter.take(), [], "signed out: nothing to mint with");
+
+        *sup.tokens_mut() = FakeTokens(static_token(), None);
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty());
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
+        assert_eq!(sup.launcher().take(), [], "the live session is not stopped");
+        match minter.take().as_slice() {
+            [MintCall::Mint { request, .. }] => {
+                assert_eq!(request.claude_session_id.as_deref(), Some(live.session_id.as_str()));
+                assert!(request.replace);
             }
             other => panic!("{other:?}"),
         }
+        assert_eq!(kept(&sup, "fm-demo-workspace"), "wss_fake1", "its helper prints the minted token");
+        assert!(sup.minted().get("fm-demo-workspace").is_some(), "recorded, so a deletion revokes it");
+        assert_helped(dir.path(), "fm-demo-workspace");
+
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 3 * SECOND);
+        assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty());
+        sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 4 * SECOND);
+        assert_eq!(minter.take(), [], "once per sign-in");
     }
 
     #[test]

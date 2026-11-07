@@ -89,4 +89,4 @@ pub use mint::{
 pub use memory::{Attempts, Failure, Millis, Policy, SECOND, SupervisorMemory};
 pub use needs::{NeedsKind, NeedsYou, Remedy};
 pub use reconcile::{Action, WaitReason, action_name, is_live, reconcile};
-pub use tokens::{AppTokens, bearer, sign_in_generation, signing_in, workman_role};
+pub use tokens::{AppTokens, bearer, mcp_url, sign_in_generation, signing_in, workman_role};

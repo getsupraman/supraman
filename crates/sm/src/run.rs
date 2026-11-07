@@ -113,17 +113,17 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         Ok(m) => m,
         Err(why) => return SessionEnd::failed(why),
     };
-    spec.mcp_config = None;
-    let mut without_workstate = None;
-    match &mint {
-        Some(m) => match keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()) {
-            Ok(with) => spec = with,
-            Err(why) => {
-                end_mint(host, &keeper, ctx.home, &spec.name, Some(m));
-                return SessionEnd::failed(why);
-            }
-        },
-        None => without_workstate = Some("Supraman is not signed in to Workman: the run has no Workman".to_string()),
+    let without_workstate = mint.is_none().then(|| "Supraman is not signed in to Workman: the run has no Workman token".to_string());
+    let helped = match &mint {
+        Some(m) => keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()),
+        None => keeper.launch_unminted(spec.clone(), &host.tokens().mcp_url()),
+    };
+    match helped {
+        Ok(with) => spec = with,
+        Err(why) => {
+            end_mint(host, &keeper, ctx.home, &spec.name, mint.as_ref());
+            return SessionEnd::failed(why);
+        }
     }
 
     if let Err(e) = host.claude().launch(&spec) {

@@ -522,9 +522,9 @@ fn fire_session_a_vanished_session_fails_and_a_report_needs_a_run_in_flight() {
     assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("no run gone-20990101-000000 is in flight"), "{out:?}");
 }
 
-/// Not signed in: the run launches without Workman, and its record says so.
+/// Not signed in: the run launches with its helped config and no token, and its record says so.
 #[test]
-fn fire_session_without_a_sign_in_launches_without_workstate() {
+fn fire_session_without_a_sign_in_launches_with_its_helped_config_and_no_token() {
     let f = fixture(false);
     f.add_approved(session_schedule("plain", ActionKind::Session, Profile::Read));
     let mut host = TestHost::new(&f, &[Look::Working]);
@@ -532,8 +532,15 @@ fn fire_session_without_a_sign_in_launches_without_workstate() {
     let report = run_now(&f, "plain", &mut host);
     assert_eq!(report.outcome, Some(Outcome::Done), "{report:?}");
     let spec = host.spec();
-    assert_eq!(spec.mcp_config, None);
+    let config = spec.mcp_config.clone().expect("its helped config");
+    assert_eq!(config, supraman_claude::mcp_config_path(&f.home.join("mcp"), &spec.name).unwrap());
     assert!(spec.strict_mcp_config, "no user-scope server either");
+    let text = fs::read_to_string(&config).unwrap();
+    let workman = &serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"]["workman"];
+    assert_eq!(workman["url"].as_str(), Some(Settings::load(&f.home).unwrap_or_default().workman.mcp_url().as_str()));
+    assert!(workman["headersHelper"].as_str().is_some_and(|h| h.contains(" mcp-header ") && h.ends_with(&spec.name)), "{text}");
+    assert!(!text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
+    assert_eq!(supraman_core::secret::default_store(&f.home).get(&supraman_claude::mcp_token_key(&spec.name)).unwrap(), None, "no token kept");
     assert!(f.fake.seen().iter().all(|s| !s.target.starts_with("/api/")));
     let Stage::Session { workstate_session, without_workstate, .. } = session_stage(&f.records(&report.run.unwrap())) else { unreachable!() };
     assert_eq!(workstate_session, None);
