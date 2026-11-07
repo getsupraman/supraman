@@ -172,8 +172,14 @@ impl DiffView {
             (Content::Image(_), mode, layout) => self.images(mode, layout, cx),
             (Content::Text(t), Mode::Diff, _) if !t.invisible.is_empty() => self.invisible(&t.invisible, cx),
             (Content::Text(_), Mode::File, _) => self.file_editor(window, cx).map_or_else(|| div().into_any_element(), |e| e.into_any_element()),
-            (Content::Text(_), Mode::Diff, Layout::Inline) => self.inline_editor(window, cx).into_any_element(),
-            (Content::Text(_), Mode::Diff, Layout::Split) => self.split(window, cx).into_any_element(),
+            (Content::Text(_), Mode::Diff, Layout::Inline) => {
+                let editor = self.inline_editor(window, cx).into_any_element();
+                self.with_picks(editor, window, cx)
+            }
+            (Content::Text(_), Mode::Diff, Layout::Split) => {
+                let split = self.split(window, cx).into_any_element();
+                self.with_picks(split, window, cx)
+            }
         }
     }
 }
@@ -201,5 +207,6 @@ impl Render for DiffView {
             .child(self.header(cx))
             .child(self.toolbar(cx))
             .child(div().flex_1().min_h_0().child(body))
+            .children(self.line_menu(cx))
     }
 }

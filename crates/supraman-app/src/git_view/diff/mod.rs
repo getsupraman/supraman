@@ -4,6 +4,7 @@
 mod image;
 mod invisible;
 mod load;
+mod picks;
 mod render;
 
 #[cfg(test)]
@@ -12,6 +13,8 @@ mod media_tests;
 mod cap_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod pick_tests;
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, KeyBinding, Window};
 use supraman_editor::{Diff, SplitDiff, ZedEditor};
@@ -20,6 +23,11 @@ use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 
 pub use load::{MAX_SHOWN_BYTES, Of, Sizes, Target, TooLarge};
+pub use picks::{PickEvent, Picks};
+#[cfg(test)]
+pub use picks::{Act, Line};
+#[cfg(test)]
+pub use picks::hunk_key;
 
 gpui::actions!(git_diff, [NextChange, PreviousChange, CloseDiff, PreviousFile, NextFile, FirstFile, LastFile]);
 
@@ -95,6 +103,10 @@ pub(crate) struct Text {
     pub encoding: String,
     /// What changed when only bytes the text does not show did.
     pub invisible: Vec<String>,
+    /// The old and new texts the diff was computed from.
+    shown: (String, String),
+    /// The editors' scroll subscriptions that repaint the picks.
+    watching: Vec<gpui::Subscription>,
     file: Option<Entity<ZedEditor>>,
     inline: Option<Entity<ZedEditor>>,
     split: Option<Entity<SplitDiff>>,
@@ -139,6 +151,8 @@ pub struct DiffView {
     /// Bumped by each read; a read that finishes under another one is dropped.
     token: u64,
     focus: FocusHandle,
+    /// The line picks of a working-tree diff, once the tab offers them.
+    picks: Option<Picks>,
 }
 
 impl EventEmitter<Close> for DiffView {}
@@ -148,7 +162,7 @@ impl DiffView {
     pub fn open(repo: Repo, target: Target, mode: Mode, layout: Layout, hits: HitTargets, cx: &mut App) -> Entity<DiffView> {
         cx.new(|cx| {
             let mode = if target.of == Of::Conflicted { Mode::File } else { mode };
-            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, to_first: false, token: 0, focus: cx.focus_handle() };
+            let mut view = DiffView { hits, target, mode, layout, content: Content::Loading, current: None, to_first: false, token: 0, focus: cx.focus_handle(), picks: None };
             view.reload(repo, cx);
             view
         })
@@ -156,24 +170,29 @@ impl DiffView {
 
     /// Reads the file's two sides again off the UI thread; what is shown stays until they are in.
     pub fn reload(&mut self, repo: Repo, cx: &mut Context<Self>) {
+        self.read_pick_tools(repo.clone(), cx);
         self.token += 1;
         let (token, job, svg) = (self.token, self.target.clone(), cx.svg_renderer());
         let loaded = cx.background_spawn(async move { load::load(&repo, &job, &svg) });
         cx.spawn(async move |this: gpui::WeakEntity<DiffView>, cx| {
             let loaded = loaded.await;
             let diff = this.update(cx, |this, cx| if this.token == token { this.apply(loaded, cx) } else { None }).ok().flatten();
-            if let Some((diff, encoding, invisible)) = diff {
+            if let Some((diff, encoding, invisible, shown)) = diff {
                 let diff = diff.await;
-                this.update(cx, |this, cx| if this.token == token { this.show(diff, encoding, invisible, cx) }).ok();
+                this.update(cx, |this, cx| if this.token == token { this.show_read(diff, encoding, invisible, shown, cx) }).ok();
             }
         })
         .detach();
     }
 
-    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, String, Vec<String>)> {
+    #[allow(clippy::type_complexity)]
+    fn apply(&mut self, loaded: Result<load::Loaded, String>, cx: &mut Context<Self>) -> Option<(gpui::Task<Diff>, String, Vec<String>, (String, String))> {
         let _stall = stall::section("diff view: buffers");
         self.content = match loaded {
-            Ok(load::Loaded::Text { old, new, encoding, invisible, language }) => return Some((Diff::compute(old, new, language, cx), encoding, invisible)),
+            Ok(load::Loaded::Text { old, new, encoding, invisible, language }) => {
+                let shown = (old.clone(), new.clone());
+                return Some((Diff::compute(old, new, language, cx), encoding, invisible, shown));
+            }
             Ok(load::Loaded::Binary(sizes)) => Content::Binary(sizes),
             Ok(load::Loaded::TooLarge(why)) => Content::TooLarge(why),
             Ok(load::Loaded::Image(images)) => Content::Image(images),
@@ -182,6 +201,14 @@ impl DiffView {
         self.current = None;
         cx.notify();
         None
+    }
+
+    /// [`DiffView::show`] of a read, with the texts the diff was computed from.
+    fn show_read(&mut self, diff: Diff, encoding: String, invisible: Vec<String>, shown: (String, String), cx: &mut Context<Self>) {
+        self.show(diff, encoding, invisible, cx);
+        if let Some(text) = self.text_mut() {
+            text.shown = shown;
+        }
     }
 
     /// The text read; a reload of a text keeps its editors' top rows and the current change.
@@ -197,7 +224,10 @@ impl DiffView {
             }
         };
         self.to_first = matches!(self.content, Content::Loading);
-        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, file: None, inline: None, split: None, place }));
+        if let Some(picks) = &mut self.picks {
+            picks.forget_rows();
+        }
+        self.content = Content::Text(Box::new(Text { diff, encoding, invisible, shown: Default::default(), watching: Vec::new(), file: None, inline: None, split: None, place }));
         cx.notify();
     }
 

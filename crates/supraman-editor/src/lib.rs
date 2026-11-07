@@ -6,6 +6,7 @@ mod inline;
 mod languages;
 mod look;
 mod ruler;
+pub mod rows;
 mod split;
 mod words;
 

@@ -177,7 +177,7 @@ pub struct GitView {
     reveal_after: Option<SharedString>,
     _panel_events: [Subscription; 3],
     /// The file viewer in the graph's place, while one is open.
-    diff: Option<(Entity<DiffView>, [Subscription; 2])>,
+    diff: Option<(Entity<DiffView>, [Subscription; 3])>,
     /// The last viewer's mode and layout, the next one's start.
     diff_mode: DiffMode,
     diff_layout: DiffLayout,
@@ -437,12 +437,29 @@ impl GitView {
     pub fn open_diff(&mut self, target: diff::Target, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else { return };
         self.close_diff(cx);
-        let view = DiffView::open(repo, target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        let working = matches!(target.of, diff::Of::Unstaged | diff::Of::Staged);
+        let view = DiffView::open(repo.clone(), target, self.diff_mode, self.diff_layout, self.hits.clone(), cx);
+        if working {
+            view.update(cx, |d, cx| d.enable_picks(self.gate.clone(), repo, cx));
+        }
         let closed = cx.subscribe(&view, |this: &mut GitView, _, _: &diff::Close, cx| this.back_to_graph(cx));
         let go = cx.subscribe(&view, |this: &mut GitView, _, go: &diff::Go, cx| this.go_file(go.0, cx));
-        self.diff = Some((view, [closed, go]));
+        let picked = cx.subscribe(&view, |this: &mut GitView, _, e: &diff::PickEvent, cx| this.picked_lines(e, cx));
+        self.diff = Some((view, [closed, go, picked]));
         self.focus_diff = true;
         cx.notify();
+    }
+
+    fn picked_lines(&mut self, e: &diff::PickEvent, cx: &mut Context<Self>) {
+        match e {
+            diff::PickEvent::Wrote(toast) => {
+                if let Some(toast) = toast {
+                    self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                }
+                self.refresh_after_write(cx);
+            }
+            diff::PickEvent::Why(why) => self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx),
+        }
     }
 
     pub fn close_diff(&mut self, cx: &mut Context<Self>) {
