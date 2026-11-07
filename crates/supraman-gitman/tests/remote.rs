@@ -178,7 +178,7 @@ fn slow_ssh(dir: &Path) -> (String, PathBuf) {
     let pid = dir.join("ssh.pid");
     let script = dir.join("slow-ssh.sh");
     let unix = |p: &Path| p.to_string_lossy().replace('\\', "/");
-    std::fs::write(&script, format!("cat /proc/$$/winpid > '{}'\nprintf 'Receiving objects:  50%% (1/2)\\r' >&2\nexec cat > /dev/null\n", unix(&pid))).unwrap();
+    std::fs::write(&script, format!("cat /proc/$$/winpid > '{}'\nprintf 'Receiving objects:  50%% (1/2)\\r' >&2\ncat > /dev/null\n", unix(&pid))).unwrap();
     (format!("'{}' '{}'", unix(&git_sh()), unix(&script)), pid)
 }
 
