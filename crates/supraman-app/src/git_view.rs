@@ -16,8 +16,8 @@ mod refresh;
 mod seek;
 pub mod ref_panel;
 mod splice;
+pub mod undo;
 mod wip;
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod write_gate;
 
 #[cfg(test)]
@@ -32,11 +32,14 @@ mod refresh_tests;
 mod seek_tests;
 #[cfg(test)]
 mod stream_tests;
+#[cfg(test)]
+mod undo_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
+use supraman_gitman::write::Occupancy;
 use supraman_gitman::{History, Layout, Repo};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::{banner, button};
@@ -56,6 +59,7 @@ use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
 use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
+use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
@@ -185,6 +189,8 @@ pub struct GitView {
     key: Option<String>,
     own_graph: bool,
     find: Option<find::Find>,
+    undo: Entity<UndoBar>,
+    _undo_events: Subscription,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
     focus: FocusHandle,
 }
@@ -192,14 +198,23 @@ pub struct GitView {
 impl EventEmitter<GitEvent> for GitView {}
 
 impl GitView {
-    /// `saved` are the sizes a tab saved before the layout file kept them, read when the repo has no entry there.
+    #[cfg(test)]
     pub fn open(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, cx: &mut App) -> Entity<GitView> {
+        GitView::open_with(folder, home, hits, saved, Arc::new(|_: &std::path::Path| Vec::new()), cx)
+    }
+
+    /// `saved` are the sizes a tab saved before the layout file kept them, read when the repo has no entry there;
+    /// `occupancy` says which live sessions work in the repo before a write.
+    pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
             let focus = cx.focus_handle();
             let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
+            let gate = cx.new(|_| write_gate::WriteGate::new(occupancy, hits.clone()));
+            let undo = cx.new(|cx| UndoBar::new(gate, hits.clone(), cx));
+            let undo_events = cx.subscribe(&undo, Self::undo_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -240,6 +255,8 @@ impl GitView {
                 key: None,
                 own_graph: false,
                 find: None,
+                undo,
+                _undo_events: undo_events,
                 focus,
             };
             view.start(saved.clone(), cx);
@@ -312,6 +329,31 @@ impl GitView {
             RefEvent::Layout => self.keep_layout(cx),
             RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
         }
+    }
+
+    fn undo_event(&mut self, _: Entity<UndoBar>, e: &UndoEvent, cx: &mut Context<Self>) {
+        match e {
+            UndoEvent::Done(toast) => {
+                self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                self.refresh_after_write(cx);
+            }
+            UndoEvent::Why(why) => {
+                self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx);
+                self.refresh_undo(cx);
+            }
+        }
+    }
+
+    /// Undo's and Redo's preview read again.
+    fn refresh_undo(&mut self, cx: &mut Context<Self>) {
+        if let Some(repo) = self.repo.clone() {
+            self.undo.update(cx, |u, cx| u.refresh(&repo, cx));
+        }
+    }
+
+    #[cfg(test)]
+    pub fn undo_bar(&self) -> &Entity<UndoBar> {
+        &self.undo
     }
 
     pub fn ref_panel(&self) -> &Entity<RefPanel> {
@@ -479,6 +521,7 @@ impl GitView {
                 self.repo = Some(first.repo);
                 self.wip = first.wip;
                 self.load = Load::Ready;
+                self.refresh_undo(cx);
                 if *self.ref_panel.read(cx).walk() != self.follow.walked {
                     self.refresh_graph(None, cx);
                 }
@@ -700,11 +743,14 @@ impl Render for GitView {
             .on_action(cx.listener(|this, _: &keys::FilterRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.focus_filter(cx))))
             .on_action(cx.listener(|this, _: &keys::Find, window, cx| this.open_find(None, window, cx)))
             .on_action(cx.listener(|this, _: &keys::FindHistory, window, cx| this.open_find(Some(find::entries::HISTORY), window, cx)))
+            .on_action(cx.listener(|this, _: &keys::Undo, _, cx| this.undo.update(cx, |u, cx| u.undo(cx))))
+            .on_action(cx.listener(|this, _: &keys::Redo, _, cx| this.undo.update(cx, |u, cx| u.redo(cx))))
             .relative()
             .bg(cx.theme().colors().editor_background)
             .text_sm()
             .flex()
             .flex_col()
+            .child(self.undo.clone())
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
