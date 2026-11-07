@@ -212,6 +212,7 @@ fn a_killed_apply_leaves_a_startable_install_at_every_step() {
 #[test]
 fn a_kill_between_the_rename_aside_and_the_move_in_is_put_back_at_the_next_start() {
     let c = case();
+    let _aside = install::rename_aside_on_this_thread();
     let holder = hold(&c.install);
     let held_moves = new_files().keys().filter(|k| **k != "VERSION").position(|k| *k == HOOK_EXE).unwrap();
     let out = install::apply(&Apply { stop_after: Some(held_moves + 1), ..job(&c) });
@@ -311,4 +312,142 @@ fn an_install_without_version_is_refused() {
     let Err(Failed::Refused(why)) = install::apply(&job(&c)).result else { panic!() };
     assert!(why.contains("has no VERSION"), "{why}");
     assert_eq!(read(&c.install, "supraman.exe").as_deref(), Some(&b"old app"[..]));
+}
+
+/// Polls `path` from another thread until dropped; `missed` counts the polls that found nothing there.
+struct Watch {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<(u64, u64)>>,
+}
+
+impl Watch {
+    fn start(path: PathBuf) -> Self {
+        use std::sync::atomic::Ordering;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let (mut polls, mut missed) = (0, 0);
+            while !flag.load(Ordering::Relaxed) {
+                polls += 1;
+                if fs::symlink_metadata(&path).is_err() {
+                    missed += 1;
+                }
+            }
+            (polls, missed)
+        });
+        Self { stop, thread: Some(thread) }
+    }
+
+    /// (polls, missed)
+    fn finish(mut self) -> (u64, u64) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.thread.take().unwrap().join().unwrap()
+    }
+}
+
+fn hook_copy_is_old_or_new(c: &Case, when: &str) {
+    let now = fs::read(c.install.join(HOOK_EXE)).unwrap_or_else(|e| panic!("{when}: {HOOK_EXE} is missing: {e}"));
+    let old = fs::read(env!("CARGO_BIN_EXE_sm")).unwrap();
+    assert!(now == old || now == new_files()[HOOK_EXE], "{when}: {HOOK_EXE} is neither the old nor the new one");
+}
+
+#[test]
+fn a_running_hooks_copy_is_replaced_in_one_rename_and_its_path_never_goes_missing() {
+    let c = case();
+    let holder = hold(&c.install);
+    let watch = Watch::start(c.install.join(HOOK_EXE));
+    let out = install::apply(&job(&c));
+    let (polls, missed) = watch.finish();
+    let log = fs::read_to_string(&c.log).unwrap_or_default();
+    assert_eq!(out.result, Ok(()), "{log}");
+    assert!(log.contains(&format!("replaced {HOOK_EXE} in one rename")), "{log}");
+    assert!(!log.contains("renamed aside"), "{log}");
+    assert!(polls > 0);
+    assert_eq!(missed, 0, "{HOOK_EXE} was missing in {missed} of {polls} polls");
+    assert!(supraman_core::process::alive(holder.id()), "the old copy ran on while it was replaced");
+    assert_new(&c);
+
+    let linked = leftovers(&c.install);
+    assert_eq!(linked.len(), 1, "{linked:?}");
+    assert!(linked[0].starts_with(&format!("{HOOK_EXE}.old-")), "{linked:?}");
+    assert_eq!(fs::read(c.install.join(&linked[0])).unwrap(), fs::read(env!("CARGO_BIN_EXE_sm")).unwrap(), "the old copy stays recoverable");
+    assert!(fs::read_to_string(c.install.join(LEFTOVERS)).unwrap().contains(&linked[0]));
+    install::cleanup(&c.install);
+    assert_eq!(leftovers(&c.install), linked, "still running: kept");
+
+    drop(holder);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
+        install::cleanup(&c.install);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(leftovers(&c.install), Vec::<String>::new());
+    assert!(!c.install.join(LEFTOVERS).exists());
+    assert_new(&c);
+}
+
+/// The apply stopped as a kill would at every step while the hooks copy runs: the copy is always there, old
+/// or new, and the next start plus a second apply finish the update.
+#[test]
+fn a_kill_at_any_step_leaves_a_running_hooks_copy_in_place() {
+    let mut k = 0;
+    loop {
+        let c = case();
+        let holder = hold(&c.install);
+        let out = install::apply(&Apply { stop_after: Some(k), ..job(&c) });
+        hook_copy_is_old_or_new(&c, &format!("after {k} moves"));
+        if out.result == Ok(()) {
+            assert!(k > new_files().len(), "stopped only {k} times");
+            break;
+        }
+        assert_eq!(out.result, Err(Failed::Stopped));
+        install::cleanup(&c.install);
+        hook_copy_is_old_or_new(&c, &format!("cleanup after {k} moves"));
+        assert_eq!(install::apply(&job(&c)).result, Ok(()), "a second apply after {k} moves");
+        assert_new(&c);
+        drop(holder);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !leftovers(&c.install).is_empty() && Instant::now() < deadline {
+            install::cleanup(&c.install);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(leftovers(&c.install), Vec::<String>::new(), "after {k} moves");
+        k += 1;
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_rolled_back_apply_puts_the_running_hooks_copy_back_from_its_link() {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    let c = case();
+    let holder = hold(&c.install);
+    const FILE_SHARE_READ: u32 = 1;
+    let pinned = fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(c.install.join("supraman.exe")).unwrap();
+    let out = install::apply(&job(&c));
+    drop(pinned);
+    let log = fs::read_to_string(&c.log).unwrap_or_default();
+    let Err(Failed::Refused(_)) = &out.result else { panic!("{:?}", out.result) };
+    assert!(log.contains(&format!("replaced {HOOK_EXE} in one rename")) && log.contains("undid Swapped"), "{log}");
+    assert_eq!(fs::read(c.install.join(HOOK_EXE)).unwrap(), fs::read(env!("CARGO_BIN_EXE_sm")).unwrap(), "the old hooks copy is back");
+    assert!(supraman_core::process::alive(holder.id()));
+    assert_eq!(leftovers(&c.install), Vec::<String>::new());
+    assert!(!c.install.join(LEFTOVERS).exists());
+}
+
+#[test]
+fn the_rename_aside_path_journals_the_rename_and_lists_the_old_copy() {
+    let c = case();
+    let _aside = install::rename_aside_on_this_thread();
+    let _holder = hold(&c.install);
+    let out = install::apply(&job(&c));
+    let log = fs::read_to_string(&c.log).unwrap_or_default();
+    assert_eq!(out.result, Ok(()), "{log}");
+    assert!(log.contains(&format!("renamed aside {HOOK_EXE} -> {HOOK_EXE}.old-")), "{log}");
+    assert!(!log.contains("in one rename"), "{log}");
+    assert_new(&c);
+    let aside = leftovers(&c.install);
+    assert_eq!(aside.len(), 1, "{aside:?}");
+    assert_eq!(fs::read_to_string(c.install.join(LEFTOVERS)).unwrap(), format!("aside {}
+", aside[0]));
 }

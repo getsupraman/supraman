@@ -156,8 +156,13 @@ The banner's **Update** (`crate::updates::install_update`) does the whole update
 5. **Apply** (`supraman_core::install::apply`): waits up to 60 s for the pid (still running: nothing changes, nothing
    restarts), takes `<install>\.update.lock`, reads the old release's `FILES`, then for each file of the new release
    stages `<name>.new` and moves it over the target with `MoveFileExW`. A target that refuses (a running exe: sessions'
-   hooks run `plugins\supraman\bin\sm.exe` even while Supraman is closed) is renamed to
-   `<name>.old-<stamp>`, listed in `<install>\.old-files` first, and the new one moved in. If even that rename fails,
+   hooks run `plugins\supraman\bin\sm.exe`, and Claude Code runs it as `sm mcp-header` on every MCP connect, even
+   while Supraman is closed) is hard-linked as `<name>.old-<stamp>`, listed in `<install>\.old-files` first, and the
+   new one renamed over it in one POSIX rename (`FileRenameInfoEx`; NTFS and ReFS take it), so the path never goes
+   missing; `apply.log` says `replaced <name> in one rename`. A volume that refuses the link or that rename (FAT, a
+   network share, Windows before 10 1709) logs `one rename refused` and takes the rename-aside path: the target is
+   renamed to `<name>.old-<stamp>` and the new one moved in, the path missing for the moment between the two. If even
+   that rename fails,
    every move so far is undone from the journal and its backups (`<home>\updates\<version>\backup\`), the old
    Supraman restarts, and the next start's banner says why (the last `failed:` line of `apply.log`). Files the old
    `FILES` named that the new release lacks are removed (renamed aside when locked); nothing it never named is touched,
@@ -166,11 +171,10 @@ The banner's **Update** (`crate::updates::install_update`) does the whole update
 6. **Restart** the new `supraman.exe`.
 7. **Cleanup** (`supraman_core::install::cleanup`) at every start of Supraman and of `sm`/`smw` (hooks included):
    the `.old-<stamp>` files `.old-files` lists that are no longer locked are removed; one whose file is missing (a
-   kill between the rename aside and the move in) is put back. Supraman also removes `<home>\updates\<version>`
+   kill between the rename aside and the move in) is put back. An undone one-rename puts the linked old file back over
+   the new one in one rename. Supraman also removes `<home>\updates\<version>`
    folders older than the running version.
 
 `release.ps1` writes `FILES` (every file of the release, `/`-separated); an install without one gets no removals on its
-first update, and the apply writes the new release's list. `std::fs::rename` is not used for these moves: on NTFS it
-uses POSIX semantics and replaces even a running exe, which a FAT or network install refuses, so the apply uses one
-behaviour everywhere. Tests and the selftest (step 7+u) apply onto temp installs only, never `C:\Tools\supraman` or
+first update, and the apply writes the new release's list. Tests and the selftest (step 7+u) apply onto temp installs only, never `C:\Tools\supraman` or
 `%APPDATA%\Supraman` (C109).

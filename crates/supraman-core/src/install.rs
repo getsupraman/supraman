@@ -126,17 +126,24 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// `MoveFileExW`, which refuses to replace a running exe: `std::fs::rename` uses POSIX semantics on NTFS and
-/// replaces it, which a FAT or network install refuses; one behaviour everywhere.
+#[cfg(windows)]
+fn wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+
+#[cfg(windows)]
+fn os_error(e: windows::core::Error) -> io::Error {
+    io::Error::from_raw_os_error(e.code().0 & 0xffff)
+}
+
+/// `MoveFileExW`, which refuses to replace a running exe; [`rename_over`] is the one that does not.
 #[cfg(windows)]
 fn move_file(from: &Path, to: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt as _;
     use windows::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
     use windows::core::PCWSTR;
-    let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>();
     let (from, to) = (wide(from), wide(to));
-    unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
-        .map_err(|e| io::Error::from_raw_os_error(e.code().0 & 0xffff))
+    unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }.map_err(os_error)
 }
 
 #[cfg(not(windows))]
@@ -144,14 +151,51 @@ fn move_file(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
 }
 
+/// One rename of `from` over `to` with POSIX semantics (`FileRenameInfoEx`, Windows 10 1709+), which replaces
+/// even a running exe; a volume without them (FAT, a network share) refuses it.
+#[cfg(windows)]
+fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, DELETE, FILE_FLAGS_AND_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FileRenameInfoEx, OPEN_EXISTING, SetFileInformationByHandle,
+    };
+    use windows::core::PCWSTR;
+    const REPLACE_IF_EXISTS: u32 = 0x1;
+    const POSIX_SEMANTICS: u32 = 0x2;
+    let from = wide(from);
+    let to = wide(to);
+    let name = &to[..to.len() - 1];
+    let offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
+    let size = offset + std::mem::size_of_val(to.as_slice());
+    let mut buf = vec![0u64; size.div_ceil(8)];
+    let info = buf.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buf` is zeroed, 8-aligned and holds the header and the name with its nul.
+    unsafe {
+        (*info).Anonymous.Flags = REPLACE_IF_EXISTS | POSIX_SEMANTICS;
+        (*info).FileNameLength = std::mem::size_of_val(name) as u32;
+        std::ptr::copy_nonoverlapping(name.as_ptr(), info.cast::<u8>().add(offset).cast::<u16>(), name.len());
+    }
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let handle = unsafe { CreateFileW(PCWSTR(from.as_ptr()), DELETE.0, share, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) }
+        .map_err(os_error)?;
+    let renamed = unsafe { SetFileInformationByHandle(handle, FileRenameInfoEx, info.cast(), size as u32) };
+    let _ = unsafe { CloseHandle(handle) };
+    renamed.map_err(os_error)
+}
+
+#[cfg(not(windows))]
+fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
+    fs::rename(from, to)
+}
+
 /// `DeleteFileW`, which refuses a running exe, for the same reason as [`move_file`].
 #[cfg(windows)]
 fn delete_file(path: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt as _;
     use windows::Win32::Storage::FileSystem::DeleteFileW;
     use windows::core::PCWSTR;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    unsafe { DeleteFileW(PCWSTR(wide.as_ptr())) }.map_err(|e| io::Error::from_raw_os_error(e.code().0 & 0xffff))
+    let wide = wide(path);
+    unsafe { DeleteFileW(PCWSTR(wide.as_ptr())) }.map_err(os_error)
 }
 
 #[cfg(not(windows))]
@@ -191,10 +235,34 @@ impl std::fmt::Display for Failed {
     }
 }
 
+thread_local! {
+    static RENAME_ASIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes [`apply`] on this thread take the rename-aside path for a locked file, as on a volume that refuses
+/// the one rename, until the guard drops: what a test of that path sets.
+#[doc(hidden)]
+#[must_use]
+pub fn rename_aside_on_this_thread() -> RenameAside {
+    RENAME_ASIDE.with(|c| c.set(true));
+    RenameAside(())
+}
+
+#[doc(hidden)]
+pub struct RenameAside(());
+
+impl Drop for RenameAside {
+    fn drop(&mut self) {
+        RENAME_ASIDE.with(|c| c.set(false));
+    }
+}
+
 #[derive(Debug)]
 enum Step {
     Added(PathBuf),
     Replaced { target: PathBuf, backup: PathBuf },
+    /// Replaced in one rename; `old` is a hard link to the file it replaced.
+    Swapped { target: PathBuf, old: PathBuf, backup: PathBuf },
     Aside { target: PathBuf, old: PathBuf },
     Removed { target: PathBuf, backup: PathBuf },
 }
@@ -209,10 +277,12 @@ pub struct Outcome {
 /// Swaps the release at `from` over the install at `to`, then starts `restart`.
 ///
 /// Sessions' hooks run `plugins\supraman\bin\sm.exe` from the install at any moment, even while Supraman is
-/// closed, so a file may be locked: Windows refuses to overwrite or delete a running exe but lets it be
-/// renamed. Each file is staged as `<name>.new` and renamed over its target in one move; a target that
-/// refuses is renamed to `<name>.old-<stamp>` (listed in [`LEFTOVERS`] before the move, so [`cleanup`]
-/// removes it, or puts it back if a kill came between the two renames) and the new one moved in. Every move
+/// closed, so a file may be locked: `MoveFileExW` refuses to overwrite or delete a running exe. Each file is
+/// staged as `<name>.new` and moved over its target; a target that refuses is hard-linked as
+/// `<name>.old-<stamp>` (listed in [`LEFTOVERS`] first, so [`cleanup`] removes it) and the new one renamed
+/// over it in one POSIX rename, so the path never goes missing. A volume that refuses the link or that rename
+/// gets the target renamed aside to `<name>.old-<stamp>` and the new one moved in ([`cleanup`] puts it back if
+/// a kill came between the two). Every move
 /// is journalled with a backup; when even the rename aside fails, the journal is undone and the old install
 /// stands. Files the old `FILES` named and the release lacks are removed, never anything else; `FILES` and
 /// then `VERSION` go last, so a killed apply leaves each file whole (old or new) and reports the old version.
@@ -301,10 +371,29 @@ impl<'a> Run<'a> {
 
     /// One rename that changes the install, retried briefly while a scanner holds the file.
     fn mv(&mut self, from: &Path, to: &Path) -> Result<Result<(), io::Error>, Failed> {
+        self.retried(from, to, move_file)
+    }
+
+    /// `staged` renamed over `target` in one move, after a hard link `old` to the file it replaces; a refused
+    /// rename takes the link away again when it can.
+    fn swap(&mut self, target: &Path, old: &Path, staged: &Path) -> Result<Result<(), io::Error>, Failed> {
+        self.check_stop()?;
+        if let Err(e) = fs::hard_link(target, old) {
+            return Ok(Err(e));
+        }
+        self.moves += 1;
+        let renamed = self.retried(staged, target, rename_over)?;
+        if renamed.is_err() {
+            let _ = delete_file(old);
+        }
+        Ok(renamed)
+    }
+
+    fn retried(&mut self, from: &Path, to: &Path, rename: fn(&Path, &Path) -> io::Result<()>) -> Result<Result<(), io::Error>, Failed> {
         self.check_stop()?;
         let mut tries = 0;
         loop {
-            match move_file(from, to) {
+            match rename(from, to) {
                 Ok(()) => {
                     self.moves += 1;
                     return Ok(Ok(()));
@@ -363,8 +452,23 @@ impl<'a> Run<'a> {
             self.steps.push(Step::Replaced { target, backup });
             return Ok(());
         }
-        let old = with_suffix(&target, &format!(".old-{}", self.stamp));
-        let old_rel = format!("{rel}.old-{}", self.stamp);
+        let mut old_rel = format!("{rel}.old-{}", self.stamp);
+        if !RENAME_ASIDE.with(std::cell::Cell::get) {
+            let old = self.job.to.join(&old_rel);
+            self.note_leftover("aside", &old_rel)?;
+            match self.swap(&target, &old, &staged)? {
+                Ok(()) => {
+                    self.log(&format!("replaced {rel} in one rename, the old one linked as {old_rel}"));
+                    self.steps.push(Step::Swapped { target, old, backup });
+                    return Ok(());
+                }
+                Err(e) => self.log(&format!("one rename refused for {rel} ({e}): renaming aside")),
+            }
+            if old.exists() {
+                old_rel.push_str("-aside");
+            }
+        }
+        let old = self.job.to.join(&old_rel);
         self.note_leftover("aside", &old_rel)?;
         if let Err(e) = self.mv(&target, &old)? {
             let _ = fs::remove_file(&staged);
@@ -409,6 +513,10 @@ impl<'a> Run<'a> {
                     let staged = with_suffix(target, ".new");
                     fs::copy(backup, &staged).and_then(|_| move_file(&staged, target))
                 }
+                Step::Swapped { target, old, backup } => rename_over(old, target).or_else(|_| {
+                    let staged = with_suffix(target, ".new");
+                    fs::copy(backup, &staged).and_then(|_| rename_over(&staged, target))
+                }),
                 Step::Aside { target, old } => {
                     let _ = delete_file(target);
                     move_file(old, target)
