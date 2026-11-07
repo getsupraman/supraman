@@ -17,7 +17,7 @@ use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};
 use crate::git_view::GitView;
 use crate::git_view::cells::pill_box;
 use crate::git_view::colours::{Palette, blend};
-use crate::git_view::details::{FileView, PANEL_STEP, files, placeholder};
+use crate::git_view::details::{FileView, PANEL_STEP, PanelEvent, files, placeholder};
 use crate::git_view::keys::{StageSelected, UnstageSelected, WIP_LIST_CONTEXT};
 
 /// `button` live while no write waits or runs, else dimmed with why.
@@ -52,15 +52,19 @@ impl WipPanel {
         div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
     }
 
-    /// A row's buttons on hover: discard and Stage File on an unstaged file, Unstage File on a staged one.
+    /// A row's buttons on hover: stash, discard and Stage File on an unstaged file, stash and Unstage File on a
+    /// staged one.
     fn row_tail(section: Section) -> files::Tail<WipPanel> {
         Rc::new(move |this: &mut WipPanel, path: &str, kind: ChangeKind, group: SharedString, cx: &mut Context<WipPanel>| {
             let (hits, busy, file) = (this.hits.clone(), this.busy(cx), this.shown().and_then(|s| s.files(section).iter().find(|f| f.path == path).cloned()));
             let file = file.unwrap_or_else(|| FileChange { kind, path: path.to_string(), old_path: None, similarity: None });
-            let row = div().flex().items_center().gap_1();
+            let muted = cx.theme().colors().text_muted;
+            let stash = button::icon(&hits, format!("wip-stash-{path}"), Icon::Stash.svg(12., muted), px(20.), cx).tooltip(Tooltip::text("Stash file"));
+            let stashed = file.clone();
+            let stash = live(stash, busy, cx, move |_, cx| cx.emit(PanelEvent::StashFiles(vec![stashed.clone()])));
+            let row = div().flex().items_center().gap_1().child(button::reveal(stash, group.clone(), false));
             match section {
                 Section::Unstaged => {
-                    let muted = cx.theme().colors().text_muted;
                     let discard = button::icon(&hits, format!("wip-discard-{path}"), Icon::Trash.svg(12., muted), px(20.), cx).tooltip(Tooltip::text("Discard changes"));
                     let (gone, staged) = (file.clone(), vec![file]);
                     let discard = live(discard, busy, cx, move |this, cx| this.ask(Ask::Discard(vec![gone.clone()]), cx));

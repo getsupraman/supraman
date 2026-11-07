@@ -17,6 +17,8 @@ mod refresh;
 mod seek;
 pub mod ref_panel;
 mod splice;
+pub mod stash;
+mod stash_bar;
 pub mod undo;
 mod wip;
 mod wip_row;
@@ -36,6 +38,8 @@ mod seek_tests;
 mod stream_tests;
 #[cfg(test)]
 mod undo_tests;
+#[cfg(test)]
+mod stash_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,6 +65,7 @@ use diff::{DiffView, Layout as DiffLayout, Mode as DiffMode};
 use colours::Palette;
 use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
+use stash::StashActions;
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 use write_gate::WriteGate;
@@ -194,8 +199,10 @@ pub struct GitView {
     find: Option<find::Find>,
     undo: Entity<UndoBar>,
     _undo_events: Subscription,
-    /// Every write of the tab passes it: Undo, Redo and the WIP panel's.
+    /// Every write of the tab passes it: Undo, Redo, the WIP panel's and the stash's.
     gate: Entity<WriteGate>,
+    stash: Entity<StashActions>,
+    _stash_events: Subscription,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -222,6 +229,8 @@ impl GitView {
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
             let undo = cx.new(|cx| UndoBar::new(gate.clone(), hits.clone(), cx));
             let undo_events = cx.subscribe(&undo, Self::undo_event);
+            let stash = cx.new(|cx| StashActions::new(gate.clone(), hits.clone(), cx));
+            let stash_events = cx.subscribe(&stash, Self::stash_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -265,6 +274,8 @@ impl GitView {
                 undo,
                 _undo_events: undo_events,
                 gate,
+                stash,
+                _stash_events: stash_events,
                 focus_summary: false,
                 focus,
             };
@@ -332,6 +343,11 @@ impl GitView {
                 self.refresh_after_write(cx);
             }
             PanelEvent::Why(why) => self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx),
+            PanelEvent::StashFiles(files) => self.stash_files(files.clone(), cx),
+            PanelEvent::ApplyFiles(sha, files) => {
+                let (sha, files) = (sha.clone(), files.clone());
+                self.stash.update(cx, |s, cx| s.apply_files(sha, files, cx));
+            }
         }
     }
 
@@ -344,6 +360,7 @@ impl GitView {
             }
             RefEvent::Layout => self.keep_layout(cx),
             RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
+            RefEvent::Stash(act, stash) => self.stash_act(*act, stash.clone(), cx),
         }
     }
 
@@ -553,6 +570,7 @@ impl GitView {
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
+                self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
                 if let Some(debounces) = refresh::follows() {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
@@ -637,17 +655,18 @@ impl GitView {
             let footer = if col == 2 { self.page_error.clone().unwrap_or_else(|| "Loading more commits…".into()) } else { String::new() };
             return div().text_color(palette.muted).child(SharedString::from(footer)).into_any_element();
         };
-        match col {
+        let cell = match col {
             0 => {
                 let view = ref_cell(&row.row, self.listed() == Some(ix));
                 cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
             }
             1 => graph::cell(row, !row.row.refs.is_empty(), palette),
-            2 if row.wip() => self.wip_message(ix, palette, cx),
+            2 if row.wip() => return self.wip_message(ix, palette, cx),
             2 => cells::message(ix, row, None, palette),
             3 => cells::date(row, palette),
             _ => cells::sha(row, palette),
-        }
+        };
+        self.stash_row(ix, cell, cx)
     }
 
     fn render_table(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -798,8 +817,8 @@ impl Render for GitView {
             .text_sm()
             .flex()
             .flex_col()
-            .child(self.undo.clone())
-            .child(div().mx_2().child(self.gate.clone()))
+            .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)))
+            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))

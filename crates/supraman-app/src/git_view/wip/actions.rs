@@ -10,7 +10,7 @@ use supraman_ui::confirm::Confirm;
 use super::compose::{self, Act};
 use super::{Section, WipPanel, sections};
 use crate::git_view::details::{FileView, PanelEvent};
-use crate::git_view::write_gate::Written;
+use crate::git_view::write_gate::{Written, capitalised};
 
 /// A write the panel asks about first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,9 +202,4 @@ impl WipPanel {
         cx.emit(PanelEvent::Wrote(toast));
         cx.notify();
     }
-}
-
-fn capitalised(why: &str) -> String {
-    let mut chars = why.chars();
-    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }

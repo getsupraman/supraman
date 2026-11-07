@@ -40,6 +40,10 @@ pub enum PanelEvent {
     Wrote(Option<String>),
     /// Why a write did not run or failed.
     Why(String),
+    /// Stash these WIP files, asked first.
+    StashFiles(Vec<FileChange>),
+    /// Put these files of the stash (its commit) in the work tree.
+    ApplyFiles(String, Vec<FileChange>),
 }
 
 /// The commit shown, its texts ready to paint.

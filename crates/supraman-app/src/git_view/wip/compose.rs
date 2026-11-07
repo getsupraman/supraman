@@ -129,6 +129,27 @@ impl WipPanel {
         self.composer.as_ref()
     }
 
+    /// The commit summary as typed, the message a stash takes.
+    pub fn pending_summary(&self, cx: &gpui::App) -> String {
+        self.composer.as_ref().map_or_else(String::new, |c| c.summary.read(cx).text().trim().to_string())
+    }
+
+    /// `summary` in an empty commit summary; a typed one stays.
+    pub fn fill_summary(&mut self, summary: &str, cx: &mut Context<Self>) {
+        let Some(c) = &self.composer else { return };
+        if self.pending_summary(cx).is_empty() {
+            let description = c.description.read(cx).text().to_string();
+            c.set(summary, &description, cx);
+        }
+    }
+
+    /// The summary spent: both fields emptied.
+    pub fn clear_summary(&mut self, cx: &mut Context<Self>) {
+        if let Some(c) = &self.composer {
+            c.set("", "", cx);
+        }
+    }
+
     /// An edit of the summary or the WIP row's copy of it; Enter in the summary moves on to the description, Ctrl+Enter commits.
     fn summary_event(&mut self, e: &InputEvent, from_row: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(c) = &self.composer else { return };

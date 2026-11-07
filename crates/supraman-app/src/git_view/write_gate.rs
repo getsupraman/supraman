@@ -40,6 +40,12 @@ pub struct WriteGate {
 
 impl EventEmitter<Written> for WriteGate {}
 
+/// A write's error as a toast says it: its first letter capitalised.
+pub fn capitalised(why: &str) -> String {
+    let mut chars = why.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+}
+
 /// The question before a write on `folder`, where `sessions` work.
 pub fn question(sessions: &[String], folder: &Path) -> String {
     let verb = if sessions.len() == 1 { "is" } else { "are" };

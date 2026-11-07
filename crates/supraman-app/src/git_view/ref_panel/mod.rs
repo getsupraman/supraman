@@ -23,6 +23,7 @@ use supraman_ui::split::StackState;
 use supraman_ui::tree::Tree;
 
 use super::GitSizes;
+use super::stash::{StashAct, StashRef};
 
 pub use entries::{Count, Entry, Section, Walk, counts, entries, tips, without};
 pub use marks::RefAction;
@@ -67,6 +68,8 @@ pub enum RefEvent {
     Layout,
     /// A hidden ref was shown by a double-click: its commit, to select once the graph walks it.
     Shown(SharedString),
+    /// A stash row's menu chose this.
+    Stash(StashAct, StashRef),
 }
 
 pub struct RefPanel {
