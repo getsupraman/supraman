@@ -65,6 +65,11 @@ impl LockSet {
         LockSet::writes(&[Resource::Index, Resource::RepoSettings])
     }
 
+    /// A stash's push, apply, pop, drop or new message: the index, the work tree and `refs/stash`.
+    pub fn stash() -> LockSet {
+        LockSet::writes(&[Resource::Index, Resource::RepoSettings])
+    }
+
     /// An undo or a redo: it may move HEAD, rewrite the index and a branch's upstream.
     pub fn undo() -> LockSet {
         LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
