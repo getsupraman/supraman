@@ -378,7 +378,7 @@ fn fire_session_only_starts_one_session_with_the_profile_the_prompt_and_a_mint()
     let [post] = posts.as_slice() else { panic!("{posts:?}") };
     let body: serde_json::Value = serde_json::from_str(&post.body).unwrap();
     assert_eq!(body["role"], "orchestrator");
-    assert_eq!((&body["launchedBy"], &body["origin"]), (&"foreman/demo/schedule/fix".into(), &"foreman/demo/schedule/fix".into()));
+    assert_eq!((&body["launchedBy"], &body["origin"]), (&"supraman/demo/schedule/fix".into(), &"supraman/demo/schedule/fix".into()));
     assert_eq!((&body["externalRole"], &body["replace"], &body["name"]), (&"schedule".into(), &false.into(), &spec.name.clone().into()));
     assert_eq!(f.api("PATCH").len(), 1, "the claude session is bound");
 

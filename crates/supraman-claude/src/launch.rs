@@ -120,9 +120,9 @@ pub struct SessionIdentity {
     pub agent: String,
     /// The claude session uuid, when it is known at launch.
     pub session: Option<String>,
-    /// E.g. `foreman/nomos`.
+    /// E.g. `supraman/nomos`.
     pub launched_by: String,
-    /// E.g. `foreman/nomos/Nomos.Extract`.
+    /// E.g. `supraman/nomos/Nomos.Extract`.
     pub origin: String,
     pub cwd: String,
     /// Supraman's role (workspace, repo, …), not the token's.

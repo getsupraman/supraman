@@ -39,6 +39,35 @@ pub struct MintRequest {
     /// is known only from its row (the PATCH of [`Minter::bind`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
+    /// The row's current `launchedBy`, which this mint moves to `launched_by` ([`mint_as`]); never recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub takeover_from: Option<String>,
+}
+
+const LAUNCHER: &str = "supraman";
+const FORMER_LAUNCHER: &str = "foreman";
+
+/// The `launchedBy` (and `origin`) of every Supraman mint: `supraman/<path>`.
+pub fn launched_by(path: &str) -> String {
+    format!("{LAUNCHER}/{path}")
+}
+
+/// `label` under [`launched_by`]: a `foreman/…` label as its `supraman/…` one, any other as it is.
+fn relabelled(label: &str) -> String {
+    label.strip_prefix(FORMER_LAUNCHER).and_then(|rest| rest.strip_prefix('/')).map_or_else(|| label.to_string(), launched_by)
+}
+
+/// Mints `request`; a row recorded under another label (`former`) is moved to `request.launched_by` with
+/// `takeoverFrom` (Workman 3.0.2), and minted without it when that 409s, as a row moved already does.
+pub fn mint_as(minter: &dyn Minter, base: &str, bearer: &str, request: &MintRequest, former: Option<&str>) -> Result<Minted, MintError> {
+    let Some(former) = former.filter(|f| *f != request.launched_by) else {
+        return minter.mint(base, bearer, request);
+    };
+    let moving = MintRequest { takeover_from: Some(former.to_string()), ..request.clone() };
+    match minter.mint(base, bearer, &moving) {
+        Err(MintError::Refused { status: 409, .. }) => minter.mint(base, bearer, request),
+        other => other,
+    }
 }
 
 /// `repo:{root, remote?}` of a mint, as git prints them; Workman normalises both (Skills
@@ -311,7 +340,13 @@ impl MintedSessions {
 
     /// [`Self::insert`] with the mint that made its token.
     pub fn insert_minted(&mut self, name: &str, session: MintedSession, request: &MintRequest) {
-        self.names.insert(name.to_string(), Entry { session, mint: Some(request.clone()) });
+        let mint = MintRequest { takeover_from: None, ..request.clone() };
+        self.names.insert(name.to_string(), Entry { session, mint: Some(mint) });
+    }
+
+    /// The `launchedBy` recorded for the Workman session named `session_name`.
+    pub fn launched_by(&self, session_name: &str) -> Option<&str> {
+        self.names.values().filter_map(|e| e.mint.as_ref()).find(|m| m.name == session_name).map(|m| m.launched_by.as_str())
     }
 
     pub fn remove(&mut self, name: &str) -> Option<MintedSession> {
@@ -427,10 +462,10 @@ impl Keeper {
         self.store.set(&supraman_claude::mcp_token_key(name), token).map_err(|e| format!("cannot keep the Workman token of {name}: {e}"))
     }
 
-    /// `expires_at` (the mint's RFC 3339 `expiresAt`) as what [`Keeping`] knows of `name`'s token, while
-    /// [`keeping::lock`] is held.
-    fn note_locked(&self, name: &str, expires_at: Option<&str>) {
-        let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), signed_out: false };
+    /// `expires_at` (the mint's RFC 3339 `expiresAt`) and the `launched_by` of a re-mint as what [`Keeping`] knows of
+    /// `name`'s token, while [`keeping::lock`] is held.
+    fn note_locked(&self, name: &str, expires_at: Option<&str>, launched_by: Option<&str>) {
+        let kept = keeping::Kept { expires_at: expires_at.and_then(supraman_core::time::rfc3339_ms), signed_out: false, launched_by: launched_by.map(str::to_string) };
         if let Err(e) = keeping::edit_locked(&self.home, |t| drop(t.insert(name.to_string(), kept))) {
             log::warn!("{name}: {e}; its token is renewed once Workman refuses it");
         }
@@ -440,7 +475,7 @@ impl Keeper {
         let held = keeping::lock(&self.home);
         self.keep_token(name, token)?;
         match held {
-            Ok(_held) => self.note_locked(name, expires_at),
+            Ok(_held) => self.note_locked(name, expires_at, None),
             Err(e) => log::warn!("{name}: {e}; its token is renewed once Workman refuses it"),
         }
         Ok(())
@@ -558,7 +593,8 @@ pub fn header(keeper: &Keeper, name: &str, bearer: impl FnOnce() -> Bearer, mint
     supraman_claude::mcp_header(keeper.store(), name)
 }
 
-/// The one re-mint of a kept token: `replace` on its record's mint, kept with its `expiresAt` under [`keeping::lock`].
+/// The one re-mint of a kept token: `replace` on its record's mint under [`launched_by`]'s label, kept with its
+/// `expiresAt` and that label under [`keeping::lock`]; the record is another owner's file and keeps its own.
 fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> Result<(), String> {
     let _held = keeping::lock(&keeper.home)?;
     let (m, request) = MintedSessions::find(&keeper.home, name).ok_or_else(|| format!("no record of {name}"))?;
@@ -568,9 +604,12 @@ fn remint(keeper: &Keeper, name: &str, bearer: Bearer, minter: &dyn Minter) -> R
     if m.origin.as_deref().is_some_and(|o| o != api_base(&url)) {
         return Err(format!("its token is from {}, not {}", m.origin.unwrap_or_default(), api_base(&url)));
     }
-    let minted = minter.mint(&api_base(&url), &token, &request).map_err(|e| e.to_string())?;
+    let moved = keeping::read(&keeper.home).ok().and_then(|mut t| t.remove(name)?.launched_by);
+    let former = moved.unwrap_or_else(|| request.launched_by.clone());
+    let request = MintRequest { launched_by: relabelled(&request.launched_by), origin: relabelled(&request.origin), ..request };
+    let minted = mint_as(minter, &api_base(&url), &token, &request, Some(&former)).map_err(|e| e.to_string())?;
     keeper.keep_token(name, &minted.token)?;
-    keeper.note_locked(name, minted.expires_at.as_deref());
+    keeper.note_locked(name, minted.expires_at.as_deref(), Some(&request.launched_by));
     Ok(())
 }
 
@@ -684,6 +723,7 @@ mod tests {
             replace: true,
             repo: None,
             claude_session_id: None,
+            takeover_from: None,
         }
     }
 
@@ -933,7 +973,7 @@ mod tests {
         assert_eq!(keeper.kept(NAME).as_deref(), Some(fresh.as_str()), "and is kept");
         let remint = mints(&fake).pop().unwrap();
         assert_eq!((&remint["replace"], &remint["claudeSessionId"], &remint["name"]), (&true.into(), &SID.into(), &NAME.into()), "{remint}");
-        assert_eq!((&remint["launchedBy"], &remint["role"]), (&"foreman/demo".into(), &"controller".into()), "the record's identity");
+        assert_eq!((&remint["launchedBy"], &remint["role"]), (&"supraman/demo".into(), &"controller".into()), "the record's identity");
         assert!(!supraman_claude::mcp_config_url(keeper.mcp_dir(), NAME).is_none(), "the config stays");
 
         sessions.revoke_name(NAME);
@@ -943,6 +983,73 @@ mod tests {
         keeper.store().delete(&supraman_claude::mcp_token_key(NAME)).unwrap();
         let again = header(&signed).unwrap();
         assert_eq!(again, header_of(&sessions.token_of(NAME).unwrap()), "a missing kept token is minted too");
+        assert_eq!(mints(&fake).len(), 3);
+    }
+
+    #[test]
+    fn a_row_launched_as_foreman_is_reminted_under_supraman_without_a_409() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(Vec::new());
+        let sessions = fake.enable_sessions();
+        let (keeper, _) = kept_at(home.path(), &fake, MintedSessions::path(home.path(), "demo"));
+        let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
+        let header = || super::header(&keeper, NAME, signed, &HttpMinter::default(), |_: &str, _: &str| true);
+
+        let printed = header().unwrap();
+        let fresh = sessions.token_of(NAME).expect("minted");
+        assert_eq!(printed, header_of(&fresh));
+        let posts = mints(&fake);
+        assert_eq!(posts.len(), 2, "one mint, no 409 before it: {posts:?}");
+        let remint = &posts[1];
+        assert_eq!((&remint["launchedBy"], &remint["origin"], &remint["takeoverFrom"]), (&"supraman/demo".into(), &"supraman/demo".into(), &"foreman/demo".into()), "{remint}");
+
+        let (_, recorded) = MintedSessions::find(home.path(), NAME).unwrap();
+        assert_eq!(recorded.launched_by, "foreman/demo", "the record is the workspace's, which relabels it on its own mint");
+        assert!(header().is_ok());
+        let posts = mints(&fake);
+        assert_eq!(posts.len(), 3, "kept.json holds the moved label: one plain mint");
+        assert_eq!((&posts[2]["launchedBy"], posts[2].get("takeoverFrom")), (&"supraman/demo".into(), None));
+
+        let token = sessions.token_of(NAME).unwrap();
+        keeper.write(NAME, &fake.mcp_url(), &token, None, &[]).unwrap();
+        assert!(header().is_ok());
+        let posts = mints(&fake);
+        assert_eq!(posts.len(), 5, "the label forgotten, the takeover 409s on the moved row and the plain mint takes it");
+        assert_eq!((&posts[3]["takeoverFrom"], &posts[4]["launchedBy"], posts[4].get("takeoverFrom")), (&"foreman/demo".into(), &"supraman/demo".into(), None));
+        assert_ne!(sessions.token_of(NAME), Some(token), "a fresh token");
+    }
+
+    #[test]
+    fn a_takeover_needs_the_rows_launcher_and_its_own_bearer_and_a_refused_one_keeps_the_row() {
+        let fake = FakeWorkman::start(Vec::new());
+        let sessions = fake.enable_sessions();
+        let minter = HttpMinter::default();
+        let first = minter.mint(fake.base(), "fake-static", &request()).unwrap();
+        let moving = |from: &str| MintRequest { launched_by: "supraman/demo".into(), takeover_from: Some(from.into()), ..request() };
+        let refused = |r: Result<Minted, MintError>| matches!(r, Err(MintError::Refused { status: 409, .. }));
+        assert!(refused(minter.mint(fake.base(), "fake-static", &MintRequest { launched_by: "supraman/demo".into(), ..request() })), "no takeover");
+        assert!(refused(minter.mint(fake.base(), "fake-static", &moving("foreman/other"))), "not the row's launcher");
+        assert!(refused(minter.mint(fake.base(), "fake-other", &moving("foreman/demo"))), "another bearer");
+        assert!(refused(minter.mint(fake.base(), "fake-static", &MintRequest { replace: false, ..moving("foreman/demo") })), "a live token without replace");
+        assert!(sessions.live(&first.token), "nothing moved the row");
+        assert!(minter.mint(fake.base(), "fake-static", &request()).is_ok(), "still foreman's");
+        let moved = minter.mint(fake.base(), "fake-static", &moving("foreman/demo")).unwrap();
+        assert_eq!(moved.session_id, first.session_id, "the same row");
+        assert!(refused(minter.mint(fake.base(), "fake-static", &request())), "now supraman's");
+    }
+
+    #[test]
+    fn a_mint_without_a_former_label_is_one_plain_call_and_its_409_stands() {
+        let fake = FakeWorkman::start(Vec::new());
+        fake.enable_sessions();
+        let minter = HttpMinter::default();
+        minter.mint(fake.base(), "fake-static", &request()).unwrap();
+        let ours = MintRequest { launched_by: launched_by("demo"), replace: false, ..request() };
+        let e = mint_as(&minter, fake.base(), "fake-static", &ours, None).unwrap_err();
+        assert!(matches!(&e, MintError::Refused { status: 409, reason } if reason.contains("another launcher")), "{e:?}");
+        let e = mint_as(&minter, fake.base(), "fake-static", &ours, Some("supraman/demo")).unwrap_err();
+        assert!(matches!(&e, MintError::Refused { status: 409, .. }), "the same label is no takeover: {e:?}");
+        assert!(mints(&fake).iter().all(|m| m.get("takeoverFrom").is_none()));
         assert_eq!(mints(&fake).len(), 3);
     }
 

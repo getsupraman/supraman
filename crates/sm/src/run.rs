@@ -249,7 +249,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
     let Some(t) = host.tokens().token(crate::schedule::RUN_ROLE).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))? else {
         return Ok(None);
     };
-    let origin = format!("foreman/{}/schedule/{}", ctx.workspace.name, ctx.schedule.id);
+    let origin = supraman_supervisor::launched_by(&format!("{}/schedule/{}", ctx.workspace.name, ctx.schedule.id));
     let request = MintRequest {
         name: spec.name.clone(),
         role: t.role.clone(),
@@ -260,6 +260,7 @@ fn mint(ctx: &RunCtx, spec: &LaunchSpec, host: &mut dyn SessionHost) -> Result<O
         replace: false,
         repo: supraman_supervisor::git_repo(&spec.cwd),
         claude_session_id: None,
+        takeover_from: None,
     };
     let minted = host.minter().mint(&api_base(&t.url), &t.token, &request).map_err(|e| format!("cannot mint a Workman token for {}: {e}", spec.name))?;
     let mut record = MintedSessions::empty(Some(MintedSessions::run_path(ctx.home, &spec.name)));
