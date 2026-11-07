@@ -26,6 +26,7 @@ const PROJECT: &str = "de000000-0000-4000-8000-000000000001";
 const RUN: &str = "de000000-0000-4000-8000-0000000000a1";
 /// The fixture folders' `origin`; the fake's project is bound to it.
 const REMOTE: &str = "https://github.com/demo/shop.git";
+const AS_OF: &str = "2026-11-02T10:00:00+00:00";
 const SELECTED: &str = "de000000-0000-4000-8000-000000000202";
 
 static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
@@ -85,6 +86,11 @@ fn fixture_repo(dir: &Path) -> Option<supraman_supervisor::MintRepo> {
     dir.starts_with(ROOT).then(|| supraman_supervisor::MintRepo { root: ROOT.to_string(), remote: Some(REMOTE.to_string()) })
 }
 
+/// The fixture's "now": its overview's `asOf`.
+fn fixture_now() -> i64 {
+    supraman_core::time::rfc3339_ms(AS_OF).unwrap_or_default()
+}
+
 fn workman() -> FakeWorkman {
     let project = item(PROJECT, WORKSPACE, "project", "Demo shop", "in_progress");
     let run = item(RUN, "checkout", "run", "Checkout flow", "in_progress");
@@ -101,7 +107,7 @@ fn workman() -> FakeWorkman {
     });
     let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "fm-demo-web", "tree": r"C:\src\demo\web",
                         "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "firstSeenAt": "x", "lastSeenAt": "x" },
-                        "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2099-01-01T00:00:00+00:00", "expired": false });
+                        "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2026-11-02T10:26:00+00:00", "expired": false });
     let overview = json!({
         "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "workingNow": [claim],
         "honesty": { "doneUnverified": 0, "forced": 1, "ungated": 0, "followupsOpen": 3 },
@@ -223,6 +229,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
     });
     let work = work.ok_or_else(|| anyhow!("no Work tab for {WORKSPACE}"))?;
+    work.update(cx, |w, _| w.now = fixture_now);
     crate::selftest::until(view, cx, Duration::from_secs(10), "the Work tab's rows", |v| v.hits.borrow().contains_key("work-row-checkout/2").then_some(())).await?;
     work.update(cx, |w, cx| w.select(SELECTED.to_string(), cx));
     crate::selftest::until(view, cx, Duration::from_secs(10), "the selected item in the detail", |v| v.hits.borrow().contains_key("work-pill-checkout/2=stop").then_some(())).await?;

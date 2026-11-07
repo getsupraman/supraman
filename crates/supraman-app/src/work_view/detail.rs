@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use gpui::{ClickEvent, FontWeight, Hsla};
-use supraman_core::time::{near, now_ms, rfc3339_local, rfc3339_ms};
+use supraman_core::time::{near, rfc3339_local, rfc3339_ms};
 use supraman_ui::details::{self, Section};
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::dot;
@@ -45,11 +45,11 @@ pub fn tab_label(tab: DetailTab, page: &ItemPage) -> String {
     if n > 0 { format!("{name} {n}") } else { name.to_string() }
 }
 
-fn when(at: &str) -> String {
-    rfc3339_ms(at).map_or_else(|| rfc3339_local(at), |ms| near(ms, now_ms()))
+fn when(at: &str, now: i64) -> String {
+    rfc3339_ms(at).map_or_else(|| rfc3339_local(at), |ms| near(ms, now))
 }
 
-pub fn facts(page: &ItemPage) -> Vec<(&'static str, String)> {
+pub fn facts(page: &ItemPage, now: i64) -> Vec<(&'static str, String)> {
     let mut out = vec![("kind", page.item.kind.clone())];
     if let Some(commit) = page.artifacts.iter().filter(|a| a.kind == "commit").max_by(|a, b| a.at.cmp(&b.at)) {
         out.push(("commit", supraman_gitman::short_sha(&commit.value).to_string()));
@@ -58,7 +58,7 @@ pub fn facts(page: &ItemPage) -> Vec<(&'static str, String)> {
         out.push(("resolution", format!("{r:?}").to_lowercase()));
     }
     if let Some(at) = &page.closed_at {
-        out.push(("closed", when(at)));
+        out.push(("closed", when(at, now)));
     }
     out
 }
@@ -90,13 +90,13 @@ pub fn overview(page: &ItemPage) -> Vec<Section> {
     out
 }
 
-pub fn notes(page: &ItemPage) -> Vec<Section> {
+pub fn notes(page: &ItemPage, now: i64) -> Vec<Section> {
     let mut s = Section::new("notes", "Notes");
     if page.notes.is_empty() {
         s = s.text("No notes.");
     }
     for n in &page.notes {
-        s = s.row(format!("{} · {}", n.kind, when(&n.created_at)), n.body.clone());
+        s = s.row(format!("{} · {}", n.kind, when(&n.created_at, now)), n.body.clone());
     }
     vec![s]
 }
@@ -143,7 +143,7 @@ impl WorkView {
         let state = state::of_page(&page);
         let sections = match self.detail_tab {
             DetailTab::Overview => overview(&page),
-            DetailTab::Notes => notes(&page),
+            DetailTab::Notes => notes(&page, (self.now)()),
             DetailTab::Brief => vec![match self.briefs.get(&page.item.id) {
                 Some(Ok(text)) => Section::new("brief", "Worker brief").long(text.clone()),
                 Some(Err(why)) => Section::new("brief", "Worker brief").text(why.clone()),
@@ -204,7 +204,7 @@ impl WorkView {
 
     fn render_bar(&self, page: &ItemPage, key: StateKey, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let chips = facts(page).into_iter().map(|(label, value)| {
+        let chips = facts(page, (self.now)()).into_iter().map(|(label, value)| {
             div()
                 .flex()
                 .flex_none()
@@ -287,7 +287,7 @@ impl WorkView {
                 div()
                     .text_xs()
                     .text_color(colors.text_muted)
-                    .child(SharedString::from(format!("attempt {} · {} · {} · {}", r.attempt, r.status, by(r.session.as_ref(), r.agent.as_deref().unwrap_or("")), when(&r.at)))),
+                    .child(SharedString::from(format!("attempt {} · {} · {} · {}", r.attempt, r.status, by(r.session.as_ref(), r.agent.as_deref().unwrap_or("")), when(&r.at, (self.now)())))),
             )
             .children(lines.collect::<Vec<_>>())
             .child(hit_target(&self.hits, format!("work-evidence-report-{}", r.attempt)))
@@ -314,7 +314,7 @@ impl WorkView {
                     .items_center()
                     .gap_2()
                     .child(pill)
-                    .child(div().flex_1().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("run by {} · {}", by(v.session.as_ref(), &v.run_by), when(&v.at))))),
+                    .child(div().flex_1().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("run by {} · {}", by(v.session.as_ref(), &v.run_by), when(&v.at, (self.now)()))))),
             )
             .when(!v.result_line.is_empty(), |d| d.child(div().text_sm().whitespace_normal().child(SharedString::from(v.result_line.clone()))))
             .when_some(v.command.as_deref().filter(|c| !c.is_empty()), |d, c| {
@@ -341,7 +341,7 @@ impl WorkView {
                     .border_b_1()
                     .border_color(colors.border_variant)
                     .text_sm()
-                    .child(fonts::figures(div().flex_none().w(px(96.)).text_xs().text_color(colors.text_muted)).child(SharedString::from(when(&e.at))))
+                    .child(fonts::figures(div().flex_none().w(px(96.)).text_xs().text_color(colors.text_muted)).child(SharedString::from(when(&e.at, (self.now)()))))
                     .child(div().flex_none().w(px(84.)).text_xs().child(SharedString::from(e.kind.clone())))
                     .child(div().flex_1().min_w_0().whitespace_normal().child(SharedString::from(e.summary.clone().unwrap_or_default())))
                     .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(by(e.session.as_ref(), &e.actor))))
@@ -377,7 +377,7 @@ mod tests {
             verifications: vec![Verification::default()],
             ..Default::default()
         };
-        let facts = facts(&page);
+        let facts = facts(&page, 0);
         assert_eq!(facts[..3], [("kind", "task".to_string()), ("commit", supraman_gitman::short_sha("62efdbe000000000").to_string()), ("resolution", "accepted".into())]);
         assert_eq!(tab_label(DetailTab::Evidence, &page), "Evidence 1");
         assert_eq!(tab_label(DetailTab::Notes, &page), "Notes 1");

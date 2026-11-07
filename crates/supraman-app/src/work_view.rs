@@ -31,7 +31,7 @@ use gpui::{
 };
 use theme::ActiveTheme as _;
 
-use supraman_ui::hit::HitTargets;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::menu::ContextMenu;
 use supraman_ui::placeholder::placeholder;
 use supraman_ui::toast::ToastSlot;
@@ -215,7 +215,7 @@ pub enum Shown {
     Ready,
 }
 
-/// What the middle column shows.
+/// What the tab shows right of the navigator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Page {
     Overview,
@@ -278,6 +278,8 @@ pub struct WorkView {
     pub palette: Option<Entity<supraman_ui::palette::Palette<find::Found>>>,
     palette_sub: Option<Subscription>,
     pub search_reads: u64,
+    /// What every relative time here is measured from: `now_ms`, or a fixture's fixed time.
+    pub now: fn() -> i64,
 }
 
 pub struct Opening {
@@ -346,6 +348,7 @@ impl WorkView {
             palette: None,
             palette_sub: None,
             search_reads: 0,
+            now: supraman_core::time::now_ms,
         };
         view.layout.load(home, cx);
         view.read_keys(cx);
@@ -717,15 +720,25 @@ impl Render for WorkView {
 }
 
 impl WorkView {
-    fn render_columns(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let list = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().child(self.render_middle(cx));
-        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().border_l_1().border_color(cx.theme().colors().border).child(self.render_detail(cx));
-        let main = layout::detail_split()
+    /// A run page is list | detail; Overview and Activity take both columns.
+    fn render_main(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Page::Run(run) = self.page.clone() else {
+            let page = if self.page == Page::Activity { self.render_activity_page(cx) } else { self.render_overview(cx) };
+            return div().relative().size_full().child(page).child(hit_target(&self.hits, "work-page".into())).into_any_element();
+        };
+        let list = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().child(self.render_run_page(&run, cx));
+        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().relative().border_l_1().border_color(cx.theme().colors().border).child(self.render_detail(cx)).child(hit_target(&self.hits, "work-detail-column".into()));
+        layout::detail_split()
             .render_second(list, detail, |this: &mut WorkView, width, cx| {
                 this.layout.set_detail(width);
                 cx.notify();
             }, |this: &mut WorkView, cx| this.layout.keep(cx), cx)
-            .size_full();
+            .size_full()
+            .into_any_element()
+    }
+
+    fn render_columns(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let main = self.render_main(cx);
         if self.layout.nav_shut() {
             let strip = div().flex_none().h_full().border_r_1().border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
             return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
@@ -739,13 +752,5 @@ impl WorkView {
             }, |this: &mut WorkView, cx| this.layout.keep(cx), cx)
             .size_full()
             .into_any_element()
-    }
-
-    fn render_middle(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        match self.page.clone() {
-            Page::Overview => self.render_overview(cx),
-            Page::Activity => self.render_activity_page(cx),
-            Page::Run(run) => self.render_run_page(&run, cx),
-        }
     }
 }
