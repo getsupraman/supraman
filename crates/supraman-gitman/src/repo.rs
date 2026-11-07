@@ -119,6 +119,15 @@ impl Repo {
         }
     }
 
+    /// [`Repo::read`] without `--no-optional-locks`: git may write the index's stat cache.
+    pub(crate) fn read_locking<T>(&self, args: &[&str], parse: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, GitError> {
+        let out = self.run_with(READ_ONLY.iter().filter(|a| **a != "--no-optional-locks"), args, None)?;
+        if !out.success() {
+            return Err(GitError::Failed { args: args.join(" "), code: out.code, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() });
+        }
+        parse(&out.stdout).map_err(|what| GitError::Parse { args: args.join(" "), what })
+    }
+
     /// [`Repo::output`] parsed, a parse failure naming the command.
     pub(crate) fn read<T>(&self, args: &[&str], input: Option<Vec<u8>>, parse: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<T, GitError> {
         let out = self.output(args, input)?;

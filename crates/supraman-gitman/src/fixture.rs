@@ -34,7 +34,8 @@ pub fn git_in(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], inpu
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
+/// [`git_in`] whatever its exit code.
+pub fn run_git(git: &Git, dir: &Path, args: &[&str], env: &[(&str, String)], input: Option<Vec<u8>>) -> process::RawOutput {
     let mut cmd = crate::repo::git_command(git, dir);
     cmd.args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"]).args(args);
     process::without_user_config(&mut cmd);

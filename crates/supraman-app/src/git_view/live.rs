@@ -8,6 +8,7 @@ use std::time::Duration;
 use futures::channel::mpsc::{UnboundedReceiver, unbounded};
 use supraman_core::paths::within;
 use supraman_core::watch::{Batch, Watch, Watcher};
+use supraman_gitman::write::{self, Settled};
 use supraman_gitman::{Dirs, Repo};
 
 /// How long the git dirs' and the work dir's watchers gather changes into one batch.
@@ -34,6 +35,7 @@ pub enum Refresh {
 /// The watchers of one tab; dropping it stops them and closes the refreshes' channel.
 pub struct Live {
     _watchers: Vec<Watcher>,
+    _settled: Settled,
 }
 
 impl Live {
@@ -43,17 +45,28 @@ impl Live {
     }
 }
 
-/// Watches the repository of `repo`; blocking (it asks git where its dirs are).
+/// Watches the repository of `repo`; blocking (it asks git where its dirs are). While GitMan's own writes run on
+/// it the batches are dropped, and one graph refresh follows the last.
 pub fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, UnboundedReceiver<Refresh>), String> {
     let dirs = supraman_gitman::dirs(repo).map_err(|e| e.to_string())?;
     let (tx, rx) = unbounded();
+    let quiet = write::quiet(&dirs);
+    let settled = {
+        let tx = tx.clone();
+        quiet.on_settled(move || {
+            tx.unbounded_send(Refresh::Graph).ok();
+        })
+    };
     let mut git_dirs = vec![Watch::tree(&dirs.common_dir)];
     if !within(&dirs.git_dir, &dirs.common_dir) {
         git_dirs.push(Watch::tree(&dirs.git_dir));
     }
     let git = {
-        let (tx, dirs) = (tx.clone(), dirs.clone());
+        let (tx, dirs, quiet) = (tx.clone(), dirs.clone(), quiet.clone());
         Watcher::new(&git_dirs, debounces.git, move |batch| {
+            if quiet.paused() {
+                return;
+            }
             if let Some(r) = git_refresh(&dirs, &batch) {
                 tx.unbounded_send(r).ok();
             }
@@ -62,13 +75,16 @@ pub fn start(repo: &Repo, debounces: Debounces) -> Result<(Live, UnboundedReceiv
     let work = {
         let top = Repo::new(repo.git().clone(), &dirs.top);
         Watcher::new(&[Watch::tree(&dirs.top)], debounces.work, move |batch| {
+            if quiet.paused() {
+                return;
+            }
             if let Some(r) = work_refresh(&top, &dirs, &batch) {
                 tx.unbounded_send(r).ok();
             }
         })
     };
     let watchers = vec![git.map_err(|e| e.to_string())?, work.map_err(|e| e.to_string())?];
-    Ok((Live { _watchers: watchers }, rx))
+    Ok((Live { _watchers: watchers, _settled: settled }, rx))
 }
 
 /// `path` below `base`, `/`-separated; `None` outside it.

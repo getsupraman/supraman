@@ -17,6 +17,8 @@ mod seek;
 pub mod ref_panel;
 mod splice;
 mod wip;
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod write_gate;
 
 #[cfg(test)]
 mod tests;
