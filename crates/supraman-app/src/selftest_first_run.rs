@@ -1,14 +1,14 @@
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail};
+use anyhow::{Context as _, anyhow, bail};
 use supraman_workman::AuthStatus;
 use supraman_workman::fake::{Answer, FakeWorkman};
-use gpui::{AsyncWindowContext, Entity};
+use gpui::{AsyncWindowContext, Entity, WindowHandle};
 
 use crate::{
     selftest::{click, sleep},
     selftest_manage::{shot, shot_window},
-    settings_window::page,
+    settings_window::{SettingsView, page},
     view::FleetView,
     workman_setup::WorkmanStatus,
 };
@@ -29,6 +29,45 @@ fn saved_url() -> anyhow::Result<String> {
     supraman_core::workman_server::load(&crate::selftest::workman_server_json()).map(|s| s.origin()).map_err(|e| anyhow!(e))
 }
 
+async fn settled<T>(
+    handle: &WindowHandle<SettingsView>,
+    cx: &mut AsyncWindowContext,
+    what: &str,
+    f: impl Fn(&SettingsView) -> Option<T>,
+) -> anyhow::Result<T> {
+    let started = Instant::now();
+    loop {
+        if let Some(found) = handle.read_with(cx, |s, _| f(s)).map_err(|e| anyhow!("settings window: {e}"))? {
+            return Ok(found);
+        }
+        if started.elapsed() > WITHIN {
+            let now = handle.read_with(cx, |s, _| format!("{:?}", s.server_check())).unwrap_or_default();
+            bail!("Settings never showed {what}: {now}");
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
+}
+
+/// Writes `<selftest home>/user/.claude.json` (the path `selftest::prepare` set in place of the user's): first
+/// without a user-scope workman entry, then with one naming `base`'s /mcp and a header value nothing may read.
+async fn claude_entry_checked(handle: &WindowHandle<SettingsView>, base: &str, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    let path = crate::selftest::claude_json();
+    let project_only = format!(r#"{{"projects":{{"C:/x":{{"mcpServers":{{"workman":{{"type":"http","url":"{base}/mcp"}}}}}}}}}}"#);
+    supraman_core::fs::write_atomic(&path, project_only).with_context(|| format!("cannot write {}", path.display()))?;
+    handle.update(cx, |s, _, cx| s.check_server(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    let missing = settled(handle, cx, "the warning of no user-scope workman entry", |s| {
+        let c = s.server_check()?;
+        (c.mcp_name.as_deref() == Some("workman")).then(|| c.warnings.iter().find(|w| w.contains("no user-scope MCP server named")).cloned()).flatten()
+    })
+    .await?;
+    shot_window("workman-oauth-only-5-claude-entry-missing", Some("Supraman Settings"), cx).await;
+    let user = format!(r#"{{"mcpServers":{{"workman":{{"type":"http","url":"{base}/mcp","headers":{{"Authorization":"Bearer selftest-never-read"}}}}}}}}"#);
+    supraman_core::fs::write_atomic(&path, user).with_context(|| format!("cannot write {}", path.display()))?;
+    handle.update(cx, |s, _, cx| s.check_server(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
+    settled(handle, cx, "no warning once claude's workman entry is this server's", |s| s.server_check().filter(|c| c.warnings.is_empty()).map(|_| ())).await?;
+    Ok(format!("{}: \"{missing}\", then none for {base}/mcp", path.display()))
+}
+
 fn painted(v: &FleetView, key: &str) -> bool {
     v.shown(key)
 }
@@ -41,7 +80,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let mut lines = Vec::new();
 
     let who = until(view, cx, "Ready as the fake operator", |v| match &v.workman {
-        WorkmanStatus::Ready { url, who } if *url == base => who.clone(),
+        WorkmanStatus::Ready { url, who, .. } if *url == base => who.clone(),
         _ => None,
     })
     .await?;
@@ -61,6 +100,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     }
     shot_window("m5-43-settings-signed-in", Some("Supraman Settings"), cx).await;
     lines.push(format!("Settings → Workman: signed in on {base} as {who}"));
+    lines.push(claude_entry_checked(&handle, &base, cx).await?);
 
     view.update(cx, |v, cx| v.sign_out(cx));
     let problem = until(view, cx, "the not-signed-in notice with Sign in", |v| {
@@ -112,6 +152,15 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if saved_url()? != other.base() {
         bail!("the new URL was not saved after the sign-in there");
     }
+    let named = supraman_core::workman_server::load(&crate::selftest::workman_server_json()).map_err(|e| anyhow!(e))?.mcp_name;
+    if named != supraman_core::workman_server::MCP_NAME {
+        bail!("Apply wrote mcpName {named:?}, not workman");
+    }
+    let mcp = format!("{}/mcp", other.base());
+    settled(&handle, cx, "the warning that claude's workman entry is not the new server", |s| {
+        s.server_check().filter(|c| c.warnings.iter().any(|w| w.contains(&mcp))).map(|_| ())
+    })
+    .await?;
     if other_oauth.issued().is_empty() {
         bail!("the other server issued nothing");
     }

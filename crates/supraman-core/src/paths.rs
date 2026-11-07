@@ -14,30 +14,111 @@ fn home_of(userprofile: Option<OsString>, home: Option<OsString>) -> Option<Path
     set(userprofile).or_else(|| set(home)).map(PathBuf::from)
 }
 
-static WORKMAN_SERVER_JSON_FOR_SELFTEST: OnceLock<PathBuf> = OnceLock::new();
-static WORKMAN_SERVER_JSON_READ: AtomicBool = AtomicBool::new(false);
+/// A user file a selftest replaces with its own, set once before the first read.
+struct SelftestPath {
+    what: &'static str,
+    path: OnceLock<PathBuf>,
+    read: AtomicBool,
+}
+
+impl SelftestPath {
+    const fn new(what: &'static str) -> Self {
+        Self { what, path: OnceLock::new(), read: AtomicBool::new(false) }
+    }
+
+    fn get(&self, user: impl FnOnce() -> Option<PathBuf>) -> Option<PathBuf> {
+        self.read.store(true, Ordering::SeqCst);
+        self.path.get().cloned().or_else(user)
+    }
+
+    fn set(&self, path: PathBuf) -> Result<(), String> {
+        let what = self.what;
+        if self.read.load(Ordering::SeqCst) {
+            return Err(format!("the {what} was read before the selftest set its own"));
+        }
+        let shown = path.display().to_string();
+        self.path.set(path).map_err(|_| format!("the selftest's {what} is set already, not to {shown}"))
+    }
+}
+
+static WORKMAN_SERVER_JSON: SelftestPath = SelftestPath::new("Workman server.json");
+static CLAUDE_JSON: SelftestPath = SelftestPath::new("claude .claude.json");
 
 /// `~/.workman/server.json` ([`crate::workman_server`]), which `/workman:setup` writes; `None` without a user home.
 pub fn workman_server_json() -> Option<PathBuf> {
-    WORKMAN_SERVER_JSON_READ.store(true, Ordering::SeqCst);
-    match WORKMAN_SERVER_JSON_FOR_SELFTEST.get() {
-        Some(path) => Some(path.clone()),
-        None => user_home().map(|h| h.join(".workman").join("server.json")),
-    }
+    WORKMAN_SERVER_JSON.get(|| user_home().map(|h| h.join(".workman").join("server.json")))
 }
 
 /// A selftest's own `server.json` in place of the user's: once per process, before [`workman_server_json`] is asked.
 pub fn set_workman_server_json_for_selftest(path: PathBuf) -> Result<(), String> {
-    if WORKMAN_SERVER_JSON_READ.load(Ordering::SeqCst) {
-        return Err("the Workman server.json was read before the selftest set its own".into());
+    WORKMAN_SERVER_JSON.set(path)
+}
+
+/// claude's user config where claude looks for it: `<CLAUDE_CONFIG_DIR, else user_home>/.claude.json`, or the
+/// legacy `<claude_dir>/.config.json` while it has content and that file has none.
+pub fn claude_json() -> Option<PathBuf> {
+    CLAUDE_JSON.get(|| claude_json_of(claude_config_dir_var(), user_home(), |p| fs::metadata(p).is_ok_and(|m| m.is_file() && m.len() > 0)))
+}
+
+/// A selftest's own `.claude.json` in place of the user's: once per process, before [`claude_json`] is asked.
+pub fn set_claude_json_for_selftest(path: PathBuf) -> Result<(), String> {
+    CLAUDE_JSON.set(path)
+}
+
+fn claude_json_of(config_dir: Option<OsString>, home: Option<PathBuf>, has_content: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let current = config_dir.clone().filter(|d| !d.is_empty()).map(PathBuf::from).or_else(|| home.clone())?.join(".claude.json");
+    let legacy = claude_dir_of(config_dir, home).map(|d| d.join(".config.json"));
+    match legacy {
+        Some(legacy) if has_content(&legacy) && !has_content(&current) => Some(legacy),
+        _ => Some(current),
     }
-    let shown = path.display().to_string();
-    WORKMAN_SERVER_JSON_FOR_SELFTEST.set(path).map_err(|_| format!("the selftest's Workman server.json is set already, not to {shown}"))
+}
+
+/// What claude's user config says of one user-scope MCP server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserMcpServer {
+    NoFile,
+    /// No top-level `mcpServers` entry of that name (a project's own `mcpServers` do not count).
+    Missing,
+    /// The entry's `url`, `None` when it has none (a stdio server).
+    Url(Option<String>),
+}
+
+/// Only each entry's `url` is kept; `headers` and every other key are skipped unread into any value.
+#[derive(serde::Deserialize)]
+struct ClaudeJson {
+    #[serde(rename = "mcpServers", default)]
+    mcp_servers: std::collections::HashMap<String, McpEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct McpEntry {
+    #[serde(default)]
+    url: Option<serde_json::Value>,
+}
+
+/// The user-scope MCP server `name` in claude's config at `path` ([`claude_json`]); blocking.
+pub fn user_mcp_server(path: &Path, name: &str) -> Result<UserMcpServer, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(UserMcpServer::NoFile),
+        Err(e) => return Err(format!("{} cannot be read ({e})", path.display())),
+    };
+    let config: ClaudeJson =
+        serde_json::from_str(&crate::text::decode(&bytes).0).map_err(|e| format!("{} is not valid JSON ({e})", path.display()))?;
+    Ok(match config.mcp_servers.get(name) {
+        Some(entry) => UserMcpServer::Url(entry.url.as_ref().and_then(|u| u.as_str()).map(str::to_string)),
+        None => UserMcpServer::Missing,
+    })
+}
+
+fn claude_config_dir_var() -> Option<OsString> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
 }
 
 /// claude's config dir: `CLAUDE_CONFIG_DIR`, else `<user_home>/.claude`.
 pub fn claude_dir() -> Option<PathBuf> {
-    claude_dir_of(std::env::var_os("CLAUDE_CONFIG_DIR"), user_home())
+    claude_dir_of(claude_config_dir_var(), user_home())
 }
 
 fn claude_dir_of(config_dir: Option<OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
@@ -152,6 +233,52 @@ mod tests {
         assert_eq!(dir, PathBuf::from(r"D:\claude-config"));
         assert_eq!(dir.join("sessions"), PathBuf::from(r"D:\claude-config").join("sessions"));
         assert_eq!(claude_dir_of(os(r"D:\claude-config"), None), Some(PathBuf::from(r"D:\claude-config")), "no home needed");
+    }
+
+    #[test]
+    fn claude_json_is_in_the_config_dir_else_home_and_the_legacy_file_only_while_it_alone_has_content() {
+        let home = PathBuf::from(r"C:\Users\x");
+        let none = |_: &Path| false;
+        assert_eq!(claude_json_of(None, Some(home.clone()), none), Some(home.join(".claude.json")));
+        assert_eq!(claude_json_of(os(""), Some(home.clone()), none), Some(home.join(".claude.json")), "empty is unset");
+        assert_eq!(claude_json_of(os(r"D:\cfg"), Some(home.clone()), none), Some(PathBuf::from(r"D:\cfg").join(".claude.json")));
+        assert_eq!(claude_json_of(None, None, none), None);
+        let legacy = home.join(".claude").join(".config.json");
+        assert_eq!(claude_json_of(None, Some(home.clone()), |p| p == legacy), Some(legacy.clone()));
+        assert_eq!(claude_json_of(None, Some(home.clone()), |_| true), Some(home.join(".claude.json")), "both: the current one");
+        let cfg_legacy = PathBuf::from(r"D:\cfg").join(".config.json");
+        assert_eq!(claude_json_of(os(r"D:\cfg"), Some(home), |p| p == cfg_legacy), Some(cfg_legacy.clone()));
+    }
+
+    const SECRET: &str = "SENTINEL-HEADER-VALUE";
+
+    #[test]
+    fn user_mcp_server_reads_a_top_level_entrys_url_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let read = |name: &str, text: &str| {
+            let path = tmp.path().join(name);
+            fs::write(&path, text).unwrap();
+            user_mcp_server(&path, "workman")
+        };
+        assert_eq!(user_mcp_server(&tmp.path().join("absent.json"), "workman"), Ok(UserMcpServer::NoFile));
+        assert_eq!(read("empty.json", "{}"), Ok(UserMcpServer::Missing));
+        assert_eq!(read("other.json", r#"{"mcpServers":{"github":{"type":"http","url":"https://api.example.com/mcp"}}}"#), Ok(UserMcpServer::Missing));
+        let project_only = r#"{"projects":{"P:/x":{"mcpServers":{"workman":{"type":"http","url":"https://work.example/mcp"}}}}}"#;
+        assert_eq!(read("project.json", project_only), Ok(UserMcpServer::Missing), "a project's entry is not user scope");
+        let user = format!(
+            r#"{{"oauthAccount":{{"emailAddress":"{SECRET}"}},"mcpServers":{{"workman":{{"type":"http","url":"https://work.example/mcp","headers":{{"Authorization":"Bearer {SECRET}"}},"headersHelper":"{SECRET}"}}}}}}"#
+        );
+        assert_eq!(read("user.json", &user), Ok(UserMcpServer::Url(Some("https://work.example/mcp".into()))));
+        assert_eq!(read("bom.json", "\u{feff}{\"mcpServers\":{\"workman\":{\"command\":\"x\"}}}"), Ok(UserMcpServer::Url(None)));
+        let bad = read("bad.json", &format!(r#"{{"mcpServers": {{"workman": {{"headers": "{SECRET}""#)).unwrap_err();
+        assert!(bad.contains("not valid JSON") && !bad.contains(SECRET), "{bad}");
+    }
+
+    #[test]
+    fn the_readers_entry_type_holds_no_headers_so_their_values_never_reach_memory() {
+        let entry: McpEntry = serde_json::from_str(&format!(r#"{{"url":"https://w.example/mcp","headers":{{"Authorization":"Bearer {SECRET}"}}}}"#)).unwrap();
+        let McpEntry { url } = entry;
+        assert_eq!(url, Some(serde_json::Value::String("https://w.example/mcp".into())));
     }
 
     #[test]

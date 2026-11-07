@@ -130,6 +130,8 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     crate::signin::use_http_browser();
     // The Workman URL is read from the scratch home's server.json, never the user's ~/.workman (C185).
     supraman_core::paths::set_workman_server_json_for_selftest(workman_server_json()).map_err(|e| anyhow!(e))?;
+    // claude's config is read from the scratch home's user folder, never the user's ~/.claude.json (C185).
+    supraman_core::paths::set_claude_json_for_selftest(claude_json()).map_err(|e| anyhow!(e))?;
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
@@ -267,6 +269,11 @@ pub fn home() -> PathBuf {
 /// Every selftest's `~/.workman/server.json`: `<selftest home>/user/.workman/server.json`.
 pub fn workman_server_json() -> PathBuf {
     home().join("user").join(".workman").join("server.json")
+}
+
+/// Every selftest's claude config: `<selftest home>/user/.claude.json`; step 1w+ writes it.
+pub fn claude_json() -> PathBuf {
+    home().join("user").join(".claude.json")
 }
 
 /// The selftest's server.json names `base`, through the one writer.
