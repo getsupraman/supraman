@@ -59,11 +59,12 @@ pub enum Icon {
     Stash,
     ChevronLeft,
     Solo,
+    ArrowUpRight,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 55] = [
+    const ALL: [Icon; 56] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -119,6 +120,7 @@ impl Icon {
         Icon::Stash,
         Icon::ChevronLeft,
         Icon::Solo,
+        Icon::ArrowUpRight,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -178,6 +180,7 @@ impl Icon {
             Icon::Stash => include_bytes!("../assets/icons/archive.svg"),
             Icon::ChevronLeft => include_bytes!("../assets/icons/chevron_left.svg"),
             Icon::Solo => include_bytes!("../assets/icons/crosshair.svg"),
+            Icon::ArrowUpRight => include_bytes!("../assets/icons/arrow_up_right.svg"),
         }
     }
 

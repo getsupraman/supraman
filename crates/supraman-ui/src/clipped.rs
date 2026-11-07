@@ -77,6 +77,47 @@ pub fn clipped_with(key: impl Into<SharedString>, text: impl Into<SharedString>,
     if tooltip && own_tooltip { label.tooltip(Tooltip::text(text)) } else { label }
 }
 
+/// [`clipped`] over up to `lines` wrapped lines, the last cut with an ellipsis; the whole text as a tooltip while cut.
+pub fn clamped(key: impl Into<SharedString>, text: impl Into<SharedString>, lines: usize) -> Stateful<Div> {
+    let (key, text) = (key.into(), text.into());
+    let tooltip = cut_at(&key).is_some();
+    let measure = {
+        let (key, text) = (key.clone(), text.clone());
+        canvas(
+            move |bounds, window, _| {
+                let style = window.text_style();
+                let size = style.font_size.to_pixels(window.rem_size());
+                let run = style.to_run(text.len());
+                let wrapped = window
+                    .text_system()
+                    .shape_text(text.clone(), size, &[run], Some(bounds.size.width + gpui::px(0.5)), None)
+                    .map(|shaped| shaped.iter().map(|line| line.wrap_boundaries().len() + 1).sum::<usize>())
+                    .unwrap_or(1);
+                let cut = wrapped > lines;
+                if cut != tooltip {
+                    window.refresh();
+                }
+                CUT.with(|set| set.borrow_mut().painted(&key, cut.then_some(bounds)));
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    };
+    let label = div()
+        .id(ElementId::Name(key))
+        .relative()
+        .min_w_0()
+        .overflow_hidden()
+        .line_clamp(lines)
+        .text_ellipsis()
+        .child(text.clone())
+        .child(measure);
+    if tooltip { label.tooltip(Tooltip::text(text)) } else { label }
+}
+
 /// A `/` path as one line: its `dir/` in `folder`, cut in the middle under `dir_key` when narrow, then its name in `name`.
 pub fn path_label(dir_key: impl Into<SharedString>, path: &str, folder: Hsla, name: Hsla) -> Div {
     let (dir, file) = match path.rsplit_once('/') {

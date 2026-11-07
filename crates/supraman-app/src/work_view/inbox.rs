@@ -8,8 +8,11 @@ use supraman_core::store::{JsonStore, Save};
 use supraman_workman::{Inbox, InboxRow, Overview};
 
 use super::*;
+use super::cards;
 
 pub const DISMISSED_FILE: &str = "workstate-dismissed.json";
+/// The Inbox's Housekeeping header; painted as `<key>=open` or `<key>=closed`.
+pub const HOUSEKEEPING_KEY: &str = "inbox-housekeeping";
 
 /// Per workspace: row key (`kind:item`) → the row's `since` when dismissed; see [`Dismissed::prune`].
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +104,7 @@ fn read(client: &Client, asks: Vec<Ask>, overview: bool) -> (Option<Overview>, V
             };
             let outcome = match project {
                 Ok(project) => match client.inbox(Some(&project.id)) {
-                    Ok(inbox) => Outcome::Read(project, inbox),
+                    Ok(inbox) => Outcome::Read(project, absolute_urls(inbox, client.base())),
                     Err(e) => Outcome::Failed(e.to_string()),
                 },
                 Err(outcome) => outcome,
@@ -110,6 +113,16 @@ fn read(client: &Client, asks: Vec<Ask>, overview: bool) -> (Option<Overview>, V
         })
         .collect();
     (overview, outcomes)
+}
+
+/// A row's `url` as the page to open: a path is on the Workman server.
+fn absolute_urls(mut inbox: Inbox, base: &str) -> Inbox {
+    for row in &mut inbox.rows {
+        if let Some(url) = row.url.as_mut().filter(|u| u.starts_with('/')) {
+            *url = format!("{}{url}", supraman_core::url::origin(base));
+        }
+    }
+    inbox
 }
 
 pub struct WorkInbox {
@@ -125,6 +138,7 @@ pub struct WorkInbox {
     pub notice: Option<String>,
     pub reads: u64,
     pub applied: u64,
+    pub housekeeping_open: bool,
 }
 
 struct GlobalInbox(Entity<WorkInbox>);
@@ -152,6 +166,7 @@ impl WorkInbox {
                 notice,
                 reads: 0,
                 applied: 0,
+                housekeeping_open: false,
             }
         });
         cx.set_global(GlobalInbox(inbox.clone()));
@@ -178,7 +193,7 @@ impl WorkInbox {
         self.workspaces
             .iter()
             .filter_map(|w| self.inboxes.get(w).map(|inbox| (w, inbox)))
-            .flat_map(|(w, inbox)| inbox.rows.iter().filter(|r| !self.dismissed.get().hides(w, r)).map(move |r| (w.as_str(), r)))
+            .flat_map(|(w, inbox)| inbox.rows.iter().filter(|r| r.kind != cards::NOTE && !self.dismissed.get().hides(w, r)).map(move |r| (w.as_str(), r)))
             .collect()
     }
 
@@ -189,6 +204,11 @@ impl WorkInbox {
             true
         });
         Self::save(save, cx);
+        cx.notify();
+    }
+
+    pub fn toggle_housekeeping(&mut self, cx: &mut Context<Self>) {
+        self.housekeeping_open = !self.housekeeping_open;
         cx.notify();
     }
 
@@ -313,17 +333,13 @@ impl WorkInbox {
     }
 }
 
-/// The key the Inbox paints a Workman row under; its × is `inbox-ws-dismiss-<key>`.
-pub fn row_key(row: &InboxRow) -> String {
-    format!("inbox-ws-{}", row.key)
+/// The key the Inbox paints a Workman row under; its × is [`dismiss_key_of`].
+pub fn row_key_of(key: &str) -> String {
+    format!("inbox-ws-{key}")
 }
 
-pub fn dismiss_key(row: &InboxRow) -> String {
-    format!("inbox-ws-dismiss-{}", row.key)
-}
-
-pub fn kind_label(kind: &str) -> String {
-    kind.replace('_', " ")
+pub fn dismiss_key_of(key: &str) -> String {
+    format!("inbox-ws-dismiss-{key}")
 }
 
 #[cfg(test)]
@@ -391,11 +407,21 @@ mod tests {
     }
 
     #[test]
+    fn a_rows_path_url_is_on_the_workman_server() {
+        let mut inbox = Inbox::default();
+        for url in [Some("/r/ws/sw2/2"), Some("https://w.example/r/x"), None] {
+            inbox.rows.push(InboxRow { url: url.map(str::to_string), ..Default::default() });
+        }
+        let urls: Vec<_> = absolute_urls(inbox, "http://127.0.0.1:9/").rows.into_iter().map(|r| r.url).collect();
+        assert_eq!(urls, [Some("http://127.0.0.1:9/r/ws/sw2/2".to_string()), Some("https://w.example/r/x".to_string()), None]);
+    }
+
+    #[test]
     fn keys_and_labels() {
         let r = row("blocker_finding:f1", "s");
-        assert_eq!(row_key(&r), "inbox-ws-blocker_finding:f1");
-        assert_eq!(dismiss_key(&r), "inbox-ws-dismiss-blocker_finding:f1");
-        assert_eq!(kind_label("stale_in_progress"), "stale in progress");
-        assert_eq!(kind_label("blocker_finding"), "blocker finding");
+        assert_eq!(row_key_of(&r.key), "inbox-ws-blocker_finding:f1");
+        assert_eq!(dismiss_key_of(&r.key), "inbox-ws-dismiss-blocker_finding:f1");
+        assert_eq!(super::super::cards::badge("stale_in_progress"), "stalled");
+        assert_eq!(super::super::cards::badge("blocker_finding"), "blocker");
     }
 }
