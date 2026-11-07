@@ -261,7 +261,7 @@ struct Entry {
 
 /// Per session name, its [`MintedSession`]; persisted (a workspace's at [`Self::path`], the [+] sessions' at
 /// [`Self::hands_path`], a scheduled run's at [`Self::run_path`]) so a restarted app still revokes what it minted and
-/// `sm mcp-header` can mint afresh. Without a path it lives in memory only.
+/// [`Keeping`] can mint afresh. Without a path it lives in memory only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MintedSessions {
     path: Option<PathBuf>,
@@ -577,20 +577,27 @@ pub fn revoke(keeper: &Keeper, minter: &dyn Minter, bearer: &Bearer, name: &str,
     done
 }
 
-/// What `sm mcp-header` prints for `name`: its kept token's `Authorization` header while Workman takes it. A kept
-/// token that is missing, or that Workman refuses (`refused(mcp_url, token)`), is replaced by one minted with `replace`
-/// from `name`'s record ([`MintedSessions::find`]) with `bearer`, kept and printed; when that fails, the kept one.
-pub fn header(keeper: &Keeper, name: &str, bearer: impl FnOnce() -> Bearer, minter: &dyn Minter, refused: impl Fn(&str, &str) -> bool) -> Result<String, String> {
-    supraman_claude::mcp_config_path(Path::new("."), name).map_err(|e| e.to_string())?;
-    let stale = match (keeper.kept(name), supraman_claude::mcp_config_url(&keeper.mcp_dir, name)) {
-        (Some(_), None) => false,
-        (Some(token), Some(url)) => refused(&url, &token),
-        (None, _) => true,
+/// What `sm mcp-header` prints when no kept token can be read: a header Workman refuses, so claude fails this one
+/// server instead of falling back to its own sign-in, which blocks every session.
+const NO_TOKEN_HEADER: &str = r#"{"Authorization":"Bearer sm-no-token"}"#;
+
+const HEADER_LOG_CAP: u64 = 1024 * 1024;
+
+/// What `sm mcp-header` prints for `name` in `home`: its kept token's `Authorization` header, else
+/// [`NO_TOKEN_HEADER`]; a read of the secret store only, [`Keeping`] keeps the token good. Each call appends a line
+/// to `<home>/logs/mcp-header.log` (never the token), whose failure changes nothing.
+pub fn header(home: Option<&Path>, name: &str) -> String {
+    let Some(home) = home else {
+        return NO_TOKEN_HEADER.to_string();
     };
-    if stale && let Err(why) = remint(keeper, name, bearer(), minter) {
-        log::info!("{name}: no fresh Workman token: {why}");
-    }
-    supraman_claude::mcp_header(keeper.store(), name)
+    let (line, said) = match supraman_claude::mcp_header(&*supraman_core::secret::default_store(home), name) {
+        Ok(line) => (line, "kept".to_string()),
+        Err(why) => (NO_TOKEN_HEADER.to_string(), format!("placeholder: {why}")),
+    };
+    let logs = home.join("logs");
+    let entry = format!("{} {} {}\n", supraman_core::time::rfc3339_utc(supraman_core::time::now_ms()), name.escape_debug(), said.replace(['\r', '\n'], " "));
+    let _ = std::fs::create_dir_all(&logs).and_then(|()| supraman_core::fs::append_capped(&logs.join("mcp-header.log"), entry.as_bytes(), HEADER_LOG_CAP));
+    line
 }
 
 /// The one re-mint of a kept token: `replace` on its record's mint under [`launched_by`]'s label, kept with its
@@ -953,36 +960,30 @@ mod tests {
     }
 
     #[test]
-    fn header_prints_the_kept_token_while_workman_takes_it_and_mints_afresh_once_it_refuses_it() {
+    fn remint_keeps_a_token_minted_with_replace_from_the_record() {
         let home = tempfile::tempdir().unwrap();
         let fake = FakeWorkman::start(Vec::new());
         let sessions = fake.enable_sessions();
         let (keeper, first) = kept_at(home.path(), &fake, MintedSessions::path(home.path(), "demo"));
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
-        let refused = |url: &str, token: &str| supraman_workman::refuses(url, token, Duration::from_secs(5));
-        let header = |bearer: &dyn Fn() -> Bearer| super::header(&keeper, NAME, bearer, &HttpMinter::default(), refused);
-
-        assert_eq!(header(&signed), Ok(header_of(&first)), "a live kept token is printed as it is");
-        assert_eq!(mints(&fake).len(), 1, "no mint for it");
 
         sessions.revoke_name(NAME);
-        let printed = header(&signed).unwrap();
+        remint(&keeper, NAME, signed(), &HttpMinter::default()).unwrap();
         let fresh = sessions.token_of(NAME).expect("a fresh token");
         assert_ne!(fresh, first);
-        assert_eq!(printed, header_of(&fresh), "the fresh token is what claude gets");
-        assert_eq!(keeper.kept(NAME).as_deref(), Some(fresh.as_str()), "and is kept");
-        let remint = mints(&fake).pop().unwrap();
-        assert_eq!((&remint["replace"], &remint["claudeSessionId"], &remint["name"]), (&true.into(), &SID.into(), &NAME.into()), "{remint}");
-        assert_eq!((&remint["launchedBy"], &remint["role"]), (&"supraman/demo".into(), &"controller".into()), "the record's identity");
+        assert_eq!(keeper.kept(NAME).as_deref(), Some(fresh.as_str()), "it is kept");
+        let posted = mints(&fake).pop().unwrap();
+        assert_eq!((&posted["replace"], &posted["claudeSessionId"], &posted["name"]), (&true.into(), &SID.into(), &NAME.into()), "{posted}");
+        assert_eq!((&posted["launchedBy"], &posted["role"]), (&"supraman/demo".into(), &"controller".into()), "the record's identity");
         assert!(!supraman_claude::mcp_config_url(keeper.mcp_dir(), NAME).is_none(), "the config stays");
 
         sessions.revoke_name(NAME);
-        assert_eq!(header(&|| Bearer::SignedOut), Ok(header_of(&fresh)), "signed out: nothing better than the kept one");
-        assert_eq!(mints(&fake).len(), 2);
+        assert!(remint(&keeper, NAME, Bearer::SignedOut, &HttpMinter::default()).is_err(), "signed out: no mint");
+        assert_eq!((keeper.kept(NAME).as_deref(), mints(&fake).len()), (Some(fresh.as_str()), 2), "the kept one stays");
 
         keeper.store().delete(&supraman_claude::mcp_token_key(NAME)).unwrap();
-        let again = header(&signed).unwrap();
-        assert_eq!(again, header_of(&sessions.token_of(NAME).unwrap()), "a missing kept token is minted too");
+        remint(&keeper, NAME, signed(), &HttpMinter::default()).unwrap();
+        assert_eq!(keeper.kept(NAME), sessions.token_of(NAME), "a missing kept token is minted too");
         assert_eq!(mints(&fake).len(), 3);
     }
 
@@ -993,26 +994,26 @@ mod tests {
         let sessions = fake.enable_sessions();
         let (keeper, _) = kept_at(home.path(), &fake, MintedSessions::path(home.path(), "demo"));
         let signed = || Bearer::Signed { url: fake.mcp_url(), token: "fake-static".into() };
-        let header = || super::header(&keeper, NAME, signed, &HttpMinter::default(), |_: &str, _: &str| true);
+        let remint = || super::remint(&keeper, NAME, signed(), &HttpMinter::default());
 
-        let printed = header().unwrap();
+        remint().unwrap();
         let fresh = sessions.token_of(NAME).expect("minted");
-        assert_eq!(printed, header_of(&fresh));
+        assert_eq!(keeper.kept(NAME), Some(fresh));
         let posts = mints(&fake);
         assert_eq!(posts.len(), 2, "one mint, no 409 before it: {posts:?}");
-        let remint = &posts[1];
-        assert_eq!((&remint["launchedBy"], &remint["origin"], &remint["takeoverFrom"]), (&"supraman/demo".into(), &"supraman/demo".into(), &"foreman/demo".into()), "{remint}");
+        let posted = &posts[1];
+        assert_eq!((&posted["launchedBy"], &posted["origin"], &posted["takeoverFrom"]), (&"supraman/demo".into(), &"supraman/demo".into(), &"foreman/demo".into()), "{posted}");
 
         let (_, recorded) = MintedSessions::find(home.path(), NAME).unwrap();
         assert_eq!(recorded.launched_by, "foreman/demo", "the record is the workspace's, which relabels it on its own mint");
-        assert!(header().is_ok());
+        assert!(remint().is_ok());
         let posts = mints(&fake);
         assert_eq!(posts.len(), 3, "kept.json holds the moved label: one plain mint");
         assert_eq!((&posts[2]["launchedBy"], posts[2].get("takeoverFrom")), (&"supraman/demo".into(), None));
 
         let token = sessions.token_of(NAME).unwrap();
         keeper.write(NAME, &fake.mcp_url(), &token, None, &[]).unwrap();
-        assert!(header().is_ok());
+        assert!(remint().is_ok());
         let posts = mints(&fake);
         assert_eq!(posts.len(), 5, "the label forgotten, the takeover 409s on the moved row and the plain mint takes it");
         assert_eq!((&posts[3]["takeoverFrom"], &posts[4]["launchedBy"], posts[4].get("takeoverFrom")), (&"foreman/demo".into(), &"supraman/demo".into(), None));
@@ -1054,13 +1055,17 @@ mod tests {
     }
 
     #[test]
-    fn header_without_a_record_or_a_kept_token_says_so_without_a_token() {
+    fn header_is_the_kept_token_or_the_placeholder_and_logs_why() {
         let home = tempfile::tempdir().unwrap();
-        let keeper = Keeper::new(home.path(), &home.path().join("mcp"), Arc::new(supraman_core::secret::MemoryStore::default()));
-        let never = |_: &str, _: &str| -> bool { panic!("nothing to ask Workman about") };
-        let e = header(&keeper, "hand-x-1", || Bearer::SignedOut, &HttpMinter::default(), never).unwrap_err();
-        assert!(e.contains("no Workman token is kept for hand-x-1"), "{e}");
-        assert!(header(&keeper, "../x", || Bearer::SignedOut, &HttpMinter::default(), never).is_err());
+        Keeper::open(home.path()).keep_token("hand-a-1", "fake-kept").unwrap();
+        assert_eq!(header(Some(home.path()), "hand-a-1"), header_of("fake-kept"));
+        assert_eq!(header(Some(home.path()), "hand-x-1"), NO_TOKEN_HEADER);
+        assert_eq!(header(Some(home.path()), "../x"), NO_TOKEN_HEADER);
+        assert_eq!(header(None, "hand-a-1"), NO_TOKEN_HEADER);
+        let log = std::fs::read_to_string(home.path().join("logs").join("mcp-header.log")).unwrap();
+        let said: Vec<&str> = log.lines().map(|l| l.split_once(' ').unwrap().1).collect();
+        assert_eq!(said[..2], ["hand-a-1 kept", "hand-x-1 placeholder: no Workman token is kept for hand-x-1"]);
+        assert!(said[2].starts_with(r#"../x placeholder: not a session name"#) && said.len() == 3 && !log.contains("fake-kept"), "{log}");
     }
 
     #[test]

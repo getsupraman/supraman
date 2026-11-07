@@ -144,6 +144,9 @@ fn failure_text(f: Failure) -> String {
 
 /// `sm`'s command line, without the program name.
 pub fn cli(args: Vec<String>) -> ExitCode {
+    if args.first().map(String::as_str) == Some("mcp-header") {
+        return mcp_header(&args[1..]);
+    }
     clean_install();
     // A hook must never break the session: exit 0 whatever the arguments or the outcome.
     if args.first().map(String::as_str) == Some("hook") {
@@ -195,16 +198,23 @@ pub fn smw(args: Vec<String>) -> ExitCode {
     }
 }
 
-/// A session's `headersHelper` (not in the usage): its Workman `Authorization` header as claude reads it, minted
-/// afresh when Workman refuses the kept one (`supraman_supervisor::header`); never on stderr.
-fn mcp_header(home: &std::path::Path, name: &str) -> Result<(), Failure> {
-    use supraman_supervisor::{Bearer, HttpMinter, Keeper};
-    let bearer = || Bearer::of(supraman_supervisor::bearer(&supraman_workman::Auth::open(home)));
-    let refused = |url: &str, token: &str| supraman_workman::refuses(url, token, std::time::Duration::from_secs(5));
-    let header = supraman_supervisor::header(&Keeper::open(home), name, bearer, &HttpMinter::default(), refused)
-        .map_err(|e| Failure::Refused(format!("error: {e}")))?;
-    println!("{header}");
-    Ok(())
+/// A session's `headersHelper` (not in the usage): one `Authorization` header line on stdout and exit 0 whatever
+/// the arguments or the outcome, since anything else makes claude fall back to its own sign-in
+/// (`supraman_supervisor::header`); before any start-up work of `sm`.
+fn mcp_header(args: &[String]) -> ExitCode {
+    use std::io::Write as _;
+    std::panic::set_hook(Box::new(|_| {}));
+    let line = std::panic::catch_unwind(|| {
+        let (home, name) = match args {
+            [flag, home, name] if flag == "--home" => (Some(std::path::PathBuf::from(home)), name.as_str()),
+            [flag, hex, name] if flag == "--home-hex" => (supraman_claude::mcp_header_home(hex), name.as_str()),
+            _ => (None, ""),
+        };
+        supraman_supervisor::header(home.as_deref(), name)
+    });
+    let line = line.unwrap_or_else(|_| supraman_supervisor::header(None, ""));
+    let _ = writeln!(std::io::stdout(), "{line}");
+    ExitCode::SUCCESS
 }
 
 /// The leftovers of an update in the install this exe runs from (`supraman_core::install::cleanup`).
@@ -255,11 +265,6 @@ fn run(args: &[String]) -> Result<(), Failure> {
         #[cfg(feature = "probes")]
         ["probe", rest @ ..] => probe_cmd(rest),
         ["release", rest @ ..] => release::release(rest),
-        ["mcp-header", "--home", home, name] => mcp_header(std::path::Path::new(home), name),
-        ["mcp-header", "--home-hex", hex, name] => {
-            let home = supraman_claude::mcp_header_home(hex).ok_or_else(|| Failure::Usage(format!("not a hex home: {hex}")))?;
-            mcp_header(&home, name)
-        }
         ["update", rest @ ..] => update::update(rest),
         ["plugin", "install", dir] => {
             let exe = std::env::current_exe().map_err(|e| Failure::Usage(format!("cannot locate sm.exe: {e}")))?;
