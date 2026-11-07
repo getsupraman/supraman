@@ -124,7 +124,6 @@ fn a_later_pick_that_conflicts_stops_continue_needs_the_files_staged_and_then_fi
     let old = git(&f, &f.worktree, &["rev-parse", "HEAD"]);
     assert_eq!(stopped(&f, &commits), Rebased::Conflicted);
     assert_eq!(state(&f), OperationState::Rebase { external: false }, "GitMan's marker in the rebase's folder");
-    assert!(std::fs::read_to_string(f.dir.join(".git/worktrees/wt/MERGE_MSG")).unwrap().contains("Conflicts:"));
 
     let side = side(&f);
     assert!(matches!(write(&side, |s| wip::step(s, Step::ContinueRebase)), Err(WriteError::Refused(rebase::STAGE_FIRST))));

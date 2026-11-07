@@ -116,11 +116,10 @@ pub(crate) fn start(s: &Session, base: &str, branch: &str, todo: &str, message: 
 }
 
 /// `rebase --continue` with every commit's message kept: the stopped commit's without git's commented
-/// "Conflicts:" section (in `MERGE_MSG`, or the rebase's `message` for an older git). Refused while a conflicted file is not staged.
+/// "Conflicts:" section. Refused while a conflicted file is not staged.
 pub fn continue_rebase(s: &Session) -> Result<Rebased, WriteError> {
     let marker = read_marker(s);
     strip_conflicts(&rebase_dir(s).join("message"))?;
-    strip_conflicts(&s.writer().dirs().git_dir.join("MERGE_MSG"))?;
     let out = s.run(&step_call("--continue"))?;
     let said = format!("{}\n{}", text(&out.stderr), text(&out.stdout)).to_lowercase();
     if !out.success() && (said.contains("edit all merge conflicts") || said.contains("unmerged files")) {
