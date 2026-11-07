@@ -35,12 +35,16 @@ struct Marker {
     from: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     autostash: Option<Autostashed>,
+    /// A rebase of a branch other than HEAD's is not kept for Undo.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unrecorded: bool,
 }
 
+/// The work in progress a write stashed as `name` to put back after it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct Autostashed {
-    sha: String,
-    name: String,
+pub struct Autostashed {
+    pub sha: String,
+    pub name: String,
 }
 
 /// What became of the stash a rebase made of the work in progress.
@@ -87,19 +91,30 @@ pub fn reword(s: &Session, sha: &str, message: &str) -> Result<Rebased, WriteErr
     let commits: Vec<String> = text(&s.output(&Call::new(&["rev-list", "--reverse", "--first-parent", &range]))?).lines().map(str::to_string).collect();
     let todo: String = commits.iter().enumerate().map(|(i, c)| format!("{} {c}
 ", if i == 0 { "reword" } else { "pick" })).collect();
-    start(s, &format!("{sha}^"), &branch, &todo, message, &autostash_name(sha))
+    start(s, &format!("{sha}^"), &branch, Some((&todo, message)), &autostash_name(sha))
 }
 
-/// `rebase -i <base> <branch>` with `todo` and `message` copied in by its editors, the work in progress stashed
-/// as `stash_name` first and popped after.
-pub(crate) fn start(s: &Session, base: &str, branch: &str, todo: &str, message: &str, stash_name: &str) -> Result<Rebased, WriteError> {
-    let from = rev(s, "HEAD")?;
+/// Rebases the local branch `branch` onto `onto` with git's own todo, the work in progress stashed first and
+/// popped after; kept for Undo when `branch` is HEAD's.
+pub fn onto(s: &Session, branch: &str, onto: &str) -> Result<Rebased, WriteError> {
+    if operation_state(&s.writer().dirs().git_dir) != OperationState::None {
+        return Err(WriteError::Refused(UNDER_WAY));
+    }
+    start(s, onto, branch, None, &format!("GitMan autostash before rebasing {branch}"))
+}
+
+/// `rebase -i <base> <branch>`: with `script` its todo and message copied in by its editors, else git's own
+/// todo; the work in progress stashed as `stash_name` first and popped after.
+pub(crate) fn start(s: &Session, base: &str, branch: &str, script: Option<(&str, &str)>, stash_name: &str) -> Result<Rebased, WriteError> {
+    let from = rev(s, &format!("refs/heads/{branch}"))?;
+    let head = text(&s.run(&Call::new(&["symbolic-ref", "-q", "--short", "HEAD"]))?.stdout).trim().to_string();
     let autostash = autostash(s, stash_name)?;
-    let marker = Marker { from, autostash };
-    let prepared = Prepared::new(&s.writer().dirs().git_dir, todo, message)?;
-    let rebase = Call::new(&[REBASE_PINS, &["rebase", "-i", base, branch]].concat())
-        .env("GIT_SEQUENCE_EDITOR", copy_over(&prepared.todo))
-        .editor(copy_over(&prepared.message));
+    let marker = Marker { from, autostash, unrecorded: head != branch };
+    let prepared = script.map(|(todo, message)| Prepared::new(&s.writer().dirs().git_dir, todo, message)).transpose()?;
+    let rebase = match &prepared {
+        Some(prepared) => Call::new(&[REBASE_PINS, &["rebase", "-i", base, branch]].concat()).env("GIT_SEQUENCE_EDITOR", copy_over(&prepared.todo)).editor(copy_over(&prepared.message)),
+        None => Call::new(&[REBASE_PINS, &["rebase", "-i", "--empty=drop", base, branch]].concat()).env("GIT_SEQUENCE_EDITOR", "true").editor("true"),
+    };
     let out = s.run(&rebase)?;
     drop(prepared);
     if out.success() && !under_way(s) {
@@ -170,6 +185,9 @@ fn stepped(s: &Session, marker: Option<Marker>, what: &str, out: &supraman_core:
 /// that Undo puts back.
 fn done(s: &Session, marker: &Marker) -> Result<Rebased, WriteError> {
     let autostash = pop(s, marker.autostash.as_ref());
+    if marker.unrecorded {
+        return Ok(Rebased::Done { head: rev(s, "HEAD")?, autostash });
+    }
     let status = crate::status(s.writer().repo())?;
     let paths: Vec<&str> = status.entries.iter().flat_map(|e| [Some(e.path.as_str()), e.orig_path.as_deref()]).flatten().collect();
     let snapshot = s.snapshot(&paths, "After reword")?;
@@ -178,7 +196,7 @@ fn done(s: &Session, marker: &Marker) -> Result<Rebased, WriteError> {
 }
 
 /// Stashes the work in progress as `name`, untracked files too, when there is any.
-fn autostash(s: &Session, name: &str) -> Result<Option<Autostashed>, WriteError> {
+pub(crate) fn autostash(s: &Session, name: &str) -> Result<Option<Autostashed>, WriteError> {
     if crate::status(s.writer().repo())?.entries.is_empty() {
         return Ok(None);
     }
@@ -186,7 +204,8 @@ fn autostash(s: &Session, name: &str) -> Result<Option<Autostashed>, WriteError>
     Ok(Some(Autostashed { sha: rev(s, "refs/stash")?, name: name.to_string() }))
 }
 
-fn pop(s: &Session, autostash: Option<&Autostashed>) -> Autostash {
+/// Puts `autostash` back and drops it; a conflict or a refusal keeps it, saying why.
+pub(crate) fn pop(s: &Session, autostash: Option<&Autostashed>) -> Autostash {
     let Some(Autostashed { sha, name }) = autostash else { return Autostash::None };
     let kept = |why: String| Autostash::Kept { name: name.clone(), why };
     match stash::apply(s, sha, true) {

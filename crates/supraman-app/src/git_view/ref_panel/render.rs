@@ -190,6 +190,10 @@ impl RefPanel {
             .border_color(cx.theme().colors().border_variant)
             .child(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx))))
             .child(self.header(section, open, cx))
+            .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.open_section_menu(section, e.position, cx);
+            }))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.tree.toggle(key);
                 cx.emit(RefEvent::Layout);

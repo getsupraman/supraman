@@ -80,6 +80,16 @@ impl LockSet {
         LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
     }
 
+    /// A checkout, a merge or a worktree's change: HEAD, the branches, the index and the work tree, the stash.
+    pub fn checkout() -> LockSet {
+        LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
+    }
+
+    /// A branch or a tag made, renamed or deleted, or a branch moved: the refs and the branch config.
+    pub fn branch() -> LockSet {
+        LockSet::writes(&[Resource::Config, Resource::RepoSettings])
+    }
+
     pub fn access(&self, resource: Resource) -> Option<Access> {
         self.0.get(&resource).copied()
     }

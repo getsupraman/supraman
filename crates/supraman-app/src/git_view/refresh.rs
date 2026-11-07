@@ -224,6 +224,7 @@ impl GitView {
         self.heads = first.heads;
         let before = std::mem::replace(&mut self.wip, first.wip);
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
+        self.hand_refs(first.all.clone(), &first.status, cx);
         self.measure_lanes();
         self.seek = None;
         match self.reveal_after.take() {

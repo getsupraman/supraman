@@ -176,7 +176,7 @@ impl Fixture {
         use crate::write::{Call, LockSet, Writer, rebase};
         Writer::open(repo).unwrap().run(LockSet::rebase(), |s| {
             let branch = crate::parse::text(&s.output(&Call::new(&["symbolic-ref", "--short", "HEAD"]))?).trim().to_string();
-            rebase::start(s, &format!("{sha}^"), &branch, todo, "Reworded\n", &rebase::autostash_name(sha))
+            rebase::start(s, &format!("{sha}^"), &branch, Some((todo, "Reworded\n")), &rebase::autostash_name(sha))
         }).unwrap()
     }
 

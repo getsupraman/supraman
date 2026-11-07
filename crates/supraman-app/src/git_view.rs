@@ -1,6 +1,7 @@
 //! The Git tab of one repository: its commit graph loaded off the UI thread page by page, its panels, and the
 //! writes they make through the tab's one [`write_gate::WriteGate`].
 
+pub mod branch;
 mod cap;
 mod cells;
 mod colours;
@@ -66,6 +67,7 @@ use colours::Palette;
 use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
+use branch::{BranchActions, OpenGit};
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 use write_gate::WriteGate;
@@ -203,6 +205,8 @@ pub struct GitView {
     gate: Entity<WriteGate>,
     stash: Entity<StashActions>,
     _stash_events: Subscription,
+    branch: Entity<BranchActions>,
+    _branch_events: Subscription,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -210,6 +214,7 @@ pub struct GitView {
 }
 
 impl EventEmitter<GitEvent> for GitView {}
+impl EventEmitter<OpenGit> for GitView {}
 
 impl GitView {
     #[cfg(test)]
@@ -231,6 +236,8 @@ impl GitView {
             let undo_events = cx.subscribe(&undo, Self::undo_event);
             let stash = cx.new(|cx| StashActions::new(gate.clone(), hits.clone(), cx));
             let stash_events = cx.subscribe(&stash, Self::stash_event);
+            let branch = cx.new(|cx| BranchActions::new(gate.clone(), hits.clone(), cx));
+            let branch_events = cx.subscribe(&branch, Self::branch_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -276,6 +283,8 @@ impl GitView {
                 gate,
                 stash,
                 _stash_events: stash_events,
+                branch,
+                _branch_events: branch_events,
                 focus_summary: false,
                 focus,
             };
@@ -380,6 +389,8 @@ impl GitView {
             RefEvent::Layout => self.keep_layout(cx),
             RefEvent::Shown(sha) => self.reveal_after = Some(sha.clone()),
             RefEvent::Stash(act, stash) => self.stash_act(*act, stash.clone(), cx),
+            RefEvent::Menu(path, position) => self.ref_menu(path, *position, cx),
+            RefEvent::Checkout(path) => self.ref_double_clicked(path, cx),
         }
     }
 
@@ -594,6 +605,8 @@ impl GitView {
                 self.panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
+                self.branch.update(cx, |b, cx| b.set_repo(first.repo.clone(), cx));
+                self.hand_refs(first.all.clone(), &first.status, cx);
                 if let Some(debounces) = refresh::follows() {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
@@ -680,10 +693,13 @@ impl GitView {
             return div().text_color(palette.muted).child(SharedString::from(footer)).into_any_element();
         };
         let cell = match col {
-            0 => {
-                let view = ref_cell(&row.row, self.listed() == Some(ix));
-                cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
-            }
+            0 => match self.branch.read(cx).inline_field(&row.sha) {
+                Some(field) => cells::naming(ix, field, &self.hits),
+                None => {
+                    let view = ref_cell(&row.row, self.listed() == Some(ix));
+                    cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
+                }
+            },
             1 => graph::cell(row, !row.row.refs.is_empty(), palette),
             2 if row.wip() => return self.wip_message(ix, palette, cx),
             2 => cells::message(ix, row, None, palette),
@@ -817,6 +833,7 @@ impl Render for GitView {
             window.focus(self.table.focus_handle(), cx);
         }
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
+        self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
@@ -842,7 +859,7 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()))
+            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
