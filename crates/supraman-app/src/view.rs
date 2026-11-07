@@ -61,6 +61,7 @@ mod left;
 mod links;
 mod manage;
 mod menu;
+pub(crate) mod occupancy;
 pub(crate) mod notices;
 mod reopen;
 mod results;
@@ -319,6 +320,7 @@ pub struct FleetView {
     pub compose: Option<Compose>,
     writes: writes::Writes,
     work_live: Rc<RefCell<Vec<LiveSession>>>,
+    occupancy: occupancy::Live,
     pub work_inbox: Entity<WorkInbox>,
     pub menu: Option<ContextMenu>,
     pub confirm: Option<Confirm>,
@@ -804,6 +806,7 @@ impl FleetView {
             compose: None,
             writes: writes::Writes::default(),
             work_live: Rc::default(),
+            occupancy: occupancy::Live::default(),
             work_inbox,
             menu: None,
             confirm: None,
@@ -1295,6 +1298,7 @@ impl FleetView {
                     .filter(|s| fleet::attachable(s, &s.health(now)))
                     .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
                     .collect();
+                self.occupancy.keep(&sessions, now);
                 self.sessions = sessions;
                 self.drop_deleted();
                 self.main_repos = refresh.main_repos;

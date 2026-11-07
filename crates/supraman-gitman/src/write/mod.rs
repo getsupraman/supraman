@@ -3,6 +3,7 @@
 //! Blocking: callers run it on a background executor.
 
 mod guard;
+pub mod journal;
 mod locks;
 mod quiet;
 mod snapshot;
@@ -44,6 +45,8 @@ pub enum WriteError {
     PathsAndInput { args: String },
     #[error("{what}: {source}")]
     Io { what: String, source: std::io::Error },
+    #[error("undo journal: {0}")]
+    Journal(String),
 }
 
 impl From<GitError> for WriteError {

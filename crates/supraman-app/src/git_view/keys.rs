@@ -10,7 +10,7 @@ use super::diff::{self, FileStep};
 use super::load::GraphRow;
 use super::{GitView, Selected};
 
-gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory]);
+gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo]);
 
 pub const KEY_CONTEXT: &str = "GitGraph";
 /// The whole tab's: the ref panel's keys work from the graph, the panels and the viewer.
@@ -30,6 +30,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-alt-f", FilterRefs, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-p", Find, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-shift-h", FindHistory, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-z", Undo, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-y", Redo, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-z", Redo, Some(TAB_CONTEXT)),
     ]);
     diff::bind_keys(cx);
 }

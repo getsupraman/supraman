@@ -65,6 +65,11 @@ impl LockSet {
         LockSet::writes(&[Resource::Index, Resource::RepoSettings])
     }
 
+    /// An undo or a redo: it may move HEAD, rewrite the index and a branch's upstream.
+    pub fn undo() -> LockSet {
+        LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
+    }
+
     pub fn access(&self, resource: Resource) -> Option<Access> {
         self.0.get(&resource).copied()
     }

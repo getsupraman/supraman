@@ -165,6 +165,13 @@ impl GitView {
         }
     }
 
+    /// After a write of the tab's own: the watchers refresh once it settles, else this does.
+    pub(super) fn refresh_after_write(&mut self, cx: &mut Context<Self>) {
+        if self.follow.live.is_none() {
+            self.refresh_graph(None, cx);
+        }
+    }
+
     /// The refs, the WIP and the first page read again, the commits loaded below it kept while the walk below is
     /// the same; `files` the work dir's changed ones.
     pub fn refresh_graph(&mut self, files: Option<HashSet<String>>, cx: &mut Context<Self>) {
@@ -227,6 +234,7 @@ impl GitView {
             self.restore(anchor);
         }
         self.reload_diff(files.as_ref(), cx);
+        self.refresh_undo(cx);
         #[cfg(test)]
         {
             self.follow.refreshes += 1;
