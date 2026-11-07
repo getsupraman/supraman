@@ -5,6 +5,8 @@ pub mod branch;
 mod cap;
 mod cells;
 mod colours;
+mod columns;
+pub mod commit;
 mod details;
 pub mod diff;
 pub mod find;
@@ -68,6 +70,7 @@ use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
 use branch::{BranchActions, OpenGit};
+use commit::CommitActions;
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 use write_gate::WriteGate;
@@ -207,6 +210,11 @@ pub struct GitView {
     _stash_events: Subscription,
     branch: Entity<BranchActions>,
     _branch_events: Subscription,
+    commit: Entity<CommitActions>,
+    _commit_events: Subscription,
+    /// The graph's columns hidden, by id.
+    hidden_columns: Vec<String>,
+    column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -238,6 +246,8 @@ impl GitView {
             let stash_events = cx.subscribe(&stash, Self::stash_event);
             let branch = cx.new(|cx| BranchActions::new(gate.clone(), hits.clone(), cx));
             let branch_events = cx.subscribe(&branch, Self::branch_event);
+            let commit = cx.new(|cx| CommitActions::new(gate.clone(), hits.clone(), cx));
+            let commit_events = cx.subscribe(&commit, Self::commit_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -285,6 +295,10 @@ impl GitView {
                 _stash_events: stash_events,
                 branch,
                 _branch_events: branch_events,
+                commit,
+                _commit_events: commit_events,
+                hidden_columns: Vec::new(),
+                column_menu: None,
                 focus_summary: false,
                 focus,
             };
@@ -309,6 +323,7 @@ impl GitView {
 
     fn open_at(&mut self, key: String, saved: &GitSizes, cx: &mut Context<Self>) {
         let (opening, save) = layout::opening(&key, saved, cx);
+        self.hidden_columns = layout::hidden_columns(cx);
         self.apply(&opening.sizes, cx);
         self.own_graph = opening.own_graph;
         self.key = Some(key);
@@ -376,6 +391,7 @@ impl GitView {
                 let (stash, message) = (stash.clone(), message.clone());
                 self.stash.update(cx, |s, cx| s.set_message(stash, message, cx));
             }
+            PanelEvent::FileMenu(click) => self.file_menu(click.clone(), cx),
         }
     }
 
@@ -706,6 +722,7 @@ impl GitView {
             3 => cells::date(row, palette),
             _ => cells::sha(row, palette),
         };
+        let cell = self.commit_row(ix, cell, cx);
         self.stash_row(ix, cell, cx)
     }
 
@@ -713,16 +730,23 @@ impl GitView {
         self.trim_tail(cx);
         let palette = Palette::of(cx.theme());
         let footer = usize::from(self.paging || self.page_error.is_some());
-        Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
+        let shown = self.shown_columns();
+        let all = columns(self.graph_max);
+        let (cols, widths): (Vec<Column>, Vec<Pixels>) = shown.iter().map(|i| (all[*i].clone(), self.widths[*i])).unzip();
+        let (painted, resized) = (shown.clone(), shown);
+        Table::new(TABLE, &self.table, &self.hits, cols, &widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
             .row_height(px(graph::ROW))
             .footer(footer)
             .on_select(|this: &mut GitView, _, _, cx| this.stepped(cx))
             .on_click(|this: &mut GitView, _, _, cx| this.settled(cx))
-            .on_resize(|this: &mut GitView, widths, cx| {
-                this.widths = widths;
+            .on_resize(move |this: &mut GitView, widths, cx| {
+                for (width, i) in widths.into_iter().zip(&resized) {
+                    this.widths[*i] = width;
+                }
                 this.keep_layout(cx);
                 cx.notify();
             })
+            .on_header_menu(|this: &mut GitView, position, _, cx| this.header_menu(position, cx))
             .on_near_end(NEAR_END, |this: &mut GitView, _, cx| this.load_more(cx))
             .render(cx)
             .into_any_element()
@@ -859,10 +883,11 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()))
+            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
             .children(self.render_find())
+            .children(self.render_column_menu(cx))
     }
 }

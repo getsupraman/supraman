@@ -83,6 +83,8 @@ pub enum RefAct {
     PruneWorktrees,
     /// The ref panel's own: hide, solo, a stash's.
     Panel(RefAction),
+    /// A commit's own: cherry-pick, reset, revert, …
+    Commit(crate::git_view::commit::CommitAct),
 }
 
 /// What a menu was opened on.
@@ -198,7 +200,7 @@ fn merge_items(menu: &mut RefMenu<RefAct>, clicked: &str, local: bool, sha: &str
 }
 
 /// Create branch here, and the tags group's Create tag here and Create annotated tag here.
-fn commit_items(menu: &mut RefMenu<RefAct>, sha: &str) {
+pub(crate) fn commit_items(menu: &mut RefMenu<RefAct>, sha: &str) {
     menu.add(Group::Commit, item("ref-create-branch", "Create branch here", RefAct::CreateBranch { at: sha.into() }));
     menu.add(Group::Copy, item("ref-copy-sha", "Copy commit sha", RefAct::Copy { text: sha.into(), what: "the commit sha" }));
     menu.add(Group::Tags, item("ref-create-tag", "Create tag here", RefAct::CreateTag { at: sha.into(), annotated: false }));

@@ -60,12 +60,17 @@ pub fn amendable(repo: &Repo, sha: &str) -> Result<Amendable, GitError> {
         return Ok(if above.is_some() { Amendable::OlderDetached } else { Amendable::Detached });
     }
     let name = text(&branch.stdout).trim().to_string();
-    let remotes = repo.output(&["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/remotes"], None)?;
-    let pushed = !text(&remotes).trim().is_empty();
+    let pushed = pushed(repo, sha)?;
     Ok(match above {
         Some(above) => Amendable::Older { name, above, pushed },
         None => Amendable::Branch { name, pushed },
     })
+}
+
+/// Whether a remote-tracking branch holds `sha`; blocking.
+pub fn pushed(repo: &Repo, sha: &str) -> Result<bool, GitError> {
+    let remotes = repo.output(&["for-each-ref", "--count=1", "--format=%(refname)", "--contains", sha, "refs/remotes"], None)?;
+    Ok(!text(&remotes).trim().is_empty())
 }
 
 /// How many commits a reword of `sha` rebases: it is below HEAD on HEAD's first-parent chain, and it and every

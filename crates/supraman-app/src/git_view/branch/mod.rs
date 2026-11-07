@@ -24,6 +24,7 @@ use supraman_ui::menu::{ContextMenu, MenuItem};
 
 pub use dialog::{NameAsk, NameDialog};
 pub use view::{DraggedPill, OpenGit};
+pub(crate) use view::{group_subject, pill_graph_items};
 use menu::{Dragged, Facts, RefAct, Subject};
 
 use super::ref_panel::RefAction;
@@ -46,6 +47,8 @@ pub enum BranchEvent {
     Panel(RefAction),
     /// Name a branch or a light tag at `at`: in its row when the graph shows it, else in the dialog.
     Name(NameAsk),
+    /// A commit's, the WIP row's or a file's item.
+    Commit(crate::git_view::commit::CommitAct),
 }
 
 /// A question before a write.
@@ -181,6 +184,10 @@ impl BranchActions {
         self.menu.as_ref().map(|m| m.items.iter().map(|i| i.label.clone()).collect()).unwrap_or_default()
     }
 
+    pub(crate) fn writer(&self) -> Option<Writer> {
+        self.writer.clone()
+    }
+
     pub(crate) fn top(&self) -> Option<PathBuf> {
         self.writer.as_ref().map(|w| w.dirs().top.clone())
     }
@@ -282,6 +289,7 @@ impl BranchActions {
             }
             RefAct::PruneWorktrees => self.request(Doing::Plain("Pruned the worktrees".into()), LockSet::branch(), branch::prune_worktrees, cx),
             RefAct::Panel(action) => cx.emit(BranchEvent::Panel(action)),
+            RefAct::Commit(act) => cx.emit(BranchEvent::Commit(act)),
         }
         cx.notify();
     }
@@ -435,6 +443,38 @@ impl BranchActions {
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
                 let items = menu::build(&subject, &facts).items();
                 this.show_menu(subject.title(), items, position, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The graph's menu of a commit at `sha` with its branch groups `subjects` (a pill's one, a row's every one),
+    /// once its relation to HEAD and its parents are read off the UI thread; `graph` the ref panel's items.
+    pub fn open_commit_menu(&mut self, subjects: Vec<Subject>, sha: String, graph: Vec<MenuItem<RefAct>>, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
+        let head = match &self.refs.head {
+            Head::Branch { sha, .. } => sha.clone(),
+            Head::Detached { sha } => Some(sha.clone()),
+        };
+        let at = sha.clone();
+        let read = cx.background_spawn(async move {
+            let relation = head.and_then(|head| relation(writer.repo(), &at, &head).ok());
+            (relation, supraman_gitman::write::commit::parent_count(writer.repo(), &at).unwrap_or(1))
+        });
+        cx.spawn(async move |this, cx| {
+            let (relation, parents) = read.await;
+            this.update(cx, |this, cx| {
+                let Some(top) = this.top() else { return };
+                let refs = this.refs.clone();
+                let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
+                let commit = crate::git_view::commit::menu::CommitFacts { sha: &sha, parents, refs: &refs, under_way: this.under_way };
+                let items = crate::git_view::commit::menu::row_menu(&subjects, &facts, &commit);
+                let title = match subjects.as_slice() {
+                    [one] => one.title(),
+                    _ => short_sha(&sha).to_string(),
+                };
+                this.show_menu(title, items, position, cx);
             })
             .ok();
         })

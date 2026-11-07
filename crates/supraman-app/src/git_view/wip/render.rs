@@ -15,6 +15,7 @@ use theme::ActiveTheme as _;
 
 use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};
 use crate::git_view::GitView;
+use crate::git_view::commit::files::{FileClick, Listed};
 use crate::git_view::cells::pill_box;
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::details::{FileView, PANEL_STEP, PanelEvent, files, placeholder};
@@ -88,6 +89,13 @@ impl WipPanel {
         })
     }
 
+    /// A row's right-click: the tab's file menu of `section`'s file or folder.
+    fn row_menu(section: Section) -> files::OnMenu<WipPanel> {
+        Rc::new(move |_: &mut WipPanel, path: &str, folder: bool, position, cx: &mut Context<WipPanel>| {
+            cx.emit(PanelEvent::FileMenu(FileClick { from: Listed::Wip(section), path: path.to_string(), folder, position }));
+        })
+    }
+
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let sort = files::sort_button(&self.hits, "wip", self.order, |this: &mut WipPanel, order, cx| this.set_order(order, cx), cx);
         let toggle = files::view_toggle(&self.hits, "wip", self.view, |this: &mut WipPanel, view, cx| this.set_view(view, cx), cx);
@@ -102,9 +110,9 @@ impl WipPanel {
             FileView::Path => {
                 let rows = shown.clone();
                 let file = move |ix: usize| rows.files(section).get(ix).map(|c| (c.path.clone(), c.kind));
-                files::path_list(id, &list.paths, &self.hits, shown.files(section).len(), file, picked, Some(Self::row_tail(section)), cx)
+                files::path_list(id, &list.paths, &self.hits, shown.files(section).len(), file, picked, Some(Self::row_tail(section)), Some(Self::row_menu(section)), cx)
             }
-            FileView::Tree => files::tree_list(id, &list.tree, &self.hits, move |this: &mut WipPanel, path, cx| picked(this, path.to_string(), cx), Some(Self::row_tail(section)), cx),
+            FileView::Tree => files::tree_list(id, &list.tree, &self.hits, move |this: &mut WipPanel, path, cx| picked(this, path.to_string(), cx), Some(Self::row_tail(section)), Some(Self::row_menu(section)), cx),
         };
         div()
             .flex()
