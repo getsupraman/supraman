@@ -172,6 +172,11 @@ impl RefPanel {
         self.tree.closed().iter().map(|p| p.to_string()).collect()
     }
 
+    /// Every ref at its tree path, in the panel's order.
+    pub fn entries(&self) -> Arc<Vec<(String, Entry)>> {
+        self.entries.clone()
+    }
+
     pub fn walk(&self) -> &Walk {
         &self.walk
     }

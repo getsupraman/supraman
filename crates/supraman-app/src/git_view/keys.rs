@@ -10,7 +10,7 @@ use super::diff::{self, FileStep};
 use super::load::GraphRow;
 use super::{GitView, Selected};
 
-gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs]);
+gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory]);
 
 pub const KEY_CONTEXT: &str = "GitGraph";
 /// The whole tab's: the ref panel's keys work from the graph, the panels and the viewer.
@@ -28,6 +28,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", OpenFirstFile, c),
         KeyBinding::new("ctrl-j", ToggleRefs, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-alt-f", FilterRefs, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-p", Find, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-h", FindHistory, Some(TAB_CONTEXT)),
     ]);
     diff::bind_keys(cx);
 }
@@ -59,7 +61,7 @@ impl GitView {
     }
 
     /// Selects the row of `sha` as a key does, or seeks it when its page is not loaded.
-    fn go_to(&mut self, sha: Option<gpui::SharedString>, cx: &mut Context<Self>) {
+    pub(super) fn go_to(&mut self, sha: Option<gpui::SharedString>, cx: &mut Context<Self>) {
         let Some(sha) = sha else { return };
         match self.row_of(&sha) {
             Some(ix) => self.select_by_key(Some(ix), cx),

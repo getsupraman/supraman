@@ -695,6 +695,11 @@ impl TextInput {
         self.lit(cx);
     }
 
+    pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     /// Focused, everything selected (Ctrl+Shift+E on the search box).
     pub fn focus_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.line.select_all();

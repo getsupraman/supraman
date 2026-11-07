@@ -236,7 +236,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-work.png"), None, cx).await?;
     println!("shot: {}", shot.display());
-    work_pages(view, &work, &out, cx).await
+    work_pages(view, &work, &out, cx).await?;
+    git_palette(view, &out, cx).await
 }
 
 /// The Work tab's Overview, Activity and the open Ctrl+P palette.
@@ -258,5 +259,24 @@ async fn work_pages(view: &Entity<FleetView>, work: &Entity<crate::work_view::Wo
     let shot = capture(out.join("supraman-work-palette.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     cx.update(|window, cx| work.update(cx, |w, cx| w.close_palette(window, cx)))?;
+    Ok(())
+}
+
+/// A Git tab of a fixture repo with its Ctrl+P palette open.
+async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    let parent = home().join("git-fixture");
+    std::fs::create_dir_all(&parent)?;
+    let fixture = cx.background_executor().spawn(async move { supraman_gitman::fixture::Fixture::new_in(&parent) }).await;
+    let dir = fixture.dir.clone();
+    view.update(cx, |v, cx| v.open_git(dir.clone(), "Git · shop".into(), &Default::default(), cx));
+    let git = crate::selftest::until_app(view, cx, Duration::from_secs(20), "the Git tab", |v, cx| crate::selftest_git::git_tabs(v, cx, &dir).first().map(|(_, g)| g.clone())).await?;
+    crate::selftest::until(view, cx, Duration::from_secs(20), "the graph's rows", |v| v.hits.borrow().contains_key("git-row-0").then_some(())).await?;
+    cx.update(|window, cx| git.update(cx, |g, cx| g.open_find(None, window, cx)))?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the Git palette's rows", |v| v.hits.borrow().contains_key("git-find-selected").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-palette.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
+    drop(fixture);
     Ok(())
 }

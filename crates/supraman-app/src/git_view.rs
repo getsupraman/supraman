@@ -5,6 +5,7 @@ mod cells;
 mod colours;
 mod details;
 pub mod diff;
+pub mod find;
 mod graph;
 mod keys;
 pub mod layout;
@@ -181,6 +182,7 @@ pub struct GitView {
     /// The repo's key in the layout file, once read.
     key: Option<String>,
     own_graph: bool,
+    find: Option<find::Find>,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
     focus: FocusHandle,
 }
@@ -235,6 +237,7 @@ impl GitView {
                 follow: refresh::Follow::default(),
                 key: None,
                 own_graph: false,
+                find: None,
                 focus,
             };
             view.start(saved.clone(), cx);
@@ -244,6 +247,7 @@ impl GitView {
 
     /// Reads the repo's key and the layout file off the UI thread, then opens at the repo's layout.
     fn start(&mut self, saved: GitSizes, cx: &mut Context<Self>) {
+        find::frecency::start(self.home.clone(), cx);
         let ready = layout::ready(self.home.clone(), cx);
         let folder = self.folder.clone();
         let key = cx.background_spawn(async move { layout::key(&folder) });
@@ -692,6 +696,9 @@ impl Render for GitView {
             .key_context(keys::TAB_CONTEXT)
             .on_action(cx.listener(|this, _: &keys::ToggleRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.toggle_shut(cx))))
             .on_action(cx.listener(|this, _: &keys::FilterRefs, _, cx| this.ref_panel.update(cx, |p, cx| p.focus_filter(cx))))
+            .on_action(cx.listener(|this, _: &keys::Find, window, cx| this.open_find(None, window, cx)))
+            .on_action(cx.listener(|this, _: &keys::FindHistory, window, cx| this.open_find(Some(find::entries::HISTORY), window, cx)))
+            .relative()
             .bg(cx.theme().colors().editor_background)
             .text_sm()
             .flex()
@@ -699,5 +706,6 @@ impl Render for GitView {
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
+            .children(self.render_find())
     }
 }
