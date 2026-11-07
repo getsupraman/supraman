@@ -69,6 +69,7 @@ mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
+mod workman_url;
 pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
 
@@ -1242,101 +1243,6 @@ impl FleetView {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
-    }
-
-    pub fn set_workman_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
-        let home = self.home.clone().ok_or("No Supraman home: settings cannot be saved.")?;
-        let origin = supraman_core::validate_workman_url(text)?;
-        let current = self.workman.checked_url().map(str::to_string);
-        if current.as_deref() == Some(origin.as_str()) {
-            return Ok(());
-        }
-        let status = {
-            let (auth, current) = (crate::signin::auth(&home), current.clone());
-            cx.background_executor().spawn(async move { current.map(|c| auth.status(&c)) })
-        };
-        cx.spawn(async move |this, cx| {
-            let signed_in = matches!(status.await, Some(supraman_workman::AuthStatus::SignedIn { .. }));
-            this.update(cx, |this, cx| match current {
-                Some(current) if signed_in => this.sign_in_to(origin, Some(current), cx),
-                _ => this.save_workman_url(home, origin, None, cx),
-            })
-            .ok();
-        })
-        .detach();
-        Ok(())
-    }
-
-    /// `origin` into server.json off the UI thread, then a recheck; `left` is the server signed out of once it is saved.
-    fn save_workman_url(&mut self, home: PathBuf, origin: String, left: Option<String>, cx: &mut Context<Self>) {
-        let auth = crate::signin::auth(&home);
-        let saved = cx.background_executor().spawn(async move { auth.save_server(&origin) });
-        cx.spawn(async move |this, cx| {
-            let saved = saved.await;
-            this.update(cx, |this, cx| {
-                this.workman = WorkmanStatus::Checking;
-                match (saved, left) {
-                    (Ok(()), Some(left)) => this.leave_servers(vec![left], cx),
-                    (Ok(()), None) => {}
-                    (Err(e), _) => this.action_error = Some(e),
-                }
-                this.recheck_workman();
-                WorkHub::reconfigure(Some(home), cx);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
-        self.synced_server = Some(origin.clone());
-        let Some(hands) = self.hands.clone() else {
-            return;
-        };
-        let at = origin.clone();
-        let task = cx.background_executor().spawn(async move {
-            let mut hands = hands.lock().unwrap_or_else(|e| e.into_inner());
-            (hands.elsewhere(&at), hands.take_left())
-        });
-        cx.spawn(async move |this, cx| {
-            let (elsewhere, left) = task.await;
-            this.update(cx, |this, cx| {
-                let stale = stale_tabs(&this.tabs, &elsewhere);
-                for tab in this.tabs.iter_mut().filter(|t| t.hand && !t.exited) {
-                    tab.restart_to = stale.contains(&tab.id).then(|| origin.clone());
-                }
-                this.hand_notices.extend(crate::hand::restart_notice(stale.len(), &origin));
-                this.leave_servers(elsewhere.into_iter().filter_map(|(_, o)| o).chain(left).collect(), cx);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn leave_servers(&mut self, origins: Vec<String>, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone().filter(|_| !origins.is_empty()) else {
-            return;
-        };
-        let auth = crate::signin::auth(&home);
-        let current = self.workman.checked_url().map(str::to_string);
-        let origins: Vec<String> = origins.into_iter().filter(|o| current.as_ref() != Some(o) && self.left_servers.insert(o.clone())).collect();
-        if origins.is_empty() {
-            return;
-        }
-        let revoke = cx.background_executor().spawn(async move { origins.iter().filter_map(|o| auth.sign_out(o).err()).collect::<Vec<_>>() });
-        cx.spawn(async move |this, cx| {
-            let failed = revoke.await;
-            if !failed.is_empty() {
-                this.update(cx, |this, cx| {
-                    this.hand_notices.push(format!("The old server's grant was not revoked: {}", failed.join("; ")));
-                    cx.notify();
-                })
-                .ok();
-            }
         })
         .detach();
     }

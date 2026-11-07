@@ -17,7 +17,7 @@ use theme::ActiveTheme as _;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
-use crate::workman_setup::{RECHECK_EVERY, WorkmanStatus};
+use crate::workman_setup::{RECHECK_EVERY, ServerCheck, WorkmanStatus};
 
 pub mod page {
     pub const SESSIONS: &str = "sessions";
@@ -41,6 +41,9 @@ fn pages() -> SettingsPages<SettingsView> {
 pub struct SettingsView {
     home: Option<PathBuf>,
     settings: Settings,
+    /// A change waits for the first read: its toggles flip what was read, never a default.
+    loaded: bool,
+    settings_reads: u64,
     error: Option<String>,
     fleet: WeakEntity<FleetView>,
     pages: SettingsPages<SettingsView>,
@@ -61,6 +64,9 @@ pub struct SettingsView {
     url_error: Option<String>,
     auth: Option<AuthStatus>,
     auth_reads: u64,
+    /// `None` until the first look at server.json and claude's entry for it.
+    server_check: Option<ServerCheck>,
+    server_checks: u64,
     _url_events: Subscription,
     saves: crate::view::writes::Serial,
 }
@@ -141,6 +147,8 @@ impl SettingsView {
         let mut this = Self {
             home,
             settings: Settings::default(),
+            loaded: false,
+            settings_reads: 0,
             error: None,
             fleet,
             pages,
@@ -158,6 +166,8 @@ impl SettingsView {
             url_error: None,
             auth: None,
             auth_reads: 0,
+            server_check: None,
+            server_checks: 0,
             _url_events: url_events,
             saves: Default::default(),
         };
@@ -188,6 +198,10 @@ impl SettingsView {
         self.page
     }
 
+    pub fn loaded(&self) -> bool {
+        self.loaded
+    }
+
     pub fn show(&mut self, page: &str, cx: &mut Context<Self>) {
         self.page = self.pages.resolve(Some(page));
         cx.notify();
@@ -198,17 +212,62 @@ impl SettingsView {
             self.error = Some("No Supraman home (set SUPRAMAN_HOME or APPDATA): settings cannot be saved.".into());
             return;
         };
-        match Settings::load_with_notices(&home) {
-            Ok((settings, notices)) => {
-                self.settings = settings;
-                if !notices.is_empty() {
-                    self.error = Some(notices.join("; "));
-                }
-            }
-            Err(e) => self.error = Some(format!("Cannot read settings.toml: {e}")),
-        }
+        self.read_settings(home.clone(), cx);
         self.read_catalog(home.clone(), cx);
-        self.read_auth(home, cx);
+        self.read_auth(home.clone(), cx);
+        self.check_server(cx);
+    }
+
+    fn read_settings(&mut self, home: PathBuf, cx: &mut Context<Self>) {
+        self.settings_reads += 1;
+        let read = self.settings_reads;
+        cx.spawn(async move |this, cx| {
+            let loaded = cx.background_spawn(async move { Settings::load_with_notices(&home) }).await;
+            this.update(cx, |this, cx| {
+                if this.settings_reads != read {
+                    return;
+                }
+                this.loaded = true;
+                match loaded {
+                    Ok((settings, notices)) => {
+                        this.settings = settings;
+                        if !notices.is_empty() {
+                            this.error = Some(notices.join("; "));
+                        }
+                    }
+                    Err(e) => this.error = Some(format!("Cannot read settings.toml: {e}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// server.json and claude's own `workman` entry, read off the UI thread.
+    pub fn check_server(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else {
+            return;
+        };
+        self.server_checks += 1;
+        let check = self.server_checks;
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_spawn(async move { crate::workman_setup::check_server(&crate::signin::auth(&home), supraman_core::paths::claude_json().as_deref()) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.server_checks == check {
+                    this.server_check = Some(found);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn server_check(&self) -> Option<&ServerCheck> {
+        self.server_check.as_ref()
     }
 
     /// The themes folder is listed and its files parsed off the UI thread.
@@ -334,7 +393,7 @@ impl SettingsView {
         then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
-        let Some(home) = self.home.clone() else {
+        let Some(home) = self.home.clone().filter(|_| self.loaded) else {
             return;
         };
         let previous = self.saves.previous();
@@ -347,6 +406,7 @@ impl SettingsView {
                 match saved {
                     Ok((settings, ())) => {
                         this.settings = settings;
+                        this.settings_reads += 1;
                         this.error = None;
                     }
                     Err(e) => this.error = Some(format!("Cannot save settings.toml: {e}")),
@@ -486,6 +546,15 @@ impl SettingsView {
                 (WorkmanStatus::NotSetUp { .. }, None) => "None: run /workman:setup, or apply a URL here.".to_string(),
                 (_, None) => "Checking…".to_string(),
             })));
+        let warnings = self.server_check.iter().flat_map(|c| c.warnings.iter()).enumerate().map(|(ix, w)| {
+            banner::tinted(status.warning).id(("ws-server-warning", ix)).mt_2().text_xs().child(SharedString::from(w.clone()))
+        });
+        let below = below.children(warnings);
+        let mcp_name = match &self.server_check {
+            None => "checking…".to_string(),
+            Some(ServerCheck { mcp_name: Some(name), .. }) => name.clone(),
+            Some(ServerCheck { mcp_name: None, .. }) => "none: no usable ~/.workman/server.json".to_string(),
+        };
         vec![
             self.render_workman_status(cx),
             row(
@@ -498,6 +567,13 @@ impl SettingsView {
                 ),
                 field.into_any_element(),
                 Some(below.into_any_element()),
+                cx,
+            ),
+            row(
+                "MCP server name",
+                "The name ~/.workman/server.json gives the Workman MCP server, which /workman:setup registers in                  claude's user config. Supraman's sessions are given it as workman; Apply writes workman.",
+                div().id("ws-mcp-name").text_sm().child(SharedString::from(mcp_name)).into_any_element(),
+                None,
                 cx,
             ),
         ]
@@ -519,7 +595,7 @@ impl SettingsView {
             (WorkmanStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
                 (format!("Signed in on {url}, but {why}."), status.warning)
             }
-            (WorkmanStatus::Ready { url, who }, _) => (
+            (WorkmanStatus::Ready { url, who, .. }, _) => (
                 match who {
                     Some(who) => format!("Signed in on {url} as {who}."),
                     None => format!("Signed in on {url}."),
@@ -555,6 +631,7 @@ impl SettingsView {
         }
         controls = controls.child(button::small("ws-check", "Check now", cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             this.fleet.update(cx, |fleet, _| fleet.recheck_workman()).ok();
+            this.check_server(cx);
         })));
         row(
             "Status",

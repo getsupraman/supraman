@@ -1,6 +1,9 @@
 //! One wording for the notice above the tree, Settings → Workman and the Work tab.
 
+use std::path::Path;
 use std::time::Duration;
+
+use supraman_core::{paths, workman_server};
 
 use supraman_workman::{Auth, AuthError, AuthStatus};
 
@@ -10,8 +13,8 @@ const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkmanStatus {
     Checking,
-    /// `who` is the token's name or subject when it says.
-    Ready { url: String, who: Option<String> },
+    /// `who` is the token's name or subject when it says; `warning` is [`supraman_core::workman_server::ServerJson::warning`].
+    Ready { url: String, who: Option<String>, warning: Option<String> },
     NotSignedIn { url: String },
     SignInAgain { url: String, why: String },
     Unreachable { url: String, error: String },
@@ -28,9 +31,6 @@ pub fn detect(auth: Option<&Auth>) -> WorkmanStatus {
         Ok(server) => server,
         Err(e) => return WorkmanStatus::NotSetUp { why: e.to_string() },
     };
-    if let Some(warning) = server.warning() {
-        log::warn!("{warning}");
-    }
     let url = server.origin();
     if let Err(error) = supraman_workman::health(&url, HEALTH_TIMEOUT) {
         return WorkmanStatus::Unreachable { url, error };
@@ -41,13 +41,33 @@ pub fn detect(auth: Option<&Auth>) -> WorkmanStatus {
                 AuthStatus::SignedIn { who, .. } => who,
                 _ => None,
             };
-            WorkmanStatus::Ready { url, who }
+            WorkmanStatus::Ready { url, who, warning: server.warning() }
         }
         Err(AuthError::NotSignedIn { .. }) => WorkmanStatus::NotSignedIn { url },
         Err(AuthError::SignInAgain { why, .. }) => WorkmanStatus::SignInAgain { url, why },
         Err(AuthError::Unreachable { reason, .. }) => WorkmanStatus::Unreachable { url, error: reason },
         Err(e) => WorkmanStatus::SignInAgain { url, why: e.to_string() },
     }
+}
+
+/// Settings → Workman's look at server.json and at claude's own entry for its server.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerCheck {
+    /// server.json's `mcpName`; `None` without a usable server.json, which the status says.
+    pub mcp_name: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+/// Blocking: reads server.json and only the `workman` entry's url in claude's config ([`paths::claude_json`]).
+pub fn check_server(auth: &Auth, claude_json: Option<&Path>) -> ServerCheck {
+    let Ok(server) = auth.server() else {
+        return ServerCheck::default();
+    };
+    let claude = match claude_json {
+        Some(path) => workman_server::claude_warning(&server, path, paths::user_mcp_server(path, workman_server::MCP_NAME)),
+        None => Some("claude's Workman server is not checked: no user home (USERPROFILE is not set).".into()),
+    };
+    ServerCheck { warnings: server.warning().into_iter().chain(claude).collect(), mcp_name: Some(server.mcp_name) }
 }
 
 impl WorkmanStatus {
@@ -63,7 +83,8 @@ impl WorkmanStatus {
 
     pub fn problem(&self) -> Option<String> {
         match self {
-            WorkmanStatus::Checking | WorkmanStatus::Ready { .. } => None,
+            WorkmanStatus::Checking => None,
+            WorkmanStatus::Ready { warning, .. } => warning.clone(),
             WorkmanStatus::NotSetUp { why } => Some(why.clone()),
             WorkmanStatus::NotSignedIn { url } => Some(format!("Not signed in to Workman at {url}, so sessions run without Workman.")),
             WorkmanStatus::SignInAgain { url, why } => {
@@ -142,7 +163,7 @@ mod tests {
 
         oauth.set_access_ttl(60);
         let auth = crate::test_auth::signed_in(&home, fake.base());
-        assert_eq!(detect(Some(&auth)), WorkmanStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()) });
+        assert_eq!(detect(Some(&auth)), WorkmanStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()), warning: None });
         assert!(fake.seen().iter().filter(|s| s.target == "/health").all(|s| s.authorization.is_none()), "/health carries no token");
 
         oauth.fail_refresh(true);
@@ -156,6 +177,42 @@ mod tests {
     }
 
     #[test]
+    fn settings_warns_of_claudes_workman_entry_and_of_another_mcp_name_and_of_neither_once_both_agree() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_json = dir.path().join("user").join(".workman").join("server.json");
+        let claude_json = dir.path().join("user").join(".claude.json");
+        let auth = Auth::with_store(dir.path(), Arc::new(MemoryStore::default())).with_server_json(Some(server_json.clone()));
+        assert_eq!(check_server(&auth, Some(&claude_json)), ServerCheck::default(), "no server.json: the status says so");
+
+        supraman_core::workman_server::save(&server_json, &supraman_core::workman_server::ServerJson::new("https://work.example")).unwrap();
+        let missing = check_server(&auth, Some(&claude_json));
+        assert_eq!(missing.mcp_name.as_deref(), Some("workman"));
+        assert!(matches!(missing.warnings.as_slice(), [w] if w.contains("does not exist")), "{missing:?}");
+
+        let entry = |url: &str| format!(r#"{{"mcpServers":{{"workman":{{"type":"http","url":"{url}","headers":{{"Authorization":"Bearer SENTINEL"}}}}}}}}"#);
+        std::fs::write(&claude_json, entry("https://elsewhere.example/mcp")).unwrap();
+        let differs = check_server(&auth, Some(&claude_json));
+        assert!(matches!(differs.warnings.as_slice(), [w] if w.contains("is not https://work.example/mcp") && !w.contains("SENTINEL")), "{differs:?}");
+
+        std::fs::write(&claude_json, entry("https://work.example/mcp")).unwrap();
+        assert_eq!(check_server(&auth, Some(&claude_json)).warnings, Vec::<String>::new());
+
+        std::fs::write(&server_json, r#"{"url":"https://work.example","mcpName":"ws"}"#).unwrap();
+        let named = check_server(&auth, Some(&claude_json));
+        assert_eq!(named.mcp_name.as_deref(), Some("ws"));
+        assert!(matches!(named.warnings.as_slice(), [w] if w.contains("\"ws\"")), "{named:?}");
+        assert!(check_server(&auth, None).warnings.iter().any(|w| w.contains("not checked")));
+    }
+
+    #[test]
+    fn a_ready_status_carries_server_jsons_warning_as_the_trees_notice() {
+        let warning = Some("names the Workman MCP server \"ws\"".to_string());
+        let ready = WorkmanStatus::Ready { url: "https://work.example".into(), who: None, warning: warning.clone() };
+        assert_eq!(ready.problem(), warning);
+        assert_eq!((ready.fix(), ready.start_warning("demo")), (None, None));
+    }
+
+    #[test]
     fn a_closed_port_is_unreachable_before_any_sign_in() {
         let dir = tempfile::tempdir().unwrap();
         let closed = supraman_workman::fake::closed_base();
@@ -165,7 +222,7 @@ mod tests {
         assert!(down.problem().unwrap().contains(&closed));
         assert!(down.fix().unwrap().contains("Settings → Workman"));
         assert!(down.start_warning("demo").unwrap().contains("unreachable"));
-        assert_eq!(WorkmanStatus::Ready { url: closed, who: None }.start_warning("demo"), None);
+        assert_eq!(WorkmanStatus::Ready { url: closed, who: None, warning: None }.start_warning("demo"), None);
     }
 
     #[test]

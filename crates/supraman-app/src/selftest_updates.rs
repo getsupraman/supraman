@@ -274,6 +274,12 @@ async fn steps(view: &Entity<FleetView>, home: &Path, fake: &FakeWorkman, cx: &m
         sleep(cx, Duration::from_millis(50)).await;
     }
     let handle = handle.ok_or_else(|| anyhow!("Settings did not open within 5 s"))?;
+    for _ in 0..100 {
+        if handle.read_with(cx, |s, _| s.loaded()).map_err(|e| anyhow!("settings window: {e}"))? {
+            break;
+        }
+        sleep(cx, Duration::from_millis(50)).await;
+    }
     let line = handle.read_with(cx, |s, cx| s.updates_line(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     if line != format!("Supraman {VERSION} is available") {
         bail!("Settings → About says {line:?}");

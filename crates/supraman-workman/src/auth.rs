@@ -225,14 +225,10 @@ impl Auth {
         self.server().map(|s| s.origin())
     }
 
-    /// `origin` as the server, its `mcpName` kept; through the one writer, never on the UI thread.
+    /// `origin` as the server under [`workman_server::MCP_NAME`]; through the one writer, never on the UI thread.
     pub fn save_server(&self, origin: &str) -> Result<(), String> {
         let path = self.server_json.as_deref().ok_or_else(|| workman_server::load_from(None).unwrap_err())?;
-        let server = match workman_server::load(path) {
-            Ok(kept) => ServerJson { url: origin.to_string(), ..kept },
-            Err(_) => ServerJson::new(origin),
-        };
-        workman_server::save(path, &server).map_err(|e| format!("Cannot save {}: {e}", path.display()))
+        workman_server::save(path, &ServerJson::new(origin)).map_err(|e| format!("Cannot save {}: {e}", path.display()))
     }
 
     pub fn issuer_of(&self, origin: &str) -> Option<String> {
@@ -785,6 +781,21 @@ pub fn http_browser() -> impl Fn(&str) -> Result<(), String> + Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_server_writes_the_url_under_mcp_name_workman_whole_and_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("user").join(".workman").join("server.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"url":"https://old.example","mcpName":"ws"}"#).unwrap();
+        let auth = Auth::with_store(dir.path(), Arc::new(crate::secret::MemoryStore::default())).with_server_json(Some(path.clone()));
+        auth.save_server("https://new.example").unwrap();
+        let raw: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw, serde_json::json!({"url": "https://new.example", "mcpName": "workman"}));
+        let left: Vec<_> = std::fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["server.json"], "write_atomic leaves no temp file beside it");
+        assert_eq!(auth.server().unwrap(), ServerJson::new("https://new.example"));
+    }
 
     #[test]
     fn form_round_trip_and_origin_split() {

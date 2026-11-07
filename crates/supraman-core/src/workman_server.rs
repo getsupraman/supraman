@@ -5,6 +5,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::paths::UserMcpServer;
+
 /// What a missing or unusable file tells the user to do.
 pub const NOT_SET_UP: &str = "Workman is not set up: run /workman:setup";
 /// The MCP server name `/workman:setup` registers.
@@ -39,6 +41,24 @@ impl ServerJson {
         (self.mcp_name != MCP_NAME).then(|| {
             format!("~/.workman/server.json names the Workman MCP server \"{}\", not \"{MCP_NAME}\"; run /workman:setup to register it as {MCP_NAME}", self.mcp_name)
         })
+    }
+}
+
+/// What claude's user config ([`crate::paths::claude_json`] at `path`) lacks for `server`: a user-scope `workman`
+/// entry whose url is `<origin>/mcp`, as `/workman:setup` registers it. Never quotes claude's url.
+pub fn claude_warning(server: &ServerJson, path: &Path, found: Result<UserMcpServer, String>) -> Option<String> {
+    let shown = path.display();
+    let fix = "run /workman:setup to register it, then restart claude";
+    match found {
+        Err(why) => Some(format!("claude's Workman server is not checked: {why}.")),
+        Ok(UserMcpServer::NoFile) => Some(format!("claude has no Workman server: {shown} does not exist; {fix}.")),
+        Ok(UserMcpServer::Missing) => Some(format!("claude has no user-scope MCP server named \"{MCP_NAME}\" in {shown}; {fix}.")),
+        Ok(UserMcpServer::Url(url)) => {
+            let base = url.as_deref().map(|u| u.trim().trim_end_matches('/')).and_then(|u| u.strip_suffix("/mcp"));
+            (!base.is_some_and(|b| b.eq_ignore_ascii_case(&server.origin()))).then(|| {
+                format!("claude's user-scope \"{MCP_NAME}\" server in {shown} is not {}, the one ~/.workman/server.json names; {fix}.", server.mcp_url())
+            })
+        }
     }
 }
 
@@ -156,6 +176,28 @@ mod tests {
             std::fs::write(&path, bad).unwrap();
             let e = load(&path).unwrap_err();
             assert!(e.starts_with(NOT_SET_UP), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn claude_is_warned_of_until_its_user_workman_entry_is_this_servers_mcp_url() {
+        let server = ServerJson::new("https://work.example");
+        let path = Path::new(r"C:\u\.claude.json");
+        let warn = |found| claude_warning(&server, path, found);
+        for (found, says) in [
+            (Ok(UserMcpServer::NoFile), "does not exist"),
+            (Ok(UserMcpServer::Missing), "no user-scope MCP server named \"workman\""),
+            (Ok(UserMcpServer::Url(None)), "is not https://work.example/mcp"),
+            (Ok(UserMcpServer::Url(Some("https://other.example/mcp?token=SECRET".into()))), "is not https://work.example/mcp"),
+            (Ok(UserMcpServer::Url(Some("https://work.example/x/mcp".into()))), "is not https://work.example/mcp"),
+            (Err(r"C:\u\.claude.json is not valid JSON (eof)".into()), "is not checked"),
+        ] {
+            let w = warn(found).unwrap_or_default();
+            assert!(w.contains(says) && !w.contains("SECRET"), "{says}: {w}");
+        }
+        assert!(warn(Ok(UserMcpServer::Missing)).unwrap().contains("/workman:setup"));
+        for same in ["https://work.example/mcp", "https://Work.Example/mcp/", " https://work.example/mcp "] {
+            assert_eq!(warn(Ok(UserMcpServer::Url(Some(same.into())))), None, "{same}");
         }
     }
 
