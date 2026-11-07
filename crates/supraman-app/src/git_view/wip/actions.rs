@@ -156,7 +156,7 @@ impl WipPanel {
         let Some(act) = act else { return cx.emit(PanelEvent::Why(words)) };
         let Some(c) = &self.composer else { return };
         let (summary, description) = c.texts(cx);
-        let (amend, no_verify) = (c.amend, c.skip_hooks && self.hooks);
+        let (amend, no_verify) = (c.amend, self.skips_hooks());
         match act {
             Act::Commit => {
                 let message = wip::message(&summary, &description);

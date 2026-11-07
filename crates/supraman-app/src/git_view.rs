@@ -221,8 +221,8 @@ impl GitView {
     /// `occupancy` says which live sessions work in the repo before a write.
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
-            let panel = cx.new(|cx| CommitPanel::new(hits.clone(), None, cx));
             let gate = cx.new(|_| WriteGate::new(occupancy, hits.clone()));
+            let panel = cx.new(|cx| CommitPanel::new(hits.clone(), gate.clone(), None, cx));
             let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
             let focus = cx.focus_handle();
             let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
@@ -347,6 +347,19 @@ impl GitView {
             PanelEvent::ApplyFiles(sha, files) => {
                 let (sha, files) = (sha.clone(), files.clone());
                 self.stash.update(cx, |s, cx| s.apply_files(sha, files, cx));
+            }
+            PanelEvent::Amend(message) => {
+                let (message, no_verify) = (message.clone(), self.wip_panel.read(cx).skips_hooks());
+                self.panel.update(cx, |p, cx| p.amend(message, no_verify, cx));
+            }
+            PanelEvent::Amended(sha, toast) => {
+                self.reveal_after = Some(sha.clone());
+                self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                self.refresh_after_write(cx);
+            }
+            PanelEvent::StashMessage(stash, message) => {
+                let (stash, message) = (stash.clone(), message.clone());
+                self.stash.update(cx, |s, cx| s.set_message(stash, message, cx));
             }
         }
     }
@@ -568,7 +581,7 @@ impl GitView {
                 self.follow.walked = first.walk;
                 self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
                 self.fit_graph();
-                self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
+                self.panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
                 if let Some(debounces) = refresh::follows() {

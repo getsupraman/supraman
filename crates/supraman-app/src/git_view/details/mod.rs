@@ -1,19 +1,22 @@
 //! The commit panel right of the graph: the selected commit's or stash's message, author, parents and files, read
-//! off the UI thread on each selection, read-only (C146).
+//! off the UI thread on each selection; HEAD's or a stash's message is edited in place ([`reword`]).
 
 pub mod files;
 mod load;
 mod render;
+pub mod reword;
 
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod reword_tests;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Pixels, ScrollHandle, SharedString, Subscription, Window, px};
-use supraman_gitman::{FileChange, Person, Repo, Stash};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, ScrollHandle, SharedString, Subscription, Window, px};
+use supraman_gitman::{Amendable, FileChange, Person, Repo, Stash};
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
@@ -25,6 +28,8 @@ pub use load::{Counts, Mark};
 pub(crate) use render::{PANEL_STEP, placeholder};
 
 use super::Selected;
+use super::stash::StashRef;
+use super::write_gate::{WriteGate, Written};
 
 pub const MESSAGE_HEIGHT: Pixels = px(140.);
 
@@ -44,6 +49,12 @@ pub enum PanelEvent {
     StashFiles(Vec<FileChange>),
     /// Put these files of the stash (its commit) in the work tree.
     ApplyFiles(String, Vec<FileChange>),
+    /// Amend HEAD's message to this, with the commit area's Skip hooks.
+    Amend(String),
+    /// HEAD's message was amended: the new HEAD and the toast.
+    Amended(SharedString, String),
+    /// Give this stash this message.
+    StashMessage(StashRef, String),
 }
 
 /// The commit shown, its texts ready to paint.
@@ -58,6 +69,7 @@ pub struct Shown {
     pub authored_ms: i64,
     pub parents: Vec<SharedString>,
     pub co_authors: Vec<Person>,
+    pub amendable: Amendable,
     /// The stash shown, its parents only its base.
     pub stash: Option<Arc<Stash>>,
     pub counts: Counts,
@@ -116,12 +128,17 @@ pub struct CommitPanel {
     filter: Option<(Entity<TextInput>, Subscription)>,
     message_height: Pixels,
     message_scroll: ScrollHandle,
+    gate: Entity<WriteGate>,
+    reword: reword::Reword,
+    _written: Subscription,
 }
 
 impl EventEmitter<PanelEvent> for CommitPanel {}
 
 impl CommitPanel {
-    pub fn new(hits: HitTargets, message_height: Option<Pixels>, cx: &mut App) -> Self {
+    pub fn new(hits: HitTargets, gate: Entity<WriteGate>, message_height: Option<Pixels>, cx: &mut Context<Self>) -> Self {
+        let written = cx.subscribe(&gate, |this: &mut CommitPanel, _, w: &Written, cx| this.written(w, cx));
+        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
         CommitPanel {
             hits,
             repo: None,
@@ -142,10 +159,14 @@ impl CommitPanel {
             filter: None,
             message_height: message_height.unwrap_or(MESSAGE_HEIGHT),
             message_scroll: ScrollHandle::new(),
+            gate,
+            reword: reword::Reword::default(),
+            _written: written,
         }
     }
 
-    pub fn set_repo(&mut self, repo: Repo) {
+    pub fn set_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
+        self.open_writer(repo.clone(), cx);
         self.repo = Some(repo);
     }
 
@@ -168,6 +189,9 @@ impl CommitPanel {
         let token = self.token;
         self.colour = colour;
         self.stale = false;
+        if self.reword.field.is_some() {
+            self.cancel_amend(cx);
+        }
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
             (Some(Selected::Wip), _) => self.state = State::Empty,
@@ -244,6 +268,7 @@ impl CommitPanel {
             authored_ms: loaded.stash.as_ref().map_or(d.commit.author.time, |s| s.time) * 1000,
             parents: d.commit.parents.into_iter().take(if loaded.stash.is_some() { 1 } else { usize::MAX }).map(SharedString::from).collect(),
             co_authors: d.co_authors,
+            amendable: loaded.amendable,
             stash: loaded.stash,
             counts: loaded.counts,
             index: index(&changes),

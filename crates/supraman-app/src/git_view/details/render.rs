@@ -69,11 +69,31 @@ impl CommitPanel {
     }
 
     fn message(&self, shown: &Shown, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
+        let field = self.field();
+        let boxed = match field {
+            Some(field) => self.field_box(field, box_bg, cx).into_any_element(),
+            None => self.read_only(shown, box_bg, cx).into_any_element(),
+        };
+        let bar = HeightBar { id: "commit-message-bar".into(), min: px(48.), max: px(640.), default: MESSAGE_HEIGHT };
+        let bar = bar.render(boxed, self.message_height, &self.hits, |this: &mut CommitPanel, height, cx| {
+            this.message_height = height;
+            cx.notify();
+        }, |_: &mut CommitPanel, cx| cx.emit(PanelEvent::Resized), cx)
+        .flex_none()
+        .px_2();
+        div().flex().flex_col().flex_none().gap_1().child(bar).children(field.map(|f| self.field_actions(f, cx)))
+    }
+
+    /// The message as it is, with Copy, and the muted line of what a click edits.
+    fn read_only(&self, shown: &Shown, box_bg: Hsla, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let text = format!("{}\n\n{}", shown.summary, shown.body).trim_end().to_string();
         let copy = button::icon(&self.hits, "commit-message-copy", Icon::Copy.svg(13., colors.text_muted), px(22.), cx)
             .tooltip(Tooltip::text("Copy the message"))
-            .on_click(move |_: &ClickEvent, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())));
+            .on_click(move |_: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            });
         let content = div()
             .id("commit-message")
             .size_full()
@@ -86,22 +106,8 @@ impl CommitPanel {
             .pr_6()
             .child(div().text_base().font_weight(FontWeight::MEDIUM).text_color(colors.text).child(shown.summary.clone()))
             .when(!shown.body.is_empty(), |d| d.child(div().text_xs().text_color(colors.text).child(shown.body.clone())));
-        let boxed = div()
-            .relative()
-            .size_full()
-            .rounded_md()
-            .border_1()
-            .border_color(colors.border)
-            .bg(box_bg)
-            .child(content)
-            .child(div().absolute().top_1().right_1().child(copy));
-        let bar = HeightBar { id: "commit-message-bar".into(), min: px(48.), max: px(640.), default: MESSAGE_HEIGHT };
-        bar.render(boxed, self.message_height, &self.hits, |this: &mut CommitPanel, height, cx| {
-            this.message_height = height;
-            cx.notify();
-        }, |_: &mut CommitPanel, cx| cx.emit(PanelEvent::Resized), cx)
-        .flex_none()
-        .px_2()
+        let boxed = div().id("commit-message-box").relative().size_full().rounded_md().border_1().border_color(colors.border).bg(box_bg).child(content);
+        div().size_full().child(self.offer_line(shown, boxed, cx).child(div().absolute().top_1().right_1().child(copy)))
     }
 
     fn author(&self, shown: &Shown, palette: &Palette, cx: &mut Context<Self>) -> Div {
