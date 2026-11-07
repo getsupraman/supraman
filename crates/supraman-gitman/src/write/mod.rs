@@ -4,6 +4,7 @@
 
 mod guard;
 pub mod journal;
+pub mod lines;
 mod locks;
 mod quiet;
 mod snapshot;
