@@ -128,6 +128,8 @@ pub(crate) fn remove_dir_retrying(dir: &Path) -> std::io::Result<()> {
 pub fn prepare(mode: Mode) -> anyhow::Result<()> {
     // The sign-in never opens a browser; its refresh tokens stay in the scratch home.
     crate::signin::use_http_browser();
+    // The Workman URL is read from the scratch home's server.json, never the user's ~/.workman (C185).
+    supraman_core::paths::set_workman_server_json_for_selftest(workman_server_json()).map_err(|e| anyhow!(e))?;
     // Closed sessions are read from a fake claude dir in the scratch home, never the user's.
     crate::view::use_claude_dir(crate::selftest_closed::claude_dir(&home()));
     // A closed loopback port as the releases API, never GitHub (C109); step 7+u serves its own fake.
@@ -191,9 +193,7 @@ pub fn prepare(mode: Mode) -> anyhow::Result<()> {
 
     // A closed loopback port as the Workman server, never the real one; the gate's step 1w names its fake instead.
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    let mut settings = supraman_core::Settings::load(&home)?;
-    settings.workman.url = Some(format!("http://127.0.0.1:{closed}"));
-    settings.save(&home)?;
+    set_workman(&format!("http://127.0.0.1:{closed}"))?;
 
     if mode == Mode::Selftest {
         crate::selftest_work::prepare(&home, &work)?;
@@ -262,6 +262,20 @@ pub(crate) fn install_guards(mode: Mode) {
 /// `main` takes the single-instance lock on it before `prepare` clears it.
 pub fn home() -> PathBuf {
     cargo_root().join("target").join("selftest-home")
+}
+
+/// Every selftest's `~/.workman/server.json`: `<selftest home>/user/.workman/server.json`.
+pub fn workman_server_json() -> PathBuf {
+    home().join("user").join(".workman").join("server.json")
+}
+
+/// The selftest's server.json names `base`, through the one writer.
+pub fn set_workman(base: &str) -> anyhow::Result<()> {
+    let path = supraman_core::paths::workman_server_json().ok_or_else(|| anyhow!("no server.json path"))?;
+    if path != workman_server_json() {
+        bail!("the Workman server.json is {}, not the selftest's own", path.display());
+    }
+    supraman_core::workman_server::save(&path, &supraman_core::workman_server::ServerJson::new(base)).with_context(|| format!("cannot write {}", path.display()))
 }
 
 pub fn log_dir() -> PathBuf {

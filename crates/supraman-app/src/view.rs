@@ -1141,7 +1141,7 @@ impl FleetView {
                 let status = executor
                     .spawn(async move {
                         let auth = home.as_deref().map(crate::signin::auth);
-                        workman_setup::detect(home.as_deref(), auth.as_deref())
+                        workman_setup::detect(auth.as_deref())
                     })
                     .await;
                 if let Some(started) = first.take() {
@@ -1177,10 +1177,9 @@ impl FleetView {
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) {
-        let Some(home) = self.home.clone() else {
+        let Some(origin) = self.workman.checked_url().map(str::to_string) else {
             return;
         };
-        let origin = crate::signin::auth(&home).configured_origin();
         self.sign_in_to(origin, None, cx);
     }
 
@@ -1205,10 +1204,7 @@ impl FleetView {
                     Ok(_) => {
                         this.left_servers.remove(&origin);
                         if let Some(from) = from {
-                            match save_workman_url(&home, &origin) {
-                                Ok(()) => this.leave_servers(vec![from], cx),
-                                Err(e) => this.action_error = Some(e),
-                            }
+                            this.save_workman_url(home.clone(), origin.clone(), Some(from), cx);
                         }
                         this.synced_server = None;
                     }
@@ -1253,25 +1249,39 @@ impl FleetView {
     pub fn set_workman_url(&mut self, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
         let home = self.home.clone().ok_or("No Supraman home: settings cannot be saved.")?;
         let origin = supraman_core::validate_workman_url(text)?;
-        let current = Settings::load(&home).map_err(|e| format!("Cannot read settings.toml: {e}"))?.workman.origin();
-        if origin == current {
+        let current = self.workman.checked_url().map(str::to_string);
+        if current.as_deref() == Some(origin.as_str()) {
             return Ok(());
         }
         let status = {
             let (auth, current) = (crate::signin::auth(&home), current.clone());
-            cx.background_executor().spawn(async move { auth.status(&current) })
+            cx.background_executor().spawn(async move { current.map(|c| auth.status(&c)) })
         };
         cx.spawn(async move |this, cx| {
-            let signed_in = matches!(status.await, supraman_workman::AuthStatus::SignedIn { .. });
+            let signed_in = matches!(status.await, Some(supraman_workman::AuthStatus::SignedIn { .. }));
+            this.update(cx, |this, cx| match current {
+                Some(current) if signed_in => this.sign_in_to(origin, Some(current), cx),
+                _ => this.save_workman_url(home, origin, None, cx),
+            })
+            .ok();
+        })
+        .detach();
+        Ok(())
+    }
+
+    /// `origin` into server.json off the UI thread, then a recheck; `left` is the server signed out of once it is saved.
+    fn save_workman_url(&mut self, home: PathBuf, origin: String, left: Option<String>, cx: &mut Context<Self>) {
+        let auth = crate::signin::auth(&home);
+        let saved = cx.background_executor().spawn(async move { auth.save_server(&origin) });
+        cx.spawn(async move |this, cx| {
+            let saved = saved.await;
             this.update(cx, |this, cx| {
-                if signed_in {
-                    this.sign_in_to(origin, Some(current), cx);
-                    return;
-                }
-                if let Err(e) = save_workman_url(&home, &origin) {
-                    this.action_error = Some(e);
-                }
                 this.workman = WorkmanStatus::Checking;
+                match (saved, left) {
+                    (Ok(()), Some(left)) => this.leave_servers(vec![left], cx),
+                    (Ok(()), None) => {}
+                    (Err(e), _) => this.action_error = Some(e),
+                }
                 this.recheck_workman();
                 WorkHub::reconfigure(Some(home), cx);
                 cx.notify();
@@ -1279,7 +1289,6 @@ impl FleetView {
             .ok();
         })
         .detach();
-        Ok(())
     }
 
     fn sync_server(&mut self, origin: String, cx: &mut Context<Self>) {
@@ -1313,8 +1322,8 @@ impl FleetView {
             return;
         };
         let auth = crate::signin::auth(&home);
-        let current = auth.configured_origin();
-        let origins: Vec<String> = origins.into_iter().filter(|o| *o != current && self.left_servers.insert(o.clone())).collect();
+        let current = self.workman.checked_url().map(str::to_string);
+        let origins: Vec<String> = origins.into_iter().filter(|o| current.as_ref() != Some(o) && self.left_servers.insert(o.clone())).collect();
         if origins.is_empty() {
             return;
         }
@@ -3008,8 +3017,3 @@ mod tests {
     }
 }
 
-fn save_workman_url(home: &std::path::Path, origin: &str) -> Result<(), String> {
-    Settings::update(home, |settings| settings.workman.url = Some(origin.to_string()))
-        .map(drop)
-        .map_err(|e| format!("Cannot save settings.toml: {e}"))
-}

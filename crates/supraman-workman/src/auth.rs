@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use supraman_core::Settings;
+use supraman_core::workman_server::{self, ServerJson};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -54,6 +54,9 @@ pub enum AuthError {
     Browser(String),
     #[error("{0}")]
     Store(String),
+    /// `~/.workman/server.json` is missing or unusable; the words say to run `/workman:setup`.
+    #[error("{0}")]
+    NotSetUp(String),
 }
 
 fn suffix(error: &str) -> String {
@@ -113,6 +116,7 @@ impl Inner {
 
 pub struct Auth {
     home: PathBuf,
+    server_json: Option<PathBuf>,
     store: Arc<dyn SecretStore>,
     agent: ureq::Agent,
     revoke_agent: ureq::Agent,
@@ -135,12 +139,13 @@ struct Tokens {
 
 impl Auth {
     pub fn open(home: &Path) -> Arc<Self> {
-        Arc::new(Self::with_store(home, default_store(home)))
+        Arc::new(Self::with_store(home, default_store(home)).with_server_json(supraman_core::paths::workman_server_json()))
     }
 
     pub fn with_store(home: &Path, store: Arc<dyn SecretStore>) -> Self {
         Self {
             home: home.to_path_buf(),
+            server_json: None,
             store,
             agent: crate::http::agent(HTTP_TIMEOUT),
             revoke_agent: crate::http::agent(REVOKE_TIMEOUT),
@@ -153,6 +158,12 @@ impl Auth {
     /// Tests: a sign-in gives up after `timeout` instead of 5 minutes.
     pub fn with_sign_in_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Where the server's URL is read; `None` (the default of [`Self::with_store`]) is not set up.
+    pub fn with_server_json(mut self, path: Option<PathBuf>) -> Self {
+        self.server_json = path;
         self
     }
 
@@ -205,8 +216,23 @@ impl Auth {
         supraman_core::fs::lock_file(&path).map_err(|e| AuthError::Store(format!("cannot lock {}: {e}", path.display())))
     }
 
-    pub fn configured_origin(&self) -> String {
-        Settings::load(&self.home).unwrap_or_default().workman.origin()
+    /// Read afresh each call: `/workman:setup` may rewrite it while Supraman runs.
+    pub fn server(&self) -> Result<ServerJson, AuthError> {
+        workman_server::load_from(self.server_json.as_deref()).map_err(AuthError::NotSetUp)
+    }
+
+    pub fn configured_origin(&self) -> Result<String, AuthError> {
+        self.server().map(|s| s.origin())
+    }
+
+    /// `origin` as the server, its `mcpName` kept; through the one writer, never on the UI thread.
+    pub fn save_server(&self, origin: &str) -> Result<(), String> {
+        let path = self.server_json.as_deref().ok_or_else(|| workman_server::load_from(None).unwrap_err())?;
+        let server = match workman_server::load(path) {
+            Ok(kept) => ServerJson { url: origin.to_string(), ..kept },
+            Err(_) => ServerJson::new(origin),
+        };
+        workman_server::save(path, &server).map_err(|e| format!("Cannot save {}: {e}", path.display()))
     }
 
     pub fn issuer_of(&self, origin: &str) -> Option<String> {
@@ -326,7 +352,7 @@ impl Auth {
 
     /// [`Self::access_token`] for the configured server: (origin, token).
     pub fn current(&self) -> Result<(String, String), AuthError> {
-        let origin = self.configured_origin();
+        let origin = self.configured_origin()?;
         let token = self.access_token(&origin)?;
         Ok((origin, token))
     }

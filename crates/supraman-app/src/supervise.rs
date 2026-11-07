@@ -33,7 +33,10 @@ pub fn signed_out(origin: &str) {
 /// Signs out of `auth`'s configured server, whose grant revoke takes every session token minted there; the hands,
 /// supervised sessions and scheduled runs minted there are marked signed out for the next sign-in. What failed.
 pub fn sign_out(auth: &supraman_workman::Auth, hands: Option<std::sync::Arc<Mutex<crate::hand::Hands>>>) -> Vec<String> {
-    let origin = auth.configured_origin();
+    let origin = match auth.configured_origin() {
+        Ok(origin) => origin,
+        Err(e) => return vec![e.to_string()],
+    };
     let mut notices: Vec<String> = auth.sign_out(&origin).err().into_iter().collect();
     signed_out(&origin);
     if let Some(hands) = hands {
@@ -192,8 +195,8 @@ pub struct Report {
     pub left_servers: Vec<String>,
 }
 
-pub fn signed_in_server(auth: &supraman_workman::Auth, settings: &Settings) -> Option<String> {
-    let origin = settings.workman.origin();
+pub fn signed_in_server(auth: &supraman_workman::Auth) -> Option<String> {
+    let origin = auth.configured_origin().ok()?;
     matches!(auth.status(&origin), supraman_workman::AuthStatus::SignedIn { .. }).then_some(origin)
 }
 
@@ -371,7 +374,7 @@ impl Supervision {
         }
         let signed_out = self.end_signed_out();
         self.notices.extend(signed_out);
-        let server = signed_in_server(&crate::signin::auth(&self.home), &settings);
+        let server = signed_in_server(&crate::signin::auth(&self.home));
         for (name, s) in &mut self.supervisors {
             let stale = s.server_changed(server.as_deref());
             if !stale.is_empty() {

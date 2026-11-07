@@ -1,6 +1,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `USERPROFILE`, else `HOME`; an empty value counts as unset.
 pub fn user_home() -> Option<PathBuf> {
@@ -10,6 +12,27 @@ pub fn user_home() -> Option<PathBuf> {
 fn home_of(userprofile: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
     let set = |v: Option<OsString>| v.filter(|v| !v.is_empty());
     set(userprofile).or_else(|| set(home)).map(PathBuf::from)
+}
+
+static WORKMAN_SERVER_JSON_FOR_SELFTEST: OnceLock<PathBuf> = OnceLock::new();
+static WORKMAN_SERVER_JSON_READ: AtomicBool = AtomicBool::new(false);
+
+/// `~/.workman/server.json` ([`crate::workman_server`]), which `/workman:setup` writes; `None` without a user home.
+pub fn workman_server_json() -> Option<PathBuf> {
+    WORKMAN_SERVER_JSON_READ.store(true, Ordering::SeqCst);
+    match WORKMAN_SERVER_JSON_FOR_SELFTEST.get() {
+        Some(path) => Some(path.clone()),
+        None => user_home().map(|h| h.join(".workman").join("server.json")),
+    }
+}
+
+/// A selftest's own `server.json` in place of the user's: once per process, before [`workman_server_json`] is asked.
+pub fn set_workman_server_json_for_selftest(path: PathBuf) -> Result<(), String> {
+    if WORKMAN_SERVER_JSON_READ.load(Ordering::SeqCst) {
+        return Err("the Workman server.json was read before the selftest set its own".into());
+    }
+    let shown = path.display().to_string();
+    WORKMAN_SERVER_JSON_FOR_SELFTEST.set(path).map_err(|_| format!("the selftest's Workman server.json is set already, not to {shown}"))
 }
 
 /// claude's config dir: `CLAUDE_CONFIG_DIR`, else `<user_home>/.claude`.

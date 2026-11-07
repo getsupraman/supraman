@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context as _, anyhow, bail};
-use supraman_core::{Folder, FolderKind, Registry, Settings, Workspace};
+use supraman_core::{Folder, FolderKind, Registry, Workspace};
 use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity};
 use serde_json::{Value, json};
@@ -62,9 +62,7 @@ pub fn prepare() -> anyhow::Result<()> {
     Registry::from_env()?.save(&Workspace::new(WORKSPACE, ROOT, folders), true)?;
     let fake = workman();
     OAUTH.set(fake.enable_oauth()).map_err(|_| anyhow!("the fake OAuth server was started twice"))?;
-    let mut settings = Settings::load(&home)?;
-    settings.workman.url = Some(fake.base().to_string());
-    settings.save(&home)?;
+    crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(&home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
         "shots: SUPRAMAN_HOME={} ; workspace {WORKSPACE} at {ROOT} (fixture folders, not on disk); fake Workman at {}",

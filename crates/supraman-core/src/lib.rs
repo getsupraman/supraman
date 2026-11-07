@@ -26,6 +26,7 @@ pub mod time;
 pub mod update;
 pub mod url;
 pub mod watch;
+pub mod workman_server;
 
 pub use discover::{discover, rescan, same_path};
 pub use edit::{Edit, Edited};
@@ -44,9 +45,10 @@ pub use relay::{
 };
 pub use scan::{DEFAULT_DEPTH, branch_at, scan};
 pub use settings::{
-    AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKMAN_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
-    SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TerminalSettings, UpdateSettings, WindowSettings, WorkmanSettings, clamp_terminal_font_size,
-    default_terminal_font_family, validate_workman_url,
+    AppearanceSettings, DEFAULT_MAX_WORKING, DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Section,
+    SessionSettings, Settings, TERMINAL_FONT_PREFERENCE, TerminalSettings, UpdateSettings, WindowSettings, clamp_terminal_font_size,
+    default_terminal_font_family,
 };
 pub use slug::{FM_PREFIX, is_safe_id, is_session_name, name_char, slugify, validate_name};
 pub use url::origin as url_origin;
+pub use workman_server::validate_workman_url;

@@ -184,7 +184,7 @@ impl WorkHub {
 fn load_client(home: Option<PathBuf>) -> Result<Client, String> {
     let home = home.ok_or_else(|| "No Supraman home (set SUPRAMAN_HOME or APPDATA), so no settings.toml.".to_string())?;
     let auth = crate::signin::auth(&home);
-    let url = auth.configured_origin();
+    let url = auth.configured_origin().map_err(|e| WorkmanStatus::NotSetUp { why: e.to_string() }.message().unwrap_or_default())?;
     match auth.status(&url) {
         AuthStatus::SignedIn { .. } => Ok(Client::with_source(url.as_str(), auth.bearer_for(&url))),
         AuthStatus::NotSignedIn => Err(WorkmanStatus::NotSignedIn { url }.message().unwrap_or_default()),

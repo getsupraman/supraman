@@ -51,12 +51,13 @@ impl std::fmt::Debug for RoleToken {
 
 /// Where the bearer comes from: the app's sign-in.
 pub trait TokenProvider {
-    /// `Ok(None)`: not signed in, so the role launches with a token-less helped config at [`Self::mcp_url`]. `Err`:
+    /// `Ok(None)`: not signed in or Workman not set up, so the role launches with a token-less helped config at
+    /// [`Self::mcp_url`], or none without one. `Err`:
     /// signed in but no token now (the server unreachable, the sign-in to redo); a launch or resume fails with it.
     fn token(&self, role: &str) -> Result<Option<RoleToken>, String>;
 
-    /// The MCP URL a session's config names while it has no token: [`crate::mcp_url`].
-    fn mcp_url(&self) -> String;
+    /// The MCP URL a session's config names while it has no token: [`crate::mcp_url`]; `Err` is Workman not set up.
+    fn mcp_url(&self) -> Result<String, String>;
 }
 
 /// Launch options every session of this supervisor gets. Every launch is `--strict-mcp-config`: a
@@ -539,7 +540,7 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
         }
         spec = match self.mint(w, None, now)? {
             Some((url, minted)) => self.keeper.launch(spec, &url, &minted.token, minted.expires_at.as_deref()),
-            None => self.keeper.launch_unminted(spec, &self.tokens.mcp_url()),
+            None => self.keeper.launch_unminted(spec, self.tokens.mcp_url().ok().as_deref()),
         }
         .map_err(Failure::Other)?;
         self.launcher.launch(&spec).map_err(|e| Failure::from(&e))
@@ -1025,7 +1026,7 @@ mod tests {
     }
 
     /// The same bearer for every role, with the Workman role the app maps it to; `.1` an error instead.
-    struct FakeTokens(Option<RoleToken>, Option<String>);
+    struct FakeTokens(Option<RoleToken>, Option<String>, Result<String, String>);
 
     impl TokenProvider for FakeTokens {
         fn token(&self, role: &str) -> Result<Option<RoleToken>, String> {
@@ -1041,8 +1042,8 @@ mod tests {
             Ok(Some(t))
         }
 
-        fn mcp_url(&self) -> String {
-            SIGNED_OUT_URL.into()
+        fn mcp_url(&self) -> Result<String, String> {
+            self.2.clone()
         }
     }
 
@@ -1131,7 +1132,7 @@ mod tests {
             plugin_dirs: vec![r"C:\fm\plugins\supraman".into()],
             ..LaunchConfig::default()
         };
-        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens, None))
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(tokens, None, Ok(SIGNED_OUT_URL.into())))
             .with_minter(FakeMinter::default())
             .with_repo_of(fake_repo_of)
             .with_daemon_check(|| None)
@@ -1367,6 +1368,22 @@ mod tests {
     }
 
     #[test]
+    fn workman_not_set_up_launches_strict_with_the_agents_server_and_no_workman_entry_and_no_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let mcp = dir.path().join("mcp");
+        let (claude, script) = claude_with_agents(dir.path());
+        let mut sup = supervisor(true, None, &mcp);
+        sup.config.claude_dir = Some(claude);
+        *sup.tokens_mut() = FakeTokens(None, None, Err("Workman is not set up: run /workman:setup".into()));
+        sup.tick(&[], &mut free(), NOW);
+        assert!(launch_argv(&sup.launcher().take()).contains("--strict-mcp-config"));
+        let config: serde_json::Value = serde_json::from_str(&config_text(&mcp, "fm-demo-workspace")).unwrap();
+        assert_eq!(config["mcpServers"].as_object().unwrap().keys().collect::<Vec<_>>(), ["agents"], "{config}");
+        assert_eq!(config["mcpServers"]["agents"], serde_json::json!({ "command": "node", "args": [script] }));
+        assert!(sup.take_notices().is_empty() && sup.needs_you().is_empty(), "not a failure: the app says it once");
+    }
+
+    #[test]
     fn mint_relaunch_and_resume_replace_the_token_on_the_same_session() {
         let dir = tempfile::tempdir().unwrap();
         let mcp = dir.path().join("mcp");
@@ -1443,7 +1460,7 @@ mod tests {
         desired.started = true;
         let config = LaunchConfig { mcp_dir: home.join("mcp"), supraman_home: Some(home.into()), ..LaunchConfig::default() };
         let minter = FakeMinter::default();
-        let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None))
+        let sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
             .with_minter(minter.clone())
             .with_repo_of(fake_repo_of)
             .with_daemon_check(|| None);
@@ -1839,7 +1856,7 @@ mod tests {
         let config = sup.config.clone();
         sup.tick(&[], &mut free(), NOW);
         // no persistence without a home at construction: rebuild the way the app does
-        let mut sup = Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None))
+        let mut sup = Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into())))
             .with_minter(minter.clone());
         assert_eq!(sup.minted().get("fm-demo-workspace"), None, "nothing saved yet");
         sup.tick(&[], &mut free(), NOW);
@@ -1852,7 +1869,7 @@ mod tests {
         // the app restarts, then the workspace is stopped, and later its session deleted
         let mut desired = sup.desired.clone();
         desired.started = false;
-        let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None)).with_minter(minter.clone());
+        let mut sup = Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
         assert_eq!(minter.take(), [], "the Stop keeps it");
         for t in [3, 4] {
@@ -1869,7 +1886,7 @@ mod tests {
         let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
         sup.config.supraman_home = Some(home.clone());
         let config = sup.config.clone();
-        let started = || Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None)).with_minter(minter.clone());
+        let started = || Supervisor::new(sup.desired.clone(), config.clone(), FakeLauncher::default(), FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()))).with_minter(minter.clone());
         let mut before = started();
         before.tick(&[], &mut free(), NOW);
         let live = row(SessionState::Working, Some(Status::Busy), Some(7));
@@ -1989,7 +2006,7 @@ mod tests {
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + SECOND);
         assert_eq!(minter.take(), [], "signed out: nothing to mint with");
 
-        *sup.tokens_mut() = FakeTokens(static_token(), None);
+        *sup.tokens_mut() = FakeTokens(static_token(), None, Ok(SIGNED_OUT_URL.into()));
         assert!(sup.server_changed(Some("http://127.0.0.1:1")).is_empty());
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 2 * SECOND);
         assert_eq!(sup.launcher().take(), [], "the live session is not stopped");
@@ -2051,7 +2068,7 @@ mod tests {
             mcp_dir: mcp_dir.into(),
             ..LaunchConfig::default()
         };
-        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None, None))
+        Supervisor::new(desired, config, FakeLauncher::default(), FakeTokens(None, None, Ok(SIGNED_OUT_URL.into())))
     }
 
     fn live(name: &str, n: u32, state: SessionState, status: Status) -> Session {

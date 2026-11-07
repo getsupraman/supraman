@@ -113,10 +113,15 @@ pub fn session_stage(ctx: &RunCtx, gate: Option<&str>, host: &mut dyn SessionHos
         Ok(m) => m,
         Err(why) => return SessionEnd::failed(why),
     };
-    let without_workstate = mint.is_none().then(|| "Supraman is not signed in to Workman: the run has no Workman token".to_string());
-    let helped = match &mint {
-        Some(m) => keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()),
-        None => keeper.launch_unminted(spec.clone(), &host.tokens().mcp_url()),
+    let url = mint.is_none().then(|| host.tokens().mcp_url());
+    let without_workstate = match &url {
+        None => None,
+        Some(Ok(_)) => Some("Supraman is not signed in to Workman: the run has no Workman token".to_string()),
+        Some(Err(not_set_up)) => Some(format!("{not_set_up}; the run has no Workman")),
+    };
+    let helped = match (&mint, url) {
+        (Some(m), _) => keeper.launch(spec.clone(), &m.url, &m.token, m.expires_at.as_deref()),
+        (None, url) => keeper.launch_unminted(spec.clone(), url.and_then(Result::ok).as_deref()),
     };
     match helped {
         Ok(with) => spec = with,

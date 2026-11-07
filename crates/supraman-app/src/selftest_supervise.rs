@@ -116,9 +116,7 @@ pub fn prepare() -> anyhow::Result<()> {
     supraman_core::ensure_relay_dirs(&home, &tb.a.0)?;
     // no sign-in, and a closed loopback port as the server: the status check never reaches a real Workman
     let closed = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port();
-    let mut settings = Settings::default();
-    settings.workman.url = Some(format!("http://127.0.0.1:{closed}"));
-    settings.save(&home)?;
+    crate::selftest::set_workman(&format!("http://127.0.0.1:{closed}"))?;
     println!(
         "step a: claude {} | SUPRAMAN_HOME={} | workspaces {} (testbed, plain dir), {} (git init: untrusted) | {} wants {} and {} (permission mode default) | step y (release only): {}",
         version.raw,

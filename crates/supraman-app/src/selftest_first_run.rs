@@ -1,7 +1,6 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail};
-use supraman_core::Settings;
 use supraman_workman::AuthStatus;
 use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity};
@@ -25,13 +24,17 @@ async fn until<T>(view: &Entity<FleetView>, cx: &mut AsyncWindowContext, what: &
     })
 }
 
+/// The URL in the selftest's own server.json.
+fn saved_url() -> anyhow::Result<String> {
+    supraman_core::workman_server::load(&crate::selftest::workman_server_json()).map(|s| s.origin()).map_err(|e| anyhow!(e))
+}
+
 fn painted(v: &FleetView, key: &str) -> bool {
     v.shown(key)
 }
 
 pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let home = crate::selftest::home();
-    let saved = Settings::load(&home)?;
     let (fake, oauth) = crate::selftest_work::fake().ok_or_else(|| anyhow!("step 1w started no fake Workman"))?;
     let base = fake.base().to_string();
     let auth = crate::signin::auth(&home);
@@ -106,7 +109,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         matches!(&v.workman, WorkmanStatus::Ready { url, .. } if url == other.base()).then_some(())
     })
     .await?;
-    if Settings::load(&home)?.workman.origin() != other.base() {
+    if saved_url()? != other.base() {
         bail!("the new URL was not saved after the sign-in there");
     }
     if other_oauth.issued().is_empty() {
@@ -119,14 +122,14 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     handle.update(cx, |s, _, cx| s.set_url_text(&closed, cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     handle.update(cx, |s, _, cx| s.apply_url(cx)).map_err(|e| anyhow!("settings window: {e}"))?;
     let error = until(view, cx, "the failed switch's error", |v| v.signing_in.is_none().then(|| v.sign_in_error.clone()).flatten()).await?;
-    if !error.contains(&closed) || Settings::load(&home)?.workman.origin() != other.base() {
-        bail!("a failed switch to {closed}: {error:?}, URL now {}", Settings::load(&home)?.workman.origin());
+    if !error.contains(&closed) || saved_url()? != other.base() {
+        bail!("a failed switch to {closed}: {error:?}, URL now {}", saved_url()?);
     }
     shot_window("m5-43-settings-switch-failed", Some("Supraman Settings"), cx).await;
     lines.push(format!("URL → {closed} (closed): \"{error}\", the URL stayed"));
     view.update(cx, |v, cx| v.close_settings(cx));
 
-    Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..saved.clone() }.save(&home)?;
+    crate::selftest::set_workman(&closed)?;
     view.update(cx, |v, _| v.recheck_workman());
     let down = until(view, cx, "the unreachable notice", |v| {
         (v.workman.unreachable() && painted(v, "ws-setup-retry")).then(|| v.workman_notice()).flatten()
@@ -145,7 +148,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     lines.push(format!("closed port: \"{down}\", Retry shown, × hid it"));
 
     auth.sign_out(other.base()).map_err(|e| anyhow!("signing out of the other fake: {e}"))?;
-    saved.save(&home)?;
+    crate::selftest::set_workman(&base)?;
     crate::signin::sign_in(&home, &base).map_err(|e| anyhow!("signing in to the gate's fake again: {e}"))?;
     view.update(cx, |v, cx| {
         v.recheck_workman();

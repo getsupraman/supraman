@@ -2,11 +2,15 @@ use std::sync::Arc;
 
 use supraman_workman::Auth;
 
+/// The test's own `server.json` naming `base`, inside `home`, never the user's; written again on each call.
+pub fn server_json(home: &std::path::Path, base: &str) -> std::path::PathBuf {
+    let path = home.join("test-user").join(".workman").join("server.json");
+    supraman_core::workman_server::save(&path, &supraman_core::workman_server::ServerJson::new(base)).unwrap();
+    path
+}
+
 pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
-    let mut settings = supraman_core::Settings::load(home).unwrap_or_default();
-    settings.workman.url = Some(base.to_string());
-    settings.save(home).unwrap();
-    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workman::MemoryStore::default())));
+    let auth = Arc::new(Auth::with_store(home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json(home, base))));
     auth.sign_in(base, &supraman_workman::auth::http_browser()).unwrap();
     auth
 }
@@ -14,7 +18,6 @@ pub fn signed_in(home: &std::path::Path, base: &str) -> Arc<Auth> {
 mod tests {
     use std::path::Path;
 
-    use supraman_core::Settings;
     use supraman_workman::fake::{Answer, FakeWorkman};
 
     use supraman_supervisor::{AppTokens, TokenProvider};
@@ -28,8 +31,9 @@ mod tests {
         let home = dir.path().join("home");
         let fake = FakeWorkman::start(vec![]);
         let oauth = fake.enable_oauth();
-        Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
-        let unsigned = AppTokens { auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default()))) };
+        let unsigned = AppTokens {
+            auth: Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json(&home, fake.base())))),
+        };
         assert_eq!(unsigned.token("workspace"), Ok(None), "not signed in: no Workman");
 
         oauth.set_access_ttl(60);
@@ -172,15 +176,13 @@ mod tests {
         let mut sup = Supervisor::new(desired, config, Recorder::default(), AppTokens { auth: auth.clone() });
         let now = 1_800_000_000_000;
         let budget = || Budget { max: 3, free: 3 };
-        let server = || signed_in_server(&auth, &Settings::load(&home).unwrap());
+        let server = || signed_in_server(&auth);
         assert!(sup.server_changed(server().as_deref()).is_empty());
         sup.tick(&[], &mut budget(), now);
         let file = home.join("mcp").join("workstate-fm-demo-workspace.json");
         assert!(std::fs::read_to_string(&file).unwrap().contains(&format!("{}/mcp", a.base())));
 
-        let mut settings = Settings::load(&home).unwrap();
-        settings.workman.url = Some(b.base().into());
-        settings.save(&home).unwrap();
+        server_json(&home, b.base());
         assert_eq!(server(), None, "not signed in to B yet");
         assert!(sup.server_changed(server().as_deref()).is_empty());
         auth.sign_in(b.base(), &supraman_workman::auth::http_browser()).unwrap();

@@ -62,6 +62,13 @@ impl LaunchSpec {
         Ok(self)
     }
 
+    /// Workman not set up: `mcp_servers` alone in `agent`'s config, still under `--strict-mcp-config`.
+    pub fn without_workman(mut self, dir: &Path, agent: &str) -> std::io::Result<Self> {
+        self.mcp_config = Some(write_mcp_config_servers(dir, agent, &self.mcp_servers)?);
+        self.strict_mcp_config = true;
+        Ok(self)
+    }
+
     /// Everything after the program name. The prompt goes after `--` because `--mcp-config` is
     /// variadic and would otherwise swallow it.
     pub fn argv(&self) -> Vec<OsString> {
@@ -168,11 +175,7 @@ fn workman_mcp_config_auth(url: &str, auth: Authorization, headers: &[(&str, Str
     if let Authorization::Helper(command) = auth {
         config["mcpServers"][MCP_SERVER]["headersHelper"] = command.into();
     }
-    for (name, server) in servers.iter().filter(|(n, _)| n != MCP_SERVER) {
-        if let Ok(server) = serde_json::from_str::<serde_json::Value>(server) {
-            config["mcpServers"][name] = server;
-        }
-    }
+    add_servers(&mut config, servers);
     config.to_string()
 }
 
@@ -196,6 +199,23 @@ pub fn write_mcp_config_with(dir: &Path, agent: &str, url: &str, token: &str, he
 pub fn write_mcp_config_helped(dir: &Path, agent: &str, url: &str, helper: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
     let path = mcp_config_path(dir, agent)?;
     supraman_core::fs::write_atomic_prepared(&path, workman_mcp_config_auth(url, Authorization::Helper(helper), &[], servers), restrict_to_owner)?;
+    Ok(path)
+}
+
+fn add_servers(config: &mut serde_json::Value, servers: &[(String, String)]) {
+    for (name, server) in servers.iter().filter(|(n, _)| n != MCP_SERVER) {
+        if let Ok(server) = serde_json::from_str::<serde_json::Value>(server) {
+            config["mcpServers"][name] = server;
+        }
+    }
+}
+
+/// `agent`'s config with `servers` and no Workman server, as [`write_mcp_config_helped`] writes it.
+pub fn write_mcp_config_servers(dir: &Path, agent: &str, servers: &[(String, String)]) -> std::io::Result<PathBuf> {
+    let path = mcp_config_path(dir, agent)?;
+    let mut config = serde_json::json!({ "mcpServers": {} });
+    add_servers(&mut config, servers);
+    supraman_core::fs::write_atomic_prepared(&path, config.to_string(), restrict_to_owner)?;
     Ok(path)
 }
 
@@ -707,5 +727,17 @@ mod tests {
         let spec = spec.with_minted_token(dir.path(), "fm-demo-b", "http://x/mcp", "fake-token").unwrap();
         let text = std::fs::read_to_string(spec.mcp_config.unwrap()).unwrap();
         assert!(text.contains("agents.mjs") && spec.strict_mcp_config, "{text}");
+    }
+
+    #[test]
+    fn without_workman_the_config_holds_the_other_servers_alone_still_strict() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = r#"{"command":"node","args":["C:/p/agents.mjs"]}"#.to_string();
+        let servers = vec![("agents".to_string(), agents), (MCP_SERVER.to_string(), r#"{"command":"evil"}"#.to_string())];
+        let spec = LaunchSpec { mcp_servers: servers, ..LaunchSpec::new("fm-demo-b", dir.path(), "p") }.without_workman(dir.path(), "fm-demo-b").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(spec.mcp_config.as_ref().unwrap()).unwrap()).unwrap();
+        assert_eq!(v["mcpServers"].as_object().unwrap().keys().collect::<Vec<_>>(), ["agents"]);
+        assert!(spec.strict_mcp_config && spec.argv().contains(&"--strict-mcp-config".into()));
+        assert_eq!(mcp_config_url(dir.path(), "fm-demo-b"), None);
     }
 }

@@ -13,7 +13,8 @@ use sm::run::{Agents, RunLog, SessionEnd, SessionHost};
 use supraman_claude::{Kind, LaunchSpec, Session, SessionState, Status};
 use supraman_core::schedule::{self, Action, ActionKind, Fired, LiveSession, Outcome, Profile, Prompt, RunEvent, Schedule, Span, Stage, Status as Sched, Trigger};
 use supraman_core::secret::{MemoryStore, SecretStore};
-use supraman_core::{Folder, Registry, Settings, Workspace};
+use supraman_core::workman_server::{self, ServerJson};
+use supraman_core::{Folder, Registry, Workspace};
 use supraman_supervisor::{AppTokens, HttpMinter, Launcher, Minter, TokenProvider};
 use supraman_workman::fake::{Answer, FakeWorkman};
 use supraman_workman::{Auth, auth::http_browser};
@@ -31,6 +32,9 @@ struct Fixture {
     claude_dir: PathBuf,
     store: MemoryStore,
     fake: FakeWorkman,
+    /// The test's own `~/.workman/server.json`, never the user's; `None` is Workman not set up.
+    server_json: Option<PathBuf>,
+    signed_in: bool,
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -40,6 +44,10 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn fixture(signed_in: bool) -> Fixture {
+    fixture_with(signed_in, true)
+}
+
+fn fixture_with(signed_in: bool, set_up: bool) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
     let alpha = tmp.path().join("ws").join("Alpha");
@@ -60,13 +68,12 @@ fn fixture(signed_in: bool) -> Fixture {
         ("DELETE /api/agent-sessions/91".into(), Answer::status(204, "")),
     ]);
     fake.enable_oauth();
-    if signed_in {
-        let mut settings = Settings::load(&home).unwrap_or_default();
-        settings.workman.url = Some(fake.base().to_string());
-        settings.save(&home).unwrap();
+    let server_json = set_up.then(|| tmp.path().join("user").join(".workman").join("server.json"));
+    if let Some(path) = &server_json {
+        workman_server::save(path, &ServerJson::new(fake.base())).unwrap();
     }
     let claude_dir = tmp.path().join("claude");
-    Fixture { _tmp: tmp, home, alpha, claude_dir, store: MemoryStore::default(), fake }
+    Fixture { _tmp: tmp, home, alpha, claude_dir, store: MemoryStore::default(), fake, server_json, signed_in }
 }
 
 fn session_schedule(id: &str, kind: ActionKind, profile: Profile) -> Schedule {
@@ -116,8 +123,8 @@ impl Fixture {
     }
 
     fn auth(&self) -> Arc<Auth> {
-        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workman::MemoryStore::default())));
-        if Settings::load(&self.home).unwrap().workman.url.is_some() {
+        let auth = Arc::new(Auth::with_store(&self.home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(self.server_json.clone()));
+        if self.signed_in {
             auth.sign_in(self.fake.base(), &http_browser()).unwrap();
         }
         auth
@@ -537,7 +544,7 @@ fn fire_session_without_a_sign_in_launches_with_its_helped_config_and_no_token()
     assert!(spec.strict_mcp_config, "no user-scope server either");
     let text = fs::read_to_string(&config).unwrap();
     let workman = &serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"]["workman"];
-    assert_eq!(workman["url"].as_str(), Some(Settings::load(&f.home).unwrap_or_default().workman.mcp_url().as_str()));
+    assert_eq!(workman["url"].as_str(), Some(f.fake.mcp_url().as_str()));
     assert!(workman["headersHelper"].as_str().is_some_and(|h| h.contains(" mcp-header ") && h.ends_with(&spec.name)), "{text}");
     assert!(!text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
     assert_eq!(supraman_core::secret::default_store(&f.home).get(&supraman_claude::mcp_token_key(&spec.name)).unwrap(), None, "no token kept");
@@ -545,6 +552,25 @@ fn fire_session_without_a_sign_in_launches_with_its_helped_config_and_no_token()
     let Stage::Session { workstate_session, without_workstate, .. } = session_stage(&f.records(&report.run.unwrap())) else { unreachable!() };
     assert_eq!(workstate_session, None);
     assert!(without_workstate.unwrap().contains("not signed in"));
+}
+
+/// Workman not set up: the run launches strict with a config that has no Workman entry, and its record says why once.
+#[test]
+fn fire_session_without_server_json_launches_without_workman_and_says_run_workman_setup() {
+    let f = fixture_with(false, false);
+    f.add_approved(session_schedule("plain", ActionKind::Session, Profile::Read));
+    let mut host = TestHost::new(&f, &[Look::Working]);
+    host.on_sleep = Some(report_done_after(15_000));
+    let report = run_now(&f, "plain", &mut host);
+    assert_eq!(report.outcome, Some(Outcome::Done), "{report:?}");
+    let spec = host.spec();
+    assert!(spec.strict_mcp_config, "no user-scope server either");
+    let text = fs::read_to_string(spec.mcp_config.clone().expect("a config of its own")).unwrap();
+    assert!(serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"].get("workman").is_none(), "{text}");
+    assert!(f.fake.seen().is_empty(), "nothing dials: {:?}", f.fake.seen().iter().map(|s| s.target.clone()).collect::<Vec<_>>());
+    let Stage::Session { workstate_session, without_workstate, .. } = session_stage(&f.records(&report.run.unwrap())) else { unreachable!() };
+    assert_eq!(workstate_session, None);
+    assert!(without_workstate.unwrap().starts_with("Workman is not set up: run /workman:setup"));
 }
 
 /// A folder that is not a git repo cannot take a worktree: the run fails before anything launches.
