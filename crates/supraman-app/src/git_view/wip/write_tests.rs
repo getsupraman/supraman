@@ -27,6 +27,13 @@ impl Render for Holder {
 
 /// A Git tab of `folder`, its WIP row selected, whose write gate reads `live`.
 fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
+    let (view, cx) = open_as(folder, live, cx);
+    select_wip(&view, cx);
+    (view, cx)
+}
+
+/// A Git tab of `folder` as it opens, whose write gate reads `live`.
+pub(super) fn open_as<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestAppContext) -> (Entity<GitView>, &'a mut VisualTestContext) {
     cx.update(|cx| {
         supraman_ui::init_globals(cx, "test");
         supraman_ui::text_input::bind_keys(cx);
@@ -37,11 +44,10 @@ fn open<'a>(folder: &std::path::Path, live: occupancy::Live, cx: &'a mut TestApp
     let (holder, cx) = cx.add_window_view(|_, cx| Holder(GitView::open_with(folder, None, HitTargets::default(), &GitSizes::default(), Arc::new(live), cx)));
     let view = holder.read_with(cx, |h, _| h.0.clone());
     cx.run_until_parked();
-    select_wip(&view, cx);
     (view, cx)
 }
 
-fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
+pub(super) fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
     let at = view.read_with(cx, |v, _| v.hits.borrow().get(key).map(|h| h.bounds.center())).unwrap_or_else(|| panic!("{key} is painted"));
     cx.simulate_click(at, Modifiers::none());
@@ -49,7 +55,7 @@ fn click(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
-fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
+pub(super) fn painted(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) -> bool {
     let hits = view.read_with(cx, |v, _| v.hits.clone());
     hits.borrow_mut().clear();
     redraw(view, cx);
@@ -62,7 +68,7 @@ fn keys(view: &Entity<GitView>, keys: &str, cx: &mut VisualTestContext) {
     redraw(view, cx);
 }
 
-fn panel<R>(view: &Entity<GitView>, cx: &mut VisualTestContext, read: impl FnOnce(&WipPanel, &gpui::App) -> R) -> R {
+pub(super) fn panel<R>(view: &Entity<GitView>, cx: &mut VisualTestContext, read: impl FnOnce(&WipPanel, &gpui::App) -> R) -> R {
     view.read_with(cx, |v, cx| read(v.wip_panel().read(cx), cx))
 }
 
@@ -72,11 +78,11 @@ fn lists(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (Vec<String>, Ve
     (paths(&shown.unstaged), paths(&shown.staged))
 }
 
-fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
+pub(super) fn toast(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Option<String> {
     view.read_with(cx, |v, _| v.toast.text().map(str::to_string))
 }
 
-fn texts(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (String, String, String) {
+pub(super) fn texts(view: &Entity<GitView>, cx: &mut VisualTestContext) -> (String, String, String) {
     panel(view, cx, |p, cx| {
         let c = p.composer().expect("the commit area is made");
         (c.summary.read(cx).text().to_string(), c.row.read(cx).text().to_string(), c.description.read(cx).text().to_string())
@@ -343,7 +349,7 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
 }
 
 /// `side` with W1 to W3 changing c.txt, stopped in GitMan's reword of W1 with W2 dropped: the pick of W3 conflicts.
-fn stopped_rebase(f: &Fixture) -> String {
+pub(super) fn stopped_rebase(f: &Fixture) -> String {
     let commits = ["one", "two", "three"].map(|n| {
         std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
         git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);

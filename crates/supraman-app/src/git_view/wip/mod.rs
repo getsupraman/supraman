@@ -1,15 +1,18 @@
-//! The WIP panel right of the graph while the WIP row is selected: the working directory's unstaged and
-//! staged files, read off the UI thread on each selection, with stage, unstage and discard on them, and the
-//! commit area under them.
+//! The WIP panel right of the graph while the WIP row is selected: the working directory's conflicted, unstaged
+//! and staged files, read off the UI thread on each selection, with stage, unstage and discard on them, the
+//! conflict panel's header and writes while an operation is under way, and the commit area under them.
 
 mod actions;
 pub mod compose;
 mod compose_render;
+mod conflicts;
 mod load;
 mod render;
 
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod conflict_tests;
 #[cfg(test)]
 mod write_tests;
 
@@ -19,8 +22,9 @@ use std::sync::{Arc, Mutex};
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription};
 use supraman_gitman::write::Writer;
+use supraman_gitman::write::conflicts::Marked;
 use supraman_gitman::write::rebase::Rebased;
-use supraman_gitman::{ChangeKind, FileChange, OperationState, Repo, Status};
+use supraman_gitman::{ChangeKind, Conflict, FileChange, OperationState, Repo, Status, UnderWay};
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
@@ -40,17 +44,31 @@ pub use render::banner;
 pub struct Shown {
     pub branch: Branch,
     pub total: usize,
+    pub conflicted: Vec<FileChange>,
     pub unstaged: Vec<FileChange>,
     pub staged: Vec<FileChange>,
     pub state: OperationState,
+    pub under_way: Option<UnderWay>,
+    pub conflicts: HashMap<String, Conflict>,
 }
 
 impl Shown {
     pub fn files(&self, section: Section) -> &[FileChange] {
         match section {
+            Section::Conflicted => &self.conflicted,
             Section::Unstaged => &self.unstaged,
             Section::Staged => &self.staged,
         }
+    }
+
+    /// An operation is under way, or files are conflicted: the panel shows the conflict header and lists.
+    pub fn conflicting(&self) -> bool {
+        self.state != OperationState::None || !self.conflicted.is_empty()
+    }
+
+    /// The lists the panel shows, top to bottom.
+    pub fn sections(&self) -> &'static [Section] {
+        if self.conflicting() { &[Section::Conflicted, Section::Unstaged, Section::Staged] } else { &[Section::Unstaged, Section::Staged] }
     }
 }
 
@@ -85,8 +103,11 @@ pub struct WipPanel {
     colour: usize,
     view: FileView,
     order: Order,
+    conflicted: List,
     unstaged: List,
     staged: List,
+    /// Each branch's lane colour in the graph, for the conflict header's pills.
+    ref_colours: Rc<HashMap<String, usize>>,
     gate: Entity<WriteGate>,
     /// Opened off the UI thread with the repo.
     writer: Option<Writer>,
@@ -97,6 +118,8 @@ pub struct WipPanel {
     asking: Option<Confirm<Ask>>,
     /// How the last rebase step ended, as its job left it.
     stepped: Arc<Mutex<Option<Rebased>>>,
+    /// What the last mark resolved did, as its job left it.
+    marked: Arc<Mutex<Option<Marked>>>,
     /// Made once a window is at hand.
     composer: Option<compose::Composer>,
     _written: Subscription,
@@ -119,14 +142,17 @@ impl WipPanel {
             colour: 0,
             view: FileView::Path,
             order: Order::Ascending,
+            conflicted: List::new(cx),
             unstaged: List::new(cx),
             staged: List::new(cx),
+            ref_colours: Rc::default(),
             gate,
             writer: None,
             hooks: false,
             doing: None,
             asking: None,
             stepped: Arc::default(),
+            marked: Arc::default(),
             composer: None,
             _written: written,
             #[cfg(test)]
@@ -167,6 +193,7 @@ impl WipPanel {
 
     fn list(&self, section: Section) -> &List {
         match section {
+            Section::Conflicted => &self.conflicted,
             Section::Unstaged => &self.unstaged,
             Section::Staged => &self.staged,
         }
@@ -174,9 +201,14 @@ impl WipPanel {
 
     fn list_mut(&mut self, section: Section) -> &mut List {
         match section {
+            Section::Conflicted => &mut self.conflicted,
             Section::Unstaged => &mut self.unstaged,
             Section::Staged => &mut self.staged,
         }
+    }
+
+    pub fn set_ref_colours(&mut self, colours: HashMap<String, usize>) {
+        self.ref_colours = Rc::new(colours);
     }
 
     /// Reads the working directory again off the UI thread, its lists opened afresh; the token of this read.
@@ -233,7 +265,8 @@ impl WipPanel {
         let _stall = stall::section("wip panel: apply");
         match loaded {
             Ok(l) => {
-                for (list, tree) in [(&self.unstaged, l.unstaged_tree), (&self.staged, l.staged_tree)] {
+                let before = self.shown().map(|s| s.state);
+                for (list, tree) in [(&self.conflicted, l.conflicted_tree), (&self.unstaged, l.unstaged_tree), (&self.staged, l.staged_tree)] {
                     list.tree.set_tree(tree);
                     if !self.in_place {
                         list.tree.expand_all();
@@ -241,7 +274,11 @@ impl WipPanel {
                         list.paths.select(None);
                     }
                 }
-                self.state = State::Shown(Rc::new(Shown { branch: l.branch, total: l.total, unstaged: l.unstaged, staged: l.staged, state: l.state }));
+                let shown = Shown { branch: l.branch, total: l.total, conflicted: l.conflicted, unstaged: l.unstaged, staged: l.staged, state: l.state, under_way: l.under_way, conflicts: l.conflicts };
+                if before != Some(shown.state) {
+                    self.fill_merge_message(&shown, cx);
+                }
+                self.state = State::Shown(Rc::new(shown));
             }
             Err(why) => self.state = State::Failed(why),
         }
@@ -257,10 +294,12 @@ impl WipPanel {
 
     pub fn set_order(&mut self, order: Order, cx: &mut Context<Self>) {
         self.order = order;
-        self.unstaged.tree.set_order_off_thread(order, cx);
-        self.staged.tree.set_order_off_thread(order, cx);
+        for list in [&self.conflicted, &self.unstaged, &self.staged] {
+            list.tree.set_order_off_thread(order, cx);
+        }
         if let State::Shown(shown) = &mut self.state {
             let shown = Rc::make_mut(shown);
+            sort_changes(&mut shown.conflicted, order);
             sort_changes(&mut shown.unstaged, order);
             sort_changes(&mut shown.staged, order);
         }
@@ -284,7 +323,7 @@ impl WipPanel {
     }
 
     pub fn deselect_files(&mut self, cx: &mut Context<Self>) {
-        for list in [&self.unstaged, &self.staged] {
+        for list in [&self.conflicted, &self.unstaged, &self.staged] {
             list.tree.select(None);
             list.paths.select(None);
         }
@@ -306,10 +345,10 @@ impl WipPanel {
         }
     }
 
-    /// The unstaged files (the conflicted among them), then the staged, as the lists show them.
+    /// The conflicted files, the unstaged, then the staged, as the lists show them.
     pub fn file_order(&self) -> Vec<Target> {
         let Some(shown) = self.shown() else { return Vec::new() };
-        [Section::Unstaged, Section::Staged]
+        [Section::Conflicted, Section::Unstaged, Section::Staged]
             .into_iter()
             .flat_map(|section| {
                 let files: HashMap<&str, &FileChange> = shown.files(section).iter().map(|f| (f.path.as_str(), f)).collect();
@@ -322,7 +361,11 @@ impl WipPanel {
     pub fn mark_file(&mut self, target: &Target, cx: &mut Context<Self>) {
         let Some(shown) = self.shown() else { return };
         self.deselect_files(cx);
-        let section = if target.of == Of::Staged { Section::Staged } else { Section::Unstaged };
+        let section = match target.of {
+            Of::Staged => Section::Staged,
+            Of::Conflicted => Section::Conflicted,
+            _ => Section::Unstaged,
+        };
         let view = self.view;
         let list = self.list_mut(section);
         list.open = true;

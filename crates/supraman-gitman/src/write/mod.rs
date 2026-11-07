@@ -2,6 +2,7 @@
 //! [`LockSet`] on the repo's [`Scheduler`], pauses the repo's watchers ([`Quiet`]) and runs git with [`PINNED`].
 //! Blocking: callers run it on a background executor.
 
+pub mod conflicts;
 mod guard;
 pub mod journal;
 pub mod lines;

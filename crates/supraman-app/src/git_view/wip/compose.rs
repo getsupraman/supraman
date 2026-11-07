@@ -3,6 +3,7 @@
 
 use gpui::{AppContext as _, Context, Div, Entity, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::OperationState;
+use supraman_gitman::write::conflicts::Sequence;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::text_input::{InputEvent, TextInput};
@@ -22,6 +23,8 @@ pub enum Act {
     Commit,
     ContinueRebase,
     SkipCommit,
+    Continue(Sequence),
+    Skip(Sequence),
 }
 
 /// The commit button's words and what it runs; `None` while it cannot act.
@@ -29,9 +32,13 @@ pub fn button(state: OperationState, staged: usize, amend: bool, has_message: bo
     let commit = |words: &str| (words.to_string(), has_message.then_some(Act::Commit));
     match state {
         OperationState::Merge if staged > 0 => commit("Commit and merge"),
-        OperationState::Merge => ("Commit and merge".into(), None),
+        OperationState::Merge => ("No changes to merge".into(), None),
         OperationState::Rebase { .. } if staged > 0 => ("Continue rebase".into(), Some(Act::ContinueRebase)),
         OperationState::Rebase { .. } => ("Skip commit".into(), Some(Act::SkipCommit)),
+        OperationState::CherryPick { .. } | OperationState::Revert { .. } | OperationState::Am => {
+            let seq = Sequence::of(state).unwrap_or(Sequence::CherryPick);
+            if staged > 0 { (format!("Continue {}", super::actions::noun(seq)), Some(Act::Continue(seq))) } else { ("Skip commit".into(), Some(Act::Skip(seq))) }
+        }
         _ if amend => commit("Amend previous commit"),
         _ if staged == 0 => ("Stage changes to commit".into(), None),
         _ if !has_message => ("Type a commit message".into(), None),
@@ -248,7 +255,7 @@ mod tests {
         let none = OperationState::None;
         let rebase = OperationState::Rebase { external: true };
         assert_eq!(button(OperationState::Merge, 1, false, true), ("Commit and merge".into(), Some(Act::Commit)));
-        assert_eq!(button(OperationState::Merge, 0, true, true), ("Commit and merge".into(), None));
+        assert_eq!(button(OperationState::Merge, 0, true, true), ("No changes to merge".into(), None));
         assert_eq!(button(rebase, 2, true, false), ("Continue rebase".into(), Some(Act::ContinueRebase)));
         assert_eq!(button(rebase, 0, false, true), ("Skip commit".into(), Some(Act::SkipCommit)));
         assert_eq!(button(none, 0, true, true), ("Amend previous commit".into(), Some(Act::Commit)));
@@ -256,6 +263,9 @@ mod tests {
         assert_eq!(button(none, 3, false, false), ("Type a commit message".into(), None));
         assert_eq!(button(none, 1, false, true), ("Commit changes to 1 file".into(), Some(Act::Commit)));
         assert_eq!(button(none, 3, false, true), ("Commit changes to 3 files".into(), Some(Act::Commit)));
+        let pick = OperationState::CherryPick { sequence: false };
+        assert_eq!(button(pick, 1, false, false), ("Continue cherry-pick".into(), Some(Act::Continue(Sequence::CherryPick))));
+        assert_eq!(button(OperationState::Revert { sequence: true }, 0, false, true), ("Skip commit".into(), Some(Act::Skip(Sequence::Revert))));
     }
 
     #[test]

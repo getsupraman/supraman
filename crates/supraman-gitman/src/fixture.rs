@@ -137,6 +137,39 @@ impl Fixture {
         assert!(!merge.success(), "the merge stops on a conflict");
     }
 
+    /// The worktree `wt` (on `side`) stops `git <args>` on a conflict in `a.txt`, after a commit of its own to it.
+    fn side_conflict(&self, args: &[&str]) {
+        std::fs::write(self.worktree.join("a.txt"), b"side
+").unwrap();
+        git_in(&self.git, &self.worktree, &["commit", "-q", "--no-verify", "-am", "Side's a.txt"], &[], None);
+        let stopped = run_git(&self.git, &self.worktree, args, &[], None);
+        assert!(!stopped.success(), "git {args:?} stops on a conflict");
+    }
+
+    /// The worktree `wt` stops cherry-picking `ahead` (which adds a line to `a.txt`) on a conflict in `a.txt`.
+    pub fn cherry_pick_conflict(&self) {
+        self.side_conflict(&["cherry-pick", self.sha("ahead")]);
+    }
+
+    /// The worktree `wt` stops reverting `second` (which added a line to `a.txt`) on a conflict in `a.txt`.
+    pub fn revert_conflict(&self) {
+        self.side_conflict(&["revert", "--no-edit", self.sha("second")]);
+    }
+
+    /// The worktree `wt` stops merging `gone`, which deletes `b.txt`, after `side` changed it: `b.txt` deleted by them.
+    pub fn delete_conflict(&self) {
+        let wt = |args: &[&str]| git_in(&self.git, &self.worktree, args, &[], None);
+        wt(&["checkout", "-q", "-b", "gone"]);
+        wt(&["rm", "-q", "b.txt"]);
+        wt(&["commit", "-q", "--no-verify", "-m", "Gone b.txt"]);
+        wt(&["checkout", "-q", "side"]);
+        std::fs::write(self.worktree.join("b.txt"), b"b on side
+").unwrap();
+        wt(&["commit", "-q", "--no-verify", "-am", "Side's b.txt"]);
+        let merge = run_git(&self.git, &self.worktree, &["merge", "-q", "--no-ff", "--no-verify", "--no-edit", "gone"], &[], None);
+        assert!(!merge.success(), "the merge stops on a conflict");
+    }
+
     /// GitMan's reword of `sha` in the checkout `repo` run with `todo` in place of the one a reword writes (one
     /// that drops a commit stops on a conflict in a later pick, which a reword alone cannot).
     pub fn gitmans_rebase(&self, repo: &Repo, sha: &str, todo: &str) -> crate::write::rebase::Rebased {

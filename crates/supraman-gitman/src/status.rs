@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use crate::changes::ChangeKind;
-use crate::operation::{OperationState, operation_state};
+use crate::operation::{OperationState, UnderWay, operation_state, under_way};
 use crate::parse::{nul_records, text};
 use crate::{GitError, Repo};
 
@@ -39,6 +39,51 @@ pub struct Entry {
     pub unstaged: Option<ChangeKind>,
 }
 
+/// What each side did to a conflicted path (porcelain v2's `XY` of an unmerged entry).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conflict {
+    BothModified,
+    BothAdded,
+    BothDeleted,
+    AddedByUs,
+    AddedByThem,
+    DeletedByUs,
+    DeletedByThem,
+}
+
+impl Conflict {
+    pub fn words(self) -> &'static str {
+        match self {
+            Conflict::BothModified => "both modified",
+            Conflict::BothAdded => "both added",
+            Conflict::BothDeleted => "both deleted",
+            Conflict::AddedByUs => "added by us",
+            Conflict::AddedByThem => "added by them",
+            Conflict::DeletedByUs => "deleted by us",
+            Conflict::DeletedByThem => "deleted by them",
+        }
+    }
+}
+
+impl Entry {
+    /// An unmerged entry's conflict.
+    pub fn conflict(&self) -> Option<Conflict> {
+        use ChangeKind::{Added, Deleted};
+        if self.kind != EntryKind::Unmerged {
+            return None;
+        }
+        Some(match (self.staged?, self.unstaged?) {
+            (Added, Added) => Conflict::BothAdded,
+            (Deleted, Deleted) => Conflict::BothDeleted,
+            (Added, _) => Conflict::AddedByUs,
+            (_, Added) => Conflict::AddedByThem,
+            (Deleted, _) => Conflict::DeletedByUs,
+            (_, Deleted) => Conflict::DeletedByThem,
+            _ => Conflict::BothModified,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Merge,
@@ -53,6 +98,8 @@ pub struct Status {
     pub entries: Vec<Entry>,
     pub operation: Option<Operation>,
     pub state: OperationState,
+    /// The sides of the operation under way.
+    pub under_way: Option<UnderWay>,
 }
 
 /// The work in progress: staged, unstaged and untracked files, and a merge or rebase under way.
@@ -81,6 +128,7 @@ fn read_status(repo: &Repo, git_dir: &std::path::Path, optional_locks: bool) -> 
     let mut status = if optional_locks { repo.read_locking(&args, parse_status)? } else { repo.read(&args, None, parse_status)? };
     status.state = operation_state(git_dir);
     status.operation = operation(status.state);
+    status.under_way = under_way(repo, git_dir, status.state, status.branch.head.as_deref())?;
     Ok(status)
 }
 
@@ -168,5 +216,15 @@ u UU N... 100644 100644 100644 100644 h1 h2 h3 c.txt\0? u.txt\0";
         assert_eq!((e[1].kind, e[1].path.as_str(), e[1].orig_path.as_deref()), (EntryKind::Renamed { score: 100 }, "new name", Some("old name")));
         assert_eq!((e[2].kind, e[2].staged), (EntryKind::Unmerged, Some(ChangeKind::Unmerged)));
         assert_eq!((e[3].kind, e[3].unstaged), (EntryKind::Untracked, Some(ChangeKind::Untracked)));
+        assert_eq!((e[2].conflict(), e[0].conflict()), (Some(Conflict::BothModified), None));
+    }
+
+    #[test]
+    fn each_unmerged_xy_is_its_conflict() {
+        let kinds = [("DD", Conflict::BothDeleted), ("AU", Conflict::AddedByUs), ("UD", Conflict::DeletedByThem), ("UA", Conflict::AddedByThem), ("DU", Conflict::DeletedByUs), ("AA", Conflict::BothAdded), ("UU", Conflict::BothModified)];
+        for (xy, conflict) in kinds {
+            let entry = changed("u", &format!("{xy} N... 100644 100644 100644 100644 h1 h2 h3 c.txt")).unwrap();
+            assert_eq!(entry.conflict(), Some(conflict), "{xy}");
+        }
     }
 }

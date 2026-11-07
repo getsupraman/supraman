@@ -1,13 +1,14 @@
 //! The WIP panel's writes, each through the tab's write gate off the UI thread: stage, unstage, discard (asked
-//! first), commit, and a merge's or rebase's next step; their outcome goes to the tab as a [`PanelEvent`].
+//! first), commit, and the next step of the operation under way; their outcome goes to the tab as a [`PanelEvent`].
 
 use std::sync::PoisonError;
 
 use gpui::{App, Context};
+use supraman_gitman::write::conflicts::{Sequence, Side};
 use supraman_gitman::write::rebase::{Autostash, Rebased};
 use supraman_gitman::write::wip::{self, Step};
 use supraman_gitman::write::{LockSet, Resource, Session, WriteError};
-use supraman_gitman::FileChange;
+use supraman_gitman::{ChangeKind, FileChange};
 use supraman_ui::confirm::Confirm;
 
 use super::compose::{self, Act};
@@ -22,6 +23,8 @@ pub enum Ask {
     Discard(Vec<FileChange>),
     DiscardAll,
     Step(Step),
+    /// Mark resolved of these files (`None`: every conflicted one), whose `markers` files still hold conflict markers.
+    ResolveAnyway { paths: Option<Vec<String>>, markers: Vec<String> },
 }
 
 /// The panel's write under way.
@@ -33,9 +36,21 @@ pub enum Doing {
     DiscardAll,
     Commit { summary: String, amend: bool },
     Step(Step),
+    Take(Side),
+    Resolve { paths: Option<Vec<String>>, anyway: bool },
+    Unresolve,
 }
 
 pub const ANOTHER_CONFLICT: &str = "The rebase stopped on another conflict";
+
+/// A cherry-pick's, revert's or am's name in the panel's words.
+pub fn noun(sequence: Sequence) -> &'static str {
+    match sequence {
+        Sequence::CherryPick => "cherry-pick",
+        Sequence::Revert => "revert",
+        Sequence::Am => "patch series",
+    }
+}
 pub const ABORTED_POPPED: &str = "Aborted the rebase; your changes are back";
 
 fn files_words(n: usize) -> String {
@@ -51,17 +66,31 @@ impl Ask {
             Ask::Step(Step::AbortRebase) => ("Abort the rebase? The branch goes back to where it started and the resolutions so far are lost.".into(), "Abort rebase"),
             Ask::Step(Step::AbortMerge) => ("Abort the merge? The resolutions so far are lost.".into(), "Abort merge"),
             Ask::Step(Step::ContinueRebase) => ("Continue the rebase?".into(), "Continue rebase"),
+            Ask::Step(Step::Continue(seq)) => (format!("Continue the {}?", noun(*seq)), "Continue"),
+            Ask::Step(Step::Skip(seq)) => (format!("Skip this commit of the {}? Its changes are left out.", noun(*seq)), "Skip commit"),
+            Ask::Step(Step::Abort(seq)) => (format!("Abort the {}? The branch goes back to where it started and the resolutions so far are lost.", noun(*seq)), "Abort"),
+            Ask::ResolveAnyway { markers, .. } => (markers_question(markers), "Mark resolved"),
         }
     }
 }
 
-/// Stages every unstaged file the status lists now.
-fn stage_everything(s: &Session) -> Result<(), WriteError> {
-    let status = supraman_gitman::status(s.writer().repo())?;
-    wip::stage(s, &sections(&status).0)
+/// `<file> still has conflict markers. Mark it resolved anyway?`, or the first file and how many more.
+fn markers_question(markers: &[String]) -> String {
+    match markers {
+        [one] => format!("{one} still has conflict markers. Mark it resolved anyway?"),
+        [first, rest @ ..] => format!("{first} and {} more still have conflict markers. Mark them resolved anyway?", files_words(rest.len())),
+        [] => "Mark resolved anyway?".into(),
+    }
 }
 
-fn index_write() -> LockSet {
+/// Stages every unstaged file the status lists now but the conflicted ones, which only mark resolved stages.
+fn stage_everything(s: &Session) -> Result<(), WriteError> {
+    let status = supraman_gitman::status(s.writer().repo())?;
+    let files: Vec<FileChange> = sections(&status).0.into_iter().filter(|f| f.kind != ChangeKind::Unmerged).collect();
+    wip::stage(s, &files)
+}
+
+pub(super) fn index_write() -> LockSet {
     LockSet::new().write(Resource::Index)
 }
 
@@ -71,7 +100,7 @@ impl WipPanel {
         self.gate.read(cx).busy()
     }
 
-    fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
+    pub(super) fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
         let Some(writer) = self.writer.clone() else {
             return cx.emit(PanelEvent::Why("The repository is still opening; try again in a moment".into()));
         };
@@ -141,6 +170,7 @@ impl WipPanel {
             Ask::Discard(files) => self.request(Doing::Discard(files.len()), LockSet::reset(), move |s| wip::discard_unstaged(s, &files), cx),
             Ask::DiscardAll => self.request(Doing::DiscardAll, LockSet::reset(), |s| wip::discard_all(s).map(drop), cx),
             Ask::Step(step) => self.step(step, false, cx),
+            Ask::ResolveAnyway { paths, .. } => self.resolve(paths, true, cx),
         }
     }
 
@@ -154,6 +184,9 @@ impl WipPanel {
         let (shown, c) = (self.shown()?, self.composer.as_ref()?);
         let staged = shown.staged.len() + if stage_all { shown.unstaged.len() } else { 0 };
         let has_message = !c.summary.read(cx).text().trim().is_empty();
+        if matches!(shown.state, supraman_gitman::OperationState::Rebase { external: true }) {
+            return None;
+        }
         Some(compose::button(shown.state, staged, c.amend, has_message))
     }
 
@@ -177,6 +210,8 @@ impl WipPanel {
             }
             Act::ContinueRebase => self.step(Step::ContinueRebase, stage_all, cx),
             Act::SkipCommit => self.ask(Ask::Step(Step::SkipCommit), cx),
+            Act::Continue(seq) => self.step(Step::Continue(seq), stage_all, cx),
+            Act::Skip(seq) => self.ask(Ask::Step(Step::Skip(seq)), cx),
         }
     }
 
@@ -199,6 +234,7 @@ impl WipPanel {
         let outcome = self.stepped.lock().unwrap_or_else(PoisonError::into_inner).take();
         match (step, outcome) {
             (Step::AbortMerge, _) | (_, None) => Some(None),
+            (Step::Continue(seq) | Step::Skip(seq) | Step::Abort(seq), Some(Rebased::Conflicted)) => Some(Some(format!("The {} stopped on another conflict", noun(seq)))),
             (_, Some(Rebased::Conflicted)) => Some(Some(ANOTHER_CONFLICT.into())),
             (step, Some(Rebased::Done { head, autostash })) => {
                 let toast = match (step, &autostash) {
@@ -234,7 +270,13 @@ impl WipPanel {
                 Some(toast) => toast,
                 None => return cx.notify(),
             },
-            (Doing::Stage | Doing::Unstage, Ok(())) => None,
+            (Doing::Resolve { paths, anyway: false }, Ok(())) => {
+                if let Some(markers) = self.markers_left() {
+                    self.ask(Ask::ResolveAnyway { paths: paths.clone(), markers }, cx);
+                }
+                None
+            }
+            (Doing::Stage | Doing::Unstage | Doing::Take(_) | Doing::Resolve { .. } | Doing::Unresolve, Ok(())) => None,
         };
         cx.emit(PanelEvent::Wrote(toast));
         cx.notify();

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::journal::{self, Action, Kind};
+use super::conflicts::{self, Sequence};
 use super::rebase::{self, Autostash, Rebased};
 use super::{Call, Session, WriteError};
 use crate::changes::{ChangeKind, FileChange};
@@ -192,6 +193,9 @@ fn run_commit(s: &Session, message: &str, extra: &[&str], no_verify: bool) -> Re
     if message.trim().is_empty() {
         return Err(WriteError::Refused("A commit needs a message"));
     }
+    if conflicts::conflicted(s)? {
+        return Err(WriteError::Refused(conflicts::RESOLVE_FIRST));
+    }
     let mut args = vec!["commit", "--file=-", "--quiet"];
     args.extend_from_slice(extra);
     if no_verify {
@@ -212,16 +216,20 @@ fn run_commit(s: &Session, message: &str, extra: &[&str], no_verify: bool) -> Re
     Ok(())
 }
 
-/// A merge's or a rebase's next step from the commit area.
+/// The next step of the operation under way, from the commit area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     ContinueRebase,
     SkipCommit,
     AbortRebase,
     AbortMerge,
+    Continue(Sequence),
+    Skip(Sequence),
+    Abort(Sequence),
 }
 
-/// Runs `step`: a rebase's as [`rebase`](super::rebase) runs them, a merge's abort; the rebase's state after.
+/// Runs `step`: a rebase's as [`rebase`](super::rebase) runs them, a merge's abort, a cherry-pick's, revert's or
+/// am's with git's own; the operation's state after.
 pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
     match step {
         Step::ContinueRebase => rebase::continue_rebase(s),
@@ -232,6 +240,9 @@ pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
             let head = text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string();
             Ok(Rebased::Done { head, autostash: Autostash::None })
         }
+        Step::Continue(sequence) => conflicts::sequence_step(s, sequence, "--continue"),
+        Step::Skip(sequence) => conflicts::sequence_step(s, sequence, "--skip"),
+        Step::Abort(sequence) => conflicts::sequence_step(s, sequence, "--abort"),
     }
 }
 

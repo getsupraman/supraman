@@ -130,11 +130,11 @@ fn wip_view_shows_a_conflicted_file_in_file_view(cx: &mut TestAppContext) {
     let (view, cx) = open_with_editor(&f.worktree, cx);
     select_wip(&view, cx);
     let s = shown(&view, cx);
-    assert_eq!(listed(&s.unstaged), [("a.txt", ChangeKind::Unmerged)]);
+    assert_eq!(listed(&s.conflicted), [("a.txt", ChangeKind::Unmerged)]);
     assert!(!s.staged.is_empty() && s.staged.iter().all(|f| f.path != "a.txt"), "the merge's clean files are staged, the conflicted one is not: {:?}", s.staged);
     assert_eq!(s.branch, Branch::Named("side".into()));
 
-    let (d, old, new) = open_file(&view, Section::Unstaged, "a.txt", cx);
+    let (d, old, new) = open_file(&view, Section::Conflicted, "a.txt", cx);
     assert!(new.contains("<<<<<<<") && new.contains(">>>>>>>") && old == new, "the worktree file with its markers: {new:?}");
     assert_eq!(d.read_with(cx, |d, _| (d.mode(), d.target.of.clone())), (Mode::File, Of::Conflicted));
 }
