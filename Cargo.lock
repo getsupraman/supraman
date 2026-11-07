@@ -8712,10 +8712,12 @@ version = "0.1.13"
 dependencies = [
  "image",
  "serde",
+ "serde_json",
  "supraman-core",
  "supraman-gitman",
  "tempfile",
  "thiserror 2.0.21",
+ "uuid",
 ]
 
 [[package]]
