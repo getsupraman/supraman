@@ -10,7 +10,7 @@ use supraman_workman::fake::{Answer, FakeWorkman};
 use super::state::StateKey;
 use super::*;
 
-const PA: &str = "aaaa0000-0000-4000-8000-000000000001";
+const PA: &str = "aaaa0000-0000-4000-8000-00000000aa01";
 const PB: &str = "bbbb0000-0000-4000-8000-000000000001";
 const PC: &str = "cccc0000-0000-4000-8000-000000000001";
 const RA: &str = "aaaa0000-0000-4000-8000-0000000000a1";
@@ -33,7 +33,7 @@ fn run_item(id: &str, qref: &str, status: &str) -> Value {
 
 fn project(id: &str, qref: &str, repos: Value, runs: Vec<Value>) -> Value {
     let runs: Vec<Value> = runs.into_iter().map(|r| json!({ "item": r, "rollup": { "total": 4, "done": 1, "inProgress": 1, "blocked": 1, "open": 1 } })).collect();
-    json!({ "item": item(id, qref, "project", &format!("Project {qref}"), "in_progress"), "rollup": {}, "repos": repos, "runs": runs })
+    json!({ "item": item(id, qref, "project", &format!("Project {qref}"), "in_progress"), "rollup": { "total": 5, "done": 2, "open": 2, "blocked": 1 }, "repos": repos, "runs": runs })
 }
 
 fn row(item: Value, depth: u32) -> Value {
@@ -66,9 +66,40 @@ fn page(item: Value, extra: Value) -> String {
     page.to_string()
 }
 
+fn claim(item: Value, run: Value, claude_session_id: &str) -> Value {
+    json!({ "item": item, "run": run, "role": "worker", "agent": "aw", "tree": "p:/wt/ra",
+            "session": { "id": "s1", "name": "fm-w-ra", "role": "worker", "claudeSessionId": claude_session_id, "firstSeenAt": "x", "lastSeenAt": "x" },
+            "acquiredAt": "2026-11-06T10:00:00Z", "heartbeatAt": "2026-11-06T10:00:00Z", "expiresAt": "2099-01-01T00:00:00Z", "expired": false })
+}
+
+/// Six questions in pa, the newest first, and one blocked item in pb.
+fn inboxes() -> (String, String) {
+    let row = |n: u32, kind: &str, run: Value| {
+        json!({ "key": format!("{kind}:{}", id(20 + n)), "kind": kind, "item": item(&id(20 + n), &format!("pa/ra/q{n}"), "question", &format!("Question {n}?"), "open"),
+                "run": run, "what": "w", "since": format!("2026-11-06T1{n}:00:00Z"), "call": "" })
+    };
+    let pa: Vec<Value> = (1..=6).rev().map(|n| row(n, "question", run_item(RA, "pa/ra", "in_progress"))).collect();
+    let mut blocked = row(0, "blocked", run_item(RB, "pb/rb", "open"));
+    blocked["item"] = item(&id(40), "pb/rb/1", "task", "Blocked in beta", "blocked");
+    blocked["key"] = json!(format!("blocked:{}", id(40)));
+    let inbox = |rows: Vec<Value>| json!({ "asOf": "x", "seq": 5, "rows": rows }).to_string();
+    (inbox(pa), inbox(vec![blocked]))
+}
+
+fn journal(events: Vec<(i64, &str, &str, &str)>) -> String {
+    let events: Vec<Value> = events
+        .into_iter()
+        .map(|(seq, at, qref, summary)| json!({ "seq": seq, "at": at, "item": item(&id(seq as u32), qref, "task", "t", "open"), "actor": "aw-1", "role": "worker", "kind": "transition", "summary": summary }))
+        .collect();
+    json!({ "asOf": "x", "seq": 20, "cursor": 20, "hasMore": false, "events": events }).to_string()
+}
+
 fn served() -> FakeWorkman {
     let overview = json!({
-        "asOf": "x", "seq": 5,
+        "asOf": "2026-11-07T00:15:00Z", "seq": 5,
+        "workingNow": [claim(item(&id(3), "pa/ra/3", "task", "In progress now", "in_progress"), run_item(RA, "pa/ra", "in_progress"), "uuid-live"),
+                       claim(item(&id(50), "pc/rc/1", "task", "Elsewhere", "in_progress"), run_item(RC, "pc/rc", "in_progress"), "uuid-other")],
+        "honesty": { "doneUnverified": 1, "forced": 4, "ungated": 0, "followupsOpen": 3 },
         "projects": [
             project(PA, "pa", json!([{ "kind": "remote", "key": "github.com/acme/alpha" }]), vec![run_item(RA, "pa/ra", "in_progress"), run_item(RA_DONE, "pa/old", "done")]),
             project(PC, "pc", json!([{ "kind": "root", "key": "p:/w/gamma" }]), vec![run_item(RC, "pc/rc", "in_progress")]),
@@ -90,8 +121,22 @@ fn served() -> FakeWorkman {
         { "key": "finalize", "label": "Finalize run", "count": 5, "text": "Finalize run `pa/ra`: close what is proven." },
         { "key": "cheat", "label": "Did we cheat?", "count": null, "text": "Check run `pa/ra` for unproven claims." }
     ]);
+    let (inbox_a, inbox_b) = inboxes();
+    let search = json!({ "asOf": "x", "seq": 5, "hits": [
+        { "item": item(&id(41), "pb/rb/2", "task", "Zebra crossing", "open"), "project": item(PB, "pb", "project", "Project pb", "in_progress"), "match": "text", "snippet": "the zebra" },
+        { "item": item(&id(51), "pc/rc/2", "task", "Zebra elsewhere", "open"), "project": item(PC, "pc", "project", "Project pc", "in_progress"), "match": "text", "snippet": null }
+    ] });
+    let journal_a = journal(vec![(10, "2026-11-06T10:00:00Z", "pa/ra/1", "1 open → in_progress"), (11, "2026-11-07T10:00:00Z", "pa/ra/2", "2 in_progress → done")]);
+    let journal_b = journal(vec![(12, "2026-11-07T11:00:00Z", "pb/rb/1", "1 open → blocked")]);
+    let cleanup = json!([{ "key": "cleanup", "label": "Clean up", "count": 7, "text": "Clean up pa." }]);
     FakeWorkman::start(vec![
         ("/api/v1/overview".into(), Answer::json(overview.to_string())),
+        (format!("/api/v1/inbox?project={PA}"), Answer::json(inbox_a)),
+        (format!("/api/v1/inbox?project={PB}"), Answer::json(inbox_b)),
+        (format!("/api/v1/journal?scope={PA}&limit=150"), Answer::json(journal_a)),
+        (format!("/api/v1/journal?scope={PB}&limit=150"), Answer::json(journal_b)),
+        ("/api/v1/search?q=zebra&limit=20".into(), Answer::json(search.to_string())),
+        (format!("/api/v1/prompts?scope={PA}"), Answer::json(prompts(item(PA, "pa", "project", "Project pa", "in_progress"), cleanup))),
         (format!("/api/v1/runs/{RA}/board"), Answer::json(board())),
         (format!("/api/v1/items/{RA}"), Answer::json(page(run_item(RA, "pa/ra", "in_progress"), json!({ "children": [{ "item": item(&id(1), "pa/ra/1", "task", "Verified by the controller", "done"), "criteria": {} }] })))),
         (format!("/api/v1/items/{}", id(1)), Answer::json(t1)),
@@ -113,6 +158,7 @@ fn repo_of(dir: &Path) -> Option<MintRepo> {
 
 thread_local! {
     static OPENED: RefCell<Vec<Link>> = const { RefCell::new(Vec::new()) };
+    static ATTACHED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 fn record(link: &Link, _: &mut App) {
@@ -123,7 +169,7 @@ fn opened() -> Vec<Link> {
     OPENED.with(|o| o.borrow().clone())
 }
 
-struct Holder(Entity<WorkView>);
+struct Holder(Entity<WorkView>, Entity<WorkInbox>);
 
 impl Render for Holder {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -134,29 +180,47 @@ impl Render for Holder {
 struct Opened<'a> {
     view: Entity<WorkView>,
     fake: FakeWorkman,
+    inbox: Entity<WorkInbox>,
     cx: &'a mut VisualTestContext,
 }
 
+fn folders() -> Vec<std::path::PathBuf> {
+    vec!["alpha".into(), "beta".into(), "plain".into()]
+}
+
+/// The tab of workspace `w` (folders alpha and beta bound to pa and pb), with its Inbox and one live Supraman session.
 fn open(cx: &mut TestAppContext) -> Opened<'_> {
-    cx.update(|cx| supraman_ui::init_globals(cx, "test"));
+    cx.update(|cx| {
+        supraman_ui::init_globals(cx, "test");
+        supraman_ui::text_input::bind_keys(cx);
+    });
     let fake = served();
     let client = Client::new(fake.base(), "fake-test-reader");
     let (holder, cx) = cx.add_window_view(|_, cx| {
         let hub = WorkHub::ready(client, cx);
+        let inbox = WorkInbox::for_test(hub.clone(), cx);
+        inbox.update(cx, |i, cx| i.set_workspaces(vec![("w".into(), folders())], repo_of, cx));
+        let live = vec![LiveSession { claude_session_id: "uuid-live".into(), id: "live0001".into(), name: "fm-w-ra".into() }];
         let opening = Opening {
             workspace: "w".into(),
-            folders: vec!["alpha".into(), "beta".into(), "plain".into()],
+            folders: folders(),
             home: None,
             hits: HitTargets::default(),
-            link: FleetLink { live: Rc::default(), attach: Rc::new(|_, _, _| {}) },
+            link: FleetLink { live: Rc::new(RefCell::new(live)), attach: Rc::new(|id, _, _| ATTACHED.with(|a| a.borrow_mut().push(id.to_string()))) },
             open_link_with: record,
             repo_of,
         };
-        Holder(cx.new(|cx| WorkView::for_test(opening, hub, cx)))
+        let view = cx.new(|cx| {
+            let mut view = WorkView::for_test(opening, hub, cx);
+            cx.observe(&inbox, |_, _, cx| cx.notify()).detach();
+            view.inbox = Some(inbox.clone());
+            view
+        });
+        Holder(view, inbox)
     });
-    let view = holder.read_with(cx, |h, _| h.0.clone());
+    let (view, inbox) = holder.read_with(cx, |h, _| (h.0.clone(), h.1.clone()));
     settle(&view, cx);
-    Opened { view, fake, cx }
+    Opened { view, fake, inbox, cx }
 }
 
 fn settle(view: &Entity<WorkView>, cx: &mut VisualTestContext) {
@@ -195,7 +259,7 @@ fn c1_each_folders_project_shows_its_runs(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
     let ids: Vec<String> = view.read_with(cx, |v, _| v.projects.iter().map(|p| p.item.id.clone()).collect());
     assert_eq!(ids, [PA, PB], "alpha's remote binds pa, beta's root binds pb, pc is no folder's");
-    for key in ["work-project-pa", "work-project-pb", "work-nav-run-pa/ra", "work-nav-run-pb/rb", "work-nav-overview", "work-nav-activity", "work-nav-inbox=0"] {
+    for key in ["work-project-pa", "work-project-pb", "work-nav-run-pa/ra", "work-nav-run-pb/rb", "work-nav-overview", "work-nav-activity", "work-nav-inbox=7"] {
         bounds(&view, key, cx);
     }
     assert!(hit(&view, "work-project-pc", cx).is_none() && hit(&view, "work-nav-run-pc/rc", cx).is_none());
@@ -258,7 +322,7 @@ fn c3_filters_count_and_rows_show_only_dot_ref_title_and_criteria(cx: &mut TestA
 
 #[gpui::test]
 fn c4_copy_ref_and_open_in_web_from_row_breadcrumb_and_header(cx: &mut TestAppContext) {
-    let Opened { view, fake, cx } = open(cx);
+    let Opened { view, fake, cx, .. } = open(cx);
     let toast = |view: &Entity<WorkView>, cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.toast.text().map(str::to_string));
     click(&view, "work-row-copy-pa/ra/3", cx);
     assert_eq!((clipboard(cx), toast(&view, cx)), (Some("pa/ra/3".into()), Some("Copied pa/ra/3".into())));
@@ -330,7 +394,7 @@ fn c5_the_details_tabs_count_and_the_dots_follow_the_legend(cx: &mut TestAppCont
 
 #[gpui::test]
 fn c7_prompt_chips_are_the_servers_in_order_and_copy_their_text(cx: &mut TestAppContext) {
-    let Opened { view, fake, cx } = open(cx);
+    let Opened { view, fake, cx, .. } = open(cx);
     let chips: Vec<Bounds<Pixels>> = ["resume", "finalize", "cheat"].iter().map(|k| bounds(&view, &format!("work-prompt-run-{k}"), cx)).collect();
     assert!(chips[0].right() <= chips[1].left() && chips[1].right() <= chips[2].left(), "in the server's order: {chips:?}");
     let labels = view.read_with(cx, |v, _| match v.prompts.by_scope.get(RA) {
@@ -370,11 +434,129 @@ fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), None, "a second Esc clears the selection");
 }
 
-#[test]
-fn the_inboxs_workspace_is_the_one_project_among_the_matches() {
-    let iref = |id: &str, kind: &str| ItemRef { id: id.into(), ref_: "w".into(), qualified_ref: "w".into(), kind: kind.into(), ..Default::default() };
-    let resolved = |m: Vec<ItemRef>| supraman_workman::Resolved { matches: m, ..Default::default() };
-    assert_eq!(pick_project(resolved(vec![iref("r", "run"), iref("p", "project")]), "w").unwrap().id, "p");
-    assert!(pick_project(resolved(vec![iref("r", "run")]), "w").unwrap_err().contains("no project with ref 'w'"));
-    assert!(pick_project(resolved(vec![iref("a", "project"), iref("b", "project")]), "w").unwrap_err().contains("names 2 Workman projects"));
+fn show_inbox_count(view: &Entity<WorkView>, cx: &mut VisualTestContext) -> Rc<std::cell::Cell<usize>> {
+    let shown = Rc::new(std::cell::Cell::new(0));
+    let counted = shown.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(view, move |_, e: &WorkEvent, _| {
+            if matches!(e, WorkEvent::ShowInbox) {
+                counted.set(counted.get() + 1);
+            }
+        })
+        .detach()
+    });
+    shown
+}
+
+fn palette_refs(view: &Entity<WorkView>, cx: &mut VisualTestContext) -> (Vec<String>, Option<String>) {
+    view.read_with(cx, |v, cx| {
+        let palette = v.palette.as_ref().expect("the palette is open").read(cx);
+        (palette.shown().iter().map(|(f, _)| f.item.qualified_ref.clone()).collect(), palette.selected().map(|f| f.item.qualified_ref.clone()))
+    })
+}
+
+#[gpui::test]
+fn c2_the_overview_says_what_needs_you_and_who_works_on_what(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    let shown = show_inbox_count(&view, cx);
+    click(&view, "work-nav-overview", cx);
+    bounds(&view, "work-overview-sentence=6 tasks open across 2 projects. 7 things need you.", cx);
+    for n in 2..=6 {
+        bounds(&view, &format!("work-overview-needs-pa/ra/q{n}"), cx);
+    }
+    assert!(hit(&view, "work-overview-needs-pa/ra/q1", cx).is_none() && hit(&view, "work-overview-needs-pb/rb/1", cx).is_none(), "the top five, newest first");
+    click(&view, "work-overview-more=+2 more in the inbox", cx);
+    assert_eq!(shown.get(), 1, "+2 more opens the Inbox");
+
+    bounds(&view, "work-working-pa/ra/3", cx);
+    assert!(hit(&view, "work-working-pc/rc/1", cx).is_none(), "a claim in a project of no folder is not this workspace's");
+    click(&view, "work-working-session-pa/ra/3", cx);
+    assert_eq!(ATTACHED.with(|a| a.borrow().clone()), ["live0001"], "the claim's Supraman session opens");
+
+    for key in ["work-tile-closed without independent proof=1", "work-tile-forced closures=4", "work-tile-follow-ups open=3", "work-tile-tasks open=6"] {
+        bounds(&view, key, cx);
+    }
+    for key in ["work-overview-project-pa", "work-overview-project-pb", "work-overview-run-pa/ra", "work-overview-run-pb/rb", "work-prompt-project-pa-cleanup", "work-legend"] {
+        bounds(&view, key, cx);
+    }
+    assert!(hit(&view, "work-overview-run-pa/old", cx).is_none(), "a closed run is counted, not listed");
+    click(&view, "work-overview-run-pb/rb", cx);
+    assert_eq!(view.read_with(cx, |v, _| v.page.clone()), Page::Run(RB.into()));
+    click(&view, "work-nav-overview", cx);
+    click(&view, "work-overview-needs-pa/ra/q6", cx);
+    assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), Some(id(26)));
+}
+
+#[gpui::test]
+fn c2_activity_groups_the_projects_events_by_day_newest_first(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    click(&view, "work-nav-activity", cx);
+    let day = |at: &str| supraman_core::time::day(supraman_core::time::rfc3339_ms(at).unwrap());
+    let (newer, older) = (bounds(&view, &format!("work-activity-day-{}=2", day("2026-11-07T10:00:00Z")), cx), bounds(&view, &format!("work-activity-day-{}=1", day("2026-11-06T10:00:00Z")), cx));
+    let rows: Vec<Bounds<Pixels>> = [12, 11, 10].iter().map(|seq| bounds(&view, &format!("work-activity-{seq}"), cx)).collect();
+    assert!(newer.top() < rows[0].top() && rows[0].top() < rows[1].top() && rows[1].top() < older.top() && older.top() < rows[2].top(), "both projects' events, newest first under their day");
+    click(&view, "work-activity-copy-12", cx);
+    assert_eq!(clipboard(cx), Some("pb/rb/1".into()));
+}
+
+#[gpui::test]
+fn c6_ctrl_p_finds_an_item_by_ref_and_enter_shows_it(cx: &mut TestAppContext) {
+    let Opened { view, fake, cx, .. } = open(cx);
+    click(&view, "work-row-pa/ra/3", cx);
+    view.update(cx, |v, cx| v.clear_selection(cx));
+    cx.simulate_keystrokes("ctrl-p");
+    settle(&view, cx);
+    bounds(&view, "work-find", cx);
+    cx.simulate_input("pa/ra/");
+    settle(&view, cx);
+    let (refs, selected) = palette_refs(&view, cx);
+    assert_eq!(refs[..3], ["pa/ra/1", "pa/ra/2", "pa/ra/3"], "the board's rows in order: {refs:?}");
+    assert_eq!(selected.as_deref(), Some("pa/ra/1"));
+    bounds(&view, &format!("work-find-row-{}", id(1)), cx);
+    cx.simulate_keystrokes("down down");
+    settle(&view, cx);
+    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("pa/ra/3"));
+    cx.simulate_keystrokes("up");
+    settle(&view, cx);
+    assert_eq!(palette_refs(&view, cx).1.as_deref(), Some("pa/ra/2"));
+    cx.simulate_keystrokes("enter");
+    settle(&view, cx);
+    assert!(view.read_with(cx, |v, _| v.palette.is_none()), "Enter closes the palette");
+    assert_eq!(view.read_with(cx, |v, _| (v.page.clone(), v.selected.clone())), (Page::Run(RA.into()), Some(id(2))), "the item selected in its run");
+
+    cx.simulate_keystrokes("ctrl-p");
+    settle(&view, cx);
+    cx.simulate_keystrokes("escape");
+    settle(&view, cx);
+    assert!(view.read_with(cx, |v, _| v.palette.is_none()), "Esc closes it");
+
+    cx.simulate_keystrokes("ctrl-p");
+    settle(&view, cx);
+    cx.simulate_input("zebra");
+    settle(&view, cx);
+    assert_eq!(palette_refs(&view, cx).0, ["pb/rb/2"], "Workman's hit in a bound project; pc's is not this workspace's");
+    assert!(fake.seen().iter().any(|s| s.target == "/api/v1/search?q=zebra&limit=20"));
+    click(&view, &format!("work-find-row-{}", id(41)), cx);
+    assert_eq!(view.read_with(cx, |v, _| (v.palette.is_none(), v.selected.clone())), (true, Some(id(41))), "a click opens it");
+}
+
+#[gpui::test]
+fn the_inbox_reads_every_project_its_folders_bind(cx: &mut TestAppContext) {
+    let Opened { fake, inbox, cx, .. } = open(cx);
+    let rows: Vec<String> = inbox.read_with(cx, |i, _| i.rows().iter().map(|(w, r)| format!("{w}:{}", r.item.qualified_ref)).collect());
+    assert_eq!(rows, ["w:pa/ra/q6", "w:pa/ra/q5", "w:pa/ra/q4", "w:pa/ra/q3", "w:pa/ra/q2", "w:pa/ra/q1", "w:pb/rb/1"], "pa's and pb's rows, newest first");
+    let mut asked: Vec<String> = fake.seen().into_iter().map(|s| s.target).filter(|t| t.starts_with("/api/v1/inbox") || t.starts_with("/api/v1/resolve")).collect();
+    asked.dedup();
+    assert_eq!(asked, [format!("/api/v1/inbox?project={PA}"), format!("/api/v1/inbox?project={PB}")], "never a project found by the workspace's name");
+}
+
+#[gpui::test]
+fn needs_you_brings_the_inbox_to_its_top_and_highlights_it_for_a_moment(cx: &mut TestAppContext) {
+    let Opened { inbox, cx, .. } = open(cx);
+    inbox.update(cx, |i, _| i.scroll.set_offset(gpui::point(px(0.), px(-120.))));
+    inbox.update(cx, |i, cx| i.show(cx));
+    assert_eq!(inbox.read_with(cx, |i, _| (i.scroll.offset().y, i.flashing())), (px(0.), true));
+    cx.executor().advance_clock(super::inbox::FLASH + Duration::from_millis(10));
+    cx.run_until_parked();
+    assert!(!inbox.read_with(cx, |i, _| i.flashing()));
 }

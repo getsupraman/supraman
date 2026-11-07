@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use crate::http::{Reply, pct_encode, read, server_reason};
-use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Prompts, Resolved, Sessions};
+use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Prompts, Resolved, SearchHits, Sessions};
 
 pub const API_HEADER: &str = "X-Workman-Api";
 pub const API_VERSION: &str = "1";
@@ -175,6 +175,12 @@ impl Client {
     /// A ref a human typed → its items (zero, one or many).
     pub fn resolve(&self, ref_: &str) -> Result<Resolved> {
         self.json(&with_query("/api/v1/resolve", &[("ref", Some(ref_))]))
+    }
+
+    /// The dashboard's find over items: ref, then ref prefix, then full text; `limit` at most 50.
+    pub fn search(&self, q: &str, limit: Option<u32>) -> Result<SearchHits> {
+        let limit = limit.map(|l| l.to_string());
+        self.json(&with_query("/api/v1/search", &[("q", Some(q)), ("limit", limit.as_deref())]))
     }
 
     fn json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {

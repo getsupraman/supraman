@@ -5,6 +5,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use supraman_core::store::{JsonStore, Save};
+use gpui::Task;
 use supraman_workman::{Inbox, InboxRow, Overview};
 
 use super::*;
@@ -58,13 +59,13 @@ pub enum Touched {
     All { overview: bool },
 }
 
-pub fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<String, ItemRef>) -> Touched {
+pub fn touched(event: &StreamEvent, run_project: &HashMap<String, String>, projects: &HashMap<String, Vec<ItemRef>>) -> Touched {
     match event.run_id.as_deref() {
         None => Touched::All { overview: false },
         Some(run) => match run_project.get(run) {
             None => Touched::All { overview: true },
             Some(project) => {
-                let mut hit: Vec<String> = projects.iter().filter(|(_, p)| &p.id == project).map(|(w, _)| w.clone()).collect();
+                let mut hit: Vec<String> = projects.iter().filter(|(_, ps)| ps.iter().any(|p| &p.id == project)).map(|(w, _)| w.clone()).collect();
                 hit.sort();
                 Touched::Workspaces(hit)
             }
@@ -79,40 +80,66 @@ struct Plan {
     workspaces: HashSet<String>,
 }
 
+type Keys = Vec<(&'static str, String)>;
+
 struct Ask {
     workspace: String,
-    project: Option<ItemRef>,
+    folders: Vec<PathBuf>,
+    keys: Option<Keys>,
+    projects: Option<Vec<ItemRef>>,
 }
 
 enum Outcome {
-    Read(ItemRef, Inbox),
+    Read(Vec<ItemRef>, Inbox),
     NoProject,
     Failed(String),
 }
 
-fn read(client: &Client, asks: Vec<Ask>, overview: bool) -> (Option<Overview>, Vec<(String, Outcome)>) {
-    let overview = if overview { client.overview().ok() } else { None };
-    let outcomes = asks
+struct Answer {
+    workspace: String,
+    keys: Option<Keys>,
+    outcome: Outcome,
+}
+
+/// One inbox of every project bound to the workspace's repos (`projects::bound`), newest first; a fresh overview binds again.
+fn read(client: &Client, asks: Vec<Ask>, overview: bool, repo_of: RepoOf) -> (Option<Overview>, Vec<Answer>) {
+    let needs_overview = overview || asks.iter().any(|a| a.projects.is_none());
+    let overview = if needs_overview { client.overview().map_err(|e| e.to_string()) } else { Err(String::new()) };
+    let answers = asks
         .into_iter()
         .map(|ask| {
-            let project = match ask.project {
-                Some(project) => Ok(project),
-                None => match client.resolve(&ask.workspace) {
-                    Ok(resolved) => pick_project(resolved, &ask.workspace).map_err(|_| Outcome::NoProject),
-                    Err(e) => Err(Outcome::Failed(e.to_string())),
-                },
+            let keys = ask.keys.unwrap_or_else(|| projects::folder_keys(&ask.folders, repo_of));
+            let projects = match (&overview, ask.projects) {
+                (Ok(overview), _) => Ok(projects::bound(overview, &keys).into_iter().map(|p| p.item).collect::<Vec<_>>()),
+                (Err(_), Some(projects)) => Ok(projects),
+                (Err(why), None) => Err(why.clone()),
             };
-            let outcome = match project {
-                Ok(project) => match client.inbox(Some(&project.id)) {
-                    Ok(inbox) => Outcome::Read(project, absolute_urls(inbox, client.base())),
-                    Err(e) => Outcome::Failed(e.to_string()),
-                },
-                Err(outcome) => outcome,
+            let outcome = match projects {
+                Ok(projects) if projects.is_empty() => Outcome::NoProject,
+                Ok(projects) => merged(client, projects),
+                Err(why) => Outcome::Failed(why),
             };
-            (ask.workspace, outcome)
+            Answer { workspace: ask.workspace, keys: Some(keys), outcome }
         })
         .collect();
-    (overview, outcomes)
+    (overview.ok(), answers)
+}
+
+fn merged(client: &Client, projects: Vec<ItemRef>) -> Outcome {
+    let mut all = Inbox::default();
+    for project in &projects {
+        match client.inbox(Some(&project.id)) {
+            Ok(inbox) => {
+                all.seq = all.seq.max(inbox.seq);
+                all.as_of = inbox.as_of;
+                let fresh: Vec<InboxRow> = inbox.rows.into_iter().filter(|r| !all.rows.iter().any(|seen| seen.key == r.key)).collect();
+                all.rows.extend(fresh);
+            }
+            Err(e) => return Outcome::Failed(e.to_string()),
+        }
+    }
+    all.rows.sort_by_key(|r| std::cmp::Reverse(supraman_core::time::rfc3339_ms(&r.since)));
+    Outcome::Read(projects, absolute_urls(all, client.base()))
 }
 
 /// A row's `url` as the page to open: a path is on the Workman server.
@@ -128,7 +155,10 @@ fn absolute_urls(mut inbox: Inbox, base: &str) -> Inbox {
 pub struct WorkInbox {
     hub: Entity<WorkHub>,
     workspaces: Vec<String>,
-    projects: HashMap<String, ItemRef>,
+    folders: HashMap<String, Vec<PathBuf>>,
+    keys: HashMap<String, Keys>,
+    repo_of: RepoOf,
+    projects: HashMap<String, Vec<ItemRef>>,
     inboxes: HashMap<String, Inbox>,
     /// Run id → project id, from the last overview.
     run_project: HashMap<String, String>,
@@ -139,7 +169,12 @@ pub struct WorkInbox {
     pub reads: u64,
     pub applied: u64,
     pub housekeeping_open: bool,
+    /// The sidebar's Inbox list: scrolled to its top when it is shown.
+    pub scroll: ScrollHandle,
+    flash: Option<Task<()>>,
 }
+
+pub const FLASH: Duration = Duration::from_millis(1200);
 
 struct GlobalInbox(Entity<WorkInbox>);
 
@@ -151,42 +186,92 @@ impl WorkInbox {
             return inbox.clone();
         }
         let hub = WorkHub::shared(home.clone(), cx);
-        let inbox = cx.new(|cx| {
-            cx.subscribe(&hub, Self::on_hub).detach();
-            let (dismissed, notice) = Dismissed::load(home.as_deref());
-            WorkInbox {
-                hub,
-                workspaces: Vec::new(),
-                projects: HashMap::new(),
-                inboxes: HashMap::new(),
-                run_project: HashMap::new(),
-                dismissed,
-                pending: None,
-                failures: HashMap::new(),
-                notice,
-                reads: 0,
-                applied: 0,
-                housekeeping_open: false,
-            }
-        });
+        let inbox = cx.new(|cx| Self::new(hub, home.as_deref(), cx));
         cx.set_global(GlobalInbox(inbox.clone()));
         inbox
     }
 
-    pub fn set_workspaces(&mut self, workspaces: Vec<String>, cx: &mut Context<Self>) {
-        if workspaces == self.workspaces {
+    /// An inbox reading through `hub`, kept nowhere: a test's.
+    #[cfg(test)]
+    pub fn for_test(hub: Entity<WorkHub>, cx: &mut App) -> Entity<WorkInbox> {
+        cx.new(|cx| Self::new(hub, None, cx))
+    }
+
+    fn new(hub: Entity<WorkHub>, home: Option<&Path>, cx: &mut Context<Self>) -> Self {
+        cx.subscribe(&hub, Self::on_hub).detach();
+        let (dismissed, notice) = Dismissed::load(home);
+        WorkInbox {
+            hub,
+            workspaces: Vec::new(),
+            folders: HashMap::new(),
+            keys: HashMap::new(),
+            repo_of: supraman_supervisor::git_repo,
+            projects: HashMap::new(),
+            inboxes: HashMap::new(),
+            run_project: HashMap::new(),
+            dismissed,
+            pending: None,
+            failures: HashMap::new(),
+            notice,
+            reads: 0,
+            applied: 0,
+            housekeeping_open: false,
+            scroll: ScrollHandle::new(),
+            flash: None,
+        }
+    }
+
+    /// Each workspace with its folders; a workspace whose folders changed is bound again.
+    pub fn set_workspaces(&mut self, workspaces: Vec<(String, Vec<PathBuf>)>, repo_of: RepoOf, cx: &mut Context<Self>) {
+        let names: Vec<String> = workspaces.iter().map(|(w, _)| w.clone()).collect();
+        let rebind = repo_of as usize != self.repo_of as usize;
+        let changed: Vec<String> = workspaces.iter().filter(|(w, f)| rebind || self.folders.get(w) != Some(f)).map(|(w, _)| w.clone()).collect();
+        if changed.is_empty() && names == self.workspaces {
             return;
         }
-        let added: Vec<String> = workspaces.iter().filter(|w| !self.workspaces.contains(w)).cloned().collect();
-        self.projects.retain(|w, _| workspaces.contains(w));
-        self.inboxes.retain(|w, _| workspaces.contains(w));
-        self.failures.retain(|w, _| workspaces.contains(w));
-        self.workspaces = workspaces;
+        self.repo_of = repo_of;
+        self.folders = workspaces.into_iter().collect();
+        for w in &changed {
+            self.keys.remove(w);
+            self.projects.remove(w);
+        }
+        self.projects.retain(|w, _| names.contains(w));
+        self.keys.retain(|w, _| names.contains(w));
+        self.inboxes.retain(|w, _| names.contains(w));
+        self.failures.retain(|w, _| names.contains(w));
+        self.workspaces = names;
         let save = self.dismissed.edit(|d| d.retain_workspaces(&self.workspaces));
         Self::save(save, cx);
-        let asks = added.into_iter().map(|workspace| Ask { workspace, project: None }).collect();
+        let asks = changed.into_iter().map(|w| self.ask(w)).collect();
         self.read(asks, true, cx);
         cx.notify();
+    }
+
+    fn ask(&self, workspace: String) -> Ask {
+        Ask {
+            folders: self.folders.get(&workspace).cloned().unwrap_or_default(),
+            keys: self.keys.get(&workspace).cloned(),
+            projects: self.projects.get(&workspace).cloned(),
+            workspace,
+        }
+    }
+
+    /// Needs you: the list back at its top and highlighted for [`FLASH`].
+    pub fn show(&mut self, cx: &mut Context<Self>) {
+        self.scroll.set_offset(gpui::point(px(0.), px(0.)));
+        self.flash = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FLASH).await;
+            this.update(cx, |this, cx| {
+                this.flash = None;
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    pub fn flashing(&self) -> bool {
+        self.flash.is_some()
     }
 
     pub fn rows(&self) -> Vec<(&str, &InboxRow)> {
@@ -263,13 +348,13 @@ impl WorkInbox {
             .workspaces
             .iter()
             .filter(|w| plan.workspaces.contains(*w))
-            .map(|w| Ask { workspace: w.clone(), project: self.projects.get(w).cloned() })
+            .map(|w| self.ask(w.clone()))
             .collect();
         self.read(asks, false, cx);
     }
 
     fn read_all(&mut self, overview: bool, cx: &mut Context<Self>) {
-        let asks = self.workspaces.iter().map(|w| Ask { workspace: w.clone(), project: self.projects.get(w).cloned() }).collect();
+        let asks = self.workspaces.iter().map(|w| self.ask(w.clone())).collect();
         self.read(asks, overview, cx);
     }
 
@@ -278,24 +363,24 @@ impl WorkInbox {
         if asks.is_empty() && !overview {
             return;
         }
-        let client = client.clone();
+        let (client, repo_of) = (client.clone(), self.repo_of);
         self.reads += 1;
         let began = std::time::Instant::now();
         cx.spawn(async move |this, cx| {
-            let (overview, outcomes) = cx.background_executor().spawn(async move { read(&client, asks, overview) }).await;
+            let (overview, answers) = cx.background_executor().spawn(async move { read(&client, asks, overview, repo_of) }).await;
             this.update(cx, |this, cx| {
                 if this.applied == 0 {
                     crate::view::timeline("workman inbox done", began.elapsed());
                 }
                 this.applied += 1;
-                this.apply(overview, outcomes, cx);
+                this.apply(overview, answers, cx);
             })
             .ok();
         })
         .detach();
     }
 
-    fn apply(&mut self, overview: Option<Overview>, outcomes: Vec<(String, Outcome)>, cx: &mut Context<Self>) {
+    fn apply(&mut self, overview: Option<Overview>, answers: Vec<Answer>, cx: &mut Context<Self>) {
         if let Some(overview) = overview {
             self.run_project = overview
                 .projects
@@ -304,14 +389,17 @@ impl WorkInbox {
                 .collect();
         }
         let mut save = None;
-        for (workspace, outcome) in outcomes {
+        for Answer { workspace, keys, outcome } in answers {
             if !self.workspaces.contains(&workspace) {
                 continue;
             }
+            if let Some(keys) = keys {
+                self.keys.insert(workspace.clone(), keys);
+            }
             match outcome {
-                Outcome::Read(project, inbox) => {
+                Outcome::Read(projects, inbox) => {
                     self.failures.remove(&workspace);
-                    self.projects.insert(workspace.clone(), project);
+                    self.projects.insert(workspace.clone(), projects);
                     if self.inboxes.get(&workspace).is_some_and(|shown| inbox.seq < shown.seq) {
                         continue;
                     }
@@ -399,7 +487,7 @@ mod tests {
         let event = |run: Option<&str>| StreamEvent { seq: 1, run_id: run.map(str::to_string), item_id: None, kind: "transition".into() };
         let runs: HashMap<String, String> = [("r1".to_string(), "p1".to_string()), ("r9".to_string(), "p9".to_string())].into();
         let project = |id: &str| ItemRef { id: id.into(), ..Default::default() };
-        let projects: HashMap<String, ItemRef> = [("w1".to_string(), project("p1")), ("w2".to_string(), project("p2"))].into();
+        let projects: HashMap<String, Vec<ItemRef>> = [("w1".to_string(), vec![project("p0"), project("p1")]), ("w2".to_string(), vec![project("p2")])].into();
         assert_eq!(touched(&event(Some("r1")), &runs, &projects), Touched::Workspaces(vec!["w1".into()]));
         assert_eq!(touched(&event(Some("r9")), &runs, &projects), Touched::Workspaces(vec![]), "an unregistered project's run");
         assert_eq!(touched(&event(Some("new")), &runs, &projects), Touched::All { overview: true });

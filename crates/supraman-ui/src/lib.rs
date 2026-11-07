@@ -1,6 +1,6 @@
 //! What every Supraman gpui binary shares: the terminal grid painter, the themes and their terminal palette,
 //! the text input, buttons, banners, fonts, the widgets (menu, confirm, toast, notices, tab strip, hover
-//! card, split pane and height bar, column table, tree list, segmented toggle, matcher, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
+//! card, split pane and height bar, column table, tree list, segmented toggle, matcher, Ctrl+P palette, settings pages, details page), the selftests' hit targets, global init, and the frame / memory probes the
 //! selftests print.
 
 pub mod banner;
@@ -21,6 +21,7 @@ pub mod menu;
 pub mod notices;
 pub mod nudge;
 pub mod open;
+pub mod palette;
 pub mod placeholder;
 pub mod segmented;
 pub mod settings_page;

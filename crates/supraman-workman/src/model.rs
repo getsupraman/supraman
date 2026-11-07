@@ -515,6 +515,27 @@ pub struct Resolved {
     pub matches: Vec<ItemRef>,
 }
 
+/// `GET /api/v1/search`: hits in three stages (`ref`, `prefix`, `text`), each item once.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SearchHits {
+    pub as_of: String,
+    pub seq: i64,
+    pub hits: Vec<SearchHit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SearchHit {
+    pub item: ItemRef,
+    pub run: Option<ItemRef>,
+    pub project: Option<ItemRef>,
+    #[serde(rename = "match")]
+    pub match_: String,
+    /// A `text` hit's matching fragment of the intent, else its title.
+    pub snippet: Option<String>,
+}
+
 
 /// One SSE frame's data: "re-read", not the change itself.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]

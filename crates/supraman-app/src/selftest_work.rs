@@ -333,10 +333,8 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         }
     }
     Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, vec![Folder::new("repo", &repo)]), true)?;
-    let resolved = json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [project()] }).to_string();
     let fake = FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
-        (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         ("/api/v1/overview".into(), Answer::json(overview(100))),
         (board_target(LIVE_RUN), Answer::json(live_board(100, false))),
         (board_target(DONE_RUN), Answer::json(done_board())),
@@ -347,10 +345,6 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         (prompts_target(LIVE_RUN), Answer::json(prompts(live_run(), &[("resume", "Resume", None), ("finalize", "Finalize run", Some(2))]))),
         (prompts_target(TASK_2), Answer::json(prompts(item(TASK_2, "sw2/2", "task", "Render the board", "blocked"), &[("unblock", "Unblock", None)]))),
         (inbox_target(), Answer::json(inbox(100, false, false))),
-        (
-            format!("/api/v1/resolve?ref={}", crate::selftest::WORKSPACE),
-            Answer::json(json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [] }).to_string()),
-        ),
     ]);
     // signed in to the fake's own OAuth server, so the Workman notice has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
