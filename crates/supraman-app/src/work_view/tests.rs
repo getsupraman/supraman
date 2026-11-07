@@ -369,3 +369,12 @@ fn keys_move_in_the_list_and_into_the_detail(cx: &mut TestAppContext) {
     settle(&view, cx);
     assert_eq!(view.read_with(cx, |v, _| v.selected.clone()), None, "a second Esc clears the selection");
 }
+
+#[test]
+fn the_inboxs_workspace_is_the_one_project_among_the_matches() {
+    let iref = |id: &str, kind: &str| ItemRef { id: id.into(), ref_: "w".into(), qualified_ref: "w".into(), kind: kind.into(), ..Default::default() };
+    let resolved = |m: Vec<ItemRef>| supraman_workman::Resolved { matches: m, ..Default::default() };
+    assert_eq!(pick_project(resolved(vec![iref("r", "run"), iref("p", "project")]), "w").unwrap().id, "p");
+    assert!(pick_project(resolved(vec![iref("r", "run")]), "w").unwrap_err().contains("no project with ref 'w'"));
+    assert!(pick_project(resolved(vec![iref("a", "project"), iref("b", "project")]), "w").unwrap_err().contains("names 2 Workman projects"));
+}
