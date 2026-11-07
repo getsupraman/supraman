@@ -10,6 +10,7 @@ pub mod fake;
 mod health;
 mod http;
 pub mod model;
+pub mod repo;
 pub mod secret;
 mod stream;
 pub mod updates;

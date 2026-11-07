@@ -231,7 +231,10 @@ impl FleetView {
             own: node.own.clone(),
             relay: self.relays.get(workspace).and_then(|r| r.label(now_ms())).map(|(text, _)| text),
             project: self.tabs.iter().find_map(|t| match &t.kind {
-                TabKind::Work(view) if view.read(cx).workspace == workspace => view.read(cx).project().map(|p| p.qualified_ref.clone()),
+                TabKind::Work(view) if view.read(cx).workspace == workspace => {
+                    let refs: Vec<String> = view.read(cx).projects.iter().map(|p| p.item.qualified_ref.clone()).collect();
+                    (!refs.is_empty()).then(|| refs.join(", "))
+                }
                 _ => None,
             }),
         };
@@ -309,7 +312,7 @@ impl FleetView {
             this.open_schedule(&workspace, schedule, At::Top, cx);
         });
         let key = format!("details-{page_key}");
-        let page = details::Page { key: &key, title, pill: Some(pill), sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None };
+        let page = details::Page { key: &key, title, pill: Some(pill), sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: None, over: None, bar: None };
         Some(details::render(page, &self.hits, cx))
     }
 }

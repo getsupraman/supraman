@@ -141,6 +141,20 @@ fn client_resolve_encodes_the_typed_ref() {
 }
 
 #[test]
+fn client_prompts_are_the_scopes_in_the_servers_order() {
+    let body = format!(
+        r#"{{"asOf":"x","seq":9,"scope":{{"id":"{RUN}","ref":"r","qualifiedRef":"p/r","kind":"run","title":"R","status":"in_progress"}},
+        "prompts":[{{"key":"resume","label":"Resume","count":null,"text":"Resume run `p/r`."}},{{"key":"finalize","label":"Finalize run","count":5,"text":"Finalize."}}]}}"#
+    );
+    let (fake, c) = server(vec![(format!("/api/v1/prompts?scope={RUN}"), Answer::json(body))]);
+    let p = c.prompts(RUN).unwrap();
+    let got: Vec<_> = p.prompts.iter().map(|p| (p.key.as_str(), p.label.as_str(), p.count, p.text.as_str())).collect();
+    assert_eq!(got, [("resume", "Resume", None, "Resume run `p/r`."), ("finalize", "Finalize run", Some(5), "Finalize.")]);
+    assert_eq!((p.seq, p.scope.qualified_ref.as_str()), (9, "p/r"));
+    assert_read_only_with_bearer(&fake);
+}
+
+#[test]
 fn client_maps_errors_and_never_says_the_token() {
     let (_fake, c) = server(vec![
         ("/api/v1/overview".into(), Answer::status(401, r#"{"error":"bad token fake-reader-token"}"#)),

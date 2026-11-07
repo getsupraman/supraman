@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use crate::{
     selftest::{home, remove_dir_retrying, sleep},
     selftest_manage::capture,
-    view::{FleetView, MenuTarget},
+    view::{FleetView, MenuTarget, TabKind},
 };
 
 pub const WORKSPACE: &str = "demo";
@@ -24,6 +24,9 @@ const FOLDERS: [(&str, &str); 4] = [("api", "main"), ("web", "feature/login"), (
 
 const PROJECT: &str = "de000000-0000-4000-8000-000000000001";
 const RUN: &str = "de000000-0000-4000-8000-0000000000a1";
+/// The fixture folders' `origin`; the fake's project is bound to it.
+const REMOTE: &str = "https://github.com/demo/shop.git";
+const SELECTED: &str = "de000000-0000-4000-8000-000000000202";
 
 static FIXTURES_ONLY: AtomicBool = AtomicBool::new(false);
 static FAKE: OnceLock<FakeWorkman> = OnceLock::new();
@@ -77,10 +80,41 @@ fn item(id: &str, qref: &str, kind: &str, title: &str, status: &str) -> Value {
     json!({ "id": id, "ref": ref_, "qualifiedRef": qref, "kind": kind, "title": title, "status": status })
 }
 
+/// A fixture folder's repo, not on disk: every one is the demo shop's checkout.
+fn fixture_repo(dir: &Path) -> Option<supraman_supervisor::MintRepo> {
+    dir.starts_with(ROOT).then(|| supraman_supervisor::MintRepo { root: ROOT.to_string(), remote: Some(REMOTE.to_string()) })
+}
+
 fn workman() -> FakeWorkman {
     let project = item(PROJECT, WORKSPACE, "project", "Demo shop", "in_progress");
     let run = item(RUN, "checkout", "run", "Checkout flow", "in_progress");
     let task = |n: &str, title: &str, status: &str| item(&format!("de000000-0000-4000-8000-00000000020{n}"), &format!("checkout/{n}"), "task", title, status);
+    let row = |n: &str, title: &str, status: &str, criteria: (u32, u32)| {
+        json!({ "item": task(n, title, status), "depth": 1, "hasChildren": false, "criteria": { "checked": criteria.0, "total": criteria.1 }, "blockedBy": [], "flags": [] })
+    };
+    let mut verified = row("1", "Payment provider adapter", "done", (3, 3));
+    verified["verification"] = json!({ "passed": true, "runBy": "orchestrator", "at": "2026-11-02T08:00:00+00:00" });
+    let board = json!({
+        "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "run": run, "project": project,
+        "rows": [verified, row("2", "Login form validation", "blocked", (1, 4)), row("3", "Order summary page", "in_progress", (0, 2)),
+                 row("4", "Receipt email", "open", (0, 0)), row("5", "Refunds from the admin view", "open", (0, 0))]
+    });
+    let overview = json!({
+        "asOf": "2026-11-02T10:00:00+00:00", "seq": 10,
+        "projects": [{ "item": project, "rollup": {}, "repos": [{ "kind": "remote", "key": "github.com/demo/shop" }],
+                       "runs": [{ "item": run, "rollup": { "total": 5, "done": 1, "inProgress": 1, "blocked": 1, "open": 2 } }] }]
+    });
+    let selected = json!({
+        "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "item": task("2", "Login form validation", "blocked"), "path": [project, run],
+        "intent": "The login form says what is wrong with an entry before it is sent.", "verifyCmd": "npm test -- login",
+        "openedAt": "2026-11-01T09:00:00+00:00",
+        "criteria": [{ "id": "c1", "text": "an empty field is named", "checked": true, "evidence": "login.test.ts: 4 cases" },
+                     { "id": "c2", "text": "a wrong password keeps the name typed", "checked": false },
+                     { "id": "c3", "text": "the session API answers the check", "checked": false },
+                     { "id": "c4", "text": "screen reader announces the error", "checked": false }],
+        "notes": [{ "id": "n1", "kind": "question", "body": "Waits for the session API.", "createdAt": "2026-11-02T09:10:00+00:00" }]
+    });
+    let prompts = |scope: Value, list: Value| json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "scope": scope, "prompts": list }).to_string();
     let rows = vec![
         json!({ "key": "question:t1", "kind": "question", "item": task("1", "Payment provider adapter", "in_progress"), "run": run,
                 "what": "Card or invoice first?", "since": "2026-11-02T09:40:00+00:00", "call": "" }),
@@ -93,6 +127,15 @@ fn workman() -> FakeWorkman {
         ("/health".into(), Answer::text("Healthy")),
         (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         (format!("/api/v1/inbox?project={PROJECT}"), Answer::json(inbox)),
+        ("/api/v1/overview".into(), Answer::json(overview.to_string())),
+        (format!("/api/v1/runs/{RUN}/board"), Answer::json(board.to_string())),
+        (format!("/api/v1/items/{SELECTED}"), Answer::json(selected.to_string())),
+        (
+            format!("/api/v1/prompts?scope={RUN}"),
+            Answer::json(prompts(run.clone(), json!([{ "key": "resume", "label": "Resume", "count": null, "text": "Resume run `checkout`." },
+                                                      { "key": "finalize", "label": "Finalize run", "count": 1, "text": "Finalize run `checkout`." }]))),
+        ),
+        (format!("/api/v1/prompts?scope={SELECTED}"), Answer::json(prompts(task("2", "Login form validation", "blocked"), json!([{ "key": "unblock", "label": "Unblock", "count": 1, "text": "Unblock `checkout/2`." }])))),
     ])
 }
 
@@ -155,5 +198,21 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(1500)).await;
     let details = capture(out.join("supraman-details.png"), None, cx).await?;
     println!("shot: {}", details.display());
+
+    let work = view.update(cx, |v, cx| {
+        v.work_repo_of = fixture_repo;
+        let tab = v.open_work(WORKSPACE, cx);
+        match v.tab(tab).map(|t| &t.kind) {
+            Some(TabKind::Work(work)) => Some(work.clone()),
+            _ => None,
+        }
+    });
+    let work = work.ok_or_else(|| anyhow!("no Work tab for {WORKSPACE}"))?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the Work tab's rows", |v| v.hits.borrow().contains_key("work-row-checkout/2").then_some(())).await?;
+    work.update(cx, |w, cx| w.select(SELECTED.to_string(), cx));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the selected item in the detail", |v| v.hits.borrow().contains_key("work-pill-checkout/2=stop").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-work.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
     Ok(())
 }

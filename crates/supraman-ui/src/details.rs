@@ -21,6 +21,8 @@ pub enum Line {
     Long(String),
     /// `label  value`, the value a link: a click passes `target` to the page's `on_link`.
     Link { label: String, value: String, target: String },
+    /// A tick, ticked when `done`, before `text`, with any `note` muted under it.
+    Check { done: bool, text: String, note: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +57,11 @@ impl Section {
         self.lines.push(Line::Link { label: label.into(), value: value.into(), target: target.into() });
         self
     }
+
+    pub fn check(mut self, done: bool, text: impl Into<String>, note: Option<String>) -> Self {
+        self.lines.push(Line::Check { done, text: text.into(), note });
+        self
+    }
 }
 
 /// The sections as plain text: a caption line, then a line per row or paragraph.
@@ -66,6 +73,12 @@ pub fn text(title: &str, sections: &[Section]) -> String {
             match line {
                 Line::Row(label, value) | Line::Link { label, value, .. } => out.push_str(&format!("\n{label}  {value}")),
                 Line::Text(t) | Line::Long(t) => out.push_str(&format!("\n{t}")),
+                Line::Check { done, text, note } => {
+                    out.push_str(&format!("\n[{}] {text}", if *done { "x" } else { " " }));
+                    if let Some(note) = note {
+                        out.push_str(&format!("\n    {note}"));
+                    }
+                }
             }
         }
     }
@@ -89,6 +102,10 @@ pub struct Page<'a, V> {
     pub on_link: Option<OnLink<V>>,
     /// Above the sections, in the scrolled body: a form of the owner's.
     pub top: Option<AnyElement>,
+    /// Above the title: the owner's line, such as a ref with its actions.
+    pub over: Option<AnyElement>,
+    /// Between the title and the scrolled body, held in place: chips, a tab bar.
+    pub bar: Option<AnyElement>,
 }
 
 pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>) -> AnyElement {
@@ -96,12 +113,14 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
     let pill = page.pill.map(|(label, color)| {
         div().flex_none().px_2().rounded_full().bg(banner::tint(color)).text_xs().text_color(color).whitespace_nowrap().child(SharedString::from(label))
     });
+    let over = page.over.map(|o| div().px_6().pt_4().child(o));
     let title = div()
         .flex()
         .items_center()
         .gap_3()
         .px_6()
-        .pt_5()
+        .when(over.is_none(), |d| d.pt_5())
+        .when(over.is_some(), |d| d.pt_1())
         .pb_3()
         .child(div().min_w_0().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(colors.text).child(SharedString::from(page.title)))
         .children(pill);
@@ -112,16 +131,19 @@ pub fn render<V: 'static>(page: Page<V>, hits: &HitTargets, cx: &mut Context<V>)
     for section in page.sections {
         body = body.child(render_section(page.key, section, page.on_link.clone(), hits, cx));
     }
-    let actions = div().flex().flex_none().flex_wrap().items_center().gap_2().px_6().py_3().border_t_1().border_color(colors.border_variant).children(page.actions);
+    let actions = (!page.actions.is_empty())
+        .then(|| div().flex().flex_none().flex_wrap().items_center().gap_2().px_6().py_3().border_t_1().border_color(colors.border_variant).children(page.actions));
     div()
         .size_full()
         .flex()
         .flex_col()
         .bg(colors.editor_background)
         .text_color(colors.text)
+        .children(over)
         .child(title)
+        .children(page.bar.map(|b| div().flex_none().px_6().pb_2().child(b)))
         .child(body)
-        .child(actions)
+        .children(actions)
         .into_any_element()
 }
 
@@ -176,7 +198,25 @@ fn render_section<V: 'static>(page: &str, section: &Section, on_link: Option<OnL
                     )
                     .into_any_element()
             }
-            Line::Text(t) => div().text_sm().child(SharedString::from(t.clone())).into_any_element(),
+            Line::Text(t) => div().text_sm().whitespace_normal().child(SharedString::from(t.clone())).into_any_element(),
+            Line::Check { done, text, note } => div()
+                .relative()
+                .flex()
+                .items_start()
+                .gap_2()
+                .text_sm()
+                .child(div().flex_none().h(px(20.)).flex().items_center().child(button::tick(*done, cx.theme().status().success, cx)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(SharedString::from(text.clone()))
+                        .children(note.as_ref().map(|n| div().text_xs().text_color(colors.text_muted).child(SharedString::from(n.clone())))),
+                )
+                .child(hit_target(hits, format!("{key}-check-{i}={}", if *done { "done" } else { "open" })))
+                .into_any_element(),
             Line::Long(t) => {
                 let copy_key = format!("{key}-copy-{i}");
                 let copied = t.clone();

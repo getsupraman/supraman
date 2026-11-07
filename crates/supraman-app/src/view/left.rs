@@ -371,6 +371,13 @@ impl FleetView {
         self.left_hold_timer = None;
     }
 
+    /// A Work tab's Needs you: the Inbox at the sidebar's top, every row shown now.
+    pub fn show_inbox(&mut self, cx: &mut Context<Self>) {
+        self.release_left(cx);
+        let text = if self.work_inbox.read(cx).rows().is_empty() && self.needs.is_empty() { "Nothing needs you." } else { "The Inbox is at the top of the sidebar." };
+        self.toast.show(text.into(), |this: &mut Self| &mut this.toast, cx);
+    }
+
     pub fn left_held(&self) -> bool {
         self.left_hold.is_some()
     }
