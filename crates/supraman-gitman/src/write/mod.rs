@@ -12,6 +12,7 @@ pub mod lines;
 mod locks;
 mod quiet;
 pub mod rebase;
+pub mod remote;
 mod snapshot;
 pub mod stash;
 pub mod wip;
@@ -61,6 +62,12 @@ pub enum WriteError {
     /// Refused before git ran.
     #[error("{0}")]
     Refused(&'static str),
+    /// The user stopped a fetch or a push; its git tree was killed.
+    #[error("cancelled")]
+    Cancelled,
+    /// A remote refused, or some of several remotes failed: each with its reason.
+    #[error("{0}")]
+    Remote(String),
 }
 
 impl From<GitError> for WriteError {

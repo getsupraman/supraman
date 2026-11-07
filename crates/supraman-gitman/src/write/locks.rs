@@ -57,6 +57,21 @@ impl LockSet {
         LockSet::writes(&[Resource::Config, Resource::GitAttributes, Resource::Index, Resource::RepoSettings])
     }
 
+    /// A fetch: the remote-tracking refs and tags, under the remote's config.
+    pub fn fetch() -> LockSet {
+        LockSet::new().write(Resource::Remote).write(Resource::RepoSettings).read(Resource::Config)
+    }
+
+    /// A pull: a fetch, then a merge or a rebase of HEAD's branch.
+    pub fn pull() -> LockSet {
+        LockSet::checkout().write(Resource::Remote)
+    }
+
+    /// A remote's URL changed or the remote removed, with its refs and the upstreams naming it.
+    pub fn remote_config() -> LockSet {
+        LockSet::writes(&[Resource::Config, Resource::Remote, Resource::RepoSettings])
+    }
+
     pub fn branch_delete() -> LockSet {
         LockSet::writes(&[Resource::Config, Resource::Remote, Resource::Index, Resource::RepoSettings])
     }

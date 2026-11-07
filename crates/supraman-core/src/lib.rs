@@ -1,3 +1,4 @@
+pub mod askpass;
 mod discover;
 mod edit;
 mod error;

@@ -12,6 +12,7 @@ mod operation;
 mod parse;
 mod patch;
 mod refs;
+mod remotes;
 mod repo;
 mod stash;
 mod status;
@@ -30,6 +31,7 @@ pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, j
 pub use operation::{OperationState, REBASE_MARKER, UnderWay, operation_state, under_way};
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
 pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs};
+pub use remotes::{Link, Remote, mask_userinfo, remotes, web_link};
 pub use repo::{GitError, Repo};
 pub use stash::{Stash, stashes};
 pub use status::{BranchStatus, Conflict, Entry, EntryKind, Operation, Status, status, status_first};
