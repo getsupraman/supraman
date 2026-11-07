@@ -123,6 +123,8 @@ pub struct First {
     pub repo: Repo,
     /// Every ref, the hidden ones too, as the ref panel's rows.
     pub refs: ref_panel::Built,
+    /// Every ref as read, for the ref menus and checkout.
+    pub all: Arc<Refs>,
     pub tips: Vec<String>,
     pub heads: Heads,
     pub wip: Option<Wip>,
@@ -193,7 +195,7 @@ pub fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>) -> Result<First, S
     });
     let wip = page.rows.first().filter(|r| r.wip()).map(|_| Wip::of(&status));
     let history = (kept.is_none() && page.more).then_some(walker);
-    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history })
+    Ok(First { repo, heads: Heads::of(&walked), refs: ref_panel::build(&refs), all: Arc::new(refs.clone()), tips, wip, status: Arc::new(status), page, walk: walk.clone(), kept, history })
 }
 
 fn dirty(status: &Status) -> bool {

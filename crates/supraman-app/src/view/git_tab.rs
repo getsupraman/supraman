@@ -7,6 +7,7 @@ use gpui::{App, Context, Entity};
 use supraman_core::paths::path_key;
 
 use super::{FleetView, Tab, TabKind};
+use crate::git_view::branch::OpenGit;
 use crate::git_view::{GitSizes, GitView};
 
 /// The open Git tab of `folder`, else a new one from `make`, pushed last; true when it is new.
@@ -37,7 +38,14 @@ impl FleetView {
     pub fn open_git(&mut self, folder: PathBuf, title: String, sizes: &GitSizes, cx: &mut Context<Self>) -> u64 {
         let (home, hits, occupancy) = (self.home.clone(), self.hits.clone(), Arc::new(self.occupancy.clone()));
         let make = |cx: &mut App| GitView::open_with(folder.clone(), home, hits, sizes, occupancy, cx);
-        let (id, _) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);
+        let (id, new) = open_or_focus(&mut self.tabs, &mut self.next_tab_id, &folder, title, cx, make);
+        if new && let Some(TabKind::Git(view)) = self.tabs.iter().find(|t| t.id == id).map(|t| &t.kind) {
+            cx.subscribe(view, |this, _, e: &OpenGit, cx| {
+                let name = e.0.file_name().map_or_else(|| e.0.display().to_string(), |n| n.to_string_lossy().into_owned());
+                this.open_git(e.0.clone(), format!("Git · {name}"), &GitSizes::default(), cx);
+            })
+            .detach();
+        }
         self.active = Some(id);
         cx.notify();
         id

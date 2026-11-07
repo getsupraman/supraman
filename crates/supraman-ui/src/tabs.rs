@@ -47,7 +47,8 @@ impl Render for DraggedSession {
     }
 }
 
-fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
+/// A dragged thing's chip under the pointer: a tab, a session row, a graph pill.
+pub fn chip<V>(title: SharedString, cx: &Context<V>) -> Div {
     let colors = cx.theme().colors();
     div()
         .font_family(fonts::UI)

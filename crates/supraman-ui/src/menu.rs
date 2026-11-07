@@ -12,17 +12,28 @@ pub struct MenuItem<A> {
     pub key: SharedString,
     pub label: String,
     pub action: A,
-    /// Starts a section: a rule, then this caption, above the item.
+    /// Starts a section: a rule, then this caption (none when empty), above the item.
     pub section: Option<String>,
+    /// Why it cannot act now: listed dimmed with this as its tooltip, its click a no-op.
+    pub dimmed: Option<String>,
 }
 
 pub fn item<A>(key: impl Into<SharedString>, label: impl Into<String>, action: A) -> MenuItem<A> {
-    MenuItem { key: key.into(), label: label.into(), action, section: None }
+    MenuItem { key: key.into(), label: label.into(), action, section: None, dimmed: None }
 }
 
 impl<A> MenuItem<A> {
     pub fn under(self, caption: impl Into<String>) -> Self {
         Self { section: Some(caption.into()), ..self }
+    }
+
+    /// Starts a group: a rule above the item.
+    pub fn rule(self) -> Self {
+        self.under("")
+    }
+
+    pub fn dimmed(self, why: impl Into<String>) -> Self {
+        Self { dimmed: Some(why.into()), ..self }
     }
 }
 
@@ -72,7 +83,7 @@ impl<A: Clone + 'static> ContextMenu<A> {
             let action = entry.action.clone();
             let on_pick = on_pick.clone();
             if let Some(caption) = &entry.section {
-                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).child(
+                list = list.child(div().my_1().h(px(1.)).bg(colors.border_variant)).when(!caption.is_empty(), |list| list.child(
                     div()
                         .px_3()
                         .pb_1()
@@ -81,7 +92,22 @@ impl<A: Clone + 'static> ContextMenu<A> {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .child(SharedString::from(caption.clone())),
+                ));
+            }
+            if let Some(why) = &entry.dimmed {
+                list = list.child(
+                    div()
+                        .id(SharedString::from(key.clone()))
+                        .relative()
+                        .px_3()
+                        .py(px(3.))
+                        .text_color(colors.text_disabled)
+                        .child(SharedString::from(entry.label.clone()))
+                        .child(hit_target(hits, key))
+                        .tooltip(crate::tooltip::Tooltip::text(why.clone()))
+                        .on_click(|_, _, cx| cx.stop_propagation()),
                 );
+                continue;
             }
             list = list.child(
                 div()

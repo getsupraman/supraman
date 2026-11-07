@@ -13,7 +13,7 @@ use supraman_ui::tree::{Item, Row};
 use theme::ActiveTheme as _;
 
 use super::overlay::OVERLAY;
-use super::{Entry, Keys, RefEvent, RefPanel};
+use super::{Entry, Keys, RefEvent, RefPanel, Section};
 use crate::git_view::stash::{self, StashAct, StashRef};
 use crate::view::secondary;
 
@@ -27,6 +27,8 @@ pub enum RefAction {
     ToggleSolo(Vec<String>),
     ToggleHidden(Vec<String>),
     Stash(StashAct, StashRef),
+    /// Every other open section closed.
+    Maximize(Section),
 }
 
 enum Mark {
@@ -106,14 +108,16 @@ impl RefPanel {
             .into_any_element()
     }
 
-    /// A hidden ref shown, its commit selected once the graph walks it again.
+    /// A hidden ref shown, its commit selected once the graph walks it again; the tab checks it out.
     fn double_clicked(&mut self, path: &str, cx: &mut Context<Self>) {
         let Some(entry) = self.entry(path).cloned() else { return };
-        let Some(key) = entry.hide_key().filter(|k| self.walk.hidden.contains(k)) else { return };
-        self.toggle_hidden(&[key], cx);
-        if let Some(sha) = entry.commit() {
-            cx.emit(RefEvent::Shown(SharedString::from(sha.to_string())));
+        if let Some(key) = entry.hide_key().filter(|k| self.walk.hidden.contains(k)) {
+            self.toggle_hidden(&[key], cx);
+            if let Some(sha) = entry.commit() {
+                cx.emit(RefEvent::Shown(SharedString::from(sha.to_string())));
+            }
         }
+        cx.emit(RefEvent::Checkout(path.to_string()));
     }
 
     /// The menu of the ref or folder at `path`: a stash's writes ([`stash::menu_items`]), Solo or Stop soloing, then
@@ -144,6 +148,9 @@ impl RefPanel {
     }
 
     fn open_menu(&mut self, path: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if matches!(self.entry(path), Some(Entry::Branch { .. } | Entry::Remote { .. } | Entry::Tag { .. } | Entry::Detached { .. } | Entry::Worktree { .. })) {
+            return cx.emit(RefEvent::Menu(path.to_string(), position));
+        }
         let items = self.menu_items(path);
         if items.is_empty() {
             return;
@@ -155,12 +162,55 @@ impl RefPanel {
 
     fn pick(&mut self, action: RefAction, _: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
+        self.act(action, cx);
+    }
+
+    /// What a menu item of the panel's own does, from its menu or a ref menu of the tab's.
+    pub fn act(&mut self, action: RefAction, cx: &mut Context<Self>) {
         match action {
             RefAction::ToggleSolo(keys) => self.toggle_solo(&keys, cx),
             RefAction::ToggleHidden(keys) => self.toggle_hidden(&keys, cx),
             RefAction::Stash(act, stash) => cx.emit(RefEvent::Stash(act, stash)),
+            RefAction::Maximize(section) => self.maximize(section, cx),
         }
         cx.notify();
+    }
+
+    /// A section header's menu (§B part 1 item 7): Hide all or Show all where its refs hide, and Maximize this
+    /// section while it is open, dimmed while it is the only one open.
+    pub fn section_items(&self, section: Section) -> Vec<MenuItem<RefAction>> {
+        let mut items = Vec::new();
+        let hide = self.tree.aggregate(section.key()).map(|k| k.hide).unwrap_or_default();
+        let hidden: Vec<String> = hide.iter().filter(|k| self.walk.hidden.contains(*k)).cloned().collect();
+        let shown: Vec<String> = hide.iter().filter(|k| !self.walk.hidden.contains(*k)).cloned().collect();
+        if section.hides() && !shown.is_empty() {
+            items.push(item("section-hide-all", "Hide all", RefAction::ToggleHidden(shown)));
+        }
+        if section.hides() && !hidden.is_empty() {
+            items.push(item("section-show-all", "Show all", RefAction::ToggleHidden(hidden)));
+        }
+        if self.tree.is_open(section.key()) {
+            let others = Section::ALL.into_iter().filter(|s| *s != section && self.tree.shows(*s) && self.tree.is_open(s.key())).count();
+            let maximize = item("section-maximize", "Maximize this section", RefAction::Maximize(section));
+            let maximize = if others == 0 { maximize.dimmed("It is the only section open") } else { maximize };
+            items.push(if items.is_empty() { maximize } else { maximize.rule() });
+        }
+        items
+    }
+
+    pub(super) fn open_section_menu(&mut self, section: Section, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let items = self.section_items(section);
+        if !items.is_empty() {
+            self.menu = Some(ContextMenu { title: section.title().to_string(), position, items });
+            cx.notify();
+        }
+    }
+
+    fn maximize(&mut self, section: Section, cx: &mut Context<Self>) {
+        for other in Section::ALL.into_iter().filter(|s| *s != section && self.tree.is_open(s.key())) {
+            self.tree.toggle(other.key());
+        }
+        cx.emit(RefEvent::Layout);
     }
 
     pub(super) fn render_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

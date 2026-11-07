@@ -70,6 +70,10 @@ pub enum RefEvent {
     Shown(SharedString),
     /// A stash row's menu chose this.
     Stash(StashAct, StashRef),
+    /// A ref's or a worktree's row was right-clicked: the row's path, where.
+    Menu(String, gpui::Point<Pixels>),
+    /// A ref's or a worktree's row was double-clicked: the row's path.
+    Checkout(String),
 }
 
 pub struct RefPanel {
@@ -283,7 +287,7 @@ impl RefPanel {
         cx.notify();
     }
 
-    fn entry(&self, path: &str) -> Option<&Entry> {
+    pub fn entry(&self, path: &str) -> Option<&Entry> {
         self.entries.iter().find(|(p, _)| p == path).map(|(_, e)| e)
     }
 

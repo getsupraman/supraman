@@ -2,7 +2,7 @@
 //! then runs on the background executor through [`Writer::run`]. One write at a time per tab: while one waits
 //! for its answer or runs, [`WriteGate::busy`] says why another cannot start.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AppContext as _, Context, EventEmitter, Render, Window, div, prelude::*};
@@ -61,18 +61,23 @@ impl WriteGate {
     /// Runs `job` holding `locks` on `writer`'s checkout, after the user's yes when a session works in it; the
     /// ticket its [`Written`] carries, or `None` (nothing asked or run) while [`WriteGate::busy`].
     pub fn request(&mut self, writer: Writer, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
+        self.request_also(writer, None, locks, job, cx)
+    }
+
+    /// [`WriteGate::request`] of a write that changes the folder `also` too (another worktree), asked about when a
+    /// session works in either.
+    pub fn request_also(&mut self, writer: Writer, also: Option<PathBuf>, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
         if self.busy().is_some() {
             return None;
         }
         self.tickets += 1;
         let ticket = self.tickets;
         let top = writer.dirs().top.clone();
-        let sessions = self.occupancy.who_works_in(&top);
+        let asked = [Some(top), also].into_iter().flatten().map(|folder| (self.occupancy.who_works_in(&folder), folder)).find(|(sessions, _)| !sessions.is_empty());
         let pending = Pending { ticket, writer, locks, job: Box::new(job) };
-        if sessions.is_empty() {
-            self.start(pending, cx);
-        } else {
-            self.asking = Some(Confirm::ask(question(&sessions, &top), "Change it anyway", pending));
+        match asked {
+            None => self.start(pending, cx),
+            Some((sessions, folder)) => self.asking = Some(Confirm::ask(question(&sessions, &folder), "Change it anyway", pending)),
         }
         cx.notify();
         Some(ticket)
