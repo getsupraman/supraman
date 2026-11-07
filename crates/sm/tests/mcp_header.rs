@@ -67,6 +67,7 @@ fn mcp_header_mints_afresh_when_workman_refuses_the_kept_token() {
         replace: true,
         repo: None,
         claude_session_id: None,
+        takeover_from: None,
     };
     let minted = supraman_supervisor::HttpMinter::default().mint(fake.base(), &bearer, &request).unwrap();
     let mut records = MintedSessions::empty(Some(MintedSessions::path(home.path(), "demo")));
@@ -90,6 +91,7 @@ fn mcp_header_mints_afresh_when_workman_refuses_the_kept_token() {
     let mints: Vec<serde_json::Value> =
         fake.seen().iter().filter(|s| s.method == "POST" && s.target == "/api/agent-sessions").map(|s| serde_json::from_str(&s.body).unwrap()).collect();
     assert_eq!((mints.len(), &mints[1]["replace"], &mints[1]["name"]), (2, &true.into(), &NAME.into()));
+    assert_eq!((&mints[1]["launchedBy"], &mints[1]["takeoverFrom"]), (&"supraman/demo".into(), &"foreman/demo".into()), "the foreman row moves");
 }
 
 /// The `headersHelper` line run as claude runs it on Windows (cmd).

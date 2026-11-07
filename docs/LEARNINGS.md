@@ -5133,7 +5133,8 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   dependency paths changed). Identifiers follow the CLI: `sm_allowed_tools`, `smw_exe`/`SMW_EXE`, `SyncTarget::smw`,
   the role placeholder `{sm}`. Kept on purpose, because they are on disk or on the wire: `fm-`/`FM_PREFIX`, the live
   file's and run records' `fm_pid`/`fm_started`, `created_by = "fm"` (`CreatedBy::Fm`), `foreman.log` and its
-  `foreman::panic` target, `FOREMAN_BLESS`, `FOREMAN_*` session vars, `from-name="foreman"`, `launchedBy` `foreman/…`.
+  `foreman::panic` target, `FOREMAN_BLESS`, `FOREMAN_*` session vars, `from-name="foreman"`. `launchedBy` is
+  `supraman/…` (workman-oauth-only/foreman-label, below).
 - **Compatibility for one release** (docs/RELEASE.md, "The fm name"): `install_hook_exe` puts the same bytes at
   `bin/sm.exe` and `bin/fm.exe` (`COMPAT_HOOK_EXE`), each swapped in by renames on its own; `sm_allowed_tools` is
   `Bash(sm:*)`, `Bash(<bin>/sm.exe:*)`, `Bash(fm:*)`, `Bash(<bin>/fm.exe:*)`; `release.ps1` ships `fm.exe`/`fmw.exe`
@@ -5892,3 +5893,22 @@ start and migrate: `settings.toml` is in tables and the refresh token is in `oau
   `heavy-lock: … cleaned` line. Third-party crates stay built. Cost: the clean ~2 s, then the members rebuild
   (supraman-core alone ~20 s; every member ~6 min in release before `cargo test --workspace`), only when the worktree
   changes. A cargo run outside heavy-lock writes no marker, so always build through it.
+
+## 2026-11-07 — workman-oauth-only/foreman-label every mint is launched by `supraman/…` (wo-label)
+
+- **One label**: `supraman_supervisor::launched_by(path)` builds every `launchedBy` and `origin`: `supraman/<ws>`
+  (`/<repo>`) for supervised sessions, `supraman/hand` (`/<folder>`) for [+] sessions, `supraman/<ws>/schedule/<id>`
+  for `sm fire` runs (fresh names, `replace` false, so a run never takes a row over).
+- **A row still `foreman/…` moves with Workman 3.0.2's takeover**: `mint_as(minter, base, bearer, request, former)`
+  sends `takeoverFrom: <former>` when the label recorded for the name differs from the request's. The former label is
+  the record's `mint.launchedBy` (`MintedSessions::launched_by`); the supervisor and hands record the new one on
+  their mint. The re-mint (`sm mcp-header`, `Keeping`) relabels the record's request and keeps the label it moved the
+  row to in `kept.json` (`Kept::launched_by`, under `kept.lock`), never in the record, which is the supervisor's or
+  the hands' file. A takeover refused with 409 (the row moved already by another minter) is retried once without
+  `takeoverFrom`; a 409 there stands as before (the hands' fresh-name loop, the supervisor's failure notice).
+- **On a server before 3.0.2**, `takeoverFrom` is ignored and the row stays `foreman/…`: both calls 409 "belongs to
+  another launcher", shown as today (the supervisor's `cannot mint a Workman token for <name>` notice, a hand's
+  fresh name with its notice, `sm mcp-header` keeping the old token and logging why).
+- **`FakeWorkman`'s rows** keep the user that made them (an access token's `sub`, a static bearer as itself); a
+  `takeoverFrom` on an existing row that does not name its launcher or comes from another user is a 409, and a
+  refused mint never moves the row.

@@ -562,10 +562,9 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
             replace: true,
             repo: w.repo.as_ref().and_then(|_| (self.repo_of)(&w.cwd)),
             claude_session_id: claude_session_id.map(str::to_string),
+            takeover_from: None,
         };
-        let minted = self
-            .minter
-            .mint(&api_base(&t.url), &t.token, &request)
+        let minted = crate::mint::mint_as(&*self.minter, &api_base(&t.url), &t.token, &request, self.minted.launched_by(&w.name))
             .map_err(|e| Failure::Other(format!("cannot mint a Workman token for {}: {e}", w.name)))?;
         let session = MintedSession {
             session_id: minted.session_id.clone(),
@@ -867,10 +866,10 @@ impl<L: Launcher, T: TokenProvider> Supervisor<L, T> {
     }
 }
 
-/// What `w` tells Workman about itself: its name, `foreman/<workspace>` as launcher, the repo in its
+/// What `w` tells Workman about itself: its name, `supraman/<workspace>` as launcher, the repo in its
 /// origin, its cwd and Supraman role.
 pub fn session_identity(workspace: &str, w: &WantedSession) -> SessionIdentity {
-    let launched_by = format!("foreman/{workspace}");
+    let launched_by = crate::mint::launched_by(workspace);
     SessionIdentity {
         agent: w.name.clone(),
         session: None,
@@ -1182,13 +1181,14 @@ mod tests {
                 request: MintRequest {
                     name: "fm-demo-workspace".into(),
                     role: "controller".into(),
-                    launched_by: "foreman/demo".into(),
-                    origin: "foreman/demo".into(),
+                    launched_by: "supraman/demo".into(),
+                    origin: "supraman/demo".into(),
                     cwd: r"C:\demo\cwd".into(),
                     external_role: "workspace".into(),
                     replace: true,
                     repo: None,
                     claude_session_id: None,
+                    takeover_from: None,
                 },
             }]
         );
@@ -1206,6 +1206,31 @@ mod tests {
         sup.tick(std::slice::from_ref(&live), &mut free(), NOW + 61 * SECOND);
         assert_eq!(sup.launcher().take(), []);
         assert_eq!(sup.memory.get("fm-demo-workspace").unwrap().started_at, None, "stable");
+    }
+
+    #[test]
+    fn mint_of_a_name_recorded_as_foreman_takes_its_row_over_and_records_supraman() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut sup, minter) = minting(true, &dir.path().join("mcp"));
+        let former = MintRequest {
+            name: "fm-demo-workspace".into(),
+            role: "controller".into(),
+            launched_by: "foreman/demo".into(),
+            origin: "foreman/demo".into(),
+            cwd: r"C:\demo\cwd".into(),
+            external_role: "workspace".into(),
+            replace: true,
+            repo: None,
+            claude_session_id: None,
+            takeover_from: None,
+        };
+        let session = MintedSession { session_id: "ws-0".into(), role: "workspace".into(), claude_session_id: None, last_active: None, origin: None };
+        sup.minted.insert_minted("fm-demo-workspace", session, &former);
+        sup.tick(&[], &mut free(), NOW);
+        let calls = minter.take();
+        let [MintCall::Mint { request, .. }] = calls.as_slice() else { panic!("{calls:?}") };
+        assert_eq!((request.launched_by.as_str(), request.takeover_from.as_deref()), ("supraman/demo", Some("foreman/demo")));
+        assert_eq!(sup.minted.launched_by("fm-demo-workspace"), Some("supraman/demo"), "the next mint is a plain one");
     }
 
     fn alpha() -> WantedSession {
@@ -1243,8 +1268,8 @@ mod tests {
             (repo.name.as_str(), repo.role.as_str(), repo.external_role.as_str()),
             ("fm-demo-alpha", "orchestrator", "repo")
         );
-        assert_eq!((repo.launched_by.as_str(), repo.origin.as_str(), repo.cwd.as_str()), ("foreman/demo", "foreman/demo/Alpha", r"C:\demo\Alpha"));
-        assert_eq!((requests[0].role.as_str(), requests[0].origin.as_str()), ("controller", "foreman/demo"));
+        assert_eq!((repo.launched_by.as_str(), repo.origin.as_str(), repo.cwd.as_str()), ("supraman/demo", "supraman/demo/Alpha", r"C:\demo\Alpha"));
+        assert_eq!((requests[0].role.as_str(), requests[0].origin.as_str()), ("controller", "supraman/demo"));
         assert_eq!(
             repo.repo,
             Some(MintRepo { root: "C:/demo/Alpha".into(), remote: Some("https://example.invalid/demo/alpha.git".into()) }),

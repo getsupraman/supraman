@@ -8,7 +8,7 @@ use std::time::Duration;
 use supraman_core::home::home_env;
 use supraman_core::paths::{path_key, within};
 use supraman_core::{Workspace, owners};
-use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo};
+use supraman_supervisor::{Bearer, HAND_ROLE, HttpMinter, Keeper, LaunchConfig, MintError, MintRepo, MintRequest, Minted, MintedSession, MintedSessions, Minter, api_base, git_repo, launched_by, mint_as};
 use supraman_workman::Auth;
 
 pub const EXTERNAL_ROLE: &str = "hand";
@@ -16,7 +16,7 @@ pub const ROLE: &str = "orchestrator";
 const MAX_NAME: usize = 64;
 /// Fresh names tried after a refused one, before the tab runs without a token.
 const FRESH_TRIES: usize = 3;
-const LAUNCHED_BY: &str = "foreman/hand";
+const HAND_LAUNCHER: &str = "hand";
 /// Quoted for a pwsh '…' string.
 const STALE: &str = "This tab''s Workman token was revoked when its claude exited; starting plain claude. Open a new + session for a fresh token.";
 
@@ -229,6 +229,8 @@ struct Pending {
     bearer: String,
     minter: Arc<dyn Minter + Send + Sync>,
     request: MintRequest,
+    /// The `launchedBy` recorded for `request.name`, which the mint moves to the current one.
+    former: Option<String>,
     name: String,
     notice: Option<String>,
     new_session: Option<String>,
@@ -242,7 +244,7 @@ impl Pending {
         let wanted = self.request.name.clone();
         let mut tried = vec![wanted.clone()];
         loop {
-            let minted = self.minter.mint(&self.base, &self.bearer, &self.request);
+            let minted = mint_as(&*self.minter, &self.base, &self.bearer, &self.request, self.former.as_deref());
             log::info!(
                 "hand mint {} as {}: replace {}, claude session {}: {}",
                 self.name,
@@ -262,6 +264,7 @@ impl Pending {
                     self.name = next.clone();
                     self.request.name = next;
                     self.request.replace = false;
+                    self.former = None;
                 }
                 other => return other,
             }
@@ -442,13 +445,14 @@ impl Hands {
         let mut request = MintRequest {
             name: own.and_then(session_name).unwrap_or_else(|| name.clone()),
             role: ROLE.into(),
-            launched_by: LAUNCHED_BY.into(),
-            origin: format!("{LAUNCHED_BY}/{folder}"),
+            launched_by: launched_by(HAND_LAUNCHER),
+            origin: launched_by(&format!("{HAND_LAUNCHER}/{folder}")),
             cwd: cwd.to_string_lossy().into_owned(),
             external_role: EXTERNAL_ROLE.into(),
             replace: self.holder_exited(claude_session.as_deref()),
             repo: (self.repo_of)(cwd),
             claude_session_id: claude_session.clone(),
+            takeover_from: None,
         };
         // the exited holder's own name: its config and kept token are rewritten in place
         if request.replace
@@ -461,7 +465,8 @@ impl Hands {
             request.name = name.clone();
         }
         self.picked.insert(name.clone(), request.name.clone());
-        Ok(Pending { base: api_base(&url), url, bearer, minter: self.minter.clone(), request, name, notice, new_session, claude_session })
+        let former = self.minted.launched_by(&request.name).map(str::to_string);
+        Ok(Pending { base: api_base(&url), url, bearer, minter: self.minter.clone(), request, former, name, notice, new_session, claude_session })
     }
 
     /// The next free name after a 409 for the launch holding `held`, held for it instead; never `wanted` or one `tried`.
@@ -739,7 +744,7 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({
-                "name": "hand-alpha-1", "role": "orchestrator", "launchedBy": "foreman/hand", "origin": "foreman/hand/alpha",
+                "name": "hand-alpha-1", "role": "orchestrator", "launchedBy": "supraman/hand", "origin": "supraman/hand/alpha",
                 "cwd": r"C:\demo\alpha", "externalRole": "hand", "replace": false,
                 "repo": { "root": "C:/demo/alpha", "remote": "https://example.invalid/demo/alpha.git" },
                 "claudeSessionId": sid
@@ -1170,6 +1175,35 @@ mod tests {
     }
 
     #[test]
+    fn hand_resume_of_a_session_recorded_as_foreman_takes_its_row_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let (url, seen, _oauth) = fake_workman(vec![]);
+        let (home, auth) = home_with(dir.path(), Some(&url));
+        let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
+        let former = MintRequest {
+            name: "mw-workflow".into(),
+            role: ROLE.into(),
+            launched_by: "foreman/hand".into(),
+            origin: "foreman/hand/alpha".into(),
+            cwd: r"C:\demo\alpha".into(),
+            external_role: EXTERNAL_ROLE.into(),
+            replace: false,
+            repo: None,
+            claude_session_id: None,
+            takeover_from: None,
+        };
+        let sid = "fc7b0272-bb70-4c4d-bf95-bbf3b3bc81ff";
+        let session = MintedSession { session_id: "s1".into(), role: EXTERNAL_ROLE.into(), claude_session_id: Some(sid.into()), last_active: None, origin: None };
+        hands.minted.insert_minted("hand-alpha-1", session, &former);
+
+        let Launch::Minted { name, session, .. } = hands.launch_for(Path::new(r"C:\demo\alpha"), Some("mw-workflow"), Some(sid)) else { panic!() };
+        assert_eq!((name.as_str(), session.as_str()), ("hand-alpha-1", "mw-workflow"), "its exited holder's record");
+        let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
+        assert_eq!((body["launchedBy"].as_str(), body["takeoverFrom"].as_str(), body["replace"].as_bool()), (Some("supraman/hand"), Some("foreman/hand"), Some(true)));
+        assert_eq!(hands.minted.launched_by("mw-workflow"), Some("supraman/hand"), "recorded under the new label");
+    }
+
+    #[test]
     fn hand_resume_mints_an_orchestrator_under_the_sessions_own_name() {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![]);
@@ -1187,7 +1221,7 @@ mod tests {
         assert!(oauth(&bearer));
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!((body["name"].as_str(), body["role"].as_str()), (Some("mw-workflow"), Some("orchestrator")));
-        assert_eq!((body["launchedBy"].as_str(), body["externalRole"].as_str()), (Some("foreman/hand"), Some("hand")));
+        assert_eq!((body["launchedBy"].as_str(), body["externalRole"].as_str()), (Some("supraman/hand"), Some("hand")));
         assert_eq!(body["claudeSessionId"].as_str(), Some(sid), "the resumed uuid (m5/40)");
 
         // never a short id: claude --resume <8 hex> starts a new session

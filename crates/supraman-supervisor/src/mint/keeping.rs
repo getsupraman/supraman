@@ -28,6 +28,9 @@ pub(super) struct Kept {
     /// Signed out of the server that minted it: its grant revoke took the token, the next sign-in mints it afresh.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub signed_out: bool,
+    /// The `launchedBy` a re-mint moved its row to; `None`: its record's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launched_by: Option<String>,
 }
 
 pub(super) type Table = BTreeMap<String, Kept>;
@@ -158,6 +161,7 @@ mod tests {
             replace: false,
             repo: None,
             claude_session_id: None,
+            takeover_from: None,
         }
     }
 

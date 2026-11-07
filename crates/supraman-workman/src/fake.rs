@@ -683,6 +683,8 @@ pub fn location_query(location: &str) -> BTreeMap<String, String> {
 struct Row {
     id: String,
     launched_by: String,
+    /// The user that made the row ([`user_of`]).
+    owner: Option<String>,
     token: Option<String>,
     revoked: bool,
     /// Epoch ms its token lapses at, under an idle window ([`FakeSessions::set_idle_window`]).
@@ -691,7 +693,8 @@ struct Row {
 
 /// Agent-session rows, one per name, by Workman 2.3.0's rules (`SessionStore.Tokens.cs`): a name whose token
 /// still works is refused (409) without `replace`; a revoked or lapsed one is taken over in its row; another
-/// launcher's name is refused even with `replace`. Under an idle window a mint answers its `expiresAt`, and each
+/// launcher's name is refused even with `replace`. A `takeoverFrom` on an existing row (Workman 3.0.2) must name its
+/// launcher and come from the user that made it, or the mint is refused; a mint that passes moves the row. Under an idle window a mint answers its `expiresAt`, and each
 /// use of a token slides it, on a clock the test sets.
 #[derive(Default)]
 pub struct FakeSessions {
@@ -762,7 +765,7 @@ impl FakeSessions {
 
     fn handle(&self, method: &str, target: &str, authorization: Option<&str>, body: &str) -> Option<Answer> {
         match (method, target) {
-            ("POST", "/api/agent-sessions") => Some(self.mint(body)),
+            ("POST", "/api/agent-sessions") => Some(self.mint(body, authorization)),
             ("POST", "/mcp") => Some(match authorization.and_then(|a| a.strip_prefix("Bearer ")) {
                 Some(token) if self.used(token) => Answer::json(r#"{"jsonrpc":"2.0","id":0,"result":{}}"#),
                 _ => Answer::status(401, r#"{"error":"invalid_token"}"#),
@@ -782,7 +785,7 @@ impl FakeSessions {
         }
     }
 
-    fn mint(&self, body: &str) -> Answer {
+    fn mint(&self, body: &str, authorization: Option<&str>) -> Answer {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
             return Answer::status(400, r#"{"error":"not JSON"}"#);
         };
@@ -795,16 +798,22 @@ impl FakeSessions {
         let mut n = self.minted.lock().unwrap();
         *n += 1;
         let token = format!("wss_fake_session{n}");
+        let existed = rows.contains_key(name);
         let row = rows
             .entry(name.to_string())
-            .or_insert_with(|| Row { id: format!("s{n}"), launched_by: launched_by.to_string(), token: None, revoked: false, expires: None });
-        if row.launched_by != launched_by {
+            .or_insert_with(|| Row { id: format!("s{n}"), launched_by: launched_by.to_string(), owner: user_of(authorization), token: None, revoked: false, expires: None });
+        let takeover = v["takeoverFrom"].as_str().filter(|_| existed);
+        if takeover.is_some_and(|from| from != row.launched_by || row.owner != user_of(authorization)) {
+            return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" cannot be taken over from that launcher") }).to_string());
+        }
+        if row.launched_by != launched_by && takeover.is_none() {
             return Answer::status(409, serde_json::json!({ "error": format!("the session \"{name}\" belongs to another launcher") }).to_string());
         }
         if Self::alive(row, clock.map(|(now, _)| now)) && !replace {
             let error = format!("the session \"{name}\" already has a live token; pass replace: true to revoke it and mint a new one");
             return Answer::status(409, serde_json::json!({ "error": error }).to_string());
         }
+        row.launched_by = launched_by.to_string();
         row.token = Some(token.clone());
         row.revoked = false;
         row.expires = clock.map(|(now, window)| now + window);
@@ -814,6 +823,18 @@ impl FakeSessions {
         }
         Answer::status(201, answer.to_string())
     }
+}
+
+/// The `sub` of an access token [`FakeAuth`] issued; any other bearer is its own user.
+fn user_of(authorization: Option<&str>) -> Option<String> {
+    let bearer = authorization?.strip_prefix("Bearer ")?;
+    let sub = bearer
+        .split('.')
+        .nth(1)
+        .and_then(|claims| URL_SAFE_NO_PAD.decode(claims).ok())
+        .and_then(|claims| serde_json::from_slice::<serde_json::Value>(&claims).ok())
+        .and_then(|claims| claims["sub"].as_str().map(str::to_string));
+    Some(sub.unwrap_or_else(|| bearer.to_string()))
 }
 
 /// A journal of `(seq, scope, kind)` events, paged as `GET /api/v1/journal` pages them.
