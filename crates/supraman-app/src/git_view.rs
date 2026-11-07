@@ -19,6 +19,7 @@ pub mod probe;
 mod refresh;
 mod seek;
 pub mod ref_panel;
+pub mod remote;
 mod splice;
 pub mod stash;
 mod stash_bar;
@@ -71,6 +72,7 @@ use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
 use branch::{BranchActions, OpenGit};
 use commit::CommitActions;
+use remote::RemoteActions;
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 use write_gate::WriteGate;
@@ -212,6 +214,9 @@ pub struct GitView {
     _branch_events: Subscription,
     commit: Entity<CommitActions>,
     _commit_events: Subscription,
+    /// Fetch, pull and push.
+    remote: Entity<RemoteActions>,
+    _remote_events: Subscription,
     /// The graph's columns hidden, by id.
     hidden_columns: Vec<String>,
     column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
@@ -248,6 +253,8 @@ impl GitView {
             let branch_events = cx.subscribe(&branch, Self::branch_event);
             let commit = cx.new(|cx| CommitActions::new(gate.clone(), hits.clone(), cx));
             let commit_events = cx.subscribe(&commit, Self::commit_event);
+            let remote = cx.new(|cx| RemoteActions::new(gate.clone(), hits.clone(), home.clone(), cx));
+            let remote_events = cx.subscribe(&remote, Self::remote_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -297,6 +304,8 @@ impl GitView {
                 _branch_events: branch_events,
                 commit,
                 _commit_events: commit_events,
+                remote,
+                _remote_events: remote_events,
                 hidden_columns: Vec::new(),
                 column_menu: None,
                 focus_summary: false,
@@ -622,7 +631,7 @@ impl GitView {
                 self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 self.stash.update(cx, |s, cx| s.set_repo(first.repo.clone(), cx));
                 self.branch.update(cx, |b, cx| b.set_repo(first.repo.clone(), cx));
-                self.hand_refs(first.all.clone(), &first.status, cx);
+                self.hand_refs(&first.repo, first.all.clone(), &first.status, cx);
                 if let Some(debounces) = refresh::follows() {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
@@ -877,13 +886,14 @@ impl Render for GitView {
             .on_action(cx.listener(|this, _: &keys::StageAll, _, cx| this.stage_all_keyed(cx)))
             .on_action(cx.listener(|this, _: &keys::UnstageAll, _, cx| this.wip_panel.update(cx, |p, cx| p.unstage_all(cx))))
             .on_action(cx.listener(|this, _: &keys::FocusMessage, _, cx| this.focus_message(cx)))
+            .on_action(cx.listener(|this, _: &keys::FetchAll, _, cx| this.remote.update(cx, |r, cx| r.act(remote::RemoteAct::FetchAll, cx))))
             .relative()
             .bg(cx.theme().colors().editor_background)
             .text_sm()
             .flex()
             .flex_col()
-            .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()))
+            .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx)))
+            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))

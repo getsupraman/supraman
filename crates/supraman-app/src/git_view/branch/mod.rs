@@ -28,6 +28,8 @@ pub(crate) use view::{group_subject, pill_graph_items};
 use menu::{Dragged, Facts, RefAct, Subject};
 
 use super::ref_panel::RefAction;
+use super::remote::RemoteFacts;
+use super::remote::menu as remote_menu;
 use super::stash::STILL_OPENING;
 use super::write_gate::{WriteGate, Written, capitalised};
 
@@ -49,6 +51,7 @@ pub enum BranchEvent {
     Name(NameAsk),
     /// A commit's, the WIP row's or a file's item.
     Commit(crate::git_view::commit::CommitAct),
+    Remote(crate::git_view::remote::RemoteAct),
 }
 
 /// A question before a write.
@@ -118,6 +121,7 @@ pub struct BranchActions {
     asking: Option<Confirm<Ask>>,
     menu: Option<ContextMenu<RefAct>>,
     naming: Option<NameDialog>,
+    remote: Arc<RemoteFacts>,
     _written: Subscription,
 }
 
@@ -135,7 +139,7 @@ impl BranchActions {
     pub fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> BranchActions {
         let written = cx.subscribe(&gate, |this: &mut BranchActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
-        BranchActions { hits, gate, writer: None, refs: Arc::new(Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() }), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, _written: written }
+        BranchActions { hits, gate, writer: None, refs: Arc::new(Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() }), under_way: false, doing: None, outcome: Arc::default(), asking: None, menu: None, naming: None, remote: Arc::default(), _written: written }
     }
 
     /// The repo's writer, opened off the UI thread.
@@ -163,6 +167,11 @@ impl BranchActions {
 
     pub fn refs(&self) -> &Arc<Refs> {
         &self.refs
+    }
+
+    /// The remotes and the pull default the remote items read.
+    pub fn set_remote_facts(&mut self, facts: Arc<RemoteFacts>) {
+        self.remote = facts;
     }
 
     pub fn busy(&self, cx: &gpui::App) -> Option<&'static str> {
@@ -290,6 +299,7 @@ impl BranchActions {
             RefAct::PruneWorktrees => self.request(Doing::Plain("Pruned the worktrees".into()), LockSet::branch(), branch::prune_worktrees, cx),
             RefAct::Panel(action) => cx.emit(BranchEvent::Panel(action)),
             RefAct::Commit(act) => cx.emit(BranchEvent::Commit(act)),
+            RefAct::Remote(act) => cx.emit(BranchEvent::Remote(act)),
         }
         cx.notify();
     }
@@ -441,8 +451,9 @@ impl BranchActions {
                 let Some(top) = this.top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
-                let items = menu::build(&subject, &facts).items();
-                this.show_menu(subject.title(), items, position, cx);
+                let mut built = menu::build(&subject, &facts);
+                remote_menu::add(&mut built, &subject, &this.remote);
+                this.show_menu(subject.title(), built.items(), position, cx);
             })
             .ok();
         })
@@ -468,7 +479,7 @@ impl BranchActions {
                 let Some(top) = this.top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation, under_way: this.under_way, graph };
-                let commit = crate::git_view::commit::menu::CommitFacts { sha: &sha, parents, refs: &refs, under_way: this.under_way };
+                let commit = crate::git_view::commit::menu::CommitFacts { sha: &sha, parents, refs: &refs, under_way: this.under_way, remote: &this.remote };
                 let items = crate::git_view::commit::menu::row_menu(&subjects, &facts, &commit);
                 let title = match subjects.as_slice() {
                     [one] => one.title(),
@@ -492,7 +503,9 @@ impl BranchActions {
                 let Some(top) = this.top() else { return };
                 let refs = this.refs.clone();
                 let facts = Facts { refs: &refs, top: &top, relation: None, under_way: this.under_way, graph: Vec::new() };
-                let items = menu::drop_menu(&dragged, &target, relation, &facts).items();
+                let mut built = menu::drop_menu(&dragged, &target, relation, &facts);
+                remote_menu::drop_items(&mut built, &dragged, &target, &this.remote);
+                let items = built.items();
                 this.show_menu(format!("{} onto {}", dragged.name, target.name), items, position, cx);
             })
             .ok();

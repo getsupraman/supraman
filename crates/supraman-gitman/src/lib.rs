@@ -27,7 +27,7 @@ pub use compose::{Amendable, COMMIT_HOOKS, amendable, commit_hooks, head_message
 pub use dirs::{Dirs, dirs, ignored};
 pub use history::{Commit, Details, FIRST_PAGE, History, NEXT_PAGE, Page, Person, Signature, details, history, short_sha};
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row};
-pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located};
+pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located, RemoteSettings, remote_settings, set_setting};
 pub use operation::{OperationState, REBASE_MARKER, UnderWay, operation_state, under_way};
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
 pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs};

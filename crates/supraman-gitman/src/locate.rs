@@ -20,6 +20,30 @@ pub struct GitmanSettings {
     pub git: Option<PathBuf>,
 }
 
+/// The remote calls' keys of `[gitman]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RemoteSettings {
+    /// What the toolbar's Pull does.
+    #[serde(default)]
+    pub pull: Option<crate::write::remote::PullChoice>,
+    /// A fetch prunes the remote-tracking branches gone from their remote; on when unset.
+    #[serde(default)]
+    pub prune: Option<bool>,
+}
+
+/// `[gitman]`'s remote keys; their defaults when the table is absent or does not parse (its notice is
+/// [`locate`]'s).
+pub fn remote_settings(settings: &Settings) -> RemoteSettings {
+    settings.section(SECTION).unwrap_or_default()
+}
+
+/// `[gitman] <key> = value`, the table's other keys kept; the caller saves it (`Settings::update`).
+pub fn set_setting(settings: &mut Settings, key: &str, value: impl Serialize) -> Result<(), String> {
+    let mut table: serde_json::Map<String, serde_json::Value> = settings.section(SECTION).unwrap_or_default();
+    table.insert(key.to_string(), serde_json::to_value(value).map_err(|e| e.to_string())?);
+    settings.set_section(SECTION, &table).map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
     pub major: u32,
@@ -119,5 +143,20 @@ pub fn judge(path: &Path, version_output: &str) -> Located {
         Some(version) if version >= FLOOR => Located::Found(Git { path, version }),
         Some(version) => Located::TooOld { path, version, floor: FLOOR },
         None => Located::Unusable { path, reason: format!("not a git version: {}", version_output.trim()) },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::write::remote::PullChoice;
+
+    #[test]
+    fn a_remote_key_is_set_with_the_tables_other_keys_kept() {
+        let mut settings = Settings::default();
+        settings.set_section(SECTION, &GitmanSettings { git: Some("C:/git.exe".into()) }).unwrap();
+        set_setting(&mut settings, "pull", PullChoice::Rebase).unwrap();
+        assert_eq!(remote_settings(&settings), RemoteSettings { pull: Some(PullChoice::Rebase), prune: None });
+        assert_eq!(section(&settings).unwrap().git.as_deref(), Some(Path::new("C:/git.exe")));
     }
 }

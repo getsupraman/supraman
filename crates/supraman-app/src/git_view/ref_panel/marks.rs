@@ -148,7 +148,7 @@ impl RefPanel {
     }
 
     fn open_menu(&mut self, path: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
-        if matches!(self.entry(path), Some(Entry::Branch { .. } | Entry::Remote { .. } | Entry::Tag { .. } | Entry::Detached { .. } | Entry::Worktree { .. })) {
+        if matches!(self.entry(path), Some(Entry::Branch { .. } | Entry::Remote { .. } | Entry::Tag { .. } | Entry::Detached { .. } | Entry::Worktree { .. })) || super::remote_folder(path).is_some() {
             return cx.emit(RefEvent::Menu(path.to_string(), position));
         }
         let items = self.menu_items(path);

@@ -11,6 +11,8 @@ use supraman_ui::menu::{MenuItem, item};
 
 use super::CommitAct;
 use crate::git_view::branch::menu::{self, Facts, Group, RefAct, RefMenu, Subject};
+use crate::git_view::remote::RemoteFacts;
+use crate::git_view::remote::menu as remote_menu;
 
 /// What a commit's items read.
 pub struct CommitFacts<'a> {
@@ -18,6 +20,7 @@ pub struct CommitFacts<'a> {
     pub parents: usize,
     pub refs: &'a Refs,
     pub under_way: bool,
+    pub remote: &'a RemoteFacts,
 }
 
 impl CommitFacts<'_> {
@@ -85,11 +88,14 @@ pub fn row_menu(groups: &[Subject], facts: &Facts, f: &CommitFacts) -> Vec<MenuI
             let mut menu = RefMenu::default();
             menu::commit_items(&mut menu, f.sha);
             add(&mut menu, f, true);
+            remote_menu::commit_links(&mut menu, f.sha, f.remote);
             menu.items()
         }
         [one] => {
             let mut menu = menu::build(one, facts);
             add(&mut menu, f, true);
+            remote_menu::add(&mut menu, one, f.remote);
+            remote_menu::commit_links(&mut menu, f.sha, f.remote);
             menu.items()
         }
         many => {
@@ -98,7 +104,9 @@ pub fn row_menu(groups: &[Subject], facts: &Facts, f: &CommitFacts) -> Vec<MenuI
             let bare = Facts { graph: Vec::new(), ..*facts };
             for subject in many {
                 let title = subject.title();
-                let items: Vec<MenuItem<RefAct>> = menu::build(subject, &bare).items().into_iter().filter(|i| !level.contains(i.key.as_ref())).collect();
+                let mut built = menu::build(subject, &bare);
+                remote_menu::add(&mut built, subject, f.remote);
+                let items: Vec<MenuItem<RefAct>> = built.items().into_iter().filter(|i| !level.contains(i.key.as_ref())).collect();
                 for (j, mut it) in items.into_iter().enumerate() {
                     it.key = format!("{title}-{}", it.key).into();
                     out.push(if j == 0 { MenuItem { section: Some(title.clone()), ..it } } else { it });

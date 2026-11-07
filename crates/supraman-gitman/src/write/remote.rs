@@ -152,20 +152,26 @@ pub fn fetch(s: &Session, remote: &str, prune: bool, t: &Transfer) -> Result<(),
     if moved.success() { Ok(()) } else { Err(moved.failed(&call)) }
 }
 
-/// Every remote fetched at once; the ones that failed, each with its reason, as one error.
+/// Every remote fetched at once, their progress said on the calling thread; the ones that failed, each with its
+/// reason, as one error.
 pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> Result<(), WriteError> {
     if remotes.is_empty() {
         return Err(WriteError::Refused(NO_REMOTES));
     }
     let writer = s.writer();
+    let (said, heard) = std::sync::mpsc::channel::<Progress>();
     let results: Vec<(String, Result<(), WriteError>)> = std::thread::scope(|scope| {
         let runs: Vec<_> = remotes
             .iter()
             .map(|remote| {
                 let call = fetch_call(remote, prune);
-                (remote.clone(), scope.spawn(move || transfer(writer, &call, t).and_then(|m| if m.success() { Ok(()) } else { Err(m.failed(&call)) })))
+                let said = std::sync::Mutex::new(said.clone());
+                let each = Transfer { progress: Arc::new(move |p| drop(said.lock().map(|s| s.send(p)))), ..t.clone() };
+                (remote.clone(), scope.spawn(move || transfer(writer, &call, &each).and_then(|m| if m.success() { Ok(()) } else { Err(m.failed(&call)) })))
             })
             .collect();
+        drop(said);
+        heard.iter().for_each(|p| (t.progress)(p));
         runs.into_iter().map(|(remote, run)| (remote, run.join().unwrap_or(Err(WriteError::Refused("a fetch panicked"))))).collect()
     });
     if results.iter().any(|(_, r)| matches!(r, Err(WriteError::Cancelled))) {
@@ -197,13 +203,37 @@ pub fn upstream_of(s: &Session, branch: &str) -> Result<Option<Upstream>, WriteE
     Ok(remote.zip(merge).map(|(remote, merge)| Upstream { remote, branch: merge.strip_prefix("refs/heads/").unwrap_or(&merge).to_string() }))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PullMode {
     /// A merge commit when the branches went apart.
     FastForwardIfPossible,
     FastForwardOnly,
     Rebase,
+}
+
+/// What the toolbar's Pull does: `[gitman] pull`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PullChoice {
+    Fetch,
+    #[default]
+    FastForwardIfPossible,
+    FastForwardOnly,
+    Rebase,
+}
+
+impl PullChoice {
+    pub const ALL: [PullChoice; 4] = [PullChoice::Fetch, PullChoice::FastForwardIfPossible, PullChoice::FastForwardOnly, PullChoice::Rebase];
+
+    /// The pull it runs; `None` for a fetch of every remote.
+    pub fn mode(self) -> Option<PullMode> {
+        match self {
+            PullChoice::Fetch => None,
+            PullChoice::FastForwardIfPossible => Some(PullMode::FastForwardIfPossible),
+            PullChoice::FastForwardOnly => Some(PullMode::FastForwardOnly),
+            PullChoice::Rebase => Some(PullMode::Rebase),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
