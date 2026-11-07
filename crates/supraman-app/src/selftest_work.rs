@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use crate::{
     selftest::{click, close_attach, frames, open_attach, scrolled_into_view, sleep},
     view::{FleetView, TabKind},
-    work_view::{DISMISSED_FILE, WorkEvent, WorkView, criterion_key, status_key, verification_key},
+    work_view::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkEvent, WorkView, cards, criterion_key, status_key, verification_key},
 };
 
 pub const WORKSPACE: &str = "selftest-work";
@@ -37,9 +37,13 @@ const LIVE_WITHIN: Duration = Duration::from_secs(2);
 static FAKE: OnceLock<FakeWorkman> = OnceLock::new();
 static OAUTH: OnceLock<std::sync::Arc<supraman_workman::fake::FakeAuth>> = OnceLock::new();
 
-pub fn inbox_keys() -> [String; 2] {
-    [format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}")]
+/// The blocked row in Needs you, and Housekeeping's header (sw1/1 is under it), open or closed.
+pub fn inbox_keys() -> (String, [String; 2]) {
+    let housekeeping = ["closed", "open"].map(|state| format!("{HOUSEKEEPING_KEY}={state}"));
+    (format!("inbox-ws-blocked:{TASK_2}"), housekeeping)
 }
+
+const EVERY_KIND: [&str; 7] = ["question", "blocked", "blocker_finding", "done_unverified", "stale_in_progress", "expired_claim", "assumption_due"];
 
 pub fn fake() -> Option<(&'static FakeWorkman, &'static supraman_workman::fake::FakeAuth)> {
     Some((FAKE.get()?, OAUTH.get()?.as_ref()))
@@ -213,17 +217,75 @@ fn inbox(seq: i64, extra: bool, restarted: bool) -> String {
     let mut rows = vec![
         json!({ "key": format!("blocked:{TASK_2}"), "kind": "blocked", "item": item(TASK_2, "sw2/2", "task", "Render the board", "blocked"),
                 "run": live_run(), "what": "Blocked: waits for the board API", "since": "2026-10-26T11:30:00+00:00",
-                "call": "work_status(ref:\"selftest-work/sw2/2\", to:\"in_progress\")" }),
+                "call": "work_status(ref:\"selftest-work/sw2/2\", to:\"in_progress\")",
+                "audience": "human", "detail": "waits on: the board API", "actor": "aw-selftest", "tree": null, "target": null, "count": 1,
+                "url": "/r/selftest-work/sw2/2" }),
         json!({ "key": format!("done_unverified:{SHIPPED}"), "kind": "done_unverified", "item": item(SHIPPED, "sw1/1", "task", "Ship it", "done"),
                 "run": done_run(), "what": "Done, but only the worker's verification says so",
                 "since": if restarted { "2026-10-26T12:30:00+00:00" } else { "2026-10-25T17:55:00+00:00" },
-                "call": "work_verify(ref:\"selftest-work/sw1/1\", …)" }),
+                "call": "work_verify(ref:\"selftest-work/sw1/1\", …)",
+                "audience": "controller", "detail": null, "actor": "aw-selftest", "tree": null, "target": null, "count": 1, "url": null }),
     ];
     if extra {
         rows.insert(0, json!({ "key": format!("question:{TASK_1}"), "kind": "question", "item": item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done"),
-                               "run": live_run(), "what": "Which frame budget?", "since": "2026-10-26T12:10:00+00:00", "call": "" }));
+                               "run": live_run(), "what": "Which frame budget?", "since": "2026-10-26T12:10:00+00:00", "call": "",
+                               "audience": "human", "detail": "Which frame budget?" }));
     }
     json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": seq, "rows": rows }).to_string()
+}
+
+fn every_kind_call(kind: &str) -> String {
+    format!("work_resolve_{kind}(ref:\"selftest-work/sw9/{kind}\")")
+}
+
+fn every_kind_id(n: usize) -> String {
+    format!("5e1f0000-0000-4000-8000-0000000009{n:02}")
+}
+
+/// One row of each kind the Inbox shows, and a note it does not.
+fn inbox_every_kind(seq: i64) -> String {
+    let rows: Vec<Value> = EVERY_KIND
+        .iter()
+        .chain(&[cards::NOTE])
+        .enumerate()
+        .map(|(n, kind)| {
+            let id = every_kind_id(n);
+            let target = if *kind == "blocker_finding" { item(TASK_2, "sw2/2", "task", "Render the board", "blocked") } else { Value::Null };
+            json!({ "key": format!("{kind}:{id}"), "kind": kind, "item": item(&id, &format!("sw9/{kind}"), "task", &format!("The {} card's item", kind.replace('_', " ")), "open"),
+                    "run": live_run(), "what": every_kind_call(kind), "since": "2026-10-26T11:00:00+00:00", "call": every_kind_call(kind),
+                    "audience": if matches!(*kind, "question" | "blocked") { "human" } else { "controller" }, "detail": null, "actor": "aw-gone",
+                    "tree": null, "target": target, "count": 1, "url": format!("/r/selftest-work/sw9/{kind}") })
+        })
+        .collect();
+    json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": seq, "rows": rows }).to_string()
+}
+
+/// A card per kind with Housekeeping open, in a shot: what René sees of each kind; the gpui tests prove the layout.
+async fn every_kind(view: &Entity<FleetView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+    fake.set(inbox_target(), Answer::json(inbox_every_kind(123)));
+    fake.push(&json!({ "seq": 123, "runId": null, "itemId": null, "kind": "note" }).to_string());
+    let keys: Vec<String> = EVERY_KIND.iter().enumerate().map(|(n, kind)| format!("inbox-ws-{kind}:{}", every_kind_id(n))).collect();
+    let mut wanted: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let open = format!("{HOUSEKEEPING_KEY}=open");
+    wanted.push(&open);
+    painted(view, &wanted, LIVE_WITHIN, "a card per kind", cx).await?;
+    crate::selftest_manage::shot("wu-cards-inbox", cx).await;
+    if painted_any(view, &format!("inbox-ws-{}:", cards::NOTE), cx) {
+        bail!("the unconsumed note has a card");
+    }
+    let texts: Vec<String> = view.read_with(cx, |v, cx| {
+        let rows: Vec<(String, supraman_workman::InboxRow)> = v.work_inbox.read(cx).rows().into_iter().map(|(w, r)| (w.to_string(), r.clone())).collect();
+        let refs: Vec<(&str, &supraman_workman::InboxRow)> = rows.iter().map(|(w, r)| (w.as_str(), r)).collect();
+        let sections = cards::sections(&refs, &[], supraman_core::time::now_ms());
+        sections.needs_you.iter().chain(sections.housekeeping.iter().flat_map(|g| &g.cards)).flat_map(|c| c.texts(0)).collect()
+    });
+    if let Some(text) = texts.iter().find(|t| EVERY_KIND.iter().any(|k| t.contains(&every_kind_call(k)))) {
+        bail!("a card paints its call: {text:?}");
+    }
+    fake.set(inbox_target(), Answer::json(inbox(124, true, true)));
+    fake.push(&json!({ "seq": 124, "runId": null, "itemId": null, "kind": "note" }).to_string());
+    painted(view, &[&format!("inbox-ws-question:{TASK_1}"), &format!("inbox-ws-done_unverified:{SHIPPED}")], LIVE_WITHIN, "the inbox again", cx).await?;
+    Ok(format!("a card per kind ({}) painted with Housekeeping open, no card for the note, no call in any card's text; shot wu-cards-inbox", EVERY_KIND.join(", ")))
 }
 
 fn inbox_target() -> String {
@@ -360,10 +422,11 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     let fake = FAKE.get().ok_or_else(|| anyhow!("no fake Workman (prepare did not run)"))?;
     let mut lines = Vec::new();
 
-    let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
-    let shown = painted(view, &[&blocked, &shipped], LOADED_WITHIN, "the Workman rows in the Inbox", cx).await?;
+    let blocked = format!("inbox-ws-blocked:{TASK_2}");
+    let closed = format!("{HOUSEKEEPING_KEY}=closed");
+    let shown = painted(view, &[&blocked, &closed], LOADED_WITHIN, "the Workman cards in the Inbox", cx).await?;
     crate::selftest_manage::shot("m5-14-inbox", cx).await;
-    lines.push(format!("Inbox painted the fake's 2 Workman rows (blocked sw2/2, done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
+    lines.push(format!("Inbox painted blocked sw2/2 under Needs you and Housekeeping closed (done_unverified sw1/1) {} ms into step 7, before any Work tab", shown.as_millis()));
 
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
     let (tab, work) = view
@@ -590,6 +653,8 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     }
     lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2's item page".into());
 
+    click(view, &format!("{HOUSEKEEPING_KEY}=closed"), cx).await?;
+    painted(view, &[&shipped, &format!("{HOUSEKEEPING_KEY}=open")], LIVE_WITHIN, "sw1/1's card under the opened Housekeeping", cx).await?;
     click(view, &format!("inbox-ws-dismiss-done_unverified:{SHIPPED}"), cx).await?;
     sleep(cx, Duration::from_millis(100)).await;
     if is_painted(view, &shipped, cx) {
@@ -633,6 +698,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     fake.push(&json!({ "seq": 122, "runId": DONE_RUN, "itemId": SHIPPED, "kind": "transition" }).to_string());
     painted(view, &[&shipped], LIVE_WITHIN, "sw1/1's row after it started over", cx).await?;
     lines.push(format!("× hid sw1/1's row and wrote {DISMISSED_FILE}; a reload added a question and kept it hidden; a new since showed it again"));
+    lines.push(every_kind(view, fake, cx).await?);
 
     click(view, "work-journal=closed", cx).await?;
     painted(view, &["work-journal=open", "journal-event-150", "journal-event-151", "journal-event-152", "journal-older"], LOADED_WITHIN, "the journal", cx).await?;

@@ -412,6 +412,19 @@ pub struct InboxRow {
     pub since: String,
     /// The resolving MCP call, qualified.
     pub call: String,
+    /// `human` (question, blocked) or `controller`; absent from a server before 3.0.1.
+    pub audience: Option<String>,
+    /// One line per kind, at most 200 characters.
+    pub detail: Option<String>,
+    /// Who closed it, or the claim's agent.
+    pub actor: Option<String>,
+    pub tree: Option<String>,
+    /// A blocker finding's target.
+    pub target: Option<ItemRef>,
+    pub count: Option<u32>,
+    /// The item's web page.
+    pub url: Option<String>,
+    pub intent: Option<String>,
 }
 
 
@@ -540,6 +553,15 @@ mod tests {
             serde_json::from_str(&format!(r#"{{"asOf":"x","seq":1,"rows":[{{"key":"k","kind":"question","item":{ITEM},"run":null,"what":"w","since":"x","call":"c"}}]}}"#))
                 .unwrap();
         assert_eq!(inbox.rows[0].run, None);
+        assert_eq!((inbox.rows[0].audience.as_deref(), inbox.rows[0].target.as_ref(), inbox.rows[0].url.as_deref()), (None, None, None), "a server before 3.0.1");
+        let inbox: Inbox = serde_json::from_str(&format!(
+            r#"{{"asOf":"x","seq":1,"rows":[{{"key":"k","kind":"blocker_finding","item":{ITEM},"run":null,"what":"w","since":"x","call":"c",
+              "audience":"controller","detail":null,"actor":"aw-1","tree":null,"target":{ITEM},"count":2,"url":"https://w/r/m4/6"}}]}}"#
+        ))
+        .unwrap();
+        let row = &inbox.rows[0];
+        assert_eq!((row.audience.as_deref(), row.detail.as_deref(), row.actor.as_deref(), row.count), (Some("controller"), None, Some("aw-1"), Some(2)));
+        assert_eq!((row.target.as_ref().map(|t| t.qualified_ref.as_str()), row.url.as_deref()), (Some("m4/6"), Some("https://w/r/m4/6")));
         let journal: Journal = serde_json::from_str(
             r#"{"asOf":"x","seq":1,"cursor":0,"hasMore":false,"events":[{"seq":1,"at":"x","item":null,"run":null,"session":null,"actor":"a","role":"r","kind":"k","summary":null,"payload":null}]}"#,
         )

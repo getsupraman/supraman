@@ -23,6 +23,7 @@ use crate::updates::Stage;
 use crate::fleet::{self, Open, RepoNode, SessionRow, WorkspaceNode};
 use crate::work_view;
 
+mod inbox_card;
 mod messages;
 
 const REVEAL_WITHIN: Duration = Duration::from_secs(60);
@@ -102,19 +103,6 @@ fn needs_label(kind: NeedsKind) -> &'static str {
         NeedsKind::OtherServer => "other server",
         NeedsKind::StopFailed => "stop failed",
     }
-}
-
-fn work_kind_color(kind: &str, cx: &gpui::App) -> Hsla {
-    let status = cx.theme().status();
-    match kind {
-        "blocked" | "blocker_finding" => status.error,
-        "question" | "assumption_due" | "done_unverified" => status.warning,
-        _ => status.info,
-    }
-}
-
-fn short_since(at: &str) -> String {
-    if at.is_empty() { String::new() } else { format!("since {}", supraman_core::time::rfc3339_local(at)) }
 }
 
 pub fn inbox_key(need: &NeedsYou) -> Option<String> {
@@ -782,10 +770,8 @@ impl FleetView {
                     .children(remedy),
             );
         }
-        for (workspace, row) in &work_rows {
-            inbox = inbox.child(self.render_work_row(workspace, row, cx));
-        }
-        inbox = inbox.children(scheduled);
+        let (work_needs, housekeeping) = self.render_work_cards(&work_rows, cx);
+        inbox = inbox.children(work_needs).children(scheduled).children(housekeeping);
         Some(inbox.into_any_element())
     }
 
@@ -901,73 +887,6 @@ impl FleetView {
                 .child(hit_target(&self.hits, "update-notice".into()))
                 .into_any_element(),
         )
-    }
-
-    /// The MCP call that would resolve it is shown, never run (C21).
-    fn render_work_row(&self, workspace: &str, row: &supraman_workman::InboxRow, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let color = work_kind_color(&row.kind, cx);
-        let key = work_view::row_key(row);
-        let dismiss_key = work_view::dismiss_key(row);
-        let (open_ws, item) = (workspace.to_string(), row.item.id.clone());
-        let (dismiss_ws, row_id) = (workspace.to_string(), row.key.clone());
-        let inbox = self.work_inbox.clone();
-        let dismiss = glyph_button(&self.hits, dismiss_key, Icon::Close, "Dismiss here (Workman is not changed)", cx)
-            .on_click(move |_: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                inbox.update(cx, |inbox, cx| inbox.dismiss(&dismiss_ws, &row_id, cx));
-            });
-        div()
-            .id(SharedString::from(key.clone()))
-            .relative()
-            .flex()
-            .items_start()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .border_l_2()
-            .border_dashed()
-            .border_color(color)
-            .bg(color.opacity(0.06))
-            .cursor_pointer()
-            .hover(|s| s.bg(color.opacity(0.14)))
-            .child(crate::brand::workman(rems(1.), color).mt(px(2.)))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .text_sm()
-                            .child(div().font_weight(FontWeight::BOLD).text_color(color).child(SharedString::from(format!(
-                                "Workman · {}",
-                                work_view::kind_label(&row.kind)
-                            ))))
-                            .child(SharedString::from(format!("{workspace} · {}", row.item.qualified_ref)))
-                            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(short_since(&row.since)))),
-                    )
-                    .child(div().text_xs().text_color(colors.text).child(SharedString::from(row.what.clone())))
-                    .when(!row.call.is_empty(), |d| {
-                        d.child(
-                            clipped(format!("work-call-{workspace}/{}", row.item.qualified_ref), row.call.clone(), false)
-                                .font_family(supraman_ui::fonts::MONO)
-                                .text_xs()
-                                .text_color(colors.text_muted),
-                        )
-                    }),
-            )
-            .child(dismiss)
-            .child(hit_target(&self.hits, key))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.open_work_item(&open_ws, &item, cx);
-            }))
-            .into_any_element()
     }
 
     pub(super) fn hover_icon(&self, key: String, icon: Icon, tip: &'static str, group: &SharedString, shown: bool, cx: &gpui::App) -> Stateful<Div> {

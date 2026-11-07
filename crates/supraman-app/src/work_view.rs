@@ -1,5 +1,6 @@
 //! Read only (C21): the token stays inside the hub's [`Client`]; no message here may carry it.
 
+pub mod cards;
 mod inbox;
 mod item;
 mod journal;
@@ -26,7 +27,7 @@ use supraman_ui::{banner, button, fonts};
 use supraman_ui::hit::{HitTargets, hit_target};
 use crate::workman_setup::WorkmanStatus;
 
-pub use inbox::{DISMISSED_FILE, WorkInbox, dismiss_key, kind_label, row_key};
+pub use inbox::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
 pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
 pub use journal::JournalView;
 

@@ -125,8 +125,8 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     if fresh.is_empty() {
         bail!("Sign in issued no token");
     }
-    let rows = crate::selftest_work::inbox_keys();
-    until(view, cx, "the tree's Workman rows", |v| rows.iter().all(|k| painted(v, k)).then_some(())).await?;
+    let (blocked, housekeeping) = crate::selftest_work::inbox_keys();
+    until(view, cx, "the Inbox's Workman cards", |v| (painted(v, &blocked) && housekeeping.iter().any(|k| painted(v, k))).then_some(())).await?;
     let read = || {
         fake.seen().iter().any(|s| {
             s.target.starts_with("/api/v1/") && s.authorization.as_deref().and_then(|a| a.strip_prefix("Bearer ")).is_some_and(|t| fresh.iter().any(|f| f == t))
@@ -139,7 +139,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
         }
         sleep(cx, Duration::from_millis(50)).await;
     }
-    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints {} Workman rows read with them", fresh.len(), rows.len()));
+    lines.push(format!("the notice's Sign in signed in again ({} new tokens), the Inbox paints its Workman cards read with them", fresh.len()));
 
     let other = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
     let other_oauth = other.enable_oauth();
