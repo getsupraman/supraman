@@ -38,9 +38,6 @@ pub fn classify(text: &str) -> Option<Prompt> {
     if trimmed.contains("continue connecting (yes/no") {
         return Some(Prompt::HostKey { text: trimmed.to_string() });
     }
-    if trimmed.starts_with("Username for ") || trimmed.starts_with("Password for ") {
-        return None;
-    }
     if let Some(rest) = trimmed.strip_prefix("Enter passphrase for key ") {
         return Some(Prompt::Passphrase { key: Some(unquoted(rest.trim_end_matches(':')).to_string()) });
     }
