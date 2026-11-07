@@ -1,10 +1,12 @@
 //! The message box edited in place: HEAD's message as a summary and a description, amended through the tab's
-//! write gate (asked first once a remote holds HEAD), or a stash's message, saved by the tab's stash writes.
+//! write gate (asked first once a remote holds HEAD), an older commit's reworded by GitMan's rebase (asked first
+//! once pushed or with work in progress), or a stash's message, saved by the tab's stash writes.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use gpui::{App, ClickEvent, Context, Div, Hsla, Stateful, Subscription, Window, div, prelude::*};
 use supraman_gitman::Amendable;
+use supraman_gitman::write::rebase::{self, Autostash, Rebased};
 use supraman_gitman::write::{LockSet, Session, WriteError, Writer, wip};
 use supraman_gitman::Repo;
 use supraman_ui::confirm::Confirm;
@@ -23,16 +25,22 @@ use crate::git_view::write_gate::{Written, capitalised};
 pub const CLICK_TO_AMEND: &str = "Click to amend your commit message";
 pub const CLICK_TO_EDIT_STASH: &str = "Click to edit the stash message";
 pub const CHECK_OUT_A_BRANCH: &str = "Check out a branch to amend";
+pub const CLICK_TO_REWORD: &str = "Click to reword your commit message";
+pub const CHECK_OUT_TO_REWORD: &str = "Check out a branch to reword: HEAD is detached";
+pub const STOPPED: &str = "The rebase stopped on a conflict: resolve it, then Continue rebase, Skip commit or Abort rebase";
 pub const TYPE_A_SUMMARY: &str = "Type a commit summary";
 pub const EDIT_KEY: &str = "commit-message-edit";
 pub const UPDATE_KEY: &str = "commit-amend-update";
 pub const CANCEL_KEY: &str = "commit-amend-cancel";
 pub const ASK_KEY: &str = "commit-amend-ask";
+pub const REBASES_KEY: &str = "commit-reword-rebases";
 
 /// What the open field edits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
     Head { branch: String, pushed: bool },
+    /// An older commit of `branch`, the `above` commits over it rebased.
+    Older { sha: String, branch: String, above: usize, pushed: bool },
     Stash(StashRef),
 }
 
@@ -52,6 +60,8 @@ pub struct Reword {
     doing: Option<u64>,
     /// HEAD's sha after the amend, as the job left it.
     reworded: Arc<Mutex<Option<String>>>,
+    /// How an older commit's reword ended, as the job left it.
+    rebased: Arc<Mutex<Option<Rebased>>>,
     /// Opened off the UI thread with the repo.
     writer: Option<Writer>,
 }
@@ -65,6 +75,41 @@ pub fn offer(shown: &Shown) -> Option<(&'static str, Option<Target>)> {
         Amendable::No => None,
         Amendable::Detached => Some((CHECK_OUT_A_BRANCH, None)),
         Amendable::Branch { name, pushed } => Some((CLICK_TO_AMEND, Some(Target::Head { branch: name.clone(), pushed: *pushed }))),
+        Amendable::OlderDetached => Some((CHECK_OUT_TO_REWORD, None)),
+        Amendable::Older { name, above, pushed } => {
+            let target = Target::Older { sha: shown.sha.to_string(), branch: name.clone(), above: *above, pushed: *pushed };
+            Some((CLICK_TO_REWORD, Some(target)))
+        }
+    }
+}
+
+fn commits(n: usize) -> String {
+    if n == 1 { "1 commit".into() } else { format!("{n} commits") }
+}
+
+/// What a reword of a commit with `above` commits over it does.
+pub fn rebases_words(above: usize) -> String {
+    format!("Rewords this commit and rebases the {} above it", commits(above))
+}
+
+/// The question before an older commit's reword: once pushed, or with work in progress to stash; none else.
+pub fn reword_question(branch: &str, above: usize, pushed: bool, dirty: bool) -> Option<String> {
+    let stashed = "Your changes are stashed and put back afterwards.";
+    match (pushed, dirty) {
+        (true, _) => {
+            let pushed = format!("{branch} was already pushed. Rewording rewrites {} and the next push must force.", commits(above + 1));
+            Some(if dirty { format!("{pushed} {stashed} Reword anyway?") } else { format!("{pushed} Reword anyway?") })
+        }
+        (false, true) => Some(format!("Reword it? {stashed}")),
+        (false, false) => None,
+    }
+}
+
+/// A toast's words when GitMan's autostash could not be put back.
+pub fn kept_words(autostash: &Autostash) -> Option<String> {
+    match autostash {
+        Autostash::Kept { name, why } => Some(format!("Your changes stay in the stash \u{201c}{name}\u{201d}: {why}")),
+        Autostash::None | Autostash::Popped => None,
     }
 }
 
@@ -122,7 +167,7 @@ impl CommitPanel {
 
     /// The keyboard to the field it is not in; a stash's message has only one.
     fn other_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(field) = self.reword.field.as_ref().filter(|f| matches!(f.target, Target::Head { .. })) else { return };
+        let Some(field) = self.reword.field.as_ref().filter(|f| !matches!(f.target, Target::Stash(_))) else { return };
         let to = if field.summary.read(cx).is_focused(window) { field.description.clone() } else { field.summary.clone() };
         to.update(cx, |i, cx| i.focus(window, cx));
     }
@@ -160,15 +205,44 @@ impl CommitPanel {
             }
             Target::Head { branch, pushed: true } => self.reword.asking = Some(Confirm::ask(pushed_question(&branch), "Amend anyway", wip::message(&summary, &description))),
             Target::Head { pushed: false, .. } => cx.emit(PanelEvent::Amend(wip::message(&summary, &description))),
+            Target::Older { .. } => cx.emit(PanelEvent::Reword(wip::message(&summary, &description))),
+        }
+        cx.notify();
+    }
+
+    /// An older commit's reword to `message`, asked first when pushed or `dirty` (the tab has work in progress).
+    pub fn reword_older(&mut self, message: String, dirty: bool, cx: &mut Context<Self>) {
+        let Some(Target::Older { branch, above, pushed, .. }) = self.reword.field.as_ref().map(|f| f.target.clone()) else { return };
+        match reword_question(&branch, above, pushed, dirty) {
+            Some(question) => self.reword.asking = Some(Confirm::ask(question, "Reword", message)),
+            None => self.run_reword(message, cx),
         }
         cx.notify();
     }
 
     pub fn answer_amend(&mut self, yes: bool, cx: &mut Context<Self>) {
+        let older = self.reword.field.as_ref().is_some_and(|f| matches!(f.target, Target::Older { .. }));
         match self.reword.asking.take().and_then(|c| c.action).filter(|_| yes) {
+            Some(message) if older => self.run_reword(message, cx),
             Some(message) => cx.emit(PanelEvent::Amend(message)),
             None => cx.notify(),
         }
+    }
+
+    /// GitMan's rebase rewording the field's older commit, through the tab's gate.
+    fn run_reword(&mut self, message: String, cx: &mut Context<Self>) {
+        let Some(Target::Older { sha, .. }) = self.reword.field.as_ref().map(|f| f.target.clone()) else { return };
+        let Some(writer) = self.reword.writer.clone() else { return cx.emit(PanelEvent::Why(STILL_OPENING.into())) };
+        let rebased = self.reword.rebased.clone();
+        let job = move |s: &Session<'_>| -> Result<(), WriteError> {
+            let outcome = rebase::reword(s, &sha, &message)?;
+            *rebased.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
+            Ok(())
+        };
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, LockSet::rebase(), job, cx)) {
+            self.reword.doing = Some(ticket);
+        }
+        cx.notify();
     }
 
     #[cfg(test)]
@@ -208,9 +282,19 @@ impl CommitPanel {
             Err(why) => self.reword.failure = Some(capitalised(why)),
             Ok(()) => {
                 let summary = self.reword.field.take().map(|f| f.summary.read(cx).text().trim().to_string()).unwrap_or_default();
-                let sha = self.reword.reworded.lock().unwrap_or_else(PoisonError::into_inner).take().unwrap_or_default();
                 self.reword.failure = None;
-                cx.emit(PanelEvent::Amended(sha.into(), format!("Amended \u{201c}{summary}\u{201d}")));
+                let rebased = self.reword.rebased.lock().unwrap_or_else(PoisonError::into_inner).take();
+                match rebased {
+                    None => {
+                        let sha = self.reword.reworded.lock().unwrap_or_else(PoisonError::into_inner).take().unwrap_or_default();
+                        cx.emit(PanelEvent::HeadMoved(sha.into(), Some(format!("Amended \u{201c}{summary}\u{201d}"))));
+                    }
+                    Some(Rebased::Done { head, autostash }) => {
+                        let toast = [Some(format!("Reworded \u{201c}{summary}\u{201d}")), kept_words(&autostash)].into_iter().flatten().collect::<Vec<_>>().join(". ");
+                        cx.emit(PanelEvent::HeadMoved(head.into(), Some(toast)));
+                    }
+                    Some(Rebased::Conflicted) => cx.emit(PanelEvent::Wrote(Some(STOPPED.into()))),
+                }
             }
         }
         cx.notify();
@@ -250,18 +334,29 @@ impl CommitPanel {
             .border_color(colors.border_focused)
             .bg(box_bg)
             .child(summary_row(&self.hits, &field.summary, "commit-amend-counter", cx))
-            .when(matches!(field.target, Target::Head { .. }), |d| d.child(field.description.clone()))
+            .when(!matches!(field.target, Target::Stash(_)), |d| d.child(field.description.clone()))
     }
 
-    /// Under the open field: a failure, the question before a pushed HEAD's amend, Cancel Amend and Update Message.
+    /// Under the open field: a failure, the question before a pushed or dirty write, what a reword rebases, Cancel
+    /// and Update Message (Reword).
     pub(super) fn field_actions(&self, field: &Field, cx: &mut Context<Self>) -> Div {
-        let head = matches!(field.target, Target::Head { .. });
-        let update = button::bordered(&self.hits, UPDATE_KEY, if head { "Update Message" } else { "Update Stash Message" }, cx);
+        let (update_words, cancel_words) = match field.target {
+            Target::Head { .. } => ("Update Message", "Cancel Amend"),
+            Target::Older { .. } => ("Reword", "Cancel Reword"),
+            Target::Stash(_) => ("Update Stash Message", "Cancel"),
+        };
+        let rebases = match field.target {
+            Target::Older { above, .. } => Some(rebases_words(above)),
+            _ => None,
+        };
+        let update = button::bordered(&self.hits, UPDATE_KEY, update_words, cx);
         let update = match self.update_why_not(cx) {
             Some(why) => button::dimmed(update).tooltip(Tooltip::text(why)),
             None => update.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.update_message(cx))),
         };
-        let cancel = button::bordered(&self.hits, CANCEL_KEY, if head { "Cancel Amend" } else { "Cancel" }, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
+        let cancel = button::bordered(&self.hits, CANCEL_KEY, cancel_words, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
+        let muted = cx.theme().colors().text_muted;
+        let rebases = rebases.map(|words| div().relative().text_xs().text_color(muted).child(words).child(hit_target(&self.hits, REBASES_KEY.into())));
         let question = self.reword.asking.as_ref().map(|asked| asked.render(&self.hits, ASK_KEY, |this: &mut Self, yes, _, cx| this.answer_amend(yes, cx), cx));
         div()
             .flex()
@@ -271,6 +366,7 @@ impl CommitPanel {
             .px_2()
             .children(self.failure(cx))
             .children(question)
+            .children(rebases)
             .child(div().flex().gap_2().justify_end().child(cancel).child(update))
     }
 

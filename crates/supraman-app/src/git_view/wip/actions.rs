@@ -1,7 +1,10 @@
 //! The WIP panel's writes, each through the tab's write gate off the UI thread: stage, unstage, discard (asked
 //! first), commit, and a merge's or rebase's next step; their outcome goes to the tab as a [`PanelEvent`].
 
+use std::sync::PoisonError;
+
 use gpui::{App, Context};
+use supraman_gitman::write::rebase::{Autostash, Rebased};
 use supraman_gitman::write::wip::{self, Step};
 use supraman_gitman::write::{LockSet, Resource, Session, WriteError};
 use supraman_gitman::FileChange;
@@ -9,6 +12,7 @@ use supraman_ui::confirm::Confirm;
 
 use super::compose::{self, Act};
 use super::{Section, WipPanel, sections};
+use crate::git_view::details::reword::kept_words;
 use crate::git_view::details::{FileView, PanelEvent};
 use crate::git_view::write_gate::{Written, capitalised};
 
@@ -30,6 +34,9 @@ pub enum Doing {
     Commit { summary: String, amend: bool },
     Step(Step),
 }
+
+pub const ANOTHER_CONFLICT: &str = "The rebase stopped on another conflict";
+pub const ABORTED_POPPED: &str = "Aborted the rebase; your changes are back";
 
 fn files_words(n: usize) -> String {
     if n == 1 { "1 file".into() } else { format!("{n} files") }
@@ -133,7 +140,7 @@ impl WipPanel {
         match ask {
             Ask::Discard(files) => self.request(Doing::Discard(files.len()), LockSet::reset(), move |s| wip::discard_unstaged(s, &files), cx),
             Ask::DiscardAll => self.request(Doing::DiscardAll, LockSet::reset(), |s| wip::discard_all(s).map(drop), cx),
-            Ask::Step(step) => self.request(Doing::Step(step), LockSet::undo(), move |s| wip::step(s, step), cx),
+            Ask::Step(step) => self.step(step, false, cx),
         }
     }
 
@@ -168,13 +175,39 @@ impl WipPanel {
                     wip::commit(s, &message, amend, no_verify)
                 }, cx);
             }
-            Act::ContinueRebase => self.request(Doing::Step(Step::ContinueRebase), LockSet::undo(), move |s| {
-                if stage_all {
-                    stage_everything(s)?;
-                }
-                wip::step(s, Step::ContinueRebase)
-            }, cx),
+            Act::ContinueRebase => self.step(Step::ContinueRebase, stage_all, cx),
             Act::SkipCommit => self.ask(Ask::Step(Step::SkipCommit), cx),
+        }
+    }
+
+    /// `step` through the gate, `stage_all` staging every file first; how it ended kept for [`Self::written`].
+    fn step(&mut self, step: Step, stage_all: bool, cx: &mut Context<Self>) {
+        let stepped = self.stepped.clone();
+        self.request(Doing::Step(step), LockSet::rebase(), move |s| {
+            if stage_all {
+                stage_everything(s)?;
+            }
+            let outcome = wip::step(s, step)?;
+            *stepped.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome);
+            Ok(())
+        }, cx);
+    }
+
+    /// A rebase's step done: once it finished, the new HEAD selected with what became of GitMan's autostash
+    /// (`None`: said); else the toast of [`PanelEvent::Wrote`].
+    fn stepped(&mut self, step: Step, cx: &mut Context<Self>) -> Option<Option<String>> {
+        let outcome = self.stepped.lock().unwrap_or_else(PoisonError::into_inner).take();
+        match (step, outcome) {
+            (Step::AbortMerge, _) | (_, None) => Some(None),
+            (_, Some(Rebased::Conflicted)) => Some(Some(ANOTHER_CONFLICT.into())),
+            (step, Some(Rebased::Done { head, autostash })) => {
+                let toast = match (step, &autostash) {
+                    (Step::AbortRebase, Autostash::Popped) => Some(ABORTED_POPPED.into()),
+                    _ => kept_words(&autostash),
+                };
+                cx.emit(PanelEvent::HeadMoved(head.into(), toast));
+                None
+            }
         }
     }
 
@@ -197,7 +230,11 @@ impl WipPanel {
             }
             (Doing::Discard(n), Ok(())) => Some(format!("Discarded the changes to {}", files_words(*n))),
             (Doing::DiscardAll, Ok(())) => Some("Discarded all changes".into()),
-            (Doing::Stage | Doing::Unstage | Doing::Step(_), Ok(())) => None,
+            (Doing::Step(step), Ok(())) => match self.stepped(*step, cx) {
+                Some(toast) => toast,
+                None => return cx.notify(),
+            },
+            (Doing::Stage | Doing::Unstage, Ok(())) => None,
         };
         cx.emit(PanelEvent::Wrote(toast));
         cx.notify();

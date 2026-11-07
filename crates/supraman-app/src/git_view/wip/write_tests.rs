@@ -341,3 +341,55 @@ fn wip_keys_one_summary_in_two_fields_commit_stage_and_unstage(cx: &mut TestAppC
     assert_eq!(texts(&view, cx).0, "su", "S and U type in a text field");
     assert_eq!(lists(&view, cx).0, vec!["k.txt".to_string()]);
 }
+
+/// `side` with W1 to W3 changing c.txt, stopped in GitMan's reword of W1 with W2 dropped: the pick of W3 conflicts.
+fn stopped_rebase(f: &Fixture) -> String {
+    let commits = ["one", "two", "three"].map(|n| {
+        std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
+        git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
+        git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")], &[], None);
+        git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+    });
+    let todo = format!("reword {}\npick {}\n", commits[0], commits[2]);
+    let stopped = f.gitmans_rebase(&supraman_gitman::Repo::new(f.git.clone(), &f.worktree), &commits[0], &todo);
+    assert_eq!(stopped, supraman_gitman::write::rebase::Rebased::Conflicted);
+    commits[2].clone()
+}
+
+#[gpui::test]
+fn a_stopped_reword_shows_skip_then_continue_once_staged_which_finishes_it_and_undo_puts_the_old_tip_back(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let old = stopped_rebase(&f);
+    let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
+    let words = |cx: &mut VisualTestContext| panel(&view, cx, |p, cx| p.commit_button(false, cx)).unwrap().0;
+    assert_eq!(words(cx), "Skip commit", "nothing staged");
+    assert!(painted(&view, "wip-abort", cx));
+    std::fs::write(f.worktree.join("c.txt"), b"three\n").unwrap();
+    git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
+    view.update(cx, |v, cx| v.refresh_after_write(cx));
+    cx.run_until_parked();
+    select_wip(&view, cx);
+    assert_eq!(words(cx), "Continue rebase");
+    click(&view, "wip-commit", cx);
+
+    let head = git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None);
+    assert_eq!(git_in(&f.git, &f.worktree, &["log", "--format=%s", "-2", "HEAD"], &[], None), "W three\nReworded");
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(crate::git_view::Selected::Commit(head.into())), "the new HEAD is selected");
+    click(&view, UNDO_KEY, cx);
+    assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None), old, "Undo puts the old tip back");
+}
+
+#[gpui::test]
+fn abort_rebase_restores_the_old_tip_and_pops_gitmans_autostash(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    std::fs::write(f.worktree.join("u.txt"), b"untracked\n").unwrap();
+    let old = stopped_rebase(&f);
+    assert!(!f.worktree.join("u.txt").exists(), "in the autostash meanwhile");
+    let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
+    click(&view, "wip-abort", cx);
+    assert_eq!(panel(&view, cx, |p, _| p.asking().map(str::to_string)).as_deref(), Some("Abort the rebase? The branch goes back to where it started and the resolutions so far are lost."));
+    click(&view, "wip-confirm-yes", cx);
+    assert_eq!(git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None), old);
+    assert_eq!(std::fs::read(f.worktree.join("u.txt")).unwrap(), b"untracked\n");
+    assert_eq!(toast(&view, cx).as_deref(), Some(super::actions::ABORTED_POPPED));
+}

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::journal::{self, Action, Kind};
+use super::rebase::{self, Autostash, Rebased};
 use super::{Call, Session, WriteError};
 use crate::changes::{ChangeKind, FileChange};
 use crate::parse::{nul_records, text};
@@ -220,20 +221,18 @@ pub enum Step {
     AbortMerge,
 }
 
-impl Step {
-    fn args(self) -> &'static [&'static str] {
-        match self {
-            Step::ContinueRebase => &["rebase", "--continue"],
-            Step::SkipCommit => &["rebase", "--skip"],
-            Step::AbortRebase => &["rebase", "--abort"],
-            Step::AbortMerge => &["merge", "--abort"],
+/// Runs `step`: a rebase's as [`rebase`](super::rebase) runs them, a merge's abort; the rebase's state after.
+pub fn step(s: &Session, step: Step) -> Result<Rebased, WriteError> {
+    match step {
+        Step::ContinueRebase => rebase::continue_rebase(s),
+        Step::SkipCommit => rebase::skip(s),
+        Step::AbortRebase => rebase::abort(s),
+        Step::AbortMerge => {
+            s.output(&Call::new(&["merge", "--abort"]))?;
+            let head = text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string();
+            Ok(Rebased::Done { head, autostash: Autostash::None })
         }
     }
-}
-
-/// Runs `step`; a continued rebase keeps each commit's message.
-pub fn step(s: &Session, step: Step) -> Result<(), WriteError> {
-    s.output(&Call::new(step.args()).editor("true")).map(drop)
 }
 
 #[cfg(test)]
