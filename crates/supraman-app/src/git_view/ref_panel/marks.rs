@@ -14,18 +14,19 @@ use theme::ActiveTheme as _;
 
 use super::overlay::OVERLAY;
 use super::{Entry, Keys, RefEvent, RefPanel};
+use crate::git_view::stash::{self, StashAct, StashRef};
 use crate::view::secondary;
 
 /// The mark slot's width.
 pub(super) const MARK: f32 = 18.;
 const ICON: f32 = 12.;
 
-/// What the ref menu does: the hide and solo keys of the ref or folder it was opened on. gitman-actions adds its
-/// own variants and items ([`RefPanel::menu_items`]).
+/// What the ref menu does: the hide and solo keys of the ref or folder it was opened on, or a stash's write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefAction {
     ToggleSolo(Vec<String>),
     ToggleHidden(Vec<String>),
+    Stash(StashAct, StashRef),
 }
 
 enum Mark {
@@ -115,20 +116,29 @@ impl RefPanel {
         }
     }
 
-    /// The menu of the ref or folder at `path`: Solo or Stop soloing, then Hide or Show; none for a row with neither.
+    /// The menu of the ref or folder at `path`: a stash's writes ([`stash::menu_items`]), Solo or Stop soloing, then
+    /// Hide or Show; none for a row with neither.
     pub fn menu_items(&self, path: &str) -> Vec<MenuItem<RefAction>> {
         let (hide, solo) = match self.entry(path) {
             Some(entry) => (entry.hide_key().into_iter().collect(), entry.solo_key().into_iter().collect()),
             None => self.tree.aggregate(path).map(|k| (k.hide, k.solo)).unwrap_or_default(),
         };
-        let mut items = Vec::new();
+        let mut items: Vec<MenuItem<RefAction>> = match self.entry(path) {
+            Some(Entry::Stash { sha, label, .. }) => {
+                let of = StashRef { sha: sha.clone(), label: label.clone() };
+                stash::menu_items(&of, RefAction::Stash)
+            }
+            _ => Vec::new(),
+        };
+        let stash_items = items.len();
         if !solo.is_empty() {
             let words = if self.all_soloed(&solo) { "Stop soloing" } else { "Solo" };
             items.push(item("ref-solo", words, RefAction::ToggleSolo(solo)));
         }
         if !hide.is_empty() {
             let words = if self.all_hidden(&hide) { "Show" } else { "Hide" };
-            items.push(item("ref-hide", words, RefAction::ToggleHidden(hide)));
+            let hide = item("ref-hide", words, RefAction::ToggleHidden(hide));
+            items.push(if stash_items > 0 { hide.under("Graph") } else { hide });
         }
         items
     }
@@ -148,6 +158,7 @@ impl RefPanel {
         match action {
             RefAction::ToggleSolo(keys) => self.toggle_solo(&keys, cx),
             RefAction::ToggleHidden(keys) => self.toggle_hidden(&keys, cx),
+            RefAction::Stash(act, stash) => cx.emit(RefEvent::Stash(act, stash)),
         }
         cx.notify();
     }

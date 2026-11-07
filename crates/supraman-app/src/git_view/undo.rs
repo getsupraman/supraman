@@ -177,15 +177,12 @@ impl UndoBar {
 
 impl Render for UndoBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.theme().colors().border;
         let (undo, redo) = (self.preview.can_undo(), self.preview.can_redo());
         let bar = div()
             .flex()
             .gap_1()
             .px_2()
             .py_1()
-            .border_b_1()
-            .border_color(border)
             .child(self.button(UNDO_KEY, Icon::Undo, "Undo", undo, self.preview.undo_tooltip(), cx))
             .child(self.button(REDO_KEY, Icon::Redo, "Redo", redo, self.preview.redo_tooltip(), cx));
         let stash = self.stash.as_ref().map(|asked| asked.render(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx).m_2());

@@ -195,7 +195,8 @@ impl CommitPanel {
         }
         if !self.all_files && self.view == FileView::Path {
             let rows = shown.clone();
-            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), None, cx);
+            let tail = Self::stash_tail(shown);
+            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), tail, cx);
             return column.child(list.flex_1().min_h_0());
         }
         let (_, expanded) = self.tree();
@@ -215,7 +216,25 @@ impl CommitPanel {
     /// The tree on show, with View all files the whole one.
     fn render_tree(&self, cx: &mut Context<Self>) -> AnyElement {
         let (tree, _) = self.tree();
-        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), None, cx).flex_1().min_h_0().into_any_element()
+        let tail = self.shown().filter(|_| !self.all_files).and_then(|shown| Self::stash_tail(&shown));
+        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), tail, cx).flex_1().min_h_0().into_any_element()
+    }
+
+    /// A stash's changed file's Apply File on hover: the file put in the work tree as the stash has it.
+    fn stash_tail(shown: &Rc<Shown>) -> Option<files::Tail<CommitPanel>> {
+        let stash = shown.stash.as_ref()?.sha.clone();
+        let changes = shown.clone();
+        Some(Rc::new(move |this: &mut CommitPanel, path: &str, _, group: SharedString, cx: &mut Context<CommitPanel>| {
+            let file = changes.changes.iter().find(|c| c.path == path).cloned();
+            let applied = button::outline(&this.hits, format!("commit-apply-{path}"), "Apply File", cx.theme().status().created, cx);
+            let Some(file) = file else { return button::dimmed(applied).into_any_element() };
+            let stash = stash.clone();
+            let applied = applied.tooltip(Tooltip::text("Put this file in the work tree as the stash has it")).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                cx.emit(PanelEvent::ApplyFiles(stash.clone(), vec![file.clone()]));
+            }));
+            button::reveal(applied, group, false).into_any_element()
+        }))
     }
 
     fn render_shown(&mut self, shown: Rc<Shown>, window: &mut Window, cx: &mut Context<Self>) -> Div {

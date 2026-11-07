@@ -10,7 +10,7 @@ use crate::changes::{ChangeKind, FileChange};
 use crate::parse::{nul_records, text};
 
 /// Each file's path and a rename's old path, once each, in order.
-fn with_old_paths(files: &[FileChange]) -> Vec<String> {
+pub(super) fn with_old_paths(files: &[FileChange]) -> Vec<String> {
     let mut seen = HashSet::new();
     files.iter().flat_map(|f| [Some(&f.path), f.old_path.as_ref()]).flatten().filter(|p| seen.insert(p.as_str())).cloned().collect()
 }
@@ -19,7 +19,7 @@ fn indexed(s: &Session) -> Result<HashSet<String>, WriteError> {
     Ok(nul_records(&s.output(&Call::new(&["ls-files", "-z"]))?).map(text).collect())
 }
 
-fn nul_joined(paths: &[String]) -> Vec<u8> {
+pub(super) fn nul_joined(paths: &[String]) -> Vec<u8> {
     paths.iter().flat_map(|p| p.bytes().chain([0])).collect()
 }
 
@@ -150,7 +150,7 @@ pub fn discard_all(s: &Session) -> Result<usize, WriteError> {
 }
 
 /// Deletes `path` under `top` when it is there, then each folder above it it leaves empty.
-fn remove_file(top: &Path, path: &str) -> Result<(), WriteError> {
+pub(super) fn remove_file(top: &Path, path: &str) -> Result<(), WriteError> {
     let file = top.join(path);
     match std::fs::remove_file(&file) {
         Ok(()) => {}

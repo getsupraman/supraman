@@ -8,6 +8,7 @@ pub mod lines;
 mod locks;
 mod quiet;
 mod snapshot;
+pub mod stash;
 pub mod wip;
 
 use std::collections::HashMap;
