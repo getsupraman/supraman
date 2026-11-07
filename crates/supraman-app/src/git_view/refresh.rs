@@ -222,7 +222,7 @@ impl GitView {
         self.history = first.history;
         self.tips = first.tips.into();
         self.heads = first.heads;
-        self.wip = first.wip;
+        let before = std::mem::replace(&mut self.wip, first.wip);
         self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
         self.measure_lanes();
         self.seek = None;
@@ -230,6 +230,7 @@ impl GitView {
             Some(sha) => self.reveal_sha(sha, cx),
             None => self.keep_selection(selected, &first.status, cx),
         }
+        self.select_conflict(before, cx);
         if let Some(anchor) = anchor {
             self.restore(anchor);
         }
@@ -270,7 +271,11 @@ impl GitView {
         match (row, selected) {
             (None, _) => self.selection_moved(cx),
             (Some(_), Some(Selected::Wip)) => {
-                self.wip_panel.update(cx, |p, cx| p.refresh(status.clone(), cx));
+                let colours = self.ref_colours();
+                self.wip_panel.update(cx, |p, cx| {
+                    p.set_ref_colours(colours);
+                    p.refresh(status.clone(), cx)
+                });
             }
             _ => {}
         }
@@ -317,10 +322,11 @@ impl GitView {
         if wip.is_some() != self.rows.first().is_some_and(GraphRow::wip) {
             return self.refresh_graph(files, cx);
         }
-        self.wip = wip;
+        let before = std::mem::replace(&mut self.wip, wip);
         if self.selected() == Some(Selected::Wip) {
             self.wip_panel.update(cx, |p, cx| p.refresh(status, cx));
         }
+        self.select_conflict(before, cx);
         self.reload_diff(files.as_ref(), cx);
         cx.notify();
     }

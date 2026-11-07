@@ -1,10 +1,16 @@
-//! The graph's WIP row, where the commit summary has its second field, and the tab's staging keys.
+//! The graph's WIP row, where the commit summary has its second field (the conflict node in its place while
+//! files are conflicted), and the tab's staging keys.
+
+use std::collections::HashMap;
 
 use gpui::{AnyElement, App, Div, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px};
 use gpui::Context;
+use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::icon::Icon;
 use theme::ActiveTheme as _;
 
 use super::colours::Palette;
+use super::load::Wip;
 use super::{GitView, Selected, cells, keys};
 
 /// The WIP row's summary field's width.
@@ -13,6 +19,9 @@ const FIELD: f32 = 160.;
 impl GitView {
     /// The summary's field and the counts; `// WIP` and the counts until the field is made.
     pub(super) fn wip_message(&mut self, ix: usize, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(conflicts) = self.wip.map(|w| w.conflicts).filter(|n| *n > 0) {
+            return cells::wip_message(&self.rows[ix], conflict_node(conflicts, &self.hits, palette, cx), String::new(), palette);
+        }
         let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
         let input = self.wip_panel.read(cx).composer().map(|c| c.row.clone());
         let row = &self.rows[ix];
@@ -57,11 +66,43 @@ impl GitView {
         cx.notify();
     }
 
+    /// The WIP row selected when files became conflicted since `before`.
+    pub(super) fn select_conflict(&mut self, before: Option<Wip>, cx: &mut Context<Self>) {
+        let conflicted = |wip: Option<Wip>| wip.is_some_and(|w| w.conflicts > 0);
+        if conflicted(self.wip) && !conflicted(before) && self.selected() != Some(Selected::Wip) {
+            self.select_wip(cx);
+        }
+    }
+
+    /// Each branch's lane colour in the loaded rows, by its pill's name and each ref's.
+    pub(super) fn ref_colours(&self) -> HashMap<String, usize> {
+        self.rows
+            .iter()
+            .flat_map(|r| r.row.refs.iter().flat_map(move |g| std::iter::once(g.name.clone()).chain(g.refs.iter().map(|l| l.name.clone())).map(move |n| (n, r.row.colour))))
+            .collect()
+    }
+
     pub(super) fn take_focus_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.focus_summary) && self.selected() == Some(Selected::Wip) {
             self.wip_panel.update(cx, |p, cx| p.focus_message(window, cx));
         }
     }
+}
+
+/// `n file conflicts in working directory` after the conflict mark, painted under `git-conflict-node`.
+fn conflict_node(n: usize, hits: &HitTargets, palette: &Palette, cx: &App) -> Div {
+    let words = if n == 1 { "1 file conflict in working directory".to_string() } else { format!("{n} file conflicts in working directory") };
+    div()
+        .relative()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .min_w_0()
+        .whitespace_nowrap()
+        .text_color(palette.text)
+        .child(Icon::Conflict.svg(14., cx.theme().status().conflict))
+        .child(SharedString::from(words))
+        .child(hit_target(hits, "git-conflict-node".into()))
 }
 
 /// The field as the row shows it until the row is selected: a click on it selects the row.

@@ -1,7 +1,9 @@
-//! What the WIP panel reads, blocking, for `cx.background_spawn`: the status, split into the unstaged and
-//! the staged files, each as a list and a tree.
+//! What the WIP panel reads, blocking, for `cx.background_spawn`: the status, split into the conflicted, the
+//! unstaged and the staged files, each as a list and a tree.
 
-use supraman_gitman::{ChangeKind, EntryKind, FileChange, OperationState, Repo, Status, short_sha};
+use std::collections::HashMap;
+
+use supraman_gitman::{ChangeKind, Conflict, EntryKind, FileChange, OperationState, Repo, Status, UnderWay, short_sha};
 use supraman_ui::tree::{Order, Tree};
 
 use crate::git_view::details::{Counts, sort_changes};
@@ -16,9 +18,10 @@ pub enum Branch {
     Detached(Option<String>),
 }
 
-/// Which of the two lists.
+/// Which of the lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
+    Conflicted,
     Unstaged,
     Staged,
 }
@@ -27,14 +30,18 @@ impl Section {
     /// The list's id in its hit keys.
     pub fn list(self) -> &'static str {
         match self {
+            Section::Conflicted => "wip-conflicted",
             Section::Unstaged => "wip-unstaged",
             Section::Staged => "wip-staged",
         }
     }
 
-    pub fn title(self) -> &'static str {
+    /// The list's title; the staged files are the resolved ones while an operation is under way.
+    pub fn title(self, under_way: bool) -> &'static str {
         match self {
+            Section::Conflicted => "Conflicted Files",
             Section::Unstaged => "Unstaged Files",
+            Section::Staged if under_way => "Resolved Files",
             Section::Staged => "Staged Files",
         }
     }
@@ -43,6 +50,7 @@ impl Section {
     pub fn target(self, file: &FileChange) -> Target {
         let of = match (self, file.kind) {
             (Section::Staged, _) => Of::Staged,
+            (Section::Conflicted, _) => Of::Conflicted,
             (Section::Unstaged, ChangeKind::Untracked) => Of::Untracked,
             (Section::Unstaged, ChangeKind::Unmerged) => Of::Conflicted,
             (Section::Unstaged, _) => Of::Unstaged,
@@ -55,11 +63,15 @@ pub struct Loaded {
     pub branch: Branch,
     /// Changed paths, each once whether staged, unstaged or both.
     pub total: usize,
+    pub conflicted: Vec<FileChange>,
     pub unstaged: Vec<FileChange>,
     pub staged: Vec<FileChange>,
+    pub conflicted_tree: FileTree,
     pub unstaged_tree: FileTree,
     pub staged_tree: FileTree,
     pub state: OperationState,
+    pub under_way: Option<UnderWay>,
+    pub conflicts: HashMap<String, Conflict>,
 }
 
 /// `1 file change`, `3 file changes`.
@@ -104,9 +116,24 @@ pub fn of_status(status: &Status, order: Order) -> Loaded {
         Some(name) => Branch::Named(name.clone()),
         None => Branch::Detached(status.branch.oid.as_ref().map(|oid| short_sha(oid).to_string())),
     };
-    let (mut unstaged, mut staged) = sections(status);
-    sort_changes(&mut unstaged, order);
-    sort_changes(&mut staged, order);
-    let (unstaged_tree, staged_tree) = (tree(&unstaged, order), tree(&staged, order));
-    Loaded { branch, total: status.entries.len(), unstaged, staged, unstaged_tree, staged_tree, state: status.state }
+    let (unstaged, mut staged) = sections(status);
+    let (mut conflicted, mut unstaged): (Vec<FileChange>, Vec<FileChange>) = unstaged.into_iter().partition(|f| f.kind == ChangeKind::Unmerged);
+    for files in [&mut conflicted, &mut unstaged, &mut staged] {
+        sort_changes(files, order);
+    }
+    let (conflicted_tree, unstaged_tree, staged_tree) = (tree(&conflicted, order), tree(&unstaged, order), tree(&staged, order));
+    let conflicts = status.entries.iter().filter_map(|e| Some((e.path.clone(), e.conflict()?))).collect();
+    Loaded {
+        branch,
+        total: status.entries.len(),
+        conflicted,
+        unstaged,
+        staged,
+        conflicted_tree,
+        unstaged_tree,
+        staged_tree,
+        state: status.state,
+        under_way: status.under_way.clone(),
+        conflicts,
+    }
 }

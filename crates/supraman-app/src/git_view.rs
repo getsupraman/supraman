@@ -534,7 +534,11 @@ impl GitView {
         let colour = self.table.selected().and_then(|ix| self.rows.get(ix)).map_or(0, |r| r.row.colour);
         let selected = self.selected();
         if selected == Some(Selected::Wip) {
-            self.wip_panel.update(cx, |p, cx| p.show(colour, cx));
+            let colours = self.ref_colours();
+            self.wip_panel.update(cx, |p, cx| {
+                p.set_ref_colours(colours);
+                p.show(colour, cx)
+            });
         }
         self.panel.update(cx, |p, cx| p.show(selected, colour, cx));
     }
@@ -594,8 +598,9 @@ impl GitView {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
                 self.repo = Some(first.repo);
-                self.wip = first.wip;
+                let before = std::mem::replace(&mut self.wip, first.wip);
                 self.load = Load::Ready;
+                self.select_conflict(before, cx);
                 self.refresh_undo(cx);
                 if *self.ref_panel.read(cx).walk() != self.follow.walked {
                     self.refresh_graph(None, cx);

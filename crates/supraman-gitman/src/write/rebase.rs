@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use super::journal::{self, Action};
+use super::conflicts::conflicted;
 use super::stash::{self, Applied};
 use super::{Call, Session, WriteError};
 use crate::history::short_sha;
@@ -213,10 +214,6 @@ fn rebase_dir(s: &Session) -> PathBuf {
 
 fn under_way(s: &Session) -> bool {
     matches!(operation_state(&s.writer().dirs().git_dir), OperationState::Rebase { .. })
-}
-
-fn conflicted(s: &Session) -> Result<bool, WriteError> {
-    Ok(!s.output(&Call::new(&["ls-files", "-u", "-z"]))?.is_empty())
 }
 
 fn failed(what: &str, out: &supraman_core::process::RawOutput, note: Option<String>) -> WriteError {

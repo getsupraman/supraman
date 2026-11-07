@@ -1,8 +1,10 @@
 //! The commit area under the WIP panel's lists: Amend previous commit, the summary with its counter, the
-//! description, a failed commit's words, Commit options, a merge's or rebase's Abort, and the commit button.
+//! description, a failed commit's words, Commit options, the operation's Abort, and the commit button; a
+//! cherry-pick, revert or am shows only its steps, an external rebase only its Abort.
 
 use gpui::{ClickEvent, Context, Div, SharedString, Stateful, div, prelude::*, px};
 use supraman_gitman::OperationState;
+use supraman_gitman::write::conflicts::Sequence;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::banner;
 use supraman_ui::button;
@@ -12,6 +14,7 @@ use theme::ActiveTheme as _;
 
 use super::compose::{Composer, failure_banner, summary_row};
 use super::render::live;
+use super::actions::noun;
 use super::{Ask, Shown, WipPanel};
 use crate::git_view::keys::{MESSAGE_CONTEXT, StageAllAndCommit};
 
@@ -95,12 +98,15 @@ impl WipPanel {
 
     fn abort(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let (step, words) = match shown.state {
-            OperationState::Merge => (Step::AbortMerge, "Abort merge"),
-            OperationState::Rebase { .. } => (Step::AbortRebase, "Abort rebase"),
-            _ => return None,
+            OperationState::Merge => (Step::AbortMerge, "Abort merge".to_string()),
+            OperationState::Rebase { .. } => (Step::AbortRebase, "Abort rebase".to_string()),
+            state => {
+                let seq = Sequence::of(state)?;
+                (Step::Abort(seq), format!("Abort {}", noun(seq)))
+            }
         };
         let busy = self.busy(cx);
-        Some(live(button::outline(&self.hits, "wip-abort", words, cx.theme().status().error, cx), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
+        Some(live(button::outline(&self.hits, "wip-abort", SharedString::from(words), cx.theme().status().error, cx), busy, cx, move |this, cx| this.ask(Ask::Step(step), cx)))
     }
 
     fn commit_bar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -121,21 +127,13 @@ impl WipPanel {
     pub(super) fn commit_area(&self, shown: &Shown, cx: &mut Context<Self>) -> Option<Div> {
         let c = self.composer.as_ref()?;
         let border = cx.theme().colors().border_variant;
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .flex_none()
-                .gap_2()
-                .p_2()
-                .border_t_1()
-                .border_color(border)
-                .child(self.amend_row(c, cx))
-                .child(self.message_box(c, cx))
-                .children(self.failure(c, cx))
-                .children(self.options(c, cx))
-                .children(self.abort(shown, cx))
-                .children(self.commit_bar(cx)),
-        )
+        let area = div().flex().flex_col().flex_none().gap_2().p_2().border_t_1().border_color(border);
+        let message = matches!(shown.state, OperationState::None | OperationState::Merge | OperationState::Rebase { external: false });
+        let area = match shown.state {
+            OperationState::None => area.child(self.amend_row(c, cx)),
+            _ => area,
+        };
+        let area = if message { area.child(self.message_box(c, cx)).children(self.failure(c, cx)).children(self.options(c, cx)) } else { area };
+        Some(area.children(self.abort(shown, cx)).children(self.commit_bar(cx)))
     }
 }

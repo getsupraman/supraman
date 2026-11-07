@@ -44,6 +44,8 @@ pub struct Wip {
     pub added: usize,
     pub modified: usize,
     pub deleted: usize,
+    /// The conflicted paths among them.
+    pub conflicts: usize,
 }
 
 impl Wip {
@@ -51,6 +53,7 @@ impl Wip {
     pub fn of(status: &Status) -> Wip {
         let mut wip = Wip::default();
         for e in &status.entries {
+            wip.conflicts += usize::from(e.kind == EntryKind::Unmerged);
             let sides = [e.staged, e.unstaged];
             if e.kind == EntryKind::Untracked || sides.contains(&Some(ChangeKind::Added)) {
                 wip.added += 1;

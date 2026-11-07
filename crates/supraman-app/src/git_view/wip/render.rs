@@ -1,5 +1,5 @@
-//! The WIP panel's parts: the header with Discard all and the branch, the sort and Path | Tree toolbar, the two
-//! collapsible lists with their stage, unstage and discard buttons, and the commit area under them.
+//! The WIP panel's parts: the header with Discard all and the branch (the conflict header while an operation is
+//! under way), the sort and Path | Tree toolbar, the collapsible lists with their buttons, and the commit area.
 
 use std::rc::Rc;
 
@@ -52,10 +52,13 @@ impl WipPanel {
         div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
     }
 
-    /// A row's buttons on hover: stash, discard and Stage File on an unstaged file, stash and Unstage File on a
-    /// staged one.
+    /// A row's buttons on hover: stash, discard and Stage File on an unstaged file, stash and Unstage File (Mark
+    /// Conflicted while an operation is under way) on a staged one; a conflicted file's are the conflict panel's.
     fn row_tail(section: Section) -> files::Tail<WipPanel> {
         Rc::new(move |this: &mut WipPanel, path: &str, kind: ChangeKind, group: SharedString, cx: &mut Context<WipPanel>| {
+            if section == Section::Conflicted {
+                return this.conflicted_tail(path, group, cx).into_any_element();
+            }
             let (hits, busy, file) = (this.hits.clone(), this.busy(cx), this.shown().and_then(|s| s.files(section).iter().find(|f| f.path == path).cloned()));
             let file = file.unwrap_or_else(|| FileChange { kind, path: path.to_string(), old_path: None, similarity: None });
             let muted = cx.theme().colors().text_muted;
@@ -71,7 +74,11 @@ impl WipPanel {
                     let stage = live(button::outline(&hits, format!("wip-stage-{path}"), "Stage File", cx.theme().status().created, cx), busy, cx, move |this, cx| this.stage(staged.clone(), cx));
                     row.child(button::reveal(discard, group.clone(), false)).child(button::reveal(stage, group, false))
                 }
+                Section::Conflicted => row,
                 Section::Staged => {
+                    if let Some(unresolve) = this.resolved_tail(path, group.clone(), cx) {
+                        return row.child(unresolve).into_any_element();
+                    }
                     let unstaged = vec![file];
                     let unstage = live(button::outline(&hits, format!("wip-unstage-{path}"), "Unstage File", cx.theme().status().error, cx), busy, cx, move |this, cx| this.unstage(unstaged.clone(), cx));
                     row.child(button::reveal(unstage, group, false))
@@ -116,6 +123,7 @@ impl WipPanel {
         let status = cx.theme().status().clone();
         let busy = self.busy(cx);
         match section {
+            Section::Conflicted => self.resolve_all_button(cx),
             Section::Unstaged => live(button::outline(&self.hits, "wip-stage-all", "Stage All Changes", status.created, cx), busy, cx, |this, cx| this.stage_all(cx)),
             Section::Staged => live(button::outline(&self.hits, "wip-unstage-all", "Unstage All Changes", status.error, cx), busy, cx, |this, cx| this.unstage_all(cx)),
         }
@@ -125,7 +133,7 @@ impl WipPanel {
         let colors = cx.theme().colors().clone();
         let open = self.list(section).open;
         let chevron = if open { Icon::ChevronDown } else { Icon::ChevronRight };
-        let title = format!("{} ({})", section.title(), shown.files(section).len());
+        let title = format!("{} ({})", section.title(shown.conflicting()), shown.files(section).len());
         let header = button::ghost(&self.hits, format!("{}-header", section.list()), cx)
             .flex()
             .flex_none()
@@ -148,15 +156,21 @@ impl WipPanel {
     fn render_shown(&self, shown: Rc<Shown>, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
         let asking = self.asking.as_ref().map(|asked| asked.render(&self.hits, "wip-confirm", |this: &mut WipPanel, yes, _, cx| this.answer(yes, cx), cx).mx_1());
+        let header = if shown.conflicting() { self.conflict_header(&shown, cx) } else { self.header(&shown, cx) };
+        let sections: Vec<Div> = shown
+            .sections()
+            .iter()
+            .filter(|s| !shown.conflicting() || **s != Section::Unstaged || !shown.unstaged.is_empty())
+            .map(|s| self.section(*s, &shown, cx))
+            .collect();
         div()
             .flex()
             .flex_col()
             .size_full()
             .gap_1()
-            .child(self.header(&shown, cx))
+            .child(header)
             .child(self.toolbar(cx).border_b_1().border_color(colors.border_variant))
-            .child(self.section(Section::Unstaged, &shown, cx))
-            .child(self.section(Section::Staged, &shown, cx))
+            .children(sections)
             .children(asking)
             .children(self.commit_area(&shown, cx))
     }
