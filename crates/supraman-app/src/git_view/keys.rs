@@ -10,11 +10,20 @@ use super::diff::{self, FileStep};
 use super::load::GraphRow;
 use super::{GitView, Selected};
 
-gpui::actions!(git_graph, [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo]);
+gpui::actions!(
+    git_graph,
+    [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo, StageAll, UnstageAll, FocusMessage, StageSelected, UnstageSelected, StageAllAndCommit]
+);
 
 pub const KEY_CONTEXT: &str = "GitGraph";
 /// The whole tab's: the ref panel's keys work from the graph, the panels and the viewer.
 pub const TAB_CONTEXT: &str = "GitTab";
+/// The WIP panel's file lists: S and U act on the selected file there, never in a text field.
+pub const WIP_LIST_CONTEXT: &str = "GitWipList";
+/// The commit message's fields and the WIP row's input.
+pub const MESSAGE_CONTEXT: &str = "GitMessage";
+/// The graph's and its table's keys that type or move in the WIP row's field instead.
+const GRAPH_KEYS: [&str; 10] = ["h", "shift-h", "j", "k", "pageup", "pagedown", "ctrl-up", "ctrl-down", "shift-up", "shift-down"];
 /// How long a selection rests before the panel reads its commit without a key coming up.
 pub const SETTLE: Duration = Duration::from_millis(150);
 
@@ -33,7 +42,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-z", Undo, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-y", Redo, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-shift-z", Redo, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-s", StageAll, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-u", UnstageAll, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-m", FocusMessage, Some(TAB_CONTEXT)),
+        KeyBinding::new("s", StageSelected, Some(WIP_LIST_CONTEXT)),
+        KeyBinding::new("u", UnstageSelected, Some(WIP_LIST_CONTEXT)),
+        KeyBinding::new("ctrl-shift-enter", StageAllAndCommit, Some(MESSAGE_CONTEXT)),
     ]);
+    cx.bind_keys(GRAPH_KEYS.iter().map(|key| KeyBinding::new(key, gpui::NoAction, Some(MESSAGE_CONTEXT))));
     diff::bind_keys(cx);
 }
 

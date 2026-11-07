@@ -40,7 +40,8 @@ pub struct UndoBar {
     preview: Preview,
     /// Bumped by each read, so only the newest preview lands.
     read: u64,
-    running: bool,
+    /// The ticket of the undo or redo under way.
+    running: Option<u64>,
     /// The newest undo or redo asked for.
     way: Option<Way>,
     outcome: Outcome,
@@ -52,13 +53,9 @@ impl EventEmitter<UndoEvent> for UndoBar {}
 
 impl UndoBar {
     pub fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> UndoBar {
-        let written = cx.subscribe(&gate, |this: &mut UndoBar, _, Written(result), cx| this.written(result.clone(), cx));
-        UndoBar { hits, gate, writer: None, preview: Preview::default(), read: 0, running: false, way: None, outcome: Arc::default(), stash: None, _written: written }
-    }
-
-    #[cfg(test)]
-    pub fn gate(&self) -> &Entity<WriteGate> {
-        &self.gate
+        let written = cx.subscribe(&gate, |this: &mut UndoBar, _, w: &Written, cx| this.written(w, cx));
+        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
+        UndoBar { hits, gate, writer: None, preview: Preview::default(), read: 0, running: None, way: None, outcome: Arc::default(), stash: None, _written: written }
     }
 
     #[cfg(test)]
@@ -111,8 +108,7 @@ impl UndoBar {
     }
 
     fn run(&mut self, way: Way, stash: bool, cx: &mut Context<Self>) {
-        let Some(writer) = self.writer.clone().filter(|_| !self.running) else { return };
-        self.running = true;
+        let Some(writer) = self.writer.clone() else { return };
         self.way = Some(way);
         let outcome = self.outcome.clone();
         let job = move |s: &supraman_gitman::write::Session<'_>| {
@@ -123,17 +119,17 @@ impl UndoBar {
             *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done);
             Ok(())
         };
-        self.gate.update(cx, |g, cx| g.request(writer, LockSet::undo(), job, cx));
-        if self.gate.read(cx).asking().is_some() {
-            self.running = false;
-        }
+        self.running = self.gate.update(cx, |g, cx| g.request(writer, LockSet::undo(), job, cx));
         cx.notify();
     }
 
-    fn written(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+    fn written(&mut self, written: &Written, cx: &mut Context<Self>) {
+        if self.running != Some(written.ticket) {
+            return;
+        }
+        self.running = None;
         let Some(outcome) = self.outcome.lock().unwrap_or_else(PoisonError::into_inner).take() else { return };
-        self.running = false;
-        match (result, outcome) {
+        match (written.result.clone(), outcome) {
             (Err(why), _) => cx.emit(UndoEvent::Why(why)),
             (Ok(()), Ok(done)) => cx.emit(UndoEvent::Done(done.toast)),
             (Ok(()), Err(Refused::WouldStash { files, action })) => {
@@ -161,6 +157,11 @@ impl UndoBar {
     }
 
     fn button(&self, key: &'static str, icon: Icon, caption: &'static str, enabled: bool, tooltip: String, cx: &mut Context<Self>) -> impl IntoElement {
+        let busy = self.gate.read(cx).busy();
+        let (enabled, tooltip) = match busy {
+            Some(why) => (false, why.to_string()),
+            None => (enabled, tooltip),
+        };
         let colors = cx.theme().colors();
         let fg = if enabled { colors.text } else { colors.text_muted };
         let button = button::toolbar(&self.hits, key, icon.svg(14., fg), false, fg, cx).child(SharedString::from(caption)).tooltip(Tooltip::text(tooltip));
@@ -177,7 +178,7 @@ impl UndoBar {
 impl Render for UndoBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
-        let (undo, redo) = (self.preview.can_undo() && !self.running, self.preview.can_redo() && !self.running);
+        let (undo, redo) = (self.preview.can_undo(), self.preview.can_redo());
         let bar = div()
             .flex()
             .gap_1()
@@ -188,6 +189,6 @@ impl Render for UndoBar {
             .child(self.button(UNDO_KEY, Icon::Undo, "Undo", undo, self.preview.undo_tooltip(), cx))
             .child(self.button(REDO_KEY, Icon::Redo, "Redo", redo, self.preview.redo_tooltip(), cx));
         let stash = self.stash.as_ref().map(|asked| asked.render(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx).m_2());
-        div().flex().flex_col().child(bar).child(div().mx_2().child(self.gate.clone())).children(stash)
+        div().flex().flex_col().child(bar).children(stash)
     }
 }

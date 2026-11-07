@@ -1,0 +1,210 @@
+//! The WIP panel's writes, each through the tab's write gate off the UI thread: stage, unstage, discard (asked
+//! first), commit, and a merge's or rebase's next step; their outcome goes to the tab as a [`PanelEvent`].
+
+use gpui::{App, Context};
+use supraman_gitman::write::wip::{self, Step};
+use supraman_gitman::write::{LockSet, Resource, Session, WriteError};
+use supraman_gitman::FileChange;
+use supraman_ui::confirm::Confirm;
+
+use super::compose::{self, Act};
+use super::{Section, WipPanel, sections};
+use crate::git_view::details::{FileView, PanelEvent};
+use crate::git_view::write_gate::Written;
+
+/// A write the panel asks about first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    Discard(Vec<FileChange>),
+    DiscardAll,
+    Step(Step),
+}
+
+/// The panel's write under way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Doing {
+    Stage,
+    Unstage,
+    Discard(usize),
+    DiscardAll,
+    Commit { summary: String, amend: bool },
+    Step(Step),
+}
+
+fn files_words(n: usize) -> String {
+    if n == 1 { "1 file".into() } else { format!("{n} files") }
+}
+
+impl Ask {
+    pub fn question(&self) -> (String, &'static str) {
+        match self {
+            Ask::Discard(files) => (format!("Discard the changes to {}? You can undo it.", files_words(files.len())), "Discard"),
+            Ask::DiscardAll => ("Discard all changes? Staged, unstaged and new untracked files go; ignored files stay. You can undo it.".into(), "Discard all"),
+            Ask::Step(Step::SkipCommit) => ("Skip this commit of the rebase? Its changes are left out.".into(), "Skip commit"),
+            Ask::Step(Step::AbortRebase) => ("Abort the rebase? The branch goes back to where it started and the resolutions so far are lost.".into(), "Abort rebase"),
+            Ask::Step(Step::AbortMerge) => ("Abort the merge? The resolutions so far are lost.".into(), "Abort merge"),
+            Ask::Step(Step::ContinueRebase) => ("Continue the rebase?".into(), "Continue rebase"),
+        }
+    }
+}
+
+/// Stages every unstaged file the status lists now.
+fn stage_everything(s: &Session) -> Result<(), WriteError> {
+    let status = supraman_gitman::status(s.writer().repo())?;
+    wip::stage(s, &sections(&status).0)
+}
+
+fn index_write() -> LockSet {
+    LockSet::new().write(Resource::Index)
+}
+
+impl WipPanel {
+    /// Why no write can start now, from the tab's gate.
+    pub fn busy(&self, cx: &App) -> Option<&'static str> {
+        self.gate.read(cx).busy()
+    }
+
+    fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
+        let Some(writer) = self.writer.clone() else {
+            return cx.emit(PanelEvent::Why("The repository is still opening; try again in a moment".into()));
+        };
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
+            self.doing = Some((ticket, doing));
+        }
+        cx.notify();
+    }
+
+    pub fn stage(&mut self, files: Vec<FileChange>, cx: &mut Context<Self>) {
+        if !files.is_empty() {
+            self.request(Doing::Stage, index_write(), move |s| wip::stage(s, &files), cx);
+        }
+    }
+
+    pub fn unstage(&mut self, files: Vec<FileChange>, cx: &mut Context<Self>) {
+        if !files.is_empty() {
+            self.request(Doing::Unstage, index_write(), move |s| wip::unstage(s, &files), cx);
+        }
+    }
+
+    /// Every unstaged file, as the status lists them when the write runs.
+    pub fn stage_all(&mut self, cx: &mut Context<Self>) {
+        self.request(Doing::Stage, index_write(), stage_everything, cx);
+    }
+
+    pub fn unstage_all(&mut self, cx: &mut Context<Self>) {
+        self.request(Doing::Unstage, index_write(), |s| wip::unstage(s, &sections(&supraman_gitman::status(s.writer().repo())?).1), cx);
+    }
+
+    /// The file selected in `section`'s list.
+    pub fn selected_file(&self, section: Section) -> Option<FileChange> {
+        let shown = self.shown()?;
+        let list = self.list(section);
+        let files = shown.files(section);
+        match self.view {
+            FileView::Path => list.paths.selected().and_then(|ix| files.get(ix).cloned()),
+            FileView::Tree => list.tree.selected().and_then(|p| files.iter().find(|f| f.path == p.as_ref()).cloned()),
+        }
+    }
+
+    pub fn stage_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(file) = self.selected_file(Section::Unstaged) {
+            self.stage(vec![file], cx);
+        }
+    }
+
+    pub fn unstage_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(file) = self.selected_file(Section::Staged) {
+            self.unstage(vec![file], cx);
+        }
+    }
+
+    /// Asks before `ask` runs; nothing is asked while a write waits or runs.
+    pub fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
+        if self.busy(cx).is_some() {
+            return;
+        }
+        let (text, yes) = ask.question();
+        self.asking = Some(Confirm::ask(text, yes, ask));
+        cx.notify();
+    }
+
+    pub fn answer(&mut self, yes: bool, cx: &mut Context<Self>) {
+        let Some(ask) = self.asking.take().and_then(|c| c.action).filter(|_| yes) else { return cx.notify() };
+        match ask {
+            Ask::Discard(files) => self.request(Doing::Discard(files.len()), LockSet::reset(), move |s| wip::discard_unstaged(s, &files), cx),
+            Ask::DiscardAll => self.request(Doing::DiscardAll, LockSet::reset(), |s| wip::discard_all(s).map(drop), cx),
+            Ask::Step(step) => self.request(Doing::Step(step), LockSet::undo(), move |s| wip::step(s, step), cx),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn asking(&self) -> Option<&str> {
+        self.asking.as_ref().map(|c| c.text.as_str())
+    }
+
+    /// The commit button's words and act now; `stage_all` counts the unstaged files as staged.
+    pub fn commit_button(&self, stage_all: bool, cx: &App) -> Option<(String, Option<Act>)> {
+        let (shown, c) = (self.shown()?, self.composer.as_ref()?);
+        let staged = shown.staged.len() + if stage_all { shown.unstaged.len() } else { 0 };
+        let has_message = !c.summary.read(cx).text().trim().is_empty();
+        Some(compose::button(shown.state, staged, c.amend, has_message))
+    }
+
+    /// What the commit button does, `stage_all` staging every file first; says why when it cannot.
+    pub fn commit(&mut self, stage_all: bool, cx: &mut Context<Self>) {
+        let Some((words, act)) = self.commit_button(stage_all, cx) else { return };
+        let Some(act) = act else { return cx.emit(PanelEvent::Why(words)) };
+        let Some(c) = &self.composer else { return };
+        let (summary, description) = c.texts(cx);
+        let (amend, no_verify) = (c.amend, c.skip_hooks && self.hooks);
+        match act {
+            Act::Commit => {
+                let message = wip::message(&summary, &description);
+                let doing = Doing::Commit { summary: summary.trim().to_string(), amend };
+                self.request(doing, LockSet::commit(), move |s| {
+                    if stage_all {
+                        stage_everything(s)?;
+                    }
+                    wip::commit(s, &message, amend, no_verify)
+                }, cx);
+            }
+            Act::ContinueRebase => self.request(Doing::Step(Step::ContinueRebase), LockSet::undo(), move |s| {
+                if stage_all {
+                    stage_everything(s)?;
+                }
+                wip::step(s, Step::ContinueRebase)
+            }, cx),
+            Act::SkipCommit => self.ask(Ask::Step(Step::SkipCommit), cx),
+        }
+    }
+
+    /// A write of the gate ran; this panel's says how it went.
+    pub(super) fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
+        let Some((_, doing)) = self.doing.take_if(|(ticket, _)| *ticket == w.ticket) else { return };
+        let toast = match (&doing, &w.result) {
+            (Doing::Commit { .. }, Err(why)) => {
+                if let Some(c) = &mut self.composer {
+                    c.failure = Some(capitalised(why));
+                }
+                None
+            }
+            (_, Err(why)) => return cx.emit(PanelEvent::Why(capitalised(why))),
+            (Doing::Commit { summary, amend }, Ok(())) => {
+                if let Some(c) = &mut self.composer {
+                    c.clear(cx);
+                }
+                Some(format!("{} \"{summary}\"", if *amend { "Amended" } else { "Committed" }))
+            }
+            (Doing::Discard(n), Ok(())) => Some(format!("Discarded the changes to {}", files_words(*n))),
+            (Doing::DiscardAll, Ok(())) => Some("Discarded all changes".into()),
+            (Doing::Stage | Doing::Unstage | Doing::Step(_), Ok(())) => None,
+        };
+        cx.emit(PanelEvent::Wrote(toast));
+        cx.notify();
+    }
+}
+
+fn capitalised(why: &str) -> String {
+    let mut chars = why.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+}

@@ -1,25 +1,46 @@
-//! The WIP panel's parts: the header with the branch, the sort and Path | Tree toolbar, the two collapsible
-//! lists, and the read-only line where a commit box would be.
+//! The WIP panel's parts: the header with Discard all and the branch, the sort and Path | Tree toolbar, the two
+//! collapsible lists with their stage, unstage and discard buttons, and the commit area under them.
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, ClickEvent, Context, Div, Render, SharedString, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, Render, SharedString, Stateful, Window, div, prelude::*, px};
+use supraman_gitman::{ChangeKind, FileChange};
 use supraman_ui::banner;
 use supraman_ui::button;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::icon::Icon;
 use supraman_ui::stall;
+use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::{Branch, Section, Shown, State, WipPanel, file_changes};
+use super::{Ask, Branch, Section, Shown, State, WipPanel, file_changes};
 use crate::git_view::GitView;
 use crate::git_view::cells::pill_box;
 use crate::git_view::colours::{Palette, blend};
 use crate::git_view::details::{FileView, PANEL_STEP, files, placeholder};
+use crate::git_view::keys::{StageSelected, UnstageSelected, WIP_LIST_CONTEXT};
 
-const READ_ONLY: &str = "The Git tab only reads for now: stage, discard and commit in your own git tool.";
+/// `button` live while no write waits or runs, else dimmed with why.
+pub(super) fn live(button: Stateful<Div>, busy: Option<&'static str>, cx: &mut Context<WipPanel>, run: impl Fn(&mut WipPanel, &mut Context<WipPanel>) + 'static) -> Stateful<Div> {
+    match busy {
+        Some(why) => button::dimmed(button).tooltip(Tooltip::text(why)),
+        None => button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            cx.stop_propagation();
+            run(this, cx);
+        })),
+    }
+}
 
 impl WipPanel {
+    /// The red trash button: Discard all changes, asked first.
+    fn discard_all_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let error = cx.theme().status().error;
+        let trash = button::icon(&self.hits, "wip-discard-all", Icon::Trash.svg(14., error), px(24.), cx).border_1().border_color(error).bg(banner::tint(error));
+        let busy = self.busy(cx);
+        let trash = if busy.is_none() { trash.tooltip(Tooltip::text("Discard all changes")) } else { trash };
+        live(trash, busy, cx, |this, cx| this.ask(Ask::DiscardAll, cx))
+    }
+
     fn header(&self, shown: &Shown, cx: &mut Context<Self>) -> Div {
         let palette = Palette::of(cx.theme());
         let name = match &shown.branch {
@@ -27,17 +48,33 @@ impl WipPanel {
             Branch::Detached(sha) => sha.clone(),
         };
         let pill = name.map(|n| pill_box(self.colour, &palette).id("wip-branch").child(SharedString::from(n)));
-        div()
-            .flex()
-            .flex_none()
-            .justify_center()
-            .items_center()
-            .gap_1p5()
-            .py_1p5()
-            .px_2()
-            .text_color(palette.text)
-            .child(div().id("wip-header").child(Self::header_words(shown)))
-            .children(pill)
+        let words = div().flex_1().flex().justify_center().items_center().gap_1p5().min_w_0().child(div().id("wip-header").child(Self::header_words(shown))).children(pill);
+        div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
+    }
+
+    /// A row's buttons on hover: discard and Stage File on an unstaged file, Unstage File on a staged one.
+    fn row_tail(section: Section) -> files::Tail<WipPanel> {
+        Rc::new(move |this: &mut WipPanel, path: &str, kind: ChangeKind, group: SharedString, cx: &mut Context<WipPanel>| {
+            let (hits, busy, file) = (this.hits.clone(), this.busy(cx), this.shown().and_then(|s| s.files(section).iter().find(|f| f.path == path).cloned()));
+            let file = file.unwrap_or_else(|| FileChange { kind, path: path.to_string(), old_path: None, similarity: None });
+            let row = div().flex().items_center().gap_1();
+            match section {
+                Section::Unstaged => {
+                    let muted = cx.theme().colors().text_muted;
+                    let discard = button::icon(&hits, format!("wip-discard-{path}"), Icon::Trash.svg(12., muted), px(20.), cx).tooltip(Tooltip::text("Discard changes"));
+                    let (gone, staged) = (file.clone(), vec![file]);
+                    let discard = live(discard, busy, cx, move |this, cx| this.ask(Ask::Discard(vec![gone.clone()]), cx));
+                    let stage = live(button::outline(&hits, format!("wip-stage-{path}"), "Stage File", cx.theme().status().created, cx), busy, cx, move |this, cx| this.stage(staged.clone(), cx));
+                    row.child(button::reveal(discard, group.clone(), false)).child(button::reveal(stage, group, false))
+                }
+                Section::Staged => {
+                    let unstaged = vec![file];
+                    let unstage = live(button::outline(&hits, format!("wip-unstage-{path}"), "Unstage File", cx.theme().status().error, cx), busy, cx, move |this, cx| this.unstage(unstaged.clone(), cx));
+                    row.child(button::reveal(unstage, group, false))
+                }
+            }
+            .into_any_element()
+        })
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
@@ -54,11 +91,30 @@ impl WipPanel {
             FileView::Path => {
                 let rows = shown.clone();
                 let file = move |ix: usize| rows.files(section).get(ix).map(|c| (c.path.clone(), c.kind));
-                files::path_list(id, &list.paths, &self.hits, shown.files(section).len(), file, picked, cx)
+                files::path_list(id, &list.paths, &self.hits, shown.files(section).len(), file, picked, Some(Self::row_tail(section)), cx)
             }
-            FileView::Tree => files::tree_list(id, &list.tree, &self.hits, move |this: &mut WipPanel, path, cx| picked(this, path.to_string(), cx), cx),
+            FileView::Tree => files::tree_list(id, &list.tree, &self.hits, move |this: &mut WipPanel, path, cx| picked(this, path.to_string(), cx), Some(Self::row_tail(section)), cx),
         };
-        element.flex_1().min_h_0().into_any_element()
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .key_context(WIP_LIST_CONTEXT)
+            .on_action(cx.listener(|this, _: &StageSelected, _, cx| this.stage_selected(cx)))
+            .on_action(cx.listener(|this, _: &UnstageSelected, _, cx| this.unstage_selected(cx)))
+            .child(element.flex_1().min_h_0())
+            .into_any_element()
+    }
+
+    /// Stage All Changes over the unstaged files, Unstage All Changes over the staged.
+    fn all_button(&self, section: Section, cx: &mut Context<Self>) -> Stateful<Div> {
+        let status = cx.theme().status().clone();
+        let busy = self.busy(cx);
+        match section {
+            Section::Unstaged => live(button::outline(&self.hits, "wip-stage-all", "Stage All Changes", status.created, cx), busy, cx, |this, cx| this.stage_all(cx)),
+            Section::Staged => live(button::outline(&self.hits, "wip-unstage-all", "Unstage All Changes", status.error, cx), busy, cx, |this, cx| this.unstage_all(cx)),
+        }
     }
 
     fn section(&self, section: Section, shown: &Rc<Shown>, cx: &mut Context<Self>) -> Div {
@@ -79,12 +135,15 @@ impl WipPanel {
             .child(SharedString::from(title))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle(section, cx)));
         let rule = div().flex_none().h(px(1.)).bg(colors.border_variant);
+        let all = (!shown.files(section).is_empty()).then(|| self.all_button(section, cx));
+        let header = div().flex().flex_none().items_center().justify_between().child(header).children(all);
         let column = div().flex().flex_col().min_h_0().px_1().child(header).child(rule);
         if open { column.flex_1().child(self.file_list(section, shown, cx)) } else { column.flex_none() }
     }
 
     fn render_shown(&self, shown: Rc<Shown>, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
+        let asking = self.asking.as_ref().map(|asked| asked.render(&self.hits, "wip-confirm", |this: &mut WipPanel, yes, _, cx| this.answer(yes, cx), cx).mx_1());
         div()
             .flex()
             .flex_col()
@@ -94,7 +153,8 @@ impl WipPanel {
             .child(self.toolbar(cx).border_b_1().border_color(colors.border_variant))
             .child(self.section(Section::Unstaged, &shown, cx))
             .child(self.section(Section::Staged, &shown, cx))
-            .child(div().id("wip-read-only").flex_none().px_2().py_2().border_t_1().border_color(colors.border_variant).text_xs().text_color(colors.text_muted).child(READ_ONLY))
+            .children(asking)
+            .children(self.commit_area(&shown, cx))
     }
 }
 

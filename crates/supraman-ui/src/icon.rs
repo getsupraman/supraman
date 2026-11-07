@@ -62,11 +62,13 @@ pub enum Icon {
     ArrowUpRight,
     Undo,
     Redo,
+    Trash,
+    GitCommit,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 58] = [
+    const ALL: [Icon; 60] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -125,6 +127,8 @@ impl Icon {
         Icon::ArrowUpRight,
         Icon::Undo,
         Icon::Redo,
+        Icon::Trash,
+        Icon::GitCommit,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -187,6 +191,8 @@ impl Icon {
             Icon::ArrowUpRight => include_bytes!("../assets/icons/arrow_up_right.svg"),
             Icon::Undo => include_bytes!("../assets/icons/undo.svg"),
             Icon::Redo => include_bytes!("../assets/icons/redo.svg"),
+            Icon::Trash => include_bytes!("../assets/icons/trash.svg"),
+            Icon::GitCommit => include_bytes!("../assets/icons/git_commit.svg"),
         }
     }
 

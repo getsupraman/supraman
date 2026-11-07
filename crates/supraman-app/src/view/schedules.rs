@@ -455,7 +455,7 @@ impl FleetView {
 
     fn on_schedule_edit_event(&mut self, event: &InputEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            InputEvent::Confirm | InputEvent::ConfirmBack => self.save_schedule_edit(cx),
+            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => self.save_schedule_edit(cx),
             InputEvent::Cancel => {
                 self.schedule_edit = None;
                 self.focus.focus(window, cx);

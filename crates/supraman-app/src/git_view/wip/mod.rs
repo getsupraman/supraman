@@ -1,18 +1,26 @@
 //! The WIP panel right of the graph while the WIP row is selected: the working directory's unstaged and
-//! staged files, read off the UI thread on each selection, read-only (C146).
+//! staged files, read off the UI thread on each selection, with stage, unstage and discard on them, and the
+//! commit area under them.
 
+mod actions;
+pub mod compose;
+mod compose_render;
 mod load;
 mod render;
 
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod write_tests;
 
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui::{App, AppContext as _, Context, EventEmitter, SharedString};
-use supraman_gitman::{ChangeKind, FileChange, Repo, Status};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription};
+use supraman_gitman::write::Writer;
+use supraman_gitman::{ChangeKind, FileChange, OperationState, Repo, Status};
+use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
 use supraman_ui::stall;
 use supraman_ui::table::TableState;
@@ -20,8 +28,10 @@ use supraman_ui::tree::{Order, TreeState};
 
 use super::details::{Counts, FileView, PanelEvent, sort_changes};
 use super::diff::{Of, Target};
+use super::write_gate::{WriteGate, Written};
 
-pub use load::{Branch, Section, file_changes};
+pub use actions::{Ask, Doing};
+pub use load::{Branch, Section, file_changes, sections};
 pub use render::banner;
 
 /// The working directory shown, its lists in the panel's order.
@@ -31,6 +41,7 @@ pub struct Shown {
     pub total: usize,
     pub unstaged: Vec<FileChange>,
     pub staged: Vec<FileChange>,
+    pub state: OperationState,
 }
 
 impl Shown {
@@ -75,6 +86,17 @@ pub struct WipPanel {
     order: Order,
     unstaged: List,
     staged: List,
+    gate: Entity<WriteGate>,
+    /// Opened off the UI thread with the repo.
+    writer: Option<Writer>,
+    /// The repo runs commit hooks: Skip hooks is offered.
+    hooks: bool,
+    /// The panel's write under way: its gate ticket.
+    doing: Option<(u64, Doing)>,
+    asking: Option<Confirm<Ask>>,
+    /// Made once a window is at hand.
+    composer: Option<compose::Composer>,
+    _written: Subscription,
     #[cfg(test)]
     pub status_reads: usize,
 }
@@ -82,7 +104,9 @@ pub struct WipPanel {
 impl EventEmitter<PanelEvent> for WipPanel {}
 
 impl WipPanel {
-    pub fn new(hits: HitTargets, cx: &mut App) -> Self {
+    pub fn new(hits: HitTargets, gate: Entity<WriteGate>, cx: &mut Context<Self>) -> Self {
+        let written = cx.subscribe(&gate, |this: &mut WipPanel, _, w: &Written, cx| this.written(w, cx));
+        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
         WipPanel {
             hits,
             repo: None,
@@ -94,13 +118,47 @@ impl WipPanel {
             order: Order::Ascending,
             unstaged: List::new(cx),
             staged: List::new(cx),
+            gate,
+            writer: None,
+            hooks: false,
+            doing: None,
+            asking: None,
+            composer: None,
+            _written: written,
             #[cfg(test)]
             status_reads: 0,
         }
     }
 
-    pub fn set_repo(&mut self, repo: Repo) {
+    pub fn set_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
         self.repo = Some(repo);
+        self.read_tools(cx);
+    }
+
+    /// The repo's writer, once, and whether it runs commit hooks, off the UI thread.
+    fn read_tools(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else { return };
+        let writer = self.writer.clone();
+        let read = cx.background_spawn(async move {
+            let writer = match writer {
+                Some(w) => Ok(w),
+                None => Writer::open(&repo).map_err(|e| e.to_string()),
+            };
+            (writer, supraman_gitman::commit_hooks(&repo).unwrap_or(false))
+        });
+        cx.spawn(async move |this, cx| {
+            let (writer, hooks) = read.await;
+            this.update(cx, |this, cx| {
+                match writer {
+                    Ok(w) => this.writer = Some(w),
+                    Err(why) => log::warn!("git tab: cannot open the repository to write: {why}"),
+                }
+                this.hooks = hooks;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn list(&self, section: Section) -> &List {
@@ -120,6 +178,7 @@ impl WipPanel {
     /// Reads the working directory again off the UI thread, its lists opened afresh; the token of this read.
     pub fn show(&mut self, colour: usize, cx: &mut Context<Self>) -> u64 {
         self.in_place = false;
+        self.read_tools(cx);
         self.read(colour, None, cx)
     }
 
@@ -178,7 +237,7 @@ impl WipPanel {
                         list.paths.select(None);
                     }
                 }
-                self.state = State::Shown(Rc::new(Shown { branch: l.branch, total: l.total, unstaged: l.unstaged, staged: l.staged }));
+                self.state = State::Shown(Rc::new(Shown { branch: l.branch, total: l.total, unstaged: l.unstaged, staged: l.staged, state: l.state }));
             }
             Err(why) => self.state = State::Failed(why),
         }

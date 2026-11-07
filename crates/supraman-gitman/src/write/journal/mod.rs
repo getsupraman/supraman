@@ -13,7 +13,8 @@ use crate::history::short_sha;
 use crate::operation::{OperationState, operation_state};
 use crate::parse::text;
 
-pub use restore::{delete_branch, discard};
+pub use restore::{delete_branch, discard, discard_from_index};
+pub(crate) use restore::drop_noop_reset;
 pub use walk::Kind;
 use walk::{Entry, Item, Line, Next, REST, UNDO};
 
@@ -30,8 +31,13 @@ pub enum Action {
     Reset { hard: bool },
     /// GitMan's own rebase of the branch that was at `from`.
     Rebase { from: String },
-    /// `paths` from the checkout's top, `/`-separated, with the snapshot of them.
-    Discard { paths: Vec<String> },
+    /// `paths` from the checkout's top, `/`-separated, with the snapshot of them; `from_index` those of them whose
+    /// working file went back to the index's, their staged change kept.
+    Discard {
+        paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        from_index: Vec<String>,
+    },
     DeleteBranch { name: String, sha: String, remote: Option<String>, merge: Option<String> },
 }
 
@@ -210,6 +216,11 @@ fn log(path: &Path) -> Result<Vec<Line>, WriteError> {
     }
 }
 
+/// The kind of HEAD's newest reflog line, if it is one the journal knows.
+pub fn newest_kind(s: &Session) -> Result<Option<Kind>, WriteError> {
+    Ok(head_log(s)?.pop().and_then(|l| Kind::of(&l.message)))
+}
+
 fn head_log(s: &Session) -> Result<Vec<Line>, WriteError> {
     log(&s.writer().dirs().git_dir.join("logs").join("HEAD"))
 }
@@ -224,7 +235,7 @@ fn read(s: &Session) -> Result<Vec<Item>, WriteError> {
 fn label(s: &Session, action: &Action) -> Result<String, WriteError> {
     let expected = match action {
         Action::Rebase { from } => return Ok(format!("rebase: from {from}")),
-        Action::Discard { paths } => return Ok(discard_label(paths)),
+        Action::Discard { paths, .. } => return Ok(discard_label(paths)),
         Action::DeleteBranch { name, .. } => return Ok(format!("delete branch: {name}")),
         Action::Commit => Kind::Commit,
         Action::Amend => Kind::Amend,

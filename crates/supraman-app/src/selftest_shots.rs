@@ -277,6 +277,17 @@ async fn git_palette(view: &Entity<FleetView>, out: &Path, cx: &mut AsyncWindowC
     let shot = capture(out.join("supraman-git-palette.png"), None, cx).await?;
     println!("shot: {}", shot.display());
     cx.update(|window, cx| git.update(cx, |g, cx| g.close_find(window, cx)))?;
+    git_wip(view, &git, out, cx).await?;
     drop(fixture);
+    Ok(())
+}
+
+/// The same tab's WIP panel: staged and unstaged files and a typed summary in the commit area.
+async fn git_wip(view: &Entity<FleetView>, git: &Entity<crate::git_view::GitView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    git.update(cx, |g, cx| g.draft_commit("Stage, discard and commit from the WIP panel", cx));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the commit area", |v| v.hits.borrow().contains_key("wip-commit").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-git-wip.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
     Ok(())
 }

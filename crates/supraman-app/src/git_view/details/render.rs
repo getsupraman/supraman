@@ -195,7 +195,7 @@ impl CommitPanel {
         }
         if !self.all_files && self.view == FileView::Path {
             let rows = shown.clone();
-            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), cx);
+            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), None, cx);
             return column.child(list.flex_1().min_h_0());
         }
         let (_, expanded) = self.tree();
@@ -215,7 +215,7 @@ impl CommitPanel {
     /// The tree on show, with View all files the whole one.
     fn render_tree(&self, cx: &mut Context<Self>) -> AnyElement {
         let (tree, _) = self.tree();
-        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), cx).flex_1().min_h_0().into_any_element()
+        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), None, cx).flex_1().min_h_0().into_any_element()
     }
 
     fn render_shown(&mut self, shown: Rc<Shown>, window: &mut Window, cx: &mut Context<Self>) -> Div {
