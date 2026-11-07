@@ -264,6 +264,7 @@ fn wip_commit_area_says_merge_and_rebase_steps(cx: &mut TestAppContext) {
     let words = |cx: &mut VisualTestContext| panel(&view, cx, |p, cx| p.commit_button(false, cx)).unwrap();
     assert_eq!(words(cx).0, "Commit and merge");
     assert!(painted(&view, "wip-abort", cx));
+    assert!(!painted(&view, "wip-commit-options", cx), "no Commit options where the repo has no commit hooks");
     click(&view, "wip-abort", cx);
     assert_eq!(panel(&view, cx, |p, _| p.asking().map(str::to_string)).as_deref(), Some("Abort the merge? The resolutions so far are lost."));
     click(&view, "wip-confirm-yes", cx);
