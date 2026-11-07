@@ -158,9 +158,20 @@ pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> 
     if remotes.is_empty() {
         return Err(WriteError::Refused(NO_REMOTES));
     }
+    let results = fetch_each(s, remotes, prune, t);
+    if results.iter().any(|(_, r)| matches!(r, Err(WriteError::Cancelled))) {
+        return Err(WriteError::Cancelled);
+    }
+    let failed: Vec<String> = results.into_iter().filter_map(|(remote, r)| r.err().map(|e| format!("{remote}: {e}"))).collect();
+    if failed.is_empty() { Ok(()) } else { Err(WriteError::Remote(failed.join("
+"))) }
+}
+
+/// Every remote fetched at once, their progress said on the calling thread; each remote's own outcome.
+pub fn fetch_each(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> Vec<(String, Result<(), WriteError>)> {
     let writer = s.writer();
     let (said, heard) = std::sync::mpsc::channel::<Progress>();
-    let results: Vec<(String, Result<(), WriteError>)> = std::thread::scope(|scope| {
+    std::thread::scope(|scope| {
         let runs: Vec<_> = remotes
             .iter()
             .map(|remote| {
@@ -173,12 +184,31 @@ pub fn fetch_all(s: &Session, remotes: &[String], prune: bool, t: &Transfer) -> 
         drop(said);
         heard.iter().for_each(|p| (t.progress)(p));
         runs.into_iter().map(|(remote, run)| (remote, run.join().unwrap_or(Err(WriteError::Refused("a fetch panicked"))))).collect()
-    });
-    if results.iter().any(|(_, r)| matches!(r, Err(WriteError::Cancelled))) {
-        return Err(WriteError::Cancelled);
+    })
+}
+
+/// A fetch nobody waits for: no prompt from git, the credential helper or ssh, so a remote that needs one fails.
+pub fn silent() -> Transfer {
+    let env = [("GIT_TERMINAL_PROMPT", "0"), ("GCM_INTERACTIVE", "never"), ("SSH_ASKPASS_REQUIRE", "never")];
+    Transfer { env: env.iter().map(|(k, v)| (k.to_string(), OsString::from(v))).collect(), ..Transfer::default() }
+}
+
+/// What a background fetch did: each remote's outcome, and whether a ref moved.
+#[derive(Debug, Default)]
+pub struct Fetched {
+    pub remotes: Vec<(String, Result<(), String>)>,
+    pub moved: bool,
+}
+
+/// Every remote fetched [`silent`]ly, nothing while an operation is under way.
+pub fn background_fetch(s: &Session, remotes: &[String], prune: bool) -> Result<Fetched, WriteError> {
+    if !matches!(operation_state(&s.writer().dirs().git_dir), OperationState::None) {
+        return Ok(Fetched::default());
     }
-    let failed: Vec<String> = results.into_iter().filter_map(|(remote, r)| r.err().map(|e| format!("{remote}: {e}"))).collect();
-    if failed.is_empty() { Ok(()) } else { Err(WriteError::Remote(failed.join("\n"))) }
+    let tips = |s: &Session| s.output(&Call::new(&["for-each-ref", "--format=%(objectname) %(refname)"]));
+    let before = tips(s)?;
+    let remotes = fetch_each(s, remotes, prune, &silent()).into_iter().map(|(r, done)| (r, done.map_err(|e| e.to_string()))).collect();
+    Ok(Fetched { remotes, moved: tips(s)? != before })
 }
 
 /// A branch's upstream as its config names it.

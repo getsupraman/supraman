@@ -19,10 +19,13 @@ use supraman_ui::text_input::{InputEvent, TextInput};
 use crate::view::{Cli, FleetView, REFRESH_EVERY};
 use crate::workman_setup::{RECHECK_EVERY, ServerCheck, WorkmanStatus};
 
+pub mod gitman;
+
 pub mod page {
     pub const SESSIONS: &str = "sessions";
     pub const WORKMAN: &str = "workman";
     pub const PLUGINS: &str = "plugins";
+    pub const GITMAN: &str = "gitman";
     pub const APPEARANCE: &str = "appearance";
     pub const ABOUT: &str = "about";
 }
@@ -34,6 +37,7 @@ fn pages() -> SettingsPages<SettingsView> {
         .register(page(page::SESSIONS, "Sessions", "\u{E7C4}", SettingsView::render_sessions))
         .register(SettingsPage { mark: Some(workman), ..page(page::WORKMAN, "Workman", "\u{E753}", SettingsView::render_workman) })
         .register(page(page::PLUGINS, "Plugins", "\u{EA86}", SettingsView::render_plugins))
+        .register(page(page::GITMAN, "GitMan", "\u{E895}", SettingsView::render_gitman))
         .register(page(page::APPEARANCE, "Appearance", "\u{E790}", SettingsView::render_appearance))
         .register(page(page::ABOUT, "About", "\u{E946}", SettingsView::render_about))
 }
@@ -69,6 +73,7 @@ pub struct SettingsView {
     server_checks: u64,
     _url_events: Subscription,
     saves: crate::view::writes::Serial,
+    gitman: Entity<gitman::GitmanPage>,
 }
 
 static MONO_FONTS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
@@ -144,6 +149,8 @@ impl SettingsView {
         });
         let pages = pages();
         let page = pages.resolve(page);
+        let hits = HitTargets::default();
+        let gitman = cx.new(|cx| gitman::GitmanPage::new(home.clone(), hits.clone(), window, cx));
         let mut this = Self {
             home,
             settings: Settings::default(),
@@ -154,7 +161,7 @@ impl SettingsView {
             pages,
             page,
             focus: cx.focus_handle(),
-            hits: HitTargets::default(),
+            hits,
             workman,
             catalog: Catalog::default(),
             theme_problem: None,
@@ -170,6 +177,7 @@ impl SettingsView {
             server_checks: 0,
             _url_events: url_events,
             saves: Default::default(),
+            gitman,
         };
         if this.mono_fonts.is_none() {
             let text_system = cx.text_system().clone();
@@ -984,6 +992,10 @@ impl SettingsView {
             Some(choices.children(notes).into_any_element()),
             cx,
         )
+    }
+
+    fn render_gitman(&self, _: &mut Context<Self>) -> Vec<AnyElement> {
+        vec![self.gitman.clone().into_any_element()]
     }
 
     fn render_plugins(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {

@@ -1,6 +1,7 @@
 //! The Git tab of one repository: its commit graph loaded off the UI thread page by page, its panels, and the
 //! writes they make through the tab's one [`write_gate::WriteGate`].
 
+pub mod background;
 pub mod branch;
 mod cap;
 mod cells;

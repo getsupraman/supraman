@@ -146,6 +146,9 @@ impl GitView {
             return;
         }
         self.follow.hidden = !shown;
+        if shown {
+            super::background::shown(cx.entity_id(), cx);
+        }
         if let Some(refresh) = self.follow.pending.take().filter(|_| shown) {
             self.live_refresh(refresh, cx);
         }
