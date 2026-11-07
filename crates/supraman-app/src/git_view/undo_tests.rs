@@ -128,7 +128,7 @@ fn undo_where_a_live_session_works_asks_first(cx: &mut TestAppContext) {
     live.set(vec![("fm-alpha".into(), f.worktree.join("src"))]);
     let (view, cx) = open(&f.worktree, live, cx);
     click(&view, UNDO_KEY, cx);
-    let gate = view.read_with(cx, |v, cx| v.undo_bar().read(cx).gate().clone());
+    let gate = view.read_with(cx, |v, _| v.gate().clone());
     assert!(gate.read_with(cx, |g, _| g.asking().is_some_and(|q| q.starts_with("fm-alpha is working in"))));
     assert_ne!(head(&f, &f.worktree), before, "nothing runs before the answer");
     click(&view, "write-guard-yes", cx);

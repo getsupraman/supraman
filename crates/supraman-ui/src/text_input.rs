@@ -443,8 +443,10 @@ pub enum InputEvent {
     Edited,
     /// A character the input's filter does not take; nothing of it was inserted.
     Refused(char),
-    /// Enter on one line or with [`TextInput::enter_confirms`], Ctrl+Enter on either.
+    /// Enter on one line or with [`TextInput::enter_confirms`], Ctrl+Enter on either unless [`TextInput::submit_apart`].
     Confirm,
+    /// Ctrl+Enter with [`TextInput::submit_apart`].
+    Submit,
     /// Shift+Enter on one line.
     ConfirmBack,
     /// Esc.
@@ -584,6 +586,8 @@ pub struct TextInput {
     multi_line: bool,
     /// On several lines, Enter confirms and Shift+Enter types the new line.
     enter_confirms: bool,
+    /// Ctrl+Enter is [`InputEvent::Submit`], told apart from Enter's [`InputEvent::Confirm`].
+    submit_apart: bool,
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: Pixels,
@@ -651,6 +655,7 @@ impl TextInput {
             filter,
             multi_line: false,
             enter_confirms: false,
+            submit_apart: false,
             last_layout: None,
             last_bounds: None,
             last_line_height: LINE_HEIGHT,
@@ -673,6 +678,12 @@ impl TextInput {
     pub fn enter_confirms(mut self) -> Self {
         self.multi_line = true;
         self.enter_confirms = true;
+        self
+    }
+
+    /// Ctrl+Enter says [`InputEvent::Submit`]: a commit message's summary, where Enter moves on.
+    pub fn submit_apart(mut self) -> Self {
+        self.submit_apart = true;
         self
     }
 
@@ -957,7 +968,7 @@ impl TextInput {
     }
 
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(InputEvent::Confirm);
+        cx.emit(if self.submit_apart { InputEvent::Submit } else { InputEvent::Confirm });
     }
 
     fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {

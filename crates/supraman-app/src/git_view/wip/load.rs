@@ -1,7 +1,7 @@
 //! What the WIP panel reads, blocking, for `cx.background_spawn`: the status, split into the unstaged and
 //! the staged files, each as a list and a tree.
 
-use supraman_gitman::{ChangeKind, EntryKind, FileChange, Repo, Status, short_sha};
+use supraman_gitman::{ChangeKind, EntryKind, FileChange, OperationState, Repo, Status, short_sha};
 use supraman_ui::tree::{Order, Tree};
 
 use crate::git_view::details::{Counts, sort_changes};
@@ -59,6 +59,7 @@ pub struct Loaded {
     pub staged: Vec<FileChange>,
     pub unstaged_tree: FileTree,
     pub staged_tree: FileTree,
+    pub state: OperationState,
 }
 
 /// `1 file change`, `3 file changes`.
@@ -107,5 +108,5 @@ pub fn of_status(status: &Status, order: Order) -> Loaded {
     sort_changes(&mut unstaged, order);
     sort_changes(&mut staged, order);
     let (unstaged_tree, staged_tree) = (tree(&unstaged, order), tree(&staged, order));
-    Loaded { branch, total: status.entries.len(), unstaged, staged, unstaged_tree, staged_tree }
+    Loaded { branch, total: status.entries.len(), unstaged, staged, unstaged_tree, staged_tree, state: status.state }
 }

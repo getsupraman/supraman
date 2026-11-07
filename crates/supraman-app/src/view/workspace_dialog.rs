@@ -58,7 +58,7 @@ pub enum NameKey {
 
 pub fn name_event(event: &InputEvent, error: &mut Option<String>, hint: &mut Option<String>) -> NameKey {
     match event {
-        InputEvent::Confirm | InputEvent::ConfirmBack => NameKey::Save,
+        InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => NameKey::Save,
         InputEvent::Cancel => NameKey::Cancel,
         InputEvent::Refused(c) => {
             *hint = Some(format!("'{c}' is not taken: a name is lowercase letters, digits and '-'."));
@@ -254,7 +254,7 @@ impl WorkspaceDialog {
     fn on_path(&mut self, _: &Entity<TextInput>, event: &InputEvent, _: &mut Window, cx: &mut Context<Self>) {
         match event {
             InputEvent::Edited | InputEvent::Refused(_) => self.error = None,
-            InputEvent::Confirm | InputEvent::ConfirmBack => self.add_typed(cx),
+            InputEvent::Confirm | InputEvent::ConfirmBack | InputEvent::Submit => self.add_typed(cx),
             InputEvent::Cancel => cx.emit(DialogEvent::Cancel),
         }
         cx.notify();

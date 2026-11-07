@@ -1,4 +1,5 @@
-//! The Git tab of one repository: its commit graph, read-only (C146), loaded off the UI thread page by page.
+//! The Git tab of one repository: its commit graph loaded off the UI thread page by page, its panels, and the
+//! writes they make through the tab's one [`write_gate::WriteGate`].
 
 mod cap;
 mod cells;
@@ -18,6 +19,7 @@ pub mod ref_panel;
 mod splice;
 pub mod undo;
 mod wip;
+mod wip_row;
 pub mod write_gate;
 
 #[cfg(test)]
@@ -61,6 +63,7 @@ use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
+use write_gate::WriteGate;
 
 /// The table's id: its hit keys are `git-col-<c>`, `git-divider-<c>`, `git-row-<n>`.
 pub const TABLE: &str = "git";
@@ -191,6 +194,10 @@ pub struct GitView {
     find: Option<find::Find>,
     undo: Entity<UndoBar>,
     _undo_events: Subscription,
+    /// Every write of the tab passes it: Undo, Redo and the WIP panel's.
+    gate: Entity<WriteGate>,
+    /// The commit summary takes the keyboard on the next frame.
+    focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
     focus: FocusHandle,
 }
@@ -208,12 +215,12 @@ impl GitView {
     pub fn open_with(folder: PathBuf, home: Option<PathBuf>, hits: HitTargets, saved: &GitSizes, occupancy: Arc<dyn Occupancy>, cx: &mut App) -> Entity<GitView> {
         cx.new(|cx| {
             let panel = cx.new(|cx| CommitPanel::new(hits.clone(), None, cx));
-            let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), cx));
+            let gate = cx.new(|_| WriteGate::new(occupancy, hits.clone()));
+            let wip_panel = cx.new(|cx| WipPanel::new(hits.clone(), gate.clone(), cx));
             let focus = cx.focus_handle();
             let ref_panel = cx.new(|cx| RefPanel::new(hits.clone(), focus.clone(), cx));
             let events = [cx.subscribe(&panel, Self::panel_event), cx.subscribe(&wip_panel, Self::panel_event), cx.subscribe(&ref_panel, Self::ref_event)];
-            let gate = cx.new(|_| write_gate::WriteGate::new(occupancy, hits.clone()));
-            let undo = cx.new(|cx| UndoBar::new(gate, hits.clone(), cx));
+            let undo = cx.new(|cx| UndoBar::new(gate.clone(), hits.clone(), cx));
             let undo_events = cx.subscribe(&undo, Self::undo_event);
             let mut view = GitView {
                 folder,
@@ -257,6 +264,8 @@ impl GitView {
                 find: None,
                 undo,
                 _undo_events: undo_events,
+                gate,
+                focus_summary: false,
                 focus,
             };
             view.start(saved.clone(), cx);
@@ -316,6 +325,13 @@ impl GitView {
             PanelEvent::Parent(sha) => self.seek_sha(sha.clone(), cx),
             PanelEvent::File(target) => self.toggle_diff(target.clone(), cx),
             PanelEvent::Resized => self.keep_layout(cx),
+            PanelEvent::Wrote(toast) => {
+                if let Some(toast) = toast {
+                    self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                }
+                self.refresh_after_write(cx);
+            }
+            PanelEvent::Why(why) => self.toast.show_why(why.clone(), |v: &mut GitView| &mut v.toast, cx),
         }
     }
 
@@ -354,6 +370,11 @@ impl GitView {
     #[cfg(test)]
     pub fn undo_bar(&self) -> &Entity<UndoBar> {
         &self.undo
+    }
+
+    #[cfg(test)]
+    pub fn gate(&self) -> &Entity<WriteGate> {
+        &self.gate
     }
 
     pub fn ref_panel(&self) -> &Entity<RefPanel> {
@@ -514,7 +535,7 @@ impl GitView {
                 self.ref_panel.update(cx, |p, cx| p.set_built(first.refs, cx));
                 self.fit_graph();
                 self.panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
-                self.wip_panel.update(cx, |p, _| p.set_repo(first.repo.clone()));
+                self.wip_panel.update(cx, |p, cx| p.set_repo(first.repo.clone(), cx));
                 if let Some(debounces) = refresh::follows() {
                     self.follow(first.repo.clone(), debounces, cx);
                 }
@@ -605,10 +626,8 @@ impl GitView {
                 cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
             }
             1 => graph::cell(row, !row.row.refs.is_empty(), palette),
-            2 => {
-                let counts = self.wip.map(|w| w.counts()).unwrap_or_default();
-                cells::message(ix, row, row.wip().then_some(counts.as_str()), palette)
-            }
+            2 if row.wip() => self.wip_message(ix, palette, cx),
+            2 => cells::message(ix, row, None, palette),
             3 => cells::date(row, palette),
             _ => cells::sha(row, palette),
         }
@@ -648,6 +667,13 @@ impl GitView {
 
     fn render_split(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let first = match &self.diff {
+            Some((view, _)) if self.selected() == Some(Selected::Wip) => div()
+                .size_full()
+                .key_context(keys::WIP_LIST_CONTEXT)
+                .on_action(cx.listener(|this, _: &keys::StageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.stage_selected(cx))))
+                .on_action(cx.listener(|this, _: &keys::UnstageSelected, _, cx| this.wip_panel.update(cx, |p, cx| p.unstage_selected(cx))))
+                .child(view.clone())
+                .into_any_element(),
             Some((view, _)) => view.clone().into_any_element(),
             None => self.render_graph(cx),
         };
@@ -730,6 +756,8 @@ impl Render for GitView {
         if std::mem::take(&mut self.focus_graph) {
             window.focus(self.table.focus_handle(), cx);
         }
+        self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
+        self.take_focus_summary(window, cx);
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
             Load::Problem(problem) => self.problem(problem, cx),
@@ -745,12 +773,16 @@ impl Render for GitView {
             .on_action(cx.listener(|this, _: &keys::FindHistory, window, cx| this.open_find(Some(find::entries::HISTORY), window, cx)))
             .on_action(cx.listener(|this, _: &keys::Undo, _, cx| this.undo.update(cx, |u, cx| u.undo(cx))))
             .on_action(cx.listener(|this, _: &keys::Redo, _, cx| this.undo.update(cx, |u, cx| u.redo(cx))))
+            .on_action(cx.listener(|this, _: &keys::StageAll, _, cx| this.stage_all_keyed(cx)))
+            .on_action(cx.listener(|this, _: &keys::UnstageAll, _, cx| this.wip_panel.update(cx, |p, cx| p.unstage_all(cx))))
+            .on_action(cx.listener(|this, _: &keys::FocusMessage, _, cx| this.focus_message(cx)))
             .relative()
             .bg(cx.theme().colors().editor_background)
             .text_sm()
             .flex()
             .flex_col()
             .child(self.undo.clone())
+            .child(div().mx_2().child(self.gate.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))

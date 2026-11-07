@@ -25,6 +25,9 @@ const ICON_GAP: f32 = 3.;
 const KIND_GAP: f32 = 14.;
 const NAME_GAP: f32 = 12.;
 
+/// A file row's buttons at its right end, shown while its row (hover group `group`) is hovered: the owner's for `path`.
+pub type Tail<V> = Rc<dyn Fn(&mut V, &str, ChangeKind, SharedString, &mut Context<V>) -> AnyElement>;
+
 /// A change's icon in the theme's status colour.
 pub fn mark_icon(kind: ChangeKind, cx: &App) -> (Icon, Hsla) {
     let status = cx.theme().status();
@@ -94,7 +97,7 @@ fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App)
 }
 
 /// A Path row: the mark, the folder part muted and the file name bright.
-fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &App) -> AnyElement {
+fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &App) -> Div {
     div()
         .flex()
         .items_center()
@@ -104,25 +107,49 @@ fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &Ap
         .whitespace_nowrap()
         .child(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))
         .child(path_label(format!("{list}-dir-{path}"), path, secondary(cx), cx.theme().colors().text).flex_1())
-        .into_any_element()
 }
 
-/// `tree` under `<list>-tree-row-<path>`; a file's or folder's selection goes to `picked`.
+fn with_tail<V: 'static>(this: &mut V, row: Div, tail: &Option<Tail<V>>, path: &str, kind: ChangeKind, group: &SharedString, cx: &mut Context<V>) -> AnyElement {
+    match tail {
+        Some(tail) => row.child(div().flex_none().pr_1().child(tail(this, path, kind, group.clone(), cx))).into_any_element(),
+        None => row.into_any_element(),
+    }
+}
+
+/// `tree` under `<list>-tree-row-<path>`; a file's or folder's selection goes to `picked`; a file row ends with `tail`.
 pub fn tree_list<V: 'static>(
     list: &'static str,
     tree: &TreeState<Mark, Counts>,
     hits: &HitTargets,
     picked: impl Fn(&mut V, &SharedString, &mut Context<V>) + 'static,
+    tail: Option<Tail<V>>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let painter = hits.clone();
-    TreeList::new(format!("{list}-tree"), tree, hits, move |_: &mut V, row, _, cx| tree_row(list, row, &painter, cx))
+    let id = format!("{list}-tree");
+    let group = supraman_ui::table::row_group(&id);
+    TreeList::new(id, tree, hits, move |this: &mut V, row, _, cx| {
+        let kind = match row.item {
+            Item::File(Some(kind)) => Some(*kind),
+            _ => None,
+        };
+        match (kind, &tail) {
+        (Some(kind), Some(_)) => {
+            let path = row.path.to_string();
+            let shown = div().flex().items_center().w_full().min_w_0().child(div().flex_1().min_w_0().child(tree_row(list, row, &painter, cx)));
+            with_tail(this, shown, &tail, &path, kind, &group, cx)
+        }
+        _ => tree_row(list, row, &painter, cx),
+        }
+    })
         .row_height(px(ROW))
         .on_select(move |this: &mut V, path, _, cx| picked(this, path, cx))
         .render(cx)
 }
 
-/// `len` files one path a row, `file(ix)` the path and change of a row, under `<list>-files-row-<path>`.
+/// `len` files one path a row, `file(ix)` the path and change of a row, under `<list>-files-row-<path>`; each row
+/// ends with `tail`.
+#[allow(clippy::too_many_arguments)]
 pub fn path_list<V: 'static>(
     list: &'static str,
     state: &TableState,
@@ -130,13 +157,16 @@ pub fn path_list<V: 'static>(
     len: usize,
     file: impl Fn(usize) -> Option<(String, ChangeKind)> + 'static,
     picked: impl Fn(&mut V, String, &mut Context<V>) + 'static,
+    tail: Option<Tail<V>>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let file = Rc::new(file);
     let (paint, keys, painter) = (file.clone(), file.clone(), hits.clone());
     let column = [Column::new("path", "", px(0.), px(0.))];
-    Table::new(format!("{list}-files"), state, hits, column, &[px(0.)], len, move |_: &mut V, ix, _, _, cx| {
-        paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| path_row(list, &path, kind, &painter, cx))
+    let id = format!("{list}-files");
+    let group = supraman_ui::table::row_group(&id);
+    Table::new(id, state, hits, column, &[px(0.)], len, move |this: &mut V, ix, _, _, cx| {
+        paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| with_tail(this, path_row(list, &path, kind, &painter, cx), &tail, &path, kind, &group, cx))
     })
     .headless()
     .row_height(px(ROW))

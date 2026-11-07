@@ -36,6 +36,10 @@ pub enum PanelEvent {
     File(super::diff::Target),
     /// The message box's height was dragged or reset.
     Resized,
+    /// A write of the panel's ran: the toast it says, if any.
+    Wrote(Option<String>),
+    /// Why a write did not run or failed.
+    Why(String),
 }
 
 /// The commit shown, its texts ready to paint.

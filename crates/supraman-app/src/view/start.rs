@@ -133,7 +133,7 @@ impl FleetView {
                 }
                 cx.notify();
             }
-            InputEvent::ConfirmBack | InputEvent::Cancel | InputEvent::Refused(_) => {}
+            InputEvent::ConfirmBack | InputEvent::Cancel | InputEvent::Refused(_) | InputEvent::Submit => {}
         });
         let title = if scheduled { format!("New scheduled task · {workspace}") } else { format!("New task · {workspace}") };
         let page = StartPage { workspace: workspace.to_string(), scheduled, folder: folder.clone(), mode: DEFAULT_MODE, input: input.clone(), error: None, sending: false, scroll: ScrollHandle::new(), _events: events };
