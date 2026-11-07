@@ -20,6 +20,7 @@ pub struct GraphRow {
     /// The body's start, on one line.
     pub body: SharedString,
     pub initials: SharedString,
+    pub author: SharedString,
     /// Epoch milliseconds of the commit; 0 on the WIP row.
     pub time_ms: i64,
     pub merge: bool,
@@ -224,7 +225,7 @@ pub fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout, walker: O
 
 fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
     let Some(c) = commit else {
-        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
+        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), author: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
     };
     let (summary, body) = c.message.split_once('\n').unwrap_or((&c.message, ""));
     let (summary, body, time) = match &row.stash {
@@ -236,6 +237,7 @@ fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
         summary: summary.into(),
         body: body.into(),
         initials: initials(&c.author.name).into(),
+        author: c.author.name.clone().into(),
         time_ms: time * 1000,
         merge: c.parents.len() > 1,
         parents: c.parents.iter().map(|p| SharedString::from(p.clone())).collect(),

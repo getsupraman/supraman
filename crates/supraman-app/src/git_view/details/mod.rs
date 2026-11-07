@@ -311,6 +311,10 @@ impl CommitPanel {
         cx.notify();
     }
 
+    pub fn view(&self) -> FileView {
+        self.view
+    }
+
     pub fn set_view(&mut self, view: FileView, cx: &mut Context<Self>) {
         self.view = view;
         cx.notify();
