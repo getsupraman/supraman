@@ -7,6 +7,7 @@ pub mod journal;
 mod locks;
 mod quiet;
 mod snapshot;
+pub mod wip;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -47,6 +48,12 @@ pub enum WriteError {
     Io { what: String, source: std::io::Error },
     #[error("undo journal: {0}")]
     Journal(String),
+    /// git, or one of its hooks, refused the commit: its exit code and what it wrote.
+    #[error("the commit failed with exit code {code}: {stderr}")]
+    CommitFailed { code: i32, stderr: String },
+    /// Refused before git ran.
+    #[error("{0}")]
+    Refused(&'static str),
 }
 
 impl From<GitError> for WriteError {

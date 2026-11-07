@@ -3,6 +3,7 @@
 
 mod blob;
 mod changes;
+mod compose;
 mod dirs;
 mod history;
 mod layout;
@@ -21,6 +22,7 @@ pub mod fixture;
 
 pub use blob::{Blob, blob, is_binary, object_sizes, staged_blob, worktree_file, worktree_size};
 pub use changes::{ChangeKind, FileChange, TreeFile, changed_between, changed_files, tree};
+pub use compose::{COMMIT_HOOKS, commit_hooks, head_message};
 pub use dirs::{Dirs, dirs, ignored};
 pub use history::{Commit, Details, FIRST_PAGE, History, NEXT_PAGE, Page, Person, Signature, details, history, short_sha};
 pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLabel, Row};

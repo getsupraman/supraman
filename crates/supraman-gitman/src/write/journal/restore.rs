@@ -60,8 +60,8 @@ pub(super) fn redo(s: &Session, again: &Again, action: &str, stash: bool) -> Res
             Ok(false)
         }
         Kind::Discard => {
-            let Some(Payload { action: Action::Discard { paths }, .. }) = payload(s, original)? else { return Err(gone(original)) };
-            discard(s, &paths)?;
+            let Some(Payload { action: Action::Discard { paths, from_index }, .. }) = payload(s, original)? else { return Err(gone(original)) };
+            discard_from_index(s, &paths, &from_index)?;
             Ok(false)
         }
         Kind::DeleteBranch => {
@@ -166,7 +166,7 @@ fn stash_all(s: &Session, action: &str, allowed: bool, untracked: bool) -> Resul
 }
 
 /// Takes out the newest line of HEAD's and its branch's reflog when it is the reset just run, which moved nothing.
-fn drop_noop_reset(s: &Session) -> Result<(), WriteError> {
+pub(crate) fn drop_noop_reset(s: &Session) -> Result<(), WriteError> {
     let branch = text(&s.run(&Call::new(&["symbolic-ref", "-q", "HEAD"]))?.stdout).trim().to_string();
     let logs = s.writer().dirs().git_dir.join("logs");
     let common = s.writer().dirs().common_dir.join("logs");
@@ -214,12 +214,23 @@ fn paths_in(s: &Session, tree: Option<&str>, index: bool) -> Result<HashSet<Stri
 
 /// Throws away the changes to `paths` (staged, unstaged and untracked), kept first in a snapshot, and records it.
 pub fn discard(s: &Session, paths: &[String]) -> Result<(), WriteError> {
+    discard_from_index(s, paths, &[])
+}
+
+/// [`discard`], but the working files of `from_index` (some of `paths`) go back to the index's, their staged change
+/// kept.
+pub fn discard_from_index(s: &Session, paths: &[String], from_index: &[String]) -> Result<(), WriteError> {
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let snapshot = s.snapshot(&refs, "Before discard")?;
     let known = paths_in(s, Some("HEAD"), true)?;
+    let to_index: HashSet<&String> = from_index.iter().collect();
     let (tracked, untracked): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| known.contains(*p));
-    if !tracked.is_empty() {
-        s.output(&Call::new(&["restore", "--source=HEAD", "--staged", "--worktree"]).paths(tracked.iter().map(|p| p.to_string())))?;
+    let (worktree, both): (Vec<&String>, Vec<&String>) = tracked.into_iter().partition(|p| to_index.contains(p));
+    if !both.is_empty() {
+        s.output(&Call::new(&["restore", "--source=HEAD", "--staged", "--worktree"]).paths(both.iter().map(|p| p.to_string())))?;
+    }
+    if !worktree.is_empty() {
+        s.output(&Call::new(&["restore", "--worktree"]).paths(worktree.iter().map(|p| p.to_string())))?;
     }
     for path in untracked {
         let file = s.writer().dirs().top.join(path);
@@ -227,18 +238,27 @@ pub fn discard(s: &Session, paths: &[String]) -> Result<(), WriteError> {
             return Err(WriteError::Io { what: format!("remove {}", file.display()), source });
         }
     }
-    record(s, Action::Discard { paths: paths.to_vec() }, Some(&snapshot))
+    record(s, Action::Discard { paths: paths.to_vec(), from_index: from_index.to_vec() }, Some(&snapshot))
 }
 
 /// A discard taken back: what changed in its paths since goes to a stash, then the paths' files and index entries
 /// are the snapshot's again.
 fn discard_back(s: &Session, item: &Item, action: &str) -> Result<bool, Refused> {
     let payload = payload(s, item)?.ok_or_else(|| gone(item))?;
-    let (Action::Discard { paths }, Some(snapshot)) = (&payload.action, payload.snapshot.as_deref()) else { return Err(gone(item)) };
+    let (Action::Discard { paths, from_index }, Some(snapshot)) = (&payload.action, payload.snapshot.as_deref()) else { return Err(gone(item)) };
     let index = index_of(s, snapshot)?;
     let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let staged_kept: HashSet<&str> = from_index.iter().map(String::as_str).collect();
     let status = crate::status(s.writer().repo()).map_err(WriteError::from)?;
-    let changed: Vec<String> = status.entries.iter().flat_map(|e| [Some(&e.path), e.orig_path.as_ref()]).flatten().filter(|p| wanted.contains(p.as_str())).cloned().collect();
+    let changed: Vec<String> = status
+        .entries
+        .iter()
+        .filter(|e| e.unstaged.is_some() || !staged_kept.contains(e.path.as_str()))
+        .flat_map(|e| [Some(&e.path), e.orig_path.as_ref()])
+        .flatten()
+        .filter(|p| wanted.contains(p.as_str()))
+        .cloned()
+        .collect();
     let stashed = !changed.is_empty();
     if stashed {
         s.output(&Call::new(&["stash", "push", "-q", "--include-untracked", "-m", &format!("GitMan: before undo of {action}")]).paths(changed))?;
