@@ -99,9 +99,13 @@ fn workman() -> FakeWorkman {
         "rows": [verified, row("2", "Login form validation", "blocked", (1, 4)), row("3", "Order summary page", "in_progress", (0, 2)),
                  row("4", "Receipt email", "open", (0, 0)), row("5", "Refunds from the admin view", "open", (0, 0))]
     });
+    let claim = json!({ "item": task("3", "Order summary page", "in_progress"), "run": run, "role": "worker", "agent": "fm-demo-web", "tree": r"C:\src\demo\web",
+                        "session": { "id": "s1", "name": "fm-demo-web", "role": "worker", "firstSeenAt": "x", "lastSeenAt": "x" },
+                        "acquiredAt": "2026-11-02T09:30:00+00:00", "heartbeatAt": "2026-11-02T09:55:00+00:00", "expiresAt": "2099-01-01T00:00:00+00:00", "expired": false });
     let overview = json!({
-        "asOf": "2026-11-02T10:00:00+00:00", "seq": 10,
-        "projects": [{ "item": project, "rollup": {}, "repos": [{ "kind": "remote", "key": "github.com/demo/shop" }],
+        "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "workingNow": [claim],
+        "honesty": { "doneUnverified": 0, "forced": 1, "ungated": 0, "followupsOpen": 3 },
+        "projects": [{ "item": project, "rollup": { "total": 5, "done": 1, "inProgress": 1, "blocked": 1, "open": 2 }, "repos": [{ "kind": "remote", "key": "github.com/demo/shop" }],
                        "runs": [{ "item": run, "rollup": { "total": 5, "done": 1, "inProgress": 1, "blocked": 1, "open": 2 } }] }]
     });
     let selected = json!({
@@ -121,12 +125,23 @@ fn workman() -> FakeWorkman {
         json!({ "key": "blocked:t2", "kind": "blocked", "item": task("2", "Login form validation", "blocked"), "run": run,
                 "what": "Blocked: waits for the session API", "since": "2026-11-02T09:10:00+00:00", "call": "" }),
     ];
-    let resolved = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "matches": [project] }).to_string();
     let inbox = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "rows": rows }).to_string();
+    let event = |seq: i64, at: &str, n: &str, title: &str, status: &str, kind: &str, summary: &str| {
+        json!({ "seq": seq, "at": at, "item": task(n, title, status), "run": run, "actor": "fm-demo-web", "role": "worker", "kind": kind, "summary": summary })
+    };
+    let journal = json!({ "asOf": "2026-11-02T10:00:00+00:00", "seq": 10, "cursor": 10, "hasMore": false, "events": [
+        event(5, "2026-11-01T16:20:00+00:00", "1", "Payment provider adapter", "done", "verification", "checkout/1 green by orchestrator: 12 passed"),
+        event(6, "2026-11-01T16:21:00+00:00", "1", "Payment provider adapter", "done", "transition", "checkout/1 review → done"),
+        event(7, "2026-11-02T09:10:00+00:00", "2", "Login form validation", "blocked", "transition", "checkout/2 in_progress → blocked"),
+        event(8, "2026-11-02T09:30:00+00:00", "3", "Order summary page", "in_progress", "claim", "checkout/3 claimed by fm-demo-web for 30m"),
+        event(9, "2026-11-02T09:40:00+00:00", "1", "Payment provider adapter", "in_progress", "note", "question: card or invoice first?")
+    ] }).to_string();
     FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
-        (format!("/api/v1/resolve?ref={WORKSPACE}"), Answer::json(resolved)),
         (format!("/api/v1/inbox?project={PROJECT}"), Answer::json(inbox)),
+        (format!("/api/v1/journal?scope={PROJECT}&limit=150"), Answer::json(journal)),
+        (format!("/api/v1/prompts?scope={PROJECT}"), Answer::json(prompts(project.clone(), json!([{ "key": "continue", "label": "Continue", "count": null, "text": "Continue project `demo`." },
+                                                                                                   { "key": "cleanup", "label": "Clean up", "count": 2, "text": "Clean up project `demo`." }])))),
         ("/api/v1/overview".into(), Answer::json(overview.to_string())),
         (format!("/api/v1/runs/{RUN}/board"), Answer::json(board.to_string())),
         (format!("/api/v1/items/{SELECTED}"), Answer::json(selected.to_string())),
@@ -175,6 +190,7 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     let out = out_dir()?;
     let fixtures = rows()?;
     let count = fixtures.len();
+    view.update(cx, |v, _| v.work_repo_of = fixture_repo);
     view.read_with(cx, |v, _| v.injected.lock().unwrap_or_else(|e| e.into_inner()).extend(fixtures));
     crate::selftest::until(view, cx, Duration::from_secs(20), "the fixture sessions in the tree", |v| {
         let tree = v.tree();
@@ -200,7 +216,6 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     println!("shot: {}", details.display());
 
     let work = view.update(cx, |v, cx| {
-        v.work_repo_of = fixture_repo;
         let tab = v.open_work(WORKSPACE, cx);
         match v.tab(tab).map(|t| &t.kind) {
             Some(TabKind::Work(work)) => Some(work.clone()),
@@ -214,5 +229,27 @@ pub async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyho
     sleep(cx, Duration::from_millis(800)).await;
     let shot = capture(out.join("supraman-work.png"), None, cx).await?;
     println!("shot: {}", shot.display());
+    work_pages(view, &work, &out, cx).await
+}
+
+/// The Work tab's Overview, Activity and the open Ctrl+P palette.
+async fn work_pages(view: &Entity<FleetView>, work: &Entity<crate::work_view::WorkView>, out: &Path, cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
+    use crate::work_view::Page;
+    work.update(cx, |w, cx| w.show_page(Page::Overview, cx));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the Overview's projects", |v| v.hits.borrow().contains_key("work-prompt-project-demo-cleanup").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-work-overview.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    work.update(cx, |w, cx| w.show_page(Page::Activity, cx));
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the Activity's events", |v| v.hits.borrow().contains_key("work-activity-9").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-work-activity.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    cx.update(|window, cx| work.update(cx, |w, cx| w.open_palette(window, cx)))?;
+    crate::selftest::until(view, cx, Duration::from_secs(10), "the palette's rows", |v| v.hits.borrow().contains_key("work-find-selected").then_some(())).await?;
+    sleep(cx, Duration::from_millis(800)).await;
+    let shot = capture(out.join("supraman-work-palette.png"), None, cx).await?;
+    println!("shot: {}", shot.display());
+    cx.update(|window, cx| work.update(cx, |w, cx| w.close_palette(window, cx)))?;
     Ok(())
 }

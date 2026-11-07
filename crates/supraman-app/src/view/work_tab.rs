@@ -43,6 +43,16 @@ impl FleetView {
         id
     }
 
+    /// A Work tab's Needs you: every Inbox row shown now, the list at its top and highlighted; a toast only when nothing needs you.
+    pub fn show_inbox(&mut self, cx: &mut Context<Self>) {
+        self.release_left(cx);
+        if self.work_inbox.read(cx).rows().is_empty() && self.needs.is_empty() {
+            self.toast.show("Nothing needs you.".into(), |this: &mut Self| &mut this.toast, cx);
+            return;
+        }
+        self.work_inbox.update(cx, |inbox, cx| inbox.show(cx));
+    }
+
     pub fn open_work_item(&mut self, workspace: &str, item_id: &str, cx: &mut Context<Self>) -> u64 {
         let id = self.open_work(workspace, cx);
         if let Some(Tab { kind: TabKind::Work(view), .. }) = self.tab(id) {

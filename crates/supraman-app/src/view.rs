@@ -702,8 +702,8 @@ impl FleetView {
                     if !this.removing.is_empty() {
                         this.finish_removals(cx);
                     }
-                    let names = this.workspaces.iter().map(|w| w.name.clone()).collect();
-                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(names, cx));
+                    let named = this.workspaces.iter().map(|w| (w.name.clone(), w.folders.iter().map(|f| f.path.clone()).collect())).collect();
+                    this.work_inbox.update(cx, |inbox, cx| inbox.set_workspaces(named, this.work_repo_of, cx));
                     cx.notify();
                     pids
                 });

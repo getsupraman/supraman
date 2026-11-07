@@ -155,6 +155,21 @@ fn client_prompts_are_the_scopes_in_the_servers_order() {
 }
 
 #[test]
+fn client_search_asks_with_q_and_limit_and_reads_every_stage() {
+    let item = |ref_: &str| format!(r#"{{"id":"{RUN}","ref":"{ref_}","qualifiedRef":"p/{ref_}","kind":"task","title":"T {ref_}","status":"open"}}"#);
+    let body = format!(
+        r#"{{"asOf":"x","seq":3,"hits":[{{"item":{},"run":null,"project":{},"match":"ref","snippet":null}},
+        {{"item":{},"run":{},"project":null,"match":"text","snippet":"inbox cards"}}]}}"#,
+        item("1"), item("p"), item("2"), item("r")
+    );
+    let (fake, c) = server(vec![("/api/v1/search?q=inbox%20c&limit=20".into(), Answer::json(body))]);
+    let hits = c.search("inbox c", Some(20)).unwrap().hits;
+    let got: Vec<_> = hits.iter().map(|h| (h.item.qualified_ref.as_str(), h.match_.as_str(), h.snippet.as_deref(), h.project.as_ref().map(|p| p.ref_.as_str()))).collect();
+    assert_eq!(got, [("p/1", "ref", None, Some("p")), ("p/2", "text", Some("inbox cards"), None)]);
+    assert_read_only_with_bearer(&fake);
+}
+
+#[test]
 fn client_maps_errors_and_never_says_the_token() {
     let (_fake, c) = server(vec![
         ("/api/v1/overview".into(), Answer::status(401, r#"{"error":"bad token fake-reader-token"}"#)),

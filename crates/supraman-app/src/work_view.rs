@@ -2,12 +2,15 @@
 //! The Work tab is the web UI's three columns: navigator | run list | detail.
 
 mod actions;
+mod activity;
 pub mod cards;
 mod detail;
+pub mod find;
 mod inbox;
 mod item;
 mod layout;
 mod navigator;
+pub mod overview;
 mod projects;
 mod prompts;
 mod run_list;
@@ -24,7 +27,7 @@ use std::{
 use supraman_workman::{AuthStatus, Board, Client, ItemRef, Overview, OverviewProject, Stream, StreamEvent, StreamSignal};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyDownEvent, Render, ScrollHandle,
-    SharedString, Window, div, prelude::*, px,
+    SharedString, Subscription, Window, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 
@@ -205,15 +208,6 @@ fn read_failed(e: supraman_workman::Error) -> String {
     }
 }
 
-pub fn pick_project(resolved: supraman_workman::Resolved, workspace: &str) -> Result<ItemRef, String> {
-    let mut found: Vec<ItemRef> = resolved.matches.into_iter().filter(|m| m.kind == "project").collect();
-    match found.len() {
-        1 => Ok(found.remove(0)),
-        0 => Err(format!("Workman has no project with ref '{workspace}', so there is no work to show for this workspace.")),
-        n => Err(format!("'{workspace}' names {n} Workman projects; Supraman cannot tell which is this workspace's.")),
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shown {
     Loading,
@@ -221,7 +215,7 @@ pub enum Shown {
     Ready,
 }
 
-/// What the middle column shows. Overview and Activity are filled by step (b) of workman-ui/work-tab-redesign.
+/// What the middle column shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Page {
     Overview,
@@ -280,6 +274,10 @@ pub struct WorkView {
     pub item_reads: u64,
     list_scroll: ScrollHandle,
     detail_scroll: ScrollHandle,
+    pub activity: activity::Activity,
+    pub palette: Option<Entity<supraman_ui::palette::Palette<find::Found>>>,
+    palette_sub: Option<Subscription>,
+    pub search_reads: u64,
 }
 
 pub struct Opening {
@@ -344,6 +342,10 @@ impl WorkView {
             item_reads: 0,
             list_scroll: ScrollHandle::new(),
             detail_scroll: ScrollHandle::new(),
+            activity: activity::Activity::default(),
+            palette: None,
+            palette_sub: None,
+            search_reads: 0,
         };
         view.layout.load(home, cx);
         view.read_keys(cx);
@@ -365,6 +367,7 @@ impl WorkView {
             }
             HubEvent::Changed(event) => {
                 self.schedule_overview(cx);
+                self.schedule_activity(cx);
                 if let Some(run) = self.shown_run().filter(|run| event.run_id.as_deref() == Some(*run)).map(str::to_string) {
                     self.schedule_board(run.clone(), cx);
                     self.schedule_prompts(run, cx);
@@ -376,6 +379,7 @@ impl WorkView {
             HubEvent::Resync => {
                 self.read_overview(cx);
                 self.reload_shown(cx);
+                self.schedule_activity(cx);
             }
             HubEvent::Connection => cx.notify(),
         }
@@ -487,6 +491,7 @@ impl WorkView {
         if let Some(run) = first.filter(|_| !self.page_chosen) {
             self.open_run(run, cx);
         }
+        self.read_page(cx);
         cx.notify();
     }
 
@@ -524,8 +529,18 @@ impl WorkView {
                 self.page = page;
                 self.selected = None;
                 self.item = None;
+                self.list_scroll.set_offset(gpui::point(px(0.), px(0.)));
+                self.read_page(cx);
                 cx.notify();
             }
+        }
+    }
+
+    fn read_page(&mut self, cx: &mut Context<Self>) {
+        match self.page {
+            Page::Overview => self.read_project_prompts(cx),
+            Page::Activity if !self.projects.is_empty() => self.read_activity(cx),
+            _ => {}
         }
     }
 
@@ -598,8 +613,14 @@ impl WorkView {
     }
 
     /// Up/Down move in the list, Enter/Right give the detail the keys, Left takes them back.
-    fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if e.keystroke.modifiers.modified() {
+    fn on_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let m = &e.keystroke.modifiers;
+        if m.control && !m.alt && !m.shift && e.keystroke.key == "p" && self.shown == Shown::Ready {
+            self.open_palette(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if m.modified() || self.palette.is_some() {
             return;
         }
         let handled = match e.keystroke.key.as_str() {
@@ -689,6 +710,7 @@ impl Render for WorkView {
             .bg(colors.editor_background)
             .text_color(colors.text)
             .child(body)
+            .children(self.render_palette())
             .children(self.toast.render(&self.hits, "work-toast", cx))
             .children(menu)
     }
@@ -721,8 +743,8 @@ impl WorkView {
 
     fn render_middle(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.page.clone() {
-            Page::Overview => placeholder("Overview", ["Every project's runs and what needs you, at a glance."], cx).size_full().into_any_element(),
-            Page::Activity => placeholder("Activity", ["What happened across this workspace's projects, newest first."], cx).size_full().into_any_element(),
+            Page::Overview => self.render_overview(cx),
+            Page::Activity => self.render_activity_page(cx),
             Page::Run(run) => self.render_run_page(&run, cx),
         }
     }

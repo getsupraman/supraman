@@ -364,18 +364,11 @@ impl FleetView {
         }));
     }
 
-    fn release_left(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn release_left(&mut self, cx: &mut Context<Self>) {
         if self.left_hold.take().is_some() {
             cx.notify();
         }
         self.left_hold_timer = None;
-    }
-
-    /// A Work tab's Needs you: the Inbox at the sidebar's top, every row shown now.
-    pub fn show_inbox(&mut self, cx: &mut Context<Self>) {
-        self.release_left(cx);
-        let text = if self.work_inbox.read(cx).rows().is_empty() && self.needs.is_empty() { "Nothing needs you." } else { "The Inbox is at the top of the sidebar." };
-        self.toast.show(text.into(), |this: &mut Self| &mut this.toast, cx);
     }
 
     pub fn left_held(&self) -> bool {
@@ -695,10 +688,13 @@ impl FleetView {
         let colors = cx.theme().colors().clone();
         let now = now_ms();
         needs.sort_by_key(|n| (n.since, n.kind));
+        let (scroll, flashing) = { let w = self.work_inbox.read(cx); (w.scroll.clone(), w.flashing()) };
         let mut inbox = div()
             .id("inbox")
             .relative()
-            .child(hit_target(&self.hits, "inbox-area".into()))
+            .track_scroll(&scroll)
+            .when(flashing, |d| d.bg(colors.element_selected))
+            .child(hit_target(&self.hits, if flashing { "inbox-area=flash".into() } else { "inbox-area".into() }))
             .flex()
             .flex_col()
             .min_h_0()

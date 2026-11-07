@@ -64,6 +64,11 @@ pub fn near(ms: i64, now_ms: i64) -> String {
     }
 }
 
+/// `Mon 3 Nov`: a day's heading here; empty outside chrono's range.
+pub fn day(ms: i64) -> String {
+    local(ms).map(|t| t.format("%a %-d %b").to_string()).unwrap_or_default()
+}
+
 /// `Mon 3 Nov 2026 at 08:00`.
 pub fn date_words(ms: i64) -> String {
     local(ms).map_or_else(|| ms.to_string(), |t| t.format("%a %-d %b %Y at %H:%M").to_string())
@@ -246,6 +251,8 @@ mod tests {
         assert_eq!(near(NOW, NOW + 3 * 24 * 3_600_000), at.format("%a %H:%M").to_string());
         assert_eq!(near(NOW, NOW + 30 * 24 * 3_600_000), at.format("%a %-d %b %H:%M").to_string());
         assert_eq!(date_words(NOW), at.format("%a %-d %b %Y at %H:%M").to_string());
+        assert_eq!(day(NOW), at.format("%a %-d %b").to_string());
+        assert_eq!(day(i64::MAX), "");
         assert_eq!(clock(i64::MAX), "");
         assert_eq!(short(i64::MAX, NOW), None);
         assert_eq!(near(i64::MAX, NOW), i64::MAX.to_string());
