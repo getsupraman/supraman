@@ -145,7 +145,7 @@ pub fn discard_all(s: &Session) -> Result<usize, WriteError> {
     for path in untracked {
         remove_file(&top, path)?;
     }
-    journal::record(s, Action::Discard { paths: paths.clone(), from_index: Vec::new() }, Some(&snapshot))?;
+    journal::record(s, Action::Discard { paths: paths.clone(), from_index: Vec::new(), left: Vec::new() }, Some(&snapshot))?;
     Ok(paths.len())
 }
 

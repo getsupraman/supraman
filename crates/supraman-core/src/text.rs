@@ -64,6 +64,16 @@ pub fn decode(bytes: &[u8]) -> (String, Encoding) {
     }
 }
 
+/// `text` as bytes of `encoding`, its byte-order mark first where it has one; `Unknown` as UTF-8.
+pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
+    match encoding {
+        Encoding::Utf8 | Encoding::Unknown => text.as_bytes().to_vec(),
+        Encoding::Utf8Bom => [&[0xEF, 0xBB, 0xBF][..], text.as_bytes()].concat(),
+        Encoding::Utf16Le => [0xFF, 0xFE].into_iter().chain(text.encode_utf16().flat_map(u16::to_le_bytes)).collect(),
+        Encoding::Utf16Be => [0xFE, 0xFF].into_iter().chain(text.encode_utf16().flat_map(u16::to_be_bytes)).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,6 +85,14 @@ mod tests {
         assert_eq!(decode(b"\xFF\xFEa\0b\0"), ("ab".into(), Encoding::Utf16Le));
         assert_eq!(decode(b"\xFE\xFF\0a\0b"), ("ab".into(), Encoding::Utf16Be));
         assert_eq!(decode(b"a\xFFb"), ("a\u{FFFD}b".into(), Encoding::Unknown));
+    }
+
+    #[test]
+    fn encode_gives_back_the_bytes_decode_read() {
+        for bytes in [&b"plain\r\n"[..], b"\xEF\xBB\xBFbom\n", b"\xFF\xFEa\0\n\0", b"\xFE\xFF\0a\0\n"] {
+            let (text, encoding) = decode(bytes);
+            assert_eq!(encode(&text, encoding), bytes);
+        }
     }
 
     #[test]

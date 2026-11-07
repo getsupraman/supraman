@@ -60,8 +60,12 @@ pub(super) fn redo(s: &Session, again: &Again, action: &str, stash: bool) -> Res
             Ok(false)
         }
         Kind::Discard => {
-            let Some(Payload { action: Action::Discard { paths, from_index }, .. }) = payload(s, original)? else { return Err(gone(original)) };
-            discard_from_index(s, &paths, &from_index)?;
+            let Some(Payload { action: Action::Discard { paths, from_index, left }, .. }) = payload(s, original)? else { return Err(gone(original)) };
+            if left.is_empty() {
+                discard_from_index(s, &paths, &from_index)?;
+            } else {
+                crate::write::lines::discard_again(s, &paths, &from_index, &left)?;
+            }
             Ok(false)
         }
         Kind::DeleteBranch => {
@@ -238,16 +242,21 @@ pub fn discard_from_index(s: &Session, paths: &[String], from_index: &[String]) 
             return Err(WriteError::Io { what: format!("remove {}", file.display()), source });
         }
     }
-    record(s, Action::Discard { paths: paths.to_vec(), from_index: from_index.to_vec() }, Some(&snapshot))
+    record(s, Action::Discard { paths: paths.to_vec(), from_index: from_index.to_vec(), left: Vec::new() }, Some(&snapshot))
 }
 
 /// A discard taken back: what changed in its paths since goes to a stash, then the paths' files and index entries
 /// are the snapshot's again.
 fn discard_back(s: &Session, item: &Item, action: &str) -> Result<bool, Refused> {
     let payload = payload(s, item)?.ok_or_else(|| gone(item))?;
-    let (Action::Discard { paths, from_index }, Some(snapshot)) = (&payload.action, payload.snapshot.as_deref()) else { return Err(gone(item)) };
+    let (Action::Discard { paths, from_index, left }, Some(snapshot)) = (&payload.action, payload.snapshot.as_deref()) else { return Err(gone(item)) };
     let index = index_of(s, snapshot)?;
-    let wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    let mut wanted: HashSet<&str> = paths.iter().map(String::as_str).collect();
+    for (path, sha) in left {
+        if crate::write::lines::holds(s, path, sha)? {
+            wanted.remove(path.as_str());
+        }
+    }
     let staged_kept: HashSet<&str> = from_index.iter().map(String::as_str).collect();
     let status = crate::status(s.writer().repo()).map_err(WriteError::from)?;
     let changed: Vec<String> = status

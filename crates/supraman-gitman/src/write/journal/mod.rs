@@ -37,6 +37,9 @@ pub enum Action {
         paths: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         from_index: Vec<String>,
+        /// Those of them a discard of some lines left changed: each with the blob it left.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        left: Vec<(String, String)>,
     },
     DeleteBranch { name: String, sha: String, remote: Option<String>, merge: Option<String> },
 }
