@@ -211,6 +211,7 @@ type ResizeFn<V> = dyn Fn(&mut V, Vec<Pixels>, &mut Context<V>);
 type NearEndFn<V> = dyn Fn(&mut V, &mut Window, &mut Context<V>);
 type KeyFn<V> = dyn Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool;
 type RowKeyFn = dyn Fn(usize) -> String;
+type HeaderMenuFn<V> = dyn Fn(&mut V, gpui::Point<Pixels>, &mut Window, &mut Context<V>);
 
 /// One frame's table, built in the owner's render. Its element ids and hit keys start with `id`:
 /// `<id>-col-<column>`, `<id>-divider-<column>` (right of that column) and `<id>-row-<index>`.
@@ -230,6 +231,7 @@ pub struct Table<V> {
     on_click: Option<Rc<SelectFn<V>>>,
     on_key: Option<Rc<KeyFn<V>>>,
     row_key: Option<Rc<RowKeyFn>>,
+    header_menu: Option<Rc<HeaderMenuFn<V>>>,
     headless: bool,
     footer: usize,
 }
@@ -261,6 +263,7 @@ impl<V: 'static> Table<V> {
             on_click: None,
             on_key: None,
             row_key: None,
+            header_menu: None,
             headless: false,
             footer: 0,
         }
@@ -293,6 +296,12 @@ impl<V: 'static> Table<V> {
     /// Gets every key pressed while the table has focus that no binding of [`KEY_CONTEXT`] took; `true` when it took the key.
     pub fn on_key(mut self, f: impl Fn(&mut V, &str, &mut Window, &mut Context<V>) -> bool + 'static) -> Self {
         self.on_key = Some(Rc::new(f));
+        self
+    }
+
+    /// Called on a right-click in the header, where it was.
+    pub fn on_header_menu(mut self, f: impl Fn(&mut V, gpui::Point<Pixels>, &mut Window, &mut Context<V>) + 'static) -> Self {
+        self.header_menu = Some(Rc::new(f));
         self
     }
 
@@ -421,6 +430,12 @@ impl<V: 'static> Table<V> {
             .text_size(size)
             .text_color(text)
             .on_drag_move(self.follow_drag(cx))
+            .when_some(self.header_menu.clone(), |header, menu| {
+                header.on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this: &mut V, e: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    menu(this, e.position, window, cx);
+                }))
+            })
             .children(cells)
     }
 

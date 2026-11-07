@@ -16,10 +16,12 @@ pub struct MenuItem<A> {
     pub section: Option<String>,
     /// Why it cannot act now: listed dimmed with this as its tooltip, its click a no-op.
     pub dimmed: Option<String>,
+    /// A tick box before the label, ticked or not.
+    pub ticked: Option<bool>,
 }
 
 pub fn item<A>(key: impl Into<SharedString>, label: impl Into<String>, action: A) -> MenuItem<A> {
-    MenuItem { key: key.into(), label: label.into(), action, section: None, dimmed: None }
+    MenuItem { key: key.into(), label: label.into(), action, section: None, dimmed: None, ticked: None }
 }
 
 impl<A> MenuItem<A> {
@@ -34,6 +36,11 @@ impl<A> MenuItem<A> {
 
     pub fn dimmed(self, why: impl Into<String>) -> Self {
         Self { dimmed: Some(why.into()), ..self }
+    }
+
+    /// A tick box before the label ([`crate::button::tick`]).
+    pub fn ticked(self, on: bool) -> Self {
+        Self { ticked: Some(on), ..self }
     }
 }
 
@@ -94,14 +101,19 @@ impl<A: Clone + 'static> ContextMenu<A> {
                         .child(SharedString::from(caption.clone())),
                 ));
             }
+            let tick = entry.ticked.map(|on| crate::button::tick(on, colors.text_accent, cx));
             if let Some(why) = &entry.dimmed {
                 list = list.child(
                     div()
                         .id(SharedString::from(key.clone()))
                         .relative()
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .px_3()
                         .py(px(3.))
                         .text_color(colors.text_disabled)
+                        .children(tick)
                         .child(SharedString::from(entry.label.clone()))
                         .child(hit_target(hits, key))
                         .tooltip(crate::tooltip::Tooltip::text(why.clone()))
@@ -115,8 +127,12 @@ impl<A: Clone + 'static> ContextMenu<A> {
                     .relative()
                     .px_3()
                     .py(px(3.))
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .cursor_pointer()
                     .hover(|s| s.bg(colors.element_hover))
+                    .children(tick)
                     .child(SharedString::from(entry.label.clone()))
                     .child(hit_target(hits, key))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {

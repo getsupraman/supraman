@@ -5,6 +5,7 @@ pub mod branch;
 mod cap;
 mod cells;
 mod colours;
+mod columns;
 pub mod commit;
 mod details;
 pub mod diff;
@@ -211,6 +212,9 @@ pub struct GitView {
     _branch_events: Subscription,
     commit: Entity<CommitActions>,
     _commit_events: Subscription,
+    /// The graph's columns hidden, by id.
+    hidden_columns: Vec<String>,
+    column_menu: Option<supraman_ui::menu::ContextMenu<columns::ColumnAct>>,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -293,6 +297,8 @@ impl GitView {
                 _branch_events: branch_events,
                 commit,
                 _commit_events: commit_events,
+                hidden_columns: Vec::new(),
+                column_menu: None,
                 focus_summary: false,
                 focus,
             };
@@ -317,6 +323,7 @@ impl GitView {
 
     fn open_at(&mut self, key: String, saved: &GitSizes, cx: &mut Context<Self>) {
         let (opening, save) = layout::opening(&key, saved, cx);
+        self.hidden_columns = layout::hidden_columns(cx);
         self.apply(&opening.sizes, cx);
         self.own_graph = opening.own_graph;
         self.key = Some(key);
@@ -723,16 +730,23 @@ impl GitView {
         self.trim_tail(cx);
         let palette = Palette::of(cx.theme());
         let footer = usize::from(self.paging || self.page_error.is_some());
-        Table::new(TABLE, &self.table, &self.hits, columns(self.graph_max), &self.widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, col, &palette, cx))
+        let shown = self.shown_columns();
+        let all = columns(self.graph_max);
+        let (cols, widths): (Vec<Column>, Vec<Pixels>) = shown.iter().map(|i| (all[*i].clone(), self.widths[*i])).unzip();
+        let (painted, resized) = (shown.clone(), shown);
+        Table::new(TABLE, &self.table, &self.hits, cols, &widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
             .row_height(px(graph::ROW))
             .footer(footer)
             .on_select(|this: &mut GitView, _, _, cx| this.stepped(cx))
             .on_click(|this: &mut GitView, _, _, cx| this.settled(cx))
-            .on_resize(|this: &mut GitView, widths, cx| {
-                this.widths = widths;
+            .on_resize(move |this: &mut GitView, widths, cx| {
+                for (width, i) in widths.into_iter().zip(&resized) {
+                    this.widths[*i] = width;
+                }
                 this.keep_layout(cx);
                 cx.notify();
             })
+            .on_header_menu(|this: &mut GitView, position, _, cx| this.header_menu(position, cx))
             .on_near_end(NEAR_END, |this: &mut GitView, _, cx| this.load_more(cx))
             .render(cx)
             .into_any_element()
@@ -874,5 +888,6 @@ impl Render for GitView {
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))
             .children(self.render_find())
+            .children(self.render_column_menu(cx))
     }
 }

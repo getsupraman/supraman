@@ -22,6 +22,9 @@ pub struct File {
     pub last: Option<GitSizes>,
     #[serde(default)]
     pub repos: BTreeMap<String, GitSizes>,
+    /// The graph's columns the header menu hides, in every repo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_columns: Vec<String>,
 }
 
 /// What a Git tab opens at.
@@ -124,6 +127,19 @@ pub fn opening(key: &str, saved: &GitSizes, cx: &mut App) -> (Opening, Option<Sa
 
 pub fn remember(key: &str, sizes: &GitSizes, cx: &mut App) -> Option<Save> {
     layouts(cx)?.store.as_mut()?.edit(|f| f.remember(key, sizes))
+}
+
+/// The graph's columns hidden, once [`ready`].
+pub fn hidden_columns(cx: &mut App) -> Vec<String> {
+    layouts(cx).and_then(|l| l.store.as_ref()).map(|s| s.get().hidden_columns.clone()).unwrap_or_default()
+}
+
+pub fn hide_columns(hidden: Vec<String>, cx: &mut App) -> Option<Save> {
+    layouts(cx)?.store.as_mut()?.edit(|f| {
+        let changed = f.hidden_columns != hidden;
+        f.hidden_columns = hidden;
+        changed
+    })
 }
 
 pub fn notice(cx: &App) -> Option<String> {
