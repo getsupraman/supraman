@@ -85,6 +85,8 @@ pub enum RefAct {
     Panel(RefAction),
     /// A commit's own: cherry-pick, reset, revert, …
     Commit(crate::git_view::commit::CommitAct),
+    /// A fetch, pull or push, or a ref on a remote.
+    Remote(crate::git_view::remote::RemoteAct),
 }
 
 /// What a menu was opened on.
@@ -95,6 +97,8 @@ pub enum Subject {
     Tag { name: String, sha: String, annotated: bool },
     Detached { sha: String },
     Worktree { path: PathBuf, label: String, branch: Option<String>, main: bool, current: bool, locked: bool, prunable: bool },
+    /// A remote's row: its items are gitman-actions/remote's.
+    Remote { name: String },
 }
 
 impl Subject {
@@ -102,7 +106,7 @@ impl Subject {
     pub fn sha(&self) -> Option<&str> {
         match self {
             Subject::Refs { sha, .. } | Subject::Tag { sha, .. } | Subject::Detached { sha } => Some(sha),
-            Subject::Worktree { .. } => None,
+            Subject::Worktree { .. } | Subject::Remote { .. } => None,
         }
     }
 
@@ -112,6 +116,7 @@ impl Subject {
             Subject::Tag { name, .. } => name.clone(),
             Subject::Detached { sha } => format!("HEAD ({})", short_sha(sha)),
             Subject::Worktree { label, .. } => label.clone(),
+            Subject::Remote { name } => name.clone(),
         }
     }
 }
@@ -161,6 +166,7 @@ pub fn build(subject: &Subject, facts: &Facts) -> RefMenu<RefAct> {
         Subject::Tag { name, sha, annotated } => tag_menu(&mut menu, name, sha, *annotated, facts),
         Subject::Detached { sha } => commit_items(&mut menu, sha),
         Subject::Worktree { .. } => worktree_menu(&mut menu, subject),
+        Subject::Remote { .. } => {}
     }
     for item in facts.graph.iter().cloned() {
         menu.add(Group::Graph, item);

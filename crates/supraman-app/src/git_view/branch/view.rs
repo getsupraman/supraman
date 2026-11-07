@@ -73,8 +73,10 @@ pub fn entry_subject(refs: &Refs, path: &str, entry: &Entry, top: Option<&std::p
 
 impl GitView {
     /// The refs a read found handed to the ref writes.
-    pub(crate) fn hand_refs(&mut self, refs: Arc<Refs>, status: &Status, cx: &mut Context<Self>) {
+    pub(crate) fn hand_refs(&mut self, repo: &supraman_gitman::Repo, refs: Arc<Refs>, status: &Status, cx: &mut Context<Self>) {
         let under_way = status.operation.is_some();
+        let (repo, all) = (repo.clone(), refs.clone());
+        self.remote.update(cx, |r, cx| r.set_refs(repo, all, under_way, cx));
         self.branch.update(cx, |b, _| b.set_refs(refs, under_way));
     }
 
@@ -96,6 +98,10 @@ impl GitView {
             }
             BranchEvent::Name(ask) => self.ask_name(ask.clone(), cx),
             BranchEvent::Commit(act) => self.commit_act(act.clone(), cx),
+            BranchEvent::Remote(act) => {
+                let act = act.clone();
+                self.remote.update(cx, |r, cx| r.act(act, cx));
+            }
         }
     }
 
@@ -115,11 +121,16 @@ impl GitView {
     /// A ref panel row's menu: its writes, with the panel's own Solo and Hide in their group.
     pub(crate) fn ref_menu(&mut self, path: &str, position: Point<Pixels>, cx: &mut Context<Self>) {
         let panel = self.ref_panel.read(cx);
-        let Some(entry) = panel.entry(path).cloned() else { return };
         let graph = panel.menu_items(path).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect();
-        let refs = self.branch.read(cx).refs().clone();
-        let top = self.branch.read(cx).top();
-        let Some(subject) = entry_subject(&refs, path, &entry, top.as_deref()) else { return };
+        let subject = match panel.entry(path).cloned() {
+            Some(entry) => {
+                let refs = self.branch.read(cx).refs().clone();
+                let top = self.branch.read(cx).top();
+                entry_subject(&refs, path, &entry, top.as_deref())
+            }
+            None => crate::git_view::ref_panel::remote_folder(path).map(|name| Subject::Remote { name: name.to_string() }),
+        };
+        let Some(subject) = subject else { return };
         self.branch.update(cx, |b, cx| b.open_menu(subject, graph, position, cx));
     }
 

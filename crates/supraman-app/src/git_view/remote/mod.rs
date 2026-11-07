@@ -1,0 +1,624 @@
+//! The tab's fetch, pull and push (docs/research/gitkraken-12.6.1.md §4 part B, §A): the toolbar's Pull split
+//! button and Push ([`bar`]), the ref menus' remote items ([`menu`]), the questions before a forced push or a
+//! delete on a remote, and the dialogs ([`dialogs`]): a branch's upstream, a remote's URL, ssh's prompts. Every call
+//! runs through the tab's [`WriteGate`] off the UI thread with its progress on the toolbar and a Cancel.
+
+mod bar;
+mod dialogs;
+pub mod menu;
+
+#[cfg(test)]
+mod tests;
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures::StreamExt as _;
+use futures::channel::mpsc::{UnboundedSender, unbounded};
+use gpui::{AppContext as _, Context, Entity, EventEmitter, Pixels, Point, Render, Subscription, Window, div, prelude::*};
+use supraman_core::askpass::{Asked, Bridge};
+use supraman_core::secret::SecretStore;
+use supraman_gitman::write::remote::{self, Force, Progress, PullChoice, PullMode, Pulled, Pushed, Transfer};
+use supraman_gitman::write::rebase::Rebased;
+use supraman_gitman::write::{LockSet, Session, WriteError, Writer};
+use supraman_core::Settings;
+use supraman_gitman::{Head, Refs, Remote, Repo, mask_userinfo};
+use supraman_ui::confirm::{Answer, Confirm};
+use supraman_ui::hit::HitTargets;
+use supraman_ui::menu::{ContextMenu, MenuItem};
+
+use super::stash::STILL_OPENING;
+use super::write_gate::{WriteGate, Written, capitalised};
+pub use dialogs::{Prompting, UpstreamDialog};
+pub use menu::RemoteFacts;
+
+pub const DETACHED: &str = "HEAD is detached: check out a branch first";
+pub const NO_REMOTE: &str = "This repository has no remote";
+pub const UNDER_WAY: &str = "Finish or abort the operation under way first";
+
+/// What a remote item or the toolbar asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteAct {
+    FetchAll,
+    Fetch(String),
+    /// HEAD's branch pulled.
+    Pull(PullMode),
+    /// `local` pushed to its upstream, or the upstream dialog first.
+    Push(String),
+    SetUpstream(String),
+    /// `local` pushed to `branch` on `remote` (a pill dropped on a remote branch).
+    PushTo { local: String, remote: String, branch: String },
+    PushTag { tag: String, remotes: Vec<String> },
+    /// `refname` (`refs/heads/<b>`, `refs/tags/<t>`) deleted on `remote`, asked first.
+    DeleteOnRemote { remote: String, refname: String },
+    EditRemote(String),
+    RemoveRemote(String),
+    SetDefault(PullChoice),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteEvent {
+    /// A call wrote: its toast; the tab refreshes.
+    Wrote(Option<String>),
+    Why(String),
+    /// The remotes and the pull default the ref menus read.
+    Facts(Arc<RemoteFacts>),
+}
+
+/// A question before a remote call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ask {
+    /// The remote has commits `local` lacks: pull (yes) or force with lease (alt).
+    Behind { local: String, remote: String, branch: String },
+    /// The remote branch moved since the last fetch: fetch (yes) or force anyway (alt).
+    Stale { local: String, remote: String, branch: String },
+    /// The second, destructive question before a forced push.
+    Force { local: String, remote: String, branch: String, force: Force },
+    Delete { remote: String, refname: String },
+    RemoveRemote(String),
+}
+
+fn short(refname: &str) -> &str {
+    refname.strip_prefix("refs/heads/").or_else(|| refname.strip_prefix("refs/tags/")).unwrap_or(refname)
+}
+
+impl Ask {
+    fn question(&self) -> Confirm<Ask> {
+        let ask = |text: String, yes: &str| Confirm::ask(text, yes, self.clone());
+        match self {
+            Ask::Behind { local, remote, branch } => ask(format!("{remote}/{branch} has commits {local} lacks. Pull them first, or force the push with lease, dropping them from {remote}?"), "Pull")
+                .or("Force with lease", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Lease }),
+            Ask::Stale { local, remote, branch } => ask(format!("{remote}/{branch} moved since this repository last fetched it. Fetch first, or force the push anyway?"), "Fetch")
+                .or("Force anyway", Ask::Force { local: local.clone(), remote: remote.clone(), branch: branch.clone(), force: Force::Anyway }),
+            Ask::Force { local, remote, branch, .. } => ask(format!("Force push {local} to {remote}/{branch}? The commits only {remote} holds are lost there."), "Force push"),
+            Ask::Delete { remote, refname } => ask(format!("Delete {} from {remote}? It cannot be undone.", short(refname)), "Delete"),
+            Ask::RemoveRemote(name) => ask(format!("Remove the remote {name} and its remote-tracking branches? It cannot be undone."), "Remove"),
+        }
+    }
+}
+
+/// The call under way, for its toast and its strip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Doing {
+    FetchAll,
+    Fetch(String),
+    Pull(PullMode),
+    Push { local: String, remote: String, branch: String },
+    Plain(String),
+}
+
+impl Doing {
+    /// What the strip says while it runs.
+    fn running(&self) -> String {
+        match self {
+            Doing::FetchAll => "Fetching".into(),
+            Doing::Fetch(r) => format!("Fetching {r}"),
+            Doing::Pull(_) => "Pulling".into(),
+            Doing::Push { remote, branch, .. } => format!("Pushing to {remote}/{branch}"),
+            Doing::Plain(_) => "Working".into(),
+        }
+    }
+}
+
+/// What a call's job left.
+#[derive(Debug, Clone)]
+enum Done {
+    Nothing,
+    Pulled(Pulled),
+    Pushed(Pushed),
+}
+
+/// A call's progress and prompts, heard off the UI thread.
+enum Heard {
+    Progress(Progress),
+    Asked(Asked),
+}
+
+struct Running {
+    ticket: u64,
+    doing: Doing,
+    progress: Option<Progress>,
+    cancel: Arc<AtomicBool>,
+}
+
+pub struct RemoteActions {
+    hits: HitTargets,
+    gate: Entity<WriteGate>,
+    home: Option<PathBuf>,
+    store: Option<Arc<dyn SecretStore>>,
+    writer: Option<Writer>,
+    refs: Arc<Refs>,
+    under_way: bool,
+    remotes: Vec<Remote>,
+    pull: PullChoice,
+    prune: bool,
+    running: Option<Running>,
+    /// A cancelled call's ticket, said as cancelled when it ends.
+    cancelled: Option<u64>,
+    outcome: Arc<Mutex<Option<Done>>>,
+    asking: Option<Confirm<Ask>>,
+    menu: Option<ContextMenu<RemoteAct>>,
+    upstream: Option<UpstreamDialog>,
+    editing: Option<dialogs::EditRemote>,
+    prompting: Option<Prompting>,
+    _written: Subscription,
+}
+
+impl EventEmitter<RemoteEvent> for RemoteActions {}
+
+impl RemoteActions {
+    /// `home` holds `settings.toml` (`[gitman] pull`, `prune`) and the secret store a remembered passphrase goes to.
+    pub fn new(gate: Entity<WriteGate>, hits: HitTargets, home: Option<PathBuf>, cx: &mut Context<Self>) -> RemoteActions {
+        let written = cx.subscribe(&gate, |this: &mut RemoteActions, _, w: &Written, cx| this.written(w, cx));
+        cx.observe(&gate, |_, _, cx| cx.notify()).detach();
+        let store = home.as_deref().map(supraman_core::secret::default_store);
+        let empty = Refs { head: Head::Detached { sha: String::new() }, branches: Vec::new(), remotes: Vec::new(), tags: Vec::new(), worktrees: Vec::new(), stashes: Vec::new() };
+        let mut this = RemoteActions {
+            hits,
+            gate,
+            home,
+            store,
+            writer: None,
+            refs: Arc::new(empty),
+            under_way: false,
+            remotes: Vec::new(),
+            pull: PullChoice::default(),
+            prune: true,
+            running: None,
+            cancelled: None,
+            outcome: Arc::default(),
+            asking: None,
+            menu: None,
+            upstream: None,
+            editing: None,
+            prompting: None,
+            _written: written,
+        };
+        this.read_settings(cx);
+        this
+    }
+
+    fn read_settings(&mut self, cx: &mut Context<Self>) {
+        let Some(home) = self.home.clone() else { return };
+        let read = cx.background_spawn(async move { Settings::load(&home).map(|s| supraman_gitman::remote_settings(&s)).unwrap_or_default() });
+        cx.spawn(async move |this, cx| {
+            let settings = read.await;
+            this.update(cx, |this, cx| {
+                this.pull = settings.pull.unwrap_or_default();
+                this.prune = settings.prune.unwrap_or(true);
+                this.said_facts(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The refs a read found; the repo's writer and remotes read again off the UI thread.
+    pub fn set_refs(&mut self, repo: Repo, refs: Arc<Refs>, under_way: bool, cx: &mut Context<Self>) {
+        self.refs = refs;
+        self.under_way = under_way;
+        let writer = self.writer.clone();
+        let read = cx.background_spawn(async move {
+            let writer = match writer {
+                Some(w) => w,
+                None => Writer::open(&repo).map_err(|e| e.to_string())?,
+            };
+            let remotes = supraman_gitman::remotes(writer.repo()).map_err(|e| e.to_string())?;
+            Ok::<_, String>((writer, remotes))
+        });
+        cx.spawn(async move |this, cx| {
+            let read = read.await;
+            this.update(cx, |this, cx| match read {
+                Ok((writer, remotes)) => {
+                    this.writer = Some(writer);
+                    this.remotes = remotes;
+                    this.said_facts(cx);
+                }
+                Err(why) => log::warn!("git tab: cannot read the remotes: {why}"),
+            })
+            .ok();
+        })
+        .detach();
+        self.said_facts(cx);
+    }
+
+    fn said_facts(&mut self, cx: &mut Context<Self>) {
+        cx.emit(RemoteEvent::Facts(Arc::new(RemoteFacts::new(self.remotes.clone(), &self.refs, self.pull))));
+        cx.notify();
+    }
+
+    pub fn pull_choice(&self) -> PullChoice {
+        self.pull
+    }
+
+    pub fn current(&self) -> Option<&str> {
+        supraman_gitman::write::branch::current_branch(&self.refs)
+    }
+
+    /// The upstream of `local` as `(remote, branch)`.
+    pub fn upstream(&self, local: &str) -> Option<(String, String)> {
+        let name = &self.refs.branches.iter().find(|b| b.name == local)?.upstream.as_ref()?.name;
+        menu::split_remote(&self.remotes, name).map(|(r, b)| (r.to_string(), b.to_string()))
+    }
+
+    /// Why a remote call cannot start: another runs or waits, the gate is busy.
+    pub fn busy(&self, cx: &gpui::App) -> Option<String> {
+        if let Some(running) = &self.running {
+            return Some(format!("{}…", running.doing.running()));
+        }
+        self.gate.read(cx).busy().map(str::to_string)
+    }
+
+    /// The call under way: its words and progress.
+    pub fn progress(&self) -> Option<(String, Option<&Progress>)> {
+        self.running.as_ref().map(|r| (r.doing.running(), r.progress.as_ref()))
+    }
+
+    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        if let Some(running) = &self.running {
+            running.cancel.store(true, Ordering::SeqCst);
+            self.cancelled = Some(running.ticket);
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn asking(&self) -> Option<&str> {
+        self.asking.as_ref().map(|c| c.text.as_str())
+    }
+
+    #[cfg(test)]
+    pub fn menu_labels(&self) -> Vec<(String, Option<bool>)> {
+        self.menu.as_ref().map(|m| m.items.iter().map(|i| (i.label.clone(), i.ticked)).collect()).unwrap_or_default()
+    }
+
+    /// Runs `job` with a [`Transfer`] whose prompts and progress come back here, holding `locks`.
+    fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>, &Transfer) -> Result<Done, WriteError> + Send + 'static, cx: &mut Context<Self>) {
+        let Some(writer) = self.writer.clone() else { return cx.emit(RemoteEvent::Why(STILL_OPENING.into())) };
+        if self.busy(cx).is_some() {
+            return;
+        }
+        let (heard, mut hearing) = unbounded::<Heard>();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (outcome, store, stop) = (self.outcome.clone(), self.store.clone(), cancel.clone());
+        let wrapped = move |s: &Session<'_>| {
+            let to = heard.clone();
+            let mut t = Transfer { cancel: stop, progress: Arc::new(move |p| drop(to.unbounded_send(Heard::Progress(p)))), env: Vec::new() };
+            let slot = Arc::new(Mutex::new(Some(heard)));
+            let bridge = askpass(store, slot.clone());
+            if let Some((_, env)) = &bridge {
+                t.env = env.clone();
+            }
+            let done = job(s, &t);
+            drop(bridge);
+            slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+            *outcome.lock().unwrap_or_else(PoisonError::into_inner) = Some(done?);
+            Ok(())
+        };
+        let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, wrapped, cx)) else { return };
+        self.running = Some(Running { ticket, doing, progress: None, cancel });
+        cx.spawn(async move |this, cx| {
+            while let Some(h) = hearing.next().await {
+                if this.update(cx, |this, cx| this.heard(ticket, h, cx)).is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn heard(&mut self, ticket: u64, heard: Heard, cx: &mut Context<Self>) {
+        match heard {
+            Heard::Progress(p) => {
+                if let Some(running) = self.running.as_mut().filter(|r| r.ticket == ticket) {
+                    running.progress = Some(p);
+                }
+            }
+            Heard::Asked(asked) => self.prompting = Some(Prompting::new(asked)),
+        }
+        cx.notify();
+    }
+
+    fn written(&mut self, w: &Written, cx: &mut Context<Self>) {
+        let Some(running) = self.running.take_if(|r| r.ticket == w.ticket) else { return };
+        if let Some(p) = self.prompting.take() {
+            p.cancel();
+        }
+        let done = self.outcome.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if self.cancelled.take() == Some(w.ticket) {
+            cx.emit(RemoteEvent::Wrote(None));
+            return cx.emit(RemoteEvent::Why(format!("{} was cancelled", running.doing.running())));
+        }
+        if let Err(why) = &w.result {
+            cx.emit(RemoteEvent::Wrote(None));
+            return cx.emit(RemoteEvent::Why(capitalised(why)));
+        }
+        let toast = match (running.doing, done.unwrap_or(Done::Nothing)) {
+            (Doing::FetchAll, _) => "Fetched every remote".to_string(),
+            (Doing::Fetch(r), _) => format!("Fetched {r}"),
+            (Doing::Pull(mode), Done::Pulled(pulled)) => match pulled {
+                Pulled::UpToDate => "Already up to date".into(),
+                Pulled::Merged => "Pulled".into(),
+                Pulled::Rebased(Rebased::Done { .. }) => "Pulled and rebased".into(),
+                Pulled::Rebased(Rebased::Conflicted) | Pulled::Conflicted => {
+                    cx.emit(RemoteEvent::Wrote(None));
+                    return cx.emit(RemoteEvent::Why("The pull stopped on conflicts: resolve them in the WIP".into()));
+                }
+                Pulled::NoUpstream { branch } => return self.ask_upstream(branch, dialogs::Then::Pull(mode), cx),
+                Pulled::Gone { upstream } => return cx.emit(RemoteEvent::Why(format!("{upstream} is gone from its remote: set another upstream"))),
+            },
+            (Doing::Push { local, remote, branch }, Done::Pushed(pushed)) => match pushed {
+                Pushed::Done => format!("Pushed {local} to {remote}/{branch}"),
+                Pushed::Behind => return self.ask(Ask::Behind { local, remote, branch }, cx),
+                Pushed::StaleLease => return self.ask(Ask::Stale { local, remote, branch }, cx),
+            },
+            (Doing::Plain(words), _) => words,
+            _ => String::new(),
+        };
+        cx.emit(RemoteEvent::Wrote(Some(toast).filter(|t| !t.is_empty())));
+        cx.notify();
+    }
+
+    fn ask(&mut self, ask: Ask, cx: &mut Context<Self>) {
+        self.asking = Some(ask.question());
+        cx.notify();
+    }
+
+    pub fn answer(&mut self, answer: Answer, cx: &mut Context<Self>) {
+        let Some(asked) = self.asking.take() else { return };
+        match asked.take(answer) {
+            Some(Ask::Behind { .. }) => self.act(RemoteAct::Pull(PullMode::FastForwardIfPossible), cx),
+            Some(Ask::Stale { remote, .. }) => self.act(RemoteAct::Fetch(remote), cx),
+            Some(ask @ Ask::Force { .. }) => self.ask(ask, cx),
+            Some(Ask::Delete { remote, refname }) => {
+                let words = format!("Deleted {} from {remote}", short(&refname));
+                self.request(Doing::Plain(words), LockSet::push(), move |s, t| remote::delete_remote_ref(s, &remote, &refname, t).map(|_| Done::Nothing), cx);
+            }
+            Some(Ask::RemoveRemote(name)) => {
+                let words = format!("Removed the remote {name}");
+                self.request(Doing::Plain(words), LockSet::remote_config(), move |s, _| remote::remove_remote(s, &name).map(|_| Done::Nothing), cx);
+            }
+            None => {}
+        }
+        cx.notify();
+    }
+
+    /// The forced push the second question was about, once confirmed.
+    fn answer_force(&mut self, answer: Answer, cx: &mut Context<Self>) {
+        match self.asking.as_ref().and_then(|a| a.action.clone()) {
+            Some(Ask::Force { local, remote, branch, force }) if answer == Answer::Yes => {
+                self.asking = None;
+                self.push(local, remote, branch, force, cx);
+            }
+            Some(Ask::Force { .. }) => {
+                self.asking = None;
+                cx.notify();
+            }
+            _ => self.answer(answer, cx),
+        }
+    }
+
+    fn push(&mut self, local: String, remote: String, branch: String, force: Force, cx: &mut Context<Self>) {
+        let doing = Doing::Push { local: local.clone(), remote: remote.clone(), branch: branch.clone() };
+        self.request(doing, LockSet::push(), move |s, t| remote::push(s, &local, &remote, &branch, force, t).map(Done::Pushed), cx);
+    }
+
+    /// What an item, a key or the toolbar asks for.
+    pub fn act(&mut self, act: RemoteAct, cx: &mut Context<Self>) {
+        self.menu = None;
+        let names: Vec<String> = self.remotes.iter().map(|r| r.name.clone()).collect();
+        let prune = self.prune;
+        match act {
+            RemoteAct::FetchAll if names.is_empty() => cx.emit(RemoteEvent::Why(NO_REMOTE.into())),
+            RemoteAct::FetchAll => self.request(Doing::FetchAll, LockSet::fetch(), move |s, t| remote::fetch_all(s, &names, prune, t).map(|_| Done::Nothing), cx),
+            RemoteAct::Fetch(name) => {
+                let doing = Doing::Fetch(name.clone());
+                self.request(doing, LockSet::fetch(), move |s, t| remote::fetch(s, &name, prune, t).map(|_| Done::Nothing), cx);
+            }
+            RemoteAct::Pull(mode) => match self.pull_why_not(Some(mode)) {
+                Some(why) => cx.emit(RemoteEvent::Why(why.into())),
+                None => self.request(Doing::Pull(mode), LockSet::pull(), move |s, t| remote::pull(s, mode, prune, t).map(Done::Pulled), cx),
+            },
+            RemoteAct::Push(local) => match self.upstream(&local) {
+                Some((remote, branch)) => self.push(local, remote, branch, Force::No, cx),
+                None if self.remotes.is_empty() => cx.emit(RemoteEvent::Why(NO_REMOTE.into())),
+                None => self.ask_upstream(local, dialogs::Then::Push, cx),
+            },
+            RemoteAct::SetUpstream(local) => self.ask_upstream(local, dialogs::Then::Set, cx),
+            RemoteAct::PushTo { local, remote, branch } => self.push(local, remote, branch, Force::No, cx),
+            RemoteAct::PushTag { tag, remotes } => {
+                let words = format!("Pushed {tag} to {}", remotes.join(", "));
+                self.request(Doing::Plain(words), LockSet::push(), move |s, t| {
+                    for r in &remotes {
+                        if remote::push_tag(s, r, &tag, t)? != Pushed::Done {
+                            return Err(WriteError::Remote(format!("{r} already has another {tag}")));
+                        }
+                    }
+                    Ok(Done::Nothing)
+                }, cx);
+            }
+            RemoteAct::DeleteOnRemote { remote, refname } => self.ask(Ask::Delete { remote, refname }, cx),
+            RemoteAct::EditRemote(name) => self.edit_remote(name, cx),
+            RemoteAct::RemoveRemote(name) => self.ask(Ask::RemoveRemote(name), cx),
+            RemoteAct::SetDefault(choice) => self.set_default(choice, cx),
+        }
+        cx.notify();
+    }
+
+    /// Why a pull (`None`: the toolbar's default) cannot start now.
+    pub fn pull_why_not(&self, mode: Option<PullMode>) -> Option<&'static str> {
+        let fetch = mode.is_none() && self.pull == PullChoice::Fetch;
+        if self.remotes.is_empty() {
+            Some(NO_REMOTE)
+        } else if fetch {
+            None
+        } else if matches!(self.refs.head, Head::Detached { .. }) {
+            Some(DETACHED)
+        } else if self.under_way {
+            Some(UNDER_WAY)
+        } else {
+            None
+        }
+    }
+
+    /// Why Push cannot start now.
+    pub fn push_why_not(&self) -> Option<&'static str> {
+        if self.remotes.is_empty() {
+            Some(NO_REMOTE)
+        } else if self.current().is_none() {
+            Some(DETACHED)
+        } else {
+            None
+        }
+    }
+
+    /// The toolbar's Pull: its default.
+    pub fn pull_default(&mut self, cx: &mut Context<Self>) {
+        match self.pull.mode() {
+            None => self.act(RemoteAct::FetchAll, cx),
+            Some(mode) => self.act(RemoteAct::Pull(mode), cx),
+        }
+    }
+
+    /// The toolbar's Push: HEAD's branch.
+    pub fn push_head(&mut self, cx: &mut Context<Self>) {
+        match (self.push_why_not(), self.current().map(str::to_string)) {
+            (None, Some(local)) => self.act(RemoteAct::Push(local), cx),
+            (Some(why), _) => cx.emit(RemoteEvent::Why(why.into())),
+            _ => {}
+        }
+    }
+
+    /// The default kept, then saved in `[gitman] pull` off the UI thread.
+    fn set_default(&mut self, choice: PullChoice, cx: &mut Context<Self>) {
+        self.pull = choice;
+        self.said_facts(cx);
+        let Some(home) = self.home.clone() else { return };
+        let save = cx.background_spawn(async move { Settings::update(&home, |s| supraman_gitman::set_setting(s, "pull", choice)).map_err(|e| e.to_string()).and_then(|(_, set)| set) });
+        cx.spawn(async move |this, cx| {
+            if let Err(why) = save.await {
+                this.update(cx, |_, cx| cx.emit(RemoteEvent::Why(format!("The default is not saved: {why}")))).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// The Pull button's menu at `position`: each pull, then the default ticked.
+    pub fn open_pull_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let mut items: Vec<MenuItem<RemoteAct>> = Vec::new();
+        for choice in PullChoice::ALL {
+            let act = match choice.mode() {
+                None => RemoteAct::FetchAll,
+                Some(mode) => RemoteAct::Pull(mode),
+            };
+            let it = supraman_ui::menu::item(format!("pull-{}", bar::key_of(choice)), bar::words(choice), act);
+            items.push(match self.pull_why_not(choice.mode()).filter(|_| choice.mode().is_some()) {
+                Some(why) => it.dimmed(why),
+                None => it,
+            });
+        }
+        for (i, choice) in PullChoice::ALL.into_iter().enumerate() {
+            let it = supraman_ui::menu::item(format!("pull-default-{}", bar::key_of(choice)), bar::words(choice), RemoteAct::SetDefault(choice)).ticked(choice == self.pull);
+            items.push(if i == 0 { it.under("Set as default") } else { it });
+        }
+        self.menu = Some(ContextMenu { title: "The button does the default".into(), position, items });
+        cx.notify();
+    }
+
+    fn ask_upstream(&mut self, local: String, then: dialogs::Then, cx: &mut Context<Self>) {
+        if self.remotes.is_empty() {
+            return cx.emit(RemoteEvent::Why(NO_REMOTE.into()));
+        }
+        self.upstream = Some(UpstreamDialog::new(local, then, &self.remotes));
+        cx.notify();
+    }
+
+    /// The upstream dialog's answer: set, then pushed or pulled as it was asked for.
+    fn submit_upstream(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = &self.upstream else { return };
+        let Some((local, remote, branch, then)) = dialog.chosen(&self.remotes, cx) else { return cx.notify() };
+        self.upstream = None;
+        let prune = self.prune;
+        match then {
+            dialogs::Then::Push => {
+                let doing = Doing::Push { local: local.clone(), remote: remote.clone(), branch: branch.clone() };
+                self.request(doing, LockSet::push(), move |s, t| remote::publish(s, &local, &remote, &branch, t).map(Done::Pushed), cx);
+            }
+            dialogs::Then::Pull(mode) => self.request(Doing::Pull(mode), LockSet::pull(), move |s, t| {
+                remote::set_upstream(s, &local, &remote, &branch)?;
+                remote::pull(s, mode, prune, t).map(Done::Pulled)
+            }, cx),
+            dialogs::Then::Set => {
+                let words = format!("{local} tracks {remote}/{branch}");
+                self.request(Doing::Plain(words), LockSet::branch(), move |s, _| remote::set_upstream(s, &local, &remote, &branch).map(|_| Done::Nothing), cx);
+            }
+        }
+    }
+
+    fn edit_remote(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(r) = self.remotes.iter().find(|r| r.name == name) else { return };
+        self.editing = Some(dialogs::EditRemote::new(name, r.url.clone()));
+        cx.notify();
+    }
+
+    fn submit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.editing.take() else { return };
+        let (name, url) = (edit.name.clone(), edit.url(cx));
+        if url.is_empty() || url == mask_userinfo(&edit.was) {
+            return cx.notify();
+        }
+        let words = format!("{name} now fetches from {}", mask_userinfo(&url));
+        self.request(Doing::Plain(words), LockSet::remote_config(), move |s, _| remote::set_url(s, &name, &url).map(|_| Done::Nothing), cx);
+    }
+}
+
+/// The bridge ssh's prompts reach this tab through, and its git's environment; none without `sm.exe` beside the app.
+/// The call empties `heard` when it ends, so the bridge's threads never hold the channel's last sender.
+fn askpass(store: Option<Arc<dyn SecretStore>>, heard: Arc<Mutex<Option<UnboundedSender<Heard>>>>) -> Option<(Bridge, Vec<(String, OsString)>)> {
+    let program = supraman_core::install::sm_exe().ok().filter(|p| p.is_file())?;
+    let bridge = Bridge::start(store, move |asked| {
+        if let Some(to) = heard.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            drop(to.unbounded_send(Heard::Asked(asked)));
+        }
+    })
+    .ok()?;
+    let env = bridge.env(&program);
+    Some((bridge, env))
+}
+
+impl Render for RemoteActions {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_fields(window, cx);
+        let question = self.asking.as_ref().map(|asked| asked.render_answer(&self.hits, "git-remote-ask", |this: &mut Self, answer, _, cx| this.answer_force(answer, cx), cx).m_2());
+        let menu = self.menu.as_ref().map(|menu| {
+            menu.render(&self.hits, |this: &mut RemoteActions, act, _, cx| this.act(act, cx), |this: &mut RemoteActions, cx| {
+                this.menu = None;
+                cx.notify();
+            }, cx)
+        });
+        div().children(question).children(self.render_dialogs(cx)).children(menu)
+    }
+}

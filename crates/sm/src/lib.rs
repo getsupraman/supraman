@@ -142,10 +142,25 @@ fn failure_text(f: Failure) -> String {
     }
 }
 
+/// Hidden: ssh's `SSH_ASKPASS` under a Git tab's fetch, pull or push; the answer the app's bridge gave on stdout,
+/// else exit 1 (supraman_core::askpass).
+fn askpass(args: &[String]) -> ExitCode {
+    match supraman_core::askpass::ask(&args.join(" ")) {
+        Some(answer) => {
+            println!("{answer}");
+            ExitCode::SUCCESS
+        }
+        None => ExitCode::from(1),
+    }
+}
+
 /// `sm`'s command line, without the program name.
 pub fn cli(args: Vec<String>) -> ExitCode {
     if args.first().map(String::as_str) == Some("mcp-header") {
         return mcp_header(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("askpass") {
+        return askpass(&args[1..]);
     }
     clean_install();
     // A hook must never break the session: exit 0 whatever the arguments or the outcome.

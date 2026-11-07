@@ -12,7 +12,7 @@ use super::{GitView, Selected};
 
 gpui::actions!(
     git_graph,
-    [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo, StageAll, UnstageAll, FocusMessage, StageSelected, UnstageSelected, StageAllAndCommit, NextField, PreviousField]
+    [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo, StageAll, UnstageAll, FocusMessage, StageSelected, UnstageSelected, StageAllAndCommit, NextField, PreviousField, FetchAll]
 );
 
 pub const KEY_CONTEXT: &str = "GitGraph";
@@ -47,6 +47,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-s", StageAll, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-shift-u", UnstageAll, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-shift-m", FocusMessage, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-l", FetchAll, Some(TAB_CONTEXT)),
         KeyBinding::new("s", StageSelected, Some(WIP_LIST_CONTEXT)),
         KeyBinding::new("u", UnstageSelected, Some(WIP_LIST_CONTEXT)),
         KeyBinding::new("ctrl-shift-enter", StageAllAndCommit, Some(MESSAGE_CONTEXT)),

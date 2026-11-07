@@ -588,6 +588,7 @@ pub struct TextInput {
     enter_confirms: bool,
     /// Ctrl+Enter is [`InputEvent::Submit`], told apart from Enter's [`InputEvent::Confirm`].
     submit_apart: bool,
+    masked: bool,
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_height: Pixels,
@@ -656,6 +657,7 @@ impl TextInput {
             multi_line: false,
             enter_confirms: false,
             submit_apart: false,
+            masked: false,
             last_layout: None,
             last_bounds: None,
             last_line_height: LINE_HEIGHT,
@@ -687,8 +689,19 @@ impl TextInput {
         self
     }
 
+    /// A passphrase's field: one `*` per byte shown, and nothing copied or cut.
+    pub fn masked(mut self) -> Self {
+        self.masked = true;
+        self
+    }
+
     pub fn text(&self) -> &str {
         self.line.text()
+    }
+
+    /// What is laid out: the text, or as many `*` as it has bytes.
+    fn shown(&self) -> SharedString {
+        if self.masked { "*".repeat(self.line.text().len()).into() } else { SharedString::from(self.line.text().to_string()) }
     }
 
     pub fn is_focused(&self, window: &Window) -> bool {
@@ -918,14 +931,14 @@ impl TextInput {
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let s = self.line.selection();
-        if !s.is_empty() {
+        if !s.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(self.line.text()[s].to_string()));
         }
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
         let s = self.line.selection();
-        if !s.is_empty() {
+        if !s.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(self.line.text()[s.clone()].to_string()));
             self.line.replace(s, "", EditKind::Other);
             self.edited(window, cx);
@@ -1044,7 +1057,7 @@ impl TextInput {
         let (shown, color) = if text.is_empty() {
             (self.placeholder.clone(), cx.theme().colors().text_placeholder)
         } else {
-            (SharedString::from(text.to_string()), style.color)
+            (self.shown(), style.color)
         };
         let run = TextRun { len: shown.len(), font: style.font(), color, background_color: None, underline: None, strikethrough: None };
         let runs = match self.line.marked().filter(|_| !text.is_empty()) {
@@ -1230,7 +1243,7 @@ impl Element for TextElement {
         let (shown, runs, font_size) = input.shaping(window, cx);
         let wrap = input.multi_line.then(|| bounds.size.width - CARET_ROOM);
         let lines: Vec<WrappedLine> = window.text_system().shape_text(shown, font_size, &runs, wrap, None).map(|l| l.into_iter().collect()).unwrap_or_default();
-        let layout = if text.is_empty() { Layout::new("", &[]) } else { Layout::new(text, &lines) };
+        let layout = if text.is_empty() { Layout::new("", &[]) } else { Layout::new(&input.shown(), &lines) };
         let mut first_rows = Vec::with_capacity(lines.len());
         let mut rows = 0;
         for line in &lines {

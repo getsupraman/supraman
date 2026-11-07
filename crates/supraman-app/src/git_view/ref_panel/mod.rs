@@ -53,6 +53,11 @@ pub struct Built {
     trees: [Tree<Entry, Keys>; 5],
 }
 
+/// The remote whose row `path` is: `remote/<name>`, the folder its branches sit in.
+pub fn remote_folder(path: &str) -> Option<&str> {
+    path.strip_prefix("remote/").filter(|name| !name.is_empty() && !name.contains('/'))
+}
+
 pub fn build(refs: &Refs) -> Built {
     let entries = entries(refs);
     let trees = Section::ALL.map(|section| Tree::build_given(entries.iter().filter(|(path, _)| Section::of(path) == Some(section)).cloned(), fold));
