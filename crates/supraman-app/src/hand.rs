@@ -25,6 +25,8 @@ pub enum Launch {
     Plain,
     /// `name` keys the file and `hands.json`; `session` is the Workman session's name.
     Minted { name: String, session: String, config: PathBuf, notice: Option<String>, new_session: Option<String> },
+    /// No token of its own (signed out, or the mint failed, said in `notice`): its config's helper prints the placeholder.
+    Helped { name: String, config: PathBuf, notice: Option<String> },
     Unminted(String),
 }
 
@@ -48,7 +50,11 @@ impl Launch {
             if argv.is_empty() { claude.to_string() } else { format!("supramanClaude @({})", argv.join(", ")) }
         };
         let script = match self {
-            Launch::Minted { config, new_session, .. } => {
+            Launch::Minted { config, .. } | Launch::Helped { config, .. } => {
+                let new_session = match self {
+                    Launch::Minted { new_session, .. } => new_session.as_ref(),
+                    _ => None,
+                };
                 let path = quote(&config.to_string_lossy());
                 let mut head: Vec<String> = new_session.iter().flat_map(|id| ["'--session-id'".into(), quote(id)]).collect();
                 head.extend(["'--mcp-config'".into(), path.clone()]);
@@ -60,7 +66,7 @@ impl Launch {
             }
             Launch::Plain | Launch::Unminted(_) => format!("{on_path}{}", run(Vec::new())),
         };
-        let passes_args = !flags.is_empty() || matches!(self, Launch::Minted { .. });
+        let passes_args = !flags.is_empty() || matches!(self, Launch::Minted { .. } | Launch::Helped { .. });
         if passes_args { format!("{}{script}", runner(claude)) } else { script }
     }
 
@@ -187,6 +193,8 @@ pub struct Hands {
     sessions: std::collections::HashMap<String, String>,
     /// Names a launch holds while its mint runs outside the lock, with their Workman session names.
     picked: std::collections::HashMap<String, String>,
+    /// Names of [`Launch::Helped`] tabs, held while their config exists.
+    helped: std::collections::HashSet<String>,
     /// Servers of released tokens that were not revoked here: their grants go ([`Self::take_left`]).
     left: Vec<String>,
     /// Where `continued-in` chains and claude's live sessions are read; without it a session is its own newest.
@@ -314,6 +322,7 @@ impl Hands {
             minted,
             sessions: Default::default(),
             picked: Default::default(),
+            helped: Default::default(),
             left: Vec::new(),
             claude_dir: None,
             carried: Default::default(),
@@ -346,7 +355,21 @@ impl Hands {
     /// Names no record has and no other launch holds; `held` is the caller's own.
     fn free_names<'a>(&'a self, cwd: &Path, held: &'a str) -> impl Iterator<Item = String> + 'a {
         let folder = folder_slug(cwd);
-        (1..).map(move |n| format!("hand-{folder}-{n}")).filter(move |n| self.minted.get(n).is_none() && (n == held || !self.picked.contains_key(n)))
+        (1..)
+            .map(move |n| format!("hand-{folder}-{n}"))
+            .filter(move |n| self.minted.get(n).is_none() && !self.helped.contains(n) && (n == held || !self.picked.contains_key(n)))
+    }
+
+    /// A tab without a token of its own still gets its helped config under a free name, never the user's own
+    /// `workman` registration.
+    fn helped(&mut self, name: String, notice: Option<String>) -> Launch {
+        match self.keeper().write_unminted(&name, &supraman_supervisor::mcp_url(&self.auth), &[]) {
+            Ok(config) => {
+                self.helped.insert(name.clone());
+                Launch::Helped { name, config, notice }
+            }
+            Err(e) => Launch::Unminted(format!("{}This claude session runs without Workman: {e}", notice.map(|n| format!("{n}; ")).unwrap_or_default())),
+        }
     }
 
     /// The claude that last held `claude_session`'s token here has exited (its config is gone) and no live
@@ -429,10 +452,12 @@ impl Hands {
 
     /// The name of a launch, held for it until [`Self::finish`], and the mint to make.
     fn pick(&mut self, cwd: &Path, own: Option<&str>, claude_session: Option<&str>) -> Result<Pending, Launch> {
+        let dir = self.mcp_dir();
+        self.helped.retain(|n| supraman_claude::mcp_config_path(&dir, n).is_ok_and(|p| p.exists()));
         let (url, bearer) = match self.bearer() {
             Ok(Some(b)) => b,
-            Ok(None) => return Err(Launch::Plain),
-            Err(e) => return Err(Launch::Unminted(format!("This claude session runs without its own Workman token: {e}"))),
+            Ok(None) => return Err(self.helped(self.next_name(cwd), None)),
+            Err(e) => return Err(self.helped(self.next_name(cwd), Some(format!("This claude session runs without its own Workman token: {e}")))),
         };
         let mut notice = self.follow_chains();
         let new_session = claude_session.is_none().then(supraman_claude::new_session_id);
@@ -482,7 +507,10 @@ impl Hands {
         self.picked.remove(&name);
         let minted = match minted {
             Ok(m) => m,
-            Err(e) => return Launch::Unminted(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")),
+            Err(e) => {
+                let name = if self.minted.get(&name).is_some() { self.next_name(Path::new(&request.cwd)) } else { name };
+                return self.helped(name, Some(format!("This claude session runs without its own Workman token: cannot mint an {ROLE} one ({e})")));
+            }
         };
         let session = MintedSession { session_id: minted.session_id.clone(), role: EXTERNAL_ROLE.into(), claude_session_id: claude_session, last_active: None, origin: Some(base) };
         self.minted.insert_minted(&name, session, &request);
@@ -1115,45 +1143,68 @@ mod tests {
         assert!(seen.recv_timeout(std::time::Duration::from_millis(300)).is_err());
     }
 
+    /// `launch` is a [`Launch::Helped`] whose config names `url`, runs the helper and holds no token, with none kept.
+    fn assert_helped_tab(hands: &Hands, launch: &Launch, url: &str) -> (String, Option<String>) {
+        let Launch::Helped { name, config, notice } = launch else { panic!("{launch:?}") };
+        assert_eq!(config, &supraman_claude::mcp_config_path(&hands.mcp_dir(), name).unwrap());
+        let text = std::fs::read_to_string(config).unwrap();
+        let workman = &serde_json::from_str::<serde_json::Value>(&text).unwrap()["mcpServers"]["workman"];
+        assert_eq!(workman["url"].as_str(), Some(url), "{text}");
+        assert!(workman["headersHelper"].as_str().is_some_and(|h| h.ends_with(&format!(" mcp-header --home \"{}\" {name}", hands.home.display()))), "{text}");
+        assert!(!text.contains("Bearer") && !text.contains("wss_"), "no token in the config: {text}");
+        assert_eq!(hands.helper.as_ref().unwrap().1.get(&supraman_claude::mcp_token_key(name)).unwrap(), None, "no token kept");
+        let script = launch.script();
+        assert!(script.contains(&format!("supramanClaude @('--mcp-config', {})", quote(&config.to_string_lossy()))), "{script}");
+        assert!(!script.contains("--strict-mcp-config"), "the user's other servers stay: {script}");
+        (name.clone(), notice.clone())
+    }
+
     #[test]
-    fn hand_without_workman_is_plain_and_mints_nothing() {
+    fn hand_signed_out_gets_its_helped_config_and_mints_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let (_url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), None);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
-        assert_eq!(hands.launch(Path::new(r"C:\demo\alpha"), None), Launch::Plain);
+        let url = supraman_supervisor::mcp_url(&auth);
+        let first = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        assert_eq!(assert_helped_tab(&hands, &first, &url), ("hand-alpha-1".to_string(), None));
+        let second = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        assert_eq!(assert_helped_tab(&hands, &second, &url).0, "hand-alpha-2", "a tab's config is its own");
+        let Launch::Helped { config, .. } = &first else { unreachable!() };
+        std::fs::remove_file(config).unwrap();
+        let third = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        assert_eq!(assert_helped_tab(&hands, &third, &url).0, "hand-alpha-1", "an exited tab's name is free again");
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no request");
-        assert!(!home.join("mcp").exists());
-        assert!(hands.release_all().is_empty());
+        assert!(hands.names().is_empty() && hands.release_all().is_empty());
     }
 
     #[test]
-    fn hand_with_a_broken_sign_in_opens_it_plain_and_says_so() {
+    fn hand_with_a_broken_sign_in_gets_its_helped_config_and_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, oauth) = fake_workman(vec![]);
         oauth.set_access_ttl(60);
         let (home, auth) = home_with(dir.path(), Some(&url));
         oauth.fail_refresh(true);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
-        let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!() };
+        let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        let (_, notice) = assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
+        let notice = notice.unwrap();
         assert!(notice.contains("sign in to Workman") && notice.contains("again"), "{notice}");
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no mint");
     }
 
     #[test]
-    fn hand_mint_failure_opens_it_plain_with_one_notice() {
+    fn hand_mint_failure_gets_its_helped_config_with_one_notice() {
         let dir = tempfile::tempdir().unwrap();
         let (url, seen, _oauth) = fake_workman(vec![(500, r#"{"error":"the store is down"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
+        let (_, notice) = assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
         assert_eq!(
-            launch,
-            Launch::Unminted(
-                "This claude session runs without its own Workman token: cannot mint an orchestrator one (Workman answered HTTP 500: the store is down)".into()
-            )
+            notice.as_deref(),
+            Some("This claude session runs without its own Workman token: cannot mint an orchestrator one (Workman answered HTTP 500: the store is down)")
         );
-        assert_eq!(launch.script(), "claude");
         assert!(oauth(&seen.recv_timeout(WAIT).unwrap().1));
         assert!(hands.names().is_empty());
     }
@@ -1271,7 +1322,8 @@ mod tests {
         let (url, seen, _oauth) = fake_workman(vec![(403, r#"{"error":"a worker cannot mint a orchestrator token; a role is never raised"}"#)]);
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
-        let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow")) else { panic!() };
+        let launch = hands.launch(Path::new(r"C:\demo\alpha"), Some("mw-workflow"));
+        let notice = assert_helped_tab(&hands, &launch, &format!("{url}/mcp")).1.unwrap();
         assert!(notice.contains("cannot mint an orchestrator one (Workman answered HTTP 403"), "{notice}");
         let body: serde_json::Value = serde_json::from_str(&seen.recv_timeout(WAIT).unwrap().2).unwrap();
         assert_eq!(body["role"].as_str(), Some("orchestrator"));
@@ -1699,7 +1751,8 @@ mod tests {
         let (home, auth) = home_with(dir.path(), Some(&url));
         let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
         let launch = hands.launch(Path::new(r"C:\demo\alpha"), None);
-        assert!(matches!(&launch, Launch::Unminted(why) if why.contains("HTTP 409")), "{launch:?}");
+        assert!(matches!(&launch, Launch::Helped { notice: Some(why), .. } if why.contains("HTTP 409")), "{launch:?}");
+        assert_helped_tab(&hands, &launch, &format!("{url}/mcp"));
         let names: Vec<String> = (0..=FRESH_TRIES)
             .map(|_| serde_json::from_str::<serde_json::Value>(&seen.recv_timeout(WAIT).unwrap().2).unwrap()["name"].as_str().unwrap().to_string())
             .collect();

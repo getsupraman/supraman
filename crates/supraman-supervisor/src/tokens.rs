@@ -19,6 +19,15 @@ impl TokenProvider for AppTokens {
         };
         Ok(bearer(&self.auth)?.map(|(url, token)| RoleToken { url, token, role: ws_role.into() }))
     }
+
+    fn mcp_url(&self) -> String {
+        mcp_url(&self.auth)
+    }
+}
+
+/// The MCP URL of the server Supraman signs in to, signed in or not: the one source of every session config's URL.
+pub fn mcp_url(auth: &Auth) -> String {
+    format!("{}/mcp", auth.configured_origin())
 }
 
 static SIGN_INS: AtomicU64 = AtomicU64::new(0);

@@ -484,14 +484,24 @@ impl Keeper {
     /// Keeps `token` (minted with `expires_at`) for `name` and writes its helped config with `servers` beside Workman's.
     pub fn write(&self, name: &str, url: &str, token: &str, expires_at: Option<&str>, servers: &[(String, String)]) -> Result<PathBuf, String> {
         self.keep(name, token, expires_at)?;
+        self.write_unminted(name, url, servers)
+    }
+
+    /// `name`'s helped config with no token kept: its helper prints the placeholder ([`header`]) until a mint keeps one.
+    pub fn write_unminted(&self, name: &str, url: &str, servers: &[(String, String)]) -> Result<PathBuf, String> {
         supraman_claude::write_mcp_config_helped(&self.mcp_dir, name, url, &self.helper(name), servers)
             .map_err(|e| format!("cannot write the mcp config of {name}: {e}"))
     }
 
     /// `spec` with `token` (minted with `expires_at`) kept for its name and its helped config.
     pub fn launch(&self, spec: supraman_claude::LaunchSpec, url: &str, token: &str, expires_at: Option<&str>) -> Result<supraman_claude::LaunchSpec, String> {
+        self.keep(&spec.name, token, expires_at)?;
+        self.launch_unminted(spec, url)
+    }
+
+    /// `spec` with its [`Self::write_unminted`] config.
+    pub fn launch_unminted(&self, spec: supraman_claude::LaunchSpec, url: &str) -> Result<supraman_claude::LaunchSpec, String> {
         let name = spec.name.clone();
-        self.keep(&name, token, expires_at)?;
         spec.with_helped_config(&self.mcp_dir, &name, url, &self.helper(&name))
             .map_err(|e| format!("cannot write the mcp config of {name}: {e}"))
     }

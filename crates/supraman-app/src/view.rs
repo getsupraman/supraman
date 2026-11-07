@@ -1940,7 +1940,7 @@ impl FleetView {
             let Some(hands) = hands else { return };
             let name = match launch {
                 Launch::Minted { name, .. } => name,
-                Launch::Unminted(notice) => {
+                Launch::Unminted(notice) | Launch::Helped { notice: Some(notice), .. } => {
                     this.update(cx, |this, cx| {
                         this.hand_notices.push(notice);
                         cx.notify();
@@ -1948,7 +1948,7 @@ impl FleetView {
                     .ok();
                     return;
                 }
-                Launch::Plain => return,
+                Launch::Plain | Launch::Helped { .. } => return,
             };
             Self::release_on_exit(this, id, hands, name, changed, cx).await;
         })
