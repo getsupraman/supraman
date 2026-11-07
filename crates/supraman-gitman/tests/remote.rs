@@ -173,7 +173,7 @@ fn a_branch_without_upstream_is_published_and_tags_and_branches_are_pushed_and_d
     assert!(remotes(&Repo::new(f.git.clone(), &mine)).unwrap().is_empty());
 }
 
-/// A fake ssh that says how far it got, notes its Windows pid, and then waits for ever.
+/// A fake ssh that says how far it got, notes its Windows pid, and waits on its child `cat` for ever.
 fn slow_ssh(dir: &Path) -> (String, PathBuf) {
     let pid = dir.join("ssh.pid");
     let script = dir.join("slow-ssh.sh");
