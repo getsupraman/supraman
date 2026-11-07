@@ -1,5 +1,5 @@
 //! The WIP panel's writes (docs/research/gitkraken-12.6.1.md, "Staging" and "Committing"): stage, unstage, the
-//! discard of the Unstaged list, discard all, commit, and a merge's or rebase's next step.
+//! discard of the Unstaged list, discard all, commit, a new message for HEAD, and a merge's or rebase's next step.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -176,22 +176,34 @@ pub fn message(summary: &str, description: &str) -> String {
 /// Commits what is staged with `message`, or with `amend` replaces HEAD by it; `no_verify` skips the hooks. A
 /// plain commit or amend is recorded for Undo; a merge's is not.
 pub fn commit(s: &Session, message: &str, amend: bool, no_verify: bool) -> Result<(), WriteError> {
+    let args: &[&str] = if amend { &["--amend"] } else { &[] };
+    run_commit(s, message, args, no_verify)
+}
+
+/// Replaces HEAD's message by `message`, its tree, author and date kept and what is staged left staged; recorded
+/// for Undo. HEAD's new sha.
+pub fn reword_head(s: &Session, message: &str, no_verify: bool) -> Result<String, WriteError> {
+    run_commit(s, message, &["--amend", "--only"], no_verify)?;
+    Ok(text(&s.output(&Call::new(&["rev-parse", "HEAD"]))?).trim().to_string())
+}
+
+fn run_commit(s: &Session, message: &str, extra: &[&str], no_verify: bool) -> Result<(), WriteError> {
     if message.trim().is_empty() {
         return Err(WriteError::Refused("A commit needs a message"));
     }
     let mut args = vec!["commit", "--file=-", "--quiet"];
-    if amend {
-        args.push("--amend");
-    }
+    args.extend_from_slice(extra);
     if no_verify {
         args.push("--no-verify");
     }
     let out = s.run(&Call::new(&args).input(message.as_bytes().to_vec()))?;
     if !out.success() {
         let said = [text(&out.stderr), text(&out.stdout)].map(|t| t.trim().to_string());
-        let stderr = said.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n");
+        let stderr = said.into_iter().filter(|t| !t.is_empty()).collect::<Vec<_>>().join("
+");
         return Err(WriteError::CommitFailed { code: out.code.unwrap_or(-1), stderr });
     }
+    let amend = extra.contains(&"--amend");
     let (kind, action) = if amend { (Kind::Amend, Action::Amend) } else { (Kind::Commit, Action::Commit) };
     if journal::newest_kind(s)? == Some(kind) {
         journal::record(s, action, None)?;

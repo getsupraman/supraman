@@ -12,7 +12,7 @@ use super::{GitView, Selected};
 
 gpui::actions!(
     git_graph,
-    [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo, StageAll, UnstageAll, FocusMessage, StageSelected, UnstageSelected, StageAllAndCommit]
+    [FirstParent, Child, GoToHead, GoToUpstream, OpenFirstFile, ToggleRefs, FilterRefs, Find, FindHistory, Undo, Redo, StageAll, UnstageAll, FocusMessage, StageSelected, UnstageSelected, StageAllAndCommit, NextField, PreviousField]
 );
 
 pub const KEY_CONTEXT: &str = "GitGraph";
@@ -22,6 +22,8 @@ pub const TAB_CONTEXT: &str = "GitTab";
 pub const WIP_LIST_CONTEXT: &str = "GitWipList";
 /// The commit message's fields and the WIP row's input.
 pub const MESSAGE_CONTEXT: &str = "GitMessage";
+/// The commit panel's message field, open to amend: Tab and Shift+Tab move between the summary and the description.
+pub const AMEND_CONTEXT: &str = "GitAmend";
 /// The graph's and its table's keys that type or move in the WIP row's field instead.
 const GRAPH_KEYS: [&str; 10] = ["h", "shift-h", "j", "k", "pageup", "pagedown", "ctrl-up", "ctrl-down", "shift-up", "shift-down"];
 /// How long a selection rests before the panel reads its commit without a key coming up.
@@ -48,6 +50,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("s", StageSelected, Some(WIP_LIST_CONTEXT)),
         KeyBinding::new("u", UnstageSelected, Some(WIP_LIST_CONTEXT)),
         KeyBinding::new("ctrl-shift-enter", StageAllAndCommit, Some(MESSAGE_CONTEXT)),
+        KeyBinding::new("tab", NextField, Some(AMEND_CONTEXT)),
+        KeyBinding::new("shift-tab", PreviousField, Some(AMEND_CONTEXT)),
     ]);
     cx.bind_keys(GRAPH_KEYS.iter().map(|key| KeyBinding::new(key, gpui::NoAction, Some(MESSAGE_CONTEXT))));
     diff::bind_keys(cx);

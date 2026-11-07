@@ -1,9 +1,14 @@
 //! The commit area's state: the summary, the description and the graph's WIP row input (one summary in two
 //! fields), Amend previous commit with the draft it keeps, the commit options, and what the commit button says.
 
-use gpui::{AppContext as _, Context, Entity, Subscription, Window};
+use gpui::{AppContext as _, Context, Div, Entity, SharedString, Subscription, Window, div, prelude::*, px};
 use supraman_gitman::OperationState;
+use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::icon::Icon;
 use supraman_ui::text_input::{InputEvent, TextInput};
+use supraman_ui::tooltip::Tooltip;
+use supraman_ui::{banner, button};
+use theme::ActiveTheme as _;
 
 use super::WipPanel;
 
@@ -51,6 +56,28 @@ pub fn split(message: &str) -> (String, String) {
     (summary.trim_end().to_string(), rest.trim_start_matches(['\r', '\n']).trim_end().to_string())
 }
 
+/// A commit message's summary and description fields: Enter in the summary says Confirm, Ctrl+Enter Submit in either.
+pub fn message_fields<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> (Entity<TextInput>, Entity<TextInput>) {
+    let summary = cx.new(|cx| TextInput::new("Commit summary", None, window, cx).submit_apart());
+    let description = cx.new(|cx| TextInput::new("Description", None, window, cx).multi_line().submit_apart());
+    (summary, description)
+}
+
+/// The summary field and its count of characters left (negative past 72, in the warning colour), painted as `counter`.
+pub fn summary_row(hits: &HitTargets, summary: &Entity<TextInput>, counter: &'static str, cx: &gpui::App) -> Div {
+    let left = left(summary.read(cx).text());
+    let count = div().id(counter).relative().flex_none().w(px(32.)).text_right().text_color(counter_colour(left, cx)).child(SharedString::from(left.to_string())).child(hit_target(hits, counter.into())).tooltip(Tooltip::text(SUMMARY_TOOLTIP));
+    div().flex().items_center().gap_1().child(div().flex_1().min_w_0().child(summary.clone())).child(count)
+}
+
+/// A failed commit's words (git's or a hook's) in the error colour with its ×, under `key` and `<key>-dismiss`.
+pub fn failure_banner<V: 'static>(hits: &HitTargets, key: &str, why: String, dismiss: impl Fn(&mut V, &mut Context<V>) + 'static, cx: &mut Context<V>) -> Div {
+    let close = button::icon(hits, format!("{key}-dismiss"), Icon::Close.svg(12., cx.theme().colors().text_muted), px(20.), cx)
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| dismiss(this, cx)));
+    let words = div().relative().child(SharedString::from(why)).child(hit_target(hits, key.into()));
+    banner::tinted(cx.theme().status().error).child(banner::dismissable(words, close))
+}
+
 pub struct Composer {
     pub summary: Entity<TextInput>,
     pub description: Entity<TextInput>,
@@ -68,8 +95,7 @@ pub struct Composer {
 
 impl Composer {
     pub fn new(window: &mut Window, cx: &mut Context<WipPanel>) -> Composer {
-        let summary = cx.new(|cx| TextInput::new("Commit summary", None, window, cx).submit_apart());
-        let description = cx.new(|cx| TextInput::new("Description", None, window, cx).multi_line().submit_apart());
+        let (summary, description) = message_fields(window, cx);
         let row = cx.new(|cx| TextInput::new("// WIP", None, window, cx).submit_apart());
         let inputs = [
             cx.subscribe_in(&summary, window, |this: &mut WipPanel, _, e: &InputEvent, window, cx| this.summary_event(e, false, window, cx)),
@@ -127,6 +153,11 @@ impl WipPanel {
 
     pub fn composer(&self) -> Option<&Composer> {
         self.composer.as_ref()
+    }
+
+    /// Skip hooks is on where the repo has commit hooks: a commit or an amend runs `--no-verify`.
+    pub fn skips_hooks(&self) -> bool {
+        self.hooks && self.composer.as_ref().is_some_and(|c| c.skip_hooks)
     }
 
     /// The commit summary as typed, the message a stash takes.

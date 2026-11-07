@@ -164,3 +164,41 @@ fn a_merge_aborts_from_the_commit_area() {
     write_in(Repo::new(f.git.clone(), &f.worktree), |s| wip::step(s, Step::AbortMerge)).unwrap();
     assert_eq!(operation_state(&f.dir.join(".git/worktrees/wt")), OperationState::None);
 }
+
+#[test]
+fn rewording_head_changes_only_its_message_and_leaves_the_staged_changes_staged_and_undo_takes_it_back() {
+    let f = Fixture::copy();
+    let who = |f: &Fixture| f.git(&["log", "-1", "--format=%an%ae%ad%T%P"]);
+    let (head, before, staged) = (f.git(&["rev-parse", "HEAD"]), who(&f), f.git(&["diff", "--cached"]));
+    assert!(!staged.is_empty(), "the fixture has staged changes");
+    let new = write(&f, |s| wip::reword_head(s, &wip::message("Ahead, reworded", "Why it is ahead"), false));
+    assert_eq!(new, f.git(&["rev-parse", "HEAD"]));
+    assert_ne!(new, head);
+    assert_eq!(f.git(&["log", "-1", "--format=%s%n%b"]), "Ahead, reworded\nWhy it is ahead");
+    assert_eq!(who(&f), before, "author, date, tree and parent kept");
+    assert_eq!(f.git(&["diff", "--cached"]), staged, "the staged changes stay staged and out of the commit");
+    assert_eq!(undo(&f).unwrap().toast, "Undid commit amend \"Ahead, reworded\"");
+    assert_eq!((f.git(&["rev-parse", "HEAD"]), f.git(&["diff", "--cached"])), (head, staged));
+}
+
+#[test]
+fn only_heads_message_on_a_branch_with_nothing_under_way_is_amendable_and_a_push_marks_it_pushed() {
+    let f = Fixture::copy();
+    let head = f.git(&["rev-parse", "HEAD"]);
+    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into(), pushed: false });
+    assert_eq!(amendable(&f.repo(), f.sha("merge")).unwrap(), Amendable::No, "not HEAD");
+
+    let wt = Repo::new(f.git.clone(), &f.worktree);
+    git(&f, &f.worktree, &["reset", "-q", "--hard", f.sha("merge")]);
+    assert_eq!(amendable(&wt, f.sha("merge")).unwrap(), Amendable::No, "a merge commit");
+    git(&f, &f.worktree, &["checkout", "-q", "--detach", f.sha("second")]);
+    assert_eq!(amendable(&wt, f.sha("second")).unwrap(), Amendable::Detached);
+    git(&f, &f.worktree, &["checkout", "-q", "side"]);
+    git(&f, &f.worktree, &["reset", "-q", "--hard", f.sha("second")]);
+    f.conflict();
+    let side = git(&f, &f.worktree, &["rev-parse", "HEAD"]);
+    assert_eq!(amendable(&wt, &side).unwrap(), Amendable::No, "a merge under way");
+
+    f.git(&["push", "-q", "origin", "main"]);
+    assert_eq!(amendable(&f.repo(), &head).unwrap(), Amendable::Branch { name: "main".into(), pushed: true });
+}

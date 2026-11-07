@@ -6,12 +6,11 @@ use supraman_gitman::OperationState;
 use supraman_gitman::write::wip::Step;
 use supraman_ui::banner;
 use supraman_ui::button;
-use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::compose::{Composer, SUMMARY_TOOLTIP, counter_colour, left};
+use super::compose::{Composer, failure_banner, summary_row};
 use super::render::live;
 use super::{Ask, Shown, WipPanel};
 use crate::git_view::keys::{MESSAGE_CONTEXT, StageAllAndCommit};
@@ -29,30 +28,26 @@ impl WipPanel {
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_amend(cx)))
     }
 
-    /// The summary, its count of characters left (negative past 72, in the warning colour), and the description.
+    /// The summary with its count of characters left, and the description.
     fn message_box(&self, c: &Composer, cx: &mut Context<Self>) -> Div {
-        let left = left(c.summary.read(cx).text());
-        let colour = counter_colour(left, cx);
-        let counter = div().id("wip-counter").flex_none().w(px(32.)).text_right().text_color(colour).child(SharedString::from(left.to_string())).tooltip(Tooltip::text(SUMMARY_TOOLTIP));
         div()
             .flex()
             .flex_col()
             .gap_1()
             .key_context(MESSAGE_CONTEXT)
             .on_action(cx.listener(|this, _: &StageAllAndCommit, _, cx| this.commit(true, cx)))
-            .child(div().flex().items_center().gap_1().child(div().flex_1().min_w_0().child(c.summary.clone())).child(counter))
+            .child(summary_row(&self.hits, &c.summary, "wip-counter", cx))
             .child(c.description.clone())
     }
 
     fn failure(&self, c: &Composer, cx: &mut Context<Self>) -> Option<Div> {
         let why = c.failure.clone()?;
-        let close = button::icon(&self.hits, "wip-commit-failure-dismiss", Icon::Close.svg(12., cx.theme().colors().text_muted), px(20.), cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        Some(failure_banner(&self.hits, "wip-commit-failure", why, |this: &mut Self, cx| {
             if let Some(c) = &mut this.composer {
                 c.failure = None;
             }
             cx.notify();
-        }));
-        Some(banner::tinted(cx.theme().status().error).child(banner::dismissable(div().relative().child(SharedString::from(why)).child(hit_target(&self.hits, "wip-commit-failure".into())), close)))
+        }, cx))
     }
 
     /// Commit options, folded; Skip hooks only where the repo has commit hooks.

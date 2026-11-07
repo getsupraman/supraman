@@ -238,6 +238,11 @@ impl StashActions {
     pub fn save_message(&mut self, cx: &mut Context<Self>) {
         let Some((stash, Some((input, _)))) = self.editing.take() else { return };
         let message = input.read(cx).text().trim().to_string();
+        self.set_message(stash, message, cx);
+    }
+
+    /// `stash` stored again on top with `message`; a blank or unchanged one writes nothing.
+    pub fn set_message(&mut self, stash: StashRef, message: String, cx: &mut Context<Self>) {
         if message.is_empty() || message == stash.label {
             return cx.notify();
         }
