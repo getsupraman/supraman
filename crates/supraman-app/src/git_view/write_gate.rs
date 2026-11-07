@@ -83,6 +83,11 @@ impl WriteGate {
         Some(ticket)
     }
 
+    /// Who works where, as the gate asks before a write.
+    pub fn occupancy(&self) -> &Arc<dyn Occupancy> {
+        &self.occupancy
+    }
+
     /// Why no other write can start now: one waits for the user's answer, or one runs.
     pub fn busy(&self) -> Option<&'static str> {
         if self.asking.is_some() {

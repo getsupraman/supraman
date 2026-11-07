@@ -48,6 +48,9 @@ impl GitView {
             RemoteEvent::Facts(facts) => {
                 let facts = facts.clone();
                 self.branch.update(cx, |b, _| b.set_remote_facts(facts));
+                if let Some(writer) = self.remote.read(cx).writer().cloned() {
+                    crate::git_view::background::join(self, &writer, cx);
+                }
             }
         }
     }
@@ -59,6 +62,13 @@ impl GitView {
         let pull = busy.clone().or_else(|| remote.pull_why_not(None).map(str::to_string));
         let push = busy.or_else(|| remote.push_why_not().map(str::to_string));
         [pull, push]
+    }
+
+    /// What the Pull button does, and each remote whose background fetches fail.
+    pub fn pull_tooltip(&self, choice: PullChoice, cx: &Context<Self>) -> String {
+        let failures = crate::git_view::background::failures(cx.entity_id(), cx);
+        std::iter::once(words(choice).to_string()).chain(failures).collect::<Vec<_>>().join("
+")
     }
 
     fn remote_button(&self, key: &'static str, icon: Icon, caption: SharedString, why_not: Option<String>, tooltip: String, cx: &mut Context<Self>) -> AnyElement {
@@ -108,7 +118,7 @@ impl GitView {
             .items_center()
             .gap_1()
             .py_1()
-            .child(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, words(choice).into(), cx))
+            .child(self.remote_button(PULL_KEY, Icon::SortDown, caption.into(), pull_why, self.pull_tooltip(choice, cx), cx))
             .child(menu)
             .child(self.remote_button(PUSH_KEY, Icon::SortUp, "Push".into(), push_why, push_tip, cx))
             .children(strip)

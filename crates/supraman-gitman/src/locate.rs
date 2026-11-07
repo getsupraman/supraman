@@ -37,6 +37,34 @@ pub fn remote_settings(settings: &Settings) -> RemoteSettings {
     settings.section(SECTION).unwrap_or_default()
 }
 
+/// The background work's keys of `[gitman]`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct BackgroundSettings {
+    /// Minutes between an open Git tab's fetches; 0 is off, unset [`FETCH_EVERY_MINUTES`].
+    #[serde(default)]
+    pub fetch_every_minutes: Option<u32>,
+    /// `git maintenance run` in the background; on when unset.
+    #[serde(default)]
+    pub maintenance: Option<bool>,
+}
+
+pub const FETCH_EVERY_MINUTES: u32 = 1;
+
+impl BackgroundSettings {
+    pub fn fetch_every(&self) -> u32 {
+        self.fetch_every_minutes.unwrap_or(FETCH_EVERY_MINUTES)
+    }
+
+    pub fn maintains(&self) -> bool {
+        self.maintenance.unwrap_or(true)
+    }
+}
+
+/// `[gitman]`'s background keys; their defaults when the table is absent or does not parse.
+pub fn background_settings(settings: &Settings) -> BackgroundSettings {
+    settings.section(SECTION).unwrap_or_default()
+}
+
 /// `[gitman] <key> = value`, the table's other keys kept; the caller saves it (`Settings::update`).
 pub fn set_setting(settings: &mut Settings, key: &str, value: impl Serialize) -> Result<(), String> {
     let mut table: serde_json::Map<String, serde_json::Value> = settings.section(SECTION).unwrap_or_default();

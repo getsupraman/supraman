@@ -85,6 +85,11 @@ pub fn heavy_job_lock(what: &str) -> io::Result<fs::File> {
     lock_waiting(&std::env::temp_dir().join(HEAVY_JOB_LOCK), what)
 }
 
+/// [`heavy_job_lock`] without the wait: `None` while a build, a test or a selftest holds it.
+pub fn try_heavy_job_lock() -> io::Result<Option<fs::File>> {
+    try_lock_file(&std::env::temp_dir().join(HEAVY_JOB_LOCK))
+}
+
 fn lock_waiting(path: &Path, what: &str) -> io::Result<fs::File> {
     if let Some(file) = try_lock_file(path)? {
         return Ok(file);

@@ -10,6 +10,7 @@ mod guard;
 pub mod journal;
 pub mod lines;
 mod locks;
+pub mod maintain;
 mod quiet;
 pub mod rebase;
 pub mod remote;
@@ -241,6 +242,13 @@ impl Writer {
         let _pausing = held.locks().has_write().then(|| Pausing::new(self.quiet.clone(), held.id()));
         let session = Session { writer: self, held };
         f(&session)
+    }
+
+    /// [`Writer::run`] of a background job, `None` when `locks` are not free now; the watchers are not paused,
+    /// so they refresh only for what it changed.
+    pub fn try_run_watched<T>(&self, locks: LockSet, f: impl FnOnce(&Session<'_>) -> Result<T, WriteError>) -> Option<Result<T, WriteError>> {
+        let held = self.scheduler.try_acquire(locks)?;
+        Some(f(&Session { writer: self, held }))
     }
 
     /// A dangling commit of the index and the working files of `paths`, `what` its message; see [`Session::snapshot`].

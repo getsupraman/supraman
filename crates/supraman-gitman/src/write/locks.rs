@@ -105,6 +105,11 @@ impl LockSet {
         LockSet::writes(&[Resource::Config, Resource::RepoSettings])
     }
 
+    /// `git maintenance run`: it repacks the objects every other write adds to, so it excludes them all.
+    pub fn maintenance() -> LockSet {
+        LockSet::writes(&[Resource::Index, Resource::Config, Resource::Remote, Resource::RepoSettings, Resource::GitAttributes, Resource::GitIgnore])
+    }
+
     pub fn access(&self, resource: Resource) -> Option<Access> {
         self.0.get(&resource).copied()
     }
@@ -159,6 +164,17 @@ impl Scheduler {
         let mut state = self.changed.wait_while(state, |s| !s.granted.contains(&id)).unwrap_or_else(PoisonError::into_inner);
         state.granted.remove(&id);
         Held { scheduler: self.clone(), id, locks }
+    }
+
+    /// [`Scheduler::acquire`] without the wait: `None` while a held or a waiting request conflicts with `locks`.
+    pub fn try_acquire(self: &Arc<Self>, locks: LockSet) -> Option<Held> {
+        let mut state = self.state();
+        if state.held.iter().chain(&state.queue).any(|(_, other)| other.conflicts(&locks)) {
+            return None;
+        }
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        state.held.push((id, locks.clone()));
+        Some(Held { scheduler: self.clone(), id, locks })
     }
 
     fn release(&self, id: u64) {
@@ -245,5 +261,21 @@ mod tests {
         assert!(outer.nested(LockSet::refresh()).is_none(), "a write grants its read");
         let more = outer.nested(LockSet::commit().write(Resource::Remote)).expect("the remote is not held");
         assert_eq!(more.locks(), &LockSet::new().write(Resource::Remote));
+    }
+
+    #[test]
+    fn a_try_takes_free_locks_and_never_one_a_push_or_pull_holds() {
+        let s = Arc::new(Scheduler::default());
+        let push = s.acquire(LockSet::push());
+        assert!(s.try_acquire(LockSet::fetch()).is_none(), "a push holds the config a fetch reads");
+        drop(push);
+        let pull = s.acquire(LockSet::pull());
+        assert!(s.try_acquire(LockSet::fetch()).is_none(), "a pull fetches");
+        drop(pull);
+        let fetch = s.try_acquire(LockSet::fetch()).expect("free");
+        assert!(s.try_acquire(LockSet::fetch()).is_none(), "never two fetches of one repo at once");
+        assert!(s.try_acquire(LockSet::refresh()).is_some(), "a fetch leaves the index to readers");
+        drop(fetch);
+        assert!(s.try_acquire(LockSet::maintenance()).is_some());
     }
 }

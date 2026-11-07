@@ -249,6 +249,31 @@ impl RemoteActions {
         cx.notify();
     }
 
+    pub fn writer(&self) -> Option<&Writer> {
+        self.writer.as_ref()
+    }
+
+    pub fn has_remotes(&self) -> bool {
+        !self.remotes.is_empty()
+    }
+
+    pub fn remote_names(&self) -> Vec<String> {
+        self.remotes.iter().map(|r| r.name.clone()).collect()
+    }
+
+    pub fn prune(&self) -> bool {
+        self.prune
+    }
+
+    pub fn under_way(&self) -> bool {
+        self.under_way
+    }
+
+    /// The repository's worktrees as the last read listed them.
+    pub fn worktrees(&self) -> Vec<PathBuf> {
+        self.refs.worktrees.iter().map(|w| w.path.clone()).collect()
+    }
+
     pub fn pull_choice(&self) -> PullChoice {
         self.pull
     }
