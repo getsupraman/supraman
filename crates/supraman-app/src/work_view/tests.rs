@@ -69,7 +69,7 @@ fn page(item: Value, extra: Value) -> String {
 fn claim(item: Value, run: Value, claude_session_id: &str) -> Value {
     json!({ "item": item, "run": run, "role": "worker", "agent": "aw", "tree": "p:/wt/ra",
             "session": { "id": "s1", "name": "fm-w-ra", "role": "worker", "claudeSessionId": claude_session_id, "firstSeenAt": "x", "lastSeenAt": "x" },
-            "acquiredAt": "2026-11-06T10:00:00Z", "heartbeatAt": "2026-11-06T10:00:00Z", "expiresAt": "2099-01-01T00:00:00Z", "expired": false })
+            "acquiredAt": "2026-11-06T10:00:00Z", "heartbeatAt": "2026-11-06T10:00:00Z", "expiresAt": "2026-11-07T00:41:00Z", "expired": false })
 }
 
 /// Six questions in pa, the newest first, and one blocked item in pb.
@@ -455,6 +455,44 @@ fn palette_refs(view: &Entity<WorkView>, cx: &mut VisualTestContext) -> (Vec<Str
     })
 }
 
+/// The overview's `asOf`.
+fn served_now() -> i64 {
+    supraman_core::time::rfc3339_ms("2026-11-07T00:15:00Z").unwrap()
+}
+
+/// The page lies right of the navigator to the tab's right edge, and no detail column is painted.
+fn spans_list_and_detail(view: &Entity<WorkView>, cx: &mut VisualTestContext) {
+    let (nav, page) = (bounds(view, "work-nav-overview", cx), bounds(view, "work-page", cx));
+    assert!(page.left() >= nav.right() && f32::from(page.right()) >= 1500. - 1., "the page spans list and detail: {page:?}");
+    assert!(f32::from(page.size.width) > layout::LIST_MIN + layout::DETAIL_MIN, "{page:?}");
+    assert!(hit(view, "work-detail-column", cx).is_none(), "no detail column beside the page");
+}
+
+fn inside(inner: Bounds<Pixels>, outer: Bounds<Pixels>) -> bool {
+    inner.left() >= outer.left() && inner.right() <= outer.right() && inner.top() >= outer.top() && inner.bottom() <= outer.bottom()
+}
+
+#[gpui::test]
+fn the_overview_spans_both_columns_and_its_tiles_and_cards_fit(cx: &mut TestAppContext) {
+    let Opened { view, cx, .. } = open(cx);
+    bounds(&view, "work-detail-column", cx);
+    view.update(cx, |v, _| v.now = served_now);
+    click(&view, "work-nav-overview", cx);
+    spans_list_and_detail(&view, cx);
+    for (label, n) in [("closed without independent proof", 1), ("forced closures", 4), ("follow-ups open", 3), ("tasks open", 6)] {
+        let tile = bounds(&view, &format!("work-tile-{label}={n}"), cx);
+        for i in 0..label.split(' ').count() {
+            let word = bounds(&view, &format!("work-tile-word-{label}-{i}"), cx);
+            assert!(inside(word, tile), "word {i} of {label:?} lies inside its tile: {word:?} {tile:?}");
+        }
+    }
+    for p in ["pa", "pb"] {
+        let (runs, card) = (bounds(&view, &format!("work-overview-runs-{p}"), cx), bounds(&view, &format!("work-overview-project-{p}"), cx));
+        assert!(inside(runs, card), "{p}'s runs line fits its card: {runs:?} {card:?}");
+    }
+    bounds(&view, "work-working-facts-pa/ra/3=worker · pa/ra/3 · p:/wt/ra · lease ends in 26m", cx);
+}
+
 #[gpui::test]
 fn c2_the_overview_says_what_needs_you_and_who_works_on_what(cx: &mut TestAppContext) {
     let Opened { view, cx, .. } = open(cx);
@@ -494,6 +532,8 @@ fn c2_activity_groups_the_projects_events_by_day_newest_first(cx: &mut TestAppCo
     let day = |at: &str| supraman_core::time::day(supraman_core::time::rfc3339_ms(at).unwrap());
     let (newer, older) = (bounds(&view, &format!("work-activity-day-{}=2", day("2026-11-07T10:00:00Z")), cx), bounds(&view, &format!("work-activity-day-{}=1", day("2026-11-06T10:00:00Z")), cx));
     let rows: Vec<Bounds<Pixels>> = [12, 11, 10].iter().map(|seq| bounds(&view, &format!("work-activity-{seq}"), cx)).collect();
+    spans_list_and_detail(&view, cx);
+    assert!(rows.iter().all(|r| f32::from(r.size.height) < 30.), "a row is one line: {rows:?}");
     assert!(newer.top() < rows[0].top() && rows[0].top() < rows[1].top() && rows[1].top() < older.top() && older.top() < rows[2].top(), "both projects' events, newest first under their day");
     click(&view, "work-activity-copy-12", cx);
     assert_eq!(clipboard(cx), Some("pb/rb/1".into()));

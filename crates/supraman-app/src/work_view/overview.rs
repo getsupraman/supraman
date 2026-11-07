@@ -1,9 +1,10 @@
 //! The Overview page, the web's: one sentence, Needs you, Working now, the honesty tiles, and a card per bound project.
 
 use gpui::{ClickEvent, FontWeight, Hsla};
-use supraman_core::time::{self, now_ms, rfc3339_ms};
+use supraman_core::time::{self, rfc3339_ms};
 use supraman_ui::hit::hit_target;
 use supraman_ui::marks::{Mark, dot};
+use supraman_ui::clipped::clipped;
 use supraman_ui::{button, fonts};
 use supraman_workman::{Claim, Honesty, InboxRow, OverviewRun, Rollup};
 
@@ -15,6 +16,8 @@ use super::state::StateKey;
 use super::*;
 
 pub const NEEDS_SHOWN: usize = 5;
+/// Wide enough for the longest word of a tile's label, so a label wraps between words only.
+const TILE_MIN: f32 = 120.;
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -47,11 +50,12 @@ pub fn tiles(honesty: &Honesty, tasks_open: u32) -> Vec<(u32, &'static str, bool
     ]
 }
 
+/// Within the hour in minutes, as the web says it; later its time here.
 pub fn lease(expires_at: &str, expired: bool, now: i64) -> String {
     match rfc3339_ms(expires_at) {
-        Some(_) if expired => "lease ended".into(),
-        Some(at) if at <= now => "lease ended".into(),
-        Some(at) => format!("lease ends in {}m", (at - now + 59_999) / 60_000),
+        Some(at) if expired || at <= now => "lease ended".into(),
+        Some(at) if at - now <= 3_600_000 => format!("lease ends in {}m", (at - now + 59_999) / 60_000),
+        Some(at) => format!("lease ends at {}", time::near(at, now)),
         None => String::new(),
     }
 }
@@ -86,12 +90,12 @@ impl WorkView {
         let Some(inbox) = &self.inbox else { return Vec::new() };
         let rows: Vec<(&str, &InboxRow)> = inbox.read(cx).rows().into_iter().filter(|(w, _)| *w == self.workspace).collect();
         let live: Vec<String> = self.link.live.borrow().iter().map(|s| s.name.clone()).collect();
-        cards::sections(&rows, &live, now_ms()).needs_you
+        cards::sections(&rows, &live, (self.now)()).needs_you
     }
 
     pub(super) fn render_overview(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.theme().colors().clone();
-        let now = now_ms();
+        let now = (self.now)();
         let needs = self.needs_cards(cx);
         let said = sentence(&self.projects, needs.len());
         let head = div()
@@ -203,6 +207,7 @@ impl WorkView {
             let qref = claim.item.qualified_ref.clone();
             let id = claim.item.id.clone();
             let holder = claim.holder().to_string();
+            let facts = claim_facts(&claim, now);
             let session = match attach_target(&claim, &live) {
                 Some(target) => {
                     let target = target.id.clone();
@@ -241,13 +246,15 @@ impl WorkView {
                             )
                             .child(
                                 div()
+                                    .relative()
                                     .flex()
                                     .flex_wrap()
                                     .gap_1()
                                     .text_xs()
                                     .text_color(colors.text_muted)
                                     .child(session)
-                                    .children(claim_facts(&claim, now).into_iter().map(|t| SharedString::from(format!("· {t}")))),
+                                    .children(facts.iter().map(|t| SharedString::from(format!("· {t}"))))
+                                    .child(hit_target(&self.hits, format!("work-working-facts-{qref}={}", facts.join(" · ")))),
                             ),
                     ),
             );
@@ -260,18 +267,22 @@ impl WorkView {
         let colors = cx.theme().colors();
         let error = cx.theme().status().error;
         let tasks: u32 = self.projects.iter().map(|p| open_of(&p.rollup)).sum();
-        let mut row = div().flex().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background);
+        let mut row = div().flex().flex_wrap().rounded_md().border_1().border_color(colors.border_variant).bg(colors.panel_background);
         for (n, label, alarm) in tiles(&honesty, tasks) {
             let fg: Hsla = if alarm { error } else { colors.text };
+            let words = label.split(' ').enumerate().map(|(i, word)| {
+                div().relative().flex_none().whitespace_nowrap().child(word).child(hit_target(&self.hits, format!("work-tile-word-{label}-{i}")))
+            });
             row = row.child(
                 div()
                     .relative()
-                    .flex_1()
-                    .min_w_0()
+                    .flex_grow(1.)
+                    .flex_basis(px(TILE_MIN))
+                    .min_w(px(TILE_MIN))
                     .px_3()
                     .py_2()
                     .child(fonts::figures(div().text_xl().font_weight(FontWeight::SEMIBOLD).text_color(fg)).child(SharedString::from(n.to_string())))
-                    .child(div().text_xs().whitespace_normal().text_color(colors.text_muted).child(label))
+                    .child(div().flex().flex_wrap().gap_x(px(3.)).text_xs().text_color(colors.text_muted).children(words))
                     .child(hit_target(&self.hits, format!("work-tile-{label}={n}"))),
             );
         }
@@ -287,10 +298,18 @@ impl WorkView {
             .gap_2()
             .px_3()
             .pt_2()
-            .child(div().text_base().font_weight(FontWeight::SEMIBOLD).child(SharedString::from(project.item.title.clone())))
-            .child(div().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(qref.clone())))
+            .child(clipped(format!("work-overview-project-title-{qref}"), project.item.title.clone(), false).flex_shrink(1.).text_base().font_weight(FontWeight::SEMIBOLD))
+            .child(div().flex_none().font_family(fonts::MONO).text_xs().text_color(colors.text_muted).child(SharedString::from(qref.clone())))
             .child(div().flex_1())
-            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(runs_line(project))));
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .text_xs()
+                    .text_color(colors.text_muted)
+                    .child(SharedString::from(runs_line(project)))
+                    .child(hit_target(&self.hits, format!("work-overview-runs-{qref}"))),
+            );
         let mut card = div()
             .relative()
             .flex()
@@ -300,6 +319,8 @@ impl WorkView {
             .border_1()
             .border_color(colors.border_variant)
             .bg(colors.panel_background)
+            .min_w_0()
+            .overflow_hidden()
             .pb_1()
             .child(hit_target(&self.hits, format!("work-overview-project-{qref}")))
             .child(head)
@@ -388,7 +409,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(claim_facts(&claim, now), ["orchestrator", "w1/1", "p:/wt/w1", "lease ends in 29m"]);
+        assert_eq!(lease("2026-11-07T00:41:00Z", false, now), "lease ends in 26m");
         assert_eq!(lease("2026-11-07T00:10:00Z", false, now), "lease ended");
         assert_eq!(lease("2026-11-07T00:43:30Z", true, now), "lease ended");
+        let later = rfc3339_ms("2026-11-07T03:00:00Z").unwrap();
+        assert_eq!(lease("2026-11-07T03:00:00Z", false, now), format!("lease ends at {}", time::near(later, now)), "past the hour: its time, never a count of minutes");
     }
 }

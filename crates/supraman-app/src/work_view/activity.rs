@@ -3,6 +3,7 @@
 use gpui::{ClickEvent, FontWeight};
 use supraman_core::time::{self, rfc3339_ms};
 use supraman_ui::hit::hit_target;
+use supraman_ui::clipped::clipped;
 use supraman_ui::icon::Icon;
 use supraman_ui::{button, fonts};
 use supraman_workman::{JournalEvent, JournalQuery};
@@ -172,8 +173,7 @@ impl WorkView {
             .group(SharedString::from(key.clone()))
             .relative()
             .flex()
-            .flex_wrap()
-            .items_start()
+            .items_center()
             .gap_2()
             .px_3()
             .py(px(3.))
@@ -183,8 +183,8 @@ impl WorkView {
             .child(fonts::figures(div().flex_none().w(px(40.)).text_xs().text_color(colors.text_muted)).child(SharedString::from(at)))
             .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(e.kind.clone())))
             .children(reference)
-            .child(div().flex_1().min_w(px(160.)).whitespace_normal().child(SharedString::from(sentence(e))))
-            .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(format!("· {}", actor(e)))))
+            .child(clipped(format!("work-activity-sentence-{}", e.seq), sentence(e), false).flex_1())
+            .child(div().flex_none().text_xs().text_color(colors.text_muted).child(SharedString::from(actor(e))))
             .child(hit_target(&self.hits, key))
             .into_any_element()
     }
