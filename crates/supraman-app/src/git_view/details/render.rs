@@ -17,6 +17,7 @@ use theme::ActiveTheme as _;
 use super::files::{self, kind_word};
 use super::{CommitPanel, FileView, MESSAGE_HEIGHT, PanelEvent, Shown, State};
 use crate::git_view::colours::{Palette, blend};
+use crate::git_view::commit::files::{FileClick, Listed};
 use crate::git_view::graph::avatar;
 use crate::git_view::load::initials;
 
@@ -202,7 +203,7 @@ impl CommitPanel {
         if !self.all_files && self.view == FileView::Path {
             let rows = shown.clone();
             let tail = Self::stash_tail(shown);
-            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), tail, cx);
+            let list = files::path_list("commit", &self.paths, &self.hits, shown.changes.len(), move |ix| rows.changes.get(ix).map(|c| (c.path.clone(), c.kind)), |this: &mut CommitPanel, path, cx| this.file_clicked(&path.into(), cx), tail, Some(Self::file_menu()), cx);
             return column.child(list.flex_1().min_h_0());
         }
         let (_, expanded) = self.tree();
@@ -223,7 +224,16 @@ impl CommitPanel {
     fn render_tree(&self, cx: &mut Context<Self>) -> AnyElement {
         let (tree, _) = self.tree();
         let tail = self.shown().filter(|_| !self.all_files).and_then(|shown| Self::stash_tail(&shown));
-        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), tail, cx).flex_1().min_h_0().into_any_element()
+        files::tree_list("commit", tree, &self.hits, |this: &mut CommitPanel, path, cx| this.file_clicked(path, cx), tail, Some(Self::file_menu()), cx).flex_1().min_h_0().into_any_element()
+    }
+
+    /// A file's or folder's right-click: the tab's file menu of the commit or stash shown.
+    fn file_menu() -> files::OnMenu<CommitPanel> {
+        Rc::new(|this: &mut CommitPanel, path: &str, folder: bool, position, cx: &mut Context<CommitPanel>| {
+            let Some(shown) = this.shown() else { return };
+            let from = Listed::Commit { sha: shown.sha.to_string(), stash: shown.stash.as_ref().map(|s| s.sha.clone()) };
+            cx.emit(PanelEvent::FileMenu(FileClick { from, path: path.to_string(), folder, position }));
+        })
     }
 
     /// A stash's changed file's Apply File on hover: the file put in the work tree as the stash has it.
@@ -266,6 +276,7 @@ impl CommitPanel {
 impl Render for CommitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _stall = stall::section("render: commit panel");
+        self.open_asked_field(window, cx);
         let colors = cx.theme().colors().clone();
         let bg = blend(colors.text.opacity(PANEL_STEP), colors.editor_background);
         let content = match &self.state {

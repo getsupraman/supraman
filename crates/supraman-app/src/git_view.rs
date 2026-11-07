@@ -5,6 +5,7 @@ pub mod branch;
 mod cap;
 mod cells;
 mod colours;
+pub mod commit;
 mod details;
 pub mod diff;
 pub mod find;
@@ -68,6 +69,7 @@ use load::{GraphRow, Heads, Problem, Wip};
 use ref_panel::{RefEvent, RefPanel};
 use stash::StashActions;
 use branch::{BranchActions, OpenGit};
+use commit::CommitActions;
 use undo::{UndoBar, UndoEvent};
 use wip::WipPanel;
 use write_gate::WriteGate;
@@ -207,6 +209,8 @@ pub struct GitView {
     _stash_events: Subscription,
     branch: Entity<BranchActions>,
     _branch_events: Subscription,
+    commit: Entity<CommitActions>,
+    _commit_events: Subscription,
     /// The commit summary takes the keyboard on the next frame.
     focus_summary: bool,
     /// The tab's own: a click on nothing focusable in it keeps the keyboard in the tab's key context.
@@ -238,6 +242,8 @@ impl GitView {
             let stash_events = cx.subscribe(&stash, Self::stash_event);
             let branch = cx.new(|cx| BranchActions::new(gate.clone(), hits.clone(), cx));
             let branch_events = cx.subscribe(&branch, Self::branch_event);
+            let commit = cx.new(|cx| CommitActions::new(gate.clone(), hits.clone(), cx));
+            let commit_events = cx.subscribe(&commit, Self::commit_event);
             let mut view = GitView {
                 folder,
                 home,
@@ -285,6 +291,8 @@ impl GitView {
                 _stash_events: stash_events,
                 branch,
                 _branch_events: branch_events,
+                commit,
+                _commit_events: commit_events,
                 focus_summary: false,
                 focus,
             };
@@ -376,6 +384,7 @@ impl GitView {
                 let (stash, message) = (stash.clone(), message.clone());
                 self.stash.update(cx, |s, cx| s.set_message(stash, message, cx));
             }
+            PanelEvent::FileMenu(click) => self.file_menu(click.clone(), cx),
         }
     }
 
@@ -706,6 +715,7 @@ impl GitView {
             3 => cells::date(row, palette),
             _ => cells::sha(row, palette),
         };
+        let cell = self.commit_row(ix, cell, cx);
         self.stash_row(ix, cell, cx)
     }
 
@@ -859,7 +869,7 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()))
+            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()))
             .children(self.layout_notice(cx))
             .children(self.follow_notice(cx))
             .child(div().flex_1().min_h_0().child(content))

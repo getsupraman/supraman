@@ -57,6 +57,8 @@ pub enum PanelEvent {
     HeadMoved(SharedString, Option<String>),
     /// Give this stash this message.
     StashMessage(StashRef, String),
+    /// A file or folder of a list right-clicked.
+    FileMenu(super::commit::files::FileClick),
 }
 
 /// The commit shown, its texts ready to paint.
@@ -194,6 +196,9 @@ impl CommitPanel {
         if self.reword.field.is_some() {
             self.cancel_amend(cx);
         }
+        if !matches!(&selected, Some(Selected::Commit(sha)) if self.reword.edit_next.as_deref() == Some(sha.as_ref())) {
+            self.reword.edit_next = None;
+        }
         match (selected, self.repo.clone()) {
             (None, _) => self.state = State::Empty,
             (Some(Selected::Wip), _) => self.state = State::Empty,
@@ -327,7 +332,7 @@ impl CommitPanel {
         self.all_files && self.whole != Whole::Read
     }
 
-    fn shown(&self) -> Option<Rc<Shown>> {
+    pub(crate) fn shown(&self) -> Option<Rc<Shown>> {
         match &self.state {
             State::Shown(s) => Some(s.clone()),
             _ => None,

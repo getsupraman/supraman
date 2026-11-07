@@ -3,7 +3,9 @@
 //! Blocking: callers run it on a background executor.
 
 pub mod branch;
+pub mod commit;
 pub mod conflicts;
+pub mod files;
 mod guard;
 pub mod journal;
 pub mod lines;

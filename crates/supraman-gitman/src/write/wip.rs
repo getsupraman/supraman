@@ -152,7 +152,7 @@ pub fn discard_all(s: &Session) -> Result<usize, WriteError> {
 }
 
 /// Deletes `path` under `top` when it is there, then each folder above it it leaves empty.
-pub(super) fn remove_file(top: &Path, path: &str) -> Result<(), WriteError> {
+pub(crate) fn remove_file(top: &Path, path: &str) -> Result<(), WriteError> {
     let file = top.join(path);
     match std::fs::remove_file(&file) {
         Ok(()) => {}

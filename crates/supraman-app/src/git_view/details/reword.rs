@@ -54,6 +54,8 @@ pub struct Field {
 #[derive(Default)]
 pub struct Reword {
     pub field: Option<Field>,
+    /// The commit whose message field opens once the panel shows it.
+    pub edit_next: Option<String>,
     asking: Option<Confirm<String>>,
     failure: Option<String>,
     /// The amend under way: its gate ticket.
@@ -133,6 +135,21 @@ impl CommitPanel {
             .ok();
         })
         .detach();
+    }
+
+    /// The field of `sha`'s message, opened once the panel shows it.
+    pub fn edit_when_shown(&mut self, sha: String, cx: &mut Context<Self>) {
+        self.reword.edit_next = Some(sha);
+        cx.notify();
+    }
+
+    /// The field asked for by [`CommitPanel::edit_when_shown`], once its commit is shown.
+    pub(super) fn open_asked_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(sha) = self.reword.edit_next.clone() else { return };
+        if self.shown().is_some_and(|s| s.sha.as_ref() == sha) && !self.stale {
+            self.reword.edit_next = None;
+            self.open_field(window, cx);
+        }
     }
 
     /// The shown message in the field, the summary focused.

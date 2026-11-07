@@ -95,6 +95,7 @@ impl GitView {
                 self.ref_panel.update(cx, |p, cx| p.act(action, cx));
             }
             BranchEvent::Name(ask) => self.ask_name(ask.clone(), cx),
+            BranchEvent::Commit(act) => self.commit_act(act.clone(), cx),
         }
     }
 
@@ -146,7 +147,8 @@ impl GitView {
         let refs = self.branch.read(cx).refs().clone();
         let Some(subject) = group_subject(&refs, &g, &row.sha) else { return };
         let graph = pill_graph_items(&self.ref_panel, &g, cx);
-        self.branch.update(cx, |b, cx| b.open_menu(subject, graph, position, cx));
+        let sha = row.sha.to_string();
+        self.branch.update(cx, |b, cx| b.open_commit_menu(vec![subject], sha, graph, position, cx));
     }
 
     /// The graph pill of row `ix`'s group `group` double-clicked: its local branch checked out, else its one remote
@@ -177,7 +179,7 @@ impl GitView {
 }
 
 /// A pill's Solo and Hide: those of its branches' rows in the ref panel.
-fn pill_graph_items(panel: &Entity<RefPanel>, group: &RefGroup, cx: &App) -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
+pub(crate) fn pill_graph_items(panel: &Entity<RefPanel>, group: &RefGroup, cx: &App) -> Vec<supraman_ui::menu::MenuItem<RefAct>> {
     let (locals, remotes, _) = split(group);
     let path = locals.first().map(|l| format!("local/{l}")).or_else(|| remotes.first().map(|r| format!("remote/{r}")));
     path.map(|p| panel.read(cx).menu_items(&p).into_iter().map(|i| item(i.key, i.label, RefAct::Panel(i.action))).collect()).unwrap_or_default()

@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Stateful, Window, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Context, Div, Hsla, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px};
 use supraman_gitman::ChangeKind;
 use supraman_ui::button;
 use supraman_ui::clipped::{clipped, path_label};
@@ -27,6 +27,26 @@ const NAME_GAP: f32 = 12.;
 
 /// A file row's buttons at its right end, shown while its row (hover group `group`) is hovered: the owner's for `path`.
 pub type Tail<V> = Rc<dyn Fn(&mut V, &str, ChangeKind, SharedString, &mut Context<V>) -> AnyElement>;
+
+/// A row right-clicked: its path, whether it is a folder, and where.
+pub type OnMenu<V> = Rc<dyn Fn(&mut V, &str, bool, Point<Pixels>, &mut Context<V>)>;
+
+/// `row` taking a right-click for `menu`.
+fn menu_row<V: 'static>(row: AnyElement, menu: &Option<OnMenu<V>>, path: &str, folder: bool, cx: &mut Context<V>) -> AnyElement {
+    let Some(menu) = menu.clone() else { return row };
+    let path = path.to_string();
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .min_w_0()
+        .on_mouse_down(MouseButton::Right, cx.listener(move |this: &mut V, e: &MouseDownEvent, _, cx| {
+            cx.stop_propagation();
+            menu(this, &path, folder, e.position, cx);
+        }))
+        .child(row)
+        .into_any_element()
+}
 
 /// A change's icon in the theme's status colour.
 pub fn mark_icon(kind: ChangeKind, cx: &App) -> (Icon, Hsla) {
@@ -116,13 +136,16 @@ fn with_tail<V: 'static>(this: &mut V, row: Div, tail: &Option<Tail<V>>, path: &
     }
 }
 
-/// `tree` under `<list>-tree-row-<path>`; a file's or folder's selection goes to `picked`; a file row ends with `tail`.
+/// `tree` under `<list>-tree-row-<path>`; a file's or folder's selection goes to `picked`, its right-click to `menu`;
+/// a file row ends with `tail`.
+#[allow(clippy::too_many_arguments)]
 pub fn tree_list<V: 'static>(
     list: &'static str,
     tree: &TreeState<Mark, Counts>,
     hits: &HitTargets,
     picked: impl Fn(&mut V, &SharedString, &mut Context<V>) + 'static,
     tail: Option<Tail<V>>,
+    menu: Option<OnMenu<V>>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let painter = hits.clone();
@@ -133,14 +156,16 @@ pub fn tree_list<V: 'static>(
             Item::File(Some(kind)) => Some(*kind),
             _ => None,
         };
-        match (kind, &tail) {
+        let (path, folder) = (row.path.to_string(), matches!(row.item, Item::Folder { .. }));
+        let painted = match (kind, &tail) {
         (Some(kind), Some(_)) => {
             let path = row.path.to_string();
             let shown = div().flex().items_center().w_full().min_w_0().child(div().flex_1().min_w_0().child(tree_row(list, row, &painter, cx)));
             with_tail(this, shown, &tail, &path, kind, &group, cx)
         }
         _ => tree_row(list, row, &painter, cx),
-        }
+        };
+        menu_row(painted, &menu, &path, folder, cx)
     })
         .row_height(px(ROW))
         .on_select(move |this: &mut V, path, _, cx| picked(this, path, cx))
@@ -148,7 +173,7 @@ pub fn tree_list<V: 'static>(
 }
 
 /// `len` files one path a row, `file(ix)` the path and change of a row, under `<list>-files-row-<path>`; each row
-/// ends with `tail`.
+/// ends with `tail` and takes a right-click for `menu`.
 #[allow(clippy::too_many_arguments)]
 pub fn path_list<V: 'static>(
     list: &'static str,
@@ -158,6 +183,7 @@ pub fn path_list<V: 'static>(
     file: impl Fn(usize) -> Option<(String, ChangeKind)> + 'static,
     picked: impl Fn(&mut V, String, &mut Context<V>) + 'static,
     tail: Option<Tail<V>>,
+    menu: Option<OnMenu<V>>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let file = Rc::new(file);
@@ -166,7 +192,10 @@ pub fn path_list<V: 'static>(
     let id = format!("{list}-files");
     let group = supraman_ui::table::row_group(&id);
     Table::new(id, state, hits, column, &[px(0.)], len, move |this: &mut V, ix, _, _, cx| {
-        paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| with_tail(this, path_row(list, &path, kind, &painter, cx), &tail, &path, kind, &group, cx))
+        paint(ix).map_or_else(|| div().into_any_element(), |(path, kind)| {
+            let row = with_tail(this, path_row(list, &path, kind, &painter, cx), &tail, &path, kind, &group, cx);
+            menu_row(row, &menu, &path, false, cx)
+        })
     })
     .headless()
     .row_height(px(ROW))
