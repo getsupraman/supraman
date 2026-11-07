@@ -173,8 +173,9 @@ pub fn first(home: Option<&Path>, folder: &Path, walk: &Walk) -> Result<First, P
 /// `loaded` below it laid out again after it when the walk below is the same.
 pub fn read(repo: Repo, walk: &Walk, loaded: Option<&Loaded>) -> Result<First, String> {
     let failed = |e: supraman_gitman::GitError| e.to_string();
+    let _index = supraman_gitman::write::refresh_lock(&repo);
     let refs = supraman_gitman::refs(&repo).map_err(failed)?;
-    let status = supraman_gitman::status(&repo).map_err(failed)?;
+    let status = supraman_gitman::status_first(&repo).map_err(failed)?;
     let walked = ref_panel::without(&refs, walk);
     let layout = Layout::new(&walked, dirty(&status));
     let tips = ref_panel::tips(&walked, walk);
@@ -198,6 +199,7 @@ fn dirty(status: &Status) -> bool {
 
 /// The WIP row's counts, `None` for a clean tree, and the status they count.
 pub fn wip(repo: &Repo) -> Result<(Option<Wip>, Arc<Status>), String> {
+    let _index = supraman_gitman::write::refresh_lock(repo);
     let status = supraman_gitman::status(repo).map_err(|e| e.to_string())?;
     Ok((dirty(&status).then(|| Wip::of(&status)), Arc::new(status)))
 }

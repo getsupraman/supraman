@@ -1,6 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use crate::changes::ChangeKind;
+use crate::operation::{OperationState, operation_state};
 use crate::parse::{nul_records, text};
 use crate::{GitError, Repo};
 
@@ -49,32 +52,45 @@ pub struct Status {
     pub branch: BranchStatus,
     pub entries: Vec<Entry>,
     pub operation: Option<Operation>,
+    pub state: OperationState,
 }
 
 /// The work in progress: staged, unstaged and untracked files, and a merge or rebase under way.
 pub fn status(repo: &Repo) -> Result<Status, GitError> {
+    read_status(repo, &git_dir(repo)?, false)
+}
+
+/// [`status`], the first time per git dir in this process with git's optional locks, so git refreshes the
+/// index's stat cache after a clone or a checkout; every later one as [`status`].
+pub fn status_first(repo: &Repo) -> Result<Status, GitError> {
+    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    let git_dir = git_dir(repo)?;
+    let first = SEEN.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(HashSet::new).insert(supraman_core::paths::path_key(&git_dir));
+    read_status(repo, &git_dir, first)
+}
+
+fn git_dir(repo: &Repo) -> Result<PathBuf, GitError> {
+    match repo.known_dirs() {
+        Some(dirs) => Ok(dirs.git_dir.clone()),
+        None => repo.read(&["rev-parse", "--absolute-git-dir"], None, |out| Ok(PathBuf::from(text(out).trim()))),
+    }
+}
+
+fn read_status(repo: &Repo, git_dir: &std::path::Path, optional_locks: bool) -> Result<Status, GitError> {
     let args = ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--branch", "--renames"];
-    let mut status = repo.read(&args, None, parse_status)?;
-    let git_dir = match repo.known_dirs() {
-        Some(dirs) => dirs.git_dir.clone(),
-        None => repo.read(&["rev-parse", "--absolute-git-dir"], None, |out| Ok(PathBuf::from(text(out).trim())))?,
-    };
-    status.operation = operation(&git_dir);
+    let mut status = if optional_locks { repo.read_locking(&args, parse_status)? } else { repo.read(&args, None, parse_status)? };
+    status.state = operation_state(git_dir);
+    status.operation = operation(status.state);
     Ok(status)
 }
 
-fn operation(git_dir: &Path) -> Option<Operation> {
-    let has = |name: &str| git_dir.join(name).exists();
-    if has("rebase-merge") || has("rebase-apply") {
-        Some(Operation::Rebase)
-    } else if has("MERGE_HEAD") {
-        Some(Operation::Merge)
-    } else if has("CHERRY_PICK_HEAD") {
-        Some(Operation::CherryPick)
-    } else if has("REVERT_HEAD") {
-        Some(Operation::Revert)
-    } else {
-        None
+fn operation(state: OperationState) -> Option<Operation> {
+    match state {
+        OperationState::None => None,
+        OperationState::Merge => Some(Operation::Merge),
+        OperationState::Rebase { .. } | OperationState::Am => Some(Operation::Rebase),
+        OperationState::Revert { .. } => Some(Operation::Revert),
+        OperationState::CherryPick { .. } => Some(Operation::CherryPick),
     }
 }
 
