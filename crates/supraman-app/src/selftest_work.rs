@@ -10,18 +10,15 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
-use supraman_core::{Registry, Workspace};
-use supraman_workman::{
-    ItemStatus,
-    fake::{Answer, FakeWorkman},
-};
+use supraman_core::{Folder, Registry, Workspace};
+use supraman_workman::fake::{Answer, FakeWorkman};
 use gpui::{AsyncWindowContext, Entity, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
 use serde_json::{Value, json};
 
 use crate::{
     selftest::{click, close_attach, frames, open_attach, scrolled_into_view, sleep},
     view::{FleetView, TabKind},
-    work_view::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkEvent, WorkView, cards, criterion_key, status_key, verification_key},
+    work_view::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkEvent, WorkView, cards},
 };
 
 pub const WORKSPACE: &str = "selftest-work";
@@ -31,6 +28,9 @@ const DONE_RUN: &str = "5e1f0000-0000-4000-8000-0000000000a1";
 const TASK_1: &str = "5e1f0000-0000-4000-8000-0000000002a1";
 const TASK_2: &str = "5e1f0000-0000-4000-8000-0000000002a2";
 const SHIPPED: &str = "5e1f0000-0000-4000-8000-0000000001a1";
+/// The workspace folder's `origin`; the fake's project is bound to it (Workman's `project_repo`).
+const REMOTE: &str = "https://example.invalid/supraman/selftest-work.git";
+const REMOTE_KEY: &str = "example.invalid/supraman/selftest-work";
 const LOADED_WITHIN: Duration = Duration::from_secs(5);
 const LIVE_WITHIN: Duration = Duration::from_secs(2);
 
@@ -78,7 +78,7 @@ fn overview(seq: i64) -> String {
     json!({
         "asOf": "2026-10-26T12:00:00+00:00", "seq": seq,
         "projects": [{
-            "item": project(), "rollup": rollup(6, 2, 1, 2, 1),
+            "item": project(), "rollup": rollup(6, 2, 1, 2, 1), "repos": [{ "kind": "remote", "key": REMOTE_KEY }],
             "runs": [
                 { "item": live_run(), "rollup": rollup(3, 0, 1, 2, 0), "branch": "sw2/x", "activeClaims": 1, "inboxCount": 1,
                   "lastEventAt": "2026-10-26T11:59:00+00:00", "lastVerification": null },
@@ -300,20 +300,23 @@ fn task2_page() -> String {
     .to_string()
 }
 
-fn journal_event(seq: i64, item_: Option<Value>, kind: &str, summary: &str) -> Value {
-    json!({ "seq": seq, "at": "2026-10-26T12:00:00+00:00", "item": item_, "run": live_run(), "session": { "name": "aw-selftest" },
-            "actor": "aw-selftest", "role": "worker", "kind": kind, "summary": summary, "payload": {} })
+/// A run's own page: what the detail shows while no row is selected.
+fn run_page(run: Value, children: Vec<Value>) -> String {
+    let children: Vec<Value> = children.into_iter().map(|item| json!({ "item": item, "criteria": { "checked": 0, "total": 0 } })).collect();
+    json!({
+        "asOf": "2026-10-26T12:02:00+00:00", "seq": 100, "item": run, "path": [project()], "intent": "selftest",
+        "openedAt": "2026-10-26T09:00:00+00:00", "children": children
+    })
+    .to_string()
 }
 
-fn journal(cursor: i64, more: bool, events: Vec<Value>) -> String {
-    json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 200, "cursor": cursor, "hasMore": more, "events": events }).to_string()
+fn prompts_target(scope: &str) -> String {
+    format!("/api/v1/prompts?scope={scope}")
 }
 
-fn journal_target(since: Option<i64>, limit: u32) -> String {
-    match since {
-        Some(since) => format!("/api/v1/journal?scope={PROJECT}&since={since}&limit={limit}"),
-        None => format!("/api/v1/journal?scope={PROJECT}&limit={limit}"),
-    }
+fn prompts(scope: Value, list: &[(&str, &str, Option<u32>)]) -> String {
+    let prompts: Vec<Value> = list.iter().map(|(key, label, count)| json!({ "key": key, "label": label, "count": count, "text": format!("{label} `selftest-work`.") })).collect();
+    json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "scope": scope, "prompts": prompts }).to_string()
 }
 
 fn board_target(run: &str) -> String {
@@ -321,8 +324,15 @@ fn board_target(run: &str) -> String {
 }
 
 pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(root)?;
-    Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, Vec::new()), true)?;
+    let repo = root.join("repo");
+    std::fs::create_dir_all(&repo)?;
+    for args in [&["init", "-q"][..], &["config", "remote.origin.url", REMOTE]] {
+        let out = supraman_core::process::git(&repo, args).map_err(|e| anyhow!("git {args:?} in {}: {e}", repo.display()))?;
+        if !out.success() {
+            bail!("git {args:?} in {} failed: {}", repo.display(), out.stderr.trim());
+        }
+    }
+    Registry::from_env()?.save(&Workspace::new(WORKSPACE, root, vec![Folder::new("repo", &repo)]), true)?;
     let resolved = json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [project()] }).to_string();
     let fake = FakeWorkman::start(vec![
         ("/health".into(), Answer::text("Healthy")),
@@ -332,22 +342,14 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
         (board_target(DONE_RUN), Answer::json(done_board())),
         (item_target(SHIPPED), Answer::json(shipped_page())),
         (item_target(TASK_2), Answer::json(task2_page())),
+        (item_target(LIVE_RUN), Answer::json(run_page(live_run(), vec![item(TASK_1, "sw2/1", "task", "Wire the Work tab", "in_progress")]))),
+        (item_target(DONE_RUN), Answer::json(run_page(done_run(), vec![item(SHIPPED, "sw1/1", "task", "Ship it", "done")]))),
+        (prompts_target(LIVE_RUN), Answer::json(prompts(live_run(), &[("resume", "Resume", None), ("finalize", "Finalize run", Some(2))]))),
+        (prompts_target(TASK_2), Answer::json(prompts(item(TASK_2, "sw2/2", "task", "Render the board", "blocked"), &[("unblock", "Unblock", None)]))),
         (inbox_target(), Answer::json(inbox(100, false, false))),
         (
             format!("/api/v1/resolve?ref={}", crate::selftest::WORKSPACE),
             Answer::json(json!({ "asOf": "2026-10-26T12:00:00+00:00", "seq": 100, "matches": [] }).to_string()),
-        ),
-        (
-            journal_target(None, 50),
-            Answer::json(journal(
-                152,
-                true,
-                vec![
-                    journal_event(150, Some(item(TASK_1, "sw2/1", "task", "Wire the Work tab", "in_progress")), "claim", "claimed"),
-                    journal_event(151, None, "note", "a note on the run"),
-                    journal_event(152, Some(item(TASK_2, "sw2/2", "task", "Render the board", "blocked")), "transition", "open → blocked"),
-                ],
-            )),
         ),
     ]);
     // signed in to the fake's own OAuth server, so the Workman notice has nothing to say during the gate; step 7d signs out and in again through the UI
@@ -355,7 +357,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
-        "step 1w: workspace {WORKSPACE} = {}; fake Workman at {} (project {WORKSPACE}, runs sw2 live, sw1 done), signed in through its fake OAuth server",
+        "step 1w: workspace {WORKSPACE} = {} (folder repo, origin {REMOTE}); fake Workman at {} (project {WORKSPACE} bound to that remote, runs sw2 live, sw1 done), signed in through its fake OAuth server",
         root.display(),
         fake.base()
     );
@@ -402,15 +404,15 @@ fn escape(cx: &mut AsyncWindowContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The runs and the live run's board the Work tab paints from the fake.
-const BOARD: [&str; 5] = ["work-run-sw2", "work-run-sw1", "work-row-sw2/1", "work-row-sw2/2", "work-row-sw2/2.1"];
+/// The live run's page the Work tab paints from the fake: the navigator's run, its rows, the run in the detail.
+const BOARD: [&str; 5] = ["work-nav-run-sw2", "work-row-sw2/1", "work-row-sw2/2", "work-row-sw2/2.1", "work-pill-sw2=doing"];
 
 /// `--selftest-perf`: the frame budget while the Work tab loads the fake's board.
 pub async fn board_frames(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let before = frames::baseline(view, cx).await;
     let recording = frames::start(view, cx);
     click(view, &format!("work-{WORKSPACE}"), cx).await?;
-    let loaded = painted(view, &BOARD, LOADED_WITHIN, "runs and the live run's board", cx).await;
+    let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await;
     sleep(cx, Duration::from_millis(200)).await;
     let during = recording.stop(view, cx);
     let loaded = loaded?;
@@ -437,25 +439,42 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
             })
         })
         .ok_or_else(|| anyhow!("clicking work-{WORKSPACE} opened no active Work tab"))?;
-    let loaded = painted(view, &BOARD, LOADED_WITHIN, "runs and the live run's board", cx).await?;
+    let loaded = painted(view, &BOARD, LOADED_WITHIN, "the live run's page", cx).await?;
     crate::selftest_manage::shot("m5-14-work-board", cx).await;
-    for absent in ["work-row-13", "work-row-sw1/1"] {
+    for absent in ["work-row-13", "work-nav-run-sw1"] {
         if is_painted(view, absent, cx) {
-            bail!("{absent} is painted: the run's own row must be the header, and the done run must start collapsed");
+            bail!("{absent} is painted: the run's own row is the page's title, and a closed run waits under N closed");
         }
     }
     let title = view.read_with(cx, |v, _| v.tab(tab).map(|t| t.title.clone()).unwrap_or_default());
-    lines.push(format!("tab \"{title}\" painted 2 runs and sw2's 3 rows (depth 1, 1, 2) {} ms after the click; run row as header, sw1 collapsed", loaded.as_millis()));
+    lines.push(format!(
+        "tab \"{title}\": project bound by the folder's origin, navigator | sw2's page (3 rows, depth 1, 1, 2) | sw2 in the detail, {} ms after the click; sw1 under 1 closed",
+        loaded.as_millis()
+    ));
 
-    click(view, "work-run-sw1", cx).await?;
-    let expanded = painted(view, &["work-row-sw1/1", "work-row-sw1/2", &status_key("sw1/1", ItemStatus::Done)], LOADED_WITHIN, "sw1 expanded", cx).await?;
-    lines.push(format!("clicked sw1: its 2 rows painted after {} ms", expanded.as_millis()));
+    click(view, &format!("work-closed-{WORKSPACE}"), cx).await?;
+    click(view, "work-nav-run-sw1", cx).await?;
+    painted(view, &["work-pill-sw1=proven"], LOADED_WITHIN, "sw1's page", cx).await?;
+    if painted_any(view, "work-row-sw1/", cx) {
+        bail!("sw1's Open filter lists a closed row");
+    }
+    click(view, "work-filter-all", cx).await?;
+    let expanded = painted(view, &["work-row-sw1/1", "work-dot-sw1/1=claimed"], LOADED_WITHIN, "sw1 under All", cx).await?;
+    if is_painted(view, "work-row-sw1/2", cx) {
+        bail!("the cancelled sw1/2 is listed under All");
+    }
+    lines.push(format!("1 closed → sw1 → Open lists nothing, All lists sw1/1 (Done, not verified: a worker's own run) after {} ms; cancelled sw1/2 left out", expanded.as_millis()));
+    click(view, "work-nav-run-sw2", cx).await?;
+    painted(view, &BOARD, LOADED_WITHIN, "sw2 again", cx).await?;
+    click(view, "work-filter-all", cx).await?;
 
     let selected: Rc<RefCell<Vec<String>>> = Rc::default();
     let sink = selected.clone();
     cx.update(|_, cx| {
-        cx.subscribe(&work, move |_: Entity<WorkView>, event: &WorkEvent, _| match event {
-            WorkEvent::ItemSelected(id) => sink.borrow_mut().push(id.clone()),
+        cx.subscribe(&work, move |_: Entity<WorkView>, event: &WorkEvent, _| {
+            if let WorkEvent::ItemSelected(id) = event {
+                sink.borrow_mut().push(id.clone());
+            }
         })
         .detach();
     })?;
@@ -464,7 +483,8 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
     if now.as_deref() != Some(TASK_2) || selected.borrow().as_slice() != [TASK_2.to_string()] {
         bail!("clicking work-row-sw2/2 selected {now:?}, emitted {:?}; expected {TASK_2}", selected.borrow());
     }
-    lines.push("clicked sw2/2: selected and ItemSelected emitted".into());
+    painted(view, &["work-pill-sw2/2=stop", "work-row-sw2/1"], LOADED_WITHIN, "sw2/2 in the detail beside the list", cx).await?;
+    lines.push("clicked sw2/2: selected, ItemSelected emitted, shown in the detail with the list kept".into());
 
     let deadline = Instant::now() + LOADED_WITHIN;
     while fake.streams() == 0 && fake.push(": ping") == 0 {
@@ -483,21 +503,20 @@ pub async fn run(view: &Entity<FleetView>, launched: &Session, cx: &mut AsyncWin
             bail!("the app's stream was gone when event {seq} was pushed");
         }
     }
-    let done_key = status_key("sw2/1", ItemStatus::Done);
-    painted(view, &[&done_key], LIVE_WITHIN, "sw2/1 done after the stream events", cx).await?;
+    painted(view, &["work-dot-sw2/1=proven"], LIVE_WITHIN, "sw2/1 verified after the stream events", cx).await?;
     let live_after = pushed.elapsed();
     sleep(cx, Duration::from_millis(500)).await;
     let (reads, overviews) = work.read_with(cx, |w, _| (w.board_reads - reads_before, w.overview_reads - overview_before));
     if reads != 1 || overviews != 1 {
         bail!("3 events within the debounce caused {reads} board and {overviews} overview re-reads, expected 1 and 1");
     }
-    if is_painted(view, &status_key("sw2/1", ItemStatus::InProgress), cx) {
-        bail!("sw2/1 is painted both in_progress and done");
+    if is_painted(view, "work-dot-sw2/1=doing", cx) {
+        bail!("sw2/1 is painted both in progress and verified");
     }
-    lines.push(format!("3 stream events for sw2 → 1 board + 1 overview re-read; sw2/1 painted done {} ms after the push", live_after.as_millis()));
+    lines.push(format!("3 stream events for sw2 → 1 board + 1 overview re-read; sw2/1's dot Verified {} ms after the push", live_after.as_millis()));
 
-    lines.push(item_page(view, &work, fake, launched, cx).await.context("item page")?);
-    lines.push(inbox_and_journal(view, tab, &work, fake, cx).await.context("inbox and journal")?);
+    lines.push(item_page(view, &work, fake, launched, cx).await.context("the detail")?);
+    lines.push(inbox_cards(view, tab, &work, fake, cx).await.context("inbox")?);
 
     let oauth = OAUTH.get().ok_or_else(|| anyhow!("no fake OAuth server"))?;
     let issued = oauth.issued();
@@ -540,39 +559,25 @@ async fn item_page(
     fake.set(item_target(TASK_1), Answer::json(task1_page(110, launched, false)));
 
     click(view, "work-row-sw2/1", cx).await?;
-    let attach_key = format!("item-attach-{}", launched.id);
-    let (c1, c2, c3, v0) = (criterion_key("c1", true), criterion_key("c2", true), criterion_key("c3", false), verification_key(0, true));
+    let attach_key = format!("work-attach-{}", launched.id);
+    let check = |i: usize, done: bool| format!("work-detail-section-criteria-check-{i}={}", if done { "done" } else { "open" });
+    let (c1, c2, c3) = (check(0, true), check(1, true), check(2, false));
     let sections = [
-        "item-pane",
-        "item-header-sw2/1",
-        "item-path-selftest-work",
-        "item-path-sw2",
-        "item-intent",
-        "item-verify-cmd",
-        "item-claim",
+        "work-pill-sw2/1=proven",
+        "work-detail-copy",
+        "work-detail-web",
+        "work-detail-section-intent",
+        "work-detail-section-criteria",
+        "work-detail-section-verify",
         &c1,
         &c2,
         &c3,
-        "item-report-1",
-        &v0,
         &attach_key,
-        "item-artifact-c0ffee1234567890",
-        "item-note-n-1",
-        "item-link-out-blocks-sw2/2",
-        "item-link-in-relates-sw1/1",
-        "item-assumption-A1",
-        "item-events",
+        "work-tab-evidence",
+        "work-row-sw2/2",
     ];
-    let opened = painted(view, &sections, LOADED_WITHIN, "sw2/1's item page", cx).await?;
-    for absent in ["item-done-unverified", "item-event-", "item-child-", "item-finding-"] {
-        if painted_any(view, absent, cx) {
-            bail!("{absent}* is painted on sw2/1's page: verified, events collapsed, no children or findings");
-        }
-    }
-    lines.push(format!(
-        "clicked sw2/1: item page beside the board after {} ms (criteria 2/3, 1 report \"claimed\", 1 verification \"proven\", claim, artifact, note, 2 links, assumption, events collapsed; no warning)",
-        opened.as_millis()
-    ));
+    let opened = painted(view, &sections, LOADED_WITHIN, "sw2/1 in the detail", cx).await?;
+    lines.push(format!("clicked sw2/1: the detail beside the list after {} ms (Verified, intent, Done when 2 of 3, Verified by running, Attach)", opened.as_millis()));
 
     let reads_before = work.read_with(cx, |w, _| w.item_reads);
     fake.set(item_target(TASK_1), Answer::json(task1_page(111, launched, true)));
@@ -581,9 +586,9 @@ async fn item_page(
     if fake.push(&frame) == 0 {
         bail!("the app's stream was gone when the criterion event was pushed");
     }
-    painted(view, &[&criterion_key("c3", true)], LIVE_WITHIN, "c3 checked after the stream event", cx).await?;
+    painted(view, &[&check(2, true)], LIVE_WITHIN, "c3 checked after the stream event", cx).await?;
     let live_after = pushed.elapsed();
-    if is_painted(view, &criterion_key("c3", false), cx) {
+    if is_painted(view, &check(2, false), cx) {
         bail!("c3 is painted both checked and unchecked");
     }
     sleep(cx, Duration::from_millis(400)).await;
@@ -595,41 +600,24 @@ async fn item_page(
 
     crate::selftest_manage::shot("m5-14-work-item", cx).await;
     if let Some(secs) = std::env::var("SUPRAMAN_SELFTEST_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
-        println!("step 7: holding the item page {secs} s (SUPRAMAN_SELFTEST_HOLD_SECS)");
+        println!("step 7: holding the detail {secs} s (SUPRAMAN_SELFTEST_HOLD_SECS)");
         sleep(cx, Duration::from_secs(secs)).await;
     }
 
-    click(view, "item-events", cx).await?;
-    painted(view, &["item-event-90", "item-event-95", "item-event-101"], LIVE_WITHIN, "events expanded", cx).await?;
+    click(view, "work-tab-evidence", cx).await?;
+    painted(view, &["work-evidence-report-1", "work-evidence-verification-0=pass"], LIVE_WITHIN, "the Evidence tab", cx).await?;
+    click(view, "work-tab-notes", cx).await?;
+    painted(view, &["work-detail-section-notes"], LIVE_WITHIN, "the Notes tab", cx).await?;
+    click(view, "work-tab-activity", cx).await?;
+    painted(view, &["work-event-90", "work-event-95", "work-event-101"], LIVE_WITHIN, "the Activity tab", cx).await?;
+    lines.push("Evidence: the report beside the controller's verification; Notes; Activity's 3 events".into());
 
-    click(view, "item-link-in-relates-sw1/1", cx).await?;
-    painted(view, &["item-header-sw1/1", "item-done-unverified", &verification_key(0, true), "item-report-1"], LOADED_WITHIN, "sw1/1 via the link", cx).await?;
-    if is_painted(view, "item-intent", cx) {
-        bail!("sw1/1's intent is null, yet an Intent section is painted");
-    }
-    lines.push("link → sw1/1 (the real server's nulls, intent null: no Intent section): done with only a worker verification, warning painted".into());
-
-    click(view, "item-back", cx).await?;
-    painted(view, &["item-header-sw2/1"], LOADED_WITHIN, "Back to sw2/1", cx).await?;
-    if is_painted(view, "item-done-unverified", cx) {
-        bail!("Back to sw2/1 still paints sw1/1's warning");
-    }
-    click(view, "item-back", cx).await?;
-    sleep(cx, Duration::from_millis(100)).await;
-    if painted_any(view, "item-", cx) || work.read_with(cx, |w, _| w.item.is_some()) {
-        bail!("the second Back left the item page open");
-    }
-    painted(view, &["work-row-sw2/1", "work-row-sw2/2"], LIVE_WITHIN, "the board after Back", cx).await?;
-    lines.push("Back → sw2/1, Back → the board".into());
-
-    click(view, "work-row-sw2/1", cx).await?;
-    painted(view, &["item-header-sw2/1"], LOADED_WITHIN, "sw2/1 again", cx).await?;
     escape(cx)?;
-    sleep(cx, Duration::from_millis(100)).await;
-    if painted_any(view, "item-", cx) {
-        bail!("Escape left the item page open");
+    painted(view, &["work-pill-sw2=doing", "work-row-sw2/1"], LOADED_WITHIN, "the run in the detail after Esc", cx).await?;
+    if work.read_with(cx, |w, _| w.selected.is_some()) {
+        bail!("Escape left a row selected");
     }
-    lines.push("Escape closed it".into());
+    lines.push("Esc cleared the selection: the run in the detail, the list kept".into());
 
     click(view, "work-row-sw2/1", cx).await?;
     painted(view, &[&attach_key], LOADED_WITHIN, "sw2/1's Attach", cx).await?;
@@ -640,18 +628,18 @@ async fn item_page(
     Ok(lines.join("; "))
 }
 
-async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
+async fn inbox_cards(view: &Entity<FleetView>, tab: u64, work: &Entity<WorkView>, fake: &FakeWorkman, cx: &mut AsyncWindowContext) -> anyhow::Result<String> {
     let mut lines = Vec::new();
     let (blocked, shipped) = (format!("inbox-ws-blocked:{TASK_2}"), format!("inbox-ws-done_unverified:{SHIPPED}"));
     let question = format!("inbox-ws-question:{TASK_1}");
 
     click(view, &blocked, cx).await?;
-    painted(view, &["item-header-sw2/2"], LOADED_WITHIN, "sw2/2's page from the Inbox", cx).await?;
+    painted(view, &["work-pill-sw2/2=stop", "work-prompt-item-unblock"], LOADED_WITHIN, "sw2/2 in the detail from the Inbox", cx).await?;
     let active = view.read_with(cx, |v, _| v.active);
     if active != Some(tab) {
         bail!("the Inbox row activated tab {active:?}, not the workspace's Work tab {tab}");
     }
-    lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2's item page".into());
+    lines.push("Inbox row blocked sw2/2 → the Work tab, sw2/2 in the detail (Blocked, its Unblock prompt chip)".into());
 
     click(view, &format!("{HOUSEKEEPING_KEY}=closed"), cx).await?;
     painted(view, &[&shipped, &format!("{HOUSEKEEPING_KEY}=open")], LIVE_WITHIN, "sw1/1's card under the opened Housekeeping", cx).await?;
@@ -661,7 +649,7 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
         bail!("× left {shipped} painted");
     }
     if work.read_with(cx, |w, _| w.item.as_ref().map(|o| o.id.clone())).as_deref() != Some(TASK_2) {
-        bail!("the × click reached the row under it: the item page left sw2/2");
+        bail!("the × click reached the row under it: the detail left sw2/2");
     }
     let file = view.read_with(cx, |v, _| v.home.clone()).ok_or_else(|| anyhow!("no Supraman home"))?.join(DISMISSED_FILE);
     let deadline = Instant::now() + LIVE_WITHIN;
@@ -700,41 +688,5 @@ async fn inbox_and_journal(view: &Entity<FleetView>, tab: u64, work: &Entity<Wor
     lines.push(format!("× hid sw1/1's row and wrote {DISMISSED_FILE}; a reload added a question and kept it hidden; a new since showed it again"));
     lines.push(every_kind(view, fake, cx).await?);
 
-    click(view, "work-journal=closed", cx).await?;
-    painted(view, &["work-journal=open", "journal-event-150", "journal-event-151", "journal-event-152", "journal-older"], LOADED_WITHIN, "the journal", cx).await?;
-    let event_153 = journal_event(153, Some(item(TASK_1, "sw2/1", "task", "Wire the Work tab", "done")), "verification", "verified: PASS");
-    fake.set(journal_target(Some(152), 500), Answer::json(journal(153, false, vec![event_153])));
-    let pushed = Instant::now();
-    fake.push(&json!({ "seq": 153, "runId": LIVE_RUN, "itemId": TASK_1, "kind": "verification" }).to_string());
-    painted(view, &["journal-event-153"], LIVE_WITHIN, "the live journal event", cx).await?;
-    let live_after = pushed.elapsed();
-    let older = vec![
-        journal_event(20, None, "created", "run created"),
-        journal_event(40, Some(item(SHIPPED, "sw1/1", "task", "Ship it", "done")), "report", "reported done"),
-    ];
-    fake.set(format!("/api/v1/journal?scope={PROJECT}&before=150&limit=200"), Answer::json(journal(20, false, older)));
-    click(view, "journal-older", cx).await?;
-    painted(view, &["journal-event-20", "journal-event-40"], LOADED_WITHIN, "the older page", cx).await?;
-    sleep(cx, Duration::from_millis(100)).await;
-    if is_painted(view, "journal-older", cx) {
-        bail!("load older is still offered after a page that reached the start");
-    }
-    let order: Vec<i64> = work.read_with(cx, |w, _| w.journal.feed.as_ref().map(|f| f.events.iter().map(|e| e.seq).collect()).unwrap_or_default());
-    if order != [20, 40, 150, 151, 152, 153] {
-        bail!("the journal holds {order:?}, expected 20, 40, 150..153 ascending");
-    }
-    click(view, "journal-event-40", cx).await?;
-    painted(view, &["item-header-sw1/1"], LOADED_WITHIN, "sw1/1 from its journal event", cx).await?;
-    lines.push(format!(
-        "journal: newest page 150..152 + load older; event 153 painted {} ms after its push; load older → 20, 40, none older offered; event 40 → sw1/1's page",
-        live_after.as_millis()
-    ));
-    crate::selftest_manage::shot("m5-14-work-journal", cx).await;
-    if let Some(secs) = std::env::var("SUPRAMAN_SELFTEST_JOURNAL_HOLD_SECS").ok().and_then(|v| v.parse::<u64>().ok()) {
-        println!("step 7: holding the journal {secs} s (SUPRAMAN_SELFTEST_JOURNAL_HOLD_SECS)");
-        sleep(cx, Duration::from_secs(secs)).await;
-    }
-    click(view, "work-journal=open", cx).await?;
-    painted(view, &["work-run-sw2"], LOADED_WITHIN, "the runs again", cx).await?;
     Ok(lines.join("; "))
 }

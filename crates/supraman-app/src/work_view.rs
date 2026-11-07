@@ -1,9 +1,19 @@
 //! Read only (C21): the token stays inside the hub's [`Client`]; no message here may carry it.
+//! The Work tab is the web UI's three columns: navigator | run list | detail.
 
+mod actions;
 pub mod cards;
+mod detail;
 mod inbox;
 mod item;
-mod journal;
+mod layout;
+mod navigator;
+mod projects;
+mod prompts;
+mod run_list;
+pub mod state;
+#[cfg(test)]
+mod tests;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -11,25 +21,26 @@ use std::{
     time::Duration,
 };
 
-use supraman_core::time::rfc3339_local;
-use supraman_workman::{
-    AuthStatus, Board, BoardRow, Client, ItemRef, ItemStatus, OverviewProject, OverviewRun, Resolved, Rollup, Stream,
-    StreamEvent, StreamSignal,
-};
+use supraman_workman::{AuthStatus, Board, Client, ItemRef, Overview, OverviewProject, Stream, StreamEvent, StreamSignal};
 use gpui::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FontWeight, Global, Hsla, Render,
-    SharedString, Window, div, prelude::*, px, relative,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyDownEvent, Render, ScrollHandle,
+    SharedString, Window, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 
-use supraman_ui::clipped::clipped;
-use supraman_ui::{banner, button, fonts};
-use supraman_ui::hit::{HitTargets, hit_target};
+use supraman_ui::hit::HitTargets;
+use supraman_ui::menu::ContextMenu;
+use supraman_ui::placeholder::placeholder;
+use supraman_ui::toast::ToastSlot;
+use crate::view::Link;
 use crate::workman_setup::WorkmanStatus;
 
+pub use actions::RowAction;
+pub use detail::DetailTab;
 pub use inbox::{DISMISSED_FILE, HOUSEKEEPING_KEY, WorkInbox, dismiss_key_of, row_key_of};
-pub use item::{FleetLink, LiveSession, OpenItem, criterion_key, verification_key};
-pub use journal::JournalView;
+pub use item::{FleetLink, ItemState, LiveSession, OpenItem};
+pub use projects::RepoOf;
+pub use state::Filter;
 
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -57,7 +68,6 @@ pub struct WorkHub {
     home: Option<PathBuf>,
     state: HubState,
     _stream: Option<Stream>,
-    connected: bool,
     lost: Option<String>,
 }
 
@@ -88,7 +98,7 @@ impl WorkHub {
             return hub;
         }
         let hub = cx.new(|cx| {
-            let mut hub = WorkHub { home, state: HubState::Starting, _stream: None, connected: false, lost: None };
+            let mut hub = WorkHub { home, state: HubState::Starting, _stream: None, lost: None };
             hub.configure(cx);
             hub
         });
@@ -96,11 +106,16 @@ impl WorkHub {
         hub
     }
 
+    /// A hub reading through `client` at once, with no stream: a test's.
+    #[cfg(test)]
+    pub fn ready(client: Client, cx: &mut App) -> Entity<WorkHub> {
+        cx.new(|_| WorkHub { home: None, state: HubState::Ready(client), _stream: None, lost: None })
+    }
+
     pub fn reconfigure(home: Option<PathBuf>, cx: &mut App) {
         if let Some(GlobalHub(hub)) = cx.try_global::<GlobalHub>() {
             hub.clone().update(cx, |hub, cx| {
                 hub._stream = None;
-                hub.connected = false;
                 hub.lost = None;
                 hub.configure(cx);
             });
@@ -114,15 +129,6 @@ impl WorkHub {
             HubState::Starting => Access::Starting,
             HubState::Ready(client) => Access::Ready(client),
             HubState::Unconfigured(why) => Access::Unconfigured(why),
-        }
-    }
-
-    pub fn connection(&self) -> (String, bool) {
-        match (&self.state, self.connected, &self.lost) {
-            (HubState::Ready(_), true, _) => ("live".into(), true),
-            (HubState::Ready(_), false, Some(why)) => (format!("reconnecting ({why})"), false),
-            (HubState::Ready(_), false, None) => ("connecting…".into(), false),
-            _ => (String::new(), false),
         }
     }
 
@@ -164,7 +170,6 @@ impl WorkHub {
     fn on_signal(&mut self, signal: StreamSignal, cx: &mut Context<Self>) {
         match signal {
             StreamSignal::Connected => {
-                self.connected = true;
                 if self.lost.take().is_some() {
                     cx.emit(HubEvent::Resync);
                 }
@@ -172,7 +177,6 @@ impl WorkHub {
             }
             StreamSignal::Event(event) => cx.emit(HubEvent::Changed(event)),
             StreamSignal::Lost(why) => {
-                self.connected = false;
                 self.lost = Some(why);
                 cx.emit(HubEvent::Connection);
             }
@@ -201,11 +205,28 @@ fn read_failed(e: supraman_workman::Error) -> String {
     }
 }
 
+pub fn pick_project(resolved: supraman_workman::Resolved, workspace: &str) -> Result<ItemRef, String> {
+    let mut found: Vec<ItemRef> = resolved.matches.into_iter().filter(|m| m.kind == "project").collect();
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(format!("Workman has no project with ref '{workspace}', so there is no work to show for this workspace.")),
+        n => Err(format!("'{workspace}' names {n} Workman projects; Supraman cannot tell which is this workspace's.")),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shown {
     Loading,
     Message(String),
-    Runs(OverviewProject),
+    Ready,
+}
+
+/// What the middle column shows. Overview and Activity are filled by step (b) of workman-ui/work-tab-redesign.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Page {
+    Overview,
+    Activity,
+    Run(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,83 +238,136 @@ pub enum BoardState {
 
 pub enum WorkEvent {
     ItemSelected(String),
+    /// Needs you was clicked: the Inbox panel is where it is answered.
+    ShowInbox,
 }
 
 impl EventEmitter<WorkEvent> for WorkView {}
 
 pub struct WorkView {
     pub workspace: String,
+    folders: Vec<PathBuf>,
+    repo_of: RepoOf,
     hub: Entity<WorkHub>,
     hits: HitTargets,
-    project: Option<ItemRef>,
     pub shown: Shown,
-    /// The `seq` of the overview shown: an older answer arriving late is dropped.
-    overview_seq: i64,
+    keys: Option<Vec<(&'static str, String)>>,
+    overview: Option<Overview>,
+    pub projects: Vec<OverviewProject>,
+    pub page: Page,
+    page_chosen: bool,
     pub boards: HashMap<String, BoardState>,
-    pub expanded: HashSet<String>,
-    /// Runs the tab has seen once; only a run's first sight decides whether it starts expanded.
-    seen_runs: HashSet<String>,
+    closed_open: HashSet<String>,
     pub selected: Option<String>,
+    pub filter: Filter,
+    pub item: Option<OpenItem>,
+    pub detail_tab: DetailTab,
+    pub prompts: prompts::Prompts,
+    briefs: HashMap<String, Result<String, String>>,
+    pub toast: ToastSlot,
+    menu: Option<ContextMenu<RowAction>>,
+    focus: FocusHandle,
+    pub detail_focused: bool,
+    pub layout: layout::Layout,
+    link: FleetLink,
+    pub open_link_with: fn(&Link, &mut App),
+    inbox: Option<Entity<WorkInbox>>,
     overview_pending: bool,
     boards_pending: HashSet<String>,
+    item_pending: bool,
     pub overview_reads: u64,
     pub board_reads: u64,
-    link: FleetLink,
-    pub item: Option<OpenItem>,
-    item_pending: bool,
     pub item_reads: u64,
-    pub journal: JournalView,
+    list_scroll: ScrollHandle,
+    detail_scroll: ScrollHandle,
+}
+
+pub struct Opening {
+    pub workspace: String,
+    pub folders: Vec<PathBuf>,
+    pub home: Option<PathBuf>,
+    pub hits: HitTargets,
+    pub link: FleetLink,
+    pub open_link_with: fn(&Link, &mut App),
+    /// A folder's repo: `supraman_supervisor::git_repo`, or a fixture's.
+    pub repo_of: RepoOf,
 }
 
 impl WorkView {
-    pub fn open<T: 'static>(workspace: &str, home: Option<PathBuf>, hits: HitTargets, link: FleetLink, cx: &mut Context<T>) -> Entity<WorkView> {
-        let hub = WorkHub::shared(home, cx);
-        cx.new(|cx| WorkView::new(workspace.to_string(), hub, hits, link, cx))
+    pub fn open<T: 'static>(opening: Opening, cx: &mut Context<T>) -> Entity<WorkView> {
+        let hub = WorkHub::shared(opening.home.clone(), cx);
+        let inbox = WorkInbox::shared(opening.home.clone(), cx);
+        cx.new(|cx| {
+            let mut view = WorkView::new(opening, hub, cx);
+            cx.observe(&inbox, |_, _, cx| cx.notify()).detach();
+            view.inbox = Some(inbox);
+            view
+        })
     }
 
-    /// The Workman project the open view read, once it has.
-    pub fn project(&self) -> Option<&ItemRef> {
-        self.project.as_ref()
-    }
-
-    fn new(workspace: String, hub: Entity<WorkHub>, hits: HitTargets, link: FleetLink, cx: &mut Context<Self>) -> Self {
+    fn new(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(&hub, Self::on_hub).detach();
+        let Opening { workspace, folders, home, hits, link, open_link_with, repo_of } = opening;
         let mut view = WorkView {
             workspace,
+            folders,
+            repo_of,
             hub,
             hits,
-            project: None,
             shown: Shown::Loading,
-            overview_seq: i64::MIN,
+            keys: None,
+            overview: None,
+            projects: Vec::new(),
+            page: Page::Overview,
+            page_chosen: false,
             boards: HashMap::new(),
-            expanded: HashSet::new(),
-            seen_runs: HashSet::new(),
+            closed_open: HashSet::new(),
             selected: None,
+            filter: Filter::Open,
+            item: None,
+            detail_tab: DetailTab::Overview,
+            prompts: prompts::Prompts::default(),
+            briefs: HashMap::new(),
+            toast: ToastSlot::default(),
+            menu: None,
+            focus: cx.focus_handle(),
+            detail_focused: false,
+            layout: layout::Layout::default(),
+            link,
+            open_link_with,
+            inbox: None,
             overview_pending: false,
             boards_pending: HashSet::new(),
+            item_pending: false,
             overview_reads: 0,
             board_reads: 0,
-            link,
-            item: None,
-            item_pending: false,
             item_reads: 0,
-            journal: JournalView::default(),
+            list_scroll: ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
         };
+        view.layout.load(home, cx);
+        view.read_keys(cx);
         view.read_overview(cx);
         view
+    }
+
+    /// A view over `hub`: a test's.
+    #[cfg(test)]
+    pub fn for_test(opening: Opening, hub: Entity<WorkHub>, cx: &mut Context<Self>) -> Self {
+        Self::new(opening, hub, cx)
     }
 
     fn on_hub(&mut self, _: Entity<WorkHub>, event: &HubEvent, cx: &mut Context<Self>) {
         match event {
             HubEvent::Configured => {
                 self.read_overview(cx);
-                self.read_item(cx);
+                self.reload_shown(cx);
             }
             HubEvent::Changed(event) => {
                 self.schedule_overview(cx);
-                self.schedule_journal(cx);
-                if let Some(run) = board_to_reload(event, &self.expanded) {
-                    self.schedule_board(run.to_string(), cx);
+                if let Some(run) = self.shown_run().filter(|run| event.run_id.as_deref() == Some(*run)).map(str::to_string) {
+                    self.schedule_board(run.clone(), cx);
+                    self.schedule_prompts(run, cx);
                 }
                 if self.item.as_ref().is_some_and(|open| item::item_to_reload(event, open)) {
                     self.schedule_item(cx);
@@ -301,40 +375,35 @@ impl WorkView {
             }
             HubEvent::Resync => {
                 self.read_overview(cx);
-                for run in self.expanded.clone() {
-                    self.read_board(run, cx);
-                }
-                self.read_item(cx);
-                if self.journal.feed.is_some() {
-                    self.read_journal(cx);
-                }
+                self.reload_shown(cx);
             }
             HubEvent::Connection => cx.notify(),
         }
     }
 
-    pub fn on_select_item(&mut self, id: &str, cx: &mut Context<Self>) {
-        cx.emit(WorkEvent::ItemSelected(id.to_string()));
-        self.show_item(id.to_string(), cx);
-    }
-
-    fn select(&mut self, id: String, cx: &mut Context<Self>) {
-        self.on_select_item(&id, cx);
-        self.selected = Some(id);
-        cx.notify();
-    }
-
-    pub fn toggle_run(&mut self, run_id: &str, cx: &mut Context<Self>) {
-        if !self.expanded.remove(run_id) {
-            self.expanded.insert(run_id.to_string());
-            if !matches!(self.boards.get(run_id), Some(BoardState::Ready(_))) {
-                self.read_board(run_id.to_string(), cx);
-            }
+    fn reload_shown(&mut self, cx: &mut Context<Self>) {
+        if let Some(run) = self.shown_run().map(str::to_string) {
+            self.read_board(run.clone(), cx);
+            self.read_prompts(run, cx);
         }
-        cx.notify();
+        self.read_item(cx);
     }
 
-    fn client(&mut self, cx: &mut Context<Self>) -> Option<Client> {
+    pub fn shown_run(&self) -> Option<&str> {
+        match &self.page {
+            Page::Run(id) => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn board(&self) -> Option<&Board> {
+        match self.boards.get(self.shown_run()?) {
+            Some(BoardState::Ready(board)) => Some(board),
+            _ => None,
+        }
+    }
+
+    pub fn client(&mut self, cx: &mut Context<Self>) -> Option<Client> {
         match self.hub.read(cx).access() {
             Access::Starting => None,
             Access::Ready(client) => Some(client.clone()),
@@ -344,6 +413,26 @@ impl WorkView {
                 None
             }
         }
+    }
+
+    pub fn web_base(&self, cx: &App) -> Option<String> {
+        match self.hub.read(cx).access() {
+            Access::Ready(client) => Some(supraman_core::url::origin(client.base())),
+            _ => None,
+        }
+    }
+
+    fn read_keys(&mut self, cx: &mut Context<Self>) {
+        let (folders, repo_of) = (self.folders.clone(), self.repo_of);
+        cx.spawn(async move |this, cx| {
+            let keys = cx.background_executor().spawn(async move { projects::folder_keys(&folders, repo_of) }).await;
+            this.update(cx, |this, cx| {
+                this.keys = Some(keys);
+                this.bind(cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn schedule_overview(&mut self, cx: &mut Context<Self>) {
@@ -367,35 +456,36 @@ impl WorkView {
 
     fn read_overview(&mut self, cx: &mut Context<Self>) {
         let Some(client) = self.client(cx) else { return };
-        let (workspace, project) = (self.workspace.clone(), self.project.clone());
         self.overview_reads += 1;
         cx.spawn(async move |this, cx| {
-            let read = cx.background_executor().spawn(async move { read_overview(&client, &workspace, project) }).await;
+            let read = cx.background_executor().spawn(async move { client.overview().map_err(read_failed) }).await;
             this.update(cx, |this, cx| this.apply_overview(read, cx)).ok();
         })
         .detach();
     }
 
-    fn apply_overview(&mut self, read: Result<(ItemRef, i64, OverviewProject), String>, cx: &mut Context<Self>) {
+    fn apply_overview(&mut self, read: Result<Overview, String>, cx: &mut Context<Self>) {
         match read {
-            Ok((_, seq, _)) if seq < self.overview_seq => return,
-            Ok((project, seq, overview)) => {
-                for run in &overview.runs {
-                    if self.seen_runs.insert(run.item.id.clone()) && starts_expanded(run.item.status) {
-                        self.expanded.insert(run.item.id.clone());
-                        self.read_board(run.item.id.clone(), cx);
-                    }
-                }
-                self.project = Some(project);
-                self.overview_seq = seq;
-                self.shown = Shown::Runs(overview);
-                self.journal_project_known(cx);
-            }
+            Ok(overview) if self.overview.as_ref().is_some_and(|shown| overview.seq < shown.seq) => return,
+            Ok(overview) => self.overview = Some(overview),
             Err(message) => {
-                self.project = None;
-                self.overview_seq = i64::MIN;
+                self.overview = None;
                 self.shown = Shown::Message(message);
+                cx.notify();
+                return;
             }
+        }
+        self.bind(cx);
+    }
+
+    /// The projects bound to the folders' repos, once both the overview and the keys are read.
+    fn bind(&mut self, cx: &mut Context<Self>) {
+        let (Some(overview), Some(keys)) = (&self.overview, &self.keys) else { return };
+        self.projects = projects::bound(overview, keys);
+        self.shown = if self.projects.is_empty() { Shown::Message(projects::no_project_message(&self.workspace, keys)) } else { Shown::Ready };
+        let first = self.projects.iter().flat_map(projects::active).next().map(|r| r.item.id.clone());
+        if let Some(run) = first.filter(|_| !self.page_chosen) {
+            self.open_run(run, cx);
         }
         cx.notify();
     }
@@ -406,10 +496,7 @@ impl WorkView {
         self.board_reads += 1;
         cx.spawn(async move |this, cx| {
             let id = run.clone();
-            let read = cx
-                .background_executor()
-                .spawn(async move { client.board(&id).map_err(|e| format!("Cannot read this run's board: {e}")) })
-                .await;
+            let read = cx.background_executor().spawn(async move { client.board(&id).map_err(|e| format!("Cannot read this run's board: {e}")) }).await;
             this.update(cx, |this, cx| {
                 match (read, this.boards.get(&run)) {
                     (Ok(board), Some(BoardState::Ready(shown))) if board.seq < shown.seq => {}
@@ -428,363 +515,215 @@ impl WorkView {
         })
         .detach();
     }
-}
 
-fn read_overview(client: &Client, workspace: &str, project: Option<ItemRef>) -> Result<(ItemRef, i64, OverviewProject), String> {
-    let failed = read_failed;
-    let project = match project {
-        Some(project) => project,
-        None => pick_project(client.resolve(workspace).map_err(failed)?, workspace)?,
-    };
-    let overview = client.overview().map_err(failed)?;
-    let seq = overview.seq;
-    let found = overview.projects.into_iter().find(|p| p.item.id == project.id);
-    let found = found.ok_or_else(|| no_project(workspace))?;
-    Ok((project, seq, found))
-}
+    pub fn show_page(&mut self, page: Page, cx: &mut Context<Self>) {
+        match page {
+            Page::Run(run) => self.open_run(run, cx),
+            page => {
+                self.page_chosen = true;
+                self.page = page;
+                self.selected = None;
+                self.item = None;
+                cx.notify();
+            }
+        }
+    }
 
-fn no_project(workspace: &str) -> String {
-    format!("Workman has no project with ref '{workspace}', so there is no work to show for this workspace.")
-}
+    pub fn open_run(&mut self, run: String, cx: &mut Context<Self>) {
+        self.page_chosen = true;
+        if self.shown_run() != Some(run.as_str()) {
+            self.page = Page::Run(run.clone());
+            self.filter = Filter::Open;
+            self.selected = None;
+            self.list_scroll.set_offset(gpui::point(px(0.), px(0.)));
+            if !matches!(self.boards.get(&run), Some(BoardState::Ready(_))) {
+                self.read_board(run.clone(), cx);
+            }
+            self.read_prompts(run.clone(), cx);
+        }
+        self.show_detail(run, cx);
+    }
 
-pub fn pick_project(resolved: Resolved, workspace: &str) -> Result<ItemRef, String> {
-    let mut found: Vec<ItemRef> = resolved.matches.into_iter().filter(|m| m.kind == "project").collect();
-    match found.len() {
-        1 => Ok(found.remove(0)),
-        0 => Err(no_project(workspace)),
-        n => Err(format!("'{workspace}' names {n} Workman projects; Supraman cannot tell which is this workspace's.")),
+    pub fn toggle_closed(&mut self, project: &str, cx: &mut Context<Self>) {
+        if !self.closed_open.remove(project) {
+            self.closed_open.insert(project.to_string());
+        }
+        cx.notify();
+    }
+
+    pub fn set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        self.filter = filter;
+        if self.selected.as_ref().is_some_and(|id| !self.listed().iter().any(|r| &r.item.id == id)) {
+            self.clear_selection(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn listed(&self) -> Vec<&supraman_workman::BoardRow> {
+        self.board().map(|b| state::listed(b, self.filter)).unwrap_or_default()
+    }
+
+    pub fn select(&mut self, id: String, cx: &mut Context<Self>) {
+        cx.emit(WorkEvent::ItemSelected(id.clone()));
+        self.selected = Some(id.clone());
+        self.show_detail(id, cx);
+        cx.notify();
+    }
+
+    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.selected = None;
+        self.detail_focused = false;
+        if let Some(run) = self.shown_run().map(str::to_string) {
+            self.show_detail(run, cx);
+        }
+        cx.notify();
+    }
+
+    /// Esc: the list again from the detail, else no selection; whether it did anything.
+    pub fn escape(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.menu.take().is_some() || self.prompts.collapse() {
+            cx.notify();
+            return true;
+        }
+        if self.detail_focused {
+            self.detail_focused = false;
+            cx.notify();
+            return true;
+        }
+        if self.selected.is_some() {
+            self.clear_selection(cx);
+            return true;
+        }
+        false
+    }
+
+    /// Up/Down move in the list, Enter/Right give the detail the keys, Left takes them back.
+    fn on_key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if e.keystroke.modifiers.modified() {
+            return;
+        }
+        let handled = match e.keystroke.key.as_str() {
+            "up" | "down" if !self.detail_focused => self.step(if e.keystroke.key == "up" { -1 } else { 1 }, cx),
+            "up" | "down" => {
+                let by = if e.keystroke.key == "up" { -40. } else { 40. };
+                let offset = self.detail_scroll.offset();
+                self.detail_scroll.set_offset(gpui::point(offset.x, (offset.y - px(by)).min(px(0.))));
+                cx.notify();
+                true
+            }
+            "enter" | "right" if self.selected.is_some() && !self.detail_focused => {
+                self.detail_focused = true;
+                cx.notify();
+                true
+            }
+            "left" if self.detail_focused => {
+                self.detail_focused = false;
+                cx.notify();
+                true
+            }
+            "escape" => self.escape(cx),
+            _ => false,
+        };
+        if handled {
+            cx.stop_propagation();
+        }
+    }
+
+    fn step(&mut self, by: isize, cx: &mut Context<Self>) -> bool {
+        let ids: Vec<String> = self.listed().iter().map(|r| r.item.id.clone()).collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let at = self.selected.as_ref().and_then(|s| ids.iter().position(|id| id == s));
+        let next = match at {
+            Some(i) => (i as isize + by).clamp(0, ids.len() as isize - 1) as usize,
+            None if by > 0 => 0,
+            None => ids.len() - 1,
+        };
+        if at != Some(next) {
+            self.select(ids[next].clone(), cx);
+        }
+        true
+    }
+
+    pub fn needs_you(&self, cx: &App) -> usize {
+        self.inbox.as_ref().map_or(0, |inbox| inbox.read(cx).rows().iter().filter(|(w, _)| *w == self.workspace).count())
     }
 }
 
-pub fn starts_expanded(status: ItemStatus) -> bool {
-    !matches!(status, ItemStatus::Done | ItemStatus::Cancelled | ItemStatus::Superseded)
-}
-
-pub fn board_to_reload<'a>(event: &'a StreamEvent, expanded: &HashSet<String>) -> Option<&'a str> {
-    event.run_id.as_deref().filter(|run| expanded.contains(*run))
-}
-
-/// The server lists the run first; the run is the section's header.
-pub fn item_rows(board: &Board) -> impl Iterator<Item = &BoardRow> {
-    board.rows.iter().filter(move |r| r.item.id != board.run.id)
-}
-
-pub fn done_text(r: &Rollup) -> String {
-    format!("{}/{} done", r.done, r.counted())
-}
-
-fn status_color(status: ItemStatus, cx: &App) -> Hsla {
-    let s = cx.theme().status();
-    match status {
-        ItemStatus::Done => s.success,
-        ItemStatus::InProgress => s.info,
-        ItemStatus::Blocked => s.error,
-        ItemStatus::Review => s.warning,
-        ItemStatus::Open | ItemStatus::Ready => cx.theme().colors().text_muted,
-        ItemStatus::Cancelled | ItemStatus::Superseded | ItemStatus::Unknown => cx.theme().colors().text_disabled,
-    }
-}
-
-fn last_segment(path: &str) -> &str {
-    path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or(path)
-}
-
-/// The key the selftest reads a row's painted status by.
-pub fn status_key(qualified_ref: &str, status: ItemStatus) -> String {
-    format!("work-status-{qualified_ref}={}", status.as_str())
-}
-
-fn small(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
-    div().flex_none().text_xs().text_color(color).child(text.into())
-}
-
-fn badge(text: impl Into<SharedString>, color: Hsla) -> gpui::Div {
-    div()
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(color.opacity(0.6))
-        .bg(color.opacity(0.10))
-        .text_xs()
-        .text_color(color)
-        .child(text.into())
-}
-
-fn rollup_bar(r: &Rollup, cx: &App) -> gpui::Div {
-    let colors = cx.theme().colors();
-    let share = if r.counted() == 0 { 0. } else { r.done as f32 / r.counted() as f32 };
-    div()
-        .flex_none()
-        .w(px(72.))
-        .h(px(6.))
-        .rounded_full()
-        .bg(colors.border)
-        .child(div().h_full().rounded_full().w(relative(share.clamp(0., 1.))).bg(cx.theme().status().success))
-}
-
-impl WorkView {
-    fn render_run(&self, run: &OverviewRun, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let open = self.expanded.contains(&run.item.id);
-        let key = format!("work-run-{}", run.item.qualified_ref);
-        let id = run.item.id.clone();
-        let header = div()
-            .id(SharedString::from(key.clone()))
-            .relative()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_1()
-            .border_t_1()
-            .border_color(colors.border)
-            .cursor_pointer()
-            .hover(|s| s.bg(colors.ghost_element_hover))
-            .active(|s| s.bg(colors.ghost_element_active))
-            .child(div().flex_none().w(px(10.)).child(if open { "▾" } else { "▸" }))
-            .child(div().flex_none().font_weight(FontWeight::BOLD).child(SharedString::from(run.item.qualified_ref.clone())))
-            .child(clipped(format!("run-title-{}", run.item.qualified_ref), run.item.title.clone(), false).flex_1().min_w(px(120.)))
-            .child(rollup_bar(&run.rollup, cx))
-            .child(small(done_text(&run.rollup), colors.text_muted))
-            .child(small(run.item.status.as_str(), status_color(run.item.status, cx)))
-            .when(run.active_claims > 0, |d| d.child(small(format!("claims {}", run.active_claims), status.info)))
-            .when(run.inbox_count > 0, |d| d.child(small(format!("inbox {}", run.inbox_count), status.warning)))
-            .when_some(run.last_verification.as_ref(), |d, v| {
-                let (text, color) = if v.passed { ("✓ verified", status.success) } else { ("✗ failed", status.error) };
-                d.child(small(format!("{text} {}", rfc3339_local(&v.at)), color))
-            })
-            .child(hit_target(&self.hits, key))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_run(&id, cx)));
-        let mut section = div().flex().flex_col().child(header);
-        if open {
-            section = match self.boards.get(&run.item.id) {
-                Some(BoardState::Ready(board)) => {
-                    let mut rows = div().flex().flex_col().pb_1();
-                    let mut any = false;
-                    for row in item_rows(board) {
-                        any = true;
-                        rows = rows.child(self.render_row(row, cx));
-                    }
-                    if !any {
-                        rows = rows.child(div().pl(px(34.)).py_1().text_xs().text_color(colors.text_muted).child("no items"));
-                    }
-                    section.child(rows)
-                }
-                Some(BoardState::Failed(message)) => section.child(
-                    div().pl(px(34.)).py_1().text_xs().text_color(status.error).child(SharedString::from(message.clone())),
-                ),
-                _ => section.child(div().pl(px(34.)).py_1().text_xs().text_color(colors.text_muted).child("loading…")),
-            };
-        }
-        section.into_any_element()
-    }
-
-    fn render_row(&self, row: &BoardRow, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let item = &row.item;
-        let key = format!("work-row-{}", item.qualified_ref);
-        let selected = self.selected.as_deref() == Some(item.id.as_str());
-        let indent = px(34. + 18. * row.depth.saturating_sub(1) as f32);
-        let color = status_color(item.status, cx);
-
-        let line = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(div().flex_none().w(px(64.)).text_xs().text_color(colors.text_muted).child(SharedString::from(item.qualified_ref.clone())))
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .w(px(78.))
-                    .text_xs()
-                    .text_color(color)
-                    .child(item.status.as_str())
-                    .child(hit_target(&self.hits, status_key(&item.qualified_ref, item.status))),
-            )
-            .child(clipped(format!("item-title-{}", item.qualified_ref), item.title.clone(), false).flex_1())
-            .when(row.criteria.total > 0, |d| {
-                let done = row.criteria.checked == row.criteria.total;
-                d.child(small(
-                    format!("{}/{}", row.criteria.checked, row.criteria.total),
-                    if done { status.success } else { colors.text_muted },
-                ))
-            })
-            .when_some(row.rollup.as_ref(), |d, r| d.child(small(done_text(r), colors.text_muted)));
-
-        let mut meta: Vec<AnyElement> = Vec::new();
-        if let Some(claim) = &row.claim {
-            let tree = claim.tree.as_deref().map(|t| format!(" @ {}", last_segment(t))).unwrap_or_default();
-            let (text, c) = if claim.expired {
-                (format!("claim {}{tree} (expired)", claim.holder()), status.warning)
-            } else {
-                (format!("claim {}{tree}", claim.holder()), status.info)
-            };
-            meta.push(small(text, c).into_any_element());
-        }
-        if let Some(v) = &row.verification {
-            let (mark, c) = if v.passed { ("✓ pass", status.success) } else { ("✗ fail", status.error) };
-            meta.push(small(format!("{mark} by {}", v.run_by), c).into_any_element());
-        }
-        if let Some(commit) = &row.commit {
-            meta.push(small(commit.chars().take(8).collect::<String>(), colors.text_muted).into_any_element());
-        }
-        if !row.blocked_by.is_empty() {
-            let by: Vec<&str> = row.blocked_by.iter().map(|i| i.qualified_ref.as_str()).collect();
-            meta.push(small(format!("blocked by {}", by.join(", ")), status.error).into_any_element());
-        }
-        for flag in &row.flags {
-            meta.push(badge(flag.clone(), status.warning).into_any_element());
-        }
-
-        let id = item.id.clone();
-        div()
-            .id(SharedString::from(key.clone()))
-            .relative()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .pl(indent)
-            .pr_3()
-            .py(px(3.))
-            .text_sm()
-            .cursor_pointer()
-            .when(selected, |d| d.bg(colors.element_selected))
-            .when(!selected, |d| d.hover(|s| s.bg(colors.ghost_element_hover)))
-            .active(|s| s.bg(colors.ghost_element_active))
-            .child(line)
-            .when(!meta.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2().pl(px(72.)).children(meta)))
-            .child(hit_target(&self.hits, key))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.select(id.clone(), cx)))
-            .into_any_element()
+impl Focusable for WorkView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 
 impl Render for WorkView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
-        let board = self.render_board(cx);
-        let root = div().size_full().flex().bg(colors.editor_background).text_color(colors.text);
-        match &self.item {
-            // The board keeps 42% of the tab, so another row is one click away.
-            Some(open) => root
-                .child(div().flex_none().w(relative(0.42)).min_w(px(380.)).h_full().child(board))
-                .child(self.render_item(open, cx)),
-            None => root.child(board),
-        }
+        let body = match &self.shown {
+            Shown::Loading => placeholder("Reading Workman…", Vec::<SharedString>::new(), cx).size_full().into_any_element(),
+            Shown::Message(message) => placeholder("No work to show", [message.clone()], cx).size_full().px_6().into_any_element(),
+            Shown::Ready => self.render_columns(cx),
+        };
+        let menu = self.menu.as_ref().map(|menu| {
+            menu.render(
+                &self.hits,
+                |this: &mut WorkView, action, window, cx| {
+                    this.menu = None;
+                    this.run_action(action, window, cx);
+                },
+                |this: &mut WorkView, cx| {
+                    this.menu = None;
+                    cx.notify();
+                },
+                cx,
+            )
+        });
+        div()
+            .id(SharedString::from(format!("work-{}", self.workspace)))
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key))
+            .relative()
+            .size_full()
+            .flex()
+            .bg(colors.editor_background)
+            .text_color(colors.text)
+            .child(body)
+            .children(self.toast.render(&self.hits, "work-toast", cx))
+            .children(menu)
     }
 }
 
 impl WorkView {
-    fn journal_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let open = self.journal.open;
-        let border = if open { colors.border_focused } else { colors.border };
-        button::outline(&self.hits, "work-journal", if open { "Runs" } else { "Journal" }, border, cx)
-            .when(open, |d| d.bg(colors.element_selected))
-            .child(hit_target(&self.hits, format!("work-journal={}", if open { "open" } else { "closed" })))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_journal(cx)))
+    fn render_columns(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let list = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN)).min_w_0().h_full().child(self.render_middle(cx));
+        let detail = div().flex_shrink(1.).min_w_0().w(self.layout.detail()).h_full().border_l_1().border_color(cx.theme().colors().border).child(self.render_detail(cx));
+        let main = layout::detail_split()
+            .render_second(list, detail, |this: &mut WorkView, width, cx| {
+                this.layout.set_detail(width);
+                cx.notify();
+            }, |this: &mut WorkView, cx| this.layout.keep(cx), cx)
+            .size_full();
+        if self.layout.nav_shut() {
+            let strip = div().flex_none().h_full().border_r_1().border_color(cx.theme().colors().border).child(self.render_nav_strip(cx));
+            return div().flex().size_full().child(strip).child(div().flex_1().min_w_0().h_full().child(main)).into_any_element();
+        }
+        let nav = div().flex_shrink(0.5).min_w_0().overflow_hidden().w(self.layout.nav()).h_full().child(self.render_navigator(cx));
+        let rest = div().flex_grow(1.).flex_basis(px(layout::LIST_MIN + layout::DETAIL_MIN + 1.)).min_w_0().h_full().child(main);
+        layout::nav_split()
+            .render(nav, rest, |this: &mut WorkView, width, cx| {
+                this.layout.set_nav(width);
+                cx.notify();
+            }, |this: &mut WorkView, cx| this.layout.keep(cx), cx)
+            .size_full()
             .into_any_element()
     }
 
-    fn render_board(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let colors = cx.theme().colors().clone();
-        let status = cx.theme().status().clone();
-        let root = div()
-            .id(SharedString::from(format!("work-{}", self.workspace)))
-            .size_full()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll();
-        let overview = match &self.shown {
-            Shown::Runs(overview) => overview,
-            Shown::Loading => {
-                return root.child(div().p_4().text_color(colors.text_muted).child("Reading Workman…")).into_any_element();
-            }
-            Shown::Message(message) => {
-                return root.child(div().p_4().text_color(colors.text_muted).child(SharedString::from(message.clone()))).into_any_element();
-            }
-        };
-        let (connection, live) = self.hub.read(cx).connection();
-        let header = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(overview.item.qualified_ref.clone())))
-            .child(clipped(format!("overview-title-{}", overview.item.qualified_ref), overview.item.title.clone(), false).flex_1())
-            .child(rollup_bar(&overview.rollup, cx))
-            .child(small(done_text(&overview.rollup), colors.text_muted))
-            .child(small(connection, if live { status.success } else { status.warning }))
-            .child(self.journal_toggle(cx));
-        if self.journal.open {
-            return div().size_full().flex().flex_col().child(header).child(self.render_journal(cx)).into_any_element();
+    fn render_middle(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        match self.page.clone() {
+            Page::Overview => placeholder("Overview", ["Every project's runs and what needs you, at a glance."], cx).size_full().into_any_element(),
+            Page::Activity => placeholder("Activity", ["What happened across this workspace's projects, newest first."], cx).size_full().into_any_element(),
+            Page::Run(run) => self.render_run_page(&run, cx),
         }
-        let mut body = root.child(header);
-        if overview.runs.is_empty() {
-            body = body.child(div().px_3().py_2().text_color(colors.text_muted).child("This project has no runs."));
-        }
-        for run in &overview.runs {
-            body = body.child(self.render_run(run, cx));
-        }
-        body.child(div().h(px(24.)).flex_none()).into_any_element()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(id: &str, kind: &str, qref: &str) -> ItemRef {
-        ItemRef { id: id.into(), ref_: qref.into(), qualified_ref: qref.into(), kind: kind.into(), ..Default::default() }
-    }
-
-    #[test]
-    fn the_workspace_is_the_one_project_among_the_matches() {
-        let resolved = |m: Vec<ItemRef>| Resolved { matches: m, ..Default::default() };
-        let p = pick_project(resolved(vec![item("r", "run", "w"), item("p", "project", "w")]), "w").unwrap();
-        assert_eq!(p.id, "p");
-        let none = pick_project(resolved(vec![item("r", "run", "w")]), "w").unwrap_err();
-        assert!(none.contains("no project with ref 'w'"), "{none}");
-        let two = pick_project(resolved(vec![item("a", "project", "w"), item("b", "project", "w")]), "w").unwrap_err();
-        assert!(two.contains("names 2 Workman projects"), "{two}");
-    }
-
-    #[test]
-    fn the_runs_own_row_is_the_header_not_a_child() {
-        let row = |id: &str, depth: u32| BoardRow { item: item(id, "task", id), depth, ..Default::default() };
-        let board = Board { run: item("run", "run", "13"), rows: vec![row("run", 0), row("t1", 1), row("t2", 2)], ..Default::default() };
-        let ids: Vec<&str> = item_rows(&board).map(|r| r.item.id.as_str()).collect();
-        assert_eq!(ids, ["t1", "t2"]);
-    }
-
-    #[test]
-    fn an_event_reloads_a_board_only_when_it_is_shown() {
-        let expanded: HashSet<String> = ["r1".to_string()].into();
-        let event = |run: Option<&str>| StreamEvent { seq: 1, run_id: run.map(str::to_string), item_id: None, kind: "transition".into() };
-        assert_eq!(board_to_reload(&event(Some("r1")), &expanded), Some("r1"));
-        assert_eq!(board_to_reload(&event(Some("r2")), &expanded), None);
-        assert_eq!(board_to_reload(&event(None), &expanded), None);
-    }
-
-    #[test]
-    fn closed_runs_start_collapsed() {
-        assert!(starts_expanded(ItemStatus::InProgress) && starts_expanded(ItemStatus::Open) && starts_expanded(ItemStatus::Blocked));
-        assert!(!starts_expanded(ItemStatus::Done) && !starts_expanded(ItemStatus::Cancelled) && !starts_expanded(ItemStatus::Superseded));
-    }
-
-    #[test]
-    fn small_formatters() {
-        let r = Rollup { total: 14, done: 10, cancelled: 1, ..Default::default() };
-        assert_eq!(done_text(&r), "10/13 done");
-        assert_eq!(last_segment(r"P:\w\m4-1\"), "m4-1");
-        assert_eq!(last_segment("P:/w/m4-1"), "m4-1");
-        assert_eq!(status_key("m4/2", ItemStatus::InProgress), "work-status-m4/2=in_progress");
     }
 }

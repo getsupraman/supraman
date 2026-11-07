@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use crate::http::{Reply, pct_encode, read, server_reason};
-use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Resolved, Sessions};
+use crate::model::{Backlog, Board, Inbox, ItemPage, Journal, Overview, Prompts, Resolved, Sessions};
 
 pub const API_HEADER: &str = "X-Workman-Api";
 pub const API_VERSION: &str = "1";
@@ -165,6 +165,11 @@ impl Client {
             "/api/v1/sessions",
             &[("active", q.active.then_some("true")), ("name", q.name), ("claudeSessionId", q.claude_session_id)],
         ))
+    }
+
+    /// The prompt actions that apply to the project, run or item `scope` (an id).
+    pub fn prompts(&self, scope: &str) -> Result<Prompts> {
+        self.json(&with_query("/api/v1/prompts", &[("scope", Some(scope))]))
     }
 
     /// A ref a human typed → its items (zero, one or many).

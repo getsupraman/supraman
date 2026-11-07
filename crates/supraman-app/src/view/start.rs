@@ -353,7 +353,7 @@ impl FleetView {
         let on_link: details::OnLink<Self> = Rc::new(move |this: &mut Self, target: &str, window, cx| this.open_start_link(&workspace, target, window, cx));
         let title = if page.scheduled { format!("New scheduled task in {}", page.workspace) } else { format!("New task in {}", page.workspace) };
         let key = format!("start-{tab}");
-        let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()) };
+        let page = details::Page { key: &key, title, pill: None, sections: &sections, actions, scroll: &page.scroll, on_link: Some(on_link), top: Some(form.into_any_element()), over: None, bar: None };
         Some(details::render(page, &self.hits, cx))
     }
 }

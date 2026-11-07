@@ -48,7 +48,7 @@ use crate::stars::Stars;
 use crate::supervise::{self, RelayStatus, Report, Supervision};
 use crate::tab_card;
 use crate::transcripts_load::TranscriptsLoad;
-use crate::work_view::{FleetLink, LiveSession, WorkHub, WorkInbox, WorkView};
+use crate::work_view::{LiveSession, WorkHub, WorkInbox, WorkView};
 use crate::workman_setup::{self, WorkmanStatus};
 
 mod delete;
@@ -69,6 +69,7 @@ mod shells;
 pub(crate) mod schedules;
 pub(crate) mod start;
 mod term;
+mod work_tab;
 mod workman_url;
 pub(crate) mod workspace_dialog;
 pub(crate) mod writes;
@@ -326,6 +327,8 @@ pub struct FleetView {
     pub pick_folder: Option<PathBuf>,
     pub open_with: fn(&Path) -> Result<(), String>,
     pub open_link_with: fn(&Link, &mut App),
+    /// What a Work tab binds its folders by; `--selftest-shots` gives fixture folders a repo.
+    pub work_repo_of: crate::work_view::RepoOf,
     pub workman: WorkmanStatus,
     workman_dismissed: Option<String>,
     workman_recheck: Nudge,
@@ -808,6 +811,7 @@ impl FleetView {
             removing: BTreeMap::new(),
             pick_folder: None,
             open_with: |path| open::open(path.as_os_str()),
+            work_repo_of: supraman_supervisor::git_repo,
             open_link_with: |link, cx| match link {
                 Link::Url(url) => open::open_off_thread(url.clone(), cx).detach(),
                 Link::Path(path) => open::open_off_thread(path.clone(), cx).detach(),
@@ -2033,40 +2037,6 @@ impl FleetView {
         if let Some(tab) = self.tab_mut(id) {
             tab.launched_session = Some(session.session_id.clone());
             tab.session_name = Some(session.name.clone());
-        }
-        id
-    }
-
-    pub fn open_work(&mut self, workspace: &str, cx: &mut Context<Self>) -> u64 {
-        let open = self.tabs.iter().find(|t| matches!(&t.kind, TabKind::Work(v) if v.read(cx).workspace == workspace));
-        if let Some(id) = open.map(|t| t.id) {
-            self.active = Some(id);
-            cx.notify();
-            return id;
-        }
-        let id = self.next_tab_id;
-        self.next_tab_id += 1;
-        let fleet = cx.weak_entity();
-        let name = workspace.to_string();
-        let link = FleetLink {
-            live: self.work_live.clone(),
-            attach: Rc::new(move |id, window, cx| {
-                fleet.update(cx, |fleet, cx| fleet.attach_by_id(&name, id, window, cx)).ok();
-            }),
-        };
-        let view = WorkView::open(workspace, self.home.clone(), self.hits.clone(), link, cx);
-        let cwd = self.workspaces.iter().find(|w| w.name == workspace).and_then(|w| w.home()).map(Path::to_path_buf);
-        self.tabs.push(Tab::new(id, format!("Work · {workspace}"), TabKind::Work(view), cwd));
-        self.active = Some(id);
-        cx.notify();
-        id
-    }
-
-    pub fn open_work_item(&mut self, workspace: &str, item_id: &str, cx: &mut Context<Self>) -> u64 {
-        let id = self.open_work(workspace, cx);
-        if let Some(Tab { kind: TabKind::Work(view), .. }) = self.tab(id) {
-            let (view, item) = (view.clone(), item_id.to_string());
-            view.update(cx, |view, cx| view.open_from_inbox(item, cx));
         }
         id
     }

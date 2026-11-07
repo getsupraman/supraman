@@ -160,6 +160,38 @@ pub struct OverviewProject {
     pub item: ItemRef,
     pub rollup: Rollup,
     pub runs: Vec<OverviewRun>,
+    /// The repos bound to the project; see [`crate::repo`].
+    pub repos: Vec<ProjectRepo>,
+    /// An archived project is listed; the client hides it.
+    pub archived_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ProjectRepo {
+    /// `remote` or `root`.
+    pub kind: String,
+    pub key: String,
+}
+
+/// `GET /api/v1/prompts?scope=`: the prompt actions that apply to one item, in the catalogue's order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Prompts {
+    pub as_of: String,
+    pub seq: i64,
+    pub scope: ItemRef,
+    pub prompts: Vec<Prompt>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct Prompt {
+    pub key: String,
+    pub label: String,
+    pub count: Option<u32>,
+    /// The whole prompt a fresh session starts with.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
