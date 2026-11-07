@@ -7,6 +7,7 @@ pub mod journal;
 pub mod lines;
 mod locks;
 mod quiet;
+pub mod rebase;
 mod snapshot;
 pub mod stash;
 pub mod wip;

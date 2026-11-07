@@ -15,10 +15,11 @@ mod write_tests;
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription};
 use supraman_gitman::write::Writer;
+use supraman_gitman::write::rebase::Rebased;
 use supraman_gitman::{ChangeKind, FileChange, OperationState, Repo, Status};
 use supraman_ui::confirm::Confirm;
 use supraman_ui::hit::HitTargets;
@@ -94,6 +95,8 @@ pub struct WipPanel {
     /// The panel's write under way: its gate ticket.
     doing: Option<(u64, Doing)>,
     asking: Option<Confirm<Ask>>,
+    /// How the last rebase step ended, as its job left it.
+    stepped: Arc<Mutex<Option<Rebased>>>,
     /// Made once a window is at hand.
     composer: Option<compose::Composer>,
     _written: Subscription,
@@ -123,6 +126,7 @@ impl WipPanel {
             hooks: false,
             doing: None,
             asking: None,
+            stepped: Arc::default(),
             composer: None,
             _written: written,
             #[cfg(test)]

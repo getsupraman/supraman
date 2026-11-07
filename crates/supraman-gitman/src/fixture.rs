@@ -137,6 +137,16 @@ impl Fixture {
         assert!(!merge.success(), "the merge stops on a conflict");
     }
 
+    /// GitMan's reword of `sha` in the checkout `repo` run with `todo` in place of the one a reword writes (one
+    /// that drops a commit stops on a conflict in a later pick, which a reword alone cannot).
+    pub fn gitmans_rebase(&self, repo: &Repo, sha: &str, todo: &str) -> crate::write::rebase::Rebased {
+        use crate::write::{Call, LockSet, Writer, rebase};
+        Writer::open(repo).unwrap().run(LockSet::rebase(), |s| {
+            let branch = crate::parse::text(&s.output(&Call::new(&["symbolic-ref", "--short", "HEAD"]))?).trim().to_string();
+            rebase::start(s, &format!("{sha}^"), &branch, todo, "Reworded\n", &rebase::autostash_name(sha))
+        }).unwrap()
+    }
+
     fn commit(&mut self, label: &'static str, message: &str) {
         self.time += 60;
         let date = format!("@{} +0000", self.time);

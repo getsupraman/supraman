@@ -75,6 +75,11 @@ impl LockSet {
         LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
     }
 
+    /// GitMan's rebase and its steps: HEAD, the branch, the index and the work tree, and the stash.
+    pub fn rebase() -> LockSet {
+        LockSet::writes(&[Resource::Config, Resource::Index, Resource::RepoSettings])
+    }
+
     pub fn access(&self, resource: Resource) -> Option<Access> {
         self.0.get(&resource).copied()
     }

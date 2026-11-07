@@ -1,10 +1,10 @@
-//! The message box's amend through the real tab, on fixture copies and their bare temp remote (C196).
+//! The message box's amend and reword through the real tab, on fixture copies and their bare temp remote (C196).
 
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use supraman_gitman::fixture::{Fixture, MAIN_STASH, git_in};
 use supraman_ui::hit::HitTargets;
 
-use super::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, EDIT_KEY, TYPE_A_SUMMARY, UPDATE_KEY, offer, pushed_question};
+use super::reword::{ASK_KEY, CANCEL_KEY, CHECK_OUT_A_BRANCH, CHECK_OUT_TO_REWORD, CLICK_TO_AMEND, CLICK_TO_EDIT_STASH, CLICK_TO_REWORD, EDIT_KEY, REBASES_KEY, TYPE_A_SUMMARY, Target, UPDATE_KEY, offer, pushed_question, rebases_words, reword_question};
 use crate::git_view::tests::redraw;
 use crate::git_view::undo::UNDO_KEY;
 use crate::git_view::write_gate::WAITING;
@@ -218,4 +218,89 @@ fn a_stashs_box_edits_its_message_through_the_stash_writes_and_waits_for_the_gat
     assert_eq!(view.read_with(cx, |v, cx| v.gate().read(cx).busy()), Some(WAITING), "the gate asks about the session first");
     assert_eq!(panel(&view, cx).read_with(cx, |p, cx| p.update_why_not(cx)), Some(WAITING), "Update Message waits with it");
     assert_eq!(head(&f), top);
+}
+
+/// `side` (at `second`, above `root`) with three commits on it, W1 to W3, each changing c.txt.
+fn three_above(f: &Fixture) -> [String; 3] {
+    ["one", "two", "three"].map(|n| {
+        std::fs::write(f.worktree.join("c.txt"), format!("{n}\n")).unwrap();
+        git_in(&f.git, &f.worktree, &["add", "c.txt"], &[], None);
+        git_in(&f.git, &f.worktree, &["commit", "-q", "--no-verify", "-m", &format!("W {n}")], &[], None);
+        git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+    })
+}
+
+fn side_head(f: &Fixture) -> String {
+    git_in(&f.git, &f.worktree, &["rev-parse", "HEAD"], &[], None)
+}
+
+fn subjects(f: &Fixture) -> Vec<String> {
+    git_in(&f.git, &f.worktree, &["log", "--format=%s", "HEAD"], &[], None).lines().map(str::to_string).collect()
+}
+
+#[gpui::test]
+fn an_older_commits_box_offers_reword_naming_the_commits_it_rebases_and_rewords_it(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let [w1, _, w3] = three_above(&f);
+    let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
+    select(&view, f.sha("root"), cx);
+    assert!(!painted(&view, EDIT_KEY, cx), "the root cannot be reworded");
+    select(&view, &w3, cx);
+    let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("HEAD shown"));
+    assert_eq!(offer(&shown).map(|o| o.0), Some(CLICK_TO_AMEND), "HEAD is amended");
+
+    select(&view, &w1, cx);
+    let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("W1 shown"));
+    assert_eq!(offer(&shown), Some((CLICK_TO_REWORD, Some(Target::Older { sha: w1.clone(), branch: "side".into(), above: 2, pushed: false }))));
+    click(&view, EDIT_KEY, cx);
+    assert_eq!(field(&view, cx).0, "W one");
+    assert!(painted(&view, REBASES_KEY, cx), "{}", rebases_words(2));
+    assert_eq!(rebases_words(2), "Rewords this commit and rebases the 2 commits above it");
+    type_in(&view, "W one, reworded", "Why", cx);
+    click(&view, UPDATE_KEY, cx);
+
+    assert_eq!(subjects(&f), ["W three", "W two", "W one, reworded", "Second", "Root"]);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Reworded \u{201c}W one, reworded\u{201d}"));
+    let new = side_head(&f);
+    assert_ne!(new, w3);
+    assert_eq!(view.read_with(cx, |v, _| v.selected()), Some(Selected::Commit(new.into())), "the new HEAD is selected");
+    assert!(!open_field(&view, cx));
+}
+
+#[gpui::test]
+fn a_pushed_or_dirty_reword_asks_first_cancel_writes_nothing_and_undo_puts_the_old_tip_back(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let [_, w2, w3] = three_above(&f);
+    git_in(&f.git, &f.worktree, &["push", "-q", "origin", "side"], &[], None);
+    std::fs::write(f.worktree.join("u.txt"), b"untracked\n").unwrap();
+    let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
+    select(&view, &w2, cx);
+    click(&view, EDIT_KEY, cx);
+    type_in(&view, "W two, reworded", "", cx);
+    click(&view, UPDATE_KEY, cx);
+    assert_eq!(panel(&view, cx).read_with(cx, |p, _| p.amend_asking().map(str::to_string)), reword_question("side", 1, true, true));
+    assert_eq!(reword_question("side", 1, true, true).unwrap(), "side was already pushed. Rewording rewrites 2 commits and the next push must force. Your changes are stashed and put back afterwards. Reword anyway?");
+    click(&view, &format!("{ASK_KEY}-cancel"), cx);
+    assert_eq!(side_head(&f), w3, "cancel writes nothing");
+
+    click(&view, UPDATE_KEY, cx);
+    click(&view, &format!("{ASK_KEY}-yes"), cx);
+    assert_eq!(subjects(&f)[..3], ["W three", "W two, reworded", "W one"]);
+    assert_eq!(std::fs::read(f.worktree.join("u.txt")).unwrap(), b"untracked\n", "the work in progress is back");
+
+    click(&view, UNDO_KEY, cx);
+    click(&view, "git-undo-stash-yes", cx);
+    assert_eq!(side_head(&f), w3, "Undo puts the old tip back, the work in progress stashed first");
+}
+
+#[gpui::test]
+fn a_detached_heads_older_commit_says_to_check_out_a_branch(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let [w1, ..] = three_above(&f);
+    git_in(&f.git, &f.worktree, &["checkout", "-q", "--detach"], &[], None);
+    let (view, cx) = open(&f.worktree, occupancy::Live::default(), cx);
+    select(&view, &w1, cx);
+    let shown = panel(&view, cx).read_with(cx, |p, _| p.shown().expect("W1 shown"));
+    assert_eq!(offer(&shown), Some((CHECK_OUT_TO_REWORD, None)));
+    assert!(!painted(&view, EDIT_KEY, cx));
 }

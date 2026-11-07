@@ -1,5 +1,5 @@
 //! The commit panel right of the graph: the selected commit's or stash's message, author, parents and files, read
-//! off the UI thread on each selection; HEAD's or a stash's message is edited in place ([`reword`]).
+//! off the UI thread on each selection; a commit's or a stash's message is edited in place ([`reword`]).
 
 pub mod files;
 mod load;
@@ -51,8 +51,10 @@ pub enum PanelEvent {
     ApplyFiles(String, Vec<FileChange>),
     /// Amend HEAD's message to this, with the commit area's Skip hooks.
     Amend(String),
-    /// HEAD's message was amended: the new HEAD and the toast.
-    Amended(SharedString, String),
+    /// Reword the open field's older commit to this message, asked first when the tab has work in progress.
+    Reword(String),
+    /// A write rewrote HEAD: select the new HEAD, with the toast.
+    HeadMoved(SharedString, Option<String>),
     /// Give this stash this message.
     StashMessage(StashRef, String),
 }

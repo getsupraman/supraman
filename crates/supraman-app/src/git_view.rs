@@ -352,9 +352,15 @@ impl GitView {
                 let (message, no_verify) = (message.clone(), self.wip_panel.read(cx).skips_hooks());
                 self.panel.update(cx, |p, cx| p.amend(message, no_verify, cx));
             }
-            PanelEvent::Amended(sha, toast) => {
+            PanelEvent::Reword(message) => {
+                let (message, dirty) = (message.clone(), self.wip.is_some_and(|w| w.total() > 0));
+                self.panel.update(cx, |p, cx| p.reword_older(message, dirty, cx));
+            }
+            PanelEvent::HeadMoved(sha, toast) => {
                 self.reveal_after = Some(sha.clone());
-                self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                if let Some(toast) = toast {
+                    self.toast.show(toast.clone(), |v: &mut GitView| &mut v.toast, cx);
+                }
                 self.refresh_after_write(cx);
             }
             PanelEvent::StashMessage(stash, message) => {
