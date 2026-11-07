@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use sm::run::Agents;
 use supraman_claude::{Kind, LaunchSpec, Session, SessionState, Status};
-use supraman_core::{Registry, Settings, Workspace};
+use supraman_core::{Registry, Workspace};
 use supraman_supervisor::{DesiredState, Launcher, MintedSessions, relay_session, repo_session};
 use supraman_workman::fake::{Answer, FakeWorkman};
 
@@ -72,7 +72,6 @@ fn removing_a_started_workspace_stops_its_sessions_and_leaves_no_desired_state_a
     })
     .unwrap();
     let fake = FakeWorkman::start(vec![("DELETE /api/agent-sessions/91".into(), Answer::status(204, ""))]);
-    Settings::update(&home, |s| s.workman.url = Some(fake.base().to_string())).unwrap();
     let minted = format!(r#"{{"fm-demo-alpha":{{"session_id":"91","role":"repo","origin":"{}"}}}}"#, fake.base());
     fs::write(MintedSessions::path(&home, "demo"), minted).unwrap();
     let mcp = supraman_claude::mcp_config_path(&home.join("mcp"), "fm-demo-alpha").unwrap();

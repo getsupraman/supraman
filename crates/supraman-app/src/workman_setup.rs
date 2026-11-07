@@ -1,9 +1,7 @@
 //! One wording for the notice above the tree, Settings → Workman and the Work tab.
 
-use std::path::Path;
 use std::time::Duration;
 
-use supraman_core::Settings;
 use supraman_workman::{Auth, AuthError, AuthStatus};
 
 pub const RECHECK_EVERY: Duration = Duration::from_secs(30);
@@ -17,18 +15,26 @@ pub enum WorkmanStatus {
     NotSignedIn { url: String },
     SignInAgain { url: String, why: String },
     Unreachable { url: String, error: String },
+    /// No usable `~/.workman/server.json`: Supraman and its sessions run without Workman.
+    NotSetUp { why: String },
 }
 
-/// Blocks up to a few seconds.
-pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WorkmanStatus {
-    let settings = home.and_then(|h| Settings::load(h).ok()).unwrap_or_default();
-    let url = settings.workman.origin();
+/// Blocks up to a few seconds; without a server.json nothing dials.
+pub fn detect(auth: Option<&Auth>) -> WorkmanStatus {
+    let Some(auth) = auth else {
+        return WorkmanStatus::NotSetUp { why: "No Supraman home (set SUPRAMAN_HOME or APPDATA), so no Workman sign-in.".into() };
+    };
+    let server = match auth.server() {
+        Ok(server) => server,
+        Err(e) => return WorkmanStatus::NotSetUp { why: e.to_string() },
+    };
+    if let Some(warning) = server.warning() {
+        log::warn!("{warning}");
+    }
+    let url = server.origin();
     if let Err(error) = supraman_workman::health(&url, HEALTH_TIMEOUT) {
         return WorkmanStatus::Unreachable { url, error };
     }
-    let Some(auth) = auth else {
-        return WorkmanStatus::NotSignedIn { url };
-    };
     match auth.access_token(&url) {
         Ok(_) => {
             let who = match auth.status(&url) {
@@ -45,9 +51,20 @@ pub fn detect(home: Option<&Path>, auth: Option<&Auth>) -> WorkmanStatus {
 }
 
 impl WorkmanStatus {
+    /// The server checked; `None` while checking or not set up.
+    pub fn checked_url(&self) -> Option<&str> {
+        match self {
+            WorkmanStatus::Ready { url, .. } | WorkmanStatus::NotSignedIn { url } | WorkmanStatus::SignInAgain { url, .. } | WorkmanStatus::Unreachable { url, .. } => {
+                Some(url)
+            }
+            WorkmanStatus::Checking | WorkmanStatus::NotSetUp { .. } => None,
+        }
+    }
+
     pub fn problem(&self) -> Option<String> {
         match self {
             WorkmanStatus::Checking | WorkmanStatus::Ready { .. } => None,
+            WorkmanStatus::NotSetUp { why } => Some(why.clone()),
             WorkmanStatus::NotSignedIn { url } => Some(format!("Not signed in to Workman at {url}, so sessions run without Workman.")),
             WorkmanStatus::SignInAgain { url, why } => {
                 Some(format!("Sign in to Workman at {url} again ({why}); until then sessions with Workman cannot start."))
@@ -64,6 +81,10 @@ impl WorkmanStatus {
             }
             WorkmanStatus::Unreachable { .. } => Some(format!(
                 "Check the server URL in Settings → Workman. Checked again every {} s.",
+                RECHECK_EVERY.as_secs()
+            )),
+            WorkmanStatus::NotSetUp { .. } => Some(format!(
+                "Supraman's sessions run without Workman until then. Checked again every {} s.",
                 RECHECK_EVERY.as_secs()
             )),
         }
@@ -89,6 +110,9 @@ impl WorkmanStatus {
             }
             WorkmanStatus::SignInAgain { .. } => Some(format!("Started {workspace}; its sessions wait for a Workman sign-in.")),
             WorkmanStatus::NotSignedIn { .. } => Some(format!("Started {workspace} without Workman: its sessions can talk, not plan.")),
+            WorkmanStatus::NotSetUp { .. } => {
+                Some(format!("Started {workspace} without Workman, which is not set up (run /workman:setup): its sessions can talk, not plan."))
+            }
         }
     }
 }
@@ -108,22 +132,21 @@ mod tests {
         let home = dir.path().join("home");
         let fake = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
         let oauth = fake.enable_oauth();
-        Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().into()) }, ..Settings::default() }.save(&home).unwrap();
         let url = fake.base().to_string();
 
-        let fresh = Auth::with_store(&home, Arc::new(MemoryStore::default()));
-        let out = detect(Some(&home), Some(&fresh));
+        let fresh = Auth::with_store(&home, Arc::new(MemoryStore::default())).with_server_json(Some(crate::test_auth::server_json(&home, fake.base())));
+        let out = detect(Some(&fresh));
         assert_eq!(out, WorkmanStatus::NotSignedIn { url: url.clone() });
         assert!(out.signed_out() && out.problem().unwrap().contains("Not signed in") && out.fix().unwrap().contains("Sign in"));
         assert!(out.start_warning("demo").unwrap().contains("without Workman"));
 
         oauth.set_access_ttl(60);
         let auth = crate::test_auth::signed_in(&home, fake.base());
-        assert_eq!(detect(Some(&home), Some(&auth)), WorkmanStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()) });
+        assert_eq!(detect(Some(&auth)), WorkmanStatus::Ready { url: url.clone(), who: Some("Fake Operator".into()) });
         assert!(fake.seen().iter().filter(|s| s.target == "/health").all(|s| s.authorization.is_none()), "/health carries no token");
 
         oauth.fail_refresh(true);
-        let broken = detect(Some(&home), Some(&auth));
+        let broken = detect(Some(&auth));
         assert!(matches!(&broken, WorkmanStatus::SignInAgain { why, .. } if why.contains("invalid_grant")), "{broken:?}");
         assert!(broken.signed_out() && broken.problem().unwrap().contains("again"));
         let text = format!("{} {broken:?}", broken.message().unwrap());
@@ -136,12 +159,28 @@ mod tests {
     fn a_closed_port_is_unreachable_before_any_sign_in() {
         let dir = tempfile::tempdir().unwrap();
         let closed = supraman_workman::fake::closed_base();
-        Settings { workman: supraman_core::WorkmanSettings { url: Some(closed.clone()) }, ..Settings::default() }.save(dir.path()).unwrap();
-        let down = detect(Some(dir.path()), None);
+        let auth = Auth::with_store(dir.path(), Arc::new(MemoryStore::default())).with_server_json(Some(crate::test_auth::server_json(dir.path(), &closed)));
+        let down = detect(Some(&auth));
         assert_eq!(down, WorkmanStatus::Unreachable { url: closed.clone(), error: "connection refused".into() });
         assert!(down.problem().unwrap().contains(&closed));
         assert!(down.fix().unwrap().contains("Settings → Workman"));
         assert!(down.start_warning("demo").unwrap().contains("unreachable"));
         assert_eq!(WorkmanStatus::Ready { url: closed, who: None }.start_warning("demo"), None);
+    }
+
+    #[test]
+    fn without_server_json_it_says_run_workman_setup_and_nothing_dials() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeWorkman::start(vec![("/health".into(), Answer::text("Healthy"))]);
+        let missing = dir.path().join("user").join(".workman").join("server.json");
+        let auth = Auth::with_store(dir.path(), Arc::new(MemoryStore::default())).with_server_json(Some(missing));
+        let out = detect(Some(&auth));
+        let WorkmanStatus::NotSetUp { why } = &out else { panic!("{out:?}") };
+        assert!(why.starts_with("Workman is not set up: run /workman:setup"), "{why}");
+        assert_eq!(out.problem().as_deref(), Some(why.as_str()));
+        assert!(!out.signed_out() && !out.unreachable() && out.checked_url().is_none());
+        assert!(out.start_warning("demo").unwrap().contains("/workman:setup"));
+        assert!(matches!(detect(None), WorkmanStatus::NotSetUp { .. }));
+        assert!(fake.seen().is_empty(), "no /health, no sign-in: {:?}", fake.seen().iter().map(|s| s.target.clone()).collect::<Vec<_>>());
     }
 }

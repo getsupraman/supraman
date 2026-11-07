@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context as _, anyhow, bail};
 use supraman_claude::Session;
-use supraman_core::{Registry, Settings, Workspace};
+use supraman_core::{Registry, Workspace};
 use supraman_workman::{
     ItemStatus,
     fake::{Answer, FakeWorkman},
@@ -290,9 +290,7 @@ pub fn prepare(home: &Path, root: &Path) -> anyhow::Result<()> {
     ]);
     // signed in to the fake's own OAuth server, so the Workman notice has nothing to say during the gate; step 7d signs out and in again through the UI
     let oauth = fake.enable_oauth();
-    let mut settings = Settings::load(home)?;
-    settings.workman.url = Some(fake.base().to_string());
-    settings.save(home)?;
+    crate::selftest::set_workman(fake.base())?;
     crate::signin::sign_in(home, fake.base()).map_err(|e| anyhow!("signing in to the fake Workman: {e}"))?;
     println!(
         "step 1w: workspace {WORKSPACE} = {}; fake Workman at {} (project {WORKSPACE}, runs sw2 live, sw1 done), signed in through its fake OAuth server",

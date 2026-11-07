@@ -104,9 +104,6 @@ fn a_run_asks_no_server_and_waits_on_no_lock() {
     const NAME: &str = "fm-demo-workspace";
     let home = tempfile::tempdir().unwrap();
     let fake = supraman_workman::fake::FakeWorkman::start(vec![("POST /mcp".into(), supraman_workman::fake::Answer::silent())]);
-    let mut settings = supraman_core::Settings::default();
-    settings.workman.url = Some(supraman_workman::fake::closed_base());
-    settings.save(home.path()).unwrap();
     supraman_supervisor::Keeper::open(home.path()).write(NAME, &fake.mcp_url(), TOKEN, None, &[]).unwrap();
     let _refresh = supraman_core::fs::lock_file(&home.path().join("oauth").join("refresh.lock")).unwrap();
     let _kept = supraman_core::fs::lock_file(&home.path().join("supervisor").join("kept.lock")).unwrap();

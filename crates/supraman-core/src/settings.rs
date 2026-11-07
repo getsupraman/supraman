@@ -10,8 +10,6 @@ use crate::shells::ShellSetting;
 use crate::{CoreError, Result};
 
 pub const DEFAULT_MAX_WORKING: usize = 20;
-/// `[workman] url` when unset.
-pub const DEFAULT_WORKMAN_URL: &str = "https://work.supraman.ai";
 /// `[terminal] font_size` when unset or invalid, and Ctrl+0's size.
 pub const DEFAULT_TERMINAL_FONT_SIZE: u32 = 14;
 /// The bounds `[terminal] font_size` is clamped to; `supraman_ui::term_element`'s MIN/MAX_FONT_SIZE.
@@ -78,32 +76,6 @@ impl Section for SessionSettings {
 impl SessionSettings {
     pub fn relay_idle_ms(&self) -> i64 {
         self.relay_idle_secs.map_or(crate::DEFAULT_RELAY_IDLE_MS, |s| s.saturating_mul(1000).min(i64::MAX as u64) as i64)
-    }
-}
-
-/// `[workman]`: the server Supraman signs in to. No token is ever kept here.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WorkmanSettings {
-    /// An origin like `https://workman.example`; any path is dropped. Unset: [`DEFAULT_WORKMAN_URL`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-}
-
-impl Section for WorkmanSettings {
-    const KEY: &'static str = "workman";
-    const FIELDS: &'static [&'static str] = &["url"];
-}
-
-impl WorkmanSettings {
-    /// The server's origin: `url` without any path, else [`DEFAULT_WORKMAN_URL`].
-    pub fn origin(&self) -> String {
-        crate::url::origin(self.url.as_deref().unwrap_or(DEFAULT_WORKMAN_URL))
-    }
-
-    /// The MCP endpoint a minted session's config names.
-    pub fn mcp_url(&self) -> String {
-        format!("{}/mcp", self.origin())
     }
 }
 
@@ -240,7 +212,6 @@ impl Section for UpdateSettings {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Settings {
     pub sessions: SessionSettings,
-    pub workman: WorkmanSettings,
     pub appearance: AppearanceSettings,
     pub terminal: TerminalSettings,
     pub window: WindowSettings,
@@ -251,9 +222,8 @@ pub struct Settings {
 }
 
 /// The tables [`Settings`] owns, which [`Settings::section`] refuses.
-const OWNED: [&str; 6] = [
+const OWNED: [&str; 5] = [
     SessionSettings::KEY,
-    WorkmanSettings::KEY,
     AppearanceSettings::KEY,
     TerminalSettings::KEY,
     WindowSettings::KEY,
@@ -285,44 +255,6 @@ fn lenient_size<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<O
 /// `size` within [`MIN_TERMINAL_FONT_SIZE`]..=[`MAX_TERMINAL_FONT_SIZE`].
 pub fn clamp_terminal_font_size(size: u32) -> u32 {
     size.clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
-}
-
-/// A server URL typed into Settings as the origin to keep: `http(s)://host[:port]`, any path dropped.
-/// Plain `http` only for this machine (a token must not cross a network in the clear).
-pub fn validate_workman_url(text: &str) -> std::result::Result<String, String> {
-    let text = text.trim();
-    let (scheme, rest) = text.split_once("://").ok_or("a URL starts with https:// (or http:// for this machine)")?;
-    let scheme = scheme.to_ascii_lowercase();
-    if scheme != "http" && scheme != "https" {
-        return Err(format!("{scheme}:// is not http or https"));
-    }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.is_empty() || authority.contains('@') || authority.chars().any(char::is_whitespace) {
-        return Err("the URL names no host".into());
-    }
-    let host = if let Some(v6) = authority.strip_prefix('[') {
-        let (h, port) = v6.split_once(']').ok_or("an IPv6 host is closed with ]")?;
-        if !port.is_empty() && port.strip_prefix(':').is_none_or(|p| p.parse::<u16>().is_err()) {
-            return Err(format!("{port} is not a port"));
-        }
-        h.to_string()
-    } else {
-        let (h, port) = authority.rsplit_once(':').map_or((authority, None), |(h, p)| (h, Some(p)));
-        if let Some(p) = port
-            && p.parse::<u16>().is_err()
-        {
-            return Err(format!("{p} is not a port"));
-        }
-        if h.is_empty() || !h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
-            return Err(format!("{h} is not a host name"));
-        }
-        h.to_ascii_lowercase()
-    };
-    let local = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
-    if scheme == "http" && !local {
-        return Err("use https:// for a server that is not on this machine".into());
-    }
-    Ok(format!("{scheme}://{}", authority.to_ascii_lowercase()))
 }
 
 impl Settings {
@@ -391,7 +323,6 @@ impl Settings {
     fn to_table(&self) -> std::result::Result<Table, toml::ser::Error> {
         let mut out = self.other.clone();
         put(&mut out, &self.sessions)?;
-        put(&mut out, &self.workman)?;
         put(&mut out, &self.appearance)?;
         put(&mut out, &self.terminal)?;
         put(&mut out, &self.window)?;
@@ -427,7 +358,6 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
     let mut table: Table = text.parse().map_err(|source| CoreError::Parse { path: path.to_path_buf(), source })?;
     let mut notices = Vec::new();
     let sessions = take(&mut table, path, &mut notices);
-    let workman = take(&mut table, path, &mut notices);
     let appearance = take(&mut table, path, &mut notices);
     let terminal = take(&mut table, path, &mut notices);
     let window = take(&mut table, path, &mut notices);
@@ -437,7 +367,7 @@ fn parse(path: &Path, text: &str) -> Result<(Settings, Vec<String>)> {
             notices.push(format!("{}: {key} is not in a table; it is ignored", path.display()));
         }
     }
-    Ok((Settings { sessions, workman, appearance, terminal, window, updates, other: table }, notices))
+    Ok((Settings { sessions, appearance, terminal, window, updates, other: table }, notices))
 }
 
 /// `S` out of its own table in `table`, each key checked on its own. What `S` does not know stays in
@@ -489,7 +419,6 @@ mod tests {
                 reopen_tabs: false,
                 resume_tabs_on_click: true,
             },
-            workman: WorkmanSettings { url: Some("https://workman.example".into()) },
             appearance: AppearanceSettings { theme: Some("Supraman Dark".into()), terminal_colors: Some("campbell".into()) },
             terminal: TerminalSettings {
                 font_size: Some(20),
@@ -521,9 +450,8 @@ mod tests {
         s.save(home.path()).unwrap();
         assert_eq!(Settings::load(home.path()).unwrap(), s);
         let file = saved(home.path());
-        assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "updates", "window", "workman"]);
+        assert_eq!(file.keys().collect::<Vec<_>>(), ["appearance", "sessions", "terminal", "updates", "window"]);
         assert_eq!(file["terminal"]["font_size"].as_integer(), Some(20));
-        assert_eq!(file["workman"]["url"].as_str(), Some("https://workman.example"));
     }
 
     #[test]
@@ -551,7 +479,6 @@ mod tests {
         }
         let s = every_key_set();
         check(&s.sessions);
-        check(&s.workman);
         check(&s.appearance);
         check(&s.terminal);
         check(&s.window);
@@ -591,8 +518,7 @@ url = "https://workman.example"
         assert!(notices.is_empty(), "{notices:?}");
         assert_eq!(s.appearance.theme.as_deref(), Some("VS Code Dark Modern"));
         assert_eq!((s.sessions.max_working, s.window.left_width), (20, Some(531)));
-        assert_eq!(s.workman.origin(), "https://workman.example");
-        assert!(s.other.is_empty(), "{:?}", s.other);
+        assert_eq!(s.other.keys().collect::<Vec<_>>(), ["workman"], "a former [workman] url is kept, never read");
         s.save(home.path()).unwrap();
         assert_eq!(saved(home.path()), today.parse::<Table>().unwrap());
         assert_eq!(Settings::load(home.path()).unwrap(), s);
@@ -666,9 +592,8 @@ url = "https://workman.example"
     #[test]
     fn partial_file_keeps_defaults() {
         let home = tempfile::tempdir().unwrap();
-        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://x/mcp\"\n");
+        let (s, _) = load_text(home.path(), "[sessions]\nrun_as_admin = true\n");
         assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
-        assert_eq!(s.workman.url.as_deref(), Some("http://x/mcp"));
         assert!(s.sessions.extra_plugin_dirs.is_empty());
         assert_eq!(s.sessions.relay_idle_ms(), crate::DEFAULT_RELAY_IDLE_MS, "10 min unless set");
         assert_eq!(load_text(home.path(), "[sessions]\nrelay_idle_secs = 20\n").0.sessions.relay_idle_ms(), 20_000);
@@ -677,25 +602,15 @@ url = "https://workman.example"
     }
 
     #[test]
-    fn workman_url_is_an_origin() {
+    fn a_former_workman_url_or_workstate_table_loads_quietly_survives_a_save_and_is_never_read() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::default().workman.origin(), DEFAULT_WORKMAN_URL);
-        assert_eq!(Settings::default().workman.mcp_url(), format!("{DEFAULT_WORKMAN_URL}/mcp"));
-        let (s, _) = load_text(home.path(), "[workman]\nurl = \"http://127.0.0.1:1/mcp\"\n");
-        assert_eq!(s.workman.origin(), "http://127.0.0.1:1");
-        assert_eq!(s.workman.mcp_url(), "http://127.0.0.1:1/mcp");
-    }
-
-    #[test]
-    fn validate_workman_url_keeps_an_origin_and_https_off_this_machine() {
-        assert_eq!(validate_workman_url(" https://Work.Supraman.ai/ ").as_deref(), Ok("https://work.supraman.ai"));
-        assert_eq!(validate_workman_url("https://work.supraman.ai/mcp").as_deref(), Ok("https://work.supraman.ai"));
-        assert_eq!(validate_workman_url("http://127.0.0.1:1").as_deref(), Ok("http://127.0.0.1:1"));
-        assert_eq!(validate_workman_url("http://localhost:9/api").as_deref(), Ok("http://localhost:9"));
-        assert_eq!(validate_workman_url("http://[::1]:9").as_deref(), Ok("http://[::1]:9"));
-        for bad in ["work.supraman.ai", "ftp://x", "http://work.supraman.ai", "https://", "https://a b", "https://x:port", "https://u@x"] {
-            assert!(validate_workman_url(bad).is_err(), "{bad}");
-        }
+        let text = "[workstate]\nurl = \"http://127.0.0.1:1\"\n\n[workman]\nurl = \"https://ws.example\"\n\n[window]\nleft_width = 300\n";
+        let (s, notices) = load_text(home.path(), text);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(s.window.left_width, Some(300));
+        Settings::update(home.path(), |s| s.window.left_width = Some(301)).unwrap();
+        let file = saved(home.path());
+        assert_eq!((file["workman"]["url"].as_str(), file["workstate"]["url"].as_str()), (Some("https://ws.example"), Some("http://127.0.0.1:1")));
     }
 
     #[test]
@@ -829,11 +744,11 @@ url = "https://workman.example"
         let home = tempfile::tempdir().unwrap();
         let (s, notices) = load_text(
             home.path(),
-            "[sessions]\nmax_working = \"many\"\nrun_as_admin = \"yes\"\n\n[workman]\nurl = \"https://ws.example\"\n\n[window]\nleft_width = 300\n",
+            "[sessions]\nmax_working = \"many\"\nrun_as_admin = \"yes\"\n\n[window]\nleft_width = 300\n",
         );
         assert_eq!(s.sessions.max_working, DEFAULT_MAX_WORKING);
         assert!(!s.sessions.run_as_admin);
-        assert_eq!((s.workman.url.as_deref(), s.window.left_width), (Some("https://ws.example"), Some(300)));
+        assert_eq!(s.window.left_width, Some(300));
         assert_eq!(notices.len(), 2, "{notices:?}");
         assert!(notices.iter().any(|n| n.contains("sessions.max_working is not valid")), "{notices:?}");
         assert!(notices.iter().any(|n| n.contains("sessions.run_as_admin is not valid")), "{notices:?}");

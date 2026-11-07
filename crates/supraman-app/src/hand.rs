@@ -363,7 +363,7 @@ impl Hands {
     /// A tab without a token of its own still gets its helped config under a free name, never the user's own
     /// `workman` registration.
     fn helped(&mut self, name: String, notice: Option<String>) -> Launch {
-        match self.keeper().write_unminted(&name, &supraman_supervisor::mcp_url(&self.auth), &[]) {
+        match supraman_supervisor::mcp_url(&self.auth).and_then(|url| self.keeper().write_unminted(&name, &url, &[])) {
             Ok(config) => {
                 self.helped.insert(name.clone());
                 Launch::Helped { name, config, notice }
@@ -677,8 +677,8 @@ mod tests {
                 (home, auth)
             }
             None => {
-                supraman_core::Settings::default().save(&home).unwrap();
-                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())));
+                let server_json = crate::test_auth::server_json(&home, &supraman_workman::fake::closed_base());
+                let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())).with_server_json(Some(server_json)));
                 (home, auth)
             }
         }
@@ -699,9 +699,7 @@ mod tests {
         seen_a.recv_timeout(WAIT).unwrap();
         assert!(hands.elsewhere(&a).is_empty(), "minted there");
 
-        let mut settings = supraman_core::Settings::load(&home).unwrap();
-        settings.workman.url = Some(b.clone());
-        settings.save(&home).unwrap();
+        crate::test_auth::server_json(&home, &b);
         auth.sign_in(&b, &supraman_workman::auth::http_browser()).unwrap();
         assert_eq!(hands.elsewhere(&b), [(name.clone(), Some(a.clone()))]);
         assert_eq!(
@@ -1165,7 +1163,7 @@ mod tests {
         let (_url, seen, _oauth) = fake_workman(vec![]);
         let (home, auth) = home_with(dir.path(), None);
         let (mut hands, _) = Hands::with(&home, auth.clone(), HttpMinter::default(), a_repo);
-        let url = supraman_supervisor::mcp_url(&auth);
+        let url = supraman_supervisor::mcp_url(&auth).unwrap();
         let first = hands.launch(Path::new(r"C:\demo\alpha"), None);
         assert_eq!(assert_helped_tab(&hands, &first, &url), ("hand-alpha-1".to_string(), None));
         let second = hands.launch(Path::new(r"C:\demo\alpha"), None);
@@ -1191,6 +1189,17 @@ mod tests {
         let notice = notice.unwrap();
         assert!(notice.contains("sign in to Workman") && notice.contains("again"), "{notice}");
         assert!(seen.recv_timeout(std::time::Duration::from_millis(200)).is_err(), "no mint");
+    }
+
+    #[test]
+    fn hand_without_server_json_starts_without_workman_saying_run_workman_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let auth = Arc::new(Auth::with_store(&home, Arc::new(supraman_workman::MemoryStore::default())));
+        let (mut hands, _) = Hands::with(&home, auth, HttpMinter::default(), a_repo);
+        let Launch::Unminted(notice) = hands.launch(Path::new(r"C:\demo\alpha"), None) else { panic!("a tab without Workman") };
+        assert!(notice.contains("runs without Workman") && notice.contains("run /workman:setup"), "{notice}");
+        assert!(!home.join("mcp").exists(), "no config written");
     }
 
     #[test]

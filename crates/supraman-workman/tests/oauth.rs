@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use supraman_core::Settings;
+use supraman_core::workman_server::{self, ServerJson};
 use supraman_workman::auth::{http_browser, http_browser_with};
 use supraman_workman::fake::{Answer, FakeWorkman, closed_base, location_query};
 use supraman_workman::{Auth, AuthError, AuthStatus, Client, MemoryStore, SecretStore};
@@ -17,10 +17,17 @@ fn setup() -> (tempfile::TempDir, FakeWorkman, Arc<supraman_workman::fake::FakeA
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeWorkman::start(vec![("/api/v1/overview".into(), overview())]);
     let oauth = fake.enable_oauth();
-    Settings { workman: supraman_core::WorkmanSettings { url: Some(fake.base().to_string()) }, ..Settings::default() }.save(dir.path()).unwrap();
+    workman_server::save(&server_json(dir.path()), &ServerJson::new(fake.base())).unwrap();
     let store = Arc::new(MemoryStore::default());
-    let auth = Arc::new(Auth::with_store(dir.path(), store.clone()).with_sign_in_timeout(Duration::from_secs(10)));
+    let auth = Arc::new(
+        Auth::with_store(dir.path(), store.clone()).with_server_json(Some(server_json(dir.path()))).with_sign_in_timeout(Duration::from_secs(10)),
+    );
     (dir, fake, oauth, store, auth)
+}
+
+/// The test's own `~/.workman/server.json`, never the user's.
+fn server_json(dir: &Path) -> std::path::PathBuf {
+    dir.join("user").join(".workman").join("server.json")
 }
 
 fn files(dir: &Path) -> Vec<(String, String)> {
@@ -152,7 +159,7 @@ fn a_grant_under_the_old_scope_names_refreshes_until_they_go_then_one_sign_in_me
 fn a_fresh_process_refreshes_from_the_store() {
     let (dir, fake, _oauth, store, auth) = setup();
     auth.sign_in(fake.base(), &http_browser()).unwrap();
-    let other = Auth::with_store(dir.path(), store.clone());
+    let other = Auth::with_store(dir.path(), store.clone()).with_server_json(Some(server_json(dir.path())));
     assert_eq!(other.status(fake.base()), AuthStatus::SignedIn { who: None, unsaved: None }, "known without a call");
     let (origin, token) = other.current().unwrap();
     assert_eq!(origin, fake.base());
@@ -536,4 +543,19 @@ fn a_6_kb_refresh_token_rotates_through_the_file_store() {
     let next = Auth::with_store(dir.path(), store());
     next.access_token(fake.base()).unwrap();
     assert!(oauth.refusals().is_empty(), "{:?}", oauth.refusals());
+}
+
+#[test]
+fn without_server_json_the_configured_server_is_run_workman_setup_and_nothing_dials() {
+    let (dir, fake, _oauth, store, auth) = setup();
+    auth.sign_in(fake.base(), &http_browser()).unwrap();
+    let before = fake.seen().len();
+    let unset = Auth::with_store(dir.path(), store.clone());
+    let gone = Auth::with_store(dir.path(), store).with_server_json(Some(dir.path().join("nobody").join(".workman").join("server.json")));
+    for auth in [unset, gone] {
+        let e = auth.current().unwrap_err();
+        assert!(matches!(&e, AuthError::NotSetUp(why) if why.starts_with("Workman is not set up: run /workman:setup")), "{e:?}");
+        assert!(matches!(auth.configured_origin(), Err(AuthError::NotSetUp(_))));
+    }
+    assert_eq!(fake.seen().len(), before, "no request after the sign-in: {:?}", fake.seen().iter().skip(before).map(|s| s.target.clone()).collect::<Vec<_>>());
 }

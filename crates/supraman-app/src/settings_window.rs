@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, DEFAULT_WORKMAN_URL, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
+use supraman_core::{DEFAULT_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, Settings};
 use supraman_core::shells::ShellSetting;
 use supraman_ui::settings_page::{SettingsPage, SettingsPages, row};
 use supraman_ui::{banner, button, term_element};
@@ -114,6 +114,9 @@ impl SettingsView {
             cx.observe(&fleet, |this, fleet, cx| {
                 let workman = fleet.read(cx).workman.clone();
                 if this.workman != workman {
+                    if let Some(url) = workman.checked_url().filter(|u| this.workman.checked_url() != Some(*u)) {
+                        this.url_input.update(cx, |input, cx| input.set_text(url, cx));
+                    }
                     this.workman = workman;
                     this.reload(cx);
                     cx.notify();
@@ -124,7 +127,7 @@ impl SettingsView {
             .detach();
         }
         let workman = fleet.upgrade().map_or(WorkmanStatus::Checking, |f| f.read(cx).workman.clone());
-        let url_input = cx.new(|cx| TextInput::new(DEFAULT_WORKMAN_URL, None, window, cx));
+        let url_input = cx.new(|cx| TextInput::new("https://work.example", None, window, cx));
         let url_events = cx.subscribe_in(&url_input, window, |this: &mut Self, _, event: &InputEvent, _, cx| match event {
             InputEvent::Confirm => this.apply_url(cx),
             InputEvent::Edited => {
@@ -175,8 +178,9 @@ impl SettingsView {
             .detach();
         }
         this.reload(cx);
-        let url = this.settings.workman.origin();
-        this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
+        if let Some(url) = this.workman.checked_url().map(str::to_string) {
+            this.url_input.update(cx, |input, cx| input.set_text(&url, cx));
+        }
         this
     }
 
@@ -223,7 +227,11 @@ impl SettingsView {
     /// `Auth::status` reads the servers file and decrypts the store: never on the UI thread.
     fn read_auth(&mut self, home: PathBuf, cx: &mut Context<Self>) {
         self.auth_reads += 1;
-        let (read, origin) = (self.auth_reads, self.settings.workman.origin());
+        let read = self.auth_reads;
+        let Some(origin) = self.workman.checked_url().map(str::to_string) else {
+            self.auth = None;
+            return;
+        };
         cx.spawn(async move |this, cx| {
             let auth = cx.background_spawn(async move { crate::signin::auth(&home).status(&origin) }).await;
             this.update(cx, |this, cx| {
@@ -473,17 +481,17 @@ impl SettingsView {
             .gap_1()
             .pt_2()
             .children(self.url_error.clone().map(|e| div().id("ws-url-error").text_xs().text_color(status.error).child(SharedString::from(e))))
-            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(format!(
-                "Now {}{}.",
-                self.settings.workman.origin(),
-                if self.settings.workman.url.is_none() { " (the default)" } else { "" }
-            ))));
+            .child(div().text_xs().text_color(colors.text_muted).child(SharedString::from(match (&self.workman, self.workman.checked_url()) {
+                (_, Some(url)) => format!("Now {url}."),
+                (WorkmanStatus::NotSetUp { .. }, None) => "None: run /workman:setup, or apply a URL here.".to_string(),
+                (_, None) => "Checking…".to_string(),
+            })));
         vec![
             self.render_workman_status(cx),
             row(
                 "Server URL",
                 format!(
-                    "The Workman server Supraman signs in to, e.g. {DEFAULT_WORKMAN_URL} (http only for this \
+                    "The Workman server Supraman signs in to, as ~/.workman/server.json names it (http only for this \
                      machine). While signed in, a new server is used only once you have signed in there: Supraman then \
                      restarts its sessions with tokens from it, asks you to restart open claude tabs, and signs out of \
                      the old one."
@@ -506,7 +514,6 @@ impl SettingsView {
                 (f.signing_in.clone(), f.sign_in_error.clone())
             })
             .unwrap_or_default();
-        let url = self.settings.workman.origin();
         let (text, color) = match (&self.workman, &self.auth) {
             (WorkmanStatus::Checking, _) => ("checking…".to_string(), colors.text_muted),
             (WorkmanStatus::Ready { url, .. }, Some(AuthStatus::SignedIn { unsaved: Some(why), .. })) => {
@@ -577,20 +584,10 @@ impl SettingsView {
                             .flatten()
                             .map(|fix| div().text_xs().child(SharedString::from(fix))),
                     )
-                    .children((url != self.workman_url()).then(|| div().text_xs().child(SharedString::from(format!("Checking {url}…")))))
                     .into_any_element(),
             ),
             cx,
         )
-    }
-
-    fn workman_url(&self) -> String {
-        match &self.workman {
-            WorkmanStatus::Ready { url, .. } | WorkmanStatus::NotSignedIn { url } | WorkmanStatus::SignInAgain { url, .. } | WorkmanStatus::Unreachable { url, .. } => {
-                url.clone()
-            }
-            WorkmanStatus::Checking => self.settings.workman.origin(),
-        }
     }
 
     pub fn workman(&self) -> &WorkmanStatus {

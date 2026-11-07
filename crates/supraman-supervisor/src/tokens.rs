@@ -20,14 +20,15 @@ impl TokenProvider for AppTokens {
         Ok(bearer(&self.auth)?.map(|(url, token)| RoleToken { url, token, role: ws_role.into() }))
     }
 
-    fn mcp_url(&self) -> String {
+    fn mcp_url(&self) -> Result<String, String> {
         mcp_url(&self.auth)
     }
 }
 
 /// The MCP URL of the server Supraman signs in to, signed in or not: the one source of every session config's URL.
-pub fn mcp_url(auth: &Auth) -> String {
-    format!("{}/mcp", auth.configured_origin())
+/// `Err` is Workman not set up, in words that say to run `/workman:setup`.
+pub fn mcp_url(auth: &Auth) -> Result<String, String> {
+    auth.configured_origin().map(|origin| format!("{origin}/mcp")).map_err(|e| e.to_string())
 }
 
 static SIGN_INS: AtomicU64 = AtomicU64::new(0);
@@ -46,7 +47,7 @@ pub fn sign_in_generation() -> u64 {
 pub fn bearer(auth: &Auth) -> Result<Option<(String, String)>, String> {
     match auth.current() {
         Ok((origin, token)) => Ok(Some((format!("{origin}/mcp"), token))),
-        Err(AuthError::NotSignedIn { .. }) => Ok(None),
+        Err(AuthError::NotSignedIn { .. } | AuthError::NotSetUp(_)) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
 }
