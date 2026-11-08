@@ -1,6 +1,6 @@
-//! Ctrl+P in the Git tab: the shared palette over GitMan's read-only commands, with modes for the refs, the files at
-//! HEAD (read off the UI thread when it opens), a file's history and the commits loaded in the graph. Enter only
-//! navigates or runs a read-only command.
+//! Ctrl+P and Ctrl+Shift+P in the Git tab: the shared palette over GitMan's commands, with modes for the refs, the
+//! files at HEAD (read off the UI thread when it opens), a file's history and the commits loaded in the graph. Its
+//! remote commands run what the toolbar's Pull and Push run, dimmed with their reasons.
 
 pub mod entries;
 pub mod frecency;
@@ -18,6 +18,8 @@ use super::GitView;
 use super::details::FileView;
 use super::diff::Target;
 use super::load::GraphRow;
+use super::remote::{Button, RemoteAct};
+use supraman_gitman::write::remote::PullMode;
 use entries::{COMMITS, Command, FILES, GitEntry, HISTORY, REFS};
 
 /// The palette's id: rows paint under `git-find-row-<key>`.
@@ -172,9 +174,12 @@ impl GitView {
 }
 
 impl GitView {
-    /// The read-only commands, each with why it cannot act now.
+    /// The commands, each with why it cannot act now.
     fn commands(&self, cx: &App) -> Vec<GitEntry> {
         let why = |can: bool, why: &str| (!can).then(|| SharedString::from(why.to_string()));
+        let remote = self.remote.read(cx);
+        let dim = |button| remote.why_not(button, cx).map(SharedString::from);
+        let pulls = [PullMode::FastForwardIfPossible, PullMode::FastForwardOnly, PullMode::Rebase].map(|mode| (Command::Pull(mode), dim(Button::Pull(Some(mode)))));
         let walk = self.ref_panel.read(cx).walk().clone();
         let view = self.panel.read(cx).view();
         let rows = !self.rows.is_empty();
@@ -188,8 +193,12 @@ impl GitView {
             (Command::GoToWip, why(self.rows.first().is_some_and(GraphRow::wip), "The working tree is clean.")),
             if view == FileView::Tree { (Command::FilesAsPaths, None) } else { (Command::FilesAsTree, None) },
             (Command::CloseViewer, why(self.diff.is_some(), "No file is open in the viewer.")),
+            (Command::Push, dim(Button::Push)),
+            (Command::PullDefault(remote.pull_choice()), dim(Button::Pull(None))),
         ]
         .into_iter()
+        .chain(pulls)
+        .chain([(Command::FetchAll, dim(Button::FetchAll))])
         .map(|(command, why_not)| GitEntry::Command { command, why_not })
         .collect()
     }
@@ -206,6 +215,10 @@ impl GitView {
             Command::FilesAsTree => self.panel.update(cx, |p, cx| p.set_view(FileView::Tree, cx)),
             Command::FilesAsPaths => self.panel.update(cx, |p, cx| p.set_view(FileView::Path, cx)),
             Command::CloseViewer => self.back_to_graph(cx),
+            Command::Push => self.remote.update(cx, |r, cx| r.push_head(cx)),
+            Command::PullDefault(_) => self.remote.update(cx, |r, cx| r.pull_default(cx)),
+            Command::Pull(mode) => self.remote.update(cx, |r, cx| r.act(RemoteAct::Pull(mode), cx)),
+            Command::FetchAll => self.remote.update(cx, |r, cx| r.act(RemoteAct::FetchAll, cx)),
         }
         if !matches!(command, Command::FilterRefs | Command::CloseViewer) {
             self.focus_graph = self.diff.is_none();

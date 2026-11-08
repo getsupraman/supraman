@@ -83,6 +83,21 @@ fn c1_ctrl_p_finds_a_branch_a_file_and_a_commit_by_its_sha(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn ctrl_shift_p_opens_the_same_palette_as_ctrl_p(cx: &mut TestAppContext) {
+    let f = Fixture::shared();
+    let (view, cx) = open(&f.dir, cx);
+    for key in ["ctrl-p", "ctrl-shift-p"] {
+        keys(&view, key, cx);
+        assert!(is_open(&view, cx), "{key} opens it");
+        let (mode, _, top) = listed(&view, cx);
+        assert_eq!(mode, None, "{key}: the top list");
+        assert!(top.contains(&"cmd:refresh".to_string()) && top.contains(&"cmd:push".to_string()), "{key}: {top:?}");
+        keys(&view, "escape", cx);
+        assert!(!is_open(&view, cx));
+    }
+}
+
+#[gpui::test]
 fn backspace_on_an_empty_query_leaves_a_mode_and_ctrl_shift_h_opens_history(cx: &mut TestAppContext) {
     let f = Fixture::shared();
     let (view, cx) = open(&f.dir, cx);

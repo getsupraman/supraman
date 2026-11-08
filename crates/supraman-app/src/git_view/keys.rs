@@ -40,6 +40,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-j", ToggleRefs, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-alt-f", FilterRefs, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-p", Find, Some(TAB_CONTEXT)),
+        KeyBinding::new("ctrl-shift-p", Find, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-shift-h", FindHistory, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-z", Undo, Some(TAB_CONTEXT)),
         KeyBinding::new("ctrl-y", Redo, Some(TAB_CONTEXT)),
