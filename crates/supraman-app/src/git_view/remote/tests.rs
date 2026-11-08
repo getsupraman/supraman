@@ -137,6 +137,106 @@ fn a_detached_head_dims_push_and_pull_but_not_a_fetch_and_no_remote_dims_both(cx
     assert_eq!(why_not(&view, cx), [Some(NO_REMOTE.into()), Some(NO_REMOTE.into())]);
 }
 
+/// The palette's Remote commands as its top list shows them: key, words and why each is dimmed.
+fn palette_remote(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(String, String, Option<String>)> {
+    use supraman_ui::palette::Entry as _;
+    view.update_in(cx, |v, window, cx| v.open_find(None, window, cx));
+    cx.simulate_input("remote");
+    cx.run_until_parked();
+    let palette = view.read_with(cx, |v, _| v.find().cloned()).expect("the palette is open");
+    let rows = palette.read_with(cx, |p, _| {
+        p.shown().iter().filter(|(e, _)| e.text().starts_with("Remote: ")).map(|(e, _)| (e.key().to_string(), e.text(), e.dimmed().map(|w| w.to_string()))).collect()
+    });
+    view.update_in(cx, |v, window, cx| v.close_find(window, cx));
+    rows
+}
+
+/// Picks the palette's row `key` with a click, as a user does.
+fn pick(view: &Entity<GitView>, key: &str, cx: &mut VisualTestContext) {
+    view.update_in(cx, |v, window, cx| v.open_find(None, window, cx));
+    cx.simulate_input("remote");
+    cx.run_until_parked();
+    press(view, &format!("{}-row-{key}", crate::git_view::find::ID), cx);
+}
+
+const REMOTE_KEYS: [&str; 6] = ["cmd:push", "cmd:pull", "cmd:pull-ff", "cmd:pull-ff-only", "cmd:pull-rebase", "cmd:fetch-all"];
+
+#[gpui::test]
+fn the_palettes_push_pull_and_fetch_act_as_the_toolbar_does_and_are_dimmed_with_its_reasons(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let (mine, other) = (clone(&f, "mine"), clone(&f, "other"));
+    let theirs = commit(&f, &other, "t.txt", "Theirs");
+    git(&f, &other, &["push", "-q"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+
+    let rows = palette_remote(&view, cx);
+    assert_eq!(rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), REMOTE_KEYS);
+    let words = ["Remote: Push", "Remote: Pull", "Remote: Pull (fast-forward if possible)", "Remote: Pull (fast-forward only)", "Remote: Pull (rebase)", "Remote: Fetch all"];
+    assert_eq!(rows.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(), words, "the default worded as the toolbar's button");
+    assert!(rows.iter().all(|r| r.2.is_none()), "{rows:?}");
+
+    pick(&view, "cmd:pull", cx);
+    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD"]), theirs, "the default pull fast-forwards");
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pulled"));
+
+    let pushed = commit(&f, &mine, "m.txt", "Mine");
+    pick(&view, "cmd:push", cx);
+    assert_eq!(git(&f, &origin, &["rev-parse", "main"]), pushed);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pushed main to origin/main"));
+
+    git(&f, &other, &["pull", "-q"]);
+    let again = commit(&f, &other, "t2.txt", "Theirs again");
+    git(&f, &other, &["push", "-q"]);
+    commit(&f, &mine, "m2.txt", "Mine again");
+    pick(&view, "cmd:pull-rebase", cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Pulled and rebased"));
+    assert_eq!(git(&f, &mine, &["rev-parse", "HEAD^"]), again, "rebased onto theirs, no merge");
+
+    let fetched = commit(&f, &other, "t3.txt", "Fetched");
+    git(&f, &other, &["push", "-q"]);
+    let head = git(&f, &mine, &["rev-parse", "HEAD"]);
+    pick(&view, "cmd:fetch-all", cx);
+    assert_eq!(toast(&view, cx).as_deref(), Some("Fetched every remote"));
+    assert_eq!((git(&f, &mine, &["rev-parse", "origin/main"]), git(&f, &mine, &["rev-parse", "HEAD"])), (fetched, head));
+
+    view.update(cx, |v, cx| v.remote.update(cx, |r, cx| r.act(super::RemoteAct::SetDefault(PullChoice::Fetch), cx)));
+    cx.run_until_parked();
+    let default = palette_remote(&view, cx).into_iter().find(|r| r.0 == "cmd:pull").map(|r| r.1);
+    assert_eq!(default.as_deref(), Some("Remote: Fetch"), "the default's words follow the toolbar's");
+
+    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.running = Some(super::Running { ticket: 0, doing: super::Doing::FetchAll, progress: None, cancel: Default::default() })));
+    let rows = palette_remote(&view, cx);
+    assert!(rows.iter().all(|r| r.2.as_deref() == Some("Fetching…")), "a transfer running dims every one: {rows:?}");
+    assert_eq!(why_not(&view, cx), [Some("Fetching…".into()), Some("Fetching…".into())]);
+    view.update(cx, |v, cx| v.remote.update(cx, |r, _| r.running = None));
+}
+
+#[gpui::test]
+fn the_palettes_remote_commands_are_dimmed_on_a_detached_head_and_without_a_remote(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let home = tempfile::tempdir().unwrap();
+    let origin = f.temp.path().join("origin.git");
+    let mine = clone(&f, "mine");
+    git(&f, &mine, &["checkout", "-q", "--detach"]);
+    let (view, cx) = open(&mine, home.path(), cx);
+    let rows = palette_remote(&view, cx);
+    let [pull, push] = why_not(&view, cx);
+    let detached = Some(DETACHED.to_string());
+    assert_eq!(rows.iter().map(|r| r.2.clone()).collect::<Vec<_>>(), [push, pull, detached.clone(), detached.clone(), detached.clone(), None], "the toolbar's reasons; a fetch needs no branch");
+    let before = git(&f, &origin, &["rev-parse", "main"]);
+    commit(&f, &mine, "d.txt", "Detached");
+    pick(&view, "cmd:push", cx);
+    assert_eq!(git(&f, &origin, &["rev-parse", "main"]), before, "a dimmed Push does nothing");
+
+    let lone = clone(&f, "lone");
+    git(&f, &lone, &["remote", "remove", "origin"]);
+    let (view, cx) = open(&lone, home.path(), cx);
+    let rows = palette_remote(&view, cx);
+    assert!(rows.iter().all(|r| r.2.as_deref() == Some(NO_REMOTE)), "{rows:?}");
+}
+
 #[gpui::test]
 fn a_push_behind_asks_pull_or_force_and_a_stale_lease_asks_fetch_or_force_anyway(cx: &mut TestAppContext) {
     let f = Fixture::copy();

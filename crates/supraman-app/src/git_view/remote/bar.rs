@@ -9,7 +9,7 @@ use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 use theme::ActiveTheme as _;
 
-use super::{RemoteActions, RemoteEvent};
+use super::{Button, RemoteActions, RemoteEvent};
 use crate::git_view::GitView;
 
 pub const PULL_KEY: &str = "git-pull";
@@ -24,6 +24,11 @@ pub fn words(choice: PullChoice) -> &'static str {
         PullChoice::FastForwardOnly => "Pull (fast-forward only)",
         PullChoice::Rebase => "Pull (rebase)",
     }
+}
+
+/// The Pull button's caption for the default `choice`.
+pub fn caption(choice: PullChoice) -> &'static str {
+    if choice == PullChoice::Fetch { "Fetch" } else { "Pull" }
 }
 
 pub fn key_of(choice: PullChoice) -> &'static str {
@@ -58,10 +63,7 @@ impl GitView {
     /// Why Pull and why Push cannot act now, each `None` while it can.
     pub fn remote_why_not(&self, cx: &App) -> [Option<String>; 2] {
         let remote = self.remote.read(cx);
-        let busy = remote.busy(cx);
-        let pull = busy.clone().or_else(|| remote.pull_why_not(None).map(str::to_string));
-        let push = busy.or_else(|| remote.push_why_not().map(str::to_string));
-        [pull, push]
+        [remote.why_not(Button::Pull(None), cx), remote.why_not(Button::Push, cx)]
     }
 
     /// What the Pull button does, and each remote whose background fetches fail.
@@ -92,7 +94,7 @@ impl GitView {
         let [pull_why, push_why] = self.remote_why_not(cx);
         let remote = self.remote.read(cx);
         let choice = remote.pull_choice();
-        let caption = if choice == PullChoice::Fetch { "Fetch" } else { "Pull" };
+        let caption = caption(choice);
         let push_tip = match remote.current().and_then(|c| remote.upstream(c)) {
             Some((r, b)) => format!("Push to {r}/{b}"),
             None => "Push, choosing its upstream first".into(),

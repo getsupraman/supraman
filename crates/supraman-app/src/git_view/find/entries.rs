@@ -1,4 +1,4 @@
-//! The Git palette's rows as plain values: the read-only commands and the mode rows of the top list, and the
+//! The Git palette's rows as plain values: the commands and the mode rows of the top list, and the
 //! refs, files and loaded commits its modes search, each with how a query fits it and how it paints.
 
 use std::ops::Range;
@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use gpui::{AnyElement, App, FontWeight, SharedString, div, prelude::*, px};
 use supraman_gitman::short_sha;
+use supraman_gitman::write::remote::{PullChoice, PullMode};
 use supraman_ui::fonts;
 use supraman_ui::icon::Icon;
 use supraman_ui::matcher::highlighted;
@@ -15,6 +16,7 @@ use theme::ActiveTheme as _;
 
 use super::super::load::GraphRow;
 use super::super::ref_panel::{self, Section};
+use super::super::remote;
 
 pub const REFS: &str = "refs";
 pub const FILES: &str = "files";
@@ -33,6 +35,11 @@ pub enum Command {
     FilesAsTree,
     FilesAsPaths,
     CloseViewer,
+    Push,
+    /// The toolbar's Pull: the default kept in `[gitman] pull`.
+    PullDefault(PullChoice),
+    Pull(PullMode),
+    FetchAll,
 }
 
 impl Command {
@@ -48,6 +55,12 @@ impl Command {
             Command::FilesAsTree => "files-as-tree",
             Command::FilesAsPaths => "files-as-paths",
             Command::CloseViewer => "close-viewer",
+            Command::Push => "push",
+            Command::PullDefault(_) => "pull",
+            Command::Pull(PullMode::FastForwardIfPossible) => "pull-ff",
+            Command::Pull(PullMode::FastForwardOnly) => "pull-ff-only",
+            Command::Pull(PullMode::Rebase) => "pull-rebase",
+            Command::FetchAll => "fetch-all",
         }
     }
 
@@ -63,6 +76,10 @@ impl Command {
             Command::FilesAsTree => ("Commit panel", "Show the files as a tree"),
             Command::FilesAsPaths => ("Commit panel", "Show the files as paths"),
             Command::CloseViewer => ("Viewer", "Close the file"),
+            Command::Push => ("Remote", "Push"),
+            Command::PullDefault(choice) => ("Remote", remote::caption(choice)),
+            Command::Pull(mode) => ("Remote", remote::words(mode.into())),
+            Command::FetchAll => ("Remote", remote::words(PullChoice::Fetch)),
         }
     }
 }

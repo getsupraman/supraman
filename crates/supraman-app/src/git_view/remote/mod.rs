@@ -31,6 +31,7 @@ use supraman_ui::menu::{ContextMenu, MenuItem};
 
 use super::stash::STILL_OPENING;
 use super::write_gate::{WriteGate, Written, capitalised};
+pub use bar::{caption, words};
 pub use dialogs::{Prompting, UpstreamDialog};
 pub use menu::RemoteFacts;
 
@@ -56,6 +57,15 @@ pub enum RemoteAct {
     EditRemote(String),
     RemoveRemote(String),
     SetDefault(PullChoice),
+}
+
+/// A remote call the toolbar and the palette offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    /// `None`: the toolbar's default.
+    Pull(Option<PullMode>),
+    Push,
+    FetchAll,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -518,6 +528,18 @@ impl RemoteActions {
         } else {
             None
         }
+    }
+
+    /// Why `button` is dimmed now, on the toolbar and in the palette.
+    pub fn why_not(&self, button: Button, cx: &gpui::App) -> Option<String> {
+        self.busy(cx).or_else(|| {
+            let why = match button {
+                Button::Pull(mode) => self.pull_why_not(mode),
+                Button::Push => self.push_why_not(),
+                Button::FetchAll => self.remotes.is_empty().then_some(NO_REMOTE),
+            };
+            why.map(str::to_string)
+        })
     }
 
     /// The toolbar's Pull: its default.

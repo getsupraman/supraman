@@ -266,6 +266,16 @@ impl PullChoice {
     }
 }
 
+impl From<PullMode> for PullChoice {
+    fn from(mode: PullMode) -> PullChoice {
+        match mode {
+            PullMode::FastForwardIfPossible => PullChoice::FastForwardIfPossible,
+            PullMode::FastForwardOnly => PullChoice::FastForwardOnly,
+            PullMode::Rebase => PullChoice::Rebase,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pulled {
     UpToDate,
