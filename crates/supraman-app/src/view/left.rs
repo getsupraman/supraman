@@ -822,7 +822,7 @@ impl FleetView {
             .mx_3()
             .my_2()
             .child(banner::dismissable(
-                div().flex().items_start().gap_2().child(crate::brand::workman(rems(1.), color).mt(px(2.))).child(SharedString::from(problem)),
+                banner::marked(crate::brand::workman(rems(1.), color).mt(px(2.)), SharedString::from(problem)),
                 dismiss,
             ))
             .children(self.workman.fix().map(|fix| div().text_xs().text_color(colors.text).child(SharedString::from(fix))))
