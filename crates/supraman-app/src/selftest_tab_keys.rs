@@ -32,6 +32,9 @@ pub(crate) async fn run(view: &Entity<FleetView>, cx: &mut AsyncWindowContext) -
     }
     .await;
     let restored = set_mode(view, TabKeys::OutsideTerminals, cx).await;
+    if let Some(handle) = view.read_with(cx, |v, _| v.settings_window) {
+        handle.update(cx, |_, window, _| window.remove_window()).ok();
+    }
     close_all(view, cx).await?;
     std::fs::remove_file(&script).ok();
     let result = result?;
