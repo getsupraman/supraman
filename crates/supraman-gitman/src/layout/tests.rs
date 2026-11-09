@@ -420,3 +420,12 @@ fn layout_of_a_worktree_on_a_tip_takes_the_lane_down_into_its_head() {
     assert_eq!(rows.iter().filter(|r| r.worktree.is_some()).count(), 2, "one row per worktree on one commit");
     assert_eq!(shape(&rows), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)]), (0, vec![(E, 0, 0), (E, 1, 0), (S, 0, 0)]), (0, vec![(E, 0, 0)])]);
 }
+
+#[test]
+fn layout_of_a_worktree_on_a_lower_free_lane_leaves_its_head_on_its_childs_lane() {
+    let worktrees = [WorktreeRow { head: "b".into(), path: "w/a".into() }];
+    let commits: Vec<Commit> = [commit("q", &["r"]), commit("y", &["b"]), commit("r", &[]), commit("b", &[])].into();
+    let rows = Layout::new(&no_refs(), false).with_worktrees(&worktrees).extend(&commits);
+    let lanes: Vec<(Option<&str>, usize)> = rows.iter().map(|r| (r.sha.as_deref(), r.lane)).collect();
+    assert_eq!(lanes, [(Some("q"), 0), (Some("y"), 1), (Some("r"), 0), (None, 0), (Some("b"), 1)]);
+}
