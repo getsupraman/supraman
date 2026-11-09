@@ -1,6 +1,8 @@
 //! Zed's icons (`assets/icons`, Lucide-derived, ISC — see `assets/icons/LICENSES`), compiled in and tinted with the text colour.
 
-use gpui::{Hsla, Svg, prelude::*, px, svg};
+use std::time::Duration;
+
+use gpui::{Animation, AnimationElement, AnimationExt as _, ElementId, Hsla, Svg, Transformation, percentage, prelude::*, px, svg};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
@@ -64,11 +66,12 @@ pub enum Icon {
     Redo,
     Trash,
     GitCommit,
+    Lock,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 60] = [
+    const ALL: [Icon; 61] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -129,6 +132,7 @@ impl Icon {
         Icon::Redo,
         Icon::Trash,
         Icon::GitCommit,
+        Icon::Lock,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -193,6 +197,7 @@ impl Icon {
             Icon::Redo => include_bytes!("../assets/icons/redo.svg"),
             Icon::Trash => include_bytes!("../assets/icons/trash.svg"),
             Icon::GitCommit => include_bytes!("../assets/icons/git_commit.svg"),
+            Icon::Lock => include_bytes!("../assets/icons/lock.svg"),
         }
     }
 
@@ -212,6 +217,11 @@ impl Icon {
     pub fn slotted(self, slot: f32, color: Hsla) -> Svg {
         self.svg(slot * self.optical(), color)
     }
+}
+
+/// `icon` turning once a second: work under way.
+pub fn turning(icon: Svg, id: impl Into<ElementId>) -> AnimationElement<Svg> {
+    icon.with_animation(id, Animation::new(Duration::from_secs(1)).repeat(), |icon, turned| icon.with_transformation(Transformation::rotate(percentage(turned))))
 }
 
 #[cfg(test)]

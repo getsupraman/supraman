@@ -8,11 +8,10 @@
 use std::cmp::Reverse;
 use std::ops::Range;
 use std::rc::Rc;
-use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, MouseButton, Render,
-    SharedString, Subscription, Transformation, Window, div, percentage, prelude::*, px,
+    AnyElement, App, ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, MouseButton, Render,
+    SharedString, Subscription, Window, div, prelude::*, px,
 };
 use theme::ActiveTheme as _;
 
@@ -362,11 +361,7 @@ impl<T: Entry> Palette<T> {
         let line = || div().flex().items_center().gap_2().px_3().py_2().text_sm().text_color(colors.text_muted);
         let mode = self.mode.map(|ix| &self.modes[ix]);
         if mode.is_some_and(|m| m.loading) {
-            let turning = Icon::Refresh.svg(14., colors.text_muted).with_animation(
-                SharedString::from(format!("{}-loading", self.id)),
-                Animation::new(Duration::from_secs(1)).repeat(),
-                |icon, turned| icon.with_transformation(Transformation::rotate(percentage(turned))),
-            );
+            let turning = crate::icon::turning(Icon::Refresh.svg(14., colors.text_muted), SharedString::from(format!("{}-loading", self.id)));
             return line().child(hit_target(&self.hits, format!("{}-loading", self.id))).child(turning).child("Reading…").into_any_element();
         }
         if self.shown.is_empty() {

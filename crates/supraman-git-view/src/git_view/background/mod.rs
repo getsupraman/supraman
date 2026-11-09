@@ -24,7 +24,7 @@ use supraman_ui::nudge::{self, Nudge, Nudged};
 
 use super::GitView;
 
-pub(crate) use wips::{Wips, refresh as refresh_wips, wips};
+pub(crate) use wips::{Wips, after_write as wips_after_write, refresh as refresh_wips, wips};
 
 /// How long a loop sleeps with nothing due: its schedule's tabs and a settings change wake it sooner.
 const IDLE: Duration = Duration::from_secs(24 * 3600);

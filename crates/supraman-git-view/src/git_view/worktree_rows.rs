@@ -2,6 +2,7 @@
 //! and Open Worktree.
 
 use gpui::{AnyElement, ClickEvent, Context, SharedString, div, prelude::*, px};
+use supraman_core::paths::path_key;
 use supraman_gitman::{WorktreeRow, WorktreeWip};
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
@@ -12,6 +13,7 @@ use super::branch::OpenGit;
 use super::colours::Palette;
 use super::live::Refresh;
 use super::load::{GraphRow, Wip};
+use super::ref_panel::RefWips;
 use super::{GitView, Load, Selected, TABLE, background, cells, graph};
 
 /// What a worktree's WIP row says.
@@ -21,20 +23,24 @@ pub(crate) struct WorktreeView {
     pub(crate) label: String,
     /// The tab's WIP row's counts: `+1 ✎2 −1`.
     pub(crate) counts: String,
+    /// Ahead of and behind its upstream: `↑1 ↓2`, the zero ones left out.
+    pub(crate) upstream: String,
     /// The live session working there, whose pill stands in place of `WIP`.
     pub(crate) session: Option<String>,
     pub(crate) detached: bool,
 }
 
 impl WorktreeView {
-    fn of(wip: &WorktreeWip, session: Option<String>) -> WorktreeView {
+    pub(crate) fn of(wip: &WorktreeWip, session: Option<String>) -> WorktreeView {
         let label = match wip.branch() {
             Some(branch) => format!("on {branch}"),
             None => "Detached HEAD".into(),
         };
         let c = wip.counts();
         let counts = Wip { added: c.added as usize, modified: (c.modified + c.renamed) as usize, deleted: c.deleted as usize, conflicts: 0 }.counts();
-        WorktreeView { label, counts, session, detached: wip.detached() }
+        let (ahead, behind) = wip.upstream().map_or((0, 0), |(_, ahead, behind)| (ahead, behind));
+        let upstream = [(ahead, "↑"), (behind, "↓")].iter().filter(|(n, _)| *n > 0).map(|(n, arrow)| format!("{arrow}{n}")).collect::<Vec<_>>().join(" ");
+        WorktreeView { label, counts, upstream, session, detached: wip.detached() }
     }
 }
 
@@ -63,7 +69,21 @@ impl GitView {
             self.live_refresh(Refresh::Graph, cx);
         }
         self.worktree_panel_read(cx);
+        self.hand_wips(cx);
         cx.notify();
+    }
+
+    /// The ref panel's worktree rows given the other worktrees' words as last read, and whether a read runs.
+    pub(crate) fn hand_wips(&mut self, cx: &mut Context<Self>) {
+        let top = self.remote.read(cx).writer().map(|w| w.dirs().top.clone());
+        let wips = background::wips(cx.entity_id(), cx).map(|w| w.read(cx));
+        let shown = RefWips {
+            reading: wips.is_some_and(|w| w.reading()),
+            landed: wips.is_some_and(|w| w.landed()),
+            own: top.as_deref().map(path_key),
+            said: self.other_wips(cx).iter().map(|w| (path_key(w.path()), WorktreeView::of(w, None))).collect(),
+        };
+        self.ref_panel.update(cx, |p, cx| p.set_wips(shown, cx));
     }
 
     /// The selected worktree row's read and words, as last read.

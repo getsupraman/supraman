@@ -1,9 +1,7 @@
 //! The buttons. Each takes `key` as its element id, its hover group and its [`hit_target`] key.
 
-use std::time::Duration;
-
 use gpui::{
-    Animation, AnimationExt as _, App, Div, ElementId, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, Transformation, div, percentage,
+    App, Div, ElementId, Hsla, Pixels, SharedString, Stateful, StyleRefinement, Svg, div,
     prelude::*, px,
 };
 use theme::ActiveTheme as _;
@@ -80,11 +78,7 @@ pub fn toolbar_turning(hits: &HitTargets, key: impl Into<SharedString>, icon: Sv
     if !turning {
         return frame.child(icon);
     }
-    frame.child(hit_target(hits, format!("{key}-turning"))).child(icon.with_animation(
-        ElementId::Name(format!("{key}-turning").into()),
-        Animation::new(Duration::from_secs(1)).repeat(),
-        |icon, turned| icon.with_transformation(Transformation::rotate(percentage(turned))),
-    ))
+    frame.child(hit_target(hits, format!("{key}-turning"))).child(crate::icon::turning(icon, ElementId::Name(format!("{key}-turning").into())))
 }
 
 /// A small bordered button: one height, the label centred, a lighter fill and border on hover.

@@ -18,6 +18,9 @@ use crate::git_view::GitView;
 #[derive(Default)]
 pub(crate) struct Wips {
     read: Option<Result<Arc<[WorktreeWip]>, String>>,
+    reading: bool,
+    /// The last read the repository's locks held off.
+    skipped: bool,
     #[cfg(test)]
     pub(crate) reads: usize,
 }
@@ -39,6 +42,16 @@ impl Wips {
             Some(Ok(all)) => all.iter().find(|w| path_key(w.path()) == key),
             _ => None,
         }
+    }
+
+    /// Whether a read is running now.
+    pub(crate) fn reading(&self) -> bool {
+        self.reading
+    }
+
+    /// Whether a read has landed.
+    pub(crate) fn landed(&self) -> bool {
+        self.read.is_some()
     }
 
     /// Why the last read failed as a whole.
@@ -66,6 +79,16 @@ impl GitView {
     pub(crate) fn other_wips(&self, cx: &Context<Self>) -> Vec<WorktreeWip> {
         let Some(top) = self.remote.read(cx).writer().map(|w| w.dirs().top.clone()) else { return Vec::new() };
         wips(cx.entity_id(), cx).map(|w| w.read(cx).others(&top)).unwrap_or_default()
+    }
+}
+
+/// The tab `id`'s write ended: a read its repository's locks held off runs now.
+pub(crate) fn after_write(id: EntityId, cx: &App) {
+    let Some(bg) = cx.try_global::<Background>() else { return };
+    for schedule in bg.repos.values().filter(|s| s.tabs.iter().any(|(t, _)| *t == id)) {
+        if schedule.wips.read(cx).skipped {
+            schedule.wip.wake();
+        }
     }
 }
 
@@ -98,14 +121,34 @@ pub(super) async fn run_loop(key: String, mut nudged: Nudged, cx: &mut AsyncApp)
             Step::Skip => continue,
             Step::Run(job) => job,
         };
+        cx.update(|cx| reading(&key, true, cx));
         let read = executor
             .spawn(async move {
                 let _index = writer.scheduler().try_acquire(LockSet::refresh())?;
                 Some(supraman_gitman::wips(writer.repo(), &shown))
             })
             .await;
-        let Some(read) = read else { continue };
+        let Some(read) = read else {
+            cx.update(|cx| reading(&key, false, cx));
+            continue;
+        };
         cx.update(|cx| read_into(&key, read.map(Arc::from).map_err(|e| e.to_string()), cx));
+    }
+}
+
+/// A read started, or ended with nothing read (`false`: the locks held it off).
+fn reading(key: &str, on: bool, cx: &mut App) {
+    let Some(schedule) = cx.try_global::<Background>().and_then(|bg| bg.repos.get(key)) else { return };
+    let (entity, views) = (schedule.wips.clone(), cx.global::<Background>().views(key));
+    entity.update(cx, |w, cx| {
+        w.reading = on;
+        if !on {
+            w.skipped = true;
+        }
+        cx.notify();
+    });
+    for view in views {
+        view.update(cx, |v, cx: &mut Context<GitView>| v.hand_wips(cx));
     }
 }
 
@@ -117,6 +160,7 @@ fn read_into(key: &str, read: Result<Arc<[WorktreeWip]>, String>, cx: &mut App) 
     let (entity, views) = (schedule.wips.clone(), cx.global::<Background>().views(key));
     entity.update(cx, |w, cx| {
         w.read = Some(read);
+        (w.reading, w.skipped) = (false, false);
         #[cfg(test)]
         {
             w.reads += 1;

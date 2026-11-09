@@ -101,7 +101,8 @@ impl RefPanel {
         }
         let after = Self::after(entry).map(|w| div().flex_none().max_w(px(120.)).overflow_hidden().whitespace_nowrap().text_ellipsis().text_color(muted).child(w));
         let content = div().flex().flex_1().min_w_0().items_center().gap_1().child(label).children(after);
-        let track = Self::track(entry).map(|t| div().flex_none().px_1().text_xs().text_color(muted).child(t));
+        let track = Self::track(entry).map(|t| div().flex_none().px_1().text_xs().text_color(muted).child(t).into_any_element());
+        let track = track.or_else(|| matches!(entry, Entry::Worktree { .. }).then(|| self.summary_element(list, row.path, &self.whole(list, row.path), cx)).flatten());
         div()
             .flex()
             .items_center()
@@ -193,6 +194,7 @@ impl RefPanel {
             .border_color(cx.theme().colors().border_variant)
             .child(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors())))))
             .child(self.header(section, open, cx))
+            .children((section == Section::Worktrees).then(|| self.refresh_wips(cx)).flatten())
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 this.open_section_menu(section, e.position, cx);
