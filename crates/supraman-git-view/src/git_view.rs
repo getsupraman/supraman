@@ -2,6 +2,7 @@
 //! writes they make through the tab's one [`write_gate::WriteGate`].
 
 pub mod background;
+mod band;
 pub mod branch;
 mod cap;
 mod cells;
@@ -56,7 +57,7 @@ use std::sync::Arc;
 use gpui::{AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Pixels, Render, SharedString, Subscription, Task, Window, div, prelude::*, px};
 use supraman_gitman::write::Occupancy;
 use supraman_gitman::{History, Layout, Repo};
-use supraman_ui::hit::HitTargets;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::{banner, button};
 use supraman_ui::tooltip::Tooltip;
 use supraman_ui::icon::Icon;
@@ -202,6 +203,7 @@ pub struct GitView {
     focus_diff: bool,
     /// The viewer closed since the last frame and the graph takes the keyboard on the next.
     focus_graph: bool,
+    band: band::Band,
     /// The panels' read of a selection a key moved, waiting for the key to come up.
     settle: Option<Task<()>>,
     follow: refresh::Follow,
@@ -295,6 +297,7 @@ impl GitView {
                 diff_layout: DiffLayout::default(),
                 focus_diff: false,
                 focus_graph: false,
+                band: band::Band::new(cx),
                 settle: None,
                 follow: refresh::Follow::default(),
                 key: None,
@@ -874,6 +877,7 @@ impl Render for GitView {
         self.wip_panel.update(cx, |p, cx| p.ensure_composer(window, cx));
         self.branch.update(cx, |b, cx| b.ensure_dialog(window, cx));
         self.take_focus_summary(window, cx);
+        let band = self.band(window, cx).map(|b| div().absolute().top_0().left_0().right_0().occlude().child(b));
         let content = match &self.load {
             Load::Loading => notice("Reading the history…", self.folder.display().to_string(), cx).into_any_element(),
             Load::Problem(problem) => self.problem(problem, cx),
@@ -899,10 +903,20 @@ impl Render for GitView {
             .flex()
             .flex_col()
             .child(div().flex().items_start().border_b_1().border_color(cx.theme().colors().border).child(self.undo.clone()).child(self.stash_buttons(cx)).child(self.remote_buttons(cx)))
-            .child(div().mx_2().child(self.gate.clone()).child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
-            .children(self.layout_notice(cx))
-            .children(self.follow_notice(cx))
-            .child(div().flex_1().min_h_0().child(content))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(div().mx_2().child(self.stash.clone()).child(self.branch.clone()).child(self.commit.clone()).child(self.remote.clone()))
+                    .children(self.layout_notice(cx))
+                    .children(self.follow_notice(cx))
+                    .child(div().flex_1().min_h_0().child(content))
+                    .child(hit_target(&self.hits, "git-below-toolbar".into()))
+                    .children(band),
+            )
             .children(self.render_find())
             .children(self.render_column_menu(cx))
     }

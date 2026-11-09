@@ -185,7 +185,12 @@ impl Render for UndoBar {
             .py_1()
             .child(self.button(UNDO_KEY, Icon::Undo, "Undo", undo, self.preview.undo_tooltip(), cx))
             .child(self.button(REDO_KEY, Icon::Redo, "Redo", redo, self.preview.redo_tooltip(), cx));
-        let stash = self.stash.as_ref().map(|asked| asked.render(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx).m_2());
-        div().flex().flex_col().child(bar).children(stash)
+        div().flex().flex_col().child(bar)
+    }
+}
+
+impl UndoBar {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        self.stash.as_ref().map(|asked| asked.render_band(&self.hits, "git-undo-stash", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
     }
 }

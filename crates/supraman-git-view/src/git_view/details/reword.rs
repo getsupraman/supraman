@@ -354,8 +354,11 @@ impl CommitPanel {
             .when(!matches!(field.target, Target::Stash(_)), |d| d.child(field.description.clone()))
     }
 
-    /// Under the open field: a failure, the question before a pushed or dirty write, what a reword rebases, Cancel
-    /// and Update Message (Reword).
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<Div> {
+        self.reword.asking.as_ref().map(|asked| asked.render_band(&self.hits, ASK_KEY, |this: &mut Self, yes, _, cx| this.answer_amend(yes, cx), cx))
+    }
+
+    /// Under the open field: a failure, what a reword rebases, Cancel and Update Message (Reword).
     pub(super) fn field_actions(&self, field: &Field, cx: &mut Context<Self>) -> Div {
         let (update_words, cancel_words) = match field.target {
             Target::Head { .. } => ("Update Message", "Cancel Amend"),
@@ -374,7 +377,6 @@ impl CommitPanel {
         let cancel = button::bordered(&self.hits, CANCEL_KEY, cancel_words, cx).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_amend(cx)));
         let muted = cx.theme().colors().text_muted;
         let rebases = rebases.map(|words| div().relative().text_xs().text_color(muted).child(words).child(hit_target(&self.hits, REBASES_KEY.into())));
-        let question = self.reword.asking.as_ref().map(|asked| asked.render(&self.hits, ASK_KEY, |this: &mut Self, yes, _, cx| this.answer_amend(yes, cx), cx));
         div()
             .flex()
             .flex_col()
@@ -382,7 +384,6 @@ impl CommitPanel {
             .gap_1()
             .px_2()
             .children(self.failure(cx))
-            .children(question)
             .children(rebases)
             .child(div().flex().gap_2().justify_end().child(cancel).child(update))
     }

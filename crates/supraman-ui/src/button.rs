@@ -107,6 +107,35 @@ pub fn bordered(hits: &HitTargets, key: impl Into<SharedString>, label: impl Int
         .child(label.into())
 }
 
+/// A prompt's answer, bold: on `tone`'s tint inside a solid `tone` border, or outlined in the border colour
+/// without a tone (Cancel).
+pub fn tinted(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, tone: Option<Hsla>, cx: &App) -> Stateful<Div> {
+    let colors = cx.theme().colors();
+    let (fill, hover, border) = match tone {
+        Some(tone) => (tone.opacity(TINT), tone.opacity(TINT_HOVER), tone),
+        None => (gpui::transparent_black(), colors.element_hover, colors.border),
+    };
+    base(hits, key.into(), move |s| s.bg(hover), colors.element_active)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .h(px(24.))
+        .px_2()
+        .rounded(px(2.))
+        .border_1()
+        .border_color(border)
+        .bg(fill)
+        .text_xs()
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(colors.text)
+        .whitespace_nowrap()
+        .child(label.into())
+}
+
+const TINT: f32 = 0.2;
+const TINT_HOVER: f32 = 0.3;
+
 /// `button` dimmed, with the plain cursor, while it cannot act; its click must then do nothing.
 pub fn dimmed(button: Stateful<Div>) -> Stateful<Div> {
     button.opacity(0.4).cursor_default()

@@ -33,6 +33,10 @@ pub(super) fn live(button: Stateful<Div>, busy: Option<&'static str>, cx: &mut C
 }
 
 impl WipPanel {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<Div> {
+        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "wip-confirm", |this: &mut WipPanel, yes, _, cx| this.answer(yes, cx), cx))
+    }
+
     /// The red trash button: Discard all changes, asked first.
     fn discard_all_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let error = cx.theme().status().error;
@@ -163,7 +167,6 @@ impl WipPanel {
 
     fn render_shown(&self, shown: Rc<Shown>, cx: &mut Context<Self>) -> Div {
         let colors = cx.theme().colors().clone();
-        let asking = self.asking.as_ref().map(|asked| asked.render(&self.hits, "wip-confirm", |this: &mut WipPanel, yes, _, cx| this.answer(yes, cx), cx).mx_1());
         let header = if shown.conflicting() { self.conflict_header(&shown, cx) } else { self.header(&shown, cx) };
         let sections: Vec<Div> = shown
             .sections()
@@ -179,7 +182,6 @@ impl WipPanel {
             .child(header)
             .child(self.toolbar(cx).border_b_1().border_color(colors.border_variant))
             .children(sections)
-            .children(asking)
             .children(self.commit_area(&shown, cx))
     }
 }

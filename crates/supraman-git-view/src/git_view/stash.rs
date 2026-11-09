@@ -115,6 +115,10 @@ impl EventEmitter<StashEvent> for StashActions {}
 pub(crate) const STILL_OPENING: &str = "The repository is still opening; try again in a moment";
 
 impl StashActions {
+    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "git-stash-ask", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
+    }
+
     pub(crate) fn new(gate: Entity<WriteGate>, hits: HitTargets, cx: &mut Context<Self>) -> StashActions {
         let written = cx.subscribe(&gate, |this: &mut StashActions, _, w: &Written, cx| this.written(w, cx));
         cx.observe(&gate, |_, _, cx| cx.notify()).detach();
@@ -165,7 +169,9 @@ impl StashActions {
             return;
         }
         let (text, yes) = ask.question();
-        self.asking = Some(Confirm::ask(text, yes, ask));
+        let destroys = matches!(ask, Ask::Delete(_));
+        let asked = Confirm::ask(text, yes, ask);
+        self.asking = Some(if destroys { asked.danger() } else { asked });
         cx.notify();
     }
 
@@ -335,7 +341,6 @@ impl StashActions {
 impl Render for StashActions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_field(window, cx);
-        let question = self.asking.as_ref().map(|asked| asked.render(&self.hits, "git-stash-ask", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx).m_2());
         let menu = self.menu.as_ref().map(|menu| {
             menu.render(&self.hits, |this: &mut StashActions, (act, stash), _, cx| {
                 this.menu = None;
@@ -346,6 +351,6 @@ impl Render for StashActions {
                 cx.notify();
             }, cx)
         });
-        div().children(question).children(self.render_editing(cx)).children(menu)
+        div().children(self.render_editing(cx)).children(menu)
     }
 }
