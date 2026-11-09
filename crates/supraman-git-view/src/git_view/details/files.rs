@@ -9,6 +9,7 @@ use supraman_ui::button;
 use supraman_ui::clipped::{clipped, path_label};
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
+use supraman_ui::ink;
 use supraman_ui::segmented::{Segment, segmented};
 use supraman_ui::table::{Column, Table, TableState};
 use supraman_ui::tooltip::Tooltip;
@@ -72,16 +73,10 @@ pub(crate) fn kind_word(kind: ChangeKind) -> &'static str {
     }
 }
 
-/// A file's mark, painted under `<list>-mark-<path>`, in the tree's lead slot; an empty slot on an unchanged file.
-fn mark(mark: &Mark, key: String, hits: &HitTargets, cx: &App) -> Div {
-    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD));
-    match mark {
-        Some(kind) => {
-            let (icon, colour) = mark_icon(*kind, cx);
-            slot.child(icon.svg(ICON, colour)).child(hit_target(hits, key))
-        }
-        None => slot,
-    }
+/// A file's mark, painted under `<list>-mark-<path>`; none on an unchanged file.
+fn mark(mark: &Mark, key: String, hits: &HitTargets, cx: &App) -> Option<Div> {
+    let (icon, colour) = mark_icon((*mark)?, cx);
+    Some(div().relative().flex().child(icon.svg(ICON, colour)).child(hit_target(hits, key)))
 }
 
 /// Each kind's icon and its words: a folder's badges and the panel's summary line.
@@ -103,15 +98,11 @@ fn name(list: &str, row: &Row<'_, Mark, Counts>, colour: Hsla, hits: &HitTargets
     clipped(format!("{list}-{kind}-{}", row.path), row.name.clone(), false).text_color(colour).child(hit_target(hits, format!("{list}-name-{}", row.path)))
 }
 
-/// A folder's name muted, its badges only while it is closed, and a file's bright; a file's mark fills the lead slot, so every
-/// name at one depth starts at one x.
+/// A folder's name muted, its badges only while it is closed, and a file's bright.
 fn tree_row(list: &str, row: Row<'_, Mark, Counts>, hits: &HitTargets, cx: &App) -> AnyElement {
     let row_div = div().flex().items_center().min_w_0();
     match row.item {
-        Item::File(m) => row_div
-            .child(mark(m, format!("{list}-mark-{}", row.path), hits, cx))
-            .child(name(list, &row, cx.theme().colors().text, hits))
-            .into_any_element(),
+        Item::File(_) => row_div.child(name(list, &row, cx.theme().colors().text, hits)).into_any_element(),
         Item::Folder { aggregate, open } => row_div.child(name(list, &row, secondary(cx.theme().colors()), hits)).when(!open, |d| d.child(badges(aggregate, format!("{list}-badges-{}", row.path), hits, cx))).into_any_element(),
     }
 }
@@ -125,7 +116,7 @@ fn path_row(list: &str, path: &str, kind: ChangeKind, hits: &HitTargets, cx: &Ap
         .w_full()
         .min_w_0()
         .whitespace_nowrap()
-        .child(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))
+        .child(ink::mark(div().flex().flex_none().justify_center().w(px(LEAD)).children(mark(&Some(kind), format!("{list}-mark-{path}"), hits, cx))))
         .child(path_label(format!("{list}-dir-{path}"), path, secondary(cx.theme().colors()), cx.theme().colors().text).flex_1())
 }
 
@@ -148,7 +139,7 @@ pub(crate) fn tree_list<V: 'static>(
     menu: Option<OnMenu<V>>,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
-    let painter = hits.clone();
+    let (painter, marker) = (hits.clone(), hits.clone());
     let id = format!("{list}-tree");
     let group = supraman_ui::table::row_group(&id);
     TreeList::new(id, tree, hits, move |this: &mut V, row, _, cx| {
@@ -168,6 +159,10 @@ pub(crate) fn tree_list<V: 'static>(
         menu_row(painted, &menu, &path, folder, cx)
     })
         .row_height(px(ROW))
+        .lead(move |_: &mut V, row, _, cx| match row.item {
+            Item::File(m) => mark(m, format!("{list}-mark-{}", row.path), &marker, cx).map(IntoElement::into_any_element),
+            Item::Folder { .. } => None,
+        })
         .on_select(move |this: &mut V, path, _, cx| picked(this, path, cx))
         .render(cx)
 }

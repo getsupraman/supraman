@@ -10,6 +10,7 @@ use theme::ActiveTheme as _;
 
 use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
+use crate::ink;
 
 fn base(hits: &HitTargets, key: SharedString, hover: impl FnOnce(StyleRefinement) -> StyleRefinement, active: Hsla) -> Stateful<Div> {
     div()
@@ -123,10 +124,13 @@ pub fn outline(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into
         .child(label.into())
 }
 
-/// A quiet outlined pill in `fg` whose border, fill and text come up on hover.
+/// A quiet outlined pill in `fg` whose border, fill and text come up on hover; its label's letters centred in it,
+/// painted under `<key>-label`.
 pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<SharedString>, fg: Hsla, cx: &App) -> Stateful<Div> {
     let colors = cx.theme().colors();
-    base(hits, key.into(), |s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text), colors.element_active)
+    let key = key.into();
+    let label = ink::text(div().relative().child(label.into()).child(hit_target(hits, format!("{key}-label"))));
+    base(hits, key, |s| s.bg(colors.element_hover).border_color(colors.border).text_color(colors.text), colors.element_active)
         .flex()
         .flex_none()
         .items_center()
@@ -137,21 +141,16 @@ pub fn pill(hits: &HitTargets, key: impl Into<SharedString>, label: impl Into<Sh
         .border_color(colors.border_variant)
         .text_xs()
         .text_color(fg)
-        .child(label.into())
+        .child(label)
 }
 
-/// A tick box: [`tick`] in the accent colour, its border lit on hover; the caller adds its label and its click.
+/// A tick box: [`tick`] in the accent colour, its border lit on hover, on the letters of the label the caller puts
+/// beside it ([`ink::mark`]); the caller adds its click.
 pub fn checkbox(hits: &HitTargets, key: impl Into<SharedString>, on: bool, cx: &App) -> Stateful<Div> {
     let key = key.into();
     let colors = cx.theme().colors();
-    div()
-        .id(key.clone())
-        .group(key.clone())
-        .relative()
-        .flex_none()
-        .cursor_pointer()
-        .child(tick(on, colors.text_accent, cx).group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected })))
-        .child(hit_target(hits, key.to_string()))
+    let square = tick(on, colors.text_accent, cx).relative().group_hover(key.clone(), |s| s.border_color(if on { colors.text_accent } else { colors.border_selected }));
+    div().id(key.clone()).group(key.clone()).flex_none().cursor_pointer().child(ink::mark(square.child(hit_target(hits, key.to_string()))))
 }
 
 /// A 14 px square, checked and filled with `fill` while `on`, the same size either way; a read-only mark on its own.
@@ -226,4 +225,42 @@ fn chosen(d: Stateful<Div>, selected: bool, cx: &App) -> Stateful<Div> {
         .cursor_pointer()
         .when(selected, |d| d.bg(colors.element_selected))
         .when(!selected, |d| d.bg(colors.element_background).hover(|s| s.bg(colors.element_hover)))
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Context, Pixels, Render, TestAppContext, VisualTestContext, Window, rems};
+
+    use super::*;
+
+    struct Row {
+        hits: HitTargets,
+    }
+
+    impl Render for Row {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let label = div().relative().child("View all files").child(hit_target(&self.hits, "label".into()));
+            let row = div().flex().items_center().gap_1p5().text_xs().child(checkbox(&self.hits, "tick", true, cx)).child(label);
+            div().flex().flex_col().gap_2().p_2().child(row).child(div().flex().child(pill(&self.hits, "pill", "main", gpui::red(), cx)))
+        }
+    }
+
+    fn centre(row: &gpui::Entity<Row>, key: &str, cx: &mut VisualTestContext) -> Pixels {
+        row.read_with(cx, |r, _| r.hits.borrow().get(key).map(|h| h.bounds.center().y)).unwrap_or_else(|| panic!("{key} paints"))
+    }
+
+    #[gpui::test]
+    fn a_tick_box_sits_on_its_labels_letters_and_a_pills_letters_on_its_middle(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (row, cx) = cx.add_window_view(|_, _| Row { hits: HitTargets::default() });
+        cx.run_until_parked();
+        let below = cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = rems(0.75).into();
+            crate::ink::offset(&style, window)
+        });
+        assert!(below > px(0.), "the letters' middle is below the line's");
+        assert!(crate::ink::level(centre(&row, "tick", cx), centre(&row, "label", cx) + below), "the square on the label's letters");
+        assert!(crate::ink::level(centre(&row, "pill", cx), centre(&row, "pill-label", cx) + below), "the pill's letters on its middle");
+    }
 }

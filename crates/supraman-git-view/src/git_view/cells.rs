@@ -6,6 +6,7 @@ use supraman_ui::clipped::clipped;
 use supraman_ui::fonts;
 use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
+use supraman_ui::ink;
 
 use super::GitView;
 use super::branch::DraggedPill;
@@ -61,14 +62,21 @@ pub(crate) fn pill_box(colour: usize, palette: &Palette) -> Div {
     div().flex().items_center().gap_1().min_w_0().h(px(PILL)).px_1p5().rounded(px(4.)).bg(palette.pill(colour)).text_color(palette.text).text_xs()
 }
 
-/// The HEAD mark, the name, then the kinds of its refs.
-fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette) -> Div {
+/// The icons after a pill's name: its refs' kinds, a linked worktree's last (GitKraken's order).
+pub(crate) fn kind_icons(group: &RefGroup) -> Vec<Icon> {
     let mut kinds: Vec<RefKind> = group.refs.iter().map(|r| r.kind).collect();
     kinds.dedup();
+    kinds.sort_by_key(|k| *k == RefKind::Worktree);
+    kinds.into_iter().map(kind_icon).collect()
+}
+
+/// The HEAD mark, the name (painted under `<key>-text`), then the kinds of its refs.
+fn pill(key: String, group: &RefGroup, colour: usize, palette: &Palette, hits: &HitTargets) -> Div {
+    let text = hit_target(hits, format!("{key}-text"));
     pill_box(colour, palette)
         .when(group.head(), |d| d.child(Icon::Check.svg(12., palette.text)))
-        .child(clipped(key, group.name.clone(), false))
-        .children(kinds.into_iter().map(|k| div().flex_none().child(kind_icon(k).svg(12., palette.text))))
+        .child(ink::text(clipped(key, group.name.clone(), false).child(text)))
+        .children(kind_icons(group).into_iter().map(|k| div().flex_none().child(k.svg(12., palette.text))))
 }
 
 /// A pill of row `ix`'s group `group`: its right-click menu, its double-click checkout, dragged onto another pill
@@ -112,7 +120,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
             cx.notify();
         }));
     let Some(first) = &view.first else { return cell.into_any_element() };
-    let shown = pill(format!("git-ref-{ix}"), first, colour, palette);
+    let shown = pill(format!("git-ref-{ix}"), first, colour, palette, hits);
     if view.ghost {
         let dim = palette.ghost();
         let shown = if selected { shown.opacity(dim) } else { shown.opacity(0.).group_hover(group, move |s| s.opacity(dim)) };
@@ -146,7 +154,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
             let key = format!("git-reflist-{ix}-{i}");
             let top = if i == 0 { px(4.) } else { px(0.) };
             let bottom = if i == last { px(4.) } else { px(0.) };
-            let shown = pill(format!("{key}-name"), g, colour, palette).relative().rounded(px(0.)).rounded_t(top).rounded_b(bottom).bg(palette.pill_solid(colour)).child(hit_target(hits, key.clone()));
+            let shown = pill(format!("{key}-name"), g, colour, palette, hits).relative().rounded(px(0.)).rounded_t(top).rounded_b(bottom).bg(palette.pill_solid(colour)).child(hit_target(hits, key.clone()));
             acting(shown, key, ix, g, i, row.sha.clone(), palette, cx)
         }))
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {

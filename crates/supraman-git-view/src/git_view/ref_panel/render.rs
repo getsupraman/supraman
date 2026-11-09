@@ -8,6 +8,7 @@ use supraman_gitman::short_sha;
 use supraman_ui::button;
 use supraman_ui::hit::hit_target;
 use supraman_ui::icon::Icon;
+use supraman_ui::ink;
 use supraman_ui::matcher::highlighted;
 use supraman_ui::split::{Pane, Stack};
 use supraman_ui::stall;
@@ -47,7 +48,7 @@ impl RefPanel {
             .gap_1p5()
             .w_full()
             .min_w_0()
-            .child(section.icon().svg(ICON, muted))
+            .child(ink::mark(section.icon().svg(ICON, muted)))
             .child(div().flex_1().min_w_0().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(muted).child(section.title()))
             .child(div().flex_none().pr_1().text_xs().text_color(muted).child(count_words(self.count_of(section), section, open)))
             .into_any_element()
@@ -59,16 +60,19 @@ impl RefPanel {
         div().flex().items_center().w_full().min_w_0().child(name.when(dimmed, |d| d.opacity(DIMMED)))
     }
 
-    /// A ref's icon in the tree's lead slot: a detached HEAD's branch, a worktree's house or tree.
-    fn lead(entry: &Entry, cx: &App) -> Div {
-        let slot = div().flex().flex_none().items_center().justify_center().w(px(LEAD));
-        let muted = secondary(cx.theme().colors());
+    /// A ref's icon in the tree's lead slot: a detached HEAD's branch, the main worktree's house, a linked one's tree.
+    pub(crate) fn lead_icon(entry: &Entry) -> Option<Icon> {
         match entry {
-            Entry::Detached { .. } => slot.child(Icon::GitBranch.svg(ICON, muted)),
-            Entry::Worktree { main: true, .. } => slot.child(Icon::Home.svg(ICON, muted)),
-            Entry::Worktree { main: false, .. } => slot.child(Icon::Worktree.svg(ICON, muted)),
-            _ => slot,
+            Entry::Detached { .. } => Some(Icon::GitBranch),
+            Entry::Worktree { main: true, .. } => Some(Icon::Home),
+            Entry::Worktree { main: false, .. } => Some(Icon::Worktree),
+            _ => None,
         }
+    }
+
+    pub(super) fn lead(row: Row<'_, Entry, Keys>, cx: &App) -> Option<AnyElement> {
+        let Item::File(entry) = row.item else { return None };
+        Some(Self::lead_icon(entry)?.svg(ICON, secondary(cx.theme().colors())).into_any_element())
     }
 
     /// The muted words after a label: a worktree's folder, a stash's branch, a detached HEAD's commit.
@@ -103,7 +107,6 @@ impl RefPanel {
             .items_center()
             .w_full()
             .min_w_0()
-            .child(Self::lead(entry, cx))
             .child(content.when(dimmed, |d| d.opacity(DIMMED)))
             .children(track)
     }
@@ -188,7 +191,7 @@ impl RefPanel {
             .px_2()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors()))))
+            .child(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(chevron.svg(ICON, secondary(cx.theme().colors())))))
             .child(self.header(section, open, cx))
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
                 cx.stop_propagation();
@@ -206,6 +209,7 @@ impl RefPanel {
         TreeList::new(LIST, self.tree.get(section), &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(LIST, row, cx))
             .row_height(px(ROW))
             .mark(px(MARK), |this, row, _, cx| this.paint_mark(LIST, row, cx))
+            .lead(|_, row, _, cx| Self::lead(row, cx))
             .on_select(|this, path, _, cx| {
                 this.picked(path, cx);
             })

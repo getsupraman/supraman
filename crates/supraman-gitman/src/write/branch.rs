@@ -9,7 +9,7 @@ use super::rebase::{Autostash, Autostashed, autostash, pop};
 use super::{Call, Session, WriteError};
 use crate::operation::{OperationState, operation_state};
 use crate::parse::text;
-use crate::{GitError, Head, Refs, Repo};
+use crate::{GitError, Head, Refs, Repo, Worktree};
 
 pub const BAD_NAME: &str = "git does not accept that name";
 pub const BRANCH_EXISTS: &str = "A branch of that name exists";
@@ -147,10 +147,19 @@ pub fn relation(repo: &Repo, a: &str, b: &str) -> Result<Relation, GitError> {
     Ok(Relation::Diverged)
 }
 
+fn holders<'a>(refs: &'a Refs, top: &Path, branch: &'a str) -> impl Iterator<Item = &'a Worktree> {
+    let here = supraman_core::paths::path_key(top);
+    refs.worktrees.iter().filter(move |w| w.branch.as_deref() == Some(branch) && supraman_core::paths::path_key(&w.path) != here)
+}
+
 /// The worktree other than `top` that has `branch` checked out.
 pub fn held_elsewhere(refs: &Refs, top: &Path, branch: &str) -> Option<PathBuf> {
-    let here = supraman_core::paths::path_key(top);
-    refs.worktrees.iter().find(|w| w.branch.as_deref() == Some(branch) && supraman_core::paths::path_key(&w.path) != here).map(|w| w.path.clone())
+    holders(refs, top, branch).next().map(|w| w.path.clone())
+}
+
+/// The linked worktree other than `top` that has `branch` checked out; never the main one.
+pub fn held_in_linked<'a>(refs: &'a Refs, top: &Path, branch: &'a str) -> Option<&'a Worktree> {
+    holders(refs, top, branch).find(|w| !w.main)
 }
 
 /// What a checkout of `target` in the checkout at `top` does; blocking.

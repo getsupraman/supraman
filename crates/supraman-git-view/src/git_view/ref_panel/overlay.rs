@@ -109,6 +109,7 @@ impl RefPanel {
         let list = TreeList::new(OVERLAY, &tree, &self.hits, |this: &mut RefPanel, row, _, cx| this.paint(OVERLAY, row, cx))
             .row_height(px(ROW))
             .mark(px(MARK), |this, row, _, cx| this.paint_mark(OVERLAY, row, cx))
+            .lead(|_, row, _, cx| RefPanel::lead(row, cx))
             .on_select(|this, path, window, cx| this.overlay_picked(path, window, cx))
             .render(cx)
             .flex_shrink(1.)

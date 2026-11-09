@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use supraman_gitman::write::branch::{Relation, Target, current_branch, held_elsewhere};
+use supraman_gitman::write::branch::{Relation, Target, current_branch, held_elsewhere, held_in_linked};
 use supraman_gitman::{Head, Refs, short_sha};
 use supraman_ui::menu::{MenuItem, item};
 
@@ -235,11 +235,16 @@ fn refs_menu(menu: &mut RefMenu<RefAct>, locals: &[String], remotes: &[String], 
     for name in locals {
         menu.add(Group::Manage, act(format!("ref-rename-{name}"), format!("Rename {name}"), RefAct::Rename(name.clone())));
         let delete = act(format!("ref-delete-{name}"), format!("Delete {name}"), RefAct::DeleteBranch(name.clone()));
-        menu.add(Group::Manage, match (Some(name.as_str()) == current, facts.elsewhere(name)) {
-            (true, _) => delete.dimmed(format!("{name} is checked out: check out another branch first")),
-            (false, Some(path)) => delete.dimmed(in_worktree(&path)),
-            (false, None) => delete,
-        });
+        if Some(name.as_str()) == current {
+            menu.add(Group::Manage, delete.dimmed(format!("{name} is checked out: check out another branch first")));
+        } else if let Some(w) = held_in_linked(facts.refs, facts.top, name) {
+            remove_items(menu, &w.path, Some(name), w.locked);
+        } else {
+            menu.add(Group::Manage, match facts.elsewhere(name) {
+                Some(path) => delete.dimmed(in_worktree(&path)),
+                None => delete,
+            });
+        }
     }
     menu.add(Group::Copy, act("ref-copy-name".into(), "Copy branch name".into(), RefAct::Copy { text: clicked.into(), what: "the branch name" }));
 }
@@ -271,12 +276,8 @@ fn worktree_menu(menu: &mut RefMenu<RefAct>, subject: &Subject) {
         menu.add(Group::Checkout, item("worktree-open", format!("Open {label}"), RefAct::OpenWorktree(path.clone())));
     }
     if !*main {
-        let unlock_first = |item: MenuItem<RefAct>| if *locked { item.dimmed("It is locked: unlock it first") } else { item };
         if !*current {
-            menu.add(Group::Manage, unlock_first(item("worktree-remove", "Remove worktree", RefAct::RemoveWorktree { path: path.clone(), branch: None })));
-            if let Some(branch) = branch {
-                menu.add(Group::Manage, unlock_first(item("worktree-remove-branch", format!("Remove worktree and delete {branch}"), RefAct::RemoveWorktree { path: path.clone(), branch: Some(branch.clone()) })));
-            }
+            remove_items(menu, path, branch.as_deref(), *locked);
         }
         let (key, words) = if *locked { ("worktree-unlock", "Unlock worktree") } else { ("worktree-lock", "Lock worktree") };
         menu.add(Group::Manage, item(key, words, RefAct::LockWorktree { path: path.clone(), lock: !*locked }));
@@ -285,6 +286,15 @@ fn worktree_menu(menu: &mut RefMenu<RefAct>, subject: &Subject) {
         menu.add(Group::Manage, item("worktree-prune", "Prune worktrees", RefAct::PruneWorktrees));
     }
     menu.add(Group::Copy, item("worktree-copy-path", "Copy path", RefAct::Copy { text: path.display().to_string(), what: "the path" }));
+}
+
+/// A linked worktree's Remove worktree, and Remove worktree and delete its branch; dimmed while it is locked.
+fn remove_items(menu: &mut RefMenu<RefAct>, path: &Path, branch: Option<&str>, locked: bool) {
+    let unlock_first = |item: MenuItem<RefAct>| if locked { item.dimmed("It is locked: unlock it first") } else { item };
+    menu.add(Group::Manage, unlock_first(item("worktree-remove", "Remove worktree", RefAct::RemoveWorktree { path: path.to_path_buf(), branch: None })));
+    if let Some(branch) = branch {
+        menu.add(Group::Manage, unlock_first(item("worktree-remove-branch", format!("Remove worktree and delete {branch}"), RefAct::RemoveWorktree { path: path.to_path_buf(), branch: Some(branch.to_string()) })));
+    }
 }
 
 /// A ref dragged onto another, as B7 names them: its branch name, whether it is local, its commit.
@@ -386,7 +396,19 @@ mod tests {
         let refs = refs();
         let labels = labels(build(&of(&["held"], &[], "w"), &facts(&refs, Some(Relation::Behind))));
         assert_eq!(labels[..3], ["Fast-forward held to main (dimmed)", "Merge main into held (dimmed)", "| Open the worktree of held"]);
-        assert!(labels.contains(&"Delete held (dimmed)".to_string()));
+        assert!(labels.windows(2).any(|w| w == ["Remove worktree", "Remove worktree and delete held"]) && !labels.iter().any(|l| l.contains("Delete held")), "{labels:?}");
+    }
+
+    #[test]
+    fn a_branch_held_in_the_main_worktree_keeps_its_dimmed_delete_and_a_locked_ones_removes_are_dimmed() {
+        let mut refs = refs();
+        refs.worktrees[0].main = true;
+        let linked = Facts { top: Path::new("C:/wt"), ..facts(&refs, Some(Relation::Same)) };
+        let main = labels(build(&of(&["main"], &[], "h"), &linked));
+        assert!(main.contains(&"Delete main (dimmed)".to_string()) && !main.iter().any(|l| l.starts_with("Remove worktree")), "{main:?}");
+        refs.worktrees[1].locked = true;
+        let held = labels(build(&of(&["held"], &[], "w"), &facts(&refs, Some(Relation::Same))));
+        assert!(held.contains(&"Remove worktree (dimmed)".to_string()) && held.contains(&"Remove worktree and delete held (dimmed)".to_string()), "{held:?}");
     }
 
     #[test]
