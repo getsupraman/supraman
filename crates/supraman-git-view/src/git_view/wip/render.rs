@@ -48,7 +48,7 @@ impl WipPanel {
             Branch::Named(name) => Some(name.clone()),
             Branch::Detached(sha) => sha.clone(),
         };
-        let pill = name.map(|n| pill_box(self.colour, &palette).id("wip-branch").child(SharedString::from(n)));
+        let pill = name.map(|n| pill_box(self.colour, &palette).id("wip-branch").child(supraman_ui::ink::text(SharedString::from(n))));
         let words = div().flex_1().flex().justify_center().items_center().gap_1p5().min_w_0().child(div().id("wip-header").child(Self::header_words(shown))).children(pill);
         div().flex().flex_none().items_center().py_1p5().px_2().text_color(palette.text).child(self.discard_all_button(cx)).child(words).child(div().w(px(24.)))
     }

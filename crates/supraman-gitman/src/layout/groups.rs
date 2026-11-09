@@ -7,7 +7,7 @@ use crate::{Head, Refs};
 /// In group order: a group's kind is its best ref's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RefKind {
-    /// A local branch checked out in another worktree.
+    /// A local branch checked out in another, linked worktree.
     Worktree,
     Local,
     Remote,
@@ -96,7 +96,7 @@ fn labels(refs: &Refs) -> Vec<(String, String, RefLabel)> {
         Head::Branch { name, .. } => Some(name.as_str()),
         Head::Detached { .. } => None,
     };
-    let checked_out = |name: &str| refs.worktrees.iter().any(|w| w.branch.as_deref() == Some(name));
+    let checked_out = |name: &str| refs.worktrees.iter().any(|w| !w.main && w.branch.as_deref() == Some(name));
     let locals = refs.branches.iter().map(|b| {
         let head = head_branch == Some(b.name.as_str());
         let kind = if !head && checked_out(&b.name) { RefKind::Worktree } else { RefKind::Local };

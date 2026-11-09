@@ -56,6 +56,8 @@ pub struct Worktree {
     pub bare: bool,
     pub locked: bool,
     pub prunable: bool,
+    /// The repository's own checkout, `worktree list`'s first.
+    pub main: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +174,7 @@ fn parse_worktrees(out: &[u8]) -> Vec<Worktree> {
         let (key, value) = line.split_once(' ').unwrap_or((&line, ""));
         match key {
             "" => all.extend(current.take()),
-            "worktree" => current = Some(Worktree { path: PathBuf::from(value), ..Worktree::default() }),
+            "worktree" => current = Some(Worktree { path: PathBuf::from(value), main: all.is_empty() && current.is_none(), ..Worktree::default() }),
             _ => {
                 let Some(w) = current.as_mut() else { continue };
                 match key {

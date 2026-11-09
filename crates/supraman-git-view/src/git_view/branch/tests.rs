@@ -9,10 +9,12 @@ use std::sync::Arc;
 use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, point, prelude::*, px};
 use supraman_gitman::fixture::{Fixture, git_in, run_git};
 use supraman_ui::hit::HitTargets;
+use supraman_ui::icon::Icon;
 
 use super::OpenGit;
 use super::view::DraggedPill;
 use crate::git_view::tests::redraw;
+use crate::git_view::ref_panel::RefPanel;
 use crate::git_view::{GitSizes, GitView, bind_keys};
 use crate::occupancy;
 
@@ -270,4 +272,61 @@ fn a_pill_dropped_on_another_fast_forwards_that_branch_without_a_checkout(cx: &m
     assert_eq!(head(&f, &f.dir), "main", "nothing checked out");
     assert_eq!(git_in(&f.git, &f.dir, &["status", "--porcelain"], &[], None), status);
     assert!(!painted(&view, "menu-drop-ff-stale", cx), "a pick closes the menu");
+}
+
+#[gpui::test]
+fn a_branch_in_a_linked_worktree_shows_the_tree_and_every_menu_of_it_offers_the_worktrees_removal(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.dir, cx);
+    let side = sha(&f, "side");
+    let ix = row_of(&view, &side, cx);
+    let group = group_of(&view, ix, "side", cx);
+    let icons = view.read_with(cx, |v, _| crate::git_view::cells::kind_icons(&v.rows[ix].row.refs[group]));
+    assert_eq!(icons.last(), Some(&Icon::Worktree), "the pill of a branch in a linked worktree ends with the tree: {icons:?}");
+    let leads = view.read_with(cx, |v, cx| {
+        let panel = v.ref_panel.read(cx);
+        ["worktrees/0", "worktrees/1"].map(|p| panel.entry(p).and_then(RefPanel::lead_icon))
+    });
+    assert_eq!(leads, [Some(Icon::Home), Some(Icon::Worktree)], "the main worktree's house, the linked one's tree");
+
+    let both = |labels: Vec<String>| labels.windows(2).any(|w| w == ["Remove worktree", "Remove worktree and delete side"]) && !labels.iter().any(|l| l.starts_with("Delete side"));
+    press(&view, "refpanel-name-local/side", MouseButton::Right, 1, cx);
+    assert!(both(menu(&view, cx)), "the ref panel's row: {:?}", menu(&view, cx));
+    pill_menu(&view, &side, "side", cx);
+    assert!(both(menu(&view, cx)), "the pill: {:?}", menu(&view, cx));
+    press(&view, &format!("git-row-{ix}"), MouseButton::Right, 1, cx);
+    assert!(both(menu(&view, cx)), "the graph row: {:?}", menu(&view, cx));
+
+    click(&view, "menu-worktree-remove-branch", cx);
+    let asked = asking(&view, cx).unwrap_or_default();
+    assert!(asked.starts_with("Remove the worktree ") && asked.ends_with(" and delete the branch side? Changes not committed there are lost."), "asked first, as not undoable: {asked}");
+    assert!(f.worktree.exists() && exists(&f, "refs/heads/side"), "nothing before the answer");
+    click(&view, "git-ref-ask-yes", cx);
+    assert!(!f.worktree.exists() && !exists(&f, "refs/heads/side"));
+}
+
+#[gpui::test]
+fn the_main_worktrees_branch_keeps_its_local_pill_and_dimmed_delete_and_a_pills_letters_sit_on_its_middle(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    let (view, cx) = open(&f.worktree, cx);
+    let main = sha(&f, "main");
+    let ix = row_of(&view, &main, cx);
+    let group = group_of(&view, ix, "main", cx);
+    let icons = view.read_with(cx, |v, _| crate::git_view::cells::kind_icons(&v.rows[ix].row.refs[group]));
+    assert!(!icons.contains(&Icon::Worktree), "the main worktree's branch never gets the tree: {icons:?}");
+    pill_menu(&view, &main, "main", cx);
+    let labels = menu(&view, cx);
+    assert!(labels.contains(&"Delete main".to_string()) && !labels.iter().any(|l| l.starts_with("Remove worktree")), "{labels:?}");
+    click(&view, "menu-ref-delete-main", cx);
+    assert!(asking(&view, cx).is_none(), "its Delete is dimmed: a no-op");
+
+    let first = view.read_with(cx, |v, _| v.rows.iter().position(|r| !r.row.refs.is_empty())).expect("a row with a pill");
+    let below = cx.update(|window, _| {
+        let mut style = window.text_style();
+        style.font_size = gpui::rems(0.75).into();
+        supraman_ui::ink::offset(&style, window)
+    });
+    let centre = |key: String, cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.hits.borrow().get(&key).map(|h| h.bounds.center().y)).unwrap_or_else(|| panic!("{key} paints"));
+    let (pill, text) = (centre(format!("git-pill-{first}"), cx), centre(format!("git-ref-{first}-text"), cx));
+    assert!(below > px(0.) && supraman_ui::ink::level(pill, text + below), "the pill's letters on its middle: {pill:?} {text:?} {below:?}");
 }

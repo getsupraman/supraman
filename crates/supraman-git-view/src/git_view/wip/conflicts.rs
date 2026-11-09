@@ -89,7 +89,7 @@ impl WipPanel {
 
     fn side_pill(&self, key: &'static str, name: &str, palette: &Palette) -> Div {
         let colour = self.ref_colours.get(name).copied().unwrap_or(self.colour);
-        pill_box(colour, palette).relative().child(SharedString::from(name.to_string())).child(hit_target(&self.hits, key.into()))
+        pill_box(colour, palette).relative().child(supraman_ui::ink::text(SharedString::from(name.to_string()))).child(hit_target(&self.hits, key.into()))
     }
 
     /// The warning (or an external rebase's own icon), the headline, and the sides as the graph colours their pills.

@@ -168,7 +168,7 @@ impl Icon {
             Icon::Local => include_bytes!("../assets/icons/screen.svg"),
             Icon::Remote => include_bytes!("../assets/icons/server.svg"),
             Icon::Tag => include_bytes!("../assets/icons/bookmark.svg"),
-            Icon::Worktree => include_bytes!("../assets/icons/git_worktree.svg"),
+            Icon::Worktree => include_bytes!("../assets/icons/tree_pine.svg"),
             Icon::Copy => include_bytes!("../assets/icons/copy.svg"),
             Icon::Modified => include_bytes!("../assets/icons/pencil.svg"),
             Icon::Renamed => include_bytes!("../assets/icons/arrow_right.svg"),

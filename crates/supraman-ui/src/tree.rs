@@ -10,8 +10,9 @@ use std::{cell::RefCell, collections::HashMap, collections::HashSet, rc::Rc};
 use gpui::{AnyElement, App, Context, Div, FocusHandle, Pixels, SharedString, Stateful, Window, div, prelude::*, px};
 use theme::ActiveTheme as _;
 
-use crate::hit::HitTargets;
+use crate::hit::{HitTargets, hit_target};
 use crate::icon::Icon;
+use crate::ink;
 use crate::matcher::find_all;
 use crate::table::{CELL_PAD, Column, Table, TableState};
 
@@ -611,7 +612,7 @@ enum Arrow {
     Toggled(SharedString),
 }
 
-/// A folder's chevron slot; a file's painter starts with a slot this wide, so its name lines up with its sibling folders'.
+/// A folder's chevron slot, and a file's [`TreeList::lead`] slot, so its name lines up with its sibling folders'.
 pub const LEAD: f32 = 16.;
 
 type PaintFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement;
@@ -619,7 +620,8 @@ type SelectFn<V> = dyn Fn(&mut V, &SharedString, &mut Window, &mut Context<V>);
 type ToggleFn<V> = dyn Fn(&mut V, &SharedString, &mut Context<V>);
 type MarkFn<V, T, A> = dyn Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement>;
 
-/// One frame's tree list, built in the owner's render. Rows paint under `<id>-row-<path>`.
+/// One frame's tree list, built in the owner's render. Rows paint under `<id>-row-<path>`, a folder's chevron under
+/// `<id>-chevron-<path>`.
 pub struct TreeList<V, T, A> {
     id: SharedString,
     state: TreeState<T, A>,
@@ -630,6 +632,7 @@ pub struct TreeList<V, T, A> {
     on_select: Option<Rc<SelectFn<V>>>,
     on_toggle: Option<Rc<ToggleFn<V>>>,
     mark: Option<(Pixels, Rc<MarkFn<V, T, A>>)>,
+    lead: Option<Rc<MarkFn<V, T, A>>>,
 }
 
 impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
@@ -640,7 +643,7 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
         hits: &HitTargets,
         paint: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> AnyElement + 'static,
     ) -> Self {
-        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None, on_toggle: None, mark: None }
+        Self { id: id.into(), state: state.clone(), hits: hits.clone(), row_height: px(24.), indent: px(14.), paint: Rc::new(paint), on_select: None, on_toggle: None, mark: None, lead: None }
     }
 
     pub fn row_height(mut self, height: Pixels) -> Self {
@@ -663,6 +666,13 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
     /// the rows' contents start right of it.
     pub fn mark(mut self, width: Pixels, mark: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement> + 'static) -> Self {
         self.mark = Some((width, Rc::new(mark)));
+        self
+    }
+
+    /// A file's [`LEAD`]-wide slot where a folder has its chevron, holding what `lead` paints for it (a change's mark,
+    /// a kind's icon) on its name's letters; the file's content starts right of it.
+    pub fn lead(mut self, lead: impl Fn(&mut V, Row<'_, T, A>, &mut Window, &mut Context<V>) -> Option<AnyElement> + 'static) -> Self {
+        self.lead = Some(Rc::new(lead));
         self
     }
 
@@ -719,7 +729,8 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
     }
 
     fn cell(&self) -> impl Fn(&mut V, usize, usize, &mut Window, &mut Context<V>) -> AnyElement + 'static {
-        let (state, paint, indent, mark) = (self.state.clone(), self.paint.clone(), self.indent, self.mark.clone());
+        let (state, paint, indent, mark, lead) = (self.state.clone(), self.paint.clone(), self.indent, self.mark.clone(), self.lead.clone());
+        let (id, hits) = (self.id.clone(), self.hits.clone());
         move |this, ix, _, window, cx| {
             let inner = state.inner.borrow();
             let Some(node) = inner.node(ix) else { return div().into_any_element() };
@@ -739,8 +750,12 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
             let content = paint(this, row(), window, cx);
             let marked = mark.as_ref().map(|(width, f)| {
                 let slot = div().absolute().top_0().bottom_0().left(gpui::rems(-CELL_PAD)).w(*width).flex().items_center().justify_center();
-                (*width, slot.children(f(this, row(), window, cx)))
+                (*width, ink::mark(slot.children(f(this, row(), window, cx))))
             });
+            let lead = match (&node.kind, &lead) {
+                (Kind::File(_), Some(f)) => Some(ink::mark(div().flex().flex_none().items_center().justify_center().w(px(LEAD)).children(f(this, row(), window, cx)))),
+                _ => None,
+            };
             div()
                 .relative()
                 .flex()
@@ -749,7 +764,11 @@ impl<V: 'static, T: 'static, A: 'static> TreeList<V, T, A> {
                 .min_w_0()
                 .pl(indent * depth as f32 + marked.as_ref().map_or(px(0.), |(w, _)| *w))
                 .children(marked.map(|(_, slot)| slot))
-                .children(chevron.map(|c| div().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted))))
+                .children(chevron.map(|c| {
+                    let slot = div().relative().flex().flex_none().items_center().justify_center().w(px(LEAD)).child(c.svg(12., muted));
+                    ink::mark(slot.child(hit_target(&hits, format!("{id}-chevron-{}", node.path))))
+                }))
+                .children(lead)
                 .child(div().flex().flex_1().min_w_0().items_center().child(content))
                 .into_any_element()
         }
@@ -1037,6 +1056,50 @@ mod tests {
         assert_eq!(inner, top + px(14.), "one level in is one indent");
         assert_eq!(x("name-src/main.rs", cx), inner, "a file beside a folder at its name");
     }
+    struct Leads {
+        state: TreeState<Change, Badge>,
+        hits: HitTargets,
+    }
+
+    impl Render for Leads {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let (painter, marker) = (self.hits.clone(), self.hits.clone());
+            let list = TreeList::new("l", &self.state, &self.hits, move |_: &mut Leads, row, _, _| {
+                div().relative().child(row.name.clone()).child(crate::hit::hit_target(&painter, format!("name-{}", row.path))).into_any_element()
+            })
+            .lead(move |_: &mut Leads, row, _, _| {
+                let mark = div().relative().size(px(12.)).child(crate::hit::hit_target(&marker, format!("mark-{}", row.path)));
+                Some(mark.into_any_element())
+            });
+            div().w(px(400.)).h(px(300.)).text_sm().child(list.render(cx))
+        }
+    }
+
+    #[gpui::test]
+    fn a_rows_mark_and_chevron_sit_on_its_names_letters(cx: &mut TestAppContext) {
+        cx.update(|cx| crate::init_globals(cx, "test"));
+        let (leads, cx) = cx.add_window_view(|_, cx| {
+            let state = TreeState::new(cx);
+            state.set_entries(entries(), count);
+            state.expand_all();
+            Leads { state, hits: HitTargets::default() }
+        });
+        cx.run_until_parked();
+        let centre = |key: &str, cx: &mut VisualTestContext| leads.read_with(cx, |l, _| l.hits.borrow().get(key).map(|h| h.bounds.center().y)).unwrap_or_else(|| panic!("{key} paints"));
+        let below = cx.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = gpui::rems(0.875).into();
+            crate::ink::offset(&style, window)
+        });
+        assert!(below > px(0.), "the letters' middle is below the line's");
+        for path in ["src/main.rs", "README.md", "src/ui/view.rs"] {
+            assert!(crate::ink::level(centre(&format!("mark-{path}"), cx), centre(&format!("name-{path}"), cx) + below), "{path}'s mark on its letters");
+        }
+        for path in ["src", "src/ui", "docs"] {
+            assert!(crate::ink::level(centre(&format!("l-chevron-{path}"), cx), centre(&format!("name-{path}"), cx) + below), "{path}'s chevron on its letters");
+        }
+    }
+
     #[gpui::test]
     fn hidden_roots_are_no_rows_but_still_close_their_rows(cx: &mut TestAppContext) {
         let state = cx.update(state);
