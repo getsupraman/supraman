@@ -4,6 +4,7 @@
 use gpui::{AnyElement, Bounds, Div, FontWeight, Hsla, SharedString, PathBuilder, Pixels, Window, canvas, div, fill, point, prelude::*, px};
 use supraman_gitman::{Edge, EdgeKind};
 use supraman_ui::fonts;
+use supraman_ui::hit::{HitTargets, hit_target};
 use supraman_ui::icon::Icon;
 use supraman_ui::tooltip::Tooltip;
 
@@ -14,8 +15,10 @@ pub(crate) const ROW: f32 = 28.;
 const LANE: f32 = 22.;
 /// The column's room left of the first lane and right of the last.
 const PAD: f32 = 8.;
-/// The space between two rows' bands.
+/// The space between two rows' bands; every column's band and fill is inset half of it from the row's top and bottom.
 pub(crate) const GAP: f32 = 2.;
+/// Every column's line box: the band's height, so each column's text centres on the same line.
+pub(crate) const LINE: f32 = ROW - GAP;
 const RADIUS: f32 = 11.;
 const NODE: f32 = 20.;
 const MERGE: f32 = 10.;
@@ -52,7 +55,8 @@ pub(crate) fn band(lane: usize, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
     Bounds::from_corners(point(left, top), point(bounds.right(), (bounds.bottom() - px(GAP / 2.)).max(top)))
 }
 
-pub(crate) fn cell(row: &GraphRow, connector: bool, palette: &Palette) -> AnyElement {
+/// The column's whole width, its padding too, painted under `git-graph-<ix>`.
+pub(crate) fn cell(ix: usize, row: &GraphRow, connector: bool, palette: &Palette, hits: &HitTargets) -> AnyElement {
     let edges: Vec<(Edge, Hsla)> = row.row.edges().map(|e| (e, palette.lane(e.colour))).collect();
     let (lane, colour) = (row.row.lane, row.row.colour);
     let link = connector.then(|| palette.connector(colour));
@@ -75,8 +79,12 @@ pub(crate) fn cell(row: &GraphRow, connector: bool, palette: &Palette) -> AnyEle
     .size_full();
     div()
         .absolute()
-        .inset_0()
+        .top_0()
+        .bottom_0()
+        .left(px(-CELL_PAD))
+        .right(px(-CELL_PAD))
         .child(paint)
+        .child(hit_target(hits, format!("git-graph-{ix}")))
         .child(node(row, palette))
         .into_any_element()
 }

@@ -10,7 +10,7 @@ use supraman_ui::icon::Icon;
 use super::GitView;
 use super::branch::DraggedPill;
 use super::colours::Palette;
-use super::graph::{BAR, CELL_PAD, GAP};
+use super::graph::{BAR, CELL_PAD, GAP, LINE};
 use super::load::GraphRow;
 
 /// The hover list shows at most this many groups.
@@ -119,7 +119,7 @@ pub(crate) fn refs(ix: usize, row: &GraphRow, view: RefCellView, selected: bool,
         return cell.child(shown.relative().child(hit_target(hits, format!("git-ghost-{ix}")))).into_any_element();
     }
     let shown = acting(shown.relative().child(hit_target(hits, format!("git-pill-{ix}"))), format!("git-pill-{ix}"), ix, first, 0, row.sha.clone(), palette, cx);
-    let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(1)) };
+    let shown = if view.list.is_empty() { shown } else { shown.child(deferred(list(ix, row, &view.list, colour, palette, hits, cx)).with_priority(supraman_ui::menu::FLOAT)) };
     cell = cell.child(shown).when(view.more > 0, |d| {
         let more = SharedString::from(format!("+{}", view.more));
         d.child(div().relative().flex_none().text_xs().text_color(palette.muted).child(more).child(hit_target(hits, format!("git-more-{ix}"))))
@@ -158,7 +158,7 @@ fn list(ix: usize, row: &GraphRow, groups: &[RefGroup], colour: usize, palette: 
 
 /// The summary, then the body muted, the WIP row's `// WIP` muted too; whichever overflows ends with an ellipsis. A bar in the row's lane colour on the
 /// column's left edge closes the graph's band.
-pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Palette) -> AnyElement {
+pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Palette, hits: &HitTargets) -> AnyElement {
     let (summary, body, colour): (SharedString, SharedString, _) = match wip {
         Some(counts) => ("// WIP".into(), counts.to_string().into(), palette.muted),
         None => (row.summary.clone(), row.body.clone(), palette.text),
@@ -169,8 +169,9 @@ pub(crate) fn message(ix: usize, row: &GraphRow, wip: Option<&str>, palette: &Pa
         .items_center()
         .gap_2()
         .size_full()
+        .line_height(px(LINE))
         .overflow_hidden()
-        .child(clipped(format!("git-msg-{ix}"), summary, false).flex_shrink(1.).text_color(colour))
+        .child(clipped(format!("git-msg-{ix}"), summary, false).flex_shrink(1.).text_color(colour).child(hit_target(hits, format!("git-text-{ix}"))))
         .when(!body.is_empty(), |d| d.child(clipped(format!("git-body-{ix}"), body, false).flex_shrink(BODY_SHRINK).text_color(palette.muted)));
     div().relative().size_full().child(bar).child(text).into_any_element()
 }
@@ -190,15 +191,17 @@ pub(crate) fn sha_text(row: &GraphRow) -> &str {
     short_sha(&row.sha)
 }
 
-/// Muted in [`fonts::figures`]: the date and sha columns share one face and keep their digits aligned.
-fn figures(text: String, palette: &Palette) -> AnyElement {
-    fonts::figures(div()).whitespace_nowrap().text_color(palette.muted).child(SharedString::from(text)).into_any_element()
+/// Muted in [`fonts::figures`]: the date and sha columns share one face and keep their digits aligned; centred on the
+/// row's line box as the message is.
+fn figures(text: String, palette: &Palette, key: String, hits: &HitTargets) -> AnyElement {
+    let line = fonts::figures(div()).relative().whitespace_nowrap().line_height(px(LINE)).text_color(palette.muted).child(SharedString::from(text)).child(hit_target(hits, key));
+    div().h_full().flex().items_center().child(line).into_any_element()
 }
 
-pub(crate) fn date(row: &GraphRow, palette: &Palette) -> AnyElement {
-    figures(date_text(row), palette)
+pub(crate) fn date(ix: usize, row: &GraphRow, palette: &Palette, hits: &HitTargets) -> AnyElement {
+    figures(date_text(row), palette, format!("git-date-{ix}"), hits)
 }
 
-pub(crate) fn sha(row: &GraphRow, palette: &Palette) -> AnyElement {
-    figures(sha_text(row).to_string(), palette)
+pub(crate) fn sha(ix: usize, row: &GraphRow, palette: &Palette, hits: &HitTargets) -> AnyElement {
+    figures(sha_text(row).to_string(), palette, format!("git-sha-{ix}"), hits)
 }

@@ -47,6 +47,8 @@ mod stream_tests;
 mod undo_tests;
 #[cfg(test)]
 mod stash_tests;
+#[cfg(test)]
+mod paint_tests;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -728,11 +730,11 @@ impl GitView {
                     cells::refs(ix, row, view, self.table.selected() == Some(ix), palette, &self.hits, cx)
                 }
             },
-            1 => graph::cell(row, !row.row.refs.is_empty(), palette),
+            1 => graph::cell(ix, row, !row.row.refs.is_empty(), palette, &self.hits),
             2 if row.wip() => return self.wip_message(ix, palette, cx),
-            2 => cells::message(ix, row, None, palette),
-            3 => cells::date(row, palette),
-            _ => cells::sha(row, palette),
+            2 => cells::message(ix, row, None, palette, &self.hits),
+            3 => cells::date(ix, row, palette, &self.hits),
+            _ => cells::sha(ix, row, palette, &self.hits),
         };
         let cell = self.commit_row(ix, cell, cx);
         self.stash_row(ix, cell, cx)
@@ -748,6 +750,7 @@ impl GitView {
         let (painted, resized) = (shown.clone(), shown);
         Table::new(TABLE, &self.table, &self.hits, cols, &widths, self.rows.len() + footer, move |this: &mut GitView, ix, col, _, cx| this.cell(ix, painted[col], &palette, cx))
             .row_height(px(graph::ROW))
+            .inset(px(graph::GAP / 2.))
             .footer(footer)
             .on_select(|this: &mut GitView, _, _, cx| this.stepped(cx))
             .on_click(|this: &mut GitView, _, _, cx| this.settled(cx))
