@@ -413,6 +413,30 @@ fn layout_puts_a_worktree_row_above_its_head_on_a_lane_of_its_own_its_edge_dashe
 }
 
 #[test]
+fn layout_stacks_rows_above_the_wip_row_and_above_a_commit_its_child_reaches() {
+    let mut refs = no_refs();
+    refs.head = Head::Branch { name: "main".into(), sha: Some("b".into()) };
+    let rows = Layout::new(&refs, true).extend(&[commit("q", &["a"]), commit("b", &["a"]), commit("a", &[])]);
+    assert_eq!(shape(&rows[..2]), vec![(0, vec![(S, 0, 0)]), (1, vec![(P, 0, 0), (S, 1, 1)])]);
+    let (above, wip) = rows[0].stacked_above(2);
+    let mut stacked = above.clone();
+    stacked.push(wip.clone());
+    assert_eq!(shape(&stacked), vec![(0, vec![(S, 0, 0)]), (0, vec![(E, 0, 0), (S, 0, 0)]), (0, vec![(E, 0, 0), (S, 0, 0)])]);
+    assert!(stacked.iter().flat_map(|r| r.edges()).all(|e| e.dashed), "every edge of the stack is dashed");
+    assert!(above.iter().all(|r| r.sha.is_none() && r.worktree.is_none() && r.refs.is_empty() && r.colour == rows[0].colour));
+    let (none, same) = rows[0].stacked_above(0);
+    assert!(none.is_empty() && same == rows[0]);
+
+    let line = lay(&[("c", &["b"]), ("b", &["a"]), ("a", &[])]);
+    let (above, b) = line[1].stacked_above(1);
+    assert_eq!(shape(&[above[0].clone(), b.clone()]), vec![(0, vec![(E, 0, 0), (S, 0, 0)]), (0, vec![(E, 0, 0), (S, 0, 0)])]);
+    assert!(above[0].edges().any(|e| e.kind == E && !e.dashed), "the child's edge comes in as it was");
+    assert!(b.edges().any(|e| e.kind == E && e.dashed), "the stack's edge goes on dashed");
+    let (above, q) = rows[1].stacked_above(1);
+    assert_eq!(shape(&[above[0].clone(), q]), vec![(1, vec![(P, 0, 0), (S, 1, 1)]), (1, vec![(P, 0, 0), (E, 1, 1), (S, 1, 1)])]);
+}
+
+#[test]
 fn layout_of_a_worktree_on_a_tip_takes_the_lane_down_into_its_head() {
     let worktrees = [WorktreeRow { head: "x".into(), path: "w/a".into() }, WorktreeRow { head: "x".into(), path: "w/b".into() }];
     let commits: Vec<Commit> = [commit("x", &["a"]), commit("a", &[])].into();

@@ -1295,7 +1295,7 @@ impl FleetView {
                     .filter(|s| fleet::attachable(s, &s.health(now)))
                     .map(|s| LiveSession { claude_session_id: s.session_id.clone(), id: s.id.clone(), name: s.name.clone() })
                     .collect();
-                self.occupancy.set(sessions.iter().filter(|s| fleet::is_alive(&s.health(now))).map(|s| (s.name.clone(), s.cwd.clone())).collect());
+                self.occupancy.set_sessions(fleet::live_sessions(&sessions, now));
                 self.sessions = sessions;
                 self.drop_deleted();
                 self.main_repos = refresh.main_repos;

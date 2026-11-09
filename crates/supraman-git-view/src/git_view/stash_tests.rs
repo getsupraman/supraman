@@ -9,7 +9,6 @@ use supraman_ui::hit::HitTargets;
 use super::stash_bar::{NOTHING_TO_POP, NOTHING_TO_STASH, POP_KEY, STASH_KEY};
 use super::tests::redraw;
 use super::wip::tests::select_wip;
-use super::write_gate::WAITING;
 use super::*;
 use crate::occupancy;
 
@@ -136,14 +135,13 @@ fn a_pop_that_conflicts_says_so_and_keeps_the_stash(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn toolbar_stash_and_pop_wait_while_a_write_waits_for_its_answer(cx: &mut TestAppContext) {
+fn toolbar_stash_runs_while_a_session_works_here(cx: &mut TestAppContext) {
     let f = Fixture::copy();
     let live = occupancy::Live::default();
     live.set(vec![("fm-alpha".to_string(), f.dir.clone())]);
     let (view, cx) = open(&f.dir, live, cx);
     click(&view, STASH_KEY, cx);
-    assert_eq!(why_not(&view, cx), [Some(WAITING.to_string()), Some(WAITING.to_string())], "the gate asks about the session first");
-    assert_eq!(labels(&f).len(), 3, "nothing is stashed before the answer");
+    assert_eq!(labels(&f).len(), 4, "stashed without a question");
 }
 
 #[gpui::test]

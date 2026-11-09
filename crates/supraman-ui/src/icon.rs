@@ -67,11 +67,12 @@ pub enum Icon {
     Trash,
     GitCommit,
     Lock,
+    Bot,
 }
 
 impl Icon {
     #[cfg(test)]
-    const ALL: [Icon; 61] = [
+    const ALL: [Icon; 62] = [
         Icon::ChevronDown,
         Icon::ChevronRight,
         Icon::Close,
@@ -133,6 +134,7 @@ impl Icon {
         Icon::Trash,
         Icon::GitCommit,
         Icon::Lock,
+        Icon::Bot,
     ];
 
     pub fn bytes(self) -> &'static [u8] {
@@ -198,6 +200,7 @@ impl Icon {
             Icon::Trash => include_bytes!("../assets/icons/trash.svg"),
             Icon::GitCommit => include_bytes!("../assets/icons/git_commit.svg"),
             Icon::Lock => include_bytes!("../assets/icons/lock.svg"),
+            Icon::Bot => include_bytes!("../assets/icons/bot.svg"),
         }
     }
 

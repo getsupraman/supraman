@@ -136,7 +136,7 @@ fn paint_edge(window: &mut Window, bounds: Bounds<Pixels>, e: &Edge, colour: Hsl
 }
 
 /// A commit's circle with its author's initials, ringed in its lane; a merge's smaller dot; a WIP row's
-/// dashed hollow ring; a stash's dashed square round its glyph.
+/// dashed hollow ring; a stash's dashed square round its glyph; a live session's dashed circle round a bot.
 fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
     let colour = row.row.colour;
     let lane = palette.lane(colour);
@@ -150,6 +150,9 @@ fn node(row: &GraphRow, palette: &Palette) -> AnyElement {
         .flex()
         .items_center()
         .justify_center();
+    if row.agent.is_some() {
+        return at.border_1().border_dashed().border_color(lane).bg(palette.background).child(Icon::Bot.svg(13., lane)).into_any_element();
+    }
     if row.wip() || row.worktree().is_some() {
         return at.border_2().border_dashed().border_color(lane).bg(palette.background).into_any_element();
     }

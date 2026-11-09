@@ -41,6 +41,42 @@ impl Edges {
     }
 }
 
+impl Edges {
+    /// The edges of `n` rows stacked directly above this row on its node's lane, each joined to the next by a dashed
+    /// edge, and this row's own with the lowest of them joined to its node.
+    pub fn stacked_above(&self, n: usize) -> (Vec<Edges>, Edges) {
+        if n == 0 {
+            return (Vec::new(), self.clone());
+        }
+        let lane = self.node as usize;
+        let (carried, dashed) = self.open.split_at(self.open.len() / 2);
+        let words = carried.len().max(lane / 64 + 1);
+        let mut with = vec![0u64; 2 * words];
+        with[..carried.len()].copy_from_slice(carried);
+        with[words..words + dashed.len()].copy_from_slice(dashed);
+        with[lane / 64] |= 1 << (lane % 64);
+        with[words + lane / 64] |= 1 << (lane % 64);
+        let with: Arc<[u64]> = with.into();
+        let was_open = has(carried, lane);
+        let above = (0..n)
+            .map(|i| match (i, was_open) {
+                (0, false) => Edges::new(self.open.clone(), &[], &[lane], lane, true),
+                (0, true) => Edges::new(self.open.clone(), &[lane], &[lane], lane, true),
+                _ => Edges::new(with.clone(), &[lane], &[lane], lane, true),
+            })
+            .collect();
+        let (ending, starting) = self.lanes.split_at(usize::from(self.ending));
+        let mut ending = ending.to_vec();
+        if !ending.contains(&self.node) {
+            ending.push(self.node);
+            ending.sort_unstable();
+        }
+        let ending_len = u16::try_from(ending.len()).expect("fewer than 65536 lanes end at one commit");
+        let lanes = ending.into_iter().chain(starting.iter().copied()).collect();
+        (above, Edges { open: with, lanes, ending: ending_len, node: self.node, dashed: self.dashed })
+    }
+}
+
 fn narrow(lane: usize) -> u32 {
     u32::try_from(lane).expect("a lane fits in u32")
 }

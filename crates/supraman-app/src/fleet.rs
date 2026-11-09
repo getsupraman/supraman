@@ -5,6 +5,8 @@ use supraman_claude::{Health, Kind, Session, assign_with, main_repo};
 use supraman_core::paths::{normalize, path_key};
 use supraman_core::time::ago;
 use supraman_core::{Event, FolderKind, Workspace, owners};
+use supraman_git_view::occupancy::LiveSession;
+use supraman_ui::marks::Activity;
 use supraman_supervisor::{relay_session_name, repo_session_name, workspace_session_name};
 
 #[derive(Debug, Clone)]
@@ -209,7 +211,29 @@ pub fn attachable(session: &Session, health: &Health) -> bool {
 }
 
 pub fn is_alive(health: &Health) -> bool {
-    matches!(health, Health::Running | Health::Blocked { .. } | Health::Idle)
+    activity(health).is_some()
+}
+
+/// A live session's state as its dot shows it; `None` for a session not alive.
+pub fn activity(health: &Health) -> Option<Activity> {
+    match health {
+        Health::Running => Some(Activity::Working),
+        Health::Blocked { .. } => Some(Activity::Waiting),
+        Health::Idle => Some(Activity::Idle),
+        Health::Stopped | Health::Orphaned { .. } | Health::Unknown => None,
+    }
+}
+
+/// The live sessions as the Git tabs show them, their attach id while [`attachable`].
+pub fn live_sessions(sessions: &[Session], now_ms: i64) -> Vec<LiveSession> {
+    sessions
+        .iter()
+        .filter_map(|s| {
+            let health = s.health(now_ms);
+            let activity = activity(&health)?;
+            Some(LiveSession { name: s.name.clone(), cwd: s.cwd.clone(), activity, attach: attachable(s, &health).then(|| s.id.clone()) })
+        })
+        .collect()
 }
 
 pub fn is_foreign(name: &str, workspaces: &[Workspace], desired: Option<&BTreeMap<String, (bool, Vec<String>)>>, own_prefix: Option<&str>) -> bool {

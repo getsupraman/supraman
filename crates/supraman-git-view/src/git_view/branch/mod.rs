@@ -207,12 +207,8 @@ impl BranchActions {
     }
 
     fn request(&mut self, doing: Doing, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
-        self.request_also(doing, None, locks, job, cx);
-    }
-
-    fn request_also(&mut self, doing: Doing, also: Option<PathBuf>, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) {
         let Some(writer) = self.writer.clone() else { return cx.emit(BranchEvent::Why(STILL_OPENING.into())) };
-        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request_also(writer, also, locks, job, cx)) {
+        if let Some(ticket) = self.gate.update(cx, |g, cx| g.request(writer, locks, job, cx)) {
             self.doing = Some((ticket, doing));
         }
         cx.notify();
@@ -261,8 +257,7 @@ impl BranchActions {
             }
             (Some(Ask::RemoveWorktree { path, branch }), _) => {
                 let words = format!("Removed the worktree {}", path.display());
-                let also = Some(path.clone());
-                self.request_also(Doing::Plain(words), also, LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
+                self.request(Doing::Plain(words), LockSet::branch_delete(), move |s| branch::remove_worktree(s, &path, branch.as_deref()), cx);
             }
             _ => {}
         }

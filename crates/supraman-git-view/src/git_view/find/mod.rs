@@ -190,7 +190,7 @@ impl GitView {
             (Command::ShowAllRefs, why(walk != Default::default(), "No ref is hidden or soloed.")),
             (Command::GoToHead, why(self.heads.head.is_some() && rows, "This repository has no commit yet.")),
             (Command::GoToUpstream, why(self.heads.upstream.is_some(), "The current branch has no upstream.")),
-            (Command::GoToWip, why(self.rows.first().is_some_and(GraphRow::wip), "The working tree is clean.")),
+            (Command::GoToWip, why(self.wip_row().is_some(), "The working tree is clean.")),
             if view == FileView::Tree { (Command::FilesAsPaths, None) } else { (Command::FilesAsTree, None) },
             (Command::CloseViewer, why(self.diff.is_some(), "No file is open in the viewer.")),
             (Command::Push, dim(Button::Push)),

@@ -146,12 +146,10 @@ pub fn inbox_buttons(need: &NeedsYou) -> Vec<(String, &'static str, InboxButton)
 
 fn health_color(health: &Health, cx: &gpui::App) -> Hsla {
     let status = cx.theme().status();
-    match health {
-        Health::Running => status.success,
-        Health::Blocked { .. } => status.warning,
-        Health::Idle => status.info,
-        Health::Stopped | Health::Orphaned { .. } => cx.theme().colors().text_disabled,
-        Health::Unknown => status.hint,
+    match (fleet::activity(health), health) {
+        (Some(activity), _) => activity.color(cx),
+        (None, Health::Unknown) => status.hint,
+        (None, _) => cx.theme().colors().text_disabled,
     }
 }
 

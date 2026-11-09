@@ -1,28 +1,14 @@
-//! Every Git tab write passes here: on a worktree a live Supraman session works in it asks first (roadmap r4),
-//! then runs on the background executor through [`Writer::run`]. One write at a time per tab: while one waits
-//! for its answer or runs, [`WriteGate::busy`] says why another cannot start.
+//! Every Git tab write passes here: it runs on the background executor through [`Writer::run`], one at a time per
+//! tab; while one runs, [`WriteGate::busy`] says why another cannot start. A live session working in the checkout
+//! shows as the graph's agent row, not as a question.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui::{AppContext as _, Context, EventEmitter, Render, Window, div, prelude::*};
+use gpui::{AppContext as _, Context, EventEmitter};
 use supraman_gitman::write::{LockSet, Occupancy, Session, WriteError, Writer};
-use supraman_ui::confirm::Confirm;
-use supraman_ui::hit::HitTargets;
 
-pub(crate) type Job = Box<dyn FnOnce(&Session<'_>) -> Result<(), WriteError> + Send>;
-
-/// Why a write cannot start while another waits for its answer or runs.
-pub(crate) const WAITING: &str = "Waiting for your answer";
+/// Why a write cannot start while another runs.
 pub(crate) const WORKING: &str = "Working…";
-
-/// A write waiting for the user's answer.
-pub(crate) struct Pending {
-    ticket: u64,
-    writer: Writer,
-    locks: LockSet,
-    job: Job,
-}
 
 /// The write of `ticket` ran: its error's words, if it failed.
 pub(crate) struct Written {
@@ -32,8 +18,6 @@ pub(crate) struct Written {
 
 pub(crate) struct WriteGate {
     occupancy: Arc<dyn Occupancy>,
-    hits: HitTargets,
-    asking: Option<Confirm<Pending>>,
     running: bool,
     tickets: u64,
 }
@@ -46,74 +30,20 @@ pub(crate) fn capitalised(why: &str) -> String {
     chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }
 
-/// The question before a write on `folder`, where `sessions` work.
-pub(crate) fn question(sessions: &[String], folder: &Path) -> String {
-    let verb = if sessions.len() == 1 { "is" } else { "are" };
-    format!("{} {verb} working in {}. Change it anyway?", sessions.join(", "), folder.display())
-}
-
 impl WriteGate {
     /// `occupancy` answers from memory: it is asked on the UI thread.
-    pub(crate) fn new(occupancy: Arc<dyn Occupancy>, hits: HitTargets) -> WriteGate {
-        WriteGate { occupancy, hits, asking: None, running: false, tickets: 0 }
+    pub(crate) fn new(occupancy: Arc<dyn Occupancy>) -> WriteGate {
+        WriteGate { occupancy, running: false, tickets: 0 }
     }
 
-    /// Runs `job` holding `locks` on `writer`'s checkout, after the user's yes when a session works in it; the
-    /// ticket its [`Written`] carries, or `None` (nothing asked or run) while [`WriteGate::busy`].
+    /// Runs `job` holding `locks` on `writer`'s checkout; the ticket its [`Written`] carries, or `None` (nothing run)
+    /// while [`WriteGate::busy`].
     pub(crate) fn request(&mut self, writer: Writer, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
-        self.request_also(writer, None, locks, job, cx)
-    }
-
-    /// [`WriteGate::request`] of a write that changes the folder `also` too (another worktree), asked about when a
-    /// session works in either.
-    pub(crate) fn request_also(&mut self, writer: Writer, also: Option<PathBuf>, locks: LockSet, job: impl FnOnce(&Session<'_>) -> Result<(), WriteError> + Send + 'static, cx: &mut Context<Self>) -> Option<u64> {
         if self.busy().is_some() {
             return None;
         }
         self.tickets += 1;
         let ticket = self.tickets;
-        let top = writer.dirs().top.clone();
-        let asked = [Some(top), also].into_iter().flatten().map(|folder| (self.occupancy.who_works_in(&folder), folder)).find(|(sessions, _)| !sessions.is_empty());
-        let pending = Pending { ticket, writer, locks, job: Box::new(job) };
-        match asked {
-            None => self.start(pending, cx),
-            Some((sessions, folder)) => self.asking = Some(Confirm::ask(question(&sessions, &folder), "Change it anyway", pending)),
-        }
-        cx.notify();
-        Some(ticket)
-    }
-
-    /// Who works where, as the gate asks before a write.
-    pub(crate) fn occupancy(&self) -> &Arc<dyn Occupancy> {
-        &self.occupancy
-    }
-
-    /// Why no other write can start now: one waits for the user's answer, or one runs.
-    pub(crate) fn busy(&self) -> Option<&'static str> {
-        if self.asking.is_some() {
-            Some(WAITING)
-        } else if self.running {
-            Some(WORKING)
-        } else {
-            None
-        }
-    }
-
-    /// The user's answer to the question shown; a no drops the write.
-    pub(crate) fn answer(&mut self, yes: bool, cx: &mut Context<Self>) {
-        if let Some(pending) = self.asking.take().and_then(|asked| asked.action).filter(|_| yes) {
-            self.start(pending, cx);
-        }
-        cx.notify();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn asking(&self) -> Option<&str> {
-        self.asking.as_ref().map(|c| c.text.as_str())
-    }
-
-    fn start(&mut self, pending: Pending, cx: &mut Context<Self>) {
-        let Pending { ticket, writer, locks, job } = pending;
         self.running = true;
         let ran = cx.background_spawn(async move { writer.run(locks, job).map_err(|e| e.to_string()) });
         cx.spawn(async move |this, cx| {
@@ -126,28 +56,28 @@ impl WriteGate {
             .ok();
         })
         .detach();
+        cx.notify();
+        Some(ticket)
     }
-}
 
-impl Render for WriteGate {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().children(self.band(cx))
+    /// Who works where: the agent and worktree rows and maintenance's skip.
+    pub(crate) fn occupancy(&self) -> &Arc<dyn Occupancy> {
+        &self.occupancy
     }
-}
 
-impl WriteGate {
-    pub(crate) fn band(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        self.asking.as_ref().map(|asked| asked.render_band(&self.hits, "write-guard", |this: &mut Self, yes, _, cx| this.answer(yes, cx), cx))
+    /// Why no other write can start now: one runs.
+    pub(crate) fn busy(&self) -> Option<&'static str> {
+        self.running.then_some(WORKING)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::rc::Rc;
 
-    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
+    use gpui::TestAppContext;
     use supraman_gitman::fixture::{Fixture, git_in};
     use supraman_gitman::write::{Call, Resource, working_in};
     use supraman_gitman::Repo;
@@ -162,48 +92,30 @@ mod tests {
         move |s| s.output(&Call::new(&["add"]).paths([path])).map(drop)
     }
 
-    fn click(gate: &Entity<WriteGate>, key: &str, cx: &mut VisualTestContext) {
-        gate.update(cx, |_, cx| cx.notify());
-        cx.run_until_parked();
-        cx.update(|_, _| ());
-        let at = gate.read_with(cx, |g, _| g.hits.borrow().get(key).map(|h| h.bounds)).unwrap_or_else(|| panic!("{key} is painted")).center();
-        cx.simulate_click(at, Modifiers::none());
-        cx.run_until_parked();
-    }
-
     #[gpui::test]
-    fn a_write_where_a_session_works_asks_first_and_cancel_writes_nothing(cx: &mut TestAppContext) {
+    fn a_write_where_a_session_works_runs_without_a_question(cx: &mut TestAppContext) {
         cx.update(|cx| supraman_ui::init_globals(cx, "test"));
         let f = Fixture::copy();
         let (main, side) = (Writer::open(&f.repo()).unwrap(), Writer::open(&Repo::new(f.git.clone(), &f.worktree)).unwrap());
         let cwd: PathBuf = main.dirs().top.join("src");
         let occupancy: Arc<dyn Occupancy> = Arc::new(move |worktree: &Path| working_in([("fm-alpha", cwd.as_path())], worktree));
-        let (gate, cx) = cx.add_window_view(|_, _| WriteGate::new(occupancy, HitTargets::default()));
+        let gate = cx.new(|_| WriteGate::new(occupancy));
         let written = Rc::new(RefCell::new(Vec::new()));
         let heard = written.clone();
-        cx.update(|_, cx| cx.subscribe(&gate, move |_, w: &Written, _| heard.borrow_mut().push(w.result.clone())).detach());
-        let top = main.dirs().top.clone();
+        cx.update(|cx| cx.subscribe(&gate, move |_, w: &Written, _| heard.borrow_mut().push(w.result.clone())).detach());
 
         gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx));
+        assert_eq!(gate.read_with(cx, |g, _| g.busy()), Some(WORKING));
+        assert_eq!(gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx)), None, "a second write is not queued while one runs");
         cx.run_until_parked();
-        assert_eq!(gate.read_with(cx, |g, _| g.asking().map(str::to_string)), Some(question(&["fm-alpha".into()], &top)));
-        assert_eq!(gate.read_with(cx, |g, _| g.busy()), Some(WAITING));
-        assert_eq!(gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx)), None, "a second write is not queued while one waits");
-        assert!(!staged(&f, &f.dir).contains(&"u.txt".into()), "nothing runs before the answer");
-        click(&gate, "write-guard-cancel", cx);
-        assert_eq!(gate.read_with(cx, |g, _| g.asking().is_none()), true);
-        assert!(!staged(&f, &f.dir).contains(&"u.txt".into()) && written.borrow().is_empty(), "cancel writes nothing");
-
-        gate.update(cx, |g, cx| g.request(main.clone(), LockSet::new().write(Resource::Index), stage("u.txt"), cx));
-        click(&gate, "write-guard-yes", cx);
         assert_eq!(*written.borrow(), [Ok(())]);
         assert_eq!(gate.read_with(cx, |g, _| g.busy()), None, "free once the write ran");
-        assert!(staged(&f, &f.dir).contains(&"u.txt".into()), "yes writes");
+        assert!(staged(&f, &f.dir).contains(&"u.txt".into()), "the write ran with fm-alpha working there");
 
-        std::fs::write(f.worktree.join("w.txt"), b"w\n").unwrap();
+        std::fs::write(f.worktree.join("w.txt"), b"w
+").unwrap();
         gate.update(cx, |g, cx| g.request(side, LockSet::new().write(Resource::Index), stage("w.txt"), cx));
         cx.run_until_parked();
-        assert_eq!(gate.read_with(cx, |g, _| g.asking().is_none()), true, "nobody works in the other worktree");
         assert!(staged(&f, &f.worktree).contains(&"w.txt".into()));
     }
 }

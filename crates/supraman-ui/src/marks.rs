@@ -1,7 +1,8 @@
 //! A state's mark in a list or a strip: a dot, a strip of one square per item, and a thin progress line.
 //! The owner maps its states to [`Mark`]s on the theme's status colours.
 
-use gpui::{Div, Hsla, div, prelude::*, px};
+use gpui::{App, Div, Hsla, div, prelude::*, px};
+use theme::ActiveTheme as _;
 
 /// A strip over this many items is a plain bar.
 pub const SQUARES_MAX: usize = 40;
@@ -18,6 +19,34 @@ impl Mark {
     pub fn color(self) -> Hsla {
         match self {
             Mark::Filled(c) | Mark::Ring(c) => c,
+        }
+    }
+}
+
+/// A live session's state as the sidebar marks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Activity {
+    Working,
+    /// Blocked on a prompt or an answer.
+    Waiting,
+    Idle,
+}
+
+impl Activity {
+    pub fn color(self, cx: &App) -> Hsla {
+        let status = cx.theme().status();
+        match self {
+            Activity::Working => status.success,
+            Activity::Waiting => status.warning,
+            Activity::Idle => status.info,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Activity::Working => "working",
+            Activity::Waiting => "waiting",
+            Activity::Idle => "idle",
         }
     }
 }

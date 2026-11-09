@@ -33,6 +33,13 @@ impl Marks {
         self.0.push(Mark { rows, commits, layout: layout.clone() });
     }
 
+    /// Rows inserted (`by` > 0) or taken away at row `at`: the page ends below it move with them.
+    pub(crate) fn shift(&mut self, at: usize, by: isize) {
+        for m in self.0.iter_mut().filter(|m| m.rows > at) {
+            m.rows = m.rows.saturating_add_signed(by);
+        }
+    }
+
     /// The first page end at or below row `at`, the ends after it dropped.
     fn cut_at(&mut self, at: usize) -> Option<&Mark> {
         let i = self.0.iter().position(|m| m.rows >= at)?;
@@ -56,6 +63,7 @@ impl GitView {
         let Some(mark) = self.marks.cut_at(keep).filter(|m| m.rows < self.rows.len()) else { return };
         let (rows, commits, layout) = (mark.rows, mark.commits, mark.layout.clone());
         let tail = self.rows.split_off(rows);
+        self.agents.dropped_from(rows);
         self.commits = commits;
         self.layout = Some(layout);
         self.more = true;

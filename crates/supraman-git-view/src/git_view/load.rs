@@ -26,11 +26,13 @@ pub(crate) struct GraphRow {
     pub(crate) merge: bool,
     /// Empty on the WIP row.
     pub(crate) parents: Vec<SharedString>,
+    /// The live session whose row this is, by name.
+    pub(crate) agent: Option<SharedString>,
 }
 
 impl GraphRow {
     pub(crate) fn wip(&self) -> bool {
-        self.row.sha.is_none() && self.row.worktree.is_none()
+        self.row.sha.is_none() && self.row.worktree.is_none() && self.agent.is_none()
     }
 
     pub(crate) fn commit(&self) -> bool {
@@ -241,7 +243,7 @@ pub(crate) fn next(repo: &Repo, tips: &[String], skip: usize, layout: Layout, wa
 
 pub(crate) fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
     let Some(c) = commit else {
-        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), author: "".into(), time_ms: 0, merge: false, parents: Vec::new() };
+        return GraphRow { row, sha: "".into(), summary: "".into(), body: "".into(), initials: "".into(), author: "".into(), time_ms: 0, merge: false, parents: Vec::new(), agent: None };
     };
     let (summary, body) = c.message.split_once('\n').unwrap_or((&c.message, ""));
     let (summary, body, time) = match &row.stash {
@@ -257,6 +259,7 @@ pub(crate) fn graph_row(row: Row, commit: Option<&Commit>) -> GraphRow {
         time_ms: time * 1000,
         merge: c.parents.len() > 1,
         parents: c.parents.iter().map(|p| SharedString::from(p.clone())).collect(),
+        agent: None,
         row,
     }
 }
