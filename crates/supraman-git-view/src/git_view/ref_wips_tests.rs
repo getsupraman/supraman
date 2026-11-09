@@ -2,7 +2,9 @@
 //! linked worktrees are in its temp dir (C196): marks, folder words, the WIP summary, Refresh WIPs, and a read the
 //! repository's locks held off run again once the tab's write ends.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{Context, Entity, IntoElement, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px};
@@ -183,9 +185,15 @@ fn refresh_wips_reads_every_other_worktree_again(cx: &mut TestAppContext) {
     assert_eq!(summary(&view, &wt, cx), before);
 
     let read = reads(&view, cx);
+    let turned = Rc::new(RefCell::new(Vec::new()));
+    let seen = turned.clone();
+    let p = panel(&view, cx);
+    let _watch = cx.update(|_, cx| cx.observe(&p, move |p, cx| seen.borrow_mut().push(p.read(cx).wips_reading())));
     click(&view, "refpanel-worktrees-refresh", cx);
     settle(&view, cx);
     assert_eq!(reads(&view, cx), read + 1);
+    assert!(turned.borrow().contains(&true), "Refresh WIPs turned while the read ran");
+    assert!(!p.read_with(cx, |p, _| p.wips_reading()), "and stopped once it landed");
     assert_eq!(summary(&view, &extra, cx).as_deref(), Some("+1"), "after the click");
     assert!(summary(&view, &wt, cx).is_some_and(|s| s.ends_with("+1")), "every other worktree");
 }

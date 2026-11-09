@@ -49,6 +49,11 @@ impl RefPanel {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn wips_reading(&self) -> bool {
+        self.wips.reading
+    }
+
     /// The worktree of the row at the panel's whole `path`.
     pub(crate) fn worktree(&self, path: &str) -> Option<&Worktree> {
         self.worktrees.get(path.strip_prefix("worktrees/")?.parse::<usize>().ok()?)
