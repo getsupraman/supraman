@@ -261,3 +261,68 @@ fn maintenance_waits_while_a_session_works_there_an_index_is_locked_or_a_heavy_j
     cx.run_until_parked();
     assert!(graph(&dirs), "turned on, it runs at the next look");
 }
+
+fn reads(view: &Entity<GitView>, cx: &mut VisualTestContext) -> usize {
+    let id = view.entity_id();
+    cx.update(|_, cx| super::wips(id, cx).map_or(0, |w| w.read(cx).reads))
+}
+
+fn others(view: &Entity<GitView>, cx: &mut VisualTestContext) -> Vec<(String, u32)> {
+    let mut others: Vec<(String, u32)> = view.update(cx, |v, cx| v.other_wips(cx)).iter().map(|w| (w.worktree.branch.clone().unwrap_or_default(), w.counts().total())).collect();
+    others.sort();
+    others
+}
+
+#[gpui::test]
+fn the_other_worktrees_are_read_on_open_activation_the_fetch_tick_and_a_refresh_never_on_a_timer_of_their_own(cx: &mut TestAppContext) {
+    let f = Fixture::copy();
+    for n in 0..4 {
+        f.git(&["worktree", "add", "-q", "-b", &format!("extra{n}"), &f.temp.path().join(format!("extra{n}")).to_string_lossy(), f.sha("second")]);
+    }
+    start(None, BackgroundSettings { fetch_every_minutes: Some(1), maintenance: Some(false) }, cx);
+    let cx = window(cx);
+    let main = open(&f.dir, None, occupancy::Live::default(), cx);
+    assert_eq!(reads(&main, cx), 1, "read as the tab opened");
+    let shown = others(&main, cx);
+    assert_eq!(shown, [("extra0".into(), 0), ("extra1".into(), 0), ("extra2".into(), 0), ("extra3".into(), 0), ("side".into(), 0)], "every worktree but the tab's own");
+
+    tick(MINUTE / 2, cx);
+    assert_eq!(reads(&main, cx), 1, "nothing between the ticks");
+    tick(MINUTE / 2 + Duration::from_secs(1), cx);
+    assert_eq!(reads(&main, cx), 2, "read at the fetch tick");
+
+    main.update(cx, |v, cx| v.set_shown(false, cx));
+    main.update(cx, |v, cx| v.set_shown(true, cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&main, cx), 3, "read as the tab became the active one");
+
+    std::fs::write(f.worktree.join("new.txt"), b"new\n").unwrap();
+    cx.run_until_parked();
+    assert_eq!(reads(&main, cx), 3, "no watcher on the other worktrees");
+    cx.update(|_, cx| super::refresh_wips(main.entity_id(), cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&main, cx), 4, "read on an explicit refresh");
+    assert!(others(&main, cx).contains(&("side".into(), 1)), "{:?}", others(&main, cx));
+
+    let dirs = write::Writer::open(&f.repo()).unwrap().dirs().clone();
+    let push = write::scheduler(&dirs).acquire(LockSet::push());
+    cx.update(|_, cx| super::refresh_wips(main.entity_id(), cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&main, cx), 4, "no read while a push holds the repository");
+    drop(push);
+    cx.update(|_, cx| super::refresh_wips(main.entity_id(), cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&main, cx), 5, "the next refresh reads");
+
+    cx.update(|_, cx| apply(BackgroundSettings { fetch_every_minutes: Some(0), maintenance: Some(false) }, cx));
+    cx.run_until_parked();
+    tick(IDLE + MINUTE, cx);
+    assert_eq!(reads(&main, cx), 5, "with the fetch off, no tick and no timer of its own");
+
+    let side = open(&f.worktree, None, occupancy::Live::default(), cx);
+    assert_eq!(reads(&main, cx), 6, "a tab joining reads once for the repository's tabs");
+    assert_eq!(reads(&side, cx), 6, "one read shared by the repository's tabs");
+    assert!(others(&side, cx).iter().any(|(branch, n)| branch == "main" && *n > 0), "the worktree's tab sees the main checkout: {:?}", others(&side, cx));
+    assert!(!others(&side, cx).iter().any(|(branch, _)| branch == "side"));
+    assert!(others(&main, cx).contains(&("side".into(), 1)));
+}

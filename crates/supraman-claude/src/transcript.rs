@@ -6,7 +6,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -753,31 +752,15 @@ fn read_one(path: &Path, len: u64, modified: SystemTime, cached: Option<Cached>)
     Some(c)
 }
 
-/// [`read_one`] each job, on up to [`READERS`] threads that each take the next job when done with one.
+/// [`read_one`] each job, on up to [`READERS`] threads.
 fn read_all(jobs: Vec<Job>, progress: &(dyn Fn(usize, usize) + Sync)) -> Vec<(PathBuf, Option<Cached>)> {
     let total = jobs.len();
-    if total == 0 {
-        return Vec::new();
-    }
-    let jobs: Vec<Mutex<Option<Job>>> = jobs.into_iter().map(|j| Mutex::new(Some(j))).collect();
-    let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, READERS).min(total);
-    std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut out = Vec::new();
-                    while let Some(slot) = jobs.get(next.fetch_add(1, Ordering::Relaxed)) {
-                        let Some((path, len, modified, cached)) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() else { continue };
-                        let read = read_one(&path, len, modified, cached);
-                        out.push((path, read));
-                        progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
-                    }
-                    out
-                })
-            })
-            .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+    let done = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(READERS);
+    supraman_core::pool::map(jobs, threads, |(path, len, modified, cached)| {
+        let read = read_one(&path, len, modified, cached);
+        progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+        (path, read)
     })
 }
 

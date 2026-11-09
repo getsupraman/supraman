@@ -12,6 +12,7 @@ mod model;
 pub mod paths;
 mod plugin;
 pub mod prune;
+pub mod pool;
 pub mod process;
 mod registry;
 mod relay;

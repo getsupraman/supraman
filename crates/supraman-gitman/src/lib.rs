@@ -16,6 +16,7 @@ mod remotes;
 mod repo;
 mod stash;
 mod status;
+mod wips;
 pub mod write;
 
 #[cfg(feature = "test-support")]
@@ -30,8 +31,9 @@ pub use layout::{Edge, EdgeKind, LANE_COLOURS, Layout, RefGroup, RefKind, RefLab
 pub use locate::{FLOOR, Git, GitmanSettings, Located, SECTION, Version, check, judge, locate, located, RemoteSettings, remote_settings, set_setting, BackgroundSettings, background_settings, FETCH_EVERY_MINUTES};
 pub use operation::{OperationState, REBASE_MARKER, UnderWay, operation_state, under_way};
 pub use patch::{DiffOf, FilePatch, Hunk, Line, LineKind, patch};
-pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs};
+pub use refs::{Branch, Head, Refs, RemoteBranch, Tag, Upstream, Worktree, refs, worktrees};
 pub use remotes::{Link, Remote, mask_userinfo, remotes, web_link};
 pub use repo::{GitError, Repo};
 pub use stash::{Stash, stashes};
 pub use status::{BranchStatus, Conflict, Entry, EntryKind, Operation, Status, status, status_first};
+pub use wips::{WIP_READERS, WipCounts, WipRead, WorktreeWip, wips};
